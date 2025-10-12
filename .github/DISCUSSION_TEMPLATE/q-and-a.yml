@@ -1,0 +1,66 @@
+title: "[Q&A] "
+labels: ["question", "discussion"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Ask a Question
+
+        Get help from the community! This is the place for:
+        - How-to questions
+        - Best practices
+        - Configuration help
+        - Troubleshooting
+        - Architecture questions
+
+        Please search existing discussions first to see if your question has been answered.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      description: What would you like to know?
+      placeholder: How do I...?
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-tried
+    attributes:
+      label: What Have You Tried?
+      description: Show us what you've attempted so far
+      placeholder: |
+        ```python
+        # Code you've tried
+        import nexus
+
+        # Your code here
+        ```
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Your setup (if relevant to the question)
+      placeholder: |
+        - Nexus Version: 0.1.0
+        - Python Version: 3.11.5
+        - OS: Ubuntu 22.04
+        - Deployment Mode: embedded
+
+  - type: checkboxes
+    id: research
+    attributes:
+      label: Research Checklist
+      description: Please confirm you've done some research
+      options:
+        - label: I have read the [documentation](https://github.com/nexi-lab/nexus/blob/main/README.md)
+        - label: I have searched [existing issues](https://github.com/nexi-lab/nexus/issues)
+        - label: I have searched [existing discussions](https://github.com/nexi-lab/nexus/discussions)
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Any other relevant information
+      placeholder: Error messages, logs, screenshots, etc.

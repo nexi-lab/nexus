@@ -1,0 +1,41 @@
+title: "[Discussion] "
+labels: ["discussion"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Welcome to Nexus Discussions!
+
+        Use this space for general discussions about Nexus. This could include:
+        - Design discussions
+        - Architecture decisions
+        - Community updates
+        - General questions
+
+        For bug reports or feature requests, please use the [Issues](https://github.com/nexi-lab/nexus/issues) tab.
+
+  - type: textarea
+    id: discussion-topic
+    attributes:
+      label: Discussion Topic
+      description: What would you like to discuss?
+      placeholder: Share your thoughts, questions, or ideas about Nexus...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Provide any relevant background or context
+      placeholder: |
+        - What prompted this discussion?
+        - Are there related discussions or issues?
+        - What's your use case or perspective?
+
+  - type: textarea
+    id: additional-info
+    attributes:
+      label: Additional Information
+      description: Any other relevant details, links, or resources
+      placeholder: Add links, code examples, or references here...

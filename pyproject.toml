@@ -1,5 +1,5 @@
 [project]
-name = "nexus"
+name = "nexus-ai-fs"
 version = "0.1.0"
 description = "AI-Native Distributed Filesystem Architecture"
 readme = "README.md"

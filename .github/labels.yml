@@ -1,0 +1,151 @@
+# GitHub Labels Configuration
+# Use with: gh label create --repo owner/repo -f .github/labels.yml
+
+# Type Labels
+- name: "bug"
+  color: "d73a4a"
+  description: "Something isn't working"
+
+- name: "enhancement"
+  color: "a2eeef"
+  description: "New feature or request"
+
+- name: "documentation"
+  color: "0075ca"
+  description: "Improvements or additions to documentation"
+
+- name: "question"
+  color: "d876e3"
+  description: "Further information is requested"
+
+- name: "good first issue"
+  color: "7057ff"
+  description: "Good for newcomers"
+
+- name: "help wanted"
+  color: "008672"
+  description: "Extra attention is needed"
+
+# Priority Labels
+- name: "priority: critical"
+  color: "b60205"
+  description: "Critical priority - needs immediate attention"
+
+- name: "priority: high"
+  color: "d93f0b"
+  description: "High priority"
+
+- name: "priority: medium"
+  color: "fbca04"
+  description: "Medium priority"
+
+- name: "priority: low"
+  color: "0e8a16"
+  description: "Low priority"
+
+# Component Labels
+- name: "component: embedded"
+  color: "1d76db"
+  description: "Embedded mode functionality"
+
+- name: "component: server"
+  color: "1d76db"
+  description: "Server mode functionality"
+
+- name: "component: distributed"
+  color: "1d76db"
+  description: "Distributed mode functionality"
+
+- name: "component: core"
+  color: "5319e7"
+  description: "Core filesystem functionality"
+
+- name: "component: storage"
+  color: "5319e7"
+  description: "Storage backend implementations"
+
+- name: "component: api"
+  color: "5319e7"
+  description: "REST API functionality"
+
+- name: "component: cli"
+  color: "5319e7"
+  description: "Command-line interface"
+
+- name: "component: ai"
+  color: "ff6347"
+  description: "AI/ML features (LLM, embeddings, semantic search)"
+
+- name: "component: agents"
+  color: "ff6347"
+  description: "Agent memory and workspace features"
+
+- name: "component: parsers"
+  color: "ff6347"
+  description: "Document parsing functionality"
+
+- name: "component: mcp"
+  color: "ff6347"
+  description: "Model Context Protocol integration"
+
+- name: "component: auth"
+  color: "c5def5"
+  description: "Authentication and authorization"
+
+- name: "component: jobs"
+  color: "c5def5"
+  description: "Job system and checkpointing"
+
+# Status Labels
+- name: "status: blocked"
+  color: "d93f0b"
+  description: "Blocked by another issue or dependency"
+
+- name: "status: in progress"
+  color: "fbca04"
+  description: "Work in progress"
+
+- name: "status: needs review"
+  color: "ededed"
+  description: "Needs code review"
+
+- name: "status: needs testing"
+  color: "ededed"
+  description: "Needs testing before merge"
+
+# Special Labels
+- name: "breaking change"
+  color: "d73a4a"
+  description: "Introduces breaking changes"
+
+- name: "dependencies"
+  color: "0366d6"
+  description: "Pull requests that update a dependency file"
+
+- name: "performance"
+  color: "ffcc00"
+  description: "Performance improvements"
+
+- name: "security"
+  color: "b60205"
+  description: "Security-related issues"
+
+- name: "testing"
+  color: "c5def5"
+  description: "Testing-related issues"
+
+- name: "refactor"
+  color: "fbca04"
+  description: "Code refactoring"
+
+- name: "wontfix"
+  color: "ffffff"
+  description: "This will not be worked on"
+
+- name: "duplicate"
+  color: "cfd3d7"
+  description: "This issue or pull request already exists"
+
+- name: "invalid"
+  color: "e4e669"
+  description: "This doesn't seem right"

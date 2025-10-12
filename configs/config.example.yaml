@@ -1,0 +1,151 @@
+# Nexus Configuration Example
+# Copy this file to config.yaml and modify as needed
+
+# Deployment mode: embedded, monolithic, or distributed
+mode: monolithic
+
+# Server settings
+server:
+  host: 0.0.0.0
+  port: 8080
+  workers: 4
+  log_level: info
+
+# Database configuration
+database:
+  # For SQLite (embedded/monolithic)
+  url: sqlite:///./nexus.db
+
+  # For PostgreSQL (distributed)
+  # url: postgresql://user:password@localhost:5432/nexus
+
+  pool_size: 10
+  max_overflow: 20
+  echo: false
+
+# Cache configuration
+cache:
+  type: memory  # memory, redis
+
+  # For Redis
+  # type: redis
+  # url: redis://localhost:6379
+  # db: 0
+
+  ttl: 3600
+  max_size_mb: 100
+
+# Vector database
+vector_db:
+  type: qdrant
+
+  # Embedded mode
+  path: ./nexus-data/qdrant
+
+  # Server mode
+  # url: http://localhost:6333
+  # api_key: your-api-key
+
+  collection_prefix: nexus
+
+# Storage backends
+backends:
+  # Local filesystem
+  - type: local
+    name: local
+    mount_point: /local
+    root_path: ./nexus-data/files
+
+  # Amazon S3
+  # - type: s3
+  #   name: s3-main
+  #   mount_point: /s3
+  #   bucket: my-company-files
+  #   region: us-east-1
+  #   access_key: ${AWS_ACCESS_KEY_ID}
+  #   secret_key: ${AWS_SECRET_ACCESS_KEY}
+
+  # Google Drive
+  # - type: gdrive
+  #   name: gdrive-main
+  #   mount_point: /gdrive
+  #   credentials_path: ./secrets/gdrive-creds.json
+
+  # Google Cloud Storage
+  # - type: gcs
+  #   name: gcs-main
+  #   mount_point: /gcs
+  #   bucket: my-company-files
+  #   credentials_path: ./secrets/gcs-creds.json
+
+# Authentication
+auth:
+  jwt_secret: ${JWT_SECRET:-change-me-in-production}
+  jwt_algorithm: HS256
+  token_expiry_hours: 24
+  api_key_expiry_days: 365
+
+# Rate limiting
+rate_limits:
+  enabled: true
+  default: "100/minute"
+  semantic_search: "10/minute"
+  llm_read: "50/hour"
+
+# LLM providers
+llm:
+  default_provider: anthropic
+
+  anthropic:
+    api_key: ${ANTHROPIC_API_KEY}
+    default_model: claude-sonnet-4
+    max_tokens: 4096
+    enable_cache: true
+
+  openai:
+    api_key: ${OPENAI_API_KEY}
+    default_model: gpt-4-turbo
+    max_tokens: 4096
+    enable_cache: true
+
+  google:
+    api_key: ${GOOGLE_API_KEY}
+    default_model: gemini-pro
+    max_tokens: 4096
+
+# Embeddings
+embeddings:
+  provider: openai
+  model: text-embedding-3-large
+  dimensions: 1536
+  batch_size: 100
+
+# Jobs
+jobs:
+  enabled: true
+  max_workers: 4
+  checkpoint_interval: 60  # seconds
+  max_retries: 3
+
+# Monitoring
+monitoring:
+  prometheus:
+    enabled: true
+    port: 9090
+
+  tracing:
+    enabled: false
+    jaeger_endpoint: http://localhost:14268/api/traces
+
+  logging:
+    level: info
+    format: json  # json, text
+    file: ./logs/nexus.log
+
+# Features
+features:
+  semantic_search: true
+  llm_read: true
+  agent_memory: true
+  job_system: true
+  mcp_server: true

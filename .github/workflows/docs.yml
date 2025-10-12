@@ -1,0 +1,115 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        run: uv venv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev]"
+          # Add documentation tools if/when needed
+          # uv pip install sphinx sphinx-rtd-theme mkdocs mkdocs-material
+
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v4
+
+      - name: Build documentation
+        run: |
+          # For now, we'll create a simple docs structure
+          # This can be expanded when Sphinx or MkDocs is added
+          mkdir -p _site
+
+          # Copy README as index
+          cp README.md _site/index.md
+
+          # Copy other markdown files
+          if [ -d docs ]; then
+            cp -r docs/* _site/
+          fi
+
+          # Create a simple HTML index
+          cat > _site/index.html <<EOF
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>Nexus Documentation</title>
+              <style>
+                  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; max-width: 900px; margin: 50px auto; padding: 0 20px; line-height: 1.6; }
+                  h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+                  a { color: #0066cc; text-decoration: none; }
+                  a:hover { text-decoration: underline; }
+                  .links { margin: 30px 0; }
+                  .links a { display: block; padding: 10px; margin: 5px 0; background: #f5f5f5; border-radius: 5px; }
+              </style>
+          </head>
+          <body>
+              <h1>Nexus Documentation</h1>
+              <p>AI-Native Distributed Filesystem Architecture</p>
+
+              <div class="links">
+                  <h2>Documentation</h2>
+                  <a href="https://github.com/nexi-lab/nexus/blob/main/README.md">README</a>
+                  <a href="https://github.com/nexi-lab/nexus/blob/main/NEXUS_COMPREHENSIVE_ARCHITECTURE.md">Architecture Guide</a>
+                  <a href="https://github.com/nexi-lab/nexus/blob/main/CONTRIBUTING.md">Contributing Guide</a>
+                  <a href="https://github.com/nexi-lab/nexus">GitHub Repository</a>
+                  <a href="https://github.com/nexi-lab/nexus/issues">Issues</a>
+              </div>
+
+              <p><em>Full documentation site coming soon!</em></p>
+          </body>
+          </html>
+          EOF
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

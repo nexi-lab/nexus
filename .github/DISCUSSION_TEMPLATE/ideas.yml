@@ -1,0 +1,65 @@
+title: "[Idea] "
+labels: ["idea", "discussion"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Share Your Idea
+
+        Have an idea for Nexus? Share it here for community discussion before creating a formal feature request.
+
+        This is a great place to:
+        - Brainstorm new features
+        - Get feedback on concepts
+        - Refine ideas before implementation
+        - Collaborate with other community members
+
+  - type: textarea
+    id: idea-description
+    attributes:
+      label: Your Idea
+      description: Describe your idea in a few sentences
+      placeholder: I think it would be great if Nexus could...
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What Problem Does This Solve?
+      description: What need or pain point does this address?
+      placeholder: Currently, users struggle with...
+
+  - type: textarea
+    id: use-cases
+    attributes:
+      label: Use Cases
+      description: How would this be used in practice?
+      placeholder: |
+        Example scenarios:
+        1. A developer wants to...
+        2. An enterprise team needs to...
+
+  - type: textarea
+    id: inspiration
+    attributes:
+      label: Inspiration
+      description: Have you seen similar features elsewhere? What inspired this idea?
+      placeholder: |
+        - Similar to [project/feature]
+        - Inspired by [experience/need]
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I'd be interested in helping implement this idea
+        - label: I'd be willing to sponsor development of this feature
+        - label: I'd like to provide feedback during development
+
+  - type: textarea
+    id: additional-thoughts
+    attributes:
+      label: Additional Thoughts
+      description: Any other context, mockups, or details about your idea

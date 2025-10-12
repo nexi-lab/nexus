@@ -1,0 +1,93 @@
+title: "[Show and Tell] "
+labels: ["show-and-tell", "discussion"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Show and Tell
+
+        Share what you've built with Nexus! This is the place to:
+        - Showcase projects built with Nexus
+        - Share interesting use cases
+        - Demonstrate integrations
+        - Show off creative solutions
+        - Inspire the community
+
+  - type: textarea
+    id: project-description
+    attributes:
+      label: What Did You Build?
+      description: Tell us about your project
+      placeholder: I built a [describe your project]...
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why Did You Build This?
+      description: What problem were you solving?
+      placeholder: I needed to solve...
+
+  - type: textarea
+    id: technical-details
+    attributes:
+      label: Technical Details
+      description: How did you use Nexus?
+      placeholder: |
+        - Deployment mode: embedded/monolithic/distributed
+        - Key features used: semantic search, LLM integration, etc.
+        - Integrations: other tools or services
+        - Architecture highlights
+
+  - type: textarea
+    id: code-example
+    attributes:
+      label: Code Example
+      description: Share a code snippet (optional but encouraged!)
+      placeholder: |
+        ```python
+        import nexus
+
+        # Your code here
+        ```
+      render: python
+
+  - type: textarea
+    id: demo-link
+    attributes:
+      label: Demo / Links
+      description: Links to your project (optional)
+      placeholder: |
+        - GitHub: https://github.com/...
+        - Demo: https://...
+        - Blog post: https://...
+        - Video: https://...
+
+  - type: textarea
+    id: lessons-learned
+    attributes:
+      label: Lessons Learned
+      description: What did you learn? Any tips for others?
+      placeholder: |
+        Things I learned:
+        - ...
+        - ...
+
+        Tips for others:
+        - ...
+        - ...
+
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Feedback for Nexus
+      description: How could Nexus better support your use case?
+      placeholder: It would be great if Nexus had...
+
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshots / Media
+      description: Share screenshots, diagrams, or other media
+      placeholder: Drag and drop images here or paste URLs...

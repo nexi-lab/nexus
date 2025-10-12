@@ -54,24 +54,34 @@ Nexus uniquely supports three deployment modes from a single codebase:
 import nexus
 
 # Zero-deployment filesystem with AI features
-nx = nexus.Embedded("./nexus-data")
+# Config auto-discovered from nexus.yaml or environment
+nx = nexus.connect()
 
-# Write and read files
-await nx.write("/workspace/data.txt", b"Hello World")
-content = await nx.read("/workspace/data.txt")
+async with nx:
+    # Write and read files
+    await nx.write("/workspace/data.txt", b"Hello World")
+    content = await nx.read("/workspace/data.txt")
 
-# Semantic search across documents
-results = await nx.semantic_search(
-    "/docs/**/*.pdf",
-    query="authentication implementation"
-)
+    # Semantic search across documents
+    results = await nx.semantic_search(
+        "/docs/**/*.pdf",
+        query="authentication implementation"
+    )
 
-# LLM-powered document reading with KV cache
-answer = await nx.llm_read(
-    "/reports/q4.pdf",
-    prompt="Summarize key findings",
-    model="claude-sonnet-4"
-)
+    # LLM-powered document reading with KV cache
+    answer = await nx.llm_read(
+        "/reports/q4.pdf",
+        prompt="Summarize key findings",
+        model="claude-sonnet-4"
+    )
+```
+
+**Config file (`nexus.yaml`):**
+```yaml
+mode: embedded
+data_dir: ./nexus-data
+cache_size_mb: 100
+enable_vector_search: true
 ```
 
 ### Quick Start: Monolithic Server
@@ -181,64 +191,71 @@ Every agent gets a structured workspace at `/workspace/{tenant}/{agent}/`:
 ### File System Operations
 
 ```python
-from nexus import NexusClient
+import nexus
 
-async with NexusClient(api_key="nexus_...") as client:
+# Works in embedded, monolithic, or distributed mode
+# Mode determined by config file or environment
+nx = nexus.connect()
+
+async with nx:
     # Basic operations
-    await client.write("/workspace/data.txt", b"content")
-    content = await client.read("/workspace/data.txt")
-    await client.delete("/workspace/data.txt")
+    await nx.write("/workspace/data.txt", b"content")
+    content = await nx.read("/workspace/data.txt")
+    await nx.delete("/workspace/data.txt")
 
     # Batch operations
-    files = await client.list("/workspace/", recursive=True)
-    results = await client.copy_batch(sources, destinations)
+    files = await nx.list("/workspace/", recursive=True)
+    results = await nx.copy_batch(sources, destinations)
 
     # File discovery
-    python_files = await client.glob("**/*.py")
-    todos = await client.grep(r"TODO:|FIXME:", file_pattern="*.py")
+    python_files = await nx.glob("**/*.py")
+    todos = await nx.grep(r"TODO:|FIXME:", file_pattern="*.py")
 ```
 
 ### Semantic Search
 
 ```python
 # Search across documents with vector embeddings
-results = await client.semantic_search(
-    path="/docs/",
-    query="How does authentication work?",
-    limit=10,
-    filters={"file_type": "markdown"}
-)
+async with nexus.connect() as nx:
+    results = await nx.semantic_search(
+        path="/docs/",
+        query="How does authentication work?",
+        limit=10,
+        filters={"file_type": "markdown"}
+    )
 
-for result in results:
-    print(f"{result.path}:{result.line} - {result.text}")
+    for result in results:
+        print(f"{result.path}:{result.line} - {result.text}")
 ```
 
 ### LLM-Powered Reading
 
 ```python
 # Read documents with AI, with automatic KV cache
-answer = await client.llm_read(
-    path="/reports/q4-2024.pdf",
-    prompt="What were the top 3 challenges?",
-    model="claude-sonnet-4",
-    max_tokens=1000
-)
+async with nexus.connect() as nx:
+    answer = await nx.llm_read(
+        path="/reports/q4-2024.pdf",
+        prompt="What were the top 3 challenges?",
+        model="claude-sonnet-4",
+        max_tokens=1000
+    )
 ```
 
 ### Agent Memory
 
 ```python
 # Store and retrieve agent memories
-await client.store_memory(
-    content="User prefers TypeScript over JavaScript",
-    memory_type="preference",
-    tags=["coding", "languages"]
-)
+async with nexus.connect() as nx:
+    await nx.store_memory(
+        content="User prefers TypeScript over JavaScript",
+        memory_type="preference",
+        tags=["coding", "languages"]
+    )
 
-memories = await client.search_memories(
-    query="programming language preferences",
-    limit=5
-)
+    memories = await nx.search_memories(
+        query="programming language preferences",
+        limit=5
+    )
 ```
 
 ### Custom Commands
@@ -266,10 +283,11 @@ Given query: {{query}}
 Execute via API:
 
 ```python
-result = await client.execute_command(
-    "semantic-search",
-    context={"query": "authentication implementation"}
-)
+async with nexus.connect() as nx:
+    result = await nx.execute_command(
+        "semantic-search",
+        context={"query": "authentication implementation"}
+    )
 ```
 
 ## Technology Stack
@@ -311,13 +329,16 @@ result = await client.execute_command(
 ```python
 import nexus
 
-config = nexus.EmbeddedConfig(
-    data_dir="./nexus-data",
-    cache_size_mb=100,
-    enable_vector_search=True
-)
+# Config via Python (useful for programmatic configuration)
+nx = nexus.connect(config={
+    "mode": "embedded",
+    "data_dir": "./nexus-data",
+    "cache_size_mb": 100,
+    "enable_vector_search": True
+})
 
-nx = nexus.Embedded(config)
+# Or let it auto-discover from nexus.yaml
+nx = nexus.connect()
 ```
 
 ### Server Mode

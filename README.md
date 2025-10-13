@@ -468,6 +468,7 @@ Nexus builds on ideas from:
 - **ReasoningBank**: Self-evolving agent memory
 - **Supermemory**: Content processing pipeline
 - **Timelinize**: Job checkpointing system
+- **Beads**: Distributed coordination patterns, collision resolution, and operational resilience
 
 ## Roadmap
 
@@ -479,6 +480,10 @@ Nexus builds on ideas from:
 - [ ] Virtual path routing
 - [ ] In-memory caching
 - [ ] Basic CLI interface
+- [ ] Batch operations (avoid N+1 queries)
+- [ ] Metadata export/import (JSONL format)
+- [ ] SQL views for ready work detection
+- [ ] Type-level validation
 
 ### v0.2.0 - Document Processing
 - [ ] PDF parser
@@ -487,6 +492,8 @@ Nexus builds on ideas from:
 - [ ] Text extraction pipeline
 - [ ] Basic semantic chunking
 - [ ] Qdrant embedded integration
+- [ ] Collision detection and resolution
+- [ ] Enhanced audit trail with structured events
 
 ### v0.3.0 - AI Integration
 - [ ] LLM provider abstraction

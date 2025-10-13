@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -26,19 +26,19 @@ class NexusConfig(BaseModel):
     )
 
     # Embedded mode settings
-    data_dir: Optional[str] = Field(
+    data_dir: str | None = Field(
         default="./nexus-data", description="Data directory for embedded mode"
     )
     cache_size_mb: int = Field(default=100, description="Cache size in megabytes")
     enable_vector_search: bool = Field(default=True, description="Enable vector search")
     enable_llm_cache: bool = Field(default=True, description="Enable LLM KV cache")
-    db_path: Optional[str] = Field(
+    db_path: str | None = Field(
         default=None, description="SQLite database path (auto-generated if None)"
     )
 
     # Remote mode settings (monolithic/distributed)
-    url: Optional[str] = Field(default=None, description="Nexus server URL for remote modes")
-    api_key: Optional[str] = Field(default=None, description="API key for authentication")
+    url: str | None = Field(default=None, description="Nexus server URL for remote modes")
+    api_key: str | None = Field(default=None, description="API key for authentication")
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
 
     @field_validator("mode")
@@ -52,7 +52,7 @@ class NexusConfig(BaseModel):
 
     @field_validator("url")
     @classmethod
-    def validate_url(cls, v: Optional[str], info: Any) -> Optional[str]:
+    def validate_url(cls, v: str | None, info: Any) -> str | None:
         """Validate URL is required for remote modes."""
         mode = info.data.get("mode")
         if mode in ["monolithic", "distributed"] and not v:
@@ -70,7 +70,7 @@ class NexusConfig(BaseModel):
 
 
 def load_config(
-    config: Optional[Union[str, Path, dict[str, Any], NexusConfig]] = None,
+    config: str | Path | dict[str, Any] | NexusConfig | None = None,
 ) -> NexusConfig:
     """
     Load Nexus configuration from various sources.
@@ -98,7 +98,7 @@ def load_config(
         return _load_from_dict(config)
 
     # Load from file path
-    if isinstance(config, (str, Path)):
+    if isinstance(config, str | Path):
         return _load_from_file(Path(config))
 
     # Auto-discover

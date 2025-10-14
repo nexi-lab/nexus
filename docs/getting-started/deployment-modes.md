@@ -1,18 +1,10 @@
 # Deployment Modes
 
-Nexus supports three deployment modes from a single codebase, allowing you to start small and scale as needed.
+**Note: v0.1.0 only implements embedded mode. Monolithic and distributed modes are planned for future releases.**
 
-## Comparison
+## Current Support (v0.1.0)
 
-| Mode | Users | Data | Use Case | Setup Time |
-|------|-------|------|----------|------------|
-| **Embedded** | 1 | ~10GB | Individual developers, CLI tools | 60 seconds |
-| **Monolithic** | 1-20 | ~100GB | Small teams, staging | 10 minutes |
-| **Distributed** | 100+ | Petabyte+ | Enterprise, production | Hours |
-
-## Embedded Mode
-
-### Overview
+### ✅ Embedded Mode - Available Now
 
 Embedded mode runs entirely in-process with no external dependencies. Perfect for:
 
@@ -20,9 +12,9 @@ Embedded mode runs entirely in-process with no external dependencies. Perfect fo
 - CLI tools
 - Testing and development
 - Desktop applications
-- Edge devices
+- Single-user scenarios
 
-### Architecture
+#### Architecture
 
 ```
 ┌─────────────────┐
@@ -31,11 +23,11 @@ Embedded mode runs entirely in-process with no external dependencies. Perfect fo
 │  ┌───────────┐ │
 │  │   Nexus   │ │  SQLite
 │  │  Embedded │ │  Local FS
-│  └───────────┘ │  In-memory cache
+│  └───────────┘ │
 └─────────────────┘
 ```
 
-### Setup
+#### Setup
 
 ```python
 import nexus
@@ -47,308 +39,97 @@ nx = nexus.connect()
 nx = nexus.connect(config_file="nexus.yaml")
 ```
 
-### Features
+#### Configuration
+
+```yaml
+mode: embedded
+data_dir: ./nexus-data
+```
+
+#### Features
 
 - ✅ File operations (read, write, delete, list)
 - ✅ SQLite metadata store
 - ✅ Local filesystem backend
-- ✅ In-memory caching
-- ✅ Basic file search (glob, grep)
-- ✅ Batch operations
-- ❌ Multi-user support
+- ✅ Virtual path management
+- ✅ Metadata tracking (size, etag, timestamps)
+- ❌ Multi-user support (single process only)
 - ❌ Remote access
 - ❌ High availability
 
-## Monolithic Mode
+## Planned Modes (Future Releases)
 
-### Overview
+### 🚧 Monolithic Mode - Planned for v0.5.0
 
-Monolithic mode runs as a single server with external databases. Perfect for:
+Single server deployment for small teams.
 
-- Small to medium teams (1-20 users)
-- Staging environments
-- Internal tools
-- Department-level deployments
+**Planned Features:**
+- Multi-user support (1-20 users)
+- REST API
+- API key authentication
+- PostgreSQL metadata store
+- Redis caching
+- Docker deployment
 
-### Architecture
+**Status:** Not yet implemented
 
-```
-┌────────────┐     ┌──────────────┐
-│  Clients   │────▶│  Nexus Server │
-│ (REST API) │     │  (Monolithic) │
-└────────────┘     └───────┬───────┘
-                          │
-         ┌────────────────┼────────────────┐
-         │                │                │
-    ┌────▼────┐    ┌─────▼──────┐   ┌────▼────┐
-    │PostgreSQL│    │   Redis    │   │ Qdrant  │
-    └──────────┘    └────────────┘   └─────────┘
-```
+### 🚧 Distributed Mode - Planned for v0.9.0
 
-### Setup
+Fully distributed architecture for enterprise scale.
 
-#### Using Docker Compose
+**Planned Features:**
+- Horizontal scaling
+- High availability
+- Load balancing
+- Multi-region support
+- Kubernetes deployment
+- Advanced monitoring
 
-```yaml
-version: '3.8'
-
-services:
-  nexus:
-    image: nexus/nexus:latest
-    ports:
-      - "8080:8080"
-    environment:
-      - NEXUS_MODE=monolithic
-      - DATABASE_URL=postgresql://nexus:password@postgres:5432/nexus
-      - REDIS_URL=redis://redis:6379
-      - QDRANT_URL=http://qdrant:6333
-    volumes:
-      - ./config.yaml:/app/config.yaml
-      - nexus-data:/data
-
-  postgres:
-    image: postgres:15
-    environment:
-      - POSTGRES_DB=nexus
-      - POSTGRES_USER=nexus
-      - POSTGRES_PASSWORD=password
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis-data:/data
-
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
-    volumes:
-      - qdrant-data:/qdrant/storage
-
-volumes:
-  nexus-data:
-  postgres-data:
-  redis-data:
-  qdrant-data:
-```
-
-Start with:
-
-```bash
-docker-compose up -d
-```
-
-### Features
-
-- ✅ All embedded mode features
-- ✅ Multi-user support
-- ✅ REST API
-- ✅ API key authentication
-- ✅ PostgreSQL metadata store
-- ✅ Redis caching
-- ✅ Vector search (Qdrant)
-- ✅ LLM integration
-- ✅ Job scheduling
-- ❌ High availability
-- ❌ Horizontal scaling
-
-## Distributed Mode
-
-### Overview
-
-Distributed mode is a fully distributed architecture with high availability. Perfect for:
-
-- Enterprise deployments
-- Production environments
-- High-scale applications (100+ users)
-- Mission-critical systems
-
-### Architecture
-
-```
-          ┌─────────────┐
-          │Load Balancer│
-          └──────┬──────┘
-                 │
-     ┌───────────┴───────────┐
-     │                       │
-┌────▼─────┐          ┌─────▼────┐
-│ Nexus    │   ...    │  Nexus   │
-│ Worker 1 │          │ Worker N │
-└────┬─────┘          └─────┬────┘
-     │                      │
-     └──────────┬───────────┘
-                │
-     ┌──────────┴──────────────────┐
-     │                             │
-┌────▼────────┐         ┌─────────▼──────┐
-│ PostgreSQL  │         │ Redis Cluster  │
-│   HA/RR     │         │  (Sentinel)    │
-└─────────────┘         └────────────────┘
-     │                             │
-     │          ┌─────────▼────────┤
-     │          │                  │
-┌────▼──────┐  │  ┌──────────┐   │
-│  Qdrant   │  │  │   S3     │   │
-│  Cluster  │  │  └──────────┘   │
-└───────────┘  │                  │
-               └──────────────────┘
-```
-
-### Setup
-
-#### Using Kubernetes with Helm
-
-```bash
-# Add the Nexus Helm repository
-helm repo add nexus https://charts.nexus.io
-helm repo update
-
-# Install with production configuration
-helm install nexus nexus/nexus-distributed \
-  --set replicas=5 \
-  --set postgres.enabled=true \
-  --set postgres.ha=true \
-  --set redis.enabled=true \
-  --set redis.cluster=true \
-  --set qdrant.enabled=true \
-  --set qdrant.replicas=3 \
-  --set autoscaling.enabled=true \
-  --set autoscaling.minReplicas=3 \
-  --set autoscaling.maxReplicas=20 \
-  --namespace nexus \
-  --create-namespace \
-  --values production-values.yaml
-```
-
-Example `production-values.yaml`:
-
-```yaml
-replicaCount: 5
-
-image:
-  repository: nexus/nexus
-  tag: latest
-  pullPolicy: Always
-
-resources:
-  limits:
-    cpu: 4000m
-    memory: 8Gi
-  requests:
-    cpu: 2000m
-    memory: 4Gi
-
-autoscaling:
-  enabled: true
-  minReplicas: 3
-  maxReplicas: 20
-  targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
-
-postgres:
-  enabled: true
-  ha: true
-  replicaCount: 3
-  resources:
-    limits:
-      cpu: 2000m
-      memory: 4Gi
-
-redis:
-  enabled: true
-  cluster: true
-  nodes: 6
-
-qdrant:
-  enabled: true
-  replicas: 3
-
-monitoring:
-  enabled: true
-  prometheus: true
-  grafana: true
-  jaeger: true
-  loki: true
-
-ingress:
-  enabled: true
-  className: nginx
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-  hosts:
-    - host: nexus.example.com
-      paths:
-        - path: /
-          pathType: Prefix
-  tls:
-    - secretName: nexus-tls
-      hosts:
-        - nexus.example.com
-```
-
-### Features
-
-- ✅ All monolithic mode features
-- ✅ High availability
-- ✅ Horizontal scaling
-- ✅ Load balancing
-- ✅ Automatic failover
-- ✅ Distributed caching
-- ✅ Multi-region support
-- ✅ Advanced monitoring
-- ✅ Distributed tracing
-
-## Choosing a Mode
-
-### Start with Embedded if:
-
-- You're a single developer
-- Building a CLI tool or desktop app
-- Need quick prototyping
-- Running on edge devices
-- Don't need multi-user support
-
-### Upgrade to Monolithic when:
-
-- You have a small team (2-20 users)
-- Need multi-user support
-- Require API access
-- Want vector search
-- Need LLM integration
-
-### Move to Distributed when:
-
-- Serving 100+ users
-- Need high availability
-- Require horizontal scaling
-- Have compliance requirements
-- Operating at enterprise scale
+**Status:** Not yet implemented
 
 ## Migration Path
 
-Nexus makes it easy to migrate between modes:
+When monolithic and distributed modes are implemented, migration will be supported:
 
-1. **Embedded → Monolithic**
-   ```bash
-   # Export metadata
-   nexus export --format jsonl > metadata.jsonl
+```bash
+# Export from embedded (future)
+nexus export --format jsonl > metadata.jsonl
 
-   # Import to monolithic
-   nexus import --url http://server:8080 < metadata.jsonl
-   ```
+# Import to monolithic (future)
+nexus import --url http://server:8080 < metadata.jsonl
+```
 
-2. **Monolithic → Distributed**
-   ```bash
-   # Database migration handled automatically
-   # Just update configuration and redeploy
-   ```
+## Current Limitations
+
+Since v0.1.0 only supports embedded mode:
+
+- **Single process only** - No concurrent access from multiple processes
+- **No remote access** - Must run in same process as application
+- **No multi-user** - Designed for single-user scenarios
+- **Local only** - Files stored on local filesystem only
+
+## When to Use Embedded Mode
+
+**Good fit:**
+- ✅ Personal projects
+- ✅ CLI tools
+- ✅ Desktop applications
+- ✅ Development and testing
+- ✅ Single-user workflows
+- ✅ Prototyping
+
+**Not recommended:**
+- ❌ Multi-user applications (wait for v0.5.0)
+- ❌ Web services with concurrent users (wait for v0.5.0)
+- ❌ Enterprise deployments (wait for v0.9.0)
+- ❌ High-availability requirements (wait for v0.9.0)
+
+## Roadmap
+
+See the [main README](../index.md#roadmap) for the full feature roadmap and timeline.
 
 ## Next Steps
 
-- [Embedded Deployment](../deployment/embedded.md)
-- [Monolithic Deployment](../deployment/monolithic.md)
-- [Distributed Deployment](../deployment/distributed.md)
-- [Configuration Guide](configuration.md)
+- [Quick Start](quickstart.md) - Get started with embedded mode
+- [Configuration](configuration.md) - Configure embedded mode
+- [API Reference](../api/api.md) - Explore the API

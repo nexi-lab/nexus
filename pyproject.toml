@@ -168,12 +168,15 @@ pretty = true
 module = [
     "click.*",
     "rich.*",
+    "alembic.*",
 ]
 ignore_missing_imports = true
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+
+[tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -191,11 +194,12 @@ ignore = [
     "C901",  # too complex
 ]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/*" = ["ARG", "S101"]
+"alembic/*" = ["UP007", "E402"]  # Alembic: Union syntax, import order
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 known-first-party = ["nexus"]
 
 [tool.ruff.format]

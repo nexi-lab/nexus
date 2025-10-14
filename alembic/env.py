@@ -7,10 +7,10 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 
 # Add src directory to Python path for imports
+# Note: This must happen before importing our models
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-# Import our models for autogenerate support
-from nexus.storage.models import Base
+from nexus.storage.models import Base  # noqa: E402
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

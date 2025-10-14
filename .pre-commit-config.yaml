@@ -11,7 +11,7 @@ repos:
       - id: debug-statements
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.14
+    rev: v0.14.0
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
@@ -21,6 +21,6 @@ repos:
     rev: v1.8.0
     hooks:
       - id: mypy
-        additional_dependencies: [pydantic, types-PyYAML]
+        additional_dependencies: [pydantic, types-PyYAML, alembic, sqlalchemy]
         args: [--ignore-missing-imports]
         exclude: ^(tests/|alembic/|examples/)

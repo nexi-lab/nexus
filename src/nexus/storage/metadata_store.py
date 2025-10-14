@@ -66,8 +66,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
     def _run_migrations(self) -> None:
         """Run Alembic migrations to create/update schema."""
         try:
-            from alembic import command  # type: ignore[attr-defined]
             from alembic.config import Config
+
+            from alembic import command
 
             # Configure Alembic
             alembic_cfg = Config("alembic.ini")

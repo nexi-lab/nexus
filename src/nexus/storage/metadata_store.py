@@ -68,7 +68,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
         try:
             from alembic.config import Config
 
-            from alembic import command  # type: ignore[attr-defined]
+            from alembic import command
 
             # Configure Alembic
             alembic_cfg = Config("alembic.ini")

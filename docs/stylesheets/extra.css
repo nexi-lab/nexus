@@ -1,0 +1,27 @@
+/* Custom CSS for Nexus documentation */
+
+:root {
+  --nexus-primary: #5e35b1;
+  --nexus-accent: #7e57c2;
+}
+
+/* Custom code block styling */
+.highlight {
+  border-radius: 8px;
+}
+
+/* Improved table styling */
+table {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Custom admonition colors */
+.md-typeset .admonition.tip {
+  border-color: var(--nexus-accent);
+}
+
+/* Logo styling */
+.md-header__button.md-logo img {
+  max-height: 32px;
+}

@@ -23,3 +23,4 @@ repos:
       - id: mypy
         additional_dependencies: [pydantic, types-PyYAML]
         args: [--ignore-missing-imports]
+        exclude: ^(tests/|alembic/|examples/)

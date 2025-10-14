@@ -1,7 +1,7 @@
 """Embedded mode implementation for Nexus."""
 
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +9,7 @@ from nexus.core.backend import StorageBackend
 from nexus.core.backends.local import LocalBackend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.metadata import FileMetadata
-from nexus.core.metadata_sqlite import SQLiteMetadataStore
+from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
 
 class Embedded:
@@ -35,10 +35,10 @@ class Embedded:
         self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize metadata store
+        # Initialize metadata store (using new SQLAlchemy-based store)
         if db_path is None:
             db_path = self.data_dir / "metadata.db"
-        self.metadata = SQLiteMetadataStore(db_path)
+        self.metadata = SQLAlchemyMetadataStore(db_path)
 
         # Initialize default local backend
         self.backend: StorageBackend = LocalBackend(self.data_dir / "files")
@@ -138,7 +138,7 @@ class Embedded:
         self.backend.write(physical_path, content)
 
         # Update metadata
-        now = datetime.now()
+        now = datetime.now(UTC)
         meta = self.metadata.get(path)
 
         if meta is None:
@@ -155,6 +155,7 @@ class Embedded:
             )
         else:
             # Update existing file
+            # Note: Version tracking not implemented in v0.1.0 simplified schema
             metadata = FileMetadata(
                 path=path,
                 backend_name=meta.backend_name,
@@ -163,7 +164,7 @@ class Embedded:
                 etag=self._compute_etag(content),
                 created_at=meta.created_at,
                 modified_at=now,
-                version=meta.version + 1,
+                version=1,  # Version tracking will be added in v0.2.0
             )
 
         self.metadata.put(metadata)

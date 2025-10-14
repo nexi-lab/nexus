@@ -85,7 +85,6 @@ jobs:
               <div class="links">
                   <h2>Documentation</h2>
                   <a href="https://github.com/nexi-lab/nexus/blob/main/README.md">README</a>
-                  <a href="https://github.com/nexi-lab/nexus/blob/main/NEXUS_COMPREHENSIVE_ARCHITECTURE.md">Architecture Guide</a>
                   <a href="https://github.com/nexi-lab/nexus/blob/main/CONTRIBUTING.md">Contributing Guide</a>
                   <a href="https://github.com/nexi-lab/nexus">GitHub Repository</a>
                   <a href="https://github.com/nexi-lab/nexus/issues">Issues</a>

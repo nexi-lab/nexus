@@ -5,7 +5,8 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-**Version 0.1.0** - Foundation Release (Embedded Mode Only)
+!!! note "Version 0.1.0 - Foundation Release"
+    Currently implements **embedded mode only**. Monolithic and distributed modes are planned for future releases.
 
 ## What is Nexus?
 
@@ -24,7 +25,8 @@ Nexus is an AI-native distributed filesystem designed for AI agent infrastructur
 
 ### ❌ Not Yet Implemented
 
-Everything else in the vision is planned but not implemented:
+!!! warning "Planned Features"
+    Everything else in the vision is planned but not implemented:
 
 - Async operations
 - Caching layer

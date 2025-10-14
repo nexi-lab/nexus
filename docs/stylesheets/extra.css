@@ -3,25 +3,214 @@
 :root {
   --nexus-primary: #5e35b1;
   --nexus-accent: #7e57c2;
+  --nexus-green: #2e7d32;
+  --nexus-red: #c62828;
+  --nexus-blue: #1565c0;
 }
 
-/* Custom code block styling */
-.highlight {
+/* Improved spacing and readability */
+.md-content {
+  max-width: 900px;
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+  color: var(--nexus-primary);
+  border-bottom: 3px solid var(--nexus-primary);
+  padding-bottom: 0.5rem;
+  margin-top: 2rem;
+  margin-bottom: 1.5rem;
+}
+
+.md-typeset h2 {
+  font-weight: 600;
+  color: var(--nexus-accent);
+  border-bottom: 2px solid #e0e0e0;
+  padding-bottom: 0.3rem;
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+}
+
+.md-typeset h3 {
+  font-weight: 600;
+  color: var(--nexus-blue);
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Code block styling */
+.md-typeset pre {
   border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
 }
 
-/* Improved table styling */
-table {
+.md-typeset code {
+  background-color: #f5f5f5;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+/* Inline code shouldn't have background in pre blocks */
+.md-typeset pre code {
+  background-color: transparent;
+  padding: 0;
+}
+
+/* Table styling */
+.md-typeset table {
   border-radius: 8px;
   overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
 }
 
-/* Custom admonition colors */
+.md-typeset table thead {
+  background-color: var(--nexus-primary);
+  color: white;
+}
+
+.md-typeset table th {
+  font-weight: 600;
+  padding: 0.75rem;
+}
+
+.md-typeset table td {
+  padding: 0.75rem;
+}
+
+.md-typeset table tbody tr:nth-child(odd) {
+  background-color: #fafafa;
+}
+
+/* Status badges */
+.md-typeset h3:has(+ ul li:first-child:contains("✅")) {
+  color: var(--nexus-green);
+}
+
+.md-typeset h3:has(+ ul li:first-child:contains("❌")) {
+  color: var(--nexus-red);
+}
+
+.md-typeset h3:has(+ ul li:first-child:contains("🚧")) {
+  color: #f57c00;
+}
+
+/* Admonition/callout styling */
+.md-typeset .admonition {
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  margin: 1.5rem 0;
+}
+
+.md-typeset .admonition.note {
+  border-left: 4px solid var(--nexus-blue);
+}
+
+.md-typeset .admonition.warning {
+  border-left: 4px solid #f57c00;
+}
+
 .md-typeset .admonition.tip {
-  border-color: var(--nexus-accent);
+  border-left: 4px solid var(--nexus-green);
 }
 
-/* Logo styling */
+.md-typeset .admonition.danger {
+  border-left: 4px solid var(--nexus-red);
+}
+
+/* Version badge */
+.md-typeset p:has(strong:contains("Version")) {
+  background: linear-gradient(135deg, var(--nexus-primary) 0%, var(--nexus-accent) 100%);
+  color: white;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  font-weight: 600;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+/* Status badges in lists */
+.md-typeset ul li:before {
+  content: "";
+}
+
+.md-typeset ul li:first-child:contains("✅") {
+  color: var(--nexus-green);
+}
+
+.md-typeset ul li:first-child:contains("❌") {
+  color: var(--nexus-red);
+}
+
+.md-typeset ul li:first-child:contains("🚧") {
+  color: #f57c00;
+}
+
+/* Improve link styling */
+.md-typeset a {
+  color: var(--nexus-blue);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-bottom 0.2s;
+}
+
+.md-typeset a:hover {
+  border-bottom: 1px solid var(--nexus-blue);
+}
+
+/* GitHub badges */
+.md-typeset p:has(img[alt*="badge"]) {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+
+/* ASCII art/diagrams */
+.md-typeset pre:has(code:contains("┌")) {
+  background-color: #fafafa;
+  border: 2px solid #e0e0e0;
+  font-family: "Courier New", monospace;
+}
+
+/* Navigation improvements */
+.md-tabs {
+  background: linear-gradient(135deg, var(--nexus-primary) 0%, var(--nexus-accent) 100%);
+}
+
+/* Footer styling */
+.md-footer {
+  background-color: #f5f5f5;
+}
+
+/* Responsive improvements */
+@media screen and (max-width: 768px) {
+  .md-content {
+    padding: 1rem;
+  }
+
+  .md-typeset h1 {
+    font-size: 1.8rem;
+  }
+
+  .md-typeset h2 {
+    font-size: 1.5rem;
+  }
+}
+
+/* Logo placeholder styling - remove when real logo added */
 .md-header__button.md-logo img {
   max-height: 32px;
+  opacity: 0.3;
+}
+
+/* Improve section spacing */
+.md-typeset > * + * {
+  margin-top: 1rem;
+}
+
+.md-typeset > h1 + *,
+.md-typeset > h2 + *,
+.md-typeset > h3 + * {
+  margin-top: 0.75rem;
 }

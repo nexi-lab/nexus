@@ -1,138 +1,147 @@
 # Quick Start
 
-Get started with Nexus in minutes with our three deployment modes.
+Get started with Nexus v0.1.0 in embedded mode (60 seconds).
 
-## Embedded Mode (60 seconds)
-
-Perfect for individual developers and CLI tools.
-
-### 1. Install Nexus
+## Installation
 
 ```bash
-uv pip install nexus-ai-fs
+# Clone the repository
+git clone https://github.com/nexi-lab/nexus.git
+cd nexus
+
+# Install with uv (recommended)
+uv venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+uv pip install -e ".[dev]"
+
+# Or with pip
+pip install -e ".[dev]"
 ```
 
-### 2. Create a Configuration File
+## Basic Usage
+
+### 1. Create Configuration (Optional)
 
 Create `nexus.yaml`:
 
 ```yaml
 mode: embedded
 data_dir: ./nexus-data
-cache_size_mb: 100
-enable_vector_search: true
 ```
 
-### 3. Start Using Nexus
+### 2. Use Nexus in Your Code
 
 ```python
 import nexus
 
-# Auto-discovers nexus.yaml
+# Connect to Nexus (auto-discovers nexus.yaml)
 nx = nexus.connect()
 
-async with nx:
-    # Write and read files
-    await nx.write("/workspace/data.txt", b"Hello World")
-    content = await nx.read("/workspace/data.txt")
-    print(content)  # b"Hello World"
+# Write a file
+nx.write("/workspace/hello.txt", b"Hello World")
 
-    # List files
-    files = await nx.list("/workspace/")
-    for file in files:
-        print(f"{file.path} - {file.size} bytes")
+# Read a file
+content = nx.read("/workspace/hello.txt")
+print(content)  # b'Hello World'
+
+# Check if file exists
+if nx.exists("/workspace/hello.txt"):
+    print("File exists!")
+
+# List files
+files = nx.list("/workspace/")
+print(files)  # ['/workspace/hello.txt']
+
+# Delete a file
+nx.delete("/workspace/hello.txt")
+
+# Clean up
+nx.close()
 ```
 
-## Monolithic Mode (10 minutes)
-
-For small teams and staging environments.
-
-### Using Docker Compose
-
-Create `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  nexus:
-    image: nexus/nexus:latest
-    ports:
-      - "8080:8080"
-    environment:
-      - NEXUS_MODE=monolithic
-      - DATABASE_URL=postgresql://nexus:password@postgres:5432/nexus
-      - REDIS_URL=redis://redis:6379
-    volumes:
-      - ./nexus-data:/data
-    depends_on:
-      - postgres
-      - redis
-
-  postgres:
-    image: postgres:15
-    environment:
-      - POSTGRES_DB=nexus
-      - POSTGRES_USER=nexus
-      - POSTGRES_PASSWORD=password
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis-data:/data
-
-volumes:
-  postgres-data:
-  redis-data:
-```
-
-Start the services:
-
-```bash
-docker-compose up -d
-```
-
-### Connect to the Server
+### 3. Using Context Manager
 
 ```python
 import nexus
 
-# Connect to remote server
-nx = nexus.connect(
-    url="http://localhost:8080",
-    api_key="your-api-key"
-)
-
-async with nx:
-    await nx.write("/workspace/data.txt", b"Hello from server!")
-    content = await nx.read("/workspace/data.txt")
+with nexus.connect() as nx:
+    nx.write("/data/test.txt", b"Test content")
+    content = nx.read("/data/test.txt")
+    print(content)
+# Automatically closes on exit
 ```
 
-## Distributed Mode (Hours)
+## What's Implemented
 
-For enterprise production deployments.
+**Available in v0.1.0:**
+- ✅ Embedded mode
+- ✅ Basic file operations: `read()`, `write()`, `delete()`, `exists()`, `list()`
+- ✅ SQLite metadata store
+- ✅ Local filesystem backend
+- ✅ Configuration from file/env/dict
+- ✅ Virtual path management
 
-### Using Helm
+**Not Yet Implemented:**
+- ❌ Async operations
+- ❌ Caching
+- ❌ Vector/semantic search
+- ❌ LLM integration
+- ❌ Monolithic/distributed modes
+- ❌ REST API
+- ❌ S3/GDrive backends
+- ❌ Docker deployment
 
-```bash
-# Add the Nexus Helm repository
-helm repo add nexus https://charts.nexus.io
-helm repo update
+See the [Roadmap](../index.md#roadmap) for planned features.
 
-# Install with custom values
-helm install nexus nexus/nexus-distributed \
-  --set replicas=5 \
-  --set postgres.enabled=true \
-  --set redis.enabled=true \
-  --set qdrant.enabled=true \
-  --namespace nexus \
-  --create-namespace
+## Example: Simple File Storage
+
+```python
+import nexus
+
+# Initialize
+config = {
+    "mode": "embedded",
+    "data_dir": "./my-data"
+}
+nx = nexus.connect(config)
+
+# Store some data
+nx.write("/documents/report.txt", b"Q4 Revenue Report...")
+nx.write("/documents/notes.txt", b"Meeting notes...")
+nx.write("/images/logo.png", logo_bytes)
+
+# Retrieve data
+report = nx.read("/documents/report.txt")
+
+# List all documents
+docs = nx.list("/documents/")
+print(f"Found {len(docs)} documents")
+
+# Clean up
+nx.close()
 ```
 
-## What's Next?
+## Error Handling
 
-- [Configuration Guide](configuration.md) - Learn about all configuration options
-- [Core Concepts](../guide/concepts.md) - Understand Nexus architecture
-- [API Reference](../api.md) - Explore the full API
+```python
+import nexus
+from nexus import NexusFileNotFoundError, InvalidPathError
+
+nx = nexus.connect()
+
+try:
+    content = nx.read("/nonexistent.txt")
+except NexusFileNotFoundError as e:
+    print(f"File not found: {e}")
+
+try:
+    nx.write("../invalid/../path.txt", b"data")
+except InvalidPathError as e:
+    print(f"Invalid path: {e}")
+```
+
+## Next Steps
+
+- [Configuration Guide](configuration.md) - Learn about configuration options
+- [API Reference](../api/api.md) - Explore the full API
+- [Development Guide](../development/development.md) - Contributing to Nexus

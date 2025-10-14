@@ -424,7 +424,6 @@ pytest tests/performance/ --benchmark-only
 
 ## Documentation
 
-- [Architecture Guide](./NEXUS_COMPREHENSIVE_ARCHITECTURE.md)
 - [API Reference](./docs/api.md)
 - [Deployment Guide](./docs/deployment.md)
 - [Development Guide](./docs/development.md)
@@ -459,16 +458,6 @@ git push origin feature/your-feature
 
 Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 
-## Acknowledgments
-
-Nexus builds on ideas from:
-- **CallFS**: LLM-powered semantic read
-- **Alluxio**: Distributed caching layer
-- **Spacedrive**: Content-addressable storage
-- **ReasoningBank**: Self-evolving agent memory
-- **Supermemory**: Content processing pipeline
-- **Timelinize**: Job checkpointing system
-- **Beads**: Distributed coordination patterns, collision resolution, and operational resilience
 
 ## Roadmap
 

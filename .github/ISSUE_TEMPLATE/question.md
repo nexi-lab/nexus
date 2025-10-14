@@ -23,7 +23,6 @@ Describe what you're working on and why you need this information.
 Share what you've already attempted or researched:
 
 - [ ] I have read the [README](https://github.com/nexi-lab/nexus/blob/main/README.md)
-- [ ] I have checked the [documentation](https://github.com/nexi-lab/nexus/blob/main/NEXUS_COMPREHENSIVE_ARCHITECTURE.md)
 - [ ] I have searched [existing issues](https://github.com/nexi-lab/nexus/issues)
 - [ ] I have searched [discussions](https://github.com/nexi-lab/nexus/discussions)
 

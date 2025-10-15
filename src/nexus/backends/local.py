@@ -122,8 +122,8 @@ class LocalBackend(Backend):
             with self._lock_file(meta_path) as lock:
                 # Write through locked file handle
                 lock.lock_file.seek(0)
+                lock.lock_file.truncate(0)  # Truncate BEFORE writing
                 lock.lock_file.write(json.dumps(metadata).encode("utf-8"))
-                lock.lock_file.truncate()
                 lock.lock_file.flush()
         except OSError as e:
             raise BackendError(
@@ -349,9 +349,10 @@ class FileLock:
     def __enter__(self) -> "FileLock":
         """Acquire lock."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.touch(exist_ok=True)
 
-        self.lock_file = open(self.path, "r+b")
+        # Use a+b mode: append+binary with read/write
+        # This works better on Windows for newly created files
+        self.lock_file = open(self.path, "a+b")
 
         # Platform-specific locking
         if platform.system() == "Windows":

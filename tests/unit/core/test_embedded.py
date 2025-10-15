@@ -33,7 +33,8 @@ def test_init_creates_directories(temp_dir: Path) -> None:
     nx = Embedded(data_dir=data_dir)
 
     assert data_dir.exists()
-    assert (data_dir / "files").exists()
+    assert (data_dir / "cas").exists()  # CAS content storage
+    assert (data_dir / "dirs").exists()  # Virtual directory structure
     assert (data_dir / "metadata.db").exists()
 
     nx.close()

@@ -2,8 +2,10 @@
 
 import posixpath
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from nexus.core.backend import StorageBackend
+if TYPE_CHECKING:
+    from nexus.backends.backend import Backend
 
 
 @dataclass
@@ -11,7 +13,7 @@ class MountConfig:
     """Mount configuration for path routing."""
 
     mount_point: str  # Virtual path prefix, e.g., "/workspace"
-    backend: StorageBackend  # Backend instance
+    backend: "Backend"  # Backend instance
     priority: int = 0  # For tie-breaking (higher = preferred)
     readonly: bool = False
 
@@ -20,7 +22,7 @@ class MountConfig:
 class RouteResult:
     """Result of path routing."""
 
-    backend: StorageBackend
+    backend: "Backend"
     backend_path: str  # Path relative to backend root
     mount_point: str  # Matched mount point
     readonly: bool
@@ -54,7 +56,7 @@ class PathRouter:
     def add_mount(
         self,
         mount_point: str,
-        backend: StorageBackend,
+        backend: "Backend",
         priority: int = 0,
         readonly: bool = False,
     ) -> None:

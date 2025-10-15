@@ -1,12 +1,13 @@
 """Embedded mode implementation for Nexus."""
 
+import contextlib
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from nexus.core.backend import StorageBackend
-from nexus.core.backends.local import LocalBackend
+from nexus.backends.backend import Backend
+from nexus.backends.local import LocalBackend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.metadata import FileMetadata
 from nexus.core.router import PathRouter
@@ -18,7 +19,12 @@ class Embedded:
     Embedded mode filesystem for Nexus.
 
     Provides file operations (read, write, delete) with metadata tracking
-    and support for multiple storage backends.
+    using content-addressable storage (CAS) for automatic deduplication.
+
+    All backends now use CAS by default for:
+    - Automatic deduplication (same content stored once)
+    - Content integrity (hash verification)
+    - Efficient storage
     """
 
     def __init__(
@@ -44,8 +50,8 @@ class Embedded:
         # Initialize path router with default mounts
         self.router = PathRouter()
 
-        # Default mount: all paths to local backend
-        self.backend: StorageBackend = LocalBackend(self.data_dir / "files")
+        # Initialize unified backend (always uses CAS)
+        self.backend: Backend = LocalBackend(self.data_dir)
         self.router.add_mount("/", self.backend, priority=0)
 
     def _validate_path(self, path: str) -> str:
@@ -111,11 +117,11 @@ class Embedded:
 
         # Check if file exists in metadata
         meta = self.metadata.get(path)
-        if meta is None:
+        if meta is None or meta.etag is None:
             raise NexusFileNotFoundError(path)
 
-        # Read from backend
-        content = self.backend.read(meta.physical_path)
+        # Read from CAS using content hash
+        content = self.backend.read_content(meta.etag)
 
         return content
 
@@ -125,6 +131,8 @@ class Embedded:
 
         Creates parent directories if needed. Overwrites existing files.
         Updates metadata store.
+
+        Automatically deduplicates content using CAS.
 
         Args:
             path: Virtual path to write
@@ -136,41 +144,31 @@ class Embedded:
         """
         path = self._validate_path(path)
 
-        # Generate physical path (strip leading slash)
-        physical_path = path.lstrip("/")
-
-        # Write to backend
-        self.backend.write(physical_path, content)
-
-        # Update metadata
+        # Get existing metadata for update detection
         now = datetime.now(UTC)
         meta = self.metadata.get(path)
 
-        if meta is None:
-            # New file
-            metadata = FileMetadata(
-                path=path,
-                backend_name="local",
-                physical_path=physical_path,
-                size=len(content),
-                etag=self._compute_etag(content),
-                created_at=now,
-                modified_at=now,
-                version=1,
-            )
-        else:
-            # Update existing file
-            # Note: Version tracking not implemented in v0.1.0 simplified schema
-            metadata = FileMetadata(
-                path=path,
-                backend_name=meta.backend_name,
-                physical_path=physical_path,
-                size=len(content),
-                etag=self._compute_etag(content),
-                created_at=meta.created_at,
-                modified_at=now,
-                version=1,  # Version tracking will be added in v0.2.0
-            )
+        # Write to CAS backend - returns content hash
+        content_hash = self.backend.write_content(content)
+
+        # If updating existing file with different content, delete old content
+        if meta is not None and meta.etag and meta.etag != content_hash:
+            # Decrement ref count for old content
+            with contextlib.suppress(Exception):
+                # Ignore errors if old content already deleted
+                self.backend.delete_content(meta.etag)
+
+        # Store metadata with content hash as both etag and physical_path
+        metadata = FileMetadata(
+            path=path,
+            backend_name="local",
+            physical_path=content_hash,  # CAS: hash is the "physical" location
+            size=len(content),
+            etag=content_hash,  # SHA-256 hash for integrity
+            created_at=meta.created_at if meta else now,
+            modified_at=now,
+            version=1,
+        )
 
         self.metadata.put(metadata)
 
@@ -179,6 +177,7 @@ class Embedded:
         Delete a file.
 
         Removes file from backend and metadata store.
+        Decrements reference count in CAS (only deletes when ref_count=0).
 
         Args:
             path: Virtual path to delete
@@ -195,8 +194,9 @@ class Embedded:
         if meta is None:
             raise NexusFileNotFoundError(path)
 
-        # Delete from backend
-        self.backend.delete(meta.physical_path)
+        # Delete from CAS (decrements ref count)
+        if meta.etag:
+            self.backend.delete_content(meta.etag)
 
         # Remove from metadata
         self.metadata.delete(path)

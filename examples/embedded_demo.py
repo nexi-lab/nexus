@@ -245,7 +245,7 @@ def main() -> None:
         nx4 = nexus.connect(config={"data_dir": str(data_dir)})
 
         # Create separate backend for workspace isolation
-        from nexus.core.backends.local import LocalBackend
+        from nexus.backends.local import LocalBackend
 
         workspace_backend = LocalBackend(data_dir / "workspace-isolated")
         nx4.router.add_mount("/workspace", workspace_backend, priority=10)
@@ -278,6 +278,141 @@ def main() -> None:
             print(f"   - {f}")
 
         nx4.close()
+
+        # ============================================================
+        # Part 6: Content-Addressable Storage (CAS) with Embedded
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 6: Content-Addressable Storage (CAS) - NEW!")
+        print("=" * 70)
+
+        print("\n22. Using Nexus with automatic CAS deduplication...")
+        # CAS is now always enabled - no special flag needed!
+        nx_cas = nexus.connect(config={"data_dir": str(data_dir / "cas-mode")})
+        print("   ✓ Connected (CAS automatic)")
+        print(f"   ✓ Storage location: {data_dir / 'cas-mode'}")
+
+        # Write content
+        print("\n23. Writing content via CAS-enabled Nexus...")
+        content1 = b"This is important data that will be content-addressed"
+        nx_cas.write("/documents/data.txt", content1)
+
+        # Get metadata to see content hash
+        meta1 = nx_cas.metadata.get("/documents/data.txt")
+        hash1 = meta1.etag  # etag is SHA-256 hash
+        print(f"   Content hash (etag): {hash1[:16]}...{hash1[-8:]}")
+        print(f"   Ref count: {nx_cas.backend.get_ref_count(hash1)}")
+        print(f"   Size: {meta1.size} bytes")
+        print(f"   Backend: {meta1.backend_name}")
+
+        # Verify directory structure
+        print("\n   Physical storage path:")
+        print(f"   cas/{hash1[:2]}/{hash1[2:4]}/{hash1}")
+        print(f"   Structure: {hash1[:2]}/{hash1[2:4]}/{hash1}")
+
+        # Write identical content (deduplication)
+        print("\n24. Testing automatic content deduplication...")
+        content2 = b"This is important data that will be content-addressed"  # Same content!
+        nx_cas.write("/reports/summary.txt", content2)  # Different path, same content
+
+        meta2 = nx_cas.metadata.get("/reports/summary.txt")
+        hash2 = meta2.etag
+        print(f"   Second file hash: {hash2[:16]}...{hash2[-8:]}")
+        print(f"   Hashes match: {hash1 == hash2}")
+        print(f"   Ref count (auto-incremented): {nx_cas.backend.get_ref_count(hash1)}")
+        print(f"   Physical paths match: {meta1.physical_path == meta2.physical_path}")
+        print("   ✓ Content deduplicated - only stored once!")
+
+        # Write different content
+        print("\n25. Writing different content...")
+        content3 = b"Different content with different hash"
+        nx_cas.write("/logs/access.log", content3)
+
+        meta3 = nx_cas.metadata.get("/logs/access.log")
+        hash3 = meta3.etag
+        print(f"   New content hash: {hash3[:16]}...{hash3[-8:]}")
+        print(f"   Different from first: {hash1 != hash3}")
+        print(f"   Ref count: {nx_cas.backend.get_ref_count(hash3)}")
+
+        # Read content back
+        print("\n26. Reading content transparently...")
+        retrieved = nx_cas.read("/documents/data.txt")
+        print(f"   Retrieved {len(retrieved)} bytes")
+        print(f"   Content matches: {retrieved == content1}")
+        print(f"   Content: {retrieved.decode()[:50]}...")
+        print("   ✓ CAS backend is transparent to user!")
+
+        # Delete with reference counting
+        print("\n27. Testing automatic reference counting on delete...")
+        print(f"   Current ref count for shared content: {nx_cas.backend.get_ref_count(hash1)}")
+
+        nx_cas.delete("/documents/data.txt")  # First delete
+        print("   After deleting /documents/data.txt...")
+        print(f"   Ref count: {nx_cas.backend.get_ref_count(hash1)}")
+        print(f"   Content still exists: {nx_cas.backend.content_exists(hash1)}")
+        print(f"   Other file still readable: {nx_cas.exists('/reports/summary.txt')}")
+
+        nx_cas.delete("/reports/summary.txt")  # Second delete
+        print("\n   After deleting /reports/summary.txt...")
+        print(f"   Content exists in CAS: {nx_cas.backend.content_exists(hash1)}")
+        print("   ✓ Content automatically removed when last reference deleted!")
+
+        # Inspect CAS directory structure
+        print("\n28. Inspecting CAS directory structure...")
+        cas_files = list((data_dir / "cas-mode" / "cas").rglob("*"))
+        content_files = [f for f in cas_files if f.is_file() and f.suffix != ".meta"]
+        meta_files = [f for f in cas_files if f.suffix == ".meta"]
+        print(f"   Content files: {len(content_files)}")
+        print(f"   Metadata files: {len(meta_files)}")
+        print("\n   Directory tree (CAS storage):")
+        for f in sorted(cas_files)[:10]:  # Show first 10
+            if f.is_file():
+                rel_path = f.relative_to(data_dir / "cas-mode" / "cas")
+                print(f"   {rel_path}")
+
+        # Demonstrate hash collision resistance
+        print("\n29. Hash collision resistance...")
+        test_contents = [
+            (b"Content A", "/test/a.txt"),
+            (b"Content B", "/test/b.txt"),
+            (b"Similar content 1", "/test/c.txt"),
+            (b"Similar content 2", "/test/d.txt"),
+            (b"x" * 1000, "/test/e.txt"),
+            (b"y" * 1000, "/test/f.txt"),
+        ]
+        for content, path in test_contents:
+            nx_cas.write(path, content)
+
+        hashes = [nx_cas.metadata.get(path).etag for _, path in test_contents]
+        unique_hashes = set(hashes)
+        print(f"   Wrote {len(test_contents)} different contents")
+        print(f"   Got {len(unique_hashes)} unique hashes")
+        print(f"   No collisions: {len(hashes) == len(unique_hashes)}")
+
+        # Show storage efficiency
+        print("\n30. Storage efficiency demonstration...")
+        # Write same content 100 times to different paths
+        repeated_content = b"This content will be written 100 times"
+        nx_cas.write("/efficiency/test0.txt", repeated_content)
+        repeated_meta = nx_cas.metadata.get("/efficiency/test0.txt")
+        repeated_hash = repeated_meta.etag
+
+        for i in range(1, 100):
+            nx_cas.write(f"/efficiency/test{i}.txt", repeated_content)
+
+        print("   Content written: 100 times (different paths)")
+        print(f"   Ref count: {nx_cas.backend.get_ref_count(repeated_hash)}")
+        print("   Physical copies: 1")
+        print(f"   Space saved: ~{len(repeated_content) * 99} bytes")
+        print("   ✓ Automatic deduplication saves storage!")
+
+        # List some files
+        print("\n   Files exist in metadata:")
+        files = nx_cas.list("/efficiency")
+        print(f"   Total files: {len(files)}")
+        print("   But only 1 physical copy in CAS storage!")
+
+        nx_cas.close()
 
         # ============================================================
         # Summary
@@ -353,6 +488,11 @@ NEW in v0.1.0:
         print("   ✓ Multi-mount support (multiple backends)")
         print("   ✓ Persistence (survives restarts)")
         print("   ✓ Data integrity (ETags)")
+        print("   ✓ Content-addressable storage (CAS)")
+        print("   ✓ Content deduplication (save space)")
+        print("   ✓ Reference counting (safe deletion)")
+        print("   ✓ Atomic writes (data integrity)")
+        print("   ✓ SHA-256 content hashing")
         print()
         print("📁 Files created:")
         workspace_backend_files = list((data_dir / "workspace-isolated").rglob("*"))

@@ -12,6 +12,11 @@ This guide covers development setup, workflow, and best practices for contributi
 - [Code Style](#code-style)
 - [Contributing](#contributing)
 
+## Additional Guides
+
+- **[Backend Architecture](BACKEND_ARCHITECTURE.md)** - Unified backend interface, CAS, implementing new backends
+- **[Database Compatibility](DATABASE_COMPATIBILITY.md)** - SQLite and PostgreSQL support
+
 ---
 
 ## Getting Started
@@ -96,8 +101,10 @@ nexus/
 │
 ├── docs/                   # Documentation
 │   ├── api.md              # API documentation
-│   ├── development.md      # This file
-│   └── DATABASE_COMPATIBILITY.md  # Database guide
+│   ├── development/        # Development guides
+│   │   ├── development.md  # This file
+│   │   ├── BACKEND_ARCHITECTURE.md  # Backend architecture guide
+│   │   └── DATABASE_COMPATIBILITY.md  # Database guide
 │
 ├── configs/                # Example configurations
 ├── scripts/                # Development scripts
@@ -668,7 +675,8 @@ gh release create v0.1.1 --title "v0.1.1" --notes "Release notes..."
 ## Resources
 
 - **API Documentation**: `docs/api.md`
-- **Database Guide**: `docs/DATABASE_COMPATIBILITY.md`
+- **Backend Architecture**: `docs/development/BACKEND_ARCHITECTURE.md`
+- **Database Guide**: `docs/development/DATABASE_COMPATIBILITY.md`
 - **Contributing**: `CONTRIBUTING.md`
 - **Issues**: https://github.com/nexi-lab/nexus/issues
 

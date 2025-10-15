@@ -102,8 +102,10 @@ class LocalBackend(Backend):
             return {"ref_count": 0, "size": 0}
 
         try:
-            with self._lock_file(meta_path):
-                content = meta_path.read_text()
+            with self._lock_file(meta_path) as lock:
+                # Read through locked file handle
+                lock.lock_file.seek(0)
+                content = lock.lock_file.read().decode("utf-8")
                 result: dict[str, Any] = json.loads(content)
                 return result
         except (OSError, json.JSONDecodeError) as e:
@@ -117,8 +119,12 @@ class LocalBackend(Backend):
         meta_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            with self._lock_file(meta_path):
-                meta_path.write_text(json.dumps(metadata))
+            with self._lock_file(meta_path) as lock:
+                # Write through locked file handle
+                lock.lock_file.seek(0)
+                lock.lock_file.write(json.dumps(metadata).encode("utf-8"))
+                lock.lock_file.truncate()
+                lock.lock_file.flush()
         except OSError as e:
             raise BackendError(
                 f"Failed to write metadata: {e}", backend="local", path=content_hash
@@ -180,10 +186,12 @@ class LocalBackend(Backend):
             raise NexusFileNotFoundError(content_hash)
 
         try:
-            with self._lock_file(content_path):
-                content = content_path.read_bytes()
+            with self._lock_file(content_path) as lock:
+                # Read through locked file handle
+                lock.lock_file.seek(0)
+                content = bytes(lock.lock_file.read())
 
-            # Verify hash
+            # Verify hash (after releasing lock)
             actual_hash = self._compute_hash(content)
             if actual_hash != content_hash:
                 raise BackendError(

@@ -102,12 +102,10 @@ class LocalBackend(Backend):
             return {"ref_count": 0, "size": 0}
 
         try:
-            with self._lock_file(meta_path) as lock:
-                # Read through locked file handle
-                lock.lock_file.seek(0)
-                content = lock.lock_file.read().decode("utf-8")
-                result: dict[str, Any] = json.loads(content)
-                return result
+            # Read directly without locking (metadata files are small and atomic)
+            content = meta_path.read_text(encoding="utf-8")
+            result: dict[str, Any] = json.loads(content)
+            return result
         except (OSError, json.JSONDecodeError) as e:
             raise BackendError(
                 f"Failed to read metadata: {e}", backend="local", path=content_hash
@@ -119,13 +117,20 @@ class LocalBackend(Backend):
         meta_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            with self._lock_file(meta_path) as lock:
-                # Write through locked file handle
-                lock.lock_file.seek(0)
-                lock.lock_file.truncate(0)  # Truncate BEFORE writing
-                lock.lock_file.write(json.dumps(metadata).encode("utf-8"))
-                lock.lock_file.flush()
+            # Atomic write: write to temp file, then move
+            # This avoids Windows file locking issues
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=meta_path.parent, delete=False, suffix=".tmp"
+            ) as tmp_file:
+                tmp_path = Path(tmp_file.name)
+                tmp_file.write(json.dumps(metadata))
+                tmp_file.flush()
+
+            # Atomic move (replace)
+            shutil.move(str(tmp_path), str(meta_path))
         except OSError as e:
+            if "tmp_path" in locals():
+                Path(tmp_path).unlink(missing_ok=True)
             raise BackendError(
                 f"Failed to write metadata: {e}", backend="local", path=content_hash
             ) from e
@@ -186,12 +191,10 @@ class LocalBackend(Backend):
             raise NexusFileNotFoundError(content_hash)
 
         try:
-            with self._lock_file(content_path) as lock:
-                # Read through locked file handle
-                lock.lock_file.seek(0)
-                content = bytes(lock.lock_file.read())
+            # Read directly without locking (content files are immutable after creation)
+            content = content_path.read_bytes()
 
-            # Verify hash (after releasing lock)
+            # Verify hash
             actual_hash = self._compute_hash(content)
             if actual_hash != content_hash:
                 raise BackendError(

@@ -222,3 +222,133 @@ def test_unicode_filename(backend: LocalBackend) -> None:
 
     result = backend.read(path)
     assert result == content
+
+
+def test_mkdir_basic(backend: LocalBackend) -> None:
+    """Test creating a directory."""
+    backend.mkdir("testdir")
+    assert backend.is_directory("testdir")
+
+
+def test_mkdir_with_parents(backend: LocalBackend) -> None:
+    """Test creating nested directories with parents=True."""
+    backend.mkdir("parent/child/grandchild", parents=True)
+    assert backend.is_directory("parent/child/grandchild")
+
+
+def test_mkdir_without_parents_raises_error(backend: LocalBackend) -> None:
+    """Test that mkdir without parents fails if parent doesn't exist."""
+    with pytest.raises(BackendError):
+        backend.mkdir("parent/child", parents=False)
+
+
+def test_mkdir_exist_ok(backend: LocalBackend) -> None:
+    """Test mkdir with exist_ok=True doesn't raise error."""
+    backend.mkdir("testdir")
+    backend.mkdir("testdir", exist_ok=True)  # Should not raise
+
+
+def test_rmdir_basic(backend: LocalBackend) -> None:
+    """Test removing an empty directory."""
+    backend.mkdir("testdir")
+    assert backend.is_directory("testdir")
+
+    backend.rmdir("testdir")
+    assert not backend.is_directory("testdir")
+
+
+def test_rmdir_recursive(backend: LocalBackend) -> None:
+    """Test removing directory recursively."""
+    backend.write("testdir/file1.txt", b"content")
+    backend.write("testdir/subdir/file2.txt", b"content")
+
+    backend.rmdir("testdir", recursive=True)
+    assert not backend.is_directory("testdir")
+
+
+def test_rmdir_non_empty_raises_error(backend: LocalBackend) -> None:
+    """Test that removing non-empty directory without recursive fails."""
+    backend.write("testdir/file.txt", b"content")
+
+    with pytest.raises(OSError):
+        backend.rmdir("testdir", recursive=False)
+
+
+def test_rmdir_nonexistent_raises_error(backend: LocalBackend) -> None:
+    """Test that removing nonexistent directory raises error."""
+    with pytest.raises(NexusFileNotFoundError):
+        backend.rmdir("nonexistent")
+
+
+def test_rmdir_not_directory_raises_error(backend: LocalBackend) -> None:
+    """Test that rmdir on a file raises error."""
+    backend.write("file.txt", b"content")
+
+    with pytest.raises(BackendError):
+        backend.rmdir("file.txt")
+
+
+def test_is_directory(backend: LocalBackend) -> None:
+    """Test checking if path is a directory."""
+    # Non-existent path
+    assert not backend.is_directory("nonexistent")
+
+    # Create directory
+    backend.mkdir("testdir")
+    assert backend.is_directory("testdir")
+
+    # Create file
+    backend.write("file.txt", b"content")
+    assert not backend.is_directory("file.txt")
+
+
+def test_is_directory_with_invalid_path(backend: LocalBackend) -> None:
+    """Test is_directory with path that escapes root."""
+    result = backend.is_directory("../../../etc")
+    assert result is False
+
+
+def test_exists_with_invalid_path(backend: LocalBackend) -> None:
+    """Test exists with path that escapes root."""
+    result = backend.exists("../../../etc/passwd")
+    assert result is False
+
+
+def test_read_directory_raises_error(backend: LocalBackend) -> None:
+    """Test that reading a directory raises error."""
+    backend.mkdir("testdir")
+
+    with pytest.raises(BackendError) as exc_info:
+        backend.read("testdir")
+
+    assert "not a file" in str(exc_info.value)
+
+
+def test_delete_directory_raises_error(backend: LocalBackend) -> None:
+    """Test that deleting a directory raises error."""
+    backend.mkdir("testdir")
+
+    with pytest.raises(BackendError) as exc_info:
+        backend.delete("testdir")
+
+    assert "not a file" in str(exc_info.value)
+
+
+def test_get_size_directory_raises_error(backend: LocalBackend) -> None:
+    """Test that getting size of directory raises error."""
+    backend.mkdir("testdir")
+
+    with pytest.raises(BackendError) as exc_info:
+        backend.get_size("testdir")
+
+    assert "not a file" in str(exc_info.value)
+
+
+def test_list_directory_not_directory_raises_error(backend: LocalBackend) -> None:
+    """Test that listing a file raises error."""
+    backend.write("file.txt", b"content")
+
+    with pytest.raises(BackendError) as exc_info:
+        backend.list_directory("file.txt")
+
+    assert "not a directory" in str(exc_info.value)

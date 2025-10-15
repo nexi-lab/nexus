@@ -4,7 +4,7 @@ import tempfile
 
 import pytest
 
-from nexus.core.backends.local import LocalBackend
+from nexus.backends.local import LocalBackend
 from nexus.core.router import PathNotMountedError, PathRouter
 
 

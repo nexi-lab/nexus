@@ -104,3 +104,51 @@ class StorageBackend(ABC):
             BackendError: If operation fails
         """
         pass
+
+    # === Directory Operations ===
+
+    @abstractmethod
+    def mkdir(self, path: str, parents: bool = False, exist_ok: bool = False) -> None:
+        """
+        Create a directory.
+
+        Args:
+            path: Directory path (relative to backend root)
+            parents: Create parent directories if needed (like mkdir -p)
+            exist_ok: Don't raise error if directory exists
+
+        Raises:
+            FileExistsError: If directory exists and exist_ok=False
+            FileNotFoundError: If parent doesn't exist and parents=False
+            BackendError: If operation fails
+        """
+        pass
+
+    @abstractmethod
+    def rmdir(self, path: str, recursive: bool = False) -> None:
+        """
+        Remove a directory.
+
+        Args:
+            path: Directory path
+            recursive: Remove non-empty directory (like rm -rf)
+
+        Raises:
+            OSError: If directory not empty and recursive=False
+            NexusFileNotFoundError: If directory doesn't exist
+            BackendError: If operation fails
+        """
+        pass
+
+    @abstractmethod
+    def is_directory(self, path: str) -> bool:
+        """
+        Check if path is a directory.
+
+        Args:
+            path: Path to check
+
+        Returns:
+            True if path is a directory, False otherwise
+        """
+        pass

@@ -154,6 +154,132 @@ def main() -> None:
         store2.close()
 
         # ============================================================
+        # Part 4: Path Routing and Directory Operations
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 4: Path Routing & Directory Operations (NEW)")
+        print("=" * 70)
+
+        print("\n12. Testing directory operations...")
+        nx3 = nexus.connect(config={"data_dir": str(data_dir)})
+
+        # Create directory structure
+        print("\n   Creating directory structure...")
+        nx3.mkdir("/workspace", exist_ok=True)
+        nx3.mkdir("/workspace/agent1", exist_ok=True)
+        nx3.mkdir("/workspace/agent1/data", exist_ok=True)
+        nx3.mkdir("/workspace/agent2", exist_ok=True)
+        print("   ✓ Created: /workspace/agent1/data")
+        print("   ✓ Created: /workspace/agent2")
+
+        # Check if directories exist
+        print("\n13. Checking directory existence...")
+        is_dir1 = nx3.is_directory("/workspace/agent1")
+        is_dir2 = nx3.is_directory("/workspace/agent1/data")
+        is_dir3 = nx3.is_directory("/documents")  # Should be False
+        print(f"   /workspace/agent1 is directory: {is_dir1}")
+        print(f"   /workspace/agent1/data is directory: {is_dir2}")
+        print(f"   /documents is directory: {is_dir3}")
+
+        # Write files into created directories
+        print("\n14. Writing files into directory structure...")
+        nx3.write("/workspace/agent1/data/file1.txt", b"Agent 1 data file")
+        nx3.write("/workspace/agent1/data/file2.txt", b"Another file")
+        nx3.write("/workspace/agent2/config.json", b'{"agent": "2"}')
+        print("   ✓ Wrote files to /workspace/agent1/data/")
+        print("   ✓ Wrote files to /workspace/agent2/")
+
+        # Create nested directories with parents=True
+        print("\n15. Creating deeply nested directories...")
+        nx3.mkdir("/projects/ml/experiments/run1", parents=True, exist_ok=True)
+        nx3.write("/projects/ml/experiments/run1/results.json", b'{"accuracy": 0.95}')
+        print("   ✓ Created: /projects/ml/experiments/run1 (with parents)")
+        print("   ✓ Wrote: /projects/ml/experiments/run1/results.json")
+
+        # List all files
+        print("\n16. Listing all files in workspace...")
+        all_files = nx3.list()
+        workspace_files = [
+            f for f in all_files if f.startswith("/workspace") or f.startswith("/projects")
+        ]
+        print(f"   Found {len(workspace_files)} files in workspace:")
+        for f in sorted(workspace_files):
+            print(f"   - {f}")
+
+        # Test path routing
+        print("\n17. Demonstrating path routing...")
+        print("   Router maps virtual paths to physical backend paths")
+        print("   Virtual: /workspace/agent1/data/file1.txt")
+        print("   → Backend: workspace/agent1/data/file1.txt")
+        print("   → Physical: {data_dir}/files/workspace/agent1/data/file1.txt")
+
+        # Remove a directory (will fail - not empty)
+        print("\n18. Testing rmdir (should fail - not empty)...")
+        try:
+            nx3.rmdir("/workspace/agent1/data", recursive=False)
+            print("   ✗ Should have failed!")
+        except OSError as e:
+            print(f"   ✓ Correctly failed: {e}")
+
+        # Remove directory recursively
+        print("\n19. Removing directory recursively...")
+        nx3.rmdir("/workspace/agent2", recursive=True)
+        print("   ✓ Removed /workspace/agent2 (recursive)")
+
+        # Verify removal
+        remaining_files = [f for f in nx3.list() if f.startswith("/workspace")]
+        print(f"   Remaining workspace files: {len(remaining_files)}")
+        for f in sorted(remaining_files):
+            print(f"   - {f}")
+
+        nx3.close()
+
+        # ============================================================
+        # Part 5: Multi-Mount Configuration
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 5: Multi-Mount Configuration")
+        print("=" * 70)
+
+        print("\n20. Testing multiple mount points...")
+        nx4 = nexus.connect(config={"data_dir": str(data_dir)})
+
+        # Create separate backend for workspace isolation
+        from nexus.core.backends.local import LocalBackend
+
+        workspace_backend = LocalBackend(data_dir / "workspace-isolated")
+        nx4.router.add_mount("/workspace", workspace_backend, priority=10)
+
+        print("   ✓ Added mount: /workspace → isolated backend")
+        print("   ✓ Default mount: / → main backend")
+
+        # Write to different mounts
+        nx4.write("/workspace/isolated.txt", b"in workspace backend")
+        nx4.write("/other/regular.txt", b"in default backend")
+
+        print("\n21. Verifying routing...")
+        route_workspace = nx4.router.route("/workspace/test.txt")
+        route_other = nx4.router.route("/other/test.txt")
+
+        print(f"   /workspace/test.txt → mount: {route_workspace.mount_point}")
+        print(f"   /other/test.txt → mount: {route_other.mount_point}")
+
+        # List files from both mounts
+        all_files_multi = nx4.list()
+        workspace_files = [f for f in all_files_multi if f.startswith("/workspace")]
+        other_files = [f for f in all_files_multi if f.startswith("/other")]
+
+        print(f"\n   Workspace mount files: {len(workspace_files)}")
+        for f in sorted(workspace_files)[:3]:
+            print(f"   - {f}")
+
+        print(f"\n   Default mount files: {len(other_files)}")
+        for f in sorted(other_files)[:3]:
+            print(f"   - {f}")
+
+        nx4.close()
+
+        # ============================================================
         # Summary
         # ============================================================
         print("\n" + "=" * 70)
@@ -208,8 +334,53 @@ Key Points:
 • Custom metadata can be added at low level
 • Both views access the same SQLite database
 • Changes are immediately persisted
+
+NEW in v0.1.0:
+• Path Router maps virtual paths to backends
+• Directory operations (mkdir, rmdir, is_directory)
+• Multi-mount support (different paths → different backends)
+• Backend-agnostic interface (LocalFS today, S3/GDrive future)
+• Longest-prefix matching for mount points
         """
         )
+
+        print("\n📊 Feature Summary:")
+        print("   ✓ File operations (read/write/delete)")
+        print("   ✓ Metadata tracking (SQLite)")
+        print("   ✓ Custom metadata (key-value)")
+        print("   ✓ Directory operations (mkdir/rmdir/is_directory)")
+        print("   ✓ Path routing (virtual → physical)")
+        print("   ✓ Multi-mount support (multiple backends)")
+        print("   ✓ Persistence (survives restarts)")
+        print("   ✓ Data integrity (ETags)")
+        print()
+        print("📁 Files created:")
+        workspace_backend_files = list((data_dir / "workspace-isolated").rglob("*"))
+        main_backend_files = list((data_dir / "files").rglob("*"))
+        print(f"   Main backend: {len([f for f in main_backend_files if f.is_file()])} files")
+        print(
+            f"   Workspace backend: {len([f for f in workspace_backend_files if f.is_file()])} files"
+        )
+        print()
+        print("🎯 Key Capabilities:")
+        print("   • Unified API across different storage backends")
+        print("   • Automatic directory creation on write")
+        print("   • Mount-based path routing with priority")
+        print("   • Cache-friendly design (path resolution)")
+        print()
+        print("🔮 Future Backends (same API!):")
+        print("   • S3: Flat key-value (path → key)")
+        print("   • Google Drive: ID-based (path → file ID with caching)")
+        print("   • SharePoint: Site/Library structure")
+        print()
+        print("Example multi-backend config:")
+        print("   /workspace → LocalFS (fast, local)")
+        print("   /shared → S3 (scalable, remote)")
+        print("   /external/gdrive → Google Drive (collaborative)")
+        print()
+        print("All using the same nx.write(path, content) API!")
+        print()
+        print("=" * 70)
 
         print("\n✓ Integrated demo completed successfully!")
         print("=" * 70)

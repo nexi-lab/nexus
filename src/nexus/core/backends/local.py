@@ -155,3 +155,58 @@ class LocalBackend(StorageBackend):
             raise NexusPermissionError(path, "List permission denied") from e
         except OSError as e:
             raise BackendError(f"Failed to list directory: {e}", backend="local", path=path) from e
+
+    def mkdir(self, path: str, parents: bool = False, exist_ok: bool = False) -> None:
+        """Create directory."""
+        full_path = self._resolve_path(path)
+
+        try:
+            if parents:
+                full_path.mkdir(parents=True, exist_ok=exist_ok)
+            else:
+                full_path.mkdir(exist_ok=exist_ok)
+        except FileExistsError as e:
+            if not exist_ok:
+                raise e
+        except FileNotFoundError as e:
+            raise BackendError(
+                f"Parent directory not found: {path}", backend="local", path=path
+            ) from e
+        except OSError as e:
+            raise BackendError(
+                f"Failed to create directory: {e}", backend="local", path=path
+            ) from e
+
+    def rmdir(self, path: str, recursive: bool = False) -> None:
+        """Remove directory."""
+        import errno
+        import shutil
+
+        full_path = self._resolve_path(path)
+
+        if not full_path.exists():
+            raise NexusFileNotFoundError(path)
+
+        if not full_path.is_dir():
+            raise BackendError(f"Path is not a directory: {path}", backend="local", path=path)
+
+        try:
+            if recursive:
+                shutil.rmtree(full_path)
+            else:
+                full_path.rmdir()
+        except OSError as e:
+            # Re-raise OSError for "directory not empty" to allow caller to handle it
+            if e.errno in (errno.ENOTEMPTY, 66):  # errno.ENOTEMPTY or macOS errno 66
+                raise
+            raise BackendError(
+                f"Failed to remove directory: {e}", backend="local", path=path
+            ) from e
+
+    def is_directory(self, path: str) -> bool:
+        """Check if path is a directory."""
+        try:
+            full_path = self._resolve_path(path)
+            return full_path.exists() and full_path.is_dir()
+        except BackendError:
+            return False

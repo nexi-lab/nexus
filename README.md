@@ -498,6 +498,8 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Custom command system (markdown)
 - [ ] Basic agent memory storage
 - [ ] Memory consolidation
+- [ ] Memory reflection phase (ACE-inspired: extract insights from execution trajectories)
+- [ ] Strategy/playbook organization (ACE-inspired: organize memories as reusable strategies)
 
 ### v0.5.0 - Monolithic Server Mode
 - [ ] FastAPI REST API
@@ -519,6 +521,9 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Memory versioning and lineage
 - [ ] Multi-agent memory sharing
 - [ ] Enhanced semantic search
+- [ ] Importance-based memory preservation (ACE-inspired: prevent brevity bias in consolidation)
+- [ ] Context-aware memory retrieval (include execution context in search)
+- [ ] Automated strategy extraction (LLM-powered extraction from successful trajectories)
 
 ### v0.8.0 - Production Readiness
 - [ ] Monitoring and observability

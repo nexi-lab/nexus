@@ -9,6 +9,7 @@ from nexus.core.backend import StorageBackend
 from nexus.core.backends.local import LocalBackend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.metadata import FileMetadata
+from nexus.core.router import PathRouter
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
 
@@ -40,8 +41,12 @@ class Embedded:
             db_path = self.data_dir / "metadata.db"
         self.metadata = SQLAlchemyMetadataStore(db_path)
 
-        # Initialize default local backend
+        # Initialize path router with default mounts
+        self.router = PathRouter()
+
+        # Default mount: all paths to local backend
         self.backend: StorageBackend = LocalBackend(self.data_dir / "files")
+        self.router.add_mount("/", self.backend, priority=0)
 
     def _validate_path(self, path: str) -> str:
         """
@@ -227,6 +232,74 @@ class Embedded:
 
         metadata_list = self.metadata.list(prefix)
         return [meta.path for meta in metadata_list]
+
+    # === Directory Operations ===
+
+    def mkdir(self, path: str, parents: bool = False, exist_ok: bool = False) -> None:
+        """
+        Create a directory.
+
+        Args:
+            path: Virtual path to directory
+            parents: Create parent directories if needed (like mkdir -p)
+            exist_ok: Don't raise error if directory exists
+
+        Raises:
+            FileExistsError: If directory exists and exist_ok=False
+            FileNotFoundError: If parent doesn't exist and parents=False
+            InvalidPathError: If path is invalid
+            BackendError: If operation fails
+        """
+        path = self._validate_path(path)
+
+        # Route to backend
+        route = self.router.route(path)
+
+        # Create directory in backend
+        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=exist_ok)
+
+    def rmdir(self, path: str, recursive: bool = False) -> None:
+        """
+        Remove a directory.
+
+        Args:
+            path: Virtual path to directory
+            recursive: Remove non-empty directory (like rm -rf)
+
+        Raises:
+            OSError: If directory not empty and recursive=False
+            NexusFileNotFoundError: If directory doesn't exist
+            InvalidPathError: If path is invalid
+            BackendError: If operation fails
+        """
+        path = self._validate_path(path)
+
+        # Route to backend
+        route = self.router.route(path)
+
+        # Check readonly
+        if route.readonly:
+            raise PermissionError(f"Mount is readonly: {route.mount_point}")
+
+        # Remove directory in backend
+        route.backend.rmdir(route.backend_path, recursive=recursive)
+
+    def is_directory(self, path: str) -> bool:
+        """
+        Check if path is a directory.
+
+        Args:
+            path: Virtual path to check
+
+        Returns:
+            True if path is a directory, False otherwise
+        """
+        try:
+            path = self._validate_path(path)
+            route = self.router.route(path)
+            return route.backend.is_directory(route.backend_path)
+        except (InvalidPathError, Exception):
+            return False
 
     def close(self) -> None:
         """Close the embedded filesystem and release resources."""

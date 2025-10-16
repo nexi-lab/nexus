@@ -178,6 +178,10 @@ module = [
 ]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "nexus.backends.gcs"
+disable_error_code = ["attr-defined"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100

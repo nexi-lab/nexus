@@ -38,17 +38,16 @@ dependencies = [
     # CLI (needed for basic CLI stub)
     "click>=8.1.7",
     "rich>=13.7.0",
-
     # Configuration
     "pydantic>=2.5.0",
     "pyyaml>=6.0.1",
-
     # HTTP client (for remote mode)
     "httpx>=0.27.0",
-
     # Database (v0.1.0)
     "sqlalchemy>=2.0.0",
     "alembic>=1.13.0",
+    # Cloud Storage Backends
+    "google-cloud-storage>=2.14.0",
 
     # Note: Dependencies will be added incrementally as features are implemented
     # v0.1.0: Will add SQLAlchemy, aiosqlite, cachetools

@@ -508,15 +508,20 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] PostgreSQL support
 - [ ] Redis caching
 - [ ] Docker deployment
+- [ ] Batch/transaction APIs (atomic multi-operation updates)
+- [ ] Optimistic locking for concurrent writes
 
-### v0.6.0 - Extended Features
+### v0.6.0 - Extended Features & Event System
 - [ ] S3 backend support
 - [ ] Google Drive backend
 - [ ] Job system with checkpointing
 - [ ] OAuth token management
 - [ ] MCP server implementation
+- [ ] Webhook/event system (file changes, memory updates, job events)
+- [ ] Watch API for real-time updates (streaming changes to clients)
+- [ ] Server-Sent Events (SSE) support for live monitoring
 
-### v0.7.0 - Advanced AI Features
+### v0.7.0 - Advanced AI Features & Rich Query
 - [ ] Advanced KV cache with context tracking
 - [ ] Memory versioning and lineage
 - [ ] Multi-agent memory sharing
@@ -524,6 +529,9 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Importance-based memory preservation (ACE-inspired: prevent brevity bias in consolidation)
 - [ ] Context-aware memory retrieval (include execution context in search)
 - [ ] Automated strategy extraction (LLM-powered extraction from successful trajectories)
+- [ ] Rich memory query language (filter by metadata, importance, task type, date ranges, etc.)
+- [ ] Memory query builder API (fluent interface for complex queries)
+- [ ] Combined vector + metadata search (hybrid search)
 
 ### v0.8.0 - Production Readiness
 - [ ] Monitoring and observability

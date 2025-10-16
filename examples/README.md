@@ -2,25 +2,50 @@
 
 This directory contains example code demonstrating Nexus embedded mode functionality.
 
-## Available Example
+## Available Examples
 
-### **integrated_demo.py** - Complete Embedded Mode Demo ⭐
+### **embedded_demo.py** - Complete Embedded Mode Demo ⭐
 
-Comprehensive demonstration of Nexus embedded filesystem with metadata store integration.
+Comprehensive demonstration of Nexus embedded filesystem with all v0.1.0 features.
 
 **Features:**
 - 📁 High-level Embedded filesystem API (user-facing)
-- 💾 Low-level SQLAlchemy Metadata Store (internal)
-- 🔗 Shows the connection between both layers
-- 🏷️ Custom metadata capabilities (tags, author, etc.)
-- 💪 Persistence testing
-- 📊 Architecture diagram
+- 💾 SQLAlchemy Metadata Store integration
+- 🏗️ Path routing and directory operations
+- 🔒 Multi-tenant and agent isolation
+- 🎯 Custom namespace support
+- 📦 Content-addressable storage (CAS)
+- 🔄 Automatic content deduplication
+- 🏷️ Custom metadata capabilities
 
 **What you'll see:**
-1. **Part 1: User View** - Write/read files using simple API
-2. **Part 2: Internal View** - Inspect the metadata database directly
-3. **Part 3: Persistence** - Verify data survives restarts
-4. **Summary** - Architecture diagram showing how it all connects
+1. **Part 1-3**: Basic file operations, metadata, persistence
+2. **Part 4**: Path routing and directory operations
+3. **Part 5**: Multi-mount configuration (educational)
+4. **Part 6**: Namespace & tenant isolation (educational + user-facing)
+5. **Part 7**: End-to-end tenant isolation (recommended approach) ✅
+6. **Part 8**: Content-addressable storage (CAS) with deduplication
+
+### **config_usage_demo.py** - Configuration Examples 🎛️
+
+Shows different ways to configure Nexus with custom namespaces and multi-tenant settings.
+
+**Examples:**
+1. Dict config (programmatic)
+2. YAML config files (declarative)
+3. Multi-tenant isolation
+4. Admin access override
+
+### **config-basic.yaml** - Basic Configuration Template
+
+Simple starter template for Nexus configuration.
+
+### **config-multi-tenant.yaml** - Multi-Tenant Configuration
+
+Complete example showing:
+- Tenant isolation setup
+- Custom namespace definitions
+- Real-world SaaS application structure
 
 ## Quick Start
 
@@ -31,41 +56,23 @@ Comprehensive demonstration of Nexus embedded filesystem with metadata store int
 pip install -e .
 
 # Or just install dependencies
-pip install sqlalchemy alembic
+pip install sqlalchemy alembic pydantic pyyaml
 ```
 
-### Running the Demo
+### Running the Examples
 
 ```bash
-PYTHONPATH=src python examples/integrated_demo.py
+# Main comprehensive demo
+PYTHONPATH=src python examples/embedded_demo.py
+
+# Configuration examples
+PYTHONPATH=src python examples/config_usage_demo.py
 ```
 
-### Expected Output
+## What These Examples Show
 
-```
-======================================================================
-Nexus Integrated Demo: Embedded Mode + Metadata Store
-======================================================================
+### 1. Basic File Operations
 
-PART 1: High-Level Embedded API (User View)
-- Writing files via Embedded API...
-- Reading files...
-- Listing files...
-
-PART 2: Low-Level Metadata Store (Internal View)
-- Inspecting file metadata...
-- Adding custom metadata...
-
-PART 3: Persistence Test
-- Re-opening filesystem...
-- Verifying data persisted...
-
-✓ Demo completed successfully!
-```
-
-## What This Demo Shows
-
-### 1. Simple File Operations
 ```python
 import nexus
 
@@ -86,41 +93,180 @@ data_files = nx.list(prefix="/data")  # Filter by prefix
 # Delete files
 nx.delete("/images/photo.jpg")
 
+# Directory operations
+nx.mkdir("/workspace/agent1/data", parents=True)
+nx.rmdir("/workspace/agent1/data", recursive=True)
+nx.is_directory("/workspace/agent1")
+
 # Close
 nx.close()
 ```
 
-### 2. Automatic Metadata Tracking
-
-Every file operation automatically updates the metadata database:
-
-- ✅ **Write** → Creates metadata entry with size, ETag, timestamps
-- ✅ **Read** → Looks up physical path from metadata
-- ✅ **Delete** → Removes metadata entry (soft delete)
-- ✅ **List** → Queries metadata database
-
-### 3. Low-Level Access (Advanced)
-
-You can also access the metadata store directly:
+### 2. Multi-Tenant Isolation (NEW in v0.1.0!)
 
 ```python
-from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+import nexus
 
-# Open the same database
-store = SQLAlchemyMetadataStore("./nexus-data/metadata.db")
+# Tenant ACME
+nx_acme = nexus.connect(config={
+    "data_dir": "./nexus-data",
+    "tenant_id": "acme",
+    "agent_id": "agent1"
+})
 
-# Inspect file metadata
-metadata = store.get("/documents/report.pdf")
-print(f"Size: {metadata.size} bytes")
-print(f"ETag: {metadata.etag}")
-print(f"Created: {metadata.created_at}")
+# Tenant TechInc
+nx_tech = nexus.connect(config={
+    "data_dir": "./nexus-data",
+    "tenant_id": "techinc",
+    "agent_id": "agent1"
+})
 
-# Add custom metadata
-store.set_file_metadata("/documents/report.pdf", "author", "John Doe")
-store.set_file_metadata("/documents/report.pdf", "tags", ["quarterly", "financial"])
+# ACME writes to their workspace
+nx_acme.write("/workspace/acme/agent1/secret.txt", b"ACME data")
 
-# Retrieve custom metadata
-author = store.get_file_metadata("/documents/report.pdf", "author")
+# TechInc CANNOT read ACME's data (automatic isolation)
+try:
+    nx_tech.read("/workspace/acme/agent1/secret.txt")
+except AccessDeniedError:
+    print("✓ Tenant isolation enforced!")
+
+# Agents in same tenant can share via /shared
+nx_acme.write("/shared/acme/team-data.json", b'{"project": "collaboration"}')
+nx_agent2 = nexus.connect(config={
+    "data_dir": "./nexus-data",
+    "tenant_id": "acme",
+    "agent_id": "agent2"
+})
+data = nx_agent2.read("/shared/acme/team-data.json")  # ✓ Works!
+```
+
+### 3. Custom Namespaces (NEW in v0.1.0!)
+
+**Option A: Dict Config**
+
+```python
+import nexus
+
+nx = nexus.connect(config={
+    "data_dir": "./nexus-data",
+    "tenant_id": "acme",
+    "namespaces": [
+        {
+            "name": "analytics",
+            "readonly": False,
+            "admin_only": False,
+            "requires_tenant": True
+        },
+        {
+            "name": "audit",
+            "readonly": False,
+            "admin_only": True,
+            "requires_tenant": False
+        }
+    ]
+})
+
+# Use custom namespace
+nx.write("/analytics/acme/daily_report.json", b'{"revenue": 50000}')
+
+# Admin-only namespace (will fail for non-admin)
+nx.write("/audit/access.log", b"log entry")  # ❌ AccessDeniedError
+```
+
+**Option B: YAML Config**
+
+Create `nexus.yaml`:
+
+```yaml
+mode: embedded
+data_dir: ./nexus-data
+tenant_id: acme
+agent_id: agent1
+
+namespaces:
+  - name: analytics
+    readonly: false
+    admin_only: false
+    requires_tenant: true
+
+  - name: audit
+    readonly: false
+    admin_only: true
+    requires_tenant: false
+```
+
+```python
+import nexus
+
+# Auto-discovers nexus.yaml
+nx = nexus.connect()
+
+# Or explicitly specify
+nx = nexus.connect(config="path/to/nexus.yaml")
+```
+
+### 4. Content-Addressable Storage (CAS) (NEW in v0.1.0!)
+
+**Automatic Deduplication:**
+
+```python
+import nexus
+
+nx = nexus.connect(config={"data_dir": "./nexus-data"})
+
+# Write same content to different paths
+content = b"This is important data"
+nx.write("/documents/data.txt", content)
+nx.write("/reports/summary.txt", content)  # Same content!
+
+# Only stored ONCE in CAS - automatic deduplication
+# Reference count: 2
+# Physical copies: 1
+# Space saved automatically!
+
+# Delete one file
+nx.delete("/documents/data.txt")
+# Content still exists (ref_count=1)
+
+# Delete second file
+nx.delete("/reports/summary.txt")
+# Content automatically removed (ref_count=0)
+```
+
+### 5. Default Namespaces
+
+Nexus provides 5 default namespaces out of the box:
+
+| Namespace | Path Format | Description | Access Control |
+|-----------|-------------|-------------|----------------|
+| **workspace** | `/workspace/{tenant}/{agent}/...` | Agent scratch space | Tenant + Agent isolation |
+| **shared** | `/shared/{tenant}/...` | Tenant-wide shared data | Tenant isolation |
+| **external** | `/external/...` | Pass-through backends | No isolation |
+| **system** | `/system/...` | System metadata | Admin-only, read-only |
+| **archives** | `/archives/{tenant}/...` | Cold storage | Tenant isolation, read-only |
+
+### 6. Admin Access Override
+
+```python
+import nexus
+
+# Regular user
+nx_user = nexus.connect(config={
+    "tenant_id": "acme",
+    "is_admin": False
+})
+
+# Admin user
+nx_admin = nexus.connect(config={
+    "tenant_id": "admin",
+    "is_admin": True
+})
+
+# User writes to their workspace
+nx_user.write("/workspace/acme/agent1/secret.txt", b"confidential")
+
+# Admin can access ANY tenant's resources (bypass isolation)
+data = nx_admin.read("/workspace/acme/agent1/secret.txt")  # ✓ Works!
 ```
 
 ## Architecture
@@ -130,15 +276,23 @@ author = store.get_file_metadata("/documents/report.pdf", "author")
 │                   USER APPLICATION                      │
 │                 (your Python code)                      │
 └────────────────────┬────────────────────────────────────┘
-                     │ Simple API
-                     │ (read, write, delete, list)
+                     │
+                     │ import nexus
+                     │ nx = nexus.connect(config={...})
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│              nexus.connect()                            │
+│              (auto-detects mode)                        │
+└────────────────────┬────────────────────────────────────┘
+                     │ Returns Embedded instance
                      ▼
 ┌─────────────────────────────────────────────────────────┐
 │              Embedded Filesystem Class                  │
 │              (nexus.core.embedded)                      │
 ├─────────────────────────────────────────────────────────┤
-│  • Path validation                                      │
-│  • ETag computation                                     │
+│  • Path validation & security                           │
+│  • PathRouter (namespace-aware)                         │
+│  • Tenant/Agent isolation enforcement                   │
 │  • Automatic metadata tracking                          │
 └─────┬──────────────────────────────────┬────────────────┘
       │                                  │
@@ -148,9 +302,9 @@ author = store.get_file_metadata("/documents/report.pdf", "author")
 │ SQLAlchemy Metadata  │      │   Storage Backend        │
 │      Store           │      │   (LocalBackend)         │
 ├──────────────────────┤      ├──────────────────────────┤
-│ • FilePathModel      │      │ • Physical file I/O      │
-│ • FileMetadataModel  │      │ • Local filesystem       │
-│ • ContentChunkModel  │      │   operations             │
+│ • FilePathModel      │      │ • CAS (content hash)     │
+│ • FileMetadataModel  │      │ • Reference counting     │
+│ • Custom metadata    │      │ • Deduplication          │
 └──────┬───────────────┘      └──────────────────────────┘
        │
        ▼
@@ -166,74 +320,92 @@ author = store.get_file_metadata("/documents/report.pdf", "author")
 
 ## Key Features
 
-### ✅ Embedded Mode (v0.1.0 - Current)
-- SQLite metadata store
-- SQLAlchemy ORM models
-- Alembic migrations
-- Soft delete support
-- Custom metadata
-- Local file backend
-- Automatic metadata tracking
+### ✅ Implemented in v0.1.0
+
+**Core Filesystem:**
+- ✅ Simple file operations (read, write, delete, list)
+- ✅ Directory operations (mkdir, rmdir, is_directory)
+- ✅ Automatic metadata tracking
+- ✅ SQLite metadata store
+- ✅ SQLAlchemy ORM models
+- ✅ Alembic migrations
+- ✅ Custom metadata (key-value)
+- ✅ Local file backend
+
+**Advanced Features:**
+- ✅ **Multi-tenant isolation** (tenant_id)
+- ✅ **Agent-level isolation** (agent_id in /workspace)
+- ✅ **Custom namespaces** (define your own)
+- ✅ **Path routing** (virtual paths → backends)
+- ✅ **Content-addressable storage (CAS)**
+- ✅ **Automatic deduplication** (same content stored once)
+- ✅ **Reference counting** (safe deletion)
+- ✅ **Admin access override** (bypass isolation)
+- ✅ **Configuration system** (dict, YAML, env vars)
+- ✅ **Namespace access control** (readonly, admin-only)
 
 ### 🚧 Coming in v0.2.0+
-- PostgreSQL support
-- Multi-tenancy
+
+- PostgreSQL support (multi-tenant production)
 - Multiple backends (S3, GCS, Azure)
-- Content deduplication
-- Version tracking
+- Version tracking per file
 - Distributed locking
+- Vector search integration
+- LLM cache integration
+- Monolithic mode (single server)
+- Distributed mode (Kubernetes-ready)
 
-## Database Migrations
+## Configuration
 
-The metadata store uses Alembic for schema migrations:
+### Config Sources (Priority Order)
+
+1. **Explicit config parameter** (highest priority)
+2. **Environment variables** (`NEXUS_*`)
+3. **Config files** (`./nexus.yaml`, `~/.nexus/config.yaml`)
+4. **Defaults** (embedded mode with `./nexus-data`)
+
+### Configuration Options
+
+```yaml
+# Deployment mode
+mode: embedded  # embedded | monolithic | distributed
+
+# Storage
+data_dir: ./nexus-data
+db_path: ./nexus-data/metadata.db  # optional, auto-generated
+
+# Multi-tenant isolation
+tenant_id: acme       # Tenant identifier (optional)
+agent_id: agent1      # Agent identifier (optional)
+is_admin: false       # Admin privileges (optional)
+
+# Performance
+cache_size_mb: 100
+enable_vector_search: true
+enable_llm_cache: true
+
+# Custom namespaces (optional)
+namespaces:
+  - name: analytics
+    readonly: false
+    admin_only: false
+    requires_tenant: true
+
+  - name: audit
+    readonly: false
+    admin_only: true
+    requires_tenant: false
+```
+
+### Environment Variables
 
 ```bash
-# View current migration
-alembic current
-
-# Upgrade to latest
-alembic upgrade head
-
-# Create new migration (after model changes)
-alembic revision --autogenerate -m "description"
-
-# Rollback
-alembic downgrade -1
+export NEXUS_MODE=embedded
+export NEXUS_DATA_DIR=./nexus-data
+export NEXUS_TENANT_ID=acme
+export NEXUS_AGENT_ID=agent1
+export NEXUS_IS_ADMIN=false
 ```
-
-See `alembic/README_DATABASES.md` for detailed migration guide.
-
-## Database Compatibility
-
-The implementation works with both **SQLite** (default) and **PostgreSQL**:
-
-### SQLite (Default - Embedded Mode)
-```python
-# Uses SQLite by default
-store = SQLAlchemyMetadataStore("./nexus.db")
-```
-
-**Best for:**
-- Desktop applications
-- Single-user deployments
-- Development/testing
-- Embedded systems
-
-### PostgreSQL (Production Mode)
-```python
-# Connect to PostgreSQL
-store = SQLAlchemyMetadataStore(
-    "postgresql://user:password@localhost:5432/nexus"
-)
-```
-
-**Best for:**
-- Multi-tenant SaaS
-- High-concurrency applications
-- Large-scale data (>10GB)
-- Production distributed systems
-
-See `docs/DATABASE_COMPATIBILITY.md` for detailed comparison.
 
 ## Testing
 
@@ -243,38 +415,55 @@ Run the tests to verify everything works:
 # All tests
 PYTHONPATH=src python -m pytest tests/ -v
 
-# Just storage tests
-PYTHONPATH=src python -m pytest tests/unit/storage/ -v
+# Core tests (includes tenant isolation, namespaces, routing)
+PYTHONPATH=src python -m pytest tests/unit/core/ -v
 
-# Just embedded tests
-PYTHONPATH=src python -m pytest tests/unit/core/test_embedded.py -v
+# Specific feature tests
+PYTHONPATH=src python -m pytest tests/unit/core/test_embedded_namespaces.py -v
+PYTHONPATH=src python -m pytest tests/unit/core/test_embedded_tenant_isolation.py -v
+PYTHONPATH=src python -m pytest tests/unit/core/test_router.py -v
+PYTHONPATH=src python -m pytest tests/unit/core/test_embedded_cas.py -v
 ```
+
+**Current Test Status:**
+- ✅ 124 tests passing
+- ✅ 75% overall coverage
+- ✅ 96% router.py coverage
+- ✅ 92% embedded.py coverage
 
 ## Project Structure
 
 ```
 examples/
-└── integrated_demo.py         # This demo
+├── README.md                     # This file
+├── embedded_demo.py              # Comprehensive demo (8 parts)
+├── config_usage_demo.py          # Configuration examples (4 demos)
+├── config-basic.yaml             # Basic config template
+└── config-multi-tenant.yaml      # Multi-tenant config example
 
 src/nexus/
+├── __init__.py                   # nexus.connect() entry point
+├── config.py                     # Configuration system (NEW!)
 ├── core/
-│   ├── embedded.py           # High-level API
-│   ├── backend.py            # Storage backend interface
-│   └── backends/
-│       └── local.py          # Local filesystem backend
+│   ├── embedded.py               # High-level API
+│   ├── router.py                 # Path routing (NEW!)
+│   ├── exceptions.py             # Exception classes
+│   └── metadata.py               # Metadata models
+├── backends/
+│   ├── backend.py                # Backend interface
+│   └── local.py                  # LocalBackend with CAS (NEW!)
 └── storage/
-    ├── models.py             # SQLAlchemy models
-    └── metadata_store.py     # Metadata store implementation
-
-alembic/
-├── versions/                 # Migration files
-├── env.py                   # Alembic environment
-└── README_DATABASES.md      # Migration guide
+    ├── models.py                 # SQLAlchemy models
+    └── metadata_store.py         # Metadata store implementation
 
 tests/
 ├── unit/
 │   ├── core/
-│   │   └── test_embedded.py
+│   │   ├── test_embedded.py              # Basic embedded tests
+│   │   ├── test_embedded_cas.py          # CAS tests (NEW!)
+│   │   ├── test_embedded_namespaces.py   # Namespace tests (NEW!)
+│   │   ├── test_embedded_tenant_isolation.py  # Isolation tests (NEW!)
+│   │   └── test_router.py                # Router tests (NEW!)
 │   └── storage/
 │       ├── test_models.py
 │       └── test_metadata_store.py
@@ -287,8 +476,18 @@ tests/
 ```python
 import nexus
 
-# ✅ Recommended: Use nexus.connect()
-nx = nexus.connect(config={"data_dir": "./nexus-data"})
+# ✅ Recommended: Use nexus.connect() with config
+nx = nexus.connect(config={
+    "data_dir": "./nexus-data",
+    "tenant_id": "acme",
+    "agent_id": "agent1"
+})
+
+# ✅ Also recommended: YAML config file
+nx = nexus.connect(config="nexus.yaml")
+
+# ✅ Also recommended: Auto-discovery (uses nexus.yaml if exists)
+nx = nexus.connect()
 
 # ❌ Not recommended: Direct class instantiation
 # from nexus.core.embedded import Embedded
@@ -299,14 +498,70 @@ nx = nexus.connect(config={"data_dir": "./nexus-data"})
 - ✅ Auto-detects deployment mode (embedded/monolithic/distributed)
 - ✅ Config-based and future-proof
 - ✅ Works across all modes
-- ✅ Simpler and cleaner
+- ✅ Supports multi-tenant configuration
+- ✅ Supports custom namespaces
+- ✅ Cleaner and simpler API
+
+## Common Use Cases
+
+### Use Case 1: Single-Tenant Application
+
+```python
+# Simple - no tenant isolation needed
+nx = nexus.connect(config={"data_dir": "./data"})
+nx.write("/workspace/data.txt", b"content")
+```
+
+### Use Case 2: Multi-Tenant SaaS
+
+```yaml
+# nexus.yaml
+mode: embedded
+data_dir: ./nexus-data
+tenant_id: ${TENANT_ID}  # From environment
+agent_id: ${AGENT_ID}
+namespaces:
+  - name: analytics
+    requires_tenant: true
+```
+
+### Use Case 3: Agent Framework with Workspace Isolation
+
+```python
+# Each agent gets isolated workspace
+for agent_id in ["agent1", "agent2", "agent3"]:
+    nx = nexus.connect(config={
+        "tenant_id": "acme",
+        "agent_id": agent_id
+    })
+    nx.write(f"/workspace/acme/{agent_id}/state.json", b'{"status": "ready"}')
+    # Agents can collaborate via /shared/acme/
+```
+
+### Use Case 4: Custom Application-Specific Namespaces
+
+```python
+nx = nexus.connect(config={
+    "tenant_id": "acme",
+    "namespaces": [
+        {"name": "ml_models", "requires_tenant": True},
+        {"name": "datasets", "requires_tenant": True},
+        {"name": "experiments", "requires_tenant": True}
+    ]
+})
+
+nx.write("/ml_models/acme/classifier-v1.pkl", model_bytes)
+nx.write("/datasets/acme/training/data.csv", data_bytes)
+nx.write("/experiments/acme/exp-001/results.json", results_bytes)
+```
 
 ## Next Steps
 
-1. **Run the demo**: `PYTHONPATH=src python examples/integrated_demo.py`
-2. **Check database compatibility**: `docs/DATABASE_COMPATIBILITY.md`
-3. **Learn about migrations**: `alembic/README_DATABASES.md`
-4. **Explore the codebase**: `src/nexus/`
+1. **Run the comprehensive demo**: `PYTHONPATH=src python examples/embedded_demo.py`
+2. **Try config examples**: `PYTHONPATH=src python examples/config_usage_demo.py`
+3. **Copy config templates**: `cp examples/config-*.yaml ./nexus.yaml`
+4. **Explore test files**: See `tests/unit/core/test_embedded_*.py` for more examples
+5. **Read the docs**: `docs/` directory
 
 ## Contributing
 

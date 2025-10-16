@@ -218,8 +218,8 @@ class GCSBackend(Backend):
 
             return content
 
-        except NotFound:
-            raise NexusFileNotFoundError(content_hash)
+        except NotFound as e:
+            raise NexusFileNotFoundError(content_hash) from e
         except NexusFileNotFoundError:
             raise
         except Exception as e:
@@ -252,8 +252,8 @@ class GCSBackend(Backend):
                 metadata["ref_count"] = ref_count - 1
                 self._write_metadata(content_hash, metadata)
 
-        except NotFound:
-            raise NexusFileNotFoundError(content_hash)
+        except NotFound as e:
+            raise NexusFileNotFoundError(content_hash) from e
         except NexusFileNotFoundError:
             raise
         except Exception as e:
@@ -285,14 +285,14 @@ class GCSBackend(Backend):
             size = blob.size
             if size is None:
                 raise BackendError(
-                    f"Failed to get content size: size is None",
+                    "Failed to get content size: size is None",
                     backend="gcs",
                     path=content_hash,
                 )
             return int(size)
 
-        except NotFound:
-            raise NexusFileNotFoundError(content_hash)
+        except NotFound as e:
+            raise NexusFileNotFoundError(content_hash) from e
         except NexusFileNotFoundError:
             raise
         except Exception as e:
@@ -387,8 +387,8 @@ class GCSBackend(Backend):
                 for blob in blobs:
                     blob.delete(timeout=60)
 
-        except NotFound:
-            raise NexusFileNotFoundError(path)
+        except NotFound as e:
+            raise NexusFileNotFoundError(path) from e
         except (NexusFileNotFoundError, OSError):
             raise
         except Exception as e:

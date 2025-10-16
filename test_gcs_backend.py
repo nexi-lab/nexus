@@ -7,12 +7,12 @@ from pathlib import Path
 # Load environment variables from .env file
 from dotenv import load_dotenv
 
+from nexus.backends.gcs import GCSBackend
+
 load_dotenv()
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-
-from nexus.backends.gcs import GCSBackend
 
 
 def test_gcs_backend():
@@ -88,13 +88,13 @@ def test_gcs_backend():
         # Test 6: Read content
         print("7. Testing read_content()...")
         read_content = backend.read_content(content_hash)
-        print(f"   ✓ Content read successfully")
+        print("   ✓ Content read successfully")
         print(f"   ✓ Content matches: {read_content == test_content}\n")
 
         # Test 7: Create directory
         print("8. Testing mkdir()...")
         backend.mkdir("test_dir", parents=True, exist_ok=True)
-        print(f"   ✓ Directory created\n")
+        print("   ✓ Directory created\n")
 
         # Test 8: Check if directory exists
         print("9. Testing is_directory()...")
@@ -111,14 +111,14 @@ def test_gcs_backend():
         print("11. Testing delete_content() - final deletion...")
         backend.delete_content(content_hash)
         exists_after = backend.content_exists(content_hash)
-        print(f"    ✓ Content deleted")
+        print("    ✓ Content deleted")
         print(f"    ✓ Content exists after deletion: {exists_after}\n")
 
         # Test 11: Remove directory
         print("12. Testing rmdir()...")
         backend.rmdir("test_dir")
         is_dir_after = backend.is_directory("test_dir")
-        print(f"    ✓ Directory removed")
+        print("    ✓ Directory removed")
         print(f"    ✓ Directory exists after removal: {is_dir_after}\n")
 
         print("=" * 60)

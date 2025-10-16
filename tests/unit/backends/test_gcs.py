@@ -1,6 +1,6 @@
 """Unit tests for GCS backend."""
 
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -130,7 +130,7 @@ class TestContentOperations:
 
         gcs_backend.bucket.blob.side_effect = blob_side_effect
 
-        content_hash = gcs_backend.write_content(test_content)
+        gcs_backend.write_content(test_content)
 
         # Should not write content again (exists)
         assert mock_blob.upload_from_string.call_count == 0

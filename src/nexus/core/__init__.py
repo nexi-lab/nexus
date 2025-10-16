@@ -9,8 +9,10 @@ from nexus.core.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+from nexus.core.filesystem import NexusFilesystem
 
 __all__ = [
+    "NexusFilesystem",
     "Embedded",
     "NexusError",
     "NexusFileNotFoundError",

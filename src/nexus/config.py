@@ -36,6 +36,21 @@ class NexusConfig(BaseModel):
         default=None, description="SQLite database path (auto-generated if None)"
     )
 
+    # Multi-tenant isolation settings
+    tenant_id: str | None = Field(
+        default=None, description="Tenant identifier for multi-tenant isolation"
+    )
+    agent_id: str | None = Field(
+        default=None, description="Agent identifier for agent-level isolation in /workspace"
+    )
+    is_admin: bool = Field(default=False, description="Whether this instance has admin privileges")
+
+    # Custom namespace configurations
+    namespaces: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Custom namespace configurations (list of dicts with name, readonly, admin_only, requires_tenant)",
+    )
+
     # Remote mode settings (monolithic/distributed)
     url: str | None = Field(default=None, description="Nexus server URL for remote modes")
     api_key: str | None = Field(default=None, description="API key for authentication")

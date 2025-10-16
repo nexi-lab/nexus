@@ -60,13 +60,13 @@ def test_add_mount_sorts_by_length_when_priority_equal(
 
 def test_route_exact_match(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test routing with exact mount point match."""
-    router.add_mount("/workspace", temp_backend)
+    router.add_mount("/data", temp_backend)
 
-    result = router.route("/workspace")
+    result = router.route("/data")
 
     assert result.backend == temp_backend
     assert result.backend_path == ""
-    assert result.mount_point == "/workspace"
+    assert result.mount_point == "/data"
     assert result.readonly is False
 
 
@@ -227,3 +227,249 @@ def test_match_prevents_false_prefix(router: PathRouter, temp_backend: LocalBack
     match = router._match_longest_prefix("/workspace2/file.txt")
 
     assert match is None
+
+
+# === Namespace and Access Control Tests ===
+
+
+def test_validate_path_accepts_valid_path(router: PathRouter) -> None:
+    """Test that validate_path accepts valid paths."""
+    result = router.validate_path("/workspace/tenant1/agent1/data.txt")
+    assert result == "/workspace/tenant1/agent1/data.txt"
+
+
+def test_validate_path_rejects_null_byte(router: PathRouter) -> None:
+    """Test that validate_path rejects paths with null bytes."""
+    from nexus.core.router import InvalidPathError
+
+    with pytest.raises(InvalidPathError) as exc_info:
+        router.validate_path("/workspace/file\0name.txt")
+
+    assert "null byte" in str(exc_info.value)
+
+
+def test_validate_path_rejects_control_characters(router: PathRouter) -> None:
+    """Test that validate_path rejects paths with control characters."""
+    from nexus.core.router import InvalidPathError
+
+    with pytest.raises(InvalidPathError) as exc_info:
+        router.validate_path("/workspace/file\x01name.txt")
+
+    assert "control characters" in str(exc_info.value)
+
+
+def test_validate_path_rejects_path_traversal(router: PathRouter) -> None:
+    """Test that validate_path rejects path traversal attempts."""
+    from nexus.core.router import InvalidPathError
+
+    with pytest.raises(InvalidPathError) as exc_info:
+        router.validate_path("/workspace/../../etc/passwd")
+
+    assert "traversal" in str(exc_info.value).lower()
+
+
+def test_parse_path_workspace(router: PathRouter) -> None:
+    """Test parsing workspace namespace path."""
+    path_info = router.parse_path("/workspace/acme/agent1/data/file.txt")
+
+    assert path_info.namespace == "workspace"
+    assert path_info.tenant_id == "acme"
+    assert path_info.agent_id == "agent1"
+    assert path_info.relative_path == "data/file.txt"
+
+
+def test_parse_path_shared(router: PathRouter) -> None:
+    """Test parsing shared namespace path."""
+    path_info = router.parse_path("/shared/acme/datasets/model.pkl")
+
+    assert path_info.namespace == "shared"
+    assert path_info.tenant_id == "acme"
+    assert path_info.agent_id is None
+    assert path_info.relative_path == "datasets/model.pkl"
+
+
+def test_parse_path_archives(router: PathRouter) -> None:
+    """Test parsing archives namespace path."""
+    path_info = router.parse_path("/archives/acme/2024/01/backup.tar")
+
+    assert path_info.namespace == "archives"
+    assert path_info.tenant_id == "acme"
+    assert path_info.agent_id is None
+    assert path_info.relative_path == "2024/01/backup.tar"
+
+
+def test_parse_path_external(router: PathRouter) -> None:
+    """Test parsing external namespace path."""
+    path_info = router.parse_path("/external/s3/bucket/file.txt")
+
+    assert path_info.namespace == "external"
+    assert path_info.tenant_id is None
+    assert path_info.agent_id is None
+    assert path_info.relative_path == "s3/bucket/file.txt"
+
+
+def test_parse_path_system(router: PathRouter) -> None:
+    """Test parsing system namespace path."""
+    path_info = router.parse_path("/system/config/settings.json")
+
+    assert path_info.namespace == "system"
+    assert path_info.tenant_id is None
+    assert path_info.agent_id is None
+    assert path_info.relative_path == "config/settings.json"
+
+
+def test_parse_path_workspace_partial_paths(router: PathRouter) -> None:
+    """Test that workspace allows partial paths for directory creation."""
+    # /workspace - just namespace
+    path_info = router.parse_path("/workspace")
+    assert path_info.namespace == "workspace"
+    assert path_info.tenant_id is None
+    assert path_info.agent_id is None
+
+    # /workspace/tenant1 - namespace + tenant
+    path_info = router.parse_path("/workspace/tenant1")
+    assert path_info.namespace == "workspace"
+    assert path_info.tenant_id == "tenant1"
+    assert path_info.agent_id is None
+
+
+def test_parse_path_shared_partial_paths(router: PathRouter) -> None:
+    """Test that shared allows partial paths for directory creation."""
+    # /shared - just namespace
+    path_info = router.parse_path("/shared")
+    assert path_info.namespace == "shared"
+    assert path_info.tenant_id is None
+
+    # /shared/tenant1 - namespace + tenant
+    path_info = router.parse_path("/shared/tenant1")
+    assert path_info.namespace == "shared"
+    assert path_info.tenant_id == "tenant1"
+
+
+def test_namespace_configuration_defaults(router: PathRouter) -> None:
+    """Test that default namespaces are registered."""
+    assert "workspace" in router._namespaces
+    assert "shared" in router._namespaces
+    assert "external" in router._namespaces
+    assert "system" in router._namespaces
+    assert "archives" in router._namespaces
+
+
+def test_namespace_system_is_readonly(router: PathRouter) -> None:
+    """Test that system namespace is read-only."""
+    assert router._namespaces["system"].readonly is True
+
+
+def test_namespace_system_is_admin_only(router: PathRouter) -> None:
+    """Test that system namespace is admin-only."""
+    assert router._namespaces["system"].admin_only is True
+
+
+def test_namespace_archives_is_readonly(router: PathRouter) -> None:
+    """Test that archives namespace is read-only."""
+    assert router._namespaces["archives"].readonly is True
+
+
+def test_route_with_tenant_isolation(router: PathRouter, temp_backend: LocalBackend) -> None:
+    """Test routing with tenant isolation enforced."""
+    router.add_mount("/workspace", temp_backend)
+
+    # Should succeed - matching tenant
+    result = router.route("/workspace/acme/agent1/data.txt", tenant_id="acme")
+    assert result.backend == temp_backend
+    assert result.backend_path == "acme/agent1/data.txt"
+
+
+def test_route_with_tenant_mismatch_raises_error(
+    router: PathRouter, temp_backend: LocalBackend
+) -> None:
+    """Test that tenant mismatch raises AccessDeniedError."""
+    from nexus.core.router import AccessDeniedError
+
+    router.add_mount("/workspace", temp_backend)
+
+    with pytest.raises(AccessDeniedError) as exc_info:
+        router.route("/workspace/acme/agent1/data.txt", tenant_id="other_tenant")
+
+    assert "cannot access" in str(exc_info.value)
+
+
+def test_route_admin_can_access_any_tenant(router: PathRouter, temp_backend: LocalBackend) -> None:
+    """Test that admin can access any tenant's resources."""
+    router.add_mount("/workspace", temp_backend)
+
+    # Admin can access other tenant's resources
+    result = router.route(
+        "/workspace/acme/agent1/data.txt", tenant_id="other_tenant", is_admin=True
+    )
+    assert result.backend == temp_backend
+
+
+def test_route_system_requires_admin(router: PathRouter, temp_backend: LocalBackend) -> None:
+    """Test that system namespace requires admin privileges."""
+    from nexus.core.router import AccessDeniedError
+
+    router.add_mount("/system", temp_backend)
+
+    with pytest.raises(AccessDeniedError) as exc_info:
+        router.route("/system/config/settings.json", is_admin=False)
+
+    assert "requires admin" in str(exc_info.value)
+
+
+def test_route_system_allows_admin(router: PathRouter, temp_backend: LocalBackend) -> None:
+    """Test that admin can access system namespace."""
+    router.add_mount("/system", temp_backend)
+
+    result = router.route("/system/config/settings.json", is_admin=True)
+    assert result.backend == temp_backend
+
+
+def test_route_readonly_namespace_rejects_writes(
+    router: PathRouter, temp_backend: LocalBackend
+) -> None:
+    """Test that readonly namespaces reject write operations."""
+    from nexus.core.router import AccessDeniedError
+
+    router.add_mount("/archives", temp_backend)
+
+    with pytest.raises(AccessDeniedError) as exc_info:
+        router.route("/archives/acme/backup.tar", tenant_id="acme", check_write=True)
+
+    assert "read-only" in str(exc_info.value)
+
+
+def test_route_readonly_namespace_allows_reads(
+    router: PathRouter, temp_backend: LocalBackend
+) -> None:
+    """Test that readonly namespaces allow read operations."""
+    router.add_mount("/archives", temp_backend)
+
+    # Should succeed - reading from readonly namespace
+    result = router.route("/archives/acme/backup.tar", tenant_id="acme", check_write=False)
+    assert result.backend == temp_backend
+    assert result.readonly is True
+
+
+def test_register_custom_namespace(router: PathRouter) -> None:
+    """Test registering a custom namespace."""
+    from nexus.core.router import NamespaceConfig
+
+    custom_ns = NamespaceConfig(
+        name="custom", readonly=False, admin_only=False, requires_tenant=False
+    )
+    router.register_namespace(custom_ns)
+
+    assert "custom" in router._namespaces
+    assert router._namespaces["custom"] == custom_ns
+
+
+def test_route_without_tenant_id_allows_external(
+    router: PathRouter, temp_backend: LocalBackend
+) -> None:
+    """Test that external namespace doesn't require tenant."""
+    router.add_mount("/external", temp_backend)
+
+    # Should succeed - external doesn't require tenant
+    result = router.route("/external/s3/bucket/file.txt")
+    assert result.backend == temp_backend

@@ -1,0 +1,44 @@
+# Multi-Tenant Nexus Configuration with Custom Namespaces
+# Example: SaaS application with tenant isolation
+
+mode: embedded
+data_dir: ./nexus-data
+
+# Tenant isolation
+tenant_id: acme
+agent_id: agent1
+is_admin: false
+
+# Custom namespaces for your application
+namespaces:
+  # Analytics namespace - tenant-isolated, read/write
+  - name: analytics
+    readonly: false
+    admin_only: false
+    requires_tenant: true
+
+  # Audit logs - admin-only access
+  - name: audit
+    readonly: false
+    admin_only: true
+    requires_tenant: false
+
+  # Static assets - read-only, public
+  - name: static
+    readonly: true
+    admin_only: false
+    requires_tenant: false
+
+  # ML models - tenant-isolated, read/write
+  - name: models
+    readonly: false
+    admin_only: false
+    requires_tenant: true
+
+# Usage examples:
+# /analytics/acme/daily_report.json    - Your analytics data
+# /audit/access_logs.txt               - Admin audit logs
+# /static/images/logo.png              - Public static files
+# /models/acme/classifier-v1.pkl       - Your ML models
+# /workspace/acme/agent1/scratch.txt   - Agent workspace (default)
+# /shared/acme/team_data.json          - Tenant shared data (default)

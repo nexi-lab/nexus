@@ -235,31 +235,33 @@ def main() -> None:
         nx3.close()
 
         # ============================================================
-        # Part 5: Multi-Mount Configuration
+        # Part 5: Multi-Mount Configuration (INTERNAL APIs)
         # ============================================================
         print("\n" + "=" * 70)
-        print("PART 5: Multi-Mount Configuration")
+        print("PART 5: Multi-Mount Configuration (Educational - Internal APIs)")
         print("=" * 70)
+        print("NOTE: This section uses internal router APIs for educational purposes.")
+        print("      In production code, use only user-facing APIs (read/write/delete/etc).")
 
         print("\n20. Testing multiple mount points...")
         nx4 = nexus.connect(config={"data_dir": str(data_dir)})
 
-        # Create separate backend for workspace isolation
+        # Create separate backend for workspace isolation (INTERNAL API)
         from nexus.backends.local import LocalBackend
 
         workspace_backend = LocalBackend(data_dir / "workspace-isolated")
-        nx4.router.add_mount("/workspace", workspace_backend, priority=10)
+        nx4.router.add_mount("/workspace", workspace_backend, priority=10)  # INTERNAL
 
-        print("   ✓ Added mount: /workspace → isolated backend")
+        print("   ✓ Added mount: /workspace → isolated backend (INTERNAL API)")
         print("   ✓ Default mount: / → main backend")
 
-        # Write to different mounts
+        # Write to different mounts (USER-FACING API)
         nx4.write("/workspace/isolated.txt", b"in workspace backend")
         nx4.write("/other/regular.txt", b"in default backend")
 
-        print("\n21. Verifying routing...")
-        route_workspace = nx4.router.route("/workspace/test.txt")
-        route_other = nx4.router.route("/other/test.txt")
+        print("\n21. Verifying routing (INTERNAL API - for demonstration)...")
+        route_workspace = nx4.router.route("/workspace/test.txt")  # INTERNAL
+        route_other = nx4.router.route("/other/test.txt")  # INTERNAL
 
         print(f"   /workspace/test.txt → mount: {route_workspace.mount_point}")
         print(f"   /other/test.txt → mount: {route_other.mount_point}")
@@ -280,20 +282,454 @@ def main() -> None:
         nx4.close()
 
         # ============================================================
-        # Part 6: Content-Addressable Storage (CAS) with Embedded
+        # Part 6: Namespace & Tenant Isolation (NEW in v0.1.0)
         # ============================================================
         print("\n" + "=" * 70)
-        print("PART 6: Content-Addressable Storage (CAS) - NEW!")
+        print("PART 6: Namespace & Tenant Isolation (Educational + User-facing)")
+        print("=" * 70)
+        print("NOTE: Sections 22-24 use internal APIs for education.")
+        print("      Section 25-29 show recommended user-facing approach.")
+
+        print("\n22. Demonstrating path parsing and namespace extraction...")
+        print("    (INTERNAL API - for educational purposes)")
+        nx5 = nexus.connect(config={"data_dir": str(data_dir)})
+
+        # Parse different namespace paths
+
+        test_paths = [
+            "/workspace/acme/agent1/data/file.txt",
+            "/shared/acme/datasets/model.pkl",
+            "/archives/acme/2024/01/backup.tar",
+            "/external/s3/bucket/file.txt",
+            "/system/config/settings.json",
+        ]
+
+        print("   Parsing virtual paths to extract namespace info:")
+        for path in test_paths:
+            info = nx5.router.parse_path(path)
+            print(f"\n   Path: {path}")
+            print(f"   → Namespace: {info.namespace}")
+            print(f"   → Tenant: {info.tenant_id or 'N/A'}")
+            print(f"   → Agent: {info.agent_id or 'N/A'}")
+            print(f"   → Relative path: {info.relative_path or '(root)'}")
+
+        print("\n23. Testing path validation and security...")
+
+        # Valid paths
+        valid_paths = [
+            "/workspace/tenant1/agent1/data.txt",
+            "/shared/tenant1/file.txt",
+            "/external/backend/file.txt",
+        ]
+        print("   Valid paths (should pass):")
+        for path in valid_paths:
+            try:
+                normalized = nx5.router.validate_path(path)
+                print(f"   ✓ {path} → {normalized}")
+            except Exception as e:
+                print(f"   ✗ {path} → ERROR: {e}")
+
+        # Invalid paths (security issues)
+        from nexus.core.router import InvalidPathError
+
+        invalid_paths = [
+            ("/workspace/../../etc/passwd", "path traversal"),
+            ("/workspace/file\x00name.txt", "null byte"),
+            ("workspace/relative", "relative path"),
+        ]
+        print("\n   Invalid paths (security checks):")
+        for path, reason in invalid_paths:
+            try:
+                nx5.router.validate_path(path)
+                print(f"   ✗ {path} should have been rejected ({reason})!")
+            except InvalidPathError:
+                print(f"   ✓ Rejected {reason}: {repr(path)[:50]}")
+
+        print("\n24. Namespace configuration and access control...")
+
+        # Show namespace configurations (INTERNAL API - for educational purposes only)
+        print("   Default namespace configurations:")
+        print("   (NOTE: Accessing ._namespaces is internal API, shown for education)")
+        for ns_name in ["workspace", "shared", "external", "system", "archives"]:
+            ns_config = nx5.router._namespaces[ns_name]
+            print(f"\n   {ns_name}:")
+            print(f"   - Read-only: {ns_config.readonly}")
+            print(f"   - Admin-only: {ns_config.admin_only}")
+            print(f"   - Requires tenant: {ns_config.requires_tenant}")
+
+        # Close old instance and create with custom namespace (USER-FACING API)
+        nx5.close()
+        print("\n   Creating instance with custom namespace...")
+        from nexus.core.router import NamespaceConfig
+
+        custom_ns = NamespaceConfig(
+            name="experiments", readonly=False, admin_only=False, requires_tenant=True
+        )
+
+        # USER-FACING: Pass custom_namespaces parameter
+        nx5 = nexus.connect(config={"data_dir": str(data_dir), "custom_namespaces": [custom_ns]})
+        print("   ✓ Registered custom namespace: 'experiments' (via config)")
+
+        print("\n25. Testing tenant isolation (INTERNAL APIs - educational)...")
+
+        # Mount workspace backend (INTERNAL API)
+        from nexus.backends.local import LocalBackend
+
+        workspace_backend = LocalBackend(data_dir / "workspace-tenant-test")
+        nx5.router.add_mount("/workspace", workspace_backend, priority=10)  # INTERNAL
+        nx5.router.add_mount("/shared", workspace_backend, priority=10)  # INTERNAL
+
+        # Tenant "acme" accessing their own resources (INTERNAL API)
+        print("   Tenant 'acme' accessing own resources:")
+        try:
+            route = nx5.router.route(  # INTERNAL
+                "/workspace/acme/agent1/data.txt", tenant_id="acme", is_admin=False
+            )
+            print("   ✓ Access granted to /workspace/acme/agent1/data.txt")
+            print(f"     → Mount: {route.mount_point}")
+            print(f"     → Backend path: {route.backend_path}")
+        except Exception as e:
+            print(f"   ✗ Unexpected error: {e}")
+
+        # Tenant "acme" trying to access "other-tenant" resources
+        from nexus.core.router import AccessDeniedError
+
+        print("\n   Tenant 'acme' accessing 'other-tenant' resources:")
+        try:
+            route = nx5.router.route(
+                "/workspace/other-tenant/agent1/data.txt", tenant_id="acme", is_admin=False
+            )
+            print("   ✗ Should have been denied!")
+        except AccessDeniedError as e:
+            print("   ✓ Access denied (tenant isolation enforced)")
+            print(f"     → {e}")
+
+        # Admin accessing any tenant's resources
+        print("\n   Admin accessing 'other-tenant' resources:")
+        try:
+            route = nx5.router.route(
+                "/workspace/other-tenant/agent1/data.txt", tenant_id="acme", is_admin=True
+            )
+            print("   ✓ Admin access granted to any tenant")
+            print(f"     → Backend path: {route.backend_path}")
+        except Exception as e:
+            print(f"   ✗ Unexpected error: {e}")
+
+        print("\n26. Testing read-only namespaces (INTERNAL APIs - educational)...")
+
+        # Mount archives backend (INTERNAL API)
+        archives_backend = LocalBackend(data_dir / "archives-test")
+        nx5.router.add_mount("/archives", archives_backend, priority=10)  # INTERNAL
+
+        # Reading from archives (should succeed)
+        print("   Reading from /archives (read-only namespace):")
+        try:
+            route = nx5.router.route(
+                "/archives/acme/2024/backup.tar",
+                tenant_id="acme",
+                is_admin=False,
+                check_write=False,
+            )
+            print("   ✓ Read access granted")
+            print(f"     → Readonly: {route.readonly}")
+        except Exception as e:
+            print(f"   ✗ Unexpected error: {e}")
+
+        # Writing to archives (should fail)
+        print("\n   Writing to /archives (should fail):")
+        try:
+            route = nx5.router.route(
+                "/archives/acme/2024/backup.tar",
+                tenant_id="acme",
+                is_admin=False,
+                check_write=True,
+            )
+            print("   ✗ Write should have been denied!")
+        except AccessDeniedError as e:
+            print("   ✓ Write denied (read-only namespace)")
+            print(f"     → {e}")
+
+        print("\n27. Testing admin-only namespaces (INTERNAL APIs - educational)...")
+
+        # Mount system backend (INTERNAL API)
+        system_backend = LocalBackend(data_dir / "system-test")
+        nx5.router.add_mount("/system", system_backend, priority=10)  # INTERNAL
+
+        # Non-admin accessing system (should fail)
+        print("   Non-admin accessing /system namespace:")
+        try:
+            route = nx5.router.route(
+                "/system/config/settings.json", is_admin=False, check_write=False
+            )
+            print("   ✗ Non-admin access should have been denied!")
+        except AccessDeniedError as e:
+            print("   ✓ Access denied (admin-only namespace)")
+            print(f"     → {e}")
+
+        # Admin accessing system (should succeed)
+        print("\n   Admin accessing /system namespace:")
+        try:
+            route = nx5.router.route(
+                "/system/config/settings.json", is_admin=True, check_write=False
+            )
+            print("   ✓ Admin access granted")
+            print(f"     → Backend path: {route.backend_path}")
+            print(f"     → Readonly: {route.readonly}")
+        except Exception as e:
+            print(f"   ✗ Unexpected error: {e}")
+
+        print("\n28. Practical example: Multi-tenant workspace isolation...")
+
+        # Create workspace structure for multiple tenants
+        print("   Creating multi-tenant workspace:")
+
+        # Tenant 1: ACME Corp
+        acme_files = [
+            "/workspace/acme/agent1/tasks/task1.json",
+            "/workspace/acme/agent1/data/results.csv",
+            "/workspace/acme/agent2/tasks/task2.json",
+            "/shared/acme/models/classifier.pkl",
+        ]
+
+        # Tenant 2: Tech Inc
+        tech_files = [
+            "/workspace/techincCorp/agent1/tasks/analysis.json",
+            "/workspace/techincCorp/agent1/data/metrics.csv",
+            "/shared/techincCorp/datasets/training_data.csv",
+        ]
+
+        print("   Tenant: ACME Corp")
+        for path in acme_files:
+            info = nx5.router.parse_path(path)
+            print(f"   - {path}")
+            print(f"     Tenant: {info.tenant_id}, Agent: {info.agent_id or 'shared'}")
+
+        print("\n   Tenant: Tech Inc")
+        for path in tech_files:
+            info = nx5.router.parse_path(path)
+            print(f"   - {path}")
+            print(f"     Tenant: {info.tenant_id}, Agent: {info.agent_id or 'shared'}")
+
+        print("\n   Enforcing isolation:")
+        print("   ✓ ACME's agent1 can only access /workspace/acme/agent1/")
+        print("   ✓ ACME's agents can share via /shared/acme/")
+        print("   ✓ Tech Inc cannot access ACME's resources")
+        print("   ✓ Admins can access all tenants for maintenance")
+
+        print("\n29. Summary of namespace features:")
+        print("   Namespaces defined:")
+        print("   - workspace/  : Agent-specific scratch space (tenant+agent required)")
+        print("   - shared/     : Tenant-wide shared data (tenant required)")
+        print("   - external/   : Pass-through to external backends (no tenant)")
+        print("   - system/     : System metadata (admin-only, read-only)")
+        print("   - archives/   : Cold storage (tenant required, read-only)")
+        print()
+        print("   Security features:")
+        print("   ✓ Path validation (null bytes, control chars, path traversal)")
+        print("   ✓ Tenant isolation (enforced by namespace)")
+        print("   ✓ Admin override (full access when needed)")
+        print("   ✓ Read-only namespaces (archives, system)")
+        print("   ✓ Custom namespace registration")
+
+        nx5.close()
+
+        # ============================================================
+        # Part 7: End-to-End Tenant Isolation (USER-FACING APIs ONLY!)
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 7: End-to-End Tenant Isolation - USER-FACING APIs ONLY!")
+        print("=" * 70)
+        print("NOTE: This section demonstrates the RECOMMENDED approach.")
+        print("      Uses only public APIs: read(), write(), delete(), mkdir(), etc.")
+
+        print("\n30. Creating multi-tenant Embedded instances...")
+
+        # Create separate instances for each tenant
+        nx_acme = nexus.connect(
+            config={"data_dir": str(data_dir / "multi-tenant"), "tenant_id": "acme"}
+        )
+        nx_tech = nexus.connect(
+            config={"data_dir": str(data_dir / "multi-tenant"), "tenant_id": "techinc"}
+        )
+        nx_admin = nexus.connect(
+            config={"data_dir": str(data_dir / "multi-tenant"), "is_admin": True}
+        )
+
+        print("   ✓ Created ACME tenant instance (tenant_id='acme')")
+        print("   ✓ Created TechInc tenant instance (tenant_id='techinc')")
+        print("   ✓ Created Admin instance (is_admin=True)")
+
+        print("\n31. Testing write isolation...")
+        # ACME writes to their workspace
+        nx_acme.write("/workspace/acme/agent1/secret.txt", b"ACME confidential data")
+        print("   ✓ ACME wrote: /workspace/acme/agent1/secret.txt")
+
+        # TechInc writes to their workspace
+        nx_tech.write("/workspace/techinc/agent1/data.json", b'{"project": "tech-project"}')
+        print("   ✓ TechInc wrote: /workspace/techinc/agent1/data.json")
+
+        # ACME writes to shared
+        nx_acme.write("/shared/acme/models/v1.pkl", b"ACME ML model")
+        print("   ✓ ACME wrote: /shared/acme/models/v1.pkl")
+
+        print("\n32. Testing read isolation...")
+        # ACME can read their own files
+        acme_secret = nx_acme.read("/workspace/acme/agent1/secret.txt")
+        print(f"   ✓ ACME read their own file: {acme_secret.decode()}")
+
+        # TechInc cannot read ACME's files
+        print("\n   TechInc attempting to read ACME's file...")
+        try:
+            nx_tech.read("/workspace/acme/agent1/secret.txt")
+            print("   ✗ Should have been blocked!")
+        except Exception as e:
+            print(f"   ✓ Access denied: {type(e).__name__}")
+            print(f"     → {e}")
+
+        print("\n33. Testing write isolation to other tenant...")
+        try:
+            nx_tech.write("/workspace/acme/agent1/hacked.txt", b"malicious data")
+            print("   ✗ Should have been blocked!")
+        except Exception as e:
+            print(f"   ✓ Write blocked: {type(e).__name__}")
+            print(f"     → {e}")
+
+        print("\n34. Testing delete isolation...")
+        try:
+            nx_tech.delete("/workspace/acme/agent1/secret.txt")
+            print("   ✗ Should have been blocked!")
+        except Exception as e:
+            print(f"   ✓ Delete blocked: {type(e).__name__}")
+            print(f"     → {e}")
+
+        print("\n35. Testing admin override...")
+        # Admin can read any tenant's files
+        admin_read = nx_admin.read("/workspace/acme/agent1/secret.txt")
+        print(f"   ✓ Admin read ACME's file: {admin_read.decode()}")
+
+        admin_read2 = nx_admin.read("/workspace/techinc/agent1/data.json")
+        print(f"   ✓ Admin read TechInc's file: {admin_read2.decode()}")
+
+        # Admin can write to any tenant's workspace
+        nx_admin.write("/workspace/acme/agent1/admin-note.txt", b"Admin audit log")
+        print("   ✓ Admin wrote to ACME's workspace")
+
+        print("\n36. Testing read-only namespace enforcement...")
+        # Try to write to archives (read-only)
+        try:
+            nx_acme.write("/archives/acme/2024/backup.tar", b"backup data")
+            print("   ✗ Should have been blocked (read-only)!")
+        except Exception as e:
+            print(f"   ✓ Write to archives blocked: {type(e).__name__}")
+            print(f"     → {e}")
+
+        print("\n37. Testing admin-only namespace enforcement...")
+        # Non-admin cannot access /system
+        try:
+            nx_acme.write("/system/config.json", b'{"setting": "value"}')
+            print("   ✗ Should have been blocked (admin-only)!")
+        except Exception as e:
+            print(f"   ✓ Access to /system blocked: {type(e).__name__}")
+            print(f"     → {e}")
+
+        print("\n38. Testing directory isolation...")
+        # ACME creates a directory
+        nx_acme.mkdir("/workspace/acme/agent2/experiments", parents=True)
+        print("   ✓ ACME created directory: /workspace/acme/agent2/experiments")
+
+        # TechInc cannot delete ACME's directory
+        try:
+            nx_tech.rmdir("/workspace/acme/agent2/experiments", recursive=True)
+            print("   ✗ Should have been blocked!")
+        except Exception as e:
+            print(f"   ✓ Directory deletion blocked: {type(e).__name__}")
+
+        print("\n39. Testing agent-level isolation...")
+        # Create agent-specific instances
+        nx_agent1 = nexus.connect(
+            config={
+                "data_dir": str(data_dir / "multi-tenant"),
+                "tenant_id": "acme",
+                "agent_id": "agent1",
+            }
+        )
+        nx_agent2 = nexus.connect(
+            config={
+                "data_dir": str(data_dir / "multi-tenant"),
+                "tenant_id": "acme",
+                "agent_id": "agent2",
+            }
+        )
+
+        print("   ✓ Created agent1 instance (tenant='acme', agent='agent1')")
+        print("   ✓ Created agent2 instance (tenant='acme', agent='agent2')")
+
+        # Agent1 writes to their workspace
+        nx_agent1.write("/workspace/acme/agent1/task.json", b'{"status": "in_progress"}')
+        print("\n   Agent1 wrote to /workspace/acme/agent1/task.json")
+
+        # Agent1 can read their own file
+        agent1_data = nx_agent1.read("/workspace/acme/agent1/task.json")
+        print(f"   Agent1 read their own file: {agent1_data.decode()}")
+
+        # Agent2 cannot read Agent1's workspace
+        print("\n   Agent2 attempting to read Agent1's file...")
+        try:
+            nx_agent2.read("/workspace/acme/agent1/task.json")
+            print("   ✗ Should have been blocked!")
+        except Exception as e:
+            print(f"   ✓ Agent isolation enforced: {type(e).__name__}")
+            print(f"     → {e}")
+
+        # Agents can collaborate via /shared
+        print("\n   Testing agent collaboration via /shared namespace...")
+        nx_agent1.write("/shared/acme/team-data.json", b'{"project": "collaboration"}')
+        print("   Agent1 wrote to /shared/acme/team-data.json")
+
+        shared_data = nx_agent2.read("/shared/acme/team-data.json")
+        print(f"   Agent2 read from shared: {shared_data.decode()}")
+        print("   ✓ Agents can collaborate via /shared namespace!")
+
+        nx_agent1.close()
+        nx_agent2.close()
+
+        print("\n40. Summary of tenant and agent isolation:")
+        print("   Tenant isolation:")
+        print("   ✓ Tenant 'acme' cannot access tenant 'techinc' resources")
+        print("   ✓ Tenant 'techinc' cannot access tenant 'acme' resources")
+        print()
+        print("   Agent isolation (workspace only):")
+        print("   ✓ Agent 'agent1' cannot access agent 'agent2' workspace")
+        print("   ✓ Agent 'agent2' cannot access agent 'agent1' workspace")
+        print("   ✓ Agents can collaborate via /shared namespace")
+        print()
+        print("   Admin privileges:")
+        print("   ✓ Admin can access all tenant and agent resources")
+        print()
+        print("   Namespace enforcement:")
+        print("   ✓ Read-only namespaces (/archives, /system) enforced")
+        print("   ✓ Admin-only namespaces (/system) enforced")
+        print("   ✓ All file and directory operations respect isolation")
+
+        nx_acme.close()
+        nx_tech.close()
+        nx_admin.close()
+
+        # ============================================================
+        # Part 8: Content-Addressable Storage (CAS) with Embedded
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 8: Content-Addressable Storage (CAS) - NEW!")
         print("=" * 70)
 
-        print("\n22. Using Nexus with automatic CAS deduplication...")
+        print("\n40. Using Nexus with automatic CAS deduplication...")
         # CAS is now always enabled - no special flag needed!
         nx_cas = nexus.connect(config={"data_dir": str(data_dir / "cas-mode")})
         print("   ✓ Connected (CAS automatic)")
         print(f"   ✓ Storage location: {data_dir / 'cas-mode'}")
 
         # Write content
-        print("\n23. Writing content via CAS-enabled Nexus...")
+        print("\n41. Writing content via CAS-enabled Nexus...")
         content1 = b"This is important data that will be content-addressed"
         nx_cas.write("/documents/data.txt", content1)
 
@@ -311,7 +747,7 @@ def main() -> None:
         print(f"   Structure: {hash1[:2]}/{hash1[2:4]}/{hash1}")
 
         # Write identical content (deduplication)
-        print("\n24. Testing automatic content deduplication...")
+        print("\n42. Testing automatic content deduplication...")
         content2 = b"This is important data that will be content-addressed"  # Same content!
         nx_cas.write("/reports/summary.txt", content2)  # Different path, same content
 
@@ -324,7 +760,7 @@ def main() -> None:
         print("   ✓ Content deduplicated - only stored once!")
 
         # Write different content
-        print("\n25. Writing different content...")
+        print("\n43. Writing different content...")
         content3 = b"Different content with different hash"
         nx_cas.write("/logs/access.log", content3)
 
@@ -335,7 +771,7 @@ def main() -> None:
         print(f"   Ref count: {nx_cas.backend.get_ref_count(hash3)}")
 
         # Read content back
-        print("\n26. Reading content transparently...")
+        print("\n44. Reading content transparently...")
         retrieved = nx_cas.read("/documents/data.txt")
         print(f"   Retrieved {len(retrieved)} bytes")
         print(f"   Content matches: {retrieved == content1}")
@@ -343,7 +779,7 @@ def main() -> None:
         print("   ✓ CAS backend is transparent to user!")
 
         # Delete with reference counting
-        print("\n27. Testing automatic reference counting on delete...")
+        print("\n45. Testing automatic reference counting on delete...")
         print(f"   Current ref count for shared content: {nx_cas.backend.get_ref_count(hash1)}")
 
         nx_cas.delete("/documents/data.txt")  # First delete
@@ -358,7 +794,7 @@ def main() -> None:
         print("   ✓ Content automatically removed when last reference deleted!")
 
         # Inspect CAS directory structure
-        print("\n28. Inspecting CAS directory structure...")
+        print("\n46. Inspecting CAS directory structure...")
         cas_files = list((data_dir / "cas-mode" / "cas").rglob("*"))
         content_files = [f for f in cas_files if f.is_file() and f.suffix != ".meta"]
         meta_files = [f for f in cas_files if f.suffix == ".meta"]
@@ -371,7 +807,7 @@ def main() -> None:
                 print(f"   {rel_path}")
 
         # Demonstrate hash collision resistance
-        print("\n29. Hash collision resistance...")
+        print("\n47. Hash collision resistance...")
         test_contents = [
             (b"Content A", "/test/a.txt"),
             (b"Content B", "/test/b.txt"),
@@ -390,7 +826,7 @@ def main() -> None:
         print(f"   No collisions: {len(hashes) == len(unique_hashes)}")
 
         # Show storage efficiency
-        print("\n30. Storage efficiency demonstration...")
+        print("\n48. Storage efficiency demonstration...")
         # Write same content 100 times to different paths
         repeated_content = b"This content will be written 100 times"
         nx_cas.write("/efficiency/test0.txt", repeated_content)
@@ -476,6 +912,9 @@ NEW in v0.1.0:
 • Multi-mount support (different paths → different backends)
 • Backend-agnostic interface (LocalFS today, S3/GDrive future)
 • Longest-prefix matching for mount points
+• Namespace & Tenant Isolation (workspace, shared, external, system, archives)
+• Path parsing & validation (security checks)
+• Access control (tenant isolation, admin-only, read-only namespaces)
         """
         )
 
@@ -486,6 +925,9 @@ NEW in v0.1.0:
         print("   ✓ Directory operations (mkdir/rmdir/is_directory)")
         print("   ✓ Path routing (virtual → physical)")
         print("   ✓ Multi-mount support (multiple backends)")
+        print("   ✓ Namespace & tenant isolation (workspace/shared/external/system/archives)")
+        print("   ✓ Path validation & security (null bytes, control chars, path traversal)")
+        print("   ✓ Access control (tenant isolation, admin-only, read-only)")
         print("   ✓ Persistence (survives restarts)")
         print("   ✓ Data integrity (ETags)")
         print("   ✓ Content-addressable storage (CAS)")

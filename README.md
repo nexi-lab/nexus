@@ -386,11 +386,12 @@ nexus server --config config.yaml
 
 ## Security
 
-### Three-Layer Security Model
+### Multi-Layer Security Model
 
 1. **API Key Authentication**: Tenant and agent identification
 2. **Row-Level Security (RLS)**: Database-level tenant isolation
-3. **ACL Permissions**: Fine-grained access control within tenants
+3. **UNIX-Style Permissions**: Owner, group, and mode bits (coming in v0.2.0)
+4. **ACL Permissions**: Fine-grained access control lists (coming in v0.2.0)
 
 ### Example: Multi-Tenancy Isolation
 
@@ -474,7 +475,17 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] SQL views for ready work detection
 - [ ] Type-level validation
 
-### v0.2.0 - Document Processing
+### v0.2.0 - File Permissions & Security
+- [ ] UNIX-style file permissions (owner, group, mode)
+- [ ] Permission operations (chmod, chown, chgrp)
+- [ ] Default permission policies per namespace
+- [ ] Permission inheritance for new files
+- [ ] Permission checking in all file operations
+- [ ] ACL (Access Control List) support
+- [ ] Permission migration for existing files
+- [ ] Comprehensive permission tests
+
+### v0.3.0 - Document Processing
 - [ ] PDF parser
 - [ ] Excel/CSV parser
 - [ ] Document type detection
@@ -484,7 +495,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Collision detection and resolution
 - [ ] Enhanced audit trail with structured events
 
-### v0.3.0 - AI Integration
+### v0.4.0 - AI Integration
 - [ ] LLM provider abstraction
 - [ ] Anthropic Claude integration
 - [ ] OpenAI integration
@@ -492,7 +503,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Semantic search (vector embeddings)
 - [ ] LLM-powered document reading
 
-### v0.4.0 - Agent Workspaces
+### v0.5.0 - Agent Workspaces
 - [ ] Agent workspace structure
 - [ ] File-based configuration (.nexus/)
 - [ ] Custom command system (markdown)
@@ -501,7 +512,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Memory reflection phase (ACE-inspired: extract insights from execution trajectories)
 - [ ] Strategy/playbook organization (ACE-inspired: organize memories as reusable strategies)
 
-### v0.5.0 - Monolithic Server Mode
+### v0.6.0 - Monolithic Server Mode
 - [ ] FastAPI REST API
 - [ ] API key authentication
 - [ ] Multi-tenancy support
@@ -511,7 +522,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Batch/transaction APIs (atomic multi-operation updates)
 - [ ] Optimistic locking for concurrent writes
 
-### v0.6.0 - Extended Features & Event System
+### v0.7.0 - Extended Features & Event System
 - [ ] S3 backend support
 - [ ] Google Drive backend
 - [ ] Job system with checkpointing
@@ -523,7 +534,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Simple admin UI (jobs, memories, files, operation logs)
 - [ ] Operation logs table (track storage operations for debugging)
 
-### v0.7.0 - Advanced AI Features & Rich Query
+### v0.8.0 - Advanced AI Features & Rich Query
 - [ ] Advanced KV cache with context tracking
 - [ ] Memory versioning and lineage
 - [ ] Multi-agent memory sharing
@@ -535,7 +546,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Memory query builder API (fluent interface for complex queries)
 - [ ] Combined vector + metadata search (hybrid search)
 
-### v0.8.0 - Production Readiness
+### v0.9.0 - Production Readiness
 - [ ] Monitoring and observability
 - [ ] Performance optimization
 - [ ] Comprehensive testing
@@ -543,7 +554,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Documentation completion
 - [ ] Optional OpenTelemetry export (for framework integration)
 
-### v0.9.0 - Distributed Mode
+### v0.10.0 - Distributed Mode
 - [ ] Distributed architecture
 - [ ] Redis distributed locks
 - [ ] PostgreSQL replication

@@ -266,7 +266,7 @@ class GCSBackend(Backend):
         try:
             content_path = self._hash_to_path(content_hash)
             blob = self.bucket.blob(content_path)
-            return blob.exists()
+            return bool(blob.exists())
         except Exception:
             return False
 
@@ -400,7 +400,7 @@ class GCSBackend(Backend):
 
             dir_path = f"dirs/{path}/"
             blob = self.bucket.blob(dir_path)
-            return blob.exists()
+            return bool(blob.exists())
 
         except Exception:
             return False

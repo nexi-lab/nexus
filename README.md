@@ -308,8 +308,8 @@ async with nexus.connect() as nx:
 ### Infrastructure
 - **Orchestration**: Kubernetes (distributed mode)
 - **Monitoring**: Prometheus + Grafana
-- **Tracing**: OpenTelemetry + Jaeger
 - **Logging**: Structlog + Loki
+- **Admin UI**: Simple HTML/JS (jobs, memories, files, operations)
 
 ## Performance Targets
 
@@ -520,6 +520,8 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Webhook/event system (file changes, memory updates, job events)
 - [ ] Watch API for real-time updates (streaming changes to clients)
 - [ ] Server-Sent Events (SSE) support for live monitoring
+- [ ] Simple admin UI (jobs, memories, files, operation logs)
+- [ ] Operation logs table (track storage operations for debugging)
 
 ### v0.7.0 - Advanced AI Features & Rich Query
 - [ ] Advanced KV cache with context tracking
@@ -539,6 +541,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Comprehensive testing
 - [ ] Security hardening
 - [ ] Documentation completion
+- [ ] Optional OpenTelemetry export (for framework integration)
 
 ### v0.9.0 - Distributed Mode
 - [ ] Distributed architecture

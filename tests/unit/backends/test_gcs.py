@@ -144,6 +144,7 @@ class TestContentOperations:
 
         # Compute the actual hash for this content
         import hashlib
+
         expected_hash = hashlib.sha256(test_content).hexdigest()
 
         mock_blob = Mock()

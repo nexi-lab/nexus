@@ -345,9 +345,7 @@ class GCSBackend(Backend):
         except (FileExistsError, FileNotFoundError):
             raise
         except Exception as e:
-            raise BackendError(
-                f"Failed to create directory: {e}", backend="gcs", path=path
-            ) from e
+            raise BackendError(f"Failed to create directory: {e}", backend="gcs", path=path) from e
 
     def rmdir(self, path: str, recursive: bool = False) -> None:
         """Remove directory from GCS."""
@@ -381,9 +379,7 @@ class GCSBackend(Backend):
 
             if recursive:
                 # Delete all objects with this prefix
-                blobs = self.client.list_blobs(
-                    self.bucket_name, prefix=dir_path, timeout=60
-                )
+                blobs = self.client.list_blobs(self.bucket_name, prefix=dir_path, timeout=60)
                 for blob in blobs:
                     blob.delete(timeout=60)
 
@@ -392,9 +388,7 @@ class GCSBackend(Backend):
         except (NexusFileNotFoundError, OSError):
             raise
         except Exception as e:
-            raise BackendError(
-                f"Failed to remove directory: {e}", backend="gcs", path=path
-            ) from e
+            raise BackendError(f"Failed to remove directory: {e}", backend="gcs", path=path) from e
 
     def is_directory(self, path: str) -> bool:
         """Check if path is a directory."""

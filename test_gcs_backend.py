@@ -50,10 +50,7 @@ def test_gcs_backend():
     try:
         # Initialize backend
         print("1. Initializing GCS backend...")
-        backend = GCSBackend(
-            bucket_name=BUCKET_NAME,
-            project_id=PROJECT_ID
-        )
+        backend = GCSBackend(bucket_name=BUCKET_NAME, project_id=PROJECT_ID)
         print("   ✓ Backend initialized successfully\n")
 
         # Test 1: Write content
@@ -128,6 +125,7 @@ def test_gcs_backend():
     except Exception as e:
         print(f"\n✗ ERROR: {e}")
         import traceback
+
         print("\nFull traceback:")
         traceback.print_exc()
         return 1

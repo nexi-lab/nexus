@@ -13,8 +13,8 @@ import hashlib
 import json
 from typing import Any
 
-from google.cloud import storage
-from google.cloud.exceptions import NotFound
+from google.cloud import storage  # type: ignore[import-untyped]
+from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
 
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
@@ -216,7 +216,7 @@ class GCSBackend(Backend):
                     path=content_hash,
                 )
 
-            return content
+            return bytes(content)
 
         except NotFound as e:
             raise NexusFileNotFoundError(content_hash) from e

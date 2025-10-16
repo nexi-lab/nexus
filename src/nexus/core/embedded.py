@@ -10,7 +10,7 @@ from nexus.backends.backend import Backend
 from nexus.backends.local import LocalBackend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.metadata import FileMetadata
-from nexus.core.router import PathRouter
+from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
 
@@ -31,6 +31,10 @@ class Embedded:
         self,
         data_dir: str | Path = "./nexus-data",
         db_path: str | Path | None = None,
+        tenant_id: str | None = None,
+        agent_id: str | None = None,
+        is_admin: bool = False,
+        custom_namespaces: list[NamespaceConfig] | None = None,
     ):
         """
         Initialize embedded filesystem.
@@ -38,17 +42,31 @@ class Embedded:
         Args:
             data_dir: Root directory for storing files
             db_path: Path to SQLite metadata database (auto-generated if None)
+            tenant_id: Tenant identifier for multi-tenant isolation (optional)
+            agent_id: Agent identifier for agent-level isolation in /workspace (optional)
+            is_admin: Whether this instance has admin privileges (default: False)
+            custom_namespaces: Additional custom namespace configurations (optional)
         """
         self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
+
+        # Store tenant and agent context
+        self.tenant_id = tenant_id
+        self.agent_id = agent_id
+        self.is_admin = is_admin
 
         # Initialize metadata store (using new SQLAlchemy-based store)
         if db_path is None:
             db_path = self.data_dir / "metadata.db"
         self.metadata = SQLAlchemyMetadataStore(db_path)
 
-        # Initialize path router with default mounts
+        # Initialize path router with default namespaces
         self.router = PathRouter()
+
+        # Register custom namespaces if provided
+        if custom_namespaces:
+            for ns_config in custom_namespaces:
+                self.router.register_namespace(ns_config)
 
         # Initialize unified backend (always uses CAS)
         self.backend: Backend = LocalBackend(self.data_dir)
@@ -112,16 +130,26 @@ class Embedded:
             NexusFileNotFoundError: If file doesn't exist
             InvalidPathError: If path is invalid
             BackendError: If read operation fails
+            AccessDeniedError: If access is denied based on tenant isolation
         """
         path = self._validate_path(path)
+
+        # Route to backend with access control
+        route = self.router.route(
+            path,
+            tenant_id=self.tenant_id,
+            agent_id=self.agent_id,
+            is_admin=self.is_admin,
+            check_write=False,
+        )
 
         # Check if file exists in metadata
         meta = self.metadata.get(path)
         if meta is None or meta.etag is None:
             raise NexusFileNotFoundError(path)
 
-        # Read from CAS using content hash
-        content = self.backend.read_content(meta.etag)
+        # Read from routed backend using content hash
+        content = route.backend.read_content(meta.etag)
 
         return content
 
@@ -141,22 +169,37 @@ class Embedded:
         Raises:
             InvalidPathError: If path is invalid
             BackendError: If write operation fails
+            AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
+            PermissionError: If path is read-only
         """
         path = self._validate_path(path)
+
+        # Route to backend with write access check
+        route = self.router.route(
+            path,
+            tenant_id=self.tenant_id,
+            agent_id=self.agent_id,
+            is_admin=self.is_admin,
+            check_write=True,
+        )
+
+        # Check if path is read-only
+        if route.readonly:
+            raise PermissionError(f"Path is read-only: {path}")
 
         # Get existing metadata for update detection
         now = datetime.now(UTC)
         meta = self.metadata.get(path)
 
-        # Write to CAS backend - returns content hash
-        content_hash = self.backend.write_content(content)
+        # Write to routed backend - returns content hash
+        content_hash = route.backend.write_content(content)
 
         # If updating existing file with different content, delete old content
         if meta is not None and meta.etag and meta.etag != content_hash:
             # Decrement ref count for old content
             with contextlib.suppress(Exception):
                 # Ignore errors if old content already deleted
-                self.backend.delete_content(meta.etag)
+                route.backend.delete_content(meta.etag)
 
         # Store metadata with content hash as both etag and physical_path
         metadata = FileMetadata(
@@ -186,17 +229,32 @@ class Embedded:
             NexusFileNotFoundError: If file doesn't exist
             InvalidPathError: If path is invalid
             BackendError: If delete operation fails
+            AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
+            PermissionError: If path is read-only
         """
         path = self._validate_path(path)
+
+        # Route to backend with write access check (delete requires write permission)
+        route = self.router.route(
+            path,
+            tenant_id=self.tenant_id,
+            agent_id=self.agent_id,
+            is_admin=self.is_admin,
+            check_write=True,
+        )
+
+        # Check if path is read-only
+        if route.readonly:
+            raise PermissionError(f"Cannot delete from read-only path: {path}")
 
         # Check if file exists in metadata
         meta = self.metadata.get(path)
         if meta is None:
             raise NexusFileNotFoundError(path)
 
-        # Delete from CAS (decrements ref count)
+        # Delete from routed backend CAS (decrements ref count)
         if meta.etag:
-            self.backend.delete_content(meta.etag)
+            route.backend.delete_content(meta.etag)
 
         # Remove from metadata
         self.metadata.delete(path)
@@ -249,11 +307,23 @@ class Embedded:
             FileNotFoundError: If parent doesn't exist and parents=False
             InvalidPathError: If path is invalid
             BackendError: If operation fails
+            AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
+            PermissionError: If path is read-only
         """
         path = self._validate_path(path)
 
-        # Route to backend
-        route = self.router.route(path)
+        # Route to backend with write access check (mkdir requires write permission)
+        route = self.router.route(
+            path,
+            tenant_id=self.tenant_id,
+            agent_id=self.agent_id,
+            is_admin=self.is_admin,
+            check_write=True,
+        )
+
+        # Check if path is read-only
+        if route.readonly:
+            raise PermissionError(f"Cannot create directory in read-only path: {path}")
 
         # Create directory in backend
         route.backend.mkdir(route.backend_path, parents=parents, exist_ok=exist_ok)
@@ -271,15 +341,23 @@ class Embedded:
             NexusFileNotFoundError: If directory doesn't exist
             InvalidPathError: If path is invalid
             BackendError: If operation fails
+            AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
+            PermissionError: If path is read-only
         """
         path = self._validate_path(path)
 
-        # Route to backend
-        route = self.router.route(path)
+        # Route to backend with write access check (rmdir requires write permission)
+        route = self.router.route(
+            path,
+            tenant_id=self.tenant_id,
+            agent_id=self.agent_id,
+            is_admin=self.is_admin,
+            check_write=True,
+        )
 
         # Check readonly
         if route.readonly:
-            raise PermissionError(f"Mount is readonly: {route.mount_point}")
+            raise PermissionError(f"Cannot remove directory from read-only path: {path}")
 
         # Remove directory in backend
         route.backend.rmdir(route.backend_path, recursive=recursive)
@@ -296,7 +374,14 @@ class Embedded:
         """
         try:
             path = self._validate_path(path)
-            route = self.router.route(path)
+            # Route with access control (read permission needed to check)
+            route = self.router.route(
+                path,
+                tenant_id=self.tenant_id,
+                agent_id=self.agent_id,
+                is_admin=self.is_admin,
+                check_write=False,
+            )
             return route.backend.is_directory(route.backend_path)
         except (InvalidPathError, Exception):
             return False

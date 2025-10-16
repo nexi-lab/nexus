@@ -37,6 +37,7 @@ from nexus.core.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+from nexus.core.router import NamespaceConfig
 
 # TODO: Import other modules when they are implemented
 # from nexus.core.client import NexusClient
@@ -82,7 +83,28 @@ def connect(
     if cfg.mode == "embedded":
         # Provide default if None (shouldn't happen due to config defaults, but type checker needs this)
         data_dir = cfg.data_dir if cfg.data_dir is not None else "./nexus-data"
-        return Embedded(data_dir=data_dir, db_path=cfg.db_path)
+
+        # Parse custom namespaces from config
+        custom_namespaces = None
+        if cfg.namespaces:
+            custom_namespaces = [
+                NamespaceConfig(
+                    name=ns["name"],
+                    readonly=ns.get("readonly", False),
+                    admin_only=ns.get("admin_only", False),
+                    requires_tenant=ns.get("requires_tenant", True),
+                )
+                for ns in cfg.namespaces
+            ]
+
+        return Embedded(
+            data_dir=data_dir,
+            db_path=cfg.db_path,
+            tenant_id=cfg.tenant_id,
+            agent_id=cfg.agent_id,
+            is_admin=cfg.is_admin,
+            custom_namespaces=custom_namespaces,
+        )
     elif cfg.mode in ["monolithic", "distributed"]:
         # TODO: Implement in v0.2.0+
         raise NotImplementedError(

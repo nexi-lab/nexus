@@ -13,8 +13,8 @@ import hashlib
 import json
 from typing import Any
 
-from google.cloud import storage  # type: ignore
-from google.cloud.exceptions import NotFound  # type: ignore
+from google.cloud import storage
+from google.cloud.exceptions import NotFound
 
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError

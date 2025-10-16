@@ -437,3 +437,245 @@ def test_overwrite_preserves_path(embedded: Embedded) -> None:
     files = embedded.list()
     assert len(files) == 1
     assert files[0] == path
+
+
+# === File Discovery Operations Tests (v0.1.0 - Issue #6) ===
+
+
+def test_list_recursive(embedded: Embedded) -> None:
+    """Test recursive listing of files."""
+    # Create directory structure
+    embedded.write("/file1.txt", b"Content 1")
+    embedded.write("/dir1/file2.txt", b"Content 2")
+    embedded.write("/dir1/subdir/file3.txt", b"Content 3")
+    embedded.write("/dir2/file4.txt", b"Content 4")
+
+    # Non-recursive list of root
+    files = embedded.list("/", recursive=False)
+    assert len(files) == 1
+    assert "/file1.txt" in files
+
+    # Recursive list of root
+    files = embedded.list("/", recursive=True)
+    assert len(files) == 4
+    assert "/file1.txt" in files
+    assert "/dir1/file2.txt" in files
+    assert "/dir1/subdir/file3.txt" in files
+    assert "/dir2/file4.txt" in files
+
+    # Non-recursive list of dir1
+    files = embedded.list("/dir1", recursive=False)
+    assert len(files) == 1
+    assert "/dir1/file2.txt" in files
+
+    # Recursive list of dir1
+    files = embedded.list("/dir1", recursive=True)
+    assert len(files) == 2
+    assert "/dir1/file2.txt" in files
+    assert "/dir1/subdir/file3.txt" in files
+
+
+def test_list_with_details(embedded: Embedded) -> None:
+    """Test listing files with detailed metadata."""
+    # Create files
+    embedded.write("/file1.txt", b"Hello")
+    embedded.write("/file2.txt", b"World!")
+
+    # List with details
+    files = embedded.list("/", recursive=True, details=True)
+
+    assert len(files) == 2
+    assert isinstance(files[0], dict)
+
+    # Check file1
+    file1 = next(f for f in files if f["path"] == "/file1.txt")
+    assert file1["size"] == 5
+    assert file1["etag"] is not None
+    assert file1["modified_at"] is not None
+    assert file1["created_at"] is not None
+
+    # Check file2
+    file2 = next(f for f in files if f["path"] == "/file2.txt")
+    assert file2["size"] == 6
+
+
+def test_glob_simple_pattern(embedded: Embedded) -> None:
+    """Test glob with simple wildcard patterns."""
+    # Create test files
+    embedded.write("/test1.txt", b"Content")
+    embedded.write("/test2.txt", b"Content")
+    embedded.write("/file.py", b"Content")
+    embedded.write("/data.csv", b"Content")
+
+    # Glob for .txt files
+    files = embedded.glob("*.txt")
+    assert len(files) == 2
+    assert "/test1.txt" in files
+    assert "/test2.txt" in files
+
+    # Glob for .py files
+    files = embedded.glob("*.py")
+    assert len(files) == 1
+    assert "/file.py" in files
+
+    # Glob for test* files
+    files = embedded.glob("test*")
+    assert len(files) == 2
+    assert "/test1.txt" in files
+    assert "/test2.txt" in files
+
+
+def test_glob_recursive_pattern(embedded: Embedded) -> None:
+    """Test glob with recursive ** pattern."""
+    # Create nested structure
+    embedded.write("/src/main.py", b"Content")
+    embedded.write("/src/utils/helper.py", b"Content")
+    embedded.write("/tests/test_main.py", b"Content")
+    embedded.write("/README.md", b"Content")
+
+    # Find all Python files recursively
+    files = embedded.glob("**/*.py")
+    assert len(files) == 3
+    assert "/src/main.py" in files
+    assert "/src/utils/helper.py" in files
+    assert "/tests/test_main.py" in files
+
+    # Find all files recursively
+    files = embedded.glob("**/*")
+    assert len(files) == 4
+
+
+def test_glob_with_base_path(embedded: Embedded) -> None:
+    """Test glob with a base path."""
+    # Create files
+    embedded.write("/data/file1.csv", b"Content")
+    embedded.write("/data/file2.csv", b"Content")
+    embedded.write("/other/file3.csv", b"Content")
+
+    # Glob in data directory
+    files = embedded.glob("*.csv", path="/data")
+    assert len(files) == 2
+    assert "/data/file1.csv" in files
+    assert "/data/file2.csv" in files
+
+
+def test_glob_question_mark_pattern(embedded: Embedded) -> None:
+    """Test glob with ? wildcard."""
+    # Create files
+    embedded.write("/file1.txt", b"Content")
+    embedded.write("/file2.txt", b"Content")
+    embedded.write("/file10.txt", b"Content")
+
+    # Match single character
+    files = embedded.glob("file?.txt")
+    assert len(files) == 2
+    assert "/file1.txt" in files
+    assert "/file2.txt" in files
+    assert "/file10.txt" not in files
+
+
+def test_grep_simple_search(embedded: Embedded) -> None:
+    """Test basic grep search."""
+    # Create test files
+    embedded.write("/file1.txt", b"Hello World\nFoo Bar\nHello Again")
+    embedded.write("/file2.txt", b"Goodbye\nWorld Peace")
+
+    # Search for "Hello"
+    results = embedded.grep("Hello")
+
+    assert len(results) == 2
+    assert results[0]["file"] == "/file1.txt"
+    assert results[0]["line"] == 1
+    assert "Hello World" in results[0]["content"]
+    assert results[0]["match"] == "Hello"
+
+    assert results[1]["file"] == "/file1.txt"
+    assert results[1]["line"] == 3
+    assert "Hello Again" in results[1]["content"]
+
+
+def test_grep_regex_pattern(embedded: Embedded) -> None:
+    """Test grep with regex patterns."""
+    # Create test file
+    embedded.write("/code.py", b"def foo():\n    pass\ndef bar():\n    return 42")
+
+    # Search for function definitions
+    results = embedded.grep(r"def \w+")
+
+    assert len(results) == 2
+    assert results[0]["match"] == "def foo"
+    assert results[1]["match"] == "def bar"
+
+
+def test_grep_with_file_pattern(embedded: Embedded) -> None:
+    """Test grep with file filtering."""
+    # Create test files
+    embedded.write("/file1.py", b"import os\nimport sys")
+    embedded.write("/file2.py", b"import re")
+    embedded.write("/file.txt", b"import nothing")
+
+    # Search only in .py files
+    results = embedded.grep("import", file_pattern="*.py")
+
+    assert len(results) == 3
+    # Should not include file.txt
+    assert all(r["file"].endswith(".py") for r in results)
+
+
+def test_grep_case_insensitive(embedded: Embedded) -> None:
+    """Test case-insensitive grep search."""
+    # Create test file
+    embedded.write("/file.txt", b"ERROR: Something went wrong\nError in processing\nerror detected")
+
+    # Case-sensitive (default)
+    results = embedded.grep("ERROR")
+    assert len(results) == 1
+
+    # Case-insensitive
+    results = embedded.grep("ERROR", ignore_case=True)
+    assert len(results) == 3
+
+
+def test_grep_max_results(embedded: Embedded) -> None:
+    """Test grep result limiting."""
+    # Create file with many matches
+    content = "\n".join([f"Line {i} with MATCH" for i in range(100)])
+    embedded.write("/file.txt", content.encode())
+
+    # Limit results
+    results = embedded.grep("MATCH", max_results=10)
+    assert len(results) == 10
+
+
+def test_grep_skips_binary_files(embedded: Embedded) -> None:
+    """Test that grep skips binary files."""
+    # Create binary file
+    embedded.write("/binary.bin", bytes(range(256)))
+
+    # Create text file
+    embedded.write("/text.txt", b"findme")
+
+    # Search should only find text file
+    results = embedded.grep("findme")
+    assert len(results) == 1
+    assert results[0]["file"] == "/text.txt"
+
+
+def test_grep_empty_results(embedded: Embedded) -> None:
+    """Test grep with no matches."""
+    embedded.write("/file.txt", b"Hello World")
+
+    results = embedded.grep("nonexistent")
+    assert len(results) == 0
+
+
+def test_list_backward_compatibility(embedded: Embedded) -> None:
+    """Test that list() maintains backward compatibility."""
+    # Create files
+    embedded.write("/file1.txt", b"Content")
+    embedded.write("/file2.txt", b"Content")
+
+    # Old-style usage (should work with new parameter defaults)
+    files = embedded.list()
+    assert isinstance(files, list)
+    assert len(files) == 2

@@ -37,6 +37,7 @@ from nexus.core.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+from nexus.core.filesystem import NexusFilesystem
 from nexus.core.router import NamespaceConfig
 
 # TODO: Import other modules when they are implemented
@@ -46,7 +47,7 @@ from nexus.core.router import NamespaceConfig
 
 def connect(
     config: str | Path | dict | NexusConfig | None = None,
-) -> Embedded:
+) -> NexusFilesystem:
     """
     Connect to Nexus filesystem.
 
@@ -61,10 +62,13 @@ def connect(
             - NexusConfig: Already loaded config
 
     Returns:
-        Nexus client instance (mode-dependent):
+        NexusFilesystem instance (mode-dependent):
             - Embedded mode: Returns Embedded instance
-            - Monolithic mode: Returns NexusClient (not yet implemented)
-            - Distributed mode: Returns NexusClient (not yet implemented)
+            - Monolithic mode: Returns MonolithClient (not yet implemented)
+            - Distributed mode: Returns DistributedClient (not yet implemented)
+
+        All modes implement the NexusFilesystem interface, ensuring consistent
+        API across deployment modes.
 
     Raises:
         ValueError: If configuration is invalid
@@ -124,6 +128,8 @@ __all__ = [
     # Configuration
     "NexusConfig",
     "load_config",
+    # Core interfaces
+    "NexusFilesystem",  # Abstract base class for all filesystem modes
     # Embedded mode (for advanced usage)
     "Embedded",
     # Exceptions

@@ -1,7 +1,12 @@
 """Embedded mode implementation for Nexus."""
 
+from __future__ import annotations
+
+import builtins
 import contextlib
+import fnmatch
 import hashlib
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -9,12 +14,13 @@ from typing import Any
 from nexus.backends.backend import Backend
 from nexus.backends.local import LocalBackend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
+from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
 
-class Embedded:
+class Embedded(NexusFilesystem):
     """
     Embedded mode filesystem for Nexus.
 
@@ -275,21 +281,272 @@ class Embedded:
         except InvalidPathError:
             return False
 
-    def list(self, prefix: str = "") -> list[str]:
+    def list(
+        self,
+        path: str = "/",
+        recursive: bool = True,
+        details: bool = False,
+        prefix: str | None = None,
+    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """
-        List all files with given path prefix.
+        List files in a directory.
 
         Args:
-            prefix: Path prefix to filter by
+            path: Directory path to list (default: "/")
+            recursive: If True, list all files recursively; if False, list only direct children (default: True)
+            details: If True, return detailed metadata; if False, return paths only (default: False)
+            prefix: (Deprecated) Path prefix to filter by - for backward compatibility.
+                    When used, lists all files recursively with this prefix.
 
         Returns:
-            List of virtual paths
-        """
-        if prefix:
-            prefix = self._validate_path(prefix)
+            List of file paths (if details=False) or list of file metadata dicts (if details=True).
+            Each metadata dict contains: path, size, modified_at, etag
 
-        metadata_list = self.metadata.list(prefix)
-        return [meta.path for meta in metadata_list]
+        Examples:
+            # List all files recursively (default)
+            fs.list()  # Returns: ["/file1.txt", "/dir/file2.txt", "/dir/subdir/file3.txt"]
+
+            # List files in root directory only (non-recursive)
+            fs.list("/", recursive=False)  # Returns: ["/file1.txt"]
+
+            # List files recursively with details
+            fs.list(details=True)  # Returns: [{"path": "/file1.txt", "size": 100, ...}, ...]
+
+            # Old API (deprecated but supported)
+            fs.list(prefix="/dir")  # Returns all files under /dir recursively
+        """
+        # Handle backward compatibility with old 'prefix' parameter
+        if prefix is not None:
+            # Old API: list(prefix="/path") - always recursive
+            if prefix:
+                prefix = self._validate_path(prefix)
+            all_files = self.metadata.list(prefix)
+            results = all_files
+        else:
+            # New API: list(path="/", recursive=False)
+            if path:
+                path = self._validate_path(path)
+
+            # Ensure path ends with / for directory listing
+            if not path.endswith("/"):
+                path = path + "/"
+
+            # Get all files with this prefix
+            all_files = self.metadata.list(path if path != "/" else "")
+
+            if recursive:
+                # Include all files under this path
+                results = all_files
+            else:
+                # Only include files directly in this directory (no subdirectories)
+                results = []
+                for meta in all_files:
+                    # Remove the prefix to get relative path
+                    rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
+                    # If there's no "/" in the relative path, it's in this directory
+                    if "/" not in rel_path:
+                        results.append(meta)
+
+        # Sort by path name
+        results.sort(key=lambda m: m.path)
+
+        if details:
+            return [
+                {
+                    "path": meta.path,
+                    "size": meta.size,
+                    "modified_at": meta.modified_at,
+                    "created_at": meta.created_at,
+                    "etag": meta.etag,
+                    "mime_type": meta.mime_type,
+                }
+                for meta in results
+            ]
+        else:
+            return [meta.path for meta in results]
+
+    def glob(self, pattern: str, path: str = "/") -> builtins.list[str]:
+        """
+        Find files matching a glob pattern.
+
+        Supports standard glob patterns:
+        - `*` matches any sequence of characters (except `/`)
+        - `**` matches any sequence of characters including `/` (recursive)
+        - `?` matches any single character
+        - `[...]` matches any character in the brackets
+
+        Args:
+            pattern: Glob pattern to match (e.g., "**/*.py", "data/*.csv", "test_*.py")
+            path: Base path to search from (default: "/")
+
+        Returns:
+            List of matching file paths, sorted by name
+
+        Examples:
+            # Find all Python files recursively
+            fs.glob("**/*.py")  # Returns: ["/src/main.py", "/tests/test_foo.py", ...]
+
+            # Find all CSV files in data directory
+            fs.glob("*.csv", "/data")  # Returns: ["/data/file1.csv", "/data/file2.csv"]
+
+            # Find all test files
+            fs.glob("test_*.py")  # Returns: ["/test_foo.py", "/test_bar.py"]
+        """
+        if path:
+            path = self._validate_path(path)
+
+        # Get all files
+        all_files = self.metadata.list("")
+
+        # Build full pattern
+        if not path.endswith("/"):
+            path = path + "/"
+        if path == "/":
+            full_pattern = pattern
+        else:
+            # Remove leading / from path for pattern matching
+            base_path = path[1:] if path.startswith("/") else path
+            full_pattern = base_path + pattern
+
+        # Match files against pattern
+        # Handle ** for recursive matching
+        if "**" in full_pattern:
+            # Convert glob pattern to regex
+            # Split by ** to handle recursive matching
+            parts = full_pattern.split("**")
+
+            regex_parts = []
+            for i, part in enumerate(parts):
+                if i > 0:
+                    # ** matches zero or more path segments
+                    # This can be empty or ".../", so use (?:.*/)? for optional match
+                    regex_parts.append("(?:.*/)?")
+
+                # Escape and convert wildcards in this part
+                escaped = re.escape(part)
+                escaped = escaped.replace(r"\*", "[^/]*")
+                escaped = escaped.replace(r"\?", ".")
+                escaped = escaped.replace(r"\[", "[").replace(r"\]", "]")
+
+                # Remove leading / from all parts since it's handled by ** or the anchor
+                # Note: re.escape() doesn't escape /, so we check for it directly
+                while escaped.startswith("/"):
+                    escaped = escaped[1:]
+
+                regex_parts.append(escaped)
+
+            regex_pattern = "^/" + "".join(regex_parts) + "$"
+
+            matches = []
+            for meta in all_files:
+                if re.match(regex_pattern, meta.path):
+                    matches.append(meta.path)
+        else:
+            # Use fnmatch for simpler patterns
+            matches = []
+            for meta in all_files:
+                # Remove leading / for matching
+                file_path = meta.path[1:] if meta.path.startswith("/") else meta.path
+                if fnmatch.fnmatch(file_path, full_pattern):
+                    matches.append(meta.path)
+
+        return sorted(matches)
+
+    def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        file_pattern: str | None = None,
+        ignore_case: bool = False,
+        max_results: int = 1000,
+    ) -> builtins.list[dict[str, Any]]:
+        r"""
+        Search file contents using regex patterns.
+
+        Args:
+            pattern: Regex pattern to search for in file contents
+            path: Base path to search from (default: "/")
+            file_pattern: Optional glob pattern to filter files (e.g., "*.py")
+            ignore_case: If True, perform case-insensitive search (default: False)
+            max_results: Maximum number of results to return (default: 1000)
+
+        Returns:
+            List of match dicts, each containing:
+            - file: File path
+            - line: Line number (1-indexed)
+            - content: Matched line content
+            - match: The matched text
+
+        Examples:
+            # Search for "TODO" in all files
+            fs.grep("TODO")  # Returns: [{"file": "/main.py", "line": 42, "content": "# TODO: ...", ...}, ...]
+
+            # Search for function definitions in Python files
+            fs.grep(r"def \w+", file_pattern="**/*.py")
+
+            # Case-insensitive search
+            fs.grep("error", ignore_case=True)
+        """
+        if path:
+            path = self._validate_path(path)
+
+        # Compile regex pattern
+        flags = re.IGNORECASE if ignore_case else 0
+        try:
+            regex = re.compile(pattern, flags)
+        except re.error as e:
+            raise ValueError(f"Invalid regex pattern: {e}") from e
+
+        # Get files to search
+        files: list[str]
+        if file_pattern:
+            files = self.glob(file_pattern, path)
+        else:
+            # Get all files under path
+            if not path.endswith("/"):
+                path = path + "/"
+            prefix = path if path != "/" else ""
+            all_files = self.metadata.list(prefix)
+            files = [meta.path for meta in all_files]
+
+        # Search through files
+        results: list[dict[str, Any]] = []
+        for file_path in files:
+            if len(results) >= max_results:
+                break
+
+            try:
+                # Read file content
+                content = self.read(file_path)
+
+                # Try to decode as text
+                try:
+                    text = content.decode("utf-8")
+                except UnicodeDecodeError:
+                    # Skip binary files
+                    continue
+
+                # Search line by line
+                for line_num, line in enumerate(text.splitlines(), start=1):
+                    if len(results) >= max_results:
+                        break
+
+                    match = regex.search(line)
+                    if match:
+                        results.append(
+                            {
+                                "file": file_path,
+                                "line": line_num,
+                                "content": line,
+                                "match": match.group(0),
+                            }
+                        )
+
+            except Exception:
+                # Skip files that can't be read
+                continue
+
+        return results
 
     # === Directory Operations ===
 
@@ -389,11 +646,3 @@ class Embedded:
     def close(self) -> None:
         """Close the embedded filesystem and release resources."""
         self.metadata.close()
-
-    def __enter__(self) -> "Embedded":
-        """Context manager entry."""
-        return self
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """Context manager exit."""
-        self.close()

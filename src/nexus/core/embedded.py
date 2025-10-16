@@ -35,6 +35,7 @@ class Embedded:
         agent_id: str | None = None,
         is_admin: bool = False,
         custom_namespaces: list[NamespaceConfig] | None = None,
+        backend: Backend | None = None,
     ):
         """
         Initialize embedded filesystem.
@@ -46,6 +47,8 @@ class Embedded:
             agent_id: Agent identifier for agent-level isolation in /workspace (optional)
             is_admin: Whether this instance has admin privileges (default: False)
             custom_namespaces: Additional custom namespace configurations (optional)
+            backend: Storage backend to use (LocalBackend, GCSBackend, etc.)
+                    If None, creates LocalBackend with data_dir (default)
         """
         self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -68,8 +71,11 @@ class Embedded:
             for ns_config in custom_namespaces:
                 self.router.register_namespace(ns_config)
 
-        # Initialize unified backend (always uses CAS)
-        self.backend: Backend = LocalBackend(self.data_dir)
+        # Initialize backend (use provided or create default LocalBackend)
+        if backend is None:
+            self.backend: Backend = LocalBackend(self.data_dir)
+        else:
+            self.backend = backend
         self.router.add_mount("/", self.backend, priority=0)
 
     def _validate_path(self, path: str) -> str:

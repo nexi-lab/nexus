@@ -26,6 +26,7 @@ __author__ = "Nexus Team"
 __license__ = "Apache-2.0"
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from nexus.config import NexusConfig, load_config
 from nexus.core.embedded import Embedded
@@ -39,6 +40,9 @@ from nexus.core.exceptions import (
 )
 from nexus.core.router import NamespaceConfig
 
+if TYPE_CHECKING:
+    from nexus.backends.backend import Backend
+
 # TODO: Import other modules when they are implemented
 # from nexus.core.client import NexusClient
 # from nexus.interface import NexusInterface
@@ -46,6 +50,7 @@ from nexus.core.router import NamespaceConfig
 
 def connect(
     config: str | Path | dict | NexusConfig | None = None,
+    backend: "Backend | None" = None,
 ) -> Embedded:
     """
     Connect to Nexus filesystem.
@@ -59,6 +64,9 @@ def connect(
             - str/Path: Path to config file
             - dict: Configuration dictionary
             - NexusConfig: Already loaded config
+        backend: Storage backend to use (LocalBackend, GCSBackend, etc.)
+            - None: Creates default LocalBackend (default)
+            - Backend: Custom backend instance
 
     Returns:
         Nexus client instance (mode-dependent):
@@ -75,6 +83,11 @@ def connect(
         >>> nx = nexus.connect()
         >>> nx.write("/workspace/file.txt", b"Hello World")
         >>> content = nx.read("/workspace/file.txt")
+
+        >>> # Using GCS backend
+        >>> from nexus.backends.gcs import GCSBackend
+        >>> gcs = GCSBackend(bucket_name="my-bucket")
+        >>> nx = nexus.connect(backend=gcs)
     """
     # Load configuration
     cfg = load_config(config)
@@ -104,6 +117,7 @@ def connect(
             agent_id=cfg.agent_id,
             is_admin=cfg.is_admin,
             custom_namespaces=custom_namespaces,
+            backend=backend,
         )
     elif cfg.mode in ["monolithic", "distributed"]:
         # TODO: Implement in v0.2.0+

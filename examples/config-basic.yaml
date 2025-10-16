@@ -1,0 +1,11 @@
+# Basic Nexus Configuration
+# Place this file as nexus.yaml in your project directory
+
+mode: embedded
+data_dir: ./nexus-data
+
+# Optional: Tenant isolation
+# Uncomment to enable multi-tenant mode
+# tenant_id: acme
+# agent_id: agent1
+# is_admin: false

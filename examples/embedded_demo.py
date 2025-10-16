@@ -851,6 +851,171 @@ def main() -> None:
         nx_cas.close()
 
         # ============================================================
+        # Part 9: File Discovery Operations (v0.1.0 - NEW!)
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 9: File Discovery Operations - NEW in v0.1.0!")
+        print("=" * 70)
+        print("Issue #6 - Implement file discovery operations (list, glob, grep)")
+
+        print("\n49. Setting up test files for discovery...")
+        nx_discover = nexus.connect(config={"data_dir": str(data_dir / "discovery-demo")})
+
+        # Create a structured file hierarchy for testing
+        test_files = {
+            "/src/main.py": b"def main():\n    print('Hello from main')\n    # TODO: Add logging\n",
+            "/src/utils/helper.py": b"def helper():\n    return 42\n# TODO: Add tests\n",
+            "/src/utils/validator.py": b"def validate(data):\n    # TODO: Add validation logic\n    return True\n",
+            "/tests/test_main.py": b"import pytest\ndef test_main():\n    assert True\n",
+            "/tests/test_helper.py": b"def test_helper():\n    # TODO: Implement tests\n    pass\n",
+            "/data/config.json": b'{"setting": "enabled"}',
+            "/data/users.csv": b"name,email\nAlice,alice@example.com\nBob,bob@example.com",
+            "/docs/README.md": b"# Project Documentation\n## Overview\nThis is a test project.",
+            "/docs/API.md": b"# API Reference\n## Endpoints\n- GET /api/users",
+        }
+
+        for path, content in test_files.items():
+            nx_discover.write(path, content)
+
+        print(f"   ✓ Created {len(test_files)} test files")
+
+        # Test list() with recursive and details options
+        print("\n50. Testing list() with recursive option...")
+        all_files = nx_discover.list("/", recursive=True)
+        print(f"   All files (recursive): {len(all_files)}")
+        for f in sorted(all_files)[:5]:
+            print(f"   - {f}")
+
+        print("\n51. Testing list() non-recursive...")
+        root_files = nx_discover.list("/", recursive=False)
+        print(f"   Root directory only: {len(root_files)}")
+        for f in sorted(root_files):
+            print(f"   - {f}")
+
+        src_files = nx_discover.list("/src", recursive=False)
+        print(f"\n   /src directory only: {len(src_files)}")
+        for f in sorted(src_files):
+            print(f"   - {f}")
+
+        print("\n52. Testing list() with details...")
+        detailed_files = nx_discover.list("/data", recursive=True, details=True)
+        print("   Files in /data with metadata:")
+        for file_info in detailed_files:
+            print(f"   - {file_info['path']}")
+            print(f"     Size: {file_info['size']} bytes")
+            print(f"     Modified: {file_info['modified_at']}")
+            print(f"     ETag: {file_info['etag'][:16]}...")
+
+        # Test glob() with various patterns
+        print("\n53. Testing glob() with simple patterns...")
+        py_files = nx_discover.glob("*.py")
+        print(f"   Pattern '*.py' (root only): {len(py_files)}")
+        for f in sorted(py_files):
+            print(f"   - {f}")
+
+        csv_files = nx_discover.glob("*.csv", path="/data")
+        print(f"\n   Pattern '*.csv' in /data: {len(csv_files)}")
+        for f in sorted(csv_files):
+            print(f"   - {f}")
+
+        print("\n54. Testing glob() with recursive patterns...")
+        all_py = nx_discover.glob("**/*.py")
+        print(f"   Pattern '**/*.py' (all Python files): {len(all_py)}")
+        for f in sorted(all_py):
+            print(f"   - {f}")
+
+        all_md = nx_discover.glob("**/*.md")
+        print(f"\n   Pattern '**/*.md' (all Markdown files): {len(all_md)}")
+        for f in sorted(all_md):
+            print(f"   - {f}")
+
+        test_files_glob = nx_discover.glob("test_*.py", path="/tests")
+        print(f"\n   Pattern 'test_*.py' in /tests: {len(test_files_glob)}")
+        for f in sorted(test_files_glob):
+            print(f"   - {f}")
+
+        print("\n55. Testing glob() with question mark wildcard...")
+        all_files_glob = nx_discover.glob("**/*")
+        print(f"   Pattern '**/*' (all files): {len(all_files_glob)}")
+
+        # Test grep() for searching content
+        print("\n56. Testing grep() for content search...")
+        todo_matches = nx_discover.grep("TODO")
+        print(f"   Searching for 'TODO': {len(todo_matches)} matches")
+        for match in todo_matches:
+            print(f"   - {match['file']}:{match['line']}")
+            print(f"     {match['content'].strip()}")
+
+        print("\n57. Testing grep() with regex patterns...")
+        function_matches = nx_discover.grep(r"def \w+\(")
+        print(f"   Searching for function definitions: {len(function_matches)} matches")
+        for match in function_matches[:5]:  # Show first 5
+            print(f"   - {match['file']}:{match['line']}")
+            print(f"     {match['content'].strip()}")
+            print(f"     Match: '{match['match']}'")
+
+        print("\n58. Testing grep() with file pattern filtering...")
+        todo_in_py = nx_discover.grep("TODO", file_pattern="**/*.py")
+        print(f"   Searching 'TODO' in Python files only: {len(todo_in_py)} matches")
+        for match in todo_in_py:
+            print(f"   - {match['file']}:{match['line']}")
+
+        print("\n59. Testing grep() case-insensitive search...")
+        api_matches_sensitive = nx_discover.grep("api")
+        api_matches_insensitive = nx_discover.grep("api", ignore_case=True)
+        print(f"   Case-sensitive 'api': {len(api_matches_sensitive)} matches")
+        print(f"   Case-insensitive 'api': {len(api_matches_insensitive)} matches")
+        for match in api_matches_insensitive:
+            print(f"   - {match['file']}:{match['line']}")
+            print(f"     {match['content'].strip()}")
+
+        print("\n60. Testing grep() with result limiting...")
+        # Create a file with many matches
+        repeated_content = "\n".join([f"Line {i} with KEYWORD here" for i in range(50)])
+        nx_discover.write("/test/repeated.txt", repeated_content.encode())
+
+        limited_results = nx_discover.grep("KEYWORD", max_results=5)
+        print(f"   Limited to 5 results: {len(limited_results)} matches returned")
+        for match in limited_results:
+            print(f"   - Line {match['line']}: {match['content'][:40]}...")
+
+        print("\n61. Practical example: Finding all test files...")
+        # Combine glob and grep for powerful file discovery
+        all_test_files = nx_discover.glob("**/test_*.py")
+        print(f"   Found {len(all_test_files)} test files:")
+        for f in sorted(all_test_files):
+            print(f"   - {f}")
+
+        print("\n62. Practical example: Finding unimplemented tests...")
+        unimplemented = nx_discover.grep("pass|TODO", file_pattern="**/test_*.py")
+        print(f"   Found {len(unimplemented)} potential unimplemented tests:")
+        for match in unimplemented:
+            print(f"   - {match['file']}:{match['line']}")
+            print(f"     {match['content'].strip()}")
+
+        print("\n63. Summary of file discovery operations:")
+        print("   list() enhancements:")
+        print("   ✓ recursive parameter - control depth of listing")
+        print("   ✓ details parameter - get file metadata (size, dates, etag)")
+        print("   ✓ Backward compatible with old prefix parameter")
+        print()
+        print("   glob() patterns supported:")
+        print("   ✓ * - matches any characters except /")
+        print("   ✓ ** - matches any characters including / (recursive)")
+        print("   ✓ ? - matches single character")
+        print("   ✓ [...] - character classes")
+        print()
+        print("   grep() capabilities:")
+        print("   ✓ Regex pattern matching in file contents")
+        print("   ✓ File filtering with glob patterns")
+        print("   ✓ Case-insensitive search option")
+        print("   ✓ Result limiting for large result sets")
+        print("   ✓ Automatic binary file detection and skipping")
+        print("   ✓ Returns file path, line number, matched line, and match text")
+
+        nx_discover.close()
+
+        # ============================================================
         # Summary
         # ============================================================
         print("\n" + "=" * 70)
@@ -935,6 +1100,10 @@ NEW in v0.1.0:
         print("   ✓ Reference counting (safe deletion)")
         print("   ✓ Atomic writes (data integrity)")
         print("   ✓ SHA-256 content hashing")
+        print("   ✓ File discovery operations (list/glob/grep) - NEW in v0.1.0!")
+        print("     - list() with recursive and details options")
+        print("     - glob() with ** recursive patterns")
+        print("     - grep() with regex and file filtering")
         print()
         print("📁 Files created:")
         workspace_backend_files = list((data_dir / "workspace-isolated").rglob("*"))

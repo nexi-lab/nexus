@@ -70,6 +70,7 @@ CONFIG_OPTION = click.option(
 
 class BackendConfig:
     """Configuration for backend connection."""
+
     def __init__(
         self,
         backend: str = "local",
@@ -105,7 +106,7 @@ def add_backend_options(func):
         gcs_bucket: str | None,
         gcs_project: str | None,
         gcs_credentials: str | None,
-        **kwargs
+        **kwargs,
     ):
         # Create backend config and pass to function
         backend_config = BackendConfig(

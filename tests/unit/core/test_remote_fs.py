@@ -87,9 +87,7 @@ class TestRemoteFSInitialization:
             )
             fs.close()
 
-    def test_init_with_tenant_and_agent(
-        self, temp_dir: Path, mock_gcs_backend: Mock
-    ) -> None:
+    def test_init_with_tenant_and_agent(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
         """Test initialization with tenant and agent context."""
         db_path = temp_dir / "metadata.db"
         fs = RemoteFS(
@@ -685,7 +683,7 @@ class TestGrepEdgeCases:
     def test_grep_binary_file(self, remote_fs: RemoteFS) -> None:
         """Test grep skips binary files that can't be decoded as UTF-8."""
         # Create binary file with invalid UTF-8 sequences
-        binary_content = b"\x80\x81\x82\x83\xFF\xFE\xFD"
+        binary_content = b"\x80\x81\x82\x83\xff\xfe\xfd"
         path = "/binary.dat"
         content_hash = "hash123"
 

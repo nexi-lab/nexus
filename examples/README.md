@@ -233,7 +233,71 @@ nx.delete("/reports/summary.txt")
 # Content automatically removed (ref_count=0)
 ```
 
-### 5. Default Namespaces
+### 5. Metadata Export/Import (NEW in v0.1.0!)
+
+**Backup and Migration:**
+
+Nexus supports exporting and importing metadata in JSONL format for easy backup and migration.
+
+```python
+import nexus
+
+nx = nexus.connect(config={"data_dir": "./nexus-data"})
+
+# Export all metadata to JSONL file
+count = nx.export_metadata("backup.jsonl")
+print(f"Exported {count} files")
+
+# Export only specific prefix
+count = nx.export_metadata("workspace-backup.jsonl", prefix="/workspace")
+
+# Import metadata from JSONL file
+imported, skipped = nx.import_metadata("backup.jsonl")
+print(f"Imported {imported} files, skipped {skipped}")
+
+# Import with overwrite
+imported, skipped = nx.import_metadata("backup.jsonl", overwrite=True)
+
+nx.close()
+```
+
+**CLI Commands:**
+
+```bash
+# Export all metadata
+nexus export metadata-backup.jsonl
+
+# Export with prefix filter
+nexus export workspace-backup.jsonl --prefix /workspace
+
+# Import metadata
+nexus import metadata-backup.jsonl
+
+# Import with overwrite
+nexus import metadata-backup.jsonl --overwrite
+```
+
+**JSONL Format:**
+
+Each line in the export file is a JSON object containing:
+- `path`: Virtual file path
+- `size`: File size in bytes
+- `etag`: Content hash (SHA-256)
+- `backend_name`: Backend identifier
+- `physical_path`: Physical storage path (content hash in CAS)
+- `mime_type`: MIME type (optional)
+- `created_at`: Creation timestamp (ISO format)
+- `modified_at`: Modification timestamp (ISO format)
+- `version`: Version number
+- `custom_metadata`: Custom key-value metadata (optional)
+
+**Important Notes:**
+- Export/import only handles metadata, not file content
+- Content must already exist in CAS storage (matched by content hash)
+- Useful for disaster recovery, migration, and auditing
+- Human-readable JSON format for easy inspection
+
+### 6. Default Namespaces
 
 Nexus provides 5 default namespaces out of the box:
 
@@ -343,6 +407,7 @@ data = nx_admin.read("/workspace/acme/agent1/secret.txt")  # ✓ Works!
 - ✅ **Admin access override** (bypass isolation)
 - ✅ **Configuration system** (dict, YAML, env vars)
 - ✅ **Namespace access control** (readonly, admin-only)
+- ✅ **Metadata export/import** (JSONL format for backup/migration)
 
 ### 🚧 Coming in v0.2.0+
 

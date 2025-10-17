@@ -88,7 +88,7 @@ class BackendConfig:
         self.gcs_credentials = gcs_credentials
 
 
-def add_backend_options(func):
+def add_backend_options(func: Any) -> Any:
     """Decorator to add all backend-related options to a command and pass them via context."""
     import functools
 
@@ -106,8 +106,8 @@ def add_backend_options(func):
         gcs_bucket: str | None,
         gcs_project: str | None,
         gcs_credentials: str | None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> Any:
         # Create backend config and pass to function
         backend_config = BackendConfig(
             backend=backend,
@@ -141,6 +141,24 @@ def get_filesystem(backend_config: BackendConfig) -> NexusFilesystem:
         else:
             # Use local backend (default)
             return nexus.connect(config={"data_dir": backend_config.data_dir})
+    except Exception as e:
+        console.print(f"[red]Error connecting to Nexus:[/red] {e}")
+        sys.exit(1)
+
+
+def get_filesystem_legacy(data_dir: str, config_path: str | None = None) -> NexusFilesystem:
+    """Get Nexus filesystem instance (legacy API for embedded-only commands).
+
+    This is a compatibility function for commands that only support embedded mode
+    and haven't been updated to use BackendConfig yet.
+    """
+    try:
+        if config_path:
+            # Use explicit config file
+            return nexus.connect(config=config_path)
+        else:
+            # Use data_dir or auto-discover
+            return nexus.connect(config={"data_dir": data_dir})
     except Exception as e:
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")
         sys.exit(1)
@@ -681,7 +699,7 @@ def export_metadata(
     try:
         from nexus.core.export_import import ExportFilter
 
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem_legacy(data_dir, config)
 
         # Note: Only Embedded mode supports metadata export
         if not isinstance(nx, Embedded):
@@ -794,7 +812,7 @@ def import_metadata(
     try:
         from nexus.core.export_import import ImportOptions
 
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem_legacy(data_dir, config)
 
         # Note: Only Embedded mode supports metadata import
         if not isinstance(nx, Embedded):
@@ -903,7 +921,7 @@ def work_command(
         nexus work ready --json
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem_legacy(data_dir, config)
 
         # Only Embedded mode has metadata store with work views
         if not isinstance(nx, Embedded):
@@ -1074,7 +1092,7 @@ def find_duplicates(path: str, json_output: bool, config: str | None, data_dir: 
         nexus find-duplicates --json
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem_legacy(data_dir, config)
 
         # Only Embedded mode supports batch_get_content_ids
         if not isinstance(nx, Embedded):

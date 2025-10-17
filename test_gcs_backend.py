@@ -15,7 +15,7 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 
-def test_gcs_backend():
+def test_gcs_backend() -> int:
     """Test GCS backend with real data."""
 
     # Configuration - Can be set via environment variables or command line args
@@ -38,7 +38,7 @@ def test_gcs_backend():
         print(f"✓ Using credentials from: {creds_path}")
         if not Path(creds_path).exists():
             print(f"✗ ERROR: Credentials file not found at {creds_path}")
-            return
+            return 1
     else:
         print("✓ Using Application Default Credentials (gcloud auth)")
 

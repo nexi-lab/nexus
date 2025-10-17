@@ -620,6 +620,156 @@ nx.write("/datasets/acme/training/data.csv", data_bytes)
 nx.write("/experiments/acme/exp-001/results.json", results_bytes)
 ```
 
+## 6. Work Detection with SQL Views (Issue #69)
+
+Nexus provides efficient SQL views for detecting and querying "ready work" - files that represent tasks or jobs in a work queue system. This enables building distributed task processing systems using the "Everything as a File" paradigm.
+
+### What is "Work" in Nexus?
+
+In Nexus, **work items** are files that represent tasks, jobs, or processing units. Each file has metadata that describes its state and dependencies:
+
+- `status`: One of `ready`, `pending`, `blocked`, `in_progress`, `completed`, `failed`
+- `priority`: Integer (lower = higher priority)
+- `depends_on`: Path ID of a file this work depends on (creates dependency chain)
+- `worker_id`: ID of worker processing this item
+- `started_at`, `completed_at`: Timestamps
+
+### SQL Views for Work Detection
+
+Five optimized SQL views provide O(n) performance for complex work queries:
+
+1. **ready_work_items** - Files ready for processing (status='ready', no blockers)
+2. **pending_work_items** - Files waiting to start (status='pending')
+3. **blocked_work_items** - Files blocked by dependencies
+4. **in_progress_work** - Files currently being processed
+5. **work_by_priority** - All work items ordered by priority
+
+### Python API
+
+```python
+import nexus
+from datetime import datetime
+
+nx = nexus.connect(config={"data_dir": "./nexus-data"})
+
+# Create work item files
+nx.write("/jobs/task1.json", b'{"task": "process_data"}')
+nx.write("/jobs/task2.json", b'{"task": "train_model"}')
+
+# Set work metadata
+nx.metadata.set_file_metadata("/jobs/task1.json", "status", "ready")
+nx.metadata.set_file_metadata("/jobs/task1.json", "priority", 1)  # High priority
+
+nx.metadata.set_file_metadata("/jobs/task2.json", "status", "in_progress")
+nx.metadata.set_file_metadata("/jobs/task2.json", "worker_id", "worker-001")
+nx.metadata.set_file_metadata("/jobs/task2.json", "started_at", datetime.utcnow().isoformat())
+
+# Query ready work (sorted by priority)
+ready_work = nx.metadata.get_ready_work(limit=10)
+for item in ready_work:
+    print(f"Ready: {item['virtual_path']}, Priority: {item['priority']}")
+
+# Query in-progress work
+in_progress = nx.metadata.get_in_progress_work()
+for item in in_progress:
+    print(f"Processing: {item['virtual_path']}, Worker: {item['worker_id']}")
+
+# Query blocked work
+blocked = nx.metadata.get_blocked_work()
+for item in blocked:
+    print(f"Blocked: {item['virtual_path']}, Blockers: {item['blocker_count']}")
+
+nx.close()
+```
+
+### CLI Usage
+
+```bash
+# Query ready work items
+nexus work ready --limit 10
+
+# Query work by status
+nexus work pending
+nexus work blocked
+nexus work in-progress
+
+# View aggregate statistics
+nexus work status
+
+# Output as JSON
+nexus work ready --json
+nexus work status --json
+```
+
+### Example: Work Queue System
+
+```python
+# Worker loop
+while True:
+    # Get highest priority ready work
+    ready = store.get_ready_work(limit=1)
+    if ready:
+        item = ready[0]
+        path = item['virtual_path']
+
+        # Mark as in-progress
+        store.set_file_metadata(path, "status", "in_progress")
+        store.set_file_metadata(path, "worker_id", worker_id)
+        store.set_file_metadata(path, "started_at", datetime.utcnow().isoformat())
+
+        # Process work
+        process_work_item(item)
+
+        # Mark as completed
+        store.set_file_metadata(path, "status", "completed")
+        store.set_file_metadata(path, "completed_at", datetime.utcnow().isoformat())
+    else:
+        time.sleep(1)
+```
+
+### Example: Dependency Resolution
+
+```python
+# Create dependent work items
+nx.write("/jobs/step1.json", b'{"task": "data_prep"}')
+nx.write("/jobs/step2.json", b'{"task": "training"}')
+
+# Step 1 is ready
+nx.metadata.set_file_metadata("/jobs/step1.json", "status", "ready")
+nx.metadata.set_file_metadata("/jobs/step1.json", "priority", 1)
+
+# Step 2 depends on Step 1
+step1_meta = nx.metadata.get("/jobs/step1.json")
+nx.metadata.set_file_metadata("/jobs/step2.json", "status", "blocked")
+nx.metadata.set_file_metadata("/jobs/step2.json", "depends_on", step1_meta.path_id)
+
+# Only step1 will appear in ready_work
+ready = nx.metadata.get_ready_work()  # Returns [step1]
+
+# After completing step1, step2 may become ready
+nx.metadata.set_file_metadata("/jobs/step1.json", "status", "completed")
+nx.metadata.set_file_metadata("/jobs/step2.json", "status", "ready")
+
+ready = nx.metadata.get_ready_work()  # Now returns [step2]
+```
+
+### Performance
+
+- O(n) query performance using indexed SQL views
+- Efficient dependency checking with EXISTS subqueries
+- < 100ms query time for 10,000+ work items
+- Automatic query optimization by SQLite
+
+### Use Cases
+
+- **Work Queue Systems**: Distributed task processing (Celery, RQ alternative)
+- **DAG Execution**: Dependency resolution (Airflow-style workflows)
+- **Priority Scheduling**: High-priority tasks first
+- **Monitoring Dashboards**: Real-time work queue status
+- **Load Balancing**: Worker assignment and tracking
+
+See `docs/SQL_VIEWS_FOR_WORK_DETECTION.md` for full documentation and examples.
+
 ## Next Steps
 
 1. **Run the comprehensive demo**: `PYTHONPATH=src python examples/embedded_demo.py`

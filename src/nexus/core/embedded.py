@@ -601,6 +601,8 @@ class Embedded(NexusFilesystem):
             AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
             PermissionError: If path is read-only
         """
+        import errno
+
         path = self._validate_path(path)
 
         # Route to backend with write access check (rmdir requires write permission)
@@ -615,6 +617,21 @@ class Embedded(NexusFilesystem):
         # Check readonly
         if route.readonly:
             raise PermissionError(f"Cannot remove directory from read-only path: {path}")
+
+        # Check if directory contains any files in metadata store
+        # Normalize path to ensure it ends with /
+        dir_path = path if path.endswith("/") else path + "/"
+        files_in_dir = self.metadata.list(dir_path)
+
+        if files_in_dir:
+            # Directory is not empty
+            if not recursive:
+                # Raise OSError with ENOTEMPTY errno (same as os.rmdir behavior)
+                raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}")
+
+            # Recursive mode - delete all files in directory first
+            for file_meta in files_in_dir:
+                self.delete(file_meta.path)
 
         # Remove directory in backend
         route.backend.rmdir(route.backend_path, recursive=recursive)

@@ -134,6 +134,7 @@ omit = [
     "*/test_*.py",
     "*/__pycache__/*",
     "*/site-packages/*",
+    "*/cli.py",  # CLI is tested via integration tests in examples/test_cli_commands.sh
 ]
 
 [tool.coverage.report]

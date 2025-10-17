@@ -190,6 +190,44 @@ test_command "Grep with multiple matches" \
 test_command "Complex glob with test_*.py pattern" \
     nexus glob "test*.py" --path /workspace --data-dir "$DATA_DIR"
 
+# Test 31: Export metadata to JSONL
+test_command "Export all metadata to JSONL" \
+    nexus export "$TEST_WORKSPACE/metadata-export.jsonl" --data-dir "$DATA_DIR"
+
+# Test 32: Verify export file exists
+test_command "Verify export file was created" \
+    test -f "$TEST_WORKSPACE/metadata-export.jsonl"
+
+# Test 33: Export with prefix filter
+test_command "Export only /workspace metadata" \
+    nexus export "$TEST_WORKSPACE/workspace-export.jsonl" --prefix /workspace --data-dir "$DATA_DIR"
+
+# Test 34: Create a new test workspace for import testing
+IMPORT_DATA_DIR="$TEST_WORKSPACE/import-test-data"
+test_command "Create import test workspace" \
+    mkdir -p "$IMPORT_DATA_DIR"
+
+# Test 35: Import metadata to new workspace
+test_command "Import metadata from export file" \
+    nexus import "$TEST_WORKSPACE/metadata-export.jsonl" --data-dir "$IMPORT_DATA_DIR"
+
+# Test 36: Verify imported files exist in metadata
+test_command "List imported files" \
+    nexus ls / --data-dir "$IMPORT_DATA_DIR"
+
+# Test 37: Re-import with skip existing (should skip all)
+test_command "Re-import should skip existing files" \
+    nexus import "$TEST_WORKSPACE/metadata-export.jsonl" --data-dir "$IMPORT_DATA_DIR"
+
+# Test 38: Import with overwrite
+test_command "Import with overwrite flag" \
+    nexus import "$TEST_WORKSPACE/metadata-export.jsonl" --overwrite --data-dir "$IMPORT_DATA_DIR"
+
+# Test 39: Test export/import workflow end-to-end
+test_command "End-to-end export/import workflow" \
+    bash -c "nexus export $TEST_WORKSPACE/full-backup.jsonl --data-dir $DATA_DIR && \
+             nexus import $TEST_WORKSPACE/full-backup.jsonl --data-dir $IMPORT_DATA_DIR"
+
 # Summary
 echo -e "${BLUE}================================${NC}"
 echo -e "${BLUE}Test Summary${NC}"

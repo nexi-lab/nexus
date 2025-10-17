@@ -1016,6 +1016,139 @@ def main() -> None:
         nx_discover.close()
 
         # ============================================================
+        # Part 10: Metadata Export/Import (v0.1.0 - NEW!)
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 10: Metadata Export/Import - NEW in v0.1.0!")
+        print("=" * 70)
+        print("Issue #68 - Implement metadata export/import (JSONL format)")
+
+        print("\n64. Setting up test data for export/import...")
+        export_dir = data_dir / "export-demo"
+        nx_export = nexus.connect(config={"data_dir": str(export_dir)})
+
+        # Create test files with various metadata
+        test_export_files = {
+            "/workspace/project1/main.py": b"def main():\n    print('Hello World')\n",
+            "/workspace/project1/utils.py": b"def helper():\n    return 42\n",
+            "/workspace/project2/app.py": b"# Application entry point\n",
+            "/shared/models/v1.pkl": b"mock ML model data",
+            "/shared/datasets/train.csv": b"col1,col2\n1,2\n3,4\n",
+        }
+
+        for path, content in test_export_files.items():
+            nx_export.write(path, content)
+
+        # Add custom metadata to some files
+        print(f"   ✓ Created {len(test_export_files)} test files")
+        print("\n   Adding custom metadata to files...")
+        nx_export.metadata.set_file_metadata("/workspace/project1/main.py", "author", "Alice")
+        nx_export.metadata.set_file_metadata("/workspace/project1/main.py", "version", "1.0")
+        nx_export.metadata.set_file_metadata("/shared/models/v1.pkl", "model_type", "classifier")
+        nx_export.metadata.set_file_metadata("/shared/models/v1.pkl", "accuracy", 0.95)
+        print("   ✓ Added custom metadata to 2 files")
+
+        # Test metadata export
+        print("\n65. Exporting all metadata to JSONL file...")
+        export_file = export_dir / "metadata-export.jsonl"
+        exported_count = nx_export.export_metadata(export_file)
+        print(f"   ✓ Exported {exported_count} file metadata records")
+        print(f"   Output: {export_file}")
+
+        # Show sample of exported JSONL
+        print("\n66. Sample of exported JSONL content...")
+        with open(export_file) as f:
+            lines = f.readlines()
+            for i, line in enumerate(lines[:2], 1):
+                import json
+
+                data = json.loads(line)
+                print(f"\n   Record {i}:")
+                print(f"     Path: {data['path']}")
+                print(f"     Size: {data['size']} bytes")
+                print(f"     ETag: {data['etag'][:16]}...")
+                if "custom_metadata" in data:
+                    print(f"     Custom metadata: {data['custom_metadata']}")
+
+        # Test selective export with prefix
+        print("\n67. Exporting only /workspace files...")
+        workspace_export = export_dir / "workspace-export.jsonl"
+        workspace_count = nx_export.export_metadata(workspace_export, prefix="/workspace")
+        print(f"   ✓ Exported {workspace_count} workspace file metadata records")
+        print(f"   Output: {workspace_export}")
+
+        # Test metadata import to a new instance
+        print("\n68. Testing metadata import to new instance...")
+        import_dir = data_dir / "import-demo"
+        nx_import = nexus.connect(config={"data_dir": str(import_dir)})
+
+        # Import metadata
+        print("   Importing metadata from export file...")
+        imported, skipped = nx_import.import_metadata(export_file)
+        print(f"   ✓ Imported {imported} file metadata records")
+        print(f"   Skipped {skipped} existing files")
+
+        # Verify imported metadata
+        print("\n69. Verifying imported metadata...")
+        imported_files = nx_import.list()
+        print(f"   Total files in new instance: {len(imported_files)}")
+        for path in sorted(imported_files)[:3]:
+            meta = nx_import.metadata.get(path)
+            print(f"\n   {path}")
+            print(f"     Size: {meta.size} bytes")
+            print(f"     ETag: {meta.etag[:16]}...")
+
+        # Verify custom metadata was imported
+        print("\n   Checking custom metadata preservation...")
+        author = nx_import.metadata.get_file_metadata("/workspace/project1/main.py", "author")
+        version = nx_import.metadata.get_file_metadata("/workspace/project1/main.py", "version")
+        print(f"   main.py author: {author}")
+        print(f"   main.py version: {version}")
+        print("   ✓ Custom metadata preserved during import!")
+
+        # Test import with overwrite
+        print("\n70. Testing import with overwrite existing metadata...")
+        # Modify a file in the import instance
+        nx_import.metadata.set_file_metadata("/workspace/project1/main.py", "author", "Bob")
+        author_before = nx_import.metadata.get_file_metadata(
+            "/workspace/project1/main.py", "author"
+        )
+        print(f"   Author before re-import: {author_before}")
+
+        # Re-import with overwrite
+        imported2, skipped2 = nx_import.import_metadata(export_file, overwrite=True)
+        print(f"   Re-imported {imported2} records (overwrite=True)")
+
+        # Verify overwrite worked
+        author_after = nx_import.metadata.get_file_metadata("/workspace/project1/main.py", "author")
+        print(f"   Author after re-import: {author_after}")
+        print("   ✓ Metadata was overwritten correctly!")
+
+        nx_export.close()
+        nx_import.close()
+
+        print("\n71. Summary of metadata export/import:")
+        print("   Export capabilities:")
+        print("   ✓ Export all metadata to JSONL format")
+        print("   ✓ Selective export with path prefix filtering")
+        print("   ✓ Includes file metadata (path, size, timestamps, etag)")
+        print("   ✓ Includes custom key-value metadata")
+        print("   ✓ Human-readable JSON format (one file per line)")
+        print()
+        print("   Import capabilities:")
+        print("   ✓ Import metadata from JSONL file")
+        print("   ✓ Skip existing files (default behavior)")
+        print("   ✓ Overwrite existing metadata (with --overwrite flag)")
+        print("   ✓ Restore custom metadata")
+        print("   ✓ Validate required fields during import")
+        print()
+        print("   Use cases:")
+        print("   • Backup metadata for disaster recovery")
+        print("   • Migrate metadata between instances")
+        print("   • Create alternative path mappings to same content")
+        print("   • Audit and inspect file metadata externally")
+
+        # ============================================================
         # Summary
         # ============================================================
         print("\n" + "=" * 70)
@@ -1104,6 +1237,11 @@ NEW in v0.1.0:
         print("     - list() with recursive and details options")
         print("     - glob() with ** recursive patterns")
         print("     - grep() with regex and file filtering")
+        print("   ✓ Metadata export/import (JSONL format) - NEW in v0.1.0!")
+        print("     - Export metadata to JSONL for backup/migration")
+        print("     - Import metadata from JSONL with validation")
+        print("     - Selective export with path prefix filtering")
+        print("     - Preserve custom metadata during export/import")
         print()
         print("📁 Files created:")
         workspace_backend_files = list((data_dir / "workspace-isolated").rglob("*"))

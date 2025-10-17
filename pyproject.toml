@@ -38,26 +38,24 @@ dependencies = [
     # CLI (needed for basic CLI stub)
     "click>=8.1.7",
     "rich>=13.7.0",
-
     # Configuration
     "pydantic>=2.5.0",
     "pyyaml>=6.0.1",
-
     # HTTP client (for remote mode)
     "httpx>=0.27.0",
-
     # Database (v0.1.0)
     "sqlalchemy>=2.0.0",
     "alembic>=1.13.0",
-
     # Caching (v0.1.0)
     "cachetools>=5.3.0",
-
+    # Cloud Storage Backends
+    "google-cloud-storage>=2.14.0",
     # Note: Dependencies will be added incrementally as features are implemented
     # v0.1.0: Will add SQLAlchemy, aiosqlite, cachetools
     # v0.2.0: Will add pypdf, openpyxl, pandas, qdrant-client
     # v0.3.0: Will add anthropic, openai, tiktoken
     # v0.5.0: Will add fastapi, uvicorn
+    "dotenv>=0.9.9",
 ]
 
 [project.optional-dependencies]
@@ -180,8 +178,13 @@ module = [
     "click.*",
     "rich.*",
     "alembic.*",
+    "google.cloud.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.gcs"
+disable_error_code = ["attr-defined"]
 
 [tool.ruff]
 target-version = "py311"

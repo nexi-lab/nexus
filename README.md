@@ -2,14 +2,13 @@
 
 [![Test](https://github.com/nexi-lab/nexus/actions/workflows/test.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/test.yml)
 [![Lint](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml)
-[![codecov](https://codecov.io/gh/nexi-lab/nexus/branch/main/graph/badge.svg)](https://codecov.io/gh/nexi-lab/nexus)
 [![PyPI version](https://badge.fury.io/py/nexus-ai-fs.svg)](https://badge.fury.io/py/nexus-ai-fs)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 **Version 0.1.0** | AI Agent Infrastructure Platform
 
-Nexus is a complete AI agent infrastructure platform that combines distributed unified filesystem, self-evolving agent memory, intelligent document processing, and seamless deployment across three modes—all from a single codebase.
+Nexus is a complete AI agent infrastructure platform that combines distributed unified filesystem, self-evolving agent memory, intelligent document processing, and seamless deployment from local development to hosted production—all from a single codebase.
 
 ## Features
 
@@ -24,6 +23,10 @@ Nexus is a complete AI agent infrastructure platform that combines distributed u
 - **Memory Versioning**: Track knowledge evolution over time
 - **Multi-Agent Sharing**: Shared memory spaces within tenants
 - **Memory Analytics**: Effectiveness tracking and insights
+- **Prompt Version Control**: Track prompt evolution with lineage
+- **Training Data Management**: Version-controlled datasets with deduplication
+- **Prompt Optimization**: Multi-candidate testing, execution traces, tradeoff analysis
+- **Experiment Tracking**: Organize optimization runs, per-example results, regression detection
 
 ### Content Processing
 - **Rich Format Parsing**: Extensible parsers (PDF, Excel, CSV, JSON, images)
@@ -38,17 +41,18 @@ Nexus is a complete AI agent infrastructure platform that combines distributed u
 - **Backend Auto-Mount**: Automatic recognition and mounting
 - **Resource Management**: CPU throttling and rate limiting
 
-## Three Deployment Modes
+## Deployment Modes
 
-Nexus uniquely supports three deployment modes from a single codebase:
+Nexus supports two deployment modes from a single codebase:
 
-| Mode | Users | Data | Use Case | Setup Time |
-|------|-------|------|----------|------------|
-| **Embedded** | 1 | ~10GB | Individual developers, CLI tools | 60 seconds |
-| **Monolithic** | 1-20 | ~100GB | Small teams, staging | 10 minutes |
-| **Distributed** | 100+ | Petabyte+ | Enterprise, production | Hours |
+| Mode | Use Case | Setup Time | Scaling |
+|------|----------|------------|---------|
+| **Local** | Individual developers, CLI tools, prototyping | 60 seconds | Single machine (~10GB) |
+| **Hosted** | Teams and production (auto-scales) | Sign up | Automatic (GB to Petabytes) |
 
-### Quick Start: Embedded Mode
+**Note**: Hosted mode automatically scales infrastructure under the hood—you don't choose between "monolithic" or "distributed". Nexus handles that for you based on your usage.
+
+### Quick Start: Local Mode
 
 ```python
 import nexus
@@ -78,34 +82,33 @@ async with nx:
 
 **Config file (`nexus.yaml`):**
 ```yaml
-mode: embedded
+mode: local
 data_dir: ./nexus-data
 cache_size_mb: 100
 enable_vector_search: true
 ```
 
-### Quick Start: Monolithic Server
+### Quick Start: Hosted Mode
 
-```bash
-# Single Docker container for teams
-docker run -d -p 8080:8080 \
-  -v ./nexus-data:/data \
-  -e NEXUS_MODE=monolithic \
-  nexus/nexus:latest server
+**Coming Soon!** Sign up for early access at [nexus.ai](https://nexus.ai)
 
-# Or with docker-compose
-docker-compose up -d
+```python
+import nexus
+
+# Connect to Nexus hosted instance
+# Infrastructure scales automatically based on your usage
+nx = nexus.connect(
+    api_key="your-api-key",
+    endpoint="https://api.nexus.ai"
+)
+
+async with nx:
+    # Same API as local mode!
+    await nx.write("/workspace/data.txt", b"Hello World")
+    content = await nx.read("/workspace/data.txt")
 ```
 
-### Quick Start: Distributed Mode
-
-```bash
-# Kubernetes with Helm
-helm install nexus nexus/nexus-distributed \
-  --set replicas=5 \
-  --set postgres.enabled=true \
-  --set redis.enabled=true
-```
+**For self-hosted deployments**, see [Deployment Guide](./docs/deployment.md) for Docker and Kubernetes setup instructions.
 
 ## Installation
 
@@ -349,7 +352,7 @@ Every agent gets a structured workspace at `/workspace/{tenant}/{agent}/`:
 ```python
 import nexus
 
-# Works in embedded, monolithic, or distributed mode
+# Works in both local and hosted modes
 # Mode determined by config file or environment
 nx = nexus.connect()
 
@@ -411,6 +414,47 @@ async with nexus.connect() as nx:
     memories = await nx.search_memories(
         query="programming language preferences",
         limit=5
+    )
+```
+
+### Prompt Optimization (Coming in v0.9.5)
+
+```python
+# Track multiple prompt candidates during optimization
+async with nexus.connect() as nx:
+    # Start optimization run
+    run_id = await nx.start_optimization_run(
+        module_name="SearchModule",
+        objectives=["accuracy", "latency", "cost"]
+    )
+
+    # Store prompt candidates with detailed traces
+    for candidate in prompt_variants:
+        version_id = await nx.store_prompt_version(
+            module_name="SearchModule",
+            prompt_template=candidate.template,
+            metrics={"accuracy": 0.85, "latency_ms": 450},
+            run_id=run_id
+        )
+
+        # Store execution traces for debugging
+        await nx.store_execution_trace(
+            prompt_version_id=version_id,
+            inputs=test_inputs,
+            outputs=predictions,
+            intermediate_steps=reasoning_chain
+        )
+
+    # Analyze tradeoffs across candidates
+    analysis = await nx.analyze_prompt_tradeoffs(
+        run_id=run_id,
+        objectives=["accuracy", "latency_ms", "cost_per_query"]
+    )
+
+    # Get per-example results to find failure patterns
+    failures = await nx.get_failing_examples(
+        prompt_version_id=version_id,
+        limit=20
     )
 ```
 
@@ -477,17 +521,21 @@ async with nexus.connect() as nx:
 | Storage Savings | 30-50% | CAS deduplication |
 | Job Resumability | 100% | Survives all restarts |
 | LLM Cache Hit Rate | 50-90% | Major cost savings |
+| Prompt Versioning | Full lineage | Track optimization history |
+| Training Data Dedup | 30-50% | CAS-based deduplication |
+| Prompt Optimization | Multi-candidate | Test multiple strategies in parallel |
+| Trace Storage | Full execution logs | Debug failures, analyze patterns |
 
 ## Configuration
 
-### Embedded Mode
+### Local Mode
 
 ```python
 import nexus
 
 # Config via Python (useful for programmatic configuration)
 nx = nexus.connect(config={
-    "mode": "embedded",
+    "mode": "local",
     "data_dir": "./nexus-data",
     "cache_size_mb": 100,
     "enable_vector_search": True
@@ -497,12 +545,12 @@ nx = nexus.connect(config={
 nx = nexus.connect()
 ```
 
-### Server Mode
+### Self-Hosted Deployment
 
-Create `config.yaml`:
+For organizations that want to run their own Nexus instance, create `config.yaml`:
 
 ```yaml
-mode: monolithic  # embedded, monolithic, distributed
+mode: server  # local or server
 
 database:
   url: postgresql://user:pass@localhost/nexus
@@ -618,7 +666,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 
 ## Roadmap
 
-### v0.1.0 - Embedded Mode Foundation (Current)
+### v0.1.0 - Local Mode Foundation (Current)
 - [x] Core embedded filesystem (read/write/delete)
 - [x] SQLite metadata store
 - [x] Local filesystem backend
@@ -669,7 +717,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Memory reflection phase (ACE-inspired: extract insights from execution trajectories)
 - [ ] Strategy/playbook organization (ACE-inspired: organize memories as reusable strategies)
 
-### v0.6.0 - Monolithic Server Mode
+### v0.6.0 - Server Mode (Self-Hosted & Managed)
 - [ ] FastAPI REST API
 - [ ] API key authentication
 - [ ] Multi-tenancy support
@@ -678,6 +726,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Docker deployment
 - [ ] Batch/transaction APIs (atomic multi-operation updates)
 - [ ] Optimistic locking for concurrent writes
+- [ ] Auto-scaling configuration (for hosted deployments)
 
 ### v0.7.0 - Extended Features & Event System
 - [ ] S3 backend support
@@ -711,12 +760,27 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Documentation completion
 - [ ] Optional OpenTelemetry export (for framework integration)
 
-### v0.10.0 - Distributed Mode
-- [ ] Distributed architecture
-- [ ] Redis distributed locks
-- [ ] PostgreSQL replication
-- [ ] Kubernetes deployment
-- [ ] Load balancing
+### v0.9.5 - Prompt Engineering & Optimization
+- [ ] Prompt version control with lineage tracking
+- [ ] Training dataset storage with CAS deduplication
+- [ ] Evaluation metrics time series (performance tracking)
+- [ ] Frozen inference snapshots (immutable program state)
+- [ ] Experiment tracking export (MLflow, W&B integration)
+- [ ] Prompt diff viewer (compare versions)
+- [ ] Regression detection alerts (performance drops)
+- [ ] Multi-candidate pool management (concurrent prompt testing)
+- [ ] Execution trace storage (detailed run logs for debugging)
+- [ ] Per-example evaluation results (granular performance tracking)
+- [ ] Optimization run grouping (experiment management)
+- [ ] Multi-objective tradeoff analysis (accuracy vs latency vs cost)
+
+### v0.10.0 - Production Infrastructure & Auto-Scaling
+- [ ] Automatic infrastructure scaling
+- [ ] Redis distributed locks (for large deployments)
+- [ ] PostgreSQL replication (for high availability)
+- [ ] Kubernetes deployment templates
+- [ ] Multi-region load balancing
+- [ ] Automatic migration from single-node to distributed
 
 ### v1.0.0 - Production Release
 - [ ] Complete feature set

@@ -109,25 +109,30 @@ helm install nexus nexus/nexus-distributed \
 
 ## Installation
 
-### Using uv (Recommended)
+### Using pip (Recommended)
 
 ```bash
-# Install uv if you haven't already
-curl -LsSf https://astral.sh/uv/install.sh | sh
+# Install from PyPI
+pip install nexus-ai-fs
 
-# Clone and setup
-git clone https://github.com/yourusername/nexus.git
+# Verify installation
+nexus --version
+```
+
+### From Source (Development)
+
+```bash
+# Clone the repository
+git clone https://github.com/nexi-lab/nexus.git
 cd nexus
 
-# Create virtual environment and install dependencies
+# Install using uv (recommended for faster installs)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 uv pip install -e ".[dev]"
-```
 
-### Using pip
-
-```bash
+# Or using pip
 pip install -e ".[dev]"
 ```
 
@@ -148,6 +153,157 @@ ruff format .
 
 # Lint
 ruff check .
+```
+
+## CLI Usage
+
+Nexus provides a beautiful command-line interface for all file operations. After installation, the `nexus` command will be available.
+
+### Quick Start
+
+```bash
+# Initialize a new workspace
+nexus init ./my-workspace
+
+# Write a file
+nexus write /workspace/hello.txt "Hello, Nexus!"
+
+# Read a file
+nexus cat /workspace/hello.txt
+
+# List files
+nexus ls /workspace
+nexus ls /workspace --recursive
+nexus ls /workspace --long  # Detailed view with metadata
+```
+
+### Available Commands
+
+#### File Operations
+
+```bash
+# Write content to a file
+nexus write /path/to/file.txt "content"
+echo "content" | nexus write /path/to/file.txt --input -
+
+# Display file contents (with syntax highlighting)
+nexus cat /workspace/code.py
+
+# Copy files
+nexus cp /source.txt /dest.txt
+
+# Delete files
+nexus rm /workspace/old-file.txt
+nexus rm /workspace/old-file.txt --force  # Skip confirmation
+
+# Show file information
+nexus info /workspace/data.txt
+```
+
+#### Directory Operations
+
+```bash
+# Create directory
+nexus mkdir /workspace/data
+nexus mkdir /workspace/deep/nested/dir --parents
+
+# Remove directory
+nexus rmdir /workspace/data
+nexus rmdir /workspace/data --recursive --force
+```
+
+#### File Discovery
+
+```bash
+# List files
+nexus ls /workspace
+nexus ls /workspace --recursive
+nexus ls /workspace --long  # Show size, modified time, etag
+
+# Find files by pattern (glob)
+nexus glob "**/*.py"  # All Python files recursively
+nexus glob "*.txt" --path /workspace  # Text files in workspace
+nexus glob "test_*.py"  # Test files
+
+# Search file contents (grep)
+nexus grep "TODO"  # Find all TODO comments
+nexus grep "def \w+" --file-pattern "**/*.py"  # Find function definitions
+nexus grep "error" --ignore-case  # Case-insensitive search
+nexus grep "TODO" --max-results 50  # Limit results
+```
+
+### Examples
+
+**Initialize and populate a workspace:**
+
+```bash
+# Create workspace
+nexus init ./my-project
+
+# Create structure
+nexus mkdir /workspace/src --data-dir ./my-project/nexus-data
+nexus mkdir /workspace/tests --data-dir ./my-project/nexus-data
+
+# Add files
+echo "print('Hello World')" | nexus write /workspace/src/main.py --input - \
+  --data-dir ./my-project/nexus-data
+
+# List everything
+nexus ls / --recursive --long --data-dir ./my-project/nexus-data
+```
+
+**Find and analyze code:**
+
+```bash
+# Find all Python files
+nexus glob "**/*.py"
+
+# Search for TODO comments
+nexus grep "TODO|FIXME" --file-pattern "**/*.py"
+
+# Find all test files
+nexus glob "**/test_*.py"
+
+# Search for function definitions
+nexus grep "^def \w+\(" --file-pattern "**/*.py"
+```
+
+**Work with data:**
+
+```bash
+# Write JSON data
+echo '{"name": "test", "value": 42}' | nexus write /data/config.json --input -
+
+# Display with syntax highlighting
+nexus cat /data/config.json
+
+# Get file information
+nexus info /data/config.json
+```
+
+### Global Options
+
+All commands support these global options:
+
+```bash
+# Use custom config file
+nexus ls /workspace --config /path/to/config.yaml
+
+# Override data directory
+nexus ls /workspace --data-dir /path/to/nexus-data
+
+# Combine both (config takes precedence)
+nexus ls /workspace --config ./my-config.yaml --data-dir ./data
+```
+
+### Help
+
+Get help for any command:
+
+```bash
+nexus --help  # Show all commands
+nexus ls --help  # Show help for ls command
+nexus grep --help  # Show help for grep command
 ```
 
 ## Architecture
@@ -463,13 +619,14 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 ## Roadmap
 
 ### v0.1.0 - Embedded Mode Foundation (Current)
-- [ ] Core embedded filesystem (read/write/delete)
-- [ ] SQLite metadata store
-- [ ] Local filesystem backend
-- [ ] Basic file operations (list, glob, grep)
-- [ ] Virtual path routing
+- [x] Core embedded filesystem (read/write/delete)
+- [x] SQLite metadata store
+- [x] Local filesystem backend
+- [x] Basic file operations (list, glob, grep)
+- [x] Virtual path routing
+- [x] Directory operations (mkdir, rmdir, is_directory)
+- [x] Basic CLI interface with Click and Rich
 - [ ] In-memory caching
-- [ ] Basic CLI interface
 - [ ] Batch operations (avoid N+1 queries)
 - [ ] Metadata export/import (JSONL format)
 - [ ] SQL views for ready work detection

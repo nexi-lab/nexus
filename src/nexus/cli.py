@@ -18,16 +18,46 @@ import nexus
 from nexus import NexusFilesystem
 from nexus.core.embedded import Embedded
 from nexus.core.exceptions import NexusError, NexusFileNotFoundError, ValidationError
+from nexus.core.remote_fs import RemoteFS
 
 console = Console()
 
 # Global options
+BACKEND_OPTION = click.option(
+    "--backend",
+    type=click.Choice(["local", "gcs"]),
+    default="local",
+    help="Backend type: local (default) or gcs (Google Cloud Storage)",
+    show_default=True,
+)
+
 DATA_DIR_OPTION = click.option(
     "--data-dir",
     type=click.Path(),
     default="./nexus-data",
-    help="Path to Nexus data directory",
+    help="Path to Nexus data directory (for local backend and metadata DB)",
     show_default=True,
+)
+
+GCS_BUCKET_OPTION = click.option(
+    "--gcs-bucket",
+    type=str,
+    default=None,
+    help="GCS bucket name (required when backend=gcs)",
+)
+
+GCS_PROJECT_OPTION = click.option(
+    "--gcs-project",
+    type=str,
+    default=None,
+    help="GCP project ID (optional for GCS backend)",
+)
+
+GCS_CREDENTIALS_OPTION = click.option(
+    "--gcs-credentials",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to GCS service account credentials JSON file",
 )
 
 CONFIG_OPTION = click.option(
@@ -38,15 +68,79 @@ CONFIG_OPTION = click.option(
 )
 
 
-def get_filesystem(data_dir: str, config_path: str | None = None) -> NexusFilesystem:
-    """Get Nexus filesystem instance."""
+class BackendConfig:
+    """Configuration for backend connection."""
+
+    def __init__(
+        self,
+        backend: str = "local",
+        data_dir: str = "./nexus-data",
+        config_path: str | None = None,
+        gcs_bucket: str | None = None,
+        gcs_project: str | None = None,
+        gcs_credentials: str | None = None,
+    ):
+        self.backend = backend
+        self.data_dir = data_dir
+        self.config_path = config_path
+        self.gcs_bucket = gcs_bucket
+        self.gcs_project = gcs_project
+        self.gcs_credentials = gcs_credentials
+
+
+def add_backend_options(func: Any) -> Any:
+    """Decorator to add all backend-related options to a command and pass them via context."""
+    import functools
+
+    @CONFIG_OPTION
+    @BACKEND_OPTION
+    @DATA_DIR_OPTION
+    @GCS_BUCKET_OPTION
+    @GCS_PROJECT_OPTION
+    @GCS_CREDENTIALS_OPTION
+    @functools.wraps(func)
+    def wrapper(
+        config: str | None,
+        backend: str,
+        data_dir: str,
+        gcs_bucket: str | None,
+        gcs_project: str | None,
+        gcs_credentials: str | None,
+        **kwargs: Any,
+    ) -> Any:
+        # Create backend config and pass to function
+        backend_config = BackendConfig(
+            backend=backend,
+            data_dir=data_dir,
+            config_path=config,
+            gcs_bucket=gcs_bucket,
+            gcs_project=gcs_project,
+            gcs_credentials=gcs_credentials,
+        )
+        return func(backend_config=backend_config, **kwargs)
+
+    return wrapper
+
+
+def get_filesystem(backend_config: BackendConfig) -> NexusFilesystem:
+    """Get Nexus filesystem instance from backend configuration."""
     try:
-        if config_path:
+        if backend_config.config_path:
             # Use explicit config file
-            return nexus.connect(config=config_path)
+            return nexus.connect(config=backend_config.config_path)
+        elif backend_config.backend == "gcs":
+            # Use GCS backend
+            if not backend_config.gcs_bucket:
+                console.print("[red]Error:[/red] --gcs-bucket is required when using --backend=gcs")
+                sys.exit(1)
+            return RemoteFS(
+                bucket_name=backend_config.gcs_bucket,
+                project_id=backend_config.gcs_project,
+                credentials_path=backend_config.gcs_credentials,
+            )
         else:
-            # Use data_dir or auto-discover
-            return nexus.connect(config={"data_dir": data_dir})
+            # Use local backend (default)
+            return nexus.connect(config={"data_dir": backend_config.data_dir})
     except Exception as e:
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")
         sys.exit(1)
@@ -120,18 +214,23 @@ def init(path: str) -> None:
 @click.argument("path", default="/", type=str)
 @click.option("-r", "--recursive", is_flag=True, help="List files recursively")
 @click.option("-l", "--long", is_flag=True, help="Show detailed information")
-@CONFIG_OPTION
-@DATA_DIR_OPTION
-def list_files(path: str, recursive: bool, long: bool, config: str | None, data_dir: str) -> None:
+@add_backend_options
+def list_files(
+    path: str,
+    recursive: bool,
+    long: bool,
+    backend_config: BackendConfig,
+) -> None:
     """List files in a directory.
 
     Examples:
         nexus ls /workspace
         nexus ls /workspace --recursive
         nexus ls /workspace -l
+        nexus ls /workspace --backend=gcs --gcs-bucket=my-bucket
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         if long:
             # Detailed listing
@@ -176,9 +275,11 @@ def list_files(path: str, recursive: bool, long: bool, config: str | None, data_
 
 @main.command()
 @click.argument("path", type=str)
-@CONFIG_OPTION
-@DATA_DIR_OPTION
-def cat(path: str, config: str | None, data_dir: str) -> None:
+@add_backend_options
+def cat(
+    path: str,
+    backend_config: BackendConfig,
+) -> None:
     """Display file contents.
 
     Examples:
@@ -186,7 +287,7 @@ def cat(path: str, config: str | None, data_dir: str) -> None:
         nexus cat /workspace/code.py
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
         content = nx.read(path)
         nx.close()
 
@@ -217,14 +318,12 @@ def cat(path: str, config: str | None, data_dir: str) -> None:
 @click.argument("path", type=str)
 @click.argument("content", type=str, required=False)
 @click.option("-i", "--input", "input_file", type=click.File("rb"), help="Read from file or stdin")
-@CONFIG_OPTION
-@DATA_DIR_OPTION
+@add_backend_options
 def write(
     path: str,
     content: str | None,
     input_file: Any,
-    config: str | None,
-    data_dir: str,
+    backend_config: BackendConfig,
 ) -> None:
     """Write content to a file.
 
@@ -234,7 +333,7 @@ def write(
         nexus write /workspace/data.txt --input local_file.txt
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         # Determine content source
         if input_file:
@@ -259,16 +358,19 @@ def write(
 @main.command()
 @click.argument("source", type=str)
 @click.argument("dest", type=str)
-@CONFIG_OPTION
-@DATA_DIR_OPTION
-def cp(source: str, dest: str, config: str | None, data_dir: str) -> None:
+@add_backend_options
+def cp(
+    source: str,
+    dest: str,
+    backend_config: BackendConfig,
+) -> None:
     """Copy a file.
 
     Examples:
         nexus cp /workspace/source.txt /workspace/dest.txt
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         # Read source
         content = nx.read(source)
@@ -286,9 +388,12 @@ def cp(source: str, dest: str, config: str | None, data_dir: str) -> None:
 @main.command()
 @click.argument("path", type=str)
 @click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation")
-@CONFIG_OPTION
-@DATA_DIR_OPTION
-def rm(path: str, force: bool, config: str | None, data_dir: str) -> None:
+@add_backend_options
+def rm(
+    path: str,
+    force: bool,
+    backend_config: BackendConfig,
+) -> None:
     """Delete a file.
 
     Examples:
@@ -296,7 +401,7 @@ def rm(path: str, force: bool, config: str | None, data_dir: str) -> None:
         nexus rm /workspace/data.txt --force
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         # Check if file exists
         if not nx.exists(path):
@@ -321,9 +426,12 @@ def rm(path: str, force: bool, config: str | None, data_dir: str) -> None:
 @main.command()
 @click.argument("pattern", type=str)
 @click.option("-p", "--path", default="/", help="Base path to search from")
-@CONFIG_OPTION
-@DATA_DIR_OPTION
-def glob(pattern: str, path: str, config: str | None, data_dir: str) -> None:
+@add_backend_options
+def glob(
+    pattern: str,
+    path: str,
+    backend_config: BackendConfig,
+) -> None:
     """Find files matching a glob pattern.
 
     Supports:
@@ -338,7 +446,7 @@ def glob(pattern: str, path: str, config: str | None, data_dir: str) -> None:
         nexus glob "test_*.py"
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
         matches = nx.glob(pattern, path)
         nx.close()
 
@@ -359,16 +467,14 @@ def glob(pattern: str, path: str, config: str | None, data_dir: str) -> None:
 @click.option("-f", "--file-pattern", help="Filter files by glob pattern (e.g., *.py)")
 @click.option("-i", "--ignore-case", is_flag=True, help="Case-insensitive search")
 @click.option("-n", "--max-results", default=100, help="Maximum results to show")
-@CONFIG_OPTION
-@DATA_DIR_OPTION
+@add_backend_options
 def grep(
     pattern: str,
     path: str,
     file_pattern: str | None,
     ignore_case: bool,
     max_results: int,
-    config: str | None,
-    data_dir: str,
+    backend_config: BackendConfig,
 ) -> None:
     """Search file contents using regex patterns.
 
@@ -379,7 +485,7 @@ def grep(
         nexus grep "TODO" --path /workspace
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
         matches = nx.grep(
             pattern,
             path=path,
@@ -410,9 +516,12 @@ def grep(
 @main.command()
 @click.argument("path", type=str)
 @click.option("-p", "--parents", is_flag=True, help="Create parent directories as needed")
-@CONFIG_OPTION
-@DATA_DIR_OPTION
-def mkdir(path: str, parents: bool, config: str | None, data_dir: str) -> None:
+@add_backend_options
+def mkdir(
+    path: str,
+    parents: bool,
+    backend_config: BackendConfig,
+) -> None:
     """Create a directory.
 
     Examples:
@@ -420,7 +529,7 @@ def mkdir(path: str, parents: bool, config: str | None, data_dir: str) -> None:
         nexus mkdir /workspace/deep/nested/dir --parents
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
         nx.mkdir(path, parents=parents, exist_ok=True)
         nx.close()
 
@@ -433,9 +542,13 @@ def mkdir(path: str, parents: bool, config: str | None, data_dir: str) -> None:
 @click.argument("path", type=str)
 @click.option("-r", "--recursive", is_flag=True, help="Remove directory and contents")
 @click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation")
-@CONFIG_OPTION
-@DATA_DIR_OPTION
-def rmdir(path: str, recursive: bool, force: bool, config: str | None, data_dir: str) -> None:
+@add_backend_options
+def rmdir(
+    path: str,
+    recursive: bool,
+    force: bool,
+    backend_config: BackendConfig,
+) -> None:
     """Remove a directory.
 
     Examples:
@@ -443,7 +556,7 @@ def rmdir(path: str, recursive: bool, force: bool, config: str | None, data_dir:
         nexus rmdir /workspace/data --recursive --force
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         # Confirm deletion unless --force
         if not force and not click.confirm(f"Remove directory {path}?"):
@@ -461,16 +574,18 @@ def rmdir(path: str, recursive: bool, force: bool, config: str | None, data_dir:
 
 @main.command()
 @click.argument("path", type=str)
-@CONFIG_OPTION
-@DATA_DIR_OPTION
-def info(path: str, config: str | None, data_dir: str) -> None:
+@add_backend_options
+def info(
+    path: str,
+    backend_config: BackendConfig,
+) -> None:
     """Show detailed file information.
 
     Examples:
         nexus info /workspace/data.txt
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         # Check if file exists first
         if not nx.exists(path):
@@ -480,7 +595,7 @@ def info(path: str, config: str | None, data_dir: str) -> None:
 
         # Get file metadata from metadata store
         # Note: Only Embedded mode has direct metadata access
-        if not isinstance(nx, Embedded):
+        if not isinstance(nx, (Embedded, RemoteFS)):
             console.print("[red]Error:[/red] File info is only available in embedded mode")
             nx.close()
             return
@@ -516,13 +631,13 @@ def info(path: str, config: str | None, data_dir: str) -> None:
 
 
 @main.command()
-@CONFIG_OPTION
-@DATA_DIR_OPTION
-def version(config: str | None, data_dir: str) -> None:  # noqa: ARG001
+@add_backend_options
+def version(
+    backend_config: BackendConfig,
+) -> None:  # noqa: ARG001
     """Show Nexus version information."""
-    _ = config  # Unused but required by decorator
     console.print(f"[cyan]Nexus[/cyan] version [green]{nexus.__version__}[/green]")
-    console.print(f"Data directory: [cyan]{data_dir}[/cyan]")
+    console.print(f"Data directory: [cyan]{backend_config.data_dir}[/cyan]")
 
 
 @main.command(name="export")
@@ -535,16 +650,14 @@ def version(config: str | None, data_dir: str) -> None:  # noqa: ARG001
     help="Export only files modified after this time (ISO format: 2024-01-01T00:00:00)",
 )
 @click.option("--include-deleted", is_flag=True, help="Include soft-deleted files in export")
-@CONFIG_OPTION
-@DATA_DIR_OPTION
+@add_backend_options
 def export_metadata(
     output: str,
     prefix: str,
     tenant_id: str | None,
     after: str | None,
     include_deleted: bool,
-    config: str | None,
-    data_dir: str,
+    backend_config: BackendConfig,
 ) -> None:
     """Export metadata to JSONL file for backup and migration.
 
@@ -566,7 +679,7 @@ def export_metadata(
     try:
         from nexus.core.export_import import ExportFilter
 
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         # Note: Only Embedded mode supports metadata export
         if not isinstance(nx, Embedded):
@@ -644,8 +757,7 @@ def export_metadata(
     hidden=True,
     help="(Deprecated) Use --conflict-mode option instead",
 )
-@CONFIG_OPTION
-@DATA_DIR_OPTION
+@add_backend_options
 def import_metadata(
     input_file: str,
     conflict_mode: str,
@@ -653,8 +765,7 @@ def import_metadata(
     no_preserve_ids: bool,
     overwrite: bool,
     _no_skip_existing: bool,
-    config: str | None,
-    data_dir: str,
+    backend_config: BackendConfig,
 ) -> None:
     """Import metadata from JSONL file.
 
@@ -679,7 +790,7 @@ def import_metadata(
     try:
         from nexus.core.export_import import ImportOptions
 
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         # Note: Only Embedded mode supports metadata import
         if not isinstance(nx, Embedded):
@@ -763,14 +874,12 @@ def import_metadata(
 )
 @click.option("-l", "--limit", type=int, default=None, help="Maximum number of results to show")
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
-@CONFIG_OPTION
-@DATA_DIR_OPTION
+@add_backend_options
 def work_command(
     view_type: str,
     limit: int | None,
     json_output: bool,
-    config: str | None,
-    data_dir: str,
+    backend_config: BackendConfig,
 ) -> None:
     """Query work items using SQL views.
 
@@ -788,7 +897,7 @@ def work_command(
         nexus work ready --json
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         # Only Embedded mode has metadata store with work views
         if not isinstance(nx, Embedded):
@@ -945,9 +1054,8 @@ def work_command(
 @main.command(name="find-duplicates")
 @click.option("-p", "--path", default="/", help="Base path to search from")
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
-@CONFIG_OPTION
-@DATA_DIR_OPTION
-def find_duplicates(path: str, json_output: bool, config: str | None, data_dir: str) -> None:
+@add_backend_options
+def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig) -> None:
     """Find duplicate files using content hashes.
 
     Uses batch_get_content_ids() for efficient deduplication detection.
@@ -959,7 +1067,7 @@ def find_duplicates(path: str, json_output: bool, config: str | None, data_dir: 
         nexus find-duplicates --json
     """
     try:
-        nx = get_filesystem(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         # Only Embedded mode supports batch_get_content_ids
         if not isinstance(nx, Embedded):

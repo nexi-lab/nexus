@@ -1,6 +1,9 @@
 """Metadata store interface for Nexus."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -85,6 +88,41 @@ class MetadataStore(ABC):
             List of file metadata
         """
         pass
+
+    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
+        """
+        Get metadata for multiple files in a single query.
+
+        Args:
+            paths: List of virtual paths
+
+        Returns:
+            Dictionary mapping path to FileMetadata (or None if not found)
+        """
+        # Default implementation: call get() for each path
+        return {path: self.get(path) for path in paths}
+
+    def delete_batch(self, paths: Sequence[str]) -> None:
+        """
+        Delete multiple files in a single transaction.
+
+        Args:
+            paths: List of virtual paths to delete
+        """
+        # Default implementation: call delete() for each path
+        for path in paths:
+            self.delete(path)
+
+    def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
+        """
+        Store or update multiple file metadata entries in a single transaction.
+
+        Args:
+            metadata_list: List of file metadata to store
+        """
+        # Default implementation: call put() for each metadata
+        for metadata in metadata_list:
+            self.put(metadata)
 
     @abstractmethod
     def close(self) -> None:

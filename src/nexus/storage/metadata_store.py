@@ -8,6 +8,7 @@ Production-ready metadata store using SQLAlchemy ORM with support for:
 
 from __future__ import annotations
 
+import builtins
 import json
 import uuid
 from collections.abc import Sequence
@@ -15,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 
 from nexus.core.exceptions import MetadataError
@@ -92,6 +93,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
         else:
             # Create tables if they don't exist
             Base.metadata.create_all(self.engine)
+            # Create SQL views for work detection
+            self._create_views()
 
     def _ensure_parent_exists(self) -> None:
         """Create parent directory for database if it doesn't exist."""
@@ -112,6 +115,20 @@ class SQLAlchemyMetadataStore(MetadataStore):
             command.upgrade(alembic_cfg, "head")
         except Exception as e:
             raise MetadataError(f"Failed to run migrations: {e}") from e
+
+    def _create_views(self) -> None:
+        """Create SQL views for work detection if they don't exist."""
+        try:
+            from nexus.storage import views
+
+            with self.engine.connect() as conn:
+                for _name, view_sql in views.ALL_VIEWS:
+                    conn.execute(view_sql)
+                    conn.commit()
+        except Exception:
+            # Views might already exist, which is fine
+            # Log or ignore the error
+            pass
 
     def get(self, path: str) -> FileMetadata | None:
         """
@@ -170,6 +187,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
         Args:
             metadata: File metadata to store
         """
+        # Validate BEFORE database operation
+        metadata.validate()
+
         try:
             with self.SessionLocal() as session:
                 # Check if file path already exists
@@ -201,6 +221,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         created_at=metadata.created_at or datetime.now(UTC),
                         updated_at=metadata.modified_at or datetime.now(UTC),
                     )
+                    # Validate model before inserting
+                    file_path.validate()
                     session.add(file_path)
 
                 session.commit()
@@ -473,6 +495,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
         if not metadata_list:
             return
 
+        # Validate all metadata BEFORE any database operations
+        for metadata in metadata_list:
+            metadata.validate()
+
         try:
             with self.SessionLocal() as session:
                 # Get all paths to check for existing entries
@@ -509,6 +535,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             created_at=metadata.created_at or datetime.now(UTC),
                             updated_at=metadata.modified_at or datetime.now(UTC),
                         )
+                        # Validate model before inserting
+                        file_path.validate()
                         session.add(file_path)
 
                 session.commit()
@@ -519,6 +547,60 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     self._cache.invalidate_path(metadata.path)
         except Exception as e:
             raise MetadataError(f"Failed to store batch metadata: {e}") from e
+
+    def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
+        """
+        Get content IDs (hashes) for multiple paths in a single query.
+
+        This is optimized for CAS (Content-Addressable Storage) deduplication.
+        Instead of fetching full metadata for each file, this only fetches the
+        content_hash field, which is more efficient for deduplication checks.
+
+        Performance: Single SQL query with IN clause instead of N queries.
+
+        Args:
+            paths: List of virtual paths
+
+        Returns:
+            Dictionary mapping path to content_hash (or None if file not found)
+
+        Example:
+            >>> hashes = store.batch_get_content_ids(["/a.txt", "/b.txt", "/c.txt"])
+            >>> # Find duplicates
+            >>> from collections import defaultdict
+            >>> by_hash = defaultdict(list)
+            >>> for path, hash in hashes.items():
+            ...     if hash:
+            ...         by_hash[hash].append(path)
+            >>> duplicates = {h: paths for h, paths in by_hash.items() if len(paths) > 1}
+        """
+        if not paths:
+            return {}
+
+        try:
+            with self.SessionLocal() as session:
+                # Single query to fetch only virtual_path and content_hash
+                stmt = select(FilePathModel.virtual_path, FilePathModel.content_hash).where(
+                    FilePathModel.virtual_path.in_(paths),
+                    FilePathModel.deleted_at.is_(None),
+                )
+
+                # Build result dict
+                result: dict[str, str | None] = {}
+                found_paths = set()
+
+                for virtual_path, content_hash in session.execute(stmt):
+                    result[virtual_path] = content_hash
+                    found_paths.add(virtual_path)
+
+                # Add None for paths not found
+                for path in paths:
+                    if path not in found_paths:
+                        result[path] = None
+
+                return result
+        except Exception as e:
+            raise MetadataError(f"Failed to get batch content IDs: {e}") from e
 
     # Additional methods for file metadata (key-value pairs)
 
@@ -615,6 +697,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         value=value_json,
                         created_at=datetime.now(UTC),
                     )
+                    # Validate model before inserting
+                    metadata.validate()
                     session.add(metadata)
 
                 session.commit()
@@ -624,6 +708,230 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 self._cache.invalidate_kv(path, key)
         except Exception as e:
             raise MetadataError(f"Failed to set file metadata: {e}", path=path) from e
+
+    def get_path_id(self, path: str) -> str | None:
+        """Get the UUID path_id for a virtual path.
+
+        This is useful for setting up work dependencies (depends_on metadata).
+
+        Args:
+            path: Virtual path
+
+        Returns:
+            UUID path_id string or None if path doesn't exist
+        """
+        try:
+            with self.SessionLocal() as session:
+                stmt = select(FilePathModel.path_id).where(
+                    FilePathModel.virtual_path == path, FilePathModel.deleted_at.is_(None)
+                )
+                path_id = session.scalar(stmt)
+                return path_id
+        except Exception as e:
+            raise MetadataError(f"Failed to get path_id: {e}", path=path) from e
+
+    # Work detection queries (using SQL views)
+
+    def get_ready_work(self, limit: int | None = None) -> builtins.list[dict[str, Any]]:
+        """Get files that are ready for processing.
+
+        Uses the ready_work_items SQL view which efficiently finds files with:
+        - status='ready'
+        - No blocking dependencies
+
+        Args:
+            limit: Optional limit on number of results
+
+        Returns:
+            List of work item dicts with path, status, priority, etc.
+        """
+        try:
+            with self.SessionLocal() as session:
+                query = "SELECT * FROM ready_work_items"
+                if limit:
+                    query += f" LIMIT {limit}"
+
+                result = session.execute(text(query))
+                rows = result.fetchall()
+
+                return [
+                    {
+                        "path_id": row[0],
+                        "tenant_id": row[1],
+                        "virtual_path": row[2],
+                        "backend_id": row[3],
+                        "physical_path": row[4],
+                        "file_type": row[5],
+                        "size_bytes": row[6],
+                        "content_hash": row[7],
+                        "created_at": row[8],
+                        "updated_at": row[9],
+                        "status": json.loads(row[10]) if row[10] else None,
+                        "priority": json.loads(row[11]) if row[11] else None,
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            raise MetadataError(f"Failed to get ready work: {e}") from e
+
+    def get_pending_work(self, limit: int | None = None) -> builtins.list[dict[str, Any]]:
+        """Get files with status='pending' ordered by priority.
+
+        Uses the pending_work_items SQL view.
+
+        Args:
+            limit: Optional limit on number of results
+
+        Returns:
+            List of work item dicts
+        """
+        try:
+            with self.SessionLocal() as session:
+                query = "SELECT * FROM pending_work_items"
+                if limit:
+                    query += f" LIMIT {limit}"
+
+                result = session.execute(text(query))
+                rows = result.fetchall()
+
+                return [
+                    {
+                        "path_id": row[0],
+                        "tenant_id": row[1],
+                        "virtual_path": row[2],
+                        "backend_id": row[3],
+                        "physical_path": row[4],
+                        "file_type": row[5],
+                        "size_bytes": row[6],
+                        "content_hash": row[7],
+                        "created_at": row[8],
+                        "updated_at": row[9],
+                        "status": json.loads(row[10]) if row[10] else None,
+                        "priority": json.loads(row[11]) if row[11] else None,
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            raise MetadataError(f"Failed to get pending work: {e}") from e
+
+    def get_blocked_work(self, limit: int | None = None) -> builtins.list[dict[str, Any]]:
+        """Get files that are blocked by dependencies.
+
+        Uses the blocked_work_items SQL view.
+
+        Args:
+            limit: Optional limit on number of results
+
+        Returns:
+            List of work item dicts with blocker_count
+        """
+        try:
+            with self.SessionLocal() as session:
+                query = "SELECT * FROM blocked_work_items"
+                if limit:
+                    query += f" LIMIT {limit}"
+
+                result = session.execute(text(query))
+                rows = result.fetchall()
+
+                return [
+                    {
+                        "path_id": row[0],
+                        "tenant_id": row[1],
+                        "virtual_path": row[2],
+                        "backend_id": row[3],
+                        "physical_path": row[4],
+                        "file_type": row[5],
+                        "size_bytes": row[6],
+                        "content_hash": row[7],
+                        "created_at": row[8],
+                        "updated_at": row[9],
+                        "status": json.loads(row[10]) if row[10] else None,
+                        "priority": json.loads(row[11]) if row[11] else None,
+                        "blocker_count": row[12],
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            raise MetadataError(f"Failed to get blocked work: {e}") from e
+
+    def get_in_progress_work(self, limit: int | None = None) -> builtins.list[dict[str, Any]]:
+        """Get files currently being processed.
+
+        Uses the in_progress_work SQL view.
+
+        Args:
+            limit: Optional limit on number of results
+
+        Returns:
+            List of work item dicts with worker_id and started_at
+        """
+        try:
+            with self.SessionLocal() as session:
+                query = "SELECT * FROM in_progress_work"
+                if limit:
+                    query += f" LIMIT {limit}"
+
+                result = session.execute(text(query))
+                rows = result.fetchall()
+
+                return [
+                    {
+                        "path_id": row[0],
+                        "tenant_id": row[1],
+                        "virtual_path": row[2],
+                        "backend_id": row[3],
+                        "file_type": row[4],
+                        "size_bytes": row[5],
+                        "created_at": row[6],
+                        "updated_at": row[7],
+                        "status": json.loads(row[8]) if row[8] else None,
+                        "worker_id": json.loads(row[9]) if row[9] else None,
+                        "started_at": json.loads(row[10]) if row[10] else None,
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            raise MetadataError(f"Failed to get in-progress work: {e}") from e
+
+    def get_work_by_priority(self, limit: int | None = None) -> builtins.list[dict[str, Any]]:
+        """Get all work items ordered by priority.
+
+        Uses the work_by_priority SQL view.
+
+        Args:
+            limit: Optional limit on number of results
+
+        Returns:
+            List of work item dicts
+        """
+        try:
+            with self.SessionLocal() as session:
+                query = "SELECT * FROM work_by_priority"
+                if limit:
+                    query += f" LIMIT {limit}"
+
+                result = session.execute(text(query))
+                rows = result.fetchall()
+
+                return [
+                    {
+                        "path_id": row[0],
+                        "tenant_id": row[1],
+                        "virtual_path": row[2],
+                        "backend_id": row[3],
+                        "file_type": row[4],
+                        "size_bytes": row[5],
+                        "created_at": row[6],
+                        "updated_at": row[7],
+                        "status": json.loads(row[8]) if row[8] else None,
+                        "priority": json.loads(row[9]) if row[9] else None,
+                        "tags": json.loads(row[10]) if row[10] else None,
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            raise MetadataError(f"Failed to get work by priority: {e}") from e
 
     def __enter__(self) -> SQLAlchemyMetadataStore:
         """Context manager entry."""

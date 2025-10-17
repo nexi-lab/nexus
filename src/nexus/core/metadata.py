@@ -22,6 +22,41 @@ class FileMetadata:
     modified_at: datetime | None = None
     version: int = 1
 
+    def validate(self) -> None:
+        """Validate file metadata before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate path
+        if not self.path:
+            raise ValidationError("path is required")
+
+        if not self.path.startswith("/"):
+            raise ValidationError(f"path must start with '/', got {self.path!r}", path=self.path)
+
+        # Check for null bytes
+        if "\x00" in self.path:
+            raise ValidationError("path contains null bytes", path=self.path)
+
+        # Validate backend_name
+        if not self.backend_name:
+            raise ValidationError("backend_name is required", path=self.path)
+
+        # Validate physical_path
+        if not self.physical_path:
+            raise ValidationError("physical_path is required", path=self.path)
+
+        # Validate size
+        if self.size < 0:
+            raise ValidationError(f"size cannot be negative, got {self.size}", path=self.path)
+
+        # Validate version
+        if self.version < 1:
+            raise ValidationError(f"version must be >= 1, got {self.version}", path=self.path)
+
 
 class MetadataStore(ABC):
     """
@@ -123,6 +158,34 @@ class MetadataStore(ABC):
         # Default implementation: call put() for each metadata
         for metadata in metadata_list:
             self.put(metadata)
+
+    def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
+        """
+        Get content IDs (hashes) for multiple paths in a single query.
+
+        This is useful for CAS (Content-Addressable Storage) deduplication
+        where you need to check which files have the same content.
+
+        Performance: Avoids N+1 queries by fetching all content hashes
+        in one database query.
+
+        Args:
+            paths: List of virtual paths
+
+        Returns:
+            Dictionary mapping path to content_hash (or None if file not found)
+
+        Example:
+            >>> hashes = store.batch_get_content_ids(["/a.txt", "/b.txt"])
+            >>> if hashes["/a.txt"] == hashes["/b.txt"]:
+            ...     print("Files have identical content!")
+        """
+        # Default implementation: call get() for each path and extract etag
+        result = {}
+        for path in paths:
+            metadata = self.get(path)
+            result[path] = metadata.etag if metadata else None
+        return result
 
     @abstractmethod
     def close(self) -> None:

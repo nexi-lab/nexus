@@ -649,12 +649,23 @@ class Embedded(NexusFilesystem):
                 # Raise OSError with ENOTEMPTY errno (same as os.rmdir behavior)
                 raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}")
 
-            # Recursive mode - delete all files in directory first
-            for file_meta in files_in_dir:
-                self.delete(file_meta.path)
+            # Recursive mode - delete all files in directory
+            # Use batch delete for better performance (single transaction instead of N queries)
+            file_paths = [file_meta.path for file_meta in files_in_dir]
 
-        # Remove directory in backend
-        route.backend.rmdir(route.backend_path, recursive=recursive)
+            # Delete content from backend for each file
+            for file_meta in files_in_dir:
+                if file_meta.etag:
+                    with contextlib.suppress(Exception):
+                        route.backend.delete_content(file_meta.etag)
+
+            # Batch delete from metadata store
+            self.metadata.delete_batch(file_paths)
+
+        # Remove directory in backend (if it still exists)
+        # In CAS systems, the directory may no longer exist after deleting its contents
+        with contextlib.suppress(NexusFileNotFoundError):
+            route.backend.rmdir(route.backend_path, recursive=recursive)
 
     def is_directory(self, path: str) -> bool:
         """

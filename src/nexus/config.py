@@ -36,6 +36,20 @@ class NexusConfig(BaseModel):
         default=None, description="SQLite database path (auto-generated if None)"
     )
 
+    # In-memory metadata caching settings
+    enable_metadata_cache: bool = Field(
+        default=True, description="Enable in-memory metadata caching"
+    )
+    cache_path_size: int = Field(default=512, description="Max entries for path metadata cache")
+    cache_list_size: int = Field(default=128, description="Max entries for directory listing cache")
+    cache_kv_size: int = Field(default=256, description="Max entries for file metadata KV cache")
+    cache_exists_size: int = Field(
+        default=1024, description="Max entries for existence check cache"
+    )
+    cache_ttl_seconds: int | None = Field(
+        default=300, description="Cache TTL in seconds (None = no expiry)"
+    )
+
     # Multi-tenant isolation settings
     tenant_id: str | None = Field(
         default=None, description="Tenant identifier for multi-tenant isolation"
@@ -155,6 +169,12 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_ENABLE_VECTOR_SEARCH": "enable_vector_search",
         "NEXUS_ENABLE_LLM_CACHE": "enable_llm_cache",
         "NEXUS_DB_PATH": "db_path",
+        "NEXUS_ENABLE_METADATA_CACHE": "enable_metadata_cache",
+        "NEXUS_CACHE_PATH_SIZE": "cache_path_size",
+        "NEXUS_CACHE_LIST_SIZE": "cache_list_size",
+        "NEXUS_CACHE_KV_SIZE": "cache_kv_size",
+        "NEXUS_CACHE_EXISTS_SIZE": "cache_exists_size",
+        "NEXUS_CACHE_TTL_SECONDS": "cache_ttl_seconds",
         "NEXUS_URL": "url",
         "NEXUS_API_KEY": "api_key",
         "NEXUS_TIMEOUT": "timeout",
@@ -165,9 +185,23 @@ def _load_from_environment() -> NexusConfig:
         if value is not None:
             # Type conversion for non-string fields
             converted_value: Any
-            if config_key in ["cache_size_mb", "timeout"]:
-                converted_value = float(value) if config_key == "timeout" else int(value)
-            elif config_key in ["enable_vector_search", "enable_llm_cache"]:
+            if config_key in [
+                "cache_size_mb",
+                "cache_path_size",
+                "cache_list_size",
+                "cache_kv_size",
+                "cache_exists_size",
+            ]:
+                converted_value = int(value)
+            elif config_key == "timeout":
+                converted_value = float(value)
+            elif config_key == "cache_ttl_seconds":
+                converted_value = int(value) if value.lower() != "none" else None
+            elif config_key in [
+                "enable_vector_search",
+                "enable_llm_cache",
+                "enable_metadata_cache",
+            ]:
                 converted_value = value.lower() in ["true", "1", "yes", "on"]
             else:
                 converted_value = value

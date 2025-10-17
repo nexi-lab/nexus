@@ -146,24 +146,6 @@ def get_filesystem(backend_config: BackendConfig) -> NexusFilesystem:
         sys.exit(1)
 
 
-def get_filesystem_legacy(data_dir: str, config_path: str | None = None) -> NexusFilesystem:
-    """Get Nexus filesystem instance (legacy API for embedded-only commands).
-
-    This is a compatibility function for commands that only support embedded mode
-    and haven't been updated to use BackendConfig yet.
-    """
-    try:
-        if config_path:
-            # Use explicit config file
-            return nexus.connect(config=config_path)
-        else:
-            # Use data_dir or auto-discover
-            return nexus.connect(config={"data_dir": data_dir})
-    except Exception as e:
-        console.print(f"[red]Error connecting to Nexus:[/red] {e}")
-        sys.exit(1)
-
-
 def handle_error(e: Exception) -> None:
     """Handle errors with beautiful output."""
     if isinstance(e, NexusFileNotFoundError):
@@ -668,16 +650,14 @@ def version(
     help="Export only files modified after this time (ISO format: 2024-01-01T00:00:00)",
 )
 @click.option("--include-deleted", is_flag=True, help="Include soft-deleted files in export")
-@CONFIG_OPTION
-@DATA_DIR_OPTION
+@add_backend_options
 def export_metadata(
     output: str,
     prefix: str,
     tenant_id: str | None,
     after: str | None,
     include_deleted: bool,
-    config: str | None,
-    data_dir: str,
+    backend_config: BackendConfig,
 ) -> None:
     """Export metadata to JSONL file for backup and migration.
 
@@ -699,7 +679,7 @@ def export_metadata(
     try:
         from nexus.core.export_import import ExportFilter
 
-        nx = get_filesystem_legacy(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         # Note: Only Embedded mode supports metadata export
         if not isinstance(nx, Embedded):
@@ -777,8 +757,7 @@ def export_metadata(
     hidden=True,
     help="(Deprecated) Use --conflict-mode option instead",
 )
-@CONFIG_OPTION
-@DATA_DIR_OPTION
+@add_backend_options
 def import_metadata(
     input_file: str,
     conflict_mode: str,
@@ -786,8 +765,7 @@ def import_metadata(
     no_preserve_ids: bool,
     overwrite: bool,
     _no_skip_existing: bool,
-    config: str | None,
-    data_dir: str,
+    backend_config: BackendConfig,
 ) -> None:
     """Import metadata from JSONL file.
 
@@ -812,7 +790,7 @@ def import_metadata(
     try:
         from nexus.core.export_import import ImportOptions
 
-        nx = get_filesystem_legacy(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         # Note: Only Embedded mode supports metadata import
         if not isinstance(nx, Embedded):
@@ -896,14 +874,12 @@ def import_metadata(
 )
 @click.option("-l", "--limit", type=int, default=None, help="Maximum number of results to show")
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
-@CONFIG_OPTION
-@DATA_DIR_OPTION
+@add_backend_options
 def work_command(
     view_type: str,
     limit: int | None,
     json_output: bool,
-    config: str | None,
-    data_dir: str,
+    backend_config: BackendConfig,
 ) -> None:
     """Query work items using SQL views.
 
@@ -921,7 +897,7 @@ def work_command(
         nexus work ready --json
     """
     try:
-        nx = get_filesystem_legacy(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         # Only Embedded mode has metadata store with work views
         if not isinstance(nx, Embedded):
@@ -1078,9 +1054,8 @@ def work_command(
 @main.command(name="find-duplicates")
 @click.option("-p", "--path", default="/", help="Base path to search from")
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
-@CONFIG_OPTION
-@DATA_DIR_OPTION
-def find_duplicates(path: str, json_output: bool, config: str | None, data_dir: str) -> None:
+@add_backend_options
+def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig) -> None:
     """Find duplicate files using content hashes.
 
     Uses batch_get_content_ids() for efficient deduplication detection.
@@ -1092,7 +1067,7 @@ def find_duplicates(path: str, json_output: bool, config: str | None, data_dir: 
         nexus find-duplicates --json
     """
     try:
-        nx = get_filesystem_legacy(data_dir, config)
+        nx = get_filesystem(backend_config)
 
         # Only Embedded mode supports batch_get_content_ids
         if not isinstance(nx, Embedded):

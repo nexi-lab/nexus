@@ -17,8 +17,8 @@ from rich.table import Table
 import nexus
 from nexus import NexusFilesystem
 from nexus.core.embedded import Embedded
-from nexus.core.remote_fs import RemoteFS
 from nexus.core.exceptions import NexusError, NexusFileNotFoundError, ValidationError
+from nexus.core.remote_fs import RemoteFS
 
 console = Console()
 

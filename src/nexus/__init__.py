@@ -108,6 +108,12 @@ def connect(
             agent_id=cfg.agent_id,
             is_admin=cfg.is_admin,
             custom_namespaces=custom_namespaces,
+            enable_metadata_cache=cfg.enable_metadata_cache,
+            cache_path_size=cfg.cache_path_size,
+            cache_list_size=cfg.cache_list_size,
+            cache_kv_size=cfg.cache_kv_size,
+            cache_exists_size=cfg.cache_exists_size,
+            cache_ttl_seconds=cfg.cache_ttl_seconds,
         )
     elif cfg.mode in ["monolithic", "distributed"]:
         # TODO: Implement in v0.2.0+

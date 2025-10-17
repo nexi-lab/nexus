@@ -41,6 +41,12 @@ class Embedded(NexusFilesystem):
         agent_id: str | None = None,
         is_admin: bool = False,
         custom_namespaces: list[NamespaceConfig] | None = None,
+        enable_metadata_cache: bool = True,
+        cache_path_size: int = 512,
+        cache_list_size: int = 128,
+        cache_kv_size: int = 256,
+        cache_exists_size: int = 1024,
+        cache_ttl_seconds: int | None = 300,
     ):
         """
         Initialize embedded filesystem.
@@ -52,6 +58,12 @@ class Embedded(NexusFilesystem):
             agent_id: Agent identifier for agent-level isolation in /workspace (optional)
             is_admin: Whether this instance has admin privileges (default: False)
             custom_namespaces: Additional custom namespace configurations (optional)
+            enable_metadata_cache: Enable in-memory metadata caching (default: True)
+            cache_path_size: Max entries for path metadata cache (default: 512)
+            cache_list_size: Max entries for directory listing cache (default: 128)
+            cache_kv_size: Max entries for file metadata KV cache (default: 256)
+            cache_exists_size: Max entries for existence check cache (default: 1024)
+            cache_ttl_seconds: Cache TTL in seconds, None = no expiry (default: 300)
         """
         self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -64,7 +76,15 @@ class Embedded(NexusFilesystem):
         # Initialize metadata store (using new SQLAlchemy-based store)
         if db_path is None:
             db_path = self.data_dir / "metadata.db"
-        self.metadata = SQLAlchemyMetadataStore(db_path)
+        self.metadata = SQLAlchemyMetadataStore(
+            db_path=db_path,
+            enable_cache=enable_metadata_cache,
+            cache_path_size=cache_path_size,
+            cache_list_size=cache_list_size,
+            cache_kv_size=cache_kv_size,
+            cache_exists_size=cache_exists_size,
+            cache_ttl_seconds=cache_ttl_seconds,
+        )
 
         # Initialize path router with default namespaces
         self.router = PathRouter()

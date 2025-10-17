@@ -523,5 +523,112 @@ def version(config: str | None, data_dir: str) -> None:  # noqa: ARG001
     console.print(f"Data directory: [cyan]{data_dir}[/cyan]")
 
 
+@main.command(name="export")
+@click.argument("output", type=click.Path())
+@click.option("-p", "--prefix", default="", help="Export only files with this prefix")
+@CONFIG_OPTION
+@DATA_DIR_OPTION
+def export_metadata(output: str, prefix: str, config: str | None, data_dir: str) -> None:
+    """Export metadata to JSONL file for backup and migration.
+
+    Exports all file metadata (paths, sizes, timestamps, hashes, custom metadata)
+    to a JSONL file. Each line is a JSON object representing one file.
+
+    IMPORTANT: This exports metadata only, not file content. The content remains
+    in the CAS storage. To restore, you need both the metadata JSONL file AND
+    the CAS storage directory.
+
+    Examples:
+        nexus export metadata-backup.jsonl
+        nexus export workspace-backup.jsonl --prefix /workspace
+    """
+    try:
+        nx = get_filesystem(data_dir, config)
+
+        # Note: Only Embedded mode supports metadata export
+        if not isinstance(nx, Embedded):
+            console.print("[red]Error:[/red] Metadata export is only available in embedded mode")
+            nx.close()
+            sys.exit(1)
+
+        console.print(f"[cyan]Exporting metadata to:[/cyan] {output}")
+        if prefix:
+            console.print(f"[cyan]Prefix filter:[/cyan] {prefix}")
+
+        with console.status("[yellow]Exporting metadata...[/yellow]", spinner="dots"):
+            count = nx.export_metadata(output, prefix=prefix)
+
+        nx.close()
+
+        console.print(f"[green]✓[/green] Exported [cyan]{count}[/cyan] file metadata records")
+        console.print(f"  Output: [cyan]{output}[/cyan]")
+    except Exception as e:
+        handle_error(e)
+
+
+@main.command(name="import")
+@click.argument("input_file", type=click.Path(exists=True))
+@click.option(
+    "--overwrite",
+    is_flag=True,
+    help="Overwrite existing metadata (default: skip existing)",
+)
+@click.option(
+    "--no-skip-existing",
+    is_flag=True,
+    help="Don't skip existing files (fails if file exists and --overwrite not set)",
+)
+@CONFIG_OPTION
+@DATA_DIR_OPTION
+def import_metadata(
+    input_file: str,
+    overwrite: bool,
+    no_skip_existing: bool,
+    config: str | None,
+    data_dir: str,
+) -> None:
+    """Import metadata from JSONL file.
+
+    IMPORTANT: This imports metadata only, not file content. The content must
+    already exist in the CAS storage (matched by content hash). This is useful for:
+    - Restoring metadata after database corruption
+    - Migrating metadata between instances (with same CAS content)
+    - Creating alternative path mappings to existing content
+
+    Examples:
+        nexus import metadata-backup.jsonl
+        nexus import metadata-backup.jsonl --overwrite
+    """
+    try:
+        nx = get_filesystem(data_dir, config)
+
+        # Note: Only Embedded mode supports metadata import
+        if not isinstance(nx, Embedded):
+            console.print("[red]Error:[/red] Metadata import is only available in embedded mode")
+            nx.close()
+            sys.exit(1)
+
+        console.print(f"[cyan]Importing metadata from:[/cyan] {input_file}")
+        if overwrite:
+            console.print("[yellow]Mode:[/yellow] Overwrite existing files")
+        else:
+            console.print("[yellow]Mode:[/yellow] Skip existing files")
+
+        with console.status("[yellow]Importing metadata...[/yellow]", spinner="dots"):
+            imported, skipped = nx.import_metadata(
+                input_file,
+                overwrite=overwrite,
+                skip_existing=not no_skip_existing,
+            )
+
+        nx.close()
+
+        console.print(f"[green]✓[/green] Imported [cyan]{imported}[/cyan] file metadata records")
+        if skipped > 0:
+            console.print(f"  Skipped [yellow]{skipped}[/yellow] existing files")
+    except Exception as e:
+        handle_error(e)
+
+
 if __name__ == "__main__":
     main()

@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
+
 from nexus.backends.backend import Backend
 from nexus.backends.local import LocalBackend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
@@ -690,6 +692,220 @@ class Embedded(NexusFilesystem):
             return route.backend.is_directory(route.backend_path)
         except (InvalidPathError, Exception):
             return False
+
+    # === Metadata Export/Import ===
+
+    def export_metadata(self, output_path: str | Path, prefix: str = "") -> int:
+        """
+        Export metadata to JSONL file for backup and migration.
+
+        Each line in the output file is a JSON object containing:
+        - path: Virtual file path
+        - backend_name: Backend identifier
+        - physical_path: Physical storage path (content hash in CAS)
+        - size: File size in bytes
+        - etag: Content hash (SHA-256)
+        - mime_type: MIME type (optional)
+        - created_at: Creation timestamp (ISO format)
+        - modified_at: Modification timestamp (ISO format)
+        - version: Version number
+        - custom_metadata: Dict of custom key-value metadata (optional)
+
+        Args:
+            output_path: Path to output JSONL file
+            prefix: Optional path prefix to filter exported files (default: "" exports all)
+
+        Returns:
+            Number of files exported
+
+        Examples:
+            # Export all metadata
+            count = fs.export_metadata("backup.jsonl")
+
+            # Export only /workspace files
+            count = fs.export_metadata("workspace-backup.jsonl", prefix="/workspace")
+        """
+        import json
+
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Get all files matching prefix
+        all_files = self.metadata.list(prefix)
+        count = 0
+
+        with output_file.open("w", encoding="utf-8") as f:
+            for file_meta in all_files:
+                # Build base metadata dict
+                metadata_dict: dict[str, Any] = {
+                    "path": file_meta.path,
+                    "backend_name": file_meta.backend_name,
+                    "physical_path": file_meta.physical_path,
+                    "size": file_meta.size,
+                    "etag": file_meta.etag,
+                    "mime_type": file_meta.mime_type,
+                    "created_at": (
+                        file_meta.created_at.isoformat() if file_meta.created_at else None
+                    ),
+                    "modified_at": (
+                        file_meta.modified_at.isoformat() if file_meta.modified_at else None
+                    ),
+                    "version": file_meta.version,
+                }
+
+                # Try to get custom metadata for this file (if any)
+                # Note: This is optional - files may not have custom metadata
+                try:
+                    if isinstance(self.metadata, SQLAlchemyMetadataStore):
+                        # Get all custom metadata keys for this path
+                        # We need to query the database directly for all keys
+                        with self.metadata.SessionLocal() as session:
+                            from nexus.storage.models import FileMetadataModel, FilePathModel
+
+                            # Get path_id
+                            path_stmt = select(FilePathModel.path_id).where(
+                                FilePathModel.virtual_path == file_meta.path,
+                                FilePathModel.deleted_at.is_(None),
+                            )
+                            path_id = session.scalar(path_stmt)
+
+                            if path_id:
+                                # Get all custom metadata
+                                meta_stmt = select(FileMetadataModel).where(
+                                    FileMetadataModel.path_id == path_id
+                                )
+                                custom_meta = {}
+                                for meta_item in session.scalars(meta_stmt):
+                                    if meta_item.value:
+                                        custom_meta[meta_item.key] = json.loads(meta_item.value)
+
+                                if custom_meta:
+                                    metadata_dict["custom_metadata"] = custom_meta
+                except Exception:
+                    # Ignore errors when fetching custom metadata
+                    pass
+
+                # Write JSON line
+                f.write(json.dumps(metadata_dict) + "\n")
+                count += 1
+
+        return count
+
+    def import_metadata(
+        self,
+        input_path: str | Path,
+        overwrite: bool = False,
+        skip_existing: bool = True,
+    ) -> tuple[int, int]:
+        """
+        Import metadata from JSONL file.
+
+        IMPORTANT: This only imports metadata records, not the actual file content.
+        The content must already exist in the CAS storage (matched by content hash).
+        This is useful for:
+        - Restoring metadata after database corruption
+        - Migrating metadata between instances (with same CAS content)
+        - Creating alternative path mappings to existing content
+
+        Args:
+            input_path: Path to input JSONL file
+            overwrite: If True, overwrite existing metadata (default: False)
+            skip_existing: If True, skip files that already exist (default: True)
+
+        Returns:
+            Tuple of (imported_count, skipped_count)
+
+        Raises:
+            ValueError: If JSONL format is invalid
+            FileNotFoundError: If input file doesn't exist
+
+        Examples:
+            # Import metadata (skip existing)
+            imported, skipped = fs.import_metadata("backup.jsonl")
+            print(f"Imported {imported} files, skipped {skipped}")
+
+            # Import and overwrite existing
+            imported, skipped = fs.import_metadata("backup.jsonl", overwrite=True)
+        """
+        import json
+
+        input_file = Path(input_path)
+        if not input_file.exists():
+            raise FileNotFoundError(f"Input file not found: {input_path}")
+
+        imported_count = 0
+        skipped_count = 0
+
+        with input_file.open("r", encoding="utf-8") as f:
+            for line_num, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    # Parse JSON line
+                    metadata_dict = json.loads(line)
+
+                    # Validate required fields
+                    required_fields = ["path", "backend_name", "physical_path", "size"]
+                    for field in required_fields:
+                        if field not in metadata_dict:
+                            raise ValueError(f"Missing required field: {field}")
+
+                    path = metadata_dict["path"]
+
+                    # Check if file already exists
+                    existing = self.metadata.get(path)
+                    if existing:
+                        if skip_existing and not overwrite:
+                            skipped_count += 1
+                            continue
+                        if not overwrite:
+                            skipped_count += 1
+                            continue
+
+                    # Parse timestamps
+                    created_at = None
+                    if metadata_dict.get("created_at"):
+                        created_at = datetime.fromisoformat(metadata_dict["created_at"])
+
+                    modified_at = None
+                    if metadata_dict.get("modified_at"):
+                        modified_at = datetime.fromisoformat(metadata_dict["modified_at"])
+
+                    # Create FileMetadata object
+                    file_meta = FileMetadata(
+                        path=path,
+                        backend_name=metadata_dict["backend_name"],
+                        physical_path=metadata_dict["physical_path"],
+                        size=metadata_dict["size"],
+                        etag=metadata_dict.get("etag"),
+                        mime_type=metadata_dict.get("mime_type"),
+                        created_at=created_at,
+                        modified_at=modified_at,
+                        version=metadata_dict.get("version", 1),
+                    )
+
+                    # Store metadata
+                    self.metadata.put(file_meta)
+
+                    # Import custom metadata if present
+                    if "custom_metadata" in metadata_dict:
+                        custom_meta = metadata_dict["custom_metadata"]
+                        if isinstance(custom_meta, dict):
+                            for key, value in custom_meta.items():
+                                with contextlib.suppress(Exception):
+                                    # Ignore errors when setting custom metadata
+                                    self.metadata.set_file_metadata(path, key, value)
+
+                    imported_count += 1
+
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON at line {line_num}: {e}") from e
+                except Exception as e:
+                    raise ValueError(f"Error processing line {line_num}: {e}") from e
+
+        return imported_count, skipped_count
 
     def close(self) -> None:
         """Close the embedded filesystem and release resources."""

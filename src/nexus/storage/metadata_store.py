@@ -17,6 +17,7 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.core.exceptions import MetadataError
 from nexus.core.metadata import FileMetadata, MetadataStore
+from nexus.storage.cache import _CACHE_MISS, MetadataCache
 from nexus.storage.models import Base, FileMetadataModel, FilePathModel
 
 
@@ -30,13 +31,29 @@ class SQLAlchemyMetadataStore(MetadataStore):
     - Content chunks (for deduplication)
     """
 
-    def __init__(self, db_path: str | Path, run_migrations: bool = False):
+    def __init__(
+        self,
+        db_path: str | Path,
+        run_migrations: bool = False,
+        enable_cache: bool = True,
+        cache_path_size: int = 512,
+        cache_list_size: int = 128,
+        cache_kv_size: int = 256,
+        cache_exists_size: int = 1024,
+        cache_ttl_seconds: int | None = 300,
+    ):
         """
         Initialize SQLAlchemy metadata store.
 
         Args:
             db_path: Path to SQLite database file
             run_migrations: If True, run Alembic migrations on startup (default: False)
+            enable_cache: If True, enable in-memory caching (default: True)
+            cache_path_size: Max entries for path metadata cache (default: 512)
+            cache_list_size: Max entries for directory listing cache (default: 128)
+            cache_kv_size: Max entries for file metadata KV cache (default: 256)
+            cache_exists_size: Max entries for existence check cache (default: 1024)
+            cache_ttl_seconds: Cache TTL in seconds, None = no expiry (default: 300)
         """
         self.db_path = Path(db_path)
         self._ensure_parent_exists()
@@ -51,6 +68,20 @@ class SQLAlchemyMetadataStore(MetadataStore):
         )
 
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False)
+
+        # Initialize cache
+        self._cache_enabled = enable_cache
+        self._cache: MetadataCache | None
+        if enable_cache:
+            self._cache = MetadataCache(
+                path_cache_size=cache_path_size,
+                list_cache_size=cache_list_size,
+                kv_cache_size=cache_kv_size,
+                exists_cache_size=cache_exists_size,
+                ttl_seconds=cache_ttl_seconds,
+            )
+        else:
+            self._cache = None
 
         # Initialize schema
         if run_migrations:
@@ -89,6 +120,13 @@ class SQLAlchemyMetadataStore(MetadataStore):
         Returns:
             FileMetadata if found, None otherwise
         """
+        # Check cache first
+        if self._cache_enabled and self._cache:
+            cached = self._cache.get_path(path)
+            if cached is not _CACHE_MISS:
+                # Type narrowing: we know it's FileMetadata | None here
+                return cached if isinstance(cached, FileMetadata) or cached is None else None
+
         try:
             with self.SessionLocal() as session:
                 stmt = select(FilePathModel).where(
@@ -97,9 +135,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 file_path = session.scalar(stmt)
 
                 if file_path is None:
+                    # Cache the negative result
+                    if self._cache_enabled and self._cache:
+                        self._cache.set_path(path, None)
                     return None
 
-                return FileMetadata(
+                metadata = FileMetadata(
                     path=file_path.virtual_path,
                     backend_name=file_path.backend_id,
                     physical_path=file_path.physical_path,
@@ -110,6 +151,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     modified_at=file_path.updated_at,
                     version=1,  # Not tracking versions yet in simplified schema
                 )
+
+                # Cache the result
+                if self._cache_enabled and self._cache:
+                    self._cache.set_path(path, metadata)
+
+                return metadata
         except Exception as e:
             raise MetadataError(f"Failed to get metadata: {e}", path=path) from e
 
@@ -154,6 +201,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     session.add(file_path)
 
                 session.commit()
+
+            # Invalidate cache for this path
+            if self._cache_enabled and self._cache:
+                self._cache.invalidate_path(metadata.path)
         except Exception as e:
             raise MetadataError(f"Failed to store metadata: {e}", path=metadata.path) from e
 
@@ -175,6 +226,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     # Soft delete
                     file_path.deleted_at = datetime.now(UTC)
                     session.commit()
+
+            # Invalidate cache for this path
+            if self._cache_enabled and self._cache:
+                self._cache.invalidate_path(path)
         except Exception as e:
             raise MetadataError(f"Failed to delete metadata: {e}", path=path) from e
 
@@ -188,12 +243,24 @@ class SQLAlchemyMetadataStore(MetadataStore):
         Returns:
             True if metadata exists, False otherwise
         """
+        # Check cache first
+        if self._cache_enabled and self._cache:
+            cached = self._cache.get_exists(path)
+            if cached is not None:
+                return cached
+
         try:
             with self.SessionLocal() as session:
                 stmt = select(FilePathModel.path_id).where(
                     FilePathModel.virtual_path == path, FilePathModel.deleted_at.is_(None)
                 )
-                return session.scalar(stmt) is not None
+                exists = session.scalar(stmt) is not None
+
+                # Cache the result
+                if self._cache_enabled and self._cache:
+                    self._cache.set_exists(path, exists)
+
+                return exists
         except Exception as e:
             raise MetadataError(f"Failed to check existence: {e}", path=path) from e
 
@@ -207,6 +274,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
         Returns:
             List of file metadata
         """
+        # Check cache first
+        if self._cache_enabled and self._cache:
+            cached = self._cache.get_list(prefix)
+            if cached is not None:
+                return cached
+
         try:
             with self.SessionLocal() as session:
                 if prefix:
@@ -240,6 +313,11 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             version=1,
                         )
                     )
+
+                # Cache the results
+                if self._cache_enabled and self._cache:
+                    self._cache.set_list(prefix, results)
+
                 return results
         except Exception as e:
             raise MetadataError(f"Failed to list metadata: {e}") from e
@@ -248,6 +326,22 @@ class SQLAlchemyMetadataStore(MetadataStore):
         """Close database connection and dispose of engine."""
         if hasattr(self, "engine"):
             self.engine.dispose()
+
+    def get_cache_stats(self) -> dict[str, Any] | None:
+        """
+        Get cache statistics.
+
+        Returns:
+            Dictionary with cache statistics, or None if caching is disabled
+        """
+        if self._cache_enabled and self._cache:
+            return self._cache.get_stats()
+        return None
+
+    def clear_cache(self) -> None:
+        """Clear all cache entries."""
+        if self._cache_enabled and self._cache:
+            self._cache.clear()
 
     # Additional methods for file metadata (key-value pairs)
 
@@ -262,6 +356,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
         Returns:
             Metadata value (deserialized from JSON) or None
         """
+        # Check cache first
+        if self._cache_enabled and self._cache:
+            cached = self._cache.get_kv(path, key)
+            if cached is not _CACHE_MISS:
+                return cached
+
         try:
             with self.SessionLocal() as session:
                 # Get file path ID
@@ -271,6 +371,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 path_id = session.scalar(path_stmt)
 
                 if path_id is None:
+                    # Cache the negative result
+                    if self._cache_enabled and self._cache:
+                        self._cache.set_kv(path, key, None)
                     return None
 
                 # Get metadata
@@ -280,9 +383,18 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 metadata = session.scalar(metadata_stmt)
 
                 if metadata is None:
+                    # Cache the negative result
+                    if self._cache_enabled and self._cache:
+                        self._cache.set_kv(path, key, None)
                     return None
 
-                return json.loads(metadata.value) if metadata.value else None
+                value = json.loads(metadata.value) if metadata.value else None
+
+                # Cache the result
+                if self._cache_enabled and self._cache:
+                    self._cache.set_kv(path, key, value)
+
+                return value
         except Exception as e:
             raise MetadataError(f"Failed to get file metadata: {e}", path=path) from e
 
@@ -329,6 +441,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     session.add(metadata)
 
                 session.commit()
+
+            # Invalidate cache for this specific key
+            if self._cache_enabled and self._cache:
+                self._cache.invalidate_kv(path, key)
         except Exception as e:
             raise MetadataError(f"Failed to set file metadata: {e}", path=path) from e
 

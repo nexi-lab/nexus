@@ -40,6 +40,7 @@ Nexus is a complete AI agent infrastructure platform that combines distributed u
 - **OAuth Token Management**: Auto-refreshing credentials
 - **Backend Auto-Mount**: Automatic recognition and mounting
 - **Resource Management**: CPU throttling and rate limiting
+- **Work Queue Detection**: SQL views for efficient task scheduling and dependency resolution
 
 ## Deployment Modes
 
@@ -234,6 +235,25 @@ nexus grep "def \w+" --file-pattern "**/*.py"  # Find function definitions
 nexus grep "error" --ignore-case  # Case-insensitive search
 nexus grep "TODO" --max-results 50  # Limit results
 ```
+
+#### Work Queue Operations
+
+```bash
+# Query work items by status
+nexus work ready --limit 10  # Get ready work items (high priority first)
+nexus work pending  # Get pending work items
+nexus work blocked  # Get blocked work items (with dependency info)
+nexus work in-progress  # Get currently processing items
+
+# View aggregate statistics
+nexus work status  # Show counts for all work queues
+
+# Output as JSON (for scripting)
+nexus work ready --json
+nexus work status --json
+```
+
+**Note**: Work items are files with special metadata (status, priority, depends_on, worker_id). See `docs/SQL_VIEWS_FOR_WORK_DETECTION.md` for details on setting up work queues.
 
 ### Examples
 
@@ -594,8 +614,43 @@ nexus server --config config.yaml
 
 1. **API Key Authentication**: Tenant and agent identification
 2. **Row-Level Security (RLS)**: Database-level tenant isolation
-3. **UNIX-Style Permissions**: Owner, group, and mode bits (coming in v0.2.0)
-4. **ACL Permissions**: Fine-grained access control lists (coming in v0.2.0)
+3. **Type-Level Validation**: Fail-fast validation before database operations
+4. **UNIX-Style Permissions**: Owner, group, and mode bits (coming in v0.2.0)
+5. **ACL Permissions**: Fine-grained access control lists (coming in v0.2.0)
+
+### Type-Level Validation (NEW in v0.1.0)
+
+All domain types have validation methods that are called automatically before database operations. This provides:
+
+- **Fail Fast**: Catch invalid data before expensive database operations
+- **Clear Error Messages**: Actionable feedback for developers and API consumers
+- **Data Integrity**: Prevent invalid data from entering the database
+- **Consistent Validation**: Same rules across all code paths
+
+```python
+from nexus.core.metadata import FileMetadata
+from nexus.core.exceptions import ValidationError
+
+# Validation happens automatically on put()
+try:
+    metadata = FileMetadata(
+        path="/data/file.txt",  # Must start with /
+        backend_name="local",
+        physical_path="/storage/file.txt",
+        size=1024,  # Must be >= 0
+    )
+    store.put(metadata)  # Validates before DB operation
+except ValidationError as e:
+    print(f"Validation failed: {e}")
+    # Example: "size cannot be negative, got -1"
+```
+
+**Validation Rules:**
+- Paths must start with `/` and not contain null bytes
+- File sizes and ref counts must be non-negative
+- Required fields (path, backend_name, physical_path, etc.) must not be empty
+- Content hashes must be valid 64-character SHA-256 hex strings
+- Metadata keys must be ≤ 255 characters
 
 ### Example: Multi-Tenancy Isolation
 
@@ -674,11 +729,11 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [x] Virtual path routing
 - [x] Directory operations (mkdir, rmdir, is_directory)
 - [x] Basic CLI interface with Click and Rich
-- [ ] In-memory caching
-- [ ] Batch operations (avoid N+1 queries)
-- [ ] Metadata export/import (JSONL format)
-- [ ] SQL views for ready work detection
-- [ ] Type-level validation
+- [x] Metadata export/import (JSONL format)
+- [x] SQL views for ready work detection
+- [x] In-memory caching
+- [x] Batch operations (avoid N+1 queries)
+- [x] Type-level validation
 
 ### v0.2.0 - File Permissions & Security
 - [ ] UNIX-style file permissions (owner, group, mode)

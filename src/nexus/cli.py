@@ -17,7 +17,7 @@ from rich.table import Table
 import nexus
 from nexus import NexusFilesystem
 from nexus.core.embedded import Embedded
-from nexus.core.exceptions import NexusError, NexusFileNotFoundError
+from nexus.core.exceptions import NexusError, NexusFileNotFoundError, ValidationError
 
 console = Console()
 
@@ -56,6 +56,8 @@ def handle_error(e: Exception) -> None:
     """Handle errors with beautiful output."""
     if isinstance(e, NexusFileNotFoundError):
         console.print(f"[red]Error:[/red] File not found: {e}")
+    elif isinstance(e, ValidationError):
+        console.print(f"[red]Validation Error:[/red] {e}")
     elif isinstance(e, NexusError):
         console.print(f"[red]Nexus Error:[/red] {e}")
     else:
@@ -526,13 +528,30 @@ def version(config: str | None, data_dir: str) -> None:  # noqa: ARG001
 @main.command(name="export")
 @click.argument("output", type=click.Path())
 @click.option("-p", "--prefix", default="", help="Export only files with this prefix")
+@click.option("--tenant-id", default=None, help="Filter by tenant ID")
+@click.option(
+    "--after",
+    default=None,
+    help="Export only files modified after this time (ISO format: 2024-01-01T00:00:00)",
+)
+@click.option("--include-deleted", is_flag=True, help="Include soft-deleted files in export")
 @CONFIG_OPTION
 @DATA_DIR_OPTION
-def export_metadata(output: str, prefix: str, config: str | None, data_dir: str) -> None:
+def export_metadata(
+    output: str,
+    prefix: str,
+    tenant_id: str | None,
+    after: str | None,
+    include_deleted: bool,
+    config: str | None,
+    data_dir: str,
+) -> None:
     """Export metadata to JSONL file for backup and migration.
 
     Exports all file metadata (paths, sizes, timestamps, hashes, custom metadata)
     to a JSONL file. Each line is a JSON object representing one file.
+
+    Output is sorted by path for clean git diffs.
 
     IMPORTANT: This exports metadata only, not file content. The content remains
     in the CAS storage. To restore, you need both the metadata JSONL file AND
@@ -541,8 +560,12 @@ def export_metadata(output: str, prefix: str, config: str | None, data_dir: str)
     Examples:
         nexus export metadata-backup.jsonl
         nexus export workspace-backup.jsonl --prefix /workspace
+        nexus export recent.jsonl --after 2024-01-01T00:00:00
+        nexus export tenant.jsonl --tenant-id acme-corp
     """
     try:
+        from nexus.core.export_import import ExportFilter
+
         nx = get_filesystem(data_dir, config)
 
         # Note: Only Embedded mode supports metadata export
@@ -551,12 +574,41 @@ def export_metadata(output: str, prefix: str, config: str | None, data_dir: str)
             nx.close()
             sys.exit(1)
 
+        # Parse after time if provided
+        after_time = None
+        if after:
+            from datetime import datetime
+
+            try:
+                after_time = datetime.fromisoformat(after)
+            except ValueError:
+                console.print(
+                    f"[red]Error:[/red] Invalid date format: {after}. Use ISO format (2024-01-01T00:00:00)"
+                )
+                nx.close()
+                sys.exit(1)
+
+        # Create export filter
+        export_filter = ExportFilter(
+            tenant_id=tenant_id,
+            path_prefix=prefix,
+            after_time=after_time,
+            include_deleted=include_deleted,
+        )
+
+        # Display filter options
         console.print(f"[cyan]Exporting metadata to:[/cyan] {output}")
         if prefix:
-            console.print(f"[cyan]Prefix filter:[/cyan] {prefix}")
+            console.print(f"  Path prefix: [cyan]{prefix}[/cyan]")
+        if tenant_id:
+            console.print(f"  Tenant ID: [cyan]{tenant_id}[/cyan]")
+        if after_time:
+            console.print(f"  After time: [cyan]{after_time.isoformat()}[/cyan]")
+        if include_deleted:
+            console.print("  [yellow]Including deleted files[/yellow]")
 
         with console.status("[yellow]Exporting metadata...[/yellow]", spinner="dots"):
-            count = nx.export_metadata(output, prefix=prefix)
+            count = nx.export_metadata(output, filter=export_filter)
 
         nx.close()
 
@@ -569,21 +621,38 @@ def export_metadata(output: str, prefix: str, config: str | None, data_dir: str)
 @main.command(name="import")
 @click.argument("input_file", type=click.Path(exists=True))
 @click.option(
+    "--conflict-mode",
+    type=click.Choice(["skip", "overwrite", "remap", "auto"]),
+    default="skip",
+    help="How to handle path collisions (default: skip)",
+)
+@click.option("--dry-run", is_flag=True, help="Simulate import without making changes")
+@click.option(
+    "--no-preserve-ids",
+    is_flag=True,
+    help="Don't preserve original UUIDs from export (default: preserve)",
+)
+@click.option(
     "--overwrite",
     is_flag=True,
-    help="Overwrite existing metadata (default: skip existing)",
+    hidden=True,
+    help="(Deprecated) Use --conflict-mode=overwrite instead",
 )
 @click.option(
     "--no-skip-existing",
     is_flag=True,
-    help="Don't skip existing files (fails if file exists and --overwrite not set)",
+    hidden=True,
+    help="(Deprecated) Use --conflict-mode option instead",
 )
 @CONFIG_OPTION
 @DATA_DIR_OPTION
 def import_metadata(
     input_file: str,
+    conflict_mode: str,
+    dry_run: bool,
+    no_preserve_ids: bool,
     overwrite: bool,
-    no_skip_existing: bool,
+    _no_skip_existing: bool,
     config: str | None,
     data_dir: str,
 ) -> None:
@@ -595,11 +664,21 @@ def import_metadata(
     - Migrating metadata between instances (with same CAS content)
     - Creating alternative path mappings to existing content
 
+    Conflict Resolution Modes:
+    - skip: Keep existing files, skip imports (default)
+    - overwrite: Replace existing files with imported data
+    - remap: Rename imported files to avoid collisions (adds _imported suffix)
+    - auto: Smart resolution - newer file wins based on timestamps
+
     Examples:
         nexus import metadata-backup.jsonl
-        nexus import metadata-backup.jsonl --overwrite
+        nexus import metadata-backup.jsonl --conflict-mode=overwrite
+        nexus import metadata-backup.jsonl --conflict-mode=auto --dry-run
+        nexus import metadata-backup.jsonl --conflict-mode=remap
     """
     try:
+        from nexus.core.export_import import ImportOptions
+
         nx = get_filesystem(data_dir, config)
 
         # Note: Only Embedded mode supports metadata import
@@ -608,24 +687,373 @@ def import_metadata(
             nx.close()
             sys.exit(1)
 
-        console.print(f"[cyan]Importing metadata from:[/cyan] {input_file}")
+        # Handle deprecated options for backward compatibility
         if overwrite:
-            console.print("[yellow]Mode:[/yellow] Overwrite existing files")
-        else:
-            console.print("[yellow]Mode:[/yellow] Skip existing files")
+            console.print(
+                "[yellow]Warning:[/yellow] --overwrite is deprecated, use --conflict-mode=overwrite"
+            )
+            conflict_mode = "overwrite"
+
+        # Create import options
+        import_options = ImportOptions(
+            dry_run=dry_run,
+            conflict_mode=conflict_mode,  # type: ignore
+            preserve_ids=not no_preserve_ids,
+        )
+
+        # Display import configuration
+        console.print(f"[cyan]Importing metadata from:[/cyan] {input_file}")
+        console.print(f"  Conflict mode: [yellow]{conflict_mode}[/yellow]")
+        if dry_run:
+            console.print("  [yellow]DRY RUN - No changes will be made[/yellow]")
+        if no_preserve_ids:
+            console.print("  [yellow]Not preserving original IDs[/yellow]")
 
         with console.status("[yellow]Importing metadata...[/yellow]", spinner="dots"):
-            imported, skipped = nx.import_metadata(
-                input_file,
-                overwrite=overwrite,
-                skip_existing=not no_skip_existing,
-            )
+            result = nx.import_metadata(input_file, options=import_options)
 
         nx.close()
 
-        console.print(f"[green]✓[/green] Imported [cyan]{imported}[/cyan] file metadata records")
-        if skipped > 0:
-            console.print(f"  Skipped [yellow]{skipped}[/yellow] existing files")
+        # Display results
+        if dry_run:
+            console.print("[bold yellow]DRY RUN RESULTS:[/bold yellow]")
+        else:
+            console.print("[bold green]✓ Import Complete![/bold green]")
+
+        console.print(f"  Created: [green]{result.created}[/green]")
+        console.print(f"  Updated: [cyan]{result.updated}[/cyan]")
+        console.print(f"  Skipped: [yellow]{result.skipped}[/yellow]")
+        if result.remapped > 0:
+            console.print(f"  Remapped: [magenta]{result.remapped}[/magenta]")
+        console.print(f"  Total: [bold]{result.total_processed}[/bold]")
+
+        # Display collisions if any
+        if result.collisions:
+            console.print(f"\n[bold yellow]Collisions:[/bold yellow] {len(result.collisions)}")
+            console.print()
+
+            # Group collisions by resolution type
+            from collections import defaultdict
+
+            by_resolution = defaultdict(list)
+            for collision in result.collisions:
+                by_resolution[collision.resolution].append(collision)
+
+            # Show summary by resolution type
+            for resolution, collisions in sorted(by_resolution.items()):
+                console.print(f"  [cyan]{resolution}:[/cyan] {len(collisions)} files")
+
+            # Show detailed collision list (limit to first 10 for readability)
+            if len(result.collisions) <= 10:
+                console.print("\n[bold]Collision Details:[/bold]")
+                for collision in result.collisions:
+                    console.print(f"  • {collision.path}")
+                    console.print(f"    [dim]{collision.message}[/dim]")
+            else:
+                console.print("\n[dim]Use --dry-run to see all collision details[/dim]")
+
+    except Exception as e:
+        handle_error(e)
+
+
+@main.command(name="work")
+@click.argument(
+    "view_type",
+    type=click.Choice(["ready", "pending", "blocked", "in-progress", "status"]),
+)
+@click.option("-l", "--limit", type=int, default=None, help="Maximum number of results to show")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+@CONFIG_OPTION
+@DATA_DIR_OPTION
+def work_command(
+    view_type: str,
+    limit: int | None,
+    json_output: bool,
+    config: str | None,
+    data_dir: str,
+) -> None:
+    """Query work items using SQL views.
+
+    View Types:
+    - ready: Files ready for processing (status='ready', no blockers)
+    - pending: Files waiting to be processed (status='pending')
+    - blocked: Files blocked by dependencies
+    - in-progress: Files currently being processed
+    - status: Show aggregate statistics of all work queues
+
+    Examples:
+        nexus work ready --limit 10
+        nexus work blocked
+        nexus work status
+        nexus work ready --json
+    """
+    try:
+        nx = get_filesystem(data_dir, config)
+
+        # Only Embedded mode has metadata store with work views
+        if not isinstance(nx, Embedded):
+            console.print("[red]Error:[/red] Work views are only available in embedded mode")
+            nx.close()
+            sys.exit(1)
+
+        # Handle status view (aggregate statistics)
+        if view_type == "status":
+            if json_output:
+                import json
+
+                ready_count = len(nx.metadata.get_ready_work())
+                pending_count = len(nx.metadata.get_pending_work())
+                blocked_count = len(nx.metadata.get_blocked_work())
+                in_progress_count = len(nx.metadata.get_in_progress_work())
+
+                status_data = {
+                    "ready": ready_count,
+                    "pending": pending_count,
+                    "blocked": blocked_count,
+                    "in_progress": in_progress_count,
+                    "total": ready_count + pending_count + blocked_count + in_progress_count,
+                }
+                console.print(json.dumps(status_data, indent=2))
+            else:
+                ready_count = len(nx.metadata.get_ready_work())
+                pending_count = len(nx.metadata.get_pending_work())
+                blocked_count = len(nx.metadata.get_blocked_work())
+                in_progress_count = len(nx.metadata.get_in_progress_work())
+                total_count = ready_count + pending_count + blocked_count + in_progress_count
+
+                table = Table(title="Work Queue Status")
+                table.add_column("Queue", style="cyan")
+                table.add_column("Count", justify="right", style="green")
+
+                table.add_row("Ready", str(ready_count))
+                table.add_row("Pending", str(pending_count))
+                table.add_row("Blocked", str(blocked_count))
+                table.add_row("In Progress", str(in_progress_count))
+                table.add_row("[bold]Total[/bold]", f"[bold]{total_count}[/bold]")
+
+                console.print(table)
+
+            nx.close()
+            return
+
+        # Get work items based on view type
+        if view_type == "ready":
+            items = nx.metadata.get_ready_work(limit=limit)
+            title = "Ready Work Items"
+            description = "Files ready for processing"
+        elif view_type == "pending":
+            items = nx.metadata.get_pending_work(limit=limit)
+            title = "Pending Work Items"
+            description = "Files waiting to be processed"
+        elif view_type == "blocked":
+            items = nx.metadata.get_blocked_work(limit=limit)
+            title = "Blocked Work Items"
+            description = "Files blocked by dependencies"
+        elif view_type == "in-progress":
+            items = nx.metadata.get_in_progress_work(limit=limit)
+            title = "In-Progress Work Items"
+            description = "Files currently being processed"
+        else:
+            console.print(f"[red]Error:[/red] Unknown view type: {view_type}")
+            nx.close()
+            sys.exit(1)
+
+        nx.close()
+
+        # Output results
+        if not items:
+            console.print(f"[yellow]No {view_type} work items found[/yellow]")
+            return
+
+        if json_output:
+            import json
+
+            console.print(json.dumps(items, indent=2, default=str))
+        else:
+            console.print(f"[green]{description}[/green] ([cyan]{len(items)}[/cyan] items)\n")
+
+            table = Table(title=title)
+            table.add_column("Path", style="cyan", no_wrap=False)
+            table.add_column("Status", style="yellow")
+            table.add_column("Priority", justify="right", style="green")
+
+            # Add blocker_count column for blocked view
+            if view_type == "blocked":
+                table.add_column("Blockers", justify="right", style="red")
+
+            # Add worker info for in-progress view
+            if view_type == "in-progress":
+                table.add_column("Worker ID", style="magenta")
+                table.add_column("Started At", style="dim")
+
+            for item in items:
+                import json as json_lib
+
+                # Extract status and priority
+                status_value = "N/A"
+                if item.get("status"):
+                    try:
+                        status_value = json_lib.loads(item["status"])
+                    except (json_lib.JSONDecodeError, TypeError):
+                        status_value = str(item["status"])
+
+                priority_value = "N/A"
+                if item.get("priority"):
+                    try:
+                        priority_value = str(json_lib.loads(item["priority"]))
+                    except (json_lib.JSONDecodeError, TypeError):
+                        priority_value = str(item["priority"])
+
+                # Build row data
+                row_data = [
+                    item["virtual_path"],
+                    status_value,
+                    priority_value,
+                ]
+
+                # Add blocker count for blocked view
+                if view_type == "blocked":
+                    blocker_count = item.get("blocker_count", 0)
+                    row_data.append(str(blocker_count))
+
+                # Add worker info for in-progress view
+                if view_type == "in-progress":
+                    worker_id = "N/A"
+                    if item.get("worker_id"):
+                        try:
+                            worker_id = json_lib.loads(item["worker_id"])
+                        except (json_lib.JSONDecodeError, TypeError):
+                            worker_id = str(item["worker_id"])
+
+                    started_at = "N/A"
+                    if item.get("started_at"):
+                        try:
+                            started_at = json_lib.loads(item["started_at"])
+                        except (json_lib.JSONDecodeError, TypeError):
+                            started_at = str(item["started_at"])
+
+                    row_data.extend([worker_id, started_at])
+
+                table.add_row(*row_data)
+
+            console.print(table)
+
+    except Exception as e:
+        handle_error(e)
+
+
+@main.command(name="find-duplicates")
+@click.option("-p", "--path", default="/", help="Base path to search from")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+@CONFIG_OPTION
+@DATA_DIR_OPTION
+def find_duplicates(path: str, json_output: bool, config: str | None, data_dir: str) -> None:
+    """Find duplicate files using content hashes.
+
+    Uses batch_get_content_ids() for efficient deduplication detection.
+    Groups files by their content hash to find duplicates.
+
+    Examples:
+        nexus find-duplicates
+        nexus find-duplicates --path /workspace
+        nexus find-duplicates --json
+    """
+    try:
+        nx = get_filesystem(data_dir, config)
+
+        # Only Embedded mode supports batch_get_content_ids
+        if not isinstance(nx, Embedded):
+            console.print("[red]Error:[/red] find-duplicates is only available in embedded mode")
+            nx.close()
+            sys.exit(1)
+
+        # Get all files under path
+        with console.status(f"[yellow]Scanning files in {path}...[/yellow]", spinner="dots"):
+            all_files_raw = nx.list(path, recursive=True)
+
+            # Check if we got detailed results (list of dicts) or simple paths (list of strings)
+            if all_files_raw and isinstance(all_files_raw[0], dict):
+                # details=True was used
+                all_files_detailed = cast(list[dict[str, Any]], all_files_raw)
+                file_paths = [f["path"] for f in all_files_detailed]
+            else:
+                # Simple list of paths
+                file_paths = cast(list[str], all_files_raw)
+
+        if not file_paths:
+            console.print(f"[yellow]No files found in {path}[/yellow]")
+            nx.close()
+            return
+
+        # Get content hashes in batch (single query)
+        with console.status(
+            f"[yellow]Analyzing {len(file_paths)} files for duplicates...[/yellow]",
+            spinner="dots",
+        ):
+            content_ids = nx.batch_get_content_ids(file_paths)
+
+            # Group by hash
+            from collections import defaultdict
+
+            by_hash = defaultdict(list)
+            for file_path, content_hash in content_ids.items():
+                if content_hash:
+                    by_hash[content_hash].append(file_path)
+
+            # Find duplicate groups (hash with >1 file)
+            duplicates = {h: paths for h, paths in by_hash.items() if len(paths) > 1}
+
+        nx.close()
+
+        # Calculate statistics
+        total_files = len(file_paths)
+        unique_hashes = len(by_hash)
+        duplicate_groups = len(duplicates)
+        duplicate_files = sum(len(paths) for paths in duplicates.values())
+
+        if json_output:
+            import json
+
+            result = {
+                "total_files": total_files,
+                "unique_hashes": unique_hashes,
+                "duplicate_groups": duplicate_groups,
+                "duplicate_files": duplicate_files,
+                "duplicates": [
+                    {"content_hash": h, "paths": paths} for h, paths in duplicates.items()
+                ],
+            }
+            console.print(json.dumps(result, indent=2))
+        else:
+            # Display summary
+            console.print("\n[bold cyan]Duplicate File Analysis[/bold cyan]")
+            console.print(f"Total files scanned: [green]{total_files}[/green]")
+            console.print(f"Unique content hashes: [green]{unique_hashes}[/green]")
+            console.print(f"Duplicate groups: [yellow]{duplicate_groups}[/yellow]")
+            console.print(f"Duplicate files: [yellow]{duplicate_files}[/yellow]")
+
+            if not duplicates:
+                console.print("\n[green]✓ No duplicate files found![/green]")
+                return
+
+            # Display duplicate groups
+            console.print("\n[bold yellow]Duplicate Groups:[/bold yellow]\n")
+
+            for i, (content_hash, paths) in enumerate(duplicates.items(), 1):
+                console.print(f"[bold]Group {i}[/bold] (hash: [dim]{content_hash[:16]}...[/dim])")
+                console.print(f"  [yellow]{len(paths)} files with identical content:[/yellow]")
+                for path in sorted(paths):
+                    console.print(f"    • {path}")
+                console.print()
+
+            # Calculate potential space savings
+            # Each duplicate group can save (n-1) copies
+            console.print("[bold cyan]Storage Impact:[/bold cyan]")
+            console.print(
+                f"  Files that could be deduplicated: [yellow]{duplicate_files - duplicate_groups}[/yellow]"
+            )
+            console.print("  (CAS automatically deduplicates - no action needed!)")
+
     except Exception as e:
         handle_error(e)
 

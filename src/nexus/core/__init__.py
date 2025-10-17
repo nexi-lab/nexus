@@ -8,6 +8,7 @@ from nexus.core.exceptions import (
     NexusError,
     NexusFileNotFoundError,
     NexusPermissionError,
+    ValidationError,
 )
 from nexus.core.filesystem import NexusFilesystem
 
@@ -20,4 +21,5 @@ __all__ = [
     "BackendError",
     "InvalidPathError",
     "MetadataError",
+    "ValidationError",
 ]

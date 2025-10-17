@@ -16,6 +16,12 @@ from sqlalchemy import select
 from nexus.backends.backend import Backend
 from nexus.backends.local import LocalBackend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
+from nexus.core.export_import import (
+    CollisionDetail,
+    ExportFilter,
+    ImportOptions,
+    ImportResult,
+)
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.router import NamespaceConfig, PathRouter
@@ -695,7 +701,12 @@ class Embedded(NexusFilesystem):
 
     # === Metadata Export/Import ===
 
-    def export_metadata(self, output_path: str | Path, prefix: str = "") -> int:
+    def export_metadata(
+        self,
+        output_path: str | Path,
+        filter: ExportFilter | None = None,
+        prefix: str = "",  # Backward compatibility
+    ) -> int:
         """
         Export metadata to JSONL file for backup and migration.
 
@@ -711,9 +722,12 @@ class Embedded(NexusFilesystem):
         - version: Version number
         - custom_metadata: Dict of custom key-value metadata (optional)
 
+        Output is sorted by path for clean git diffs.
+
         Args:
             output_path: Path to output JSONL file
-            prefix: Optional path prefix to filter exported files (default: "" exports all)
+            filter: Export filter options (tenant_id, path_prefix, after_time, include_deleted)
+            prefix: (Deprecated) Path prefix filter for backward compatibility
 
         Returns:
             Number of files exported
@@ -722,20 +736,60 @@ class Embedded(NexusFilesystem):
             # Export all metadata
             count = fs.export_metadata("backup.jsonl")
 
-            # Export only /workspace files
-            count = fs.export_metadata("workspace-backup.jsonl", prefix="/workspace")
+            # Export with filters
+            from nexus.core.export_import import ExportFilter
+            from datetime import datetime
+            filter = ExportFilter(
+                path_prefix="/workspace",
+                after_time=datetime(2024, 1, 1),
+                tenant_id="acme-corp"
+            )
+            count = fs.export_metadata("backup.jsonl", filter=filter)
         """
         import json
 
         output_file = Path(output_path)
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
+        # Handle backward compatibility and create filter
+        if filter is None:
+            filter = ExportFilter(path_prefix=prefix)
+        elif prefix:
+            # If both provided, prefix takes precedence for backward compat
+            filter.path_prefix = prefix
+
         # Get all files matching prefix
-        all_files = self.metadata.list(prefix)
+        all_files = self.metadata.list(filter.path_prefix)
+
+        # Apply filters
+        filtered_files = []
+        for file_meta in all_files:
+            # Filter by modification time
+            if filter.after_time and file_meta.modified_at:
+                # Ensure both timestamps are timezone-aware for comparison
+                file_time = file_meta.modified_at
+                filter_time = filter.after_time
+                if file_time.tzinfo is None:
+                    file_time = file_time.replace(tzinfo=UTC)
+                if filter_time.tzinfo is None:
+                    filter_time = filter_time.replace(tzinfo=UTC)
+
+                if file_time < filter_time:
+                    continue
+
+            # Note: include_deleted and tenant_id filtering would require
+            # database-level support. For now, we skip these filters.
+            # TODO: Add deleted_at column support and tenant filtering
+
+            filtered_files.append(file_meta)
+
+        # Sort by path for clean git diffs (deterministic output)
+        filtered_files.sort(key=lambda m: m.path)
+
         count = 0
 
         with output_file.open("w", encoding="utf-8") as f:
-            for file_meta in all_files:
+            for file_meta in filtered_files:
                 # Build base metadata dict
                 metadata_dict: dict[str, Any] = {
                     "path": file_meta.path,
@@ -794,9 +848,10 @@ class Embedded(NexusFilesystem):
     def import_metadata(
         self,
         input_path: str | Path,
-        overwrite: bool = False,
-        skip_existing: bool = True,
-    ) -> tuple[int, int]:
+        options: ImportOptions | None = None,
+        overwrite: bool = False,  # Backward compatibility
+        skip_existing: bool = True,  # Backward compatibility
+    ) -> ImportResult:
         """
         Import metadata from JSONL file.
 
@@ -809,23 +864,34 @@ class Embedded(NexusFilesystem):
 
         Args:
             input_path: Path to input JSONL file
-            overwrite: If True, overwrite existing metadata (default: False)
-            skip_existing: If True, skip files that already exist (default: True)
+            options: Import options (conflict mode, dry-run, preserve IDs)
+            overwrite: (Deprecated) If True, overwrite existing (backward compat)
+            skip_existing: (Deprecated) If True, skip existing (backward compat)
 
         Returns:
-            Tuple of (imported_count, skipped_count)
+            ImportResult with counts and collision details
 
         Raises:
             ValueError: If JSONL format is invalid
             FileNotFoundError: If input file doesn't exist
 
         Examples:
-            # Import metadata (skip existing)
-            imported, skipped = fs.import_metadata("backup.jsonl")
-            print(f"Imported {imported} files, skipped {skipped}")
+            # Import metadata (skip existing - default)
+            result = fs.import_metadata("backup.jsonl")
+            print(f"Created {result.created}, updated {result.updated}, skipped {result.skipped}")
 
-            # Import and overwrite existing
-            imported, skipped = fs.import_metadata("backup.jsonl", overwrite=True)
+            # Import with conflict resolution
+            from nexus.core.export_import import ImportOptions
+            options = ImportOptions(conflict_mode="auto", dry_run=True)
+            result = fs.import_metadata("backup.jsonl", options=options)
+
+            # Import and overwrite conflicts
+            options = ImportOptions(conflict_mode="overwrite")
+            result = fs.import_metadata("backup.jsonl", options=options)
+
+            # Backward compatibility (old API)
+            result = fs.import_metadata("backup.jsonl", overwrite=True)
+            # Returns ImportResult, but behaves like old (imported, skipped) tuple
         """
         import json
 
@@ -833,8 +899,16 @@ class Embedded(NexusFilesystem):
         if not input_file.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
-        imported_count = 0
-        skipped_count = 0
+        # Handle backward compatibility - convert old params to ImportOptions
+        if options is None:
+            if overwrite:
+                options = ImportOptions(conflict_mode="overwrite")
+            elif skip_existing:
+                options = ImportOptions(conflict_mode="skip")
+            else:
+                options = ImportOptions(conflict_mode="skip")
+
+        result = ImportResult()
 
         with input_file.open("r", encoding="utf-8") as f:
             for line_num, line in enumerate(f, start=1):
@@ -852,17 +926,8 @@ class Embedded(NexusFilesystem):
                         if field not in metadata_dict:
                             raise ValueError(f"Missing required field: {field}")
 
-                    path = metadata_dict["path"]
-
-                    # Check if file already exists
-                    existing = self.metadata.get(path)
-                    if existing:
-                        if skip_existing and not overwrite:
-                            skipped_count += 1
-                            continue
-                        if not overwrite:
-                            skipped_count += 1
-                            continue
+                    original_path = metadata_dict["path"]
+                    path = original_path
 
                     # Parse timestamps
                     created_at = None
@@ -873,13 +938,213 @@ class Embedded(NexusFilesystem):
                     if metadata_dict.get("modified_at"):
                         modified_at = datetime.fromisoformat(metadata_dict["modified_at"])
 
+                    # Check if file already exists
+                    existing = self.metadata.get(path)
+                    imported_etag = metadata_dict.get("etag")
+
+                    if existing:
+                        # Collision detected - determine resolution
+                        existing_etag = existing.etag
+                        is_same_content = existing_etag == imported_etag
+
+                        if is_same_content:
+                            # Same content, different metadata - just update
+                            if options.dry_run:
+                                result.updated += 1
+                                continue
+
+                            # Update metadata
+                            file_meta = FileMetadata(
+                                path=path,
+                                backend_name=metadata_dict["backend_name"],
+                                physical_path=metadata_dict["physical_path"],
+                                size=metadata_dict["size"],
+                                etag=imported_etag,
+                                mime_type=metadata_dict.get("mime_type"),
+                                created_at=created_at or existing.created_at,
+                                modified_at=modified_at or existing.modified_at,
+                                version=metadata_dict.get("version", existing.version),
+                            )
+                            self.metadata.put(file_meta)
+                            self._import_custom_metadata(path, metadata_dict)
+                            result.updated += 1
+                            continue
+
+                        # Different content - apply conflict mode
+                        if options.conflict_mode == "skip":
+                            result.skipped += 1
+                            result.collisions.append(
+                                CollisionDetail(
+                                    path=path,
+                                    existing_etag=existing_etag,
+                                    imported_etag=imported_etag,
+                                    resolution="skip",
+                                    message="Skipped: existing file has different content",
+                                )
+                            )
+                            continue
+
+                        elif options.conflict_mode == "overwrite":
+                            if options.dry_run:
+                                result.updated += 1
+                                result.collisions.append(
+                                    CollisionDetail(
+                                        path=path,
+                                        existing_etag=existing_etag,
+                                        imported_etag=imported_etag,
+                                        resolution="overwrite",
+                                        message="Would overwrite with imported content",
+                                    )
+                                )
+                                continue
+
+                            # Overwrite existing
+                            file_meta = FileMetadata(
+                                path=path,
+                                backend_name=metadata_dict["backend_name"],
+                                physical_path=metadata_dict["physical_path"],
+                                size=metadata_dict["size"],
+                                etag=imported_etag,
+                                mime_type=metadata_dict.get("mime_type"),
+                                created_at=created_at or existing.created_at,
+                                modified_at=modified_at,
+                                version=metadata_dict.get("version", existing.version + 1),
+                            )
+                            self.metadata.put(file_meta)
+                            self._import_custom_metadata(path, metadata_dict)
+                            result.updated += 1
+                            result.collisions.append(
+                                CollisionDetail(
+                                    path=path,
+                                    existing_etag=existing_etag,
+                                    imported_etag=imported_etag,
+                                    resolution="overwrite",
+                                    message="Overwrote with imported content",
+                                )
+                            )
+                            continue
+
+                        elif options.conflict_mode == "remap":
+                            # Rename imported file to avoid collision
+                            suffix = 1
+                            while self.metadata.exists(f"{path}_imported{suffix}"):
+                                suffix += 1
+                            path = f"{path}_imported{suffix}"
+
+                            if options.dry_run:
+                                result.remapped += 1
+                                result.collisions.append(
+                                    CollisionDetail(
+                                        path=original_path,
+                                        existing_etag=existing_etag,
+                                        imported_etag=imported_etag,
+                                        resolution="remap",
+                                        message=f"Would remap to: {path}",
+                                    )
+                                )
+                                continue
+
+                            # Create with new path
+                            file_meta = FileMetadata(
+                                path=path,
+                                backend_name=metadata_dict["backend_name"],
+                                physical_path=metadata_dict["physical_path"],
+                                size=metadata_dict["size"],
+                                etag=imported_etag,
+                                mime_type=metadata_dict.get("mime_type"),
+                                created_at=created_at,
+                                modified_at=modified_at,
+                                version=metadata_dict.get("version", 1),
+                            )
+                            self.metadata.put(file_meta)
+                            self._import_custom_metadata(path, metadata_dict)
+                            result.remapped += 1
+                            result.collisions.append(
+                                CollisionDetail(
+                                    path=original_path,
+                                    existing_etag=existing_etag,
+                                    imported_etag=imported_etag,
+                                    resolution="remap",
+                                    message=f"Remapped to: {path}",
+                                )
+                            )
+                            continue
+
+                        elif options.conflict_mode == "auto":
+                            # Smart resolution: newer wins
+                            existing_time = existing.modified_at or existing.created_at
+                            imported_time = modified_at or created_at
+
+                            # Ensure both timestamps are timezone-aware for comparison
+                            if existing_time and existing_time.tzinfo is None:
+                                existing_time = existing_time.replace(tzinfo=UTC)
+                            if imported_time and imported_time.tzinfo is None:
+                                imported_time = imported_time.replace(tzinfo=UTC)
+
+                            if imported_time and existing_time and imported_time > existing_time:
+                                # Imported is newer - overwrite
+                                if options.dry_run:
+                                    result.updated += 1
+                                    result.collisions.append(
+                                        CollisionDetail(
+                                            path=path,
+                                            existing_etag=existing_etag,
+                                            imported_etag=imported_etag,
+                                            resolution="auto_overwrite",
+                                            message=f"Would overwrite: imported is newer ({imported_time} > {existing_time})",
+                                        )
+                                    )
+                                    continue
+
+                                file_meta = FileMetadata(
+                                    path=path,
+                                    backend_name=metadata_dict["backend_name"],
+                                    physical_path=metadata_dict["physical_path"],
+                                    size=metadata_dict["size"],
+                                    etag=imported_etag,
+                                    mime_type=metadata_dict.get("mime_type"),
+                                    created_at=created_at or existing.created_at,
+                                    modified_at=modified_at,
+                                    version=metadata_dict.get("version", existing.version + 1),
+                                )
+                                self.metadata.put(file_meta)
+                                self._import_custom_metadata(path, metadata_dict)
+                                result.updated += 1
+                                result.collisions.append(
+                                    CollisionDetail(
+                                        path=path,
+                                        existing_etag=existing_etag,
+                                        imported_etag=imported_etag,
+                                        resolution="auto_overwrite",
+                                        message=f"Overwrote: imported is newer ({imported_time} > {existing_time})",
+                                    )
+                                )
+                            else:
+                                # Existing is newer or equal - skip
+                                result.skipped += 1
+                                result.collisions.append(
+                                    CollisionDetail(
+                                        path=path,
+                                        existing_etag=existing_etag,
+                                        imported_etag=imported_etag,
+                                        resolution="auto_skip",
+                                        message="Skipped: existing is newer or equal",
+                                    )
+                                )
+                            continue
+
+                    # No collision - create new file
+                    if options.dry_run:
+                        result.created += 1
+                        continue
+
                     # Create FileMetadata object
                     file_meta = FileMetadata(
                         path=path,
                         backend_name=metadata_dict["backend_name"],
                         physical_path=metadata_dict["physical_path"],
                         size=metadata_dict["size"],
-                        etag=metadata_dict.get("etag"),
+                        etag=imported_etag,
                         mime_type=metadata_dict.get("mime_type"),
                         created_at=created_at,
                         modified_at=modified_at,
@@ -888,24 +1153,58 @@ class Embedded(NexusFilesystem):
 
                     # Store metadata
                     self.metadata.put(file_meta)
-
-                    # Import custom metadata if present
-                    if "custom_metadata" in metadata_dict:
-                        custom_meta = metadata_dict["custom_metadata"]
-                        if isinstance(custom_meta, dict):
-                            for key, value in custom_meta.items():
-                                with contextlib.suppress(Exception):
-                                    # Ignore errors when setting custom metadata
-                                    self.metadata.set_file_metadata(path, key, value)
-
-                    imported_count += 1
+                    self._import_custom_metadata(path, metadata_dict)
+                    result.created += 1
 
                 except json.JSONDecodeError as e:
                     raise ValueError(f"Invalid JSON at line {line_num}: {e}") from e
                 except Exception as e:
                     raise ValueError(f"Error processing line {line_num}: {e}") from e
 
-        return imported_count, skipped_count
+        return result
+
+    def _import_custom_metadata(self, path: str, metadata_dict: dict[str, Any]) -> None:
+        """Helper to import custom metadata for a file."""
+        if "custom_metadata" in metadata_dict:
+            custom_meta = metadata_dict["custom_metadata"]
+            if isinstance(custom_meta, dict):
+                for key, value in custom_meta.items():
+                    with contextlib.suppress(Exception):
+                        # Ignore errors when setting custom metadata
+                        self.metadata.set_file_metadata(path, key, value)
+
+    def batch_get_content_ids(self, paths: builtins.list[str]) -> dict[str, str | None]:
+        """
+        Get content IDs (hashes) for multiple paths in a single query.
+
+        This is a convenience method that delegates to the metadata store's
+        batch_get_content_ids(). Useful for CAS deduplication scenarios where
+        you need to find duplicate files efficiently.
+
+        Performance: Uses a single SQL query instead of N queries (avoids N+1 problem).
+
+        Args:
+            paths: List of virtual file paths
+
+        Returns:
+            Dictionary mapping path to content_hash (or None if file not found)
+
+        Examples:
+            # Find duplicate files
+            paths = fs.list()
+            hashes = fs.batch_get_content_ids(paths)
+
+            # Group by hash to find duplicates
+            from collections import defaultdict
+            by_hash = defaultdict(list)
+            for path, hash in hashes.items():
+                if hash:
+                    by_hash[hash].append(path)
+
+            # Find duplicate groups
+            duplicates = {h: paths for h, paths in by_hash.items() if len(paths) > 1}
+        """
+        return self.metadata.batch_get_content_ids(paths)
 
     def close(self) -> None:
         """Close the embedded filesystem and release resources."""

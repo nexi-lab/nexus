@@ -422,3 +422,232 @@ class TestBatchOperations:
         assert result.size == 500
 
         store.close()
+
+    def test_batch_get_content_ids_basic(self, tmp_path: Path):
+        """Test basic batch get content IDs operation."""
+        db_path = tmp_path / "test.db"
+        store = SQLAlchemyMetadataStore(db_path)
+
+        # Store multiple files with different content hashes
+        files = [
+            ("/file1.txt", "hash1"),
+            ("/file2.txt", "hash2"),
+            ("/file3.txt", "hash3"),
+            ("/file4.txt", "hash1"),  # Duplicate of file1
+            ("/file5.txt", "hash2"),  # Duplicate of file2
+        ]
+
+        for path, content_hash in files:
+            metadata = FileMetadata(
+                path=path,
+                backend_name="local",
+                physical_path=f"storage{path}",
+                size=100,
+                etag=content_hash,
+            )
+            store.put(metadata)
+
+        # Batch get content IDs
+        paths = [f[0] for f in files]
+        result = store.batch_get_content_ids(paths)
+
+        # Verify all hashes retrieved
+        assert len(result) == 5
+        assert result["/file1.txt"] == "hash1"
+        assert result["/file2.txt"] == "hash2"
+        assert result["/file3.txt"] == "hash3"
+        assert result["/file4.txt"] == "hash1"
+        assert result["/file5.txt"] == "hash2"
+
+        store.close()
+
+    def test_batch_get_content_ids_with_missing(self, tmp_path: Path):
+        """Test batch get content IDs with some files not found."""
+        db_path = tmp_path / "test.db"
+        store = SQLAlchemyMetadataStore(db_path)
+
+        # Store only some files
+        for i in [0, 2, 4]:
+            metadata = FileMetadata(
+                path=f"/file{i}.txt",
+                backend_name="local",
+                physical_path=f"storage/file{i}.txt",
+                size=100,
+                etag=f"hash{i}",
+            )
+            store.put(metadata)
+
+        # Batch get including non-existent files
+        paths = [f"/file{i}.txt" for i in range(6)]
+        result = store.batch_get_content_ids(paths)
+
+        # Verify mixed results
+        assert len(result) == 6
+        assert result["/file0.txt"] == "hash0"
+        assert result["/file1.txt"] is None
+        assert result["/file2.txt"] == "hash2"
+        assert result["/file3.txt"] is None
+        assert result["/file4.txt"] == "hash4"
+        assert result["/file5.txt"] is None
+
+        store.close()
+
+    def test_batch_get_content_ids_empty_list(self, tmp_path: Path):
+        """Test batch get content IDs with empty path list."""
+        db_path = tmp_path / "test.db"
+        store = SQLAlchemyMetadataStore(db_path)
+
+        result = store.batch_get_content_ids([])
+        assert result == {}
+
+        store.close()
+
+    def test_batch_get_content_ids_deduplication(self, tmp_path: Path):
+        """Test using batch_get_content_ids for deduplication detection."""
+        db_path = tmp_path / "test.db"
+        store = SQLAlchemyMetadataStore(db_path)
+
+        # Store files with some duplicates
+        files = [
+            ("/doc1.txt", "abc123"),
+            ("/doc2.txt", "def456"),
+            ("/doc3.txt", "abc123"),  # Duplicate of doc1
+            ("/doc4.txt", "ghi789"),
+            ("/doc5.txt", "def456"),  # Duplicate of doc2
+            ("/doc6.txt", "abc123"),  # Duplicate of doc1 and doc3
+        ]
+
+        for path, content_hash in files:
+            metadata = FileMetadata(
+                path=path,
+                backend_name="local",
+                physical_path=f"storage{path}",
+                size=100,
+                etag=content_hash,
+            )
+            store.put(metadata)
+
+        # Get all content IDs
+        paths = [f[0] for f in files]
+        hashes = store.batch_get_content_ids(paths)
+
+        # Find duplicates
+        from collections import defaultdict
+
+        by_hash = defaultdict(list)
+        for path, content_hash in hashes.items():
+            if content_hash:
+                by_hash[content_hash].append(path)
+
+        duplicates = {h: paths for h, paths in by_hash.items() if len(paths) > 1}
+
+        # Verify duplicate detection
+        assert len(duplicates) == 2  # Two groups of duplicates
+        assert set(duplicates["abc123"]) == {"/doc1.txt", "/doc3.txt", "/doc6.txt"}
+        assert set(duplicates["def456"]) == {"/doc2.txt", "/doc5.txt"}
+
+        store.close()
+
+    def test_batch_get_content_ids_null_hashes(self, tmp_path: Path):
+        """Test batch get content IDs with files that have no content hash."""
+        db_path = tmp_path / "test.db"
+        store = SQLAlchemyMetadataStore(db_path)
+
+        # Store files with some having no content hash
+        metadata1 = FileMetadata(
+            path="/file1.txt",
+            backend_name="local",
+            physical_path="storage/file1.txt",
+            size=100,
+            etag="hash1",
+        )
+        store.put(metadata1)
+
+        metadata2 = FileMetadata(
+            path="/file2.txt",
+            backend_name="local",
+            physical_path="storage/file2.txt",
+            size=100,
+            etag=None,  # No hash
+        )
+        store.put(metadata2)
+
+        # Batch get content IDs
+        result = store.batch_get_content_ids(["/file1.txt", "/file2.txt"])
+
+        # Verify results
+        assert result["/file1.txt"] == "hash1"
+        assert result["/file2.txt"] is None
+
+        store.close()
+
+    def test_batch_get_content_ids_performance(self, tmp_path: Path):
+        """Test batch get content IDs with large number of files."""
+        db_path = tmp_path / "test.db"
+        store = SQLAlchemyMetadataStore(db_path)
+
+        # Create many files
+        num_files = 100
+        for i in range(num_files):
+            metadata = FileMetadata(
+                path=f"/file{i}.txt",
+                backend_name="local",
+                physical_path=f"storage/file{i}.txt",
+                size=1000,
+                etag=f"hash{i % 10}",  # Create some duplicates
+            )
+            store.put(metadata)
+
+        # Batch get all content IDs
+        paths = [f"/file{i}.txt" for i in range(num_files)]
+        result = store.batch_get_content_ids(paths)
+
+        # Verify all returned
+        assert len(result) == num_files
+
+        # Count duplicates by hash
+        from collections import Counter
+
+        hash_counts = Counter(h for h in result.values() if h is not None)
+
+        # Each hash (0-9) should appear 10 times
+        for i in range(10):
+            assert hash_counts[f"hash{i}"] == 10
+
+        store.close()
+
+    def test_batch_get_content_ids_vs_get_batch(self, tmp_path: Path):
+        """Compare batch_get_content_ids with get_batch for efficiency."""
+        db_path = tmp_path / "test.db"
+        store = SQLAlchemyMetadataStore(db_path)
+
+        # Store files
+        for i in range(10):
+            metadata = FileMetadata(
+                path=f"/file{i}.txt",
+                backend_name="local",
+                physical_path=f"storage/file{i}.txt",
+                size=1000,
+                etag=f"hash{i}",
+            )
+            store.put(metadata)
+
+        paths = [f"/file{i}.txt" for i in range(10)]
+
+        # Method 1: batch_get_content_ids (efficient - only fetches hash)
+        result1 = store.batch_get_content_ids(paths)
+
+        # Method 2: get_batch (less efficient - fetches full metadata)
+        result2_meta = store.get_batch(paths)
+        result2 = {p: m.etag if m else None for p, m in result2_meta.items()}
+
+        # Results should be identical
+        assert result1 == result2
+
+        # Both methods should return correct hashes
+        for i in range(10):
+            path = f"/file{i}.txt"
+            assert result1[path] == f"hash{i}"
+            assert result2[path] == f"hash{i}"
+
+        store.close()

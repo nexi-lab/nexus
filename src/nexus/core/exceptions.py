@@ -55,3 +55,18 @@ class MetadataError(NexusError):
 
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path)
+
+
+class ValidationError(NexusError):
+    """Raised when validation fails.
+
+    This is a domain error that should be caught and converted to
+    appropriate HTTP status codes (400 Bad Request) in API layers.
+
+    Examples:
+        >>> raise ValidationError("name is required")
+        >>> raise ValidationError("size cannot be negative", path="/data/file.txt")
+    """
+
+    def __init__(self, message: str, path: str | None = None):
+        super().__init__(message, path)

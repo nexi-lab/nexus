@@ -329,6 +329,116 @@ nexus ls --help  # Show help for ls command
 nexus grep --help  # Show help for grep command
 ```
 
+## FUSE Mount: rclone-like Experience (Coming in v0.2.0)
+
+Mount Nexus to a local path and use **any standard Linux command** - just like rclone!
+
+### Quick Start
+
+```bash
+# Mount Nexus to local path
+nexus mount /mnt/nexus --data-dir ./nexus-data
+
+# Now use ANY standard Unix tools!
+ls -la /mnt/nexus/workspace/
+cat /mnt/nexus/workspace/notes.txt
+grep -r "TODO" /mnt/nexus/workspace/
+find /mnt/nexus -name "*.py"
+vim /mnt/nexus/workspace/code.py
+
+# Unmount when done
+nexus unmount /mnt/nexus
+```
+
+### Content-Aware Operations
+
+Nexus automatically parses binary files (PDFs, images, Excel) so standard tools work seamlessly:
+
+```bash
+# PDFs are automatically parsed!
+grep "TODO" /mnt/nexus/docs/report.pdf  # ✅ Searches parsed text
+cat /mnt/nexus/docs/report.pdf          # ✅ Shows readable content
+less /mnt/nexus/docs/report.pdf         # ✅ Page through text
+
+# Virtual .txt and .md views auto-generated
+ls /mnt/nexus/docs/
+# report.pdf          <- Original binary
+# report.pdf.txt      <- Virtual text view (parsed)
+# report.pdf.md       <- Virtual markdown view (formatted)
+
+# Access original binary via .raw
+evince /mnt/nexus/.raw/docs/report.pdf  # PDF viewer gets original
+```
+
+### Mount Modes
+
+```bash
+# Smart mode (default) - Returns parsed text for binary files
+nexus mount /mnt/nexus --mode=smart
+
+# Text mode - Always return text (best for grep/search)
+nexus mount /mnt/nexus --mode=text
+
+# Binary mode - Return original binary (for compatibility)
+nexus mount /mnt/nexus --mode=binary
+```
+
+### rclone-style CLI Commands
+
+```bash
+# Smart sync (only copy changed files)
+nexus sync /local/dir/ /workspace/backup/
+nexus sync /workspace/project/ /mnt/nexus/backup/
+
+# Copy with deduplication
+nexus copy /local/data/ /workspace/project/
+
+# Move files efficiently
+nexus move /workspace/old/ /archives/2024/
+
+# Visual directory tree
+nexus tree /workspace/
+
+# Calculate size
+nexus size /workspace/project/
+
+# Serve over HTTP/WebDAV
+nexus serve http /workspace/ --port 8080
+nexus serve webdav /workspace/ --port 8081
+```
+
+### Performance Comparison
+
+| Method | Speed | Content-Aware | Use Case |
+|--------|-------|---------------|----------|
+| `grep -r /mnt/nexus/` | Medium | ✅ Yes (via mount) | Interactive use |
+| `nexus grep "pattern"` | **Fast** (DB-backed) | ✅ Yes | Large-scale search |
+| Standard tools | Familiar | ✅ Yes (via mount) | Day-to-day work |
+
+### Use Cases
+
+**Interactive Development**:
+```bash
+# Mount for interactive work
+nexus mount /mnt/nexus
+vim /mnt/nexus/workspace/code.py
+git clone /mnt/nexus/repos/myproject
+```
+
+**Bulk Operations**:
+```bash
+# Use rclone-style commands for efficiency
+nexus sync /local/dataset/ /workspace/training-data/
+nexus tree /workspace/ > structure.txt
+```
+
+**Automated Workflows**:
+```bash
+# Standard Unix tools in scripts
+find /mnt/nexus -name "*.pdf" -exec grep -l "invoice" {} \;
+rsync -av /mnt/nexus/workspace/ /backup/
+```
+
 ## Architecture
 
 ### Agent Workspace Structure
@@ -735,7 +845,24 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [x] Batch operations (avoid N+1 queries)
 - [x] Type-level validation
 
-### v0.2.0 - File Permissions & Security
+### v0.2.0 - FUSE Mount & Content-Aware Operations
+- [ ] **FUSE filesystem mount** - Mount Nexus to local path (e.g., `/mnt/nexus`)
+- [ ] **Smart read mode** - Return parsed text for binary files (PDFs, images)
+- [ ] **Virtual file views** - Auto-generate `.txt` and `.md` views for binary files
+- [ ] **Content parser framework** - Extensible parser system for document types
+- [ ] **PDF parser** - Extract text and markdown from PDFs
+- [ ] **Image OCR parser** - Extract text from images (PNG, JPEG)
+- [ ] **Excel/CSV parser** - Parse spreadsheets to structured data
+- [ ] **Content-aware grep** - Search parsed content automatically
+- [ ] **Document type detection** - Auto-detect MIME types and route to parsers
+- [ ] **Parsed content storage** - Store parsed text as metadata
+- [ ] **Mount CLI commands** - `nexus mount`, `nexus unmount`
+- [ ] **Mount modes** - Binary, text, and smart modes
+- [ ] **rclone-style CLI commands** - `sync`, `copy`, `move`, `tree`, `size`
+- [ ] **Background parsing** - Async content parsing on write
+- [ ] **FUSE performance optimizations** - Caching, read-ahead, lazy loading
+
+### v0.3.0 - File Permissions & Security
 - [ ] UNIX-style file permissions (owner, group, mode)
 - [ ] Permission operations (chmod, chown, chgrp)
 - [ ] Default permission policies per namespace
@@ -744,16 +871,6 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] ACL (Access Control List) support
 - [ ] Permission migration for existing files
 - [ ] Comprehensive permission tests
-
-### v0.3.0 - Document Processing
-- [ ] PDF parser
-- [ ] Excel/CSV parser
-- [ ] Document type detection
-- [ ] Text extraction pipeline
-- [ ] Basic semantic chunking
-- [ ] Qdrant embedded integration
-- [ ] Collision detection and resolution
-- [ ] Enhanced audit trail with structured events
 
 ### v0.4.0 - AI Integration
 - [ ] LLM provider abstraction

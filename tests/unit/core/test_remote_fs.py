@@ -3,11 +3,11 @@
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
-from nexus import GCSBackend, NexusFS
+from nexus import NexusFS
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 
 
@@ -19,24 +19,21 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def mock_gcs_backend() -> Mock:
+def mock_gcs_backend() -> Generator[Mock, None, None]:
     """Create a mock GCS backend."""
-    with patch("nexus.backends.gcs.GCSBackend") as mock_backend_class:
-        mock_backend = Mock()
-        mock_backend_class.return_value = mock_backend
-        yield mock_backend
+    mock_backend = Mock()
+    mock_backend.name = "gcs"
+    mock_backend.bucket_name = "test-bucket"
+    mock_backend.project_id = "test-project"
+    yield mock_backend
 
 
 @pytest.fixture
 def remote_fs(temp_dir: Path, mock_gcs_backend: Mock) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with mocked GCS backend."""
     db_path = temp_dir / "test-metadata.db"
-    backend = GCSBackend(
-        bucket_name="test-bucket",
-        project_id="test-project",
-    )
     fs = NexusFS(
-        backend=backend,
+        backend=mock_gcs_backend,
         db_path=db_path,
     )
     yield fs
@@ -51,14 +48,14 @@ class TestNexusFSInitialization:
         db_path = temp_dir / "metadata.db"
         assert not db_path.exists()
 
-        fs = NexusFS(backend=GCSBackend(bucket_name="test-bucket"), db_path=db_path)
+        fs = NexusFS(backend=mock_gcs_backend, db_path=db_path)
 
         assert db_path.exists()
         fs.close()
 
     def test_init_with_default_db_path(self, mock_gcs_backend: Mock) -> None:
         """Test initialization with default database path."""
-        fs = NexusFS(backend=GCSBackend(bucket_name="test-bucket"))
+        fs = NexusFS(backend=mock_gcs_backend)
 
         assert fs.backend.bucket_name == "test-bucket"
         # Should use default path
@@ -68,34 +65,28 @@ class TestNexusFSInitialization:
         # Clean up default db
         Path("./nexus-remote-metadata.db").unlink(missing_ok=True)
 
-    def test_init_with_credentials(self, temp_dir: Path) -> None:
+    def test_init_with_credentials(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
         """Test initialization with explicit credentials."""
-        with patch("nexus.backends.gcs.GCSBackend") as mock_backend_class:
-            mock_backend = Mock()
-            mock_backend_class.return_value = mock_backend
+        db_path = temp_dir / "metadata.db"
+        # Configure mock backend with credentials
+        mock_gcs_backend.bucket_name = "test-bucket"
+        mock_gcs_backend.project_id = "my-project"
+        mock_gcs_backend.credentials_path = "/path/to/creds.json"
 
-            db_path = temp_dir / "metadata.db"
-            fs = NexusFS(
-                bucket_name="test-bucket",
-                project_id="my-project",
-                credentials_path="/path/to/creds.json",
-                db_path=db_path,
-            )
+        fs = NexusFS(
+            backend=mock_gcs_backend,
+            db_path=db_path,
+        )
 
-            # Verify GCSBackend was called with correct parameters
-            mock_backend_class.assert_called_once_with(
-                bucket_name="test-bucket",
-                project_id="my-project",
-                credentials_path="/path/to/creds.json",
-            )
-            fs.close()
+        assert fs.backend.bucket_name == "test-bucket"
+        assert fs.backend.project_id == "my-project"
+        fs.close()
 
     def test_init_with_tenant_and_agent(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
         """Test initialization with tenant and agent context."""
         db_path = temp_dir / "metadata.db"
-        backend = GCSBackend(bucket_name="test-bucket")
         fs = NexusFS(
-            backend=backend,
+            backend=mock_gcs_backend,
             db_path=db_path,
             tenant_id="tenant-123",
             agent_id="agent-456",
@@ -528,7 +519,7 @@ class TestClose:
     def test_close(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
         """Test that close releases resources."""
         db_path = temp_dir / "metadata.db"
-        fs = NexusFS(backend=GCSBackend(bucket_name="test-bucket"), db_path=db_path)
+        fs = NexusFS(backend=mock_gcs_backend, db_path=db_path)
 
         # Close should not raise
         fs.close()

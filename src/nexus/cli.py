@@ -652,7 +652,7 @@ def import_metadata(
     dry_run: bool,
     no_preserve_ids: bool,
     overwrite: bool,
-    _no_skip_existing: bool,
+    no_skip_existing: bool,
     config: str | None,
     data_dir: str,
 ) -> None:
@@ -688,6 +688,8 @@ def import_metadata(
             sys.exit(1)
 
         # Handle deprecated options for backward compatibility
+        _ = no_skip_existing  # Deprecated parameter, kept for backward compatibility
+
         if overwrite:
             console.print(
                 "[yellow]Warning:[/yellow] --overwrite is deprecated, use --conflict-mode=overwrite"

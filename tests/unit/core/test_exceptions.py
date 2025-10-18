@@ -7,6 +7,7 @@ from nexus.core.exceptions import (
     NexusError,
     NexusFileNotFoundError,
     NexusPermissionError,
+    ParserError,
 )
 
 
@@ -99,6 +100,27 @@ def test_metadata_error() -> None:
     assert error.path == "/test/file.txt"
 
 
+def test_parser_error() -> None:
+    """Test ParserError."""
+    # Without parser or path
+    error = ParserError("Parsing failed")
+    assert str(error) == "Parsing failed"
+    assert error.parser is None
+    assert error.path is None
+
+    # With parser
+    error = ParserError("Parsing failed", parser="MarkItDown")
+    assert "[MarkItDown]" in str(error)
+    assert error.parser == "MarkItDown"
+
+    # With parser and path
+    error = ParserError("Parsing failed", path="/test/file.pdf", parser="MarkItDown")
+    assert "[MarkItDown]" in str(error)
+    assert "/test/file.pdf" in str(error)
+    assert error.parser == "MarkItDown"
+    assert error.path == "/test/file.pdf"
+
+
 def test_exception_inheritance() -> None:
     """Test that all custom exceptions inherit from NexusError."""
     assert issubclass(NexusFileNotFoundError, NexusError)
@@ -106,6 +128,7 @@ def test_exception_inheritance() -> None:
     assert issubclass(BackendError, NexusError)
     assert issubclass(InvalidPathError, NexusError)
     assert issubclass(MetadataError, NexusError)
+    assert issubclass(ParserError, NexusError)
 
     # All should also be standard Exceptions
     assert issubclass(NexusError, Exception)

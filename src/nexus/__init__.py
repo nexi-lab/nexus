@@ -114,6 +114,8 @@ def connect(
             cache_kv_size=cfg.cache_kv_size,
             cache_exists_size=cfg.cache_exists_size,
             cache_ttl_seconds=cfg.cache_ttl_seconds,
+            auto_parse=cfg.auto_parse,
+            custom_parsers=cfg.parsers,
         )
     elif cfg.mode in ["monolithic", "distributed"]:
         # TODO: Implement in v0.2.0+

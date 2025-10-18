@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import contextlib
 import fnmatch
 import hashlib
 import re
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,8 @@ from nexus.core.export_import import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.router import NamespaceConfig, PathRouter
+from nexus.parsers import MarkItDownParser, ParserRegistry
+from nexus.parsers.types import ParseResult
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
 
@@ -55,6 +59,8 @@ class Embedded(NexusFilesystem):
         cache_kv_size: int = 256,
         cache_exists_size: int = 1024,
         cache_ttl_seconds: int | None = 300,
+        auto_parse: bool = True,
+        custom_parsers: list[dict[str, Any]] | None = None,
     ):
         """
         Initialize embedded filesystem.
@@ -72,6 +78,8 @@ class Embedded(NexusFilesystem):
             cache_kv_size: Max entries for file metadata KV cache (default: 256)
             cache_exists_size: Max entries for existence check cache (default: 1024)
             cache_ttl_seconds: Cache TTL in seconds, None = no expiry (default: 300)
+            auto_parse: Automatically parse files on write (default: True)
+            custom_parsers: Custom parser configurations from config (optional)
         """
         self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -80,6 +88,7 @@ class Embedded(NexusFilesystem):
         self.tenant_id = tenant_id
         self.agent_id = agent_id
         self.is_admin = is_admin
+        self.auto_parse = auto_parse
 
         # Initialize metadata store (using new SQLAlchemy-based store)
         if db_path is None:
@@ -105,6 +114,60 @@ class Embedded(NexusFilesystem):
         # Initialize unified backend (always uses CAS)
         self.backend: Backend = LocalBackend(self.data_dir)
         self.router.add_mount("/", self.backend, priority=0)
+
+        # Initialize parser registry with default MarkItDown parser
+        self.parser_registry = ParserRegistry()
+        self.parser_registry.register(MarkItDownParser())
+
+        # Load custom parsers from config
+        if custom_parsers:
+            self._load_custom_parsers(custom_parsers)
+
+    def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
+        """
+        Dynamically load and register custom parsers from configuration.
+
+        Args:
+            parser_configs: List of parser configurations, each containing:
+                - module: Python module path (e.g., "my_parsers.csv_parser")
+                - class: Parser class name (e.g., "CSVParser")
+                - priority: Optional priority (default: 50)
+                - enabled: Optional enabled flag (default: True)
+        """
+        import importlib
+
+        for config in parser_configs:
+            # Skip disabled parsers
+            if not config.get("enabled", True):
+                continue
+
+            try:
+                module_path = config.get("module")
+                class_name = config.get("class")
+
+                if not module_path or not class_name:
+                    continue
+
+                # Dynamically import the module
+                module = importlib.import_module(module_path)
+
+                # Get the parser class
+                parser_class = getattr(module, class_name)
+
+                # Get priority (default: 50)
+                priority = config.get("priority", 50)
+
+                # Instantiate the parser with priority
+                parser_instance = parser_class(priority=priority)
+
+                # Register with registry
+                self.parser_registry.register(parser_instance)
+
+            except Exception:
+                # Silently skip parsers that fail to load
+                # This prevents config errors from breaking the entire system
+                # In production environments, enable logging to see errors
+                pass
 
     def _validate_path(self, path: str) -> str:
         """
@@ -248,6 +311,42 @@ class Embedded(NexusFilesystem):
         )
 
         self.metadata.put(metadata)
+
+        # Auto-parse file if enabled and format is supported
+        if self.auto_parse:
+            self._auto_parse_file(path)
+
+    def _auto_parse_file(self, path: str) -> None:
+        """Auto-parse a file in the background (fire-and-forget).
+
+        Args:
+            path: Virtual path to the file
+        """
+        try:
+            # Check if parser is available for this file type
+            self.parser_registry.get_parser(path)
+
+            # Run parsing in a background thread (fire-and-forget)
+            thread = threading.Thread(
+                target=self._parse_in_thread,
+                args=(path,),
+                daemon=True,
+            )
+            thread.start()
+        except Exception:
+            # Silently ignore if no parser available or parsing fails
+            pass
+
+    def _parse_in_thread(self, path: str) -> None:
+        """Parse file in a background thread.
+
+        Args:
+            path: Virtual path to the file
+        """
+        # Silently ignore parsing errors
+        with contextlib.suppress(Exception):
+            # Run async parse in a new event loop (thread-safe)
+            asyncio.run(self.parse(path, store_result=True))
 
     def delete(self, path: str) -> None:
         """
@@ -544,15 +643,22 @@ class Embedded(NexusFilesystem):
                 break
 
             try:
-                # Read file content
-                content = self.read(file_path)
+                # Try to get parsed text first (if auto-parsing is enabled)
+                parsed_text = self.metadata.get_file_metadata(file_path, "parsed_text")
 
-                # Try to decode as text
-                try:
-                    text = content.decode("utf-8")
-                except UnicodeDecodeError:
-                    # Skip binary files
-                    continue
+                if parsed_text:
+                    # Use parsed text for search
+                    text = parsed_text
+                else:
+                    # Fall back to reading raw content
+                    content = self.read(file_path)
+
+                    # Try to decode as text
+                    try:
+                        text = content.decode("utf-8")
+                    except UnicodeDecodeError:
+                        # Skip binary files
+                        continue
 
                 # Search line by line
                 for line_num, line in enumerate(text.splitlines(), start=1):
@@ -1205,6 +1311,71 @@ class Embedded(NexusFilesystem):
             duplicates = {h: paths for h, paths in by_hash.items() if len(paths) > 1}
         """
         return self.metadata.batch_get_content_ids(paths)
+
+    async def parse(
+        self,
+        path: str,
+        store_result: bool = True,
+    ) -> ParseResult:
+        """
+        Parse a file's content using the appropriate parser.
+
+        This method reads the file, selects a parser based on the file extension,
+        and extracts structured data (text, metadata, chunks, etc.).
+
+        Args:
+            path: Virtual path to the file to parse
+            store_result: If True, store parsed text as file metadata (default: True)
+
+        Returns:
+            ParseResult containing extracted text, metadata, structure, and chunks
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            ParserError: If parsing fails or no suitable parser found
+
+        Examples:
+            # Parse a PDF file
+            result = await fs.parse("/documents/report.pdf")
+            print(result.text)  # Extracted text
+            print(result.structure)  # Document structure
+
+            # Parse without storing metadata
+            result = await fs.parse("/data/file.xlsx", store_result=False)
+
+            # Access parsed chunks
+            for chunk in result.chunks:
+                print(chunk.text)
+        """
+        # Validate path
+        path = self._validate_path(path)
+
+        # Read file content
+        content = self.read(path)
+
+        # Get file metadata for MIME type
+        meta = self.metadata.get(path)
+        mime_type = meta.mime_type if meta else None
+
+        # Get appropriate parser
+        parser = self.parser_registry.get_parser(path, mime_type)
+
+        # Parse the content
+        parse_metadata = {
+            "path": path,
+            "mime_type": mime_type,
+            "size": len(content),
+        }
+        result = await parser.parse(content, parse_metadata)
+
+        # Optionally store parsed text as file metadata
+        if store_result and result.text:
+            # Store parsed text in custom metadata
+            self.metadata.set_file_metadata(path, "parsed_text", result.text)
+            self.metadata.set_file_metadata(path, "parsed_at", datetime.now(UTC).isoformat())
+            self.metadata.set_file_metadata(path, "parser_name", parser.name)
+
+        return result
 
     def close(self) -> None:
         """Close the embedded filesystem and release resources."""

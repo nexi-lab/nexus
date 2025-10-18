@@ -448,6 +448,78 @@ nexus ls --help  # Show help for ls command
 nexus grep --help  # Show help for grep command
 ```
 
+## S3-Compatible HTTP Server
+
+Nexus includes an S3-compatible HTTP server that allows you to access your Nexus filesystem using standard S3 tools like rclone, boto3, and AWS CLI.
+
+### Quick Start
+
+```bash
+# Start the server
+nexus serve --access-key mykey --secret-key mysecret
+
+# Configure rclone (one-time)
+rclone config create nexus s3 \
+    provider=Other \
+    endpoint=http://localhost:8080 \
+    access_key_id=mykey \
+    secret_access_key=mysecret \
+    force_path_style=true
+
+# Use rclone with Nexus
+rclone copy local-file.txt nexus:nexus/
+rclone ls nexus:nexus/
+rclone sync /local/dir nexus:nexus/remote/
+```
+
+### Features
+
+- **AWS SigV4 Authentication**: Secure authentication using AWS Signature Version 4
+- **S3 API Operations**: ListObjectsV2, GetObject, PutObject, DeleteObject, HeadObject
+- **Backend Agnostic**: Works with local and GCS backends
+- **Standard S3 Tools**: Compatible with rclone, boto3, AWS CLI, s3cmd, and more
+
+### Using with boto3
+
+```python
+import boto3
+
+s3 = boto3.client(
+    's3',
+    endpoint_url='http://localhost:8080',
+    aws_access_key_id='mykey',
+    aws_secret_access_key='mysecret',
+)
+
+# Upload file
+s3.put_object(Bucket='nexus', Key='file.txt', Body=b'Hello!')
+
+# List files
+response = s3.list_objects_v2(Bucket='nexus')
+for obj in response['Contents']:
+    print(obj['Key'])
+
+# Download file
+response = s3.get_object(Bucket='nexus', Key='file.txt')
+content = response['Body'].read()
+```
+
+### Server Options
+
+```bash
+# Start with GCS backend
+nexus serve --backend=gcs --gcs-bucket=my-bucket \
+    --access-key mykey --secret-key mysecret
+
+# Custom host and port
+nexus serve --host 0.0.0.0 --port 9000 \
+    --access-key mykey --secret-key mysecret
+
+# Custom data directory
+nexus serve --data-dir /path/to/data \
+    --access-key mykey --secret-key mysecret
+```
+
 ## FUSE Mount: rclone-like Experience (Coming in v0.2.0)
 
 Mount Nexus to a local path and use **any standard Linux command** - just like rclone!

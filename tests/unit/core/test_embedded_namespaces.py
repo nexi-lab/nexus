@@ -43,7 +43,9 @@ def test_workspace_namespace_operations():
 def test_shared_namespace_operations():
     """Test basic operations in shared namespace."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        nx = NexusFS(backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db", tenant_id="acme")
+        nx = NexusFS(
+            backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db", tenant_id="acme"
+        )
 
         # Write to shared
         nx.write("/shared/acme/models/model.pkl", b"model data")
@@ -83,7 +85,9 @@ def test_external_namespace_operations():
 def test_archives_namespace_readonly():
     """Test that archives namespace is read-only."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        nx = NexusFS(backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db", tenant_id="acme")
+        nx = NexusFS(
+            backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db", tenant_id="acme"
+        )
 
         # Archives is read-only - cannot write
         with pytest.raises(AccessDeniedError) as exc_info:
@@ -97,7 +101,9 @@ def test_system_namespace_admin_only():
     """Test that system namespace requires admin privileges."""
     with tempfile.TemporaryDirectory() as tmpdir:
         # Non-admin cannot access system namespace
-        nx = NexusFS(backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db", is_admin=False)
+        nx = NexusFS(
+            backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db", is_admin=False
+        )
 
         with pytest.raises(AccessDeniedError) as exc_info:
             nx.read("/system/config.json")

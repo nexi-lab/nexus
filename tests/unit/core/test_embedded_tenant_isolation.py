@@ -435,7 +435,9 @@ def test_no_agent_id_allows_access_to_any_agent():
     """Test that without agent_id, can access any agent's workspace."""
     with tempfile.TemporaryDirectory() as tmpdir:
         # Without agent_id, can write to any agent's workspace
-        nx = NexusFS(backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db", tenant_id="acme")
+        nx = NexusFS(
+            backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db", tenant_id="acme"
+        )
         nx.write("/workspace/acme/agent1/file1.txt", b"data1")
         nx.write("/workspace/acme/agent2/file2.txt", b"data2")
 

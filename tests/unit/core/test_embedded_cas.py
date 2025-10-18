@@ -19,9 +19,23 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def embedded_cas(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create an Embedded instance (CAS always enabled)."""
-    emb = NexusFS(backend=LocalBackend(temp_dir), db_path=temp_dir / "metadata.db")
+    emb = NexusFS(
+        backend=LocalBackend(temp_dir),
+        db_path=temp_dir / "metadata.db",
+        auto_parse=False,  # Disable auto-parsing for unit tests
+    )
     yield emb
     emb.close()
+
+    # On Windows, give OS extra time to release file handles after close
+    # This is necessary because SQLite WAL files may still be locked
+    import gc
+    import platform
+    import time
+
+    gc.collect()  # Force garbage collection to release connections
+    if platform.system() == "Windows":
+        time.sleep(0.05)  # 50ms extra delay on Windows
 
 
 def test_cas_write_and_read(embedded_cas: NexusFS) -> None:

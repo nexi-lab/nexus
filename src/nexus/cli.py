@@ -1167,5 +1167,107 @@ def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig)
         handle_error(e)
 
 
+@main.command(name="serve")
+@click.option("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
+@click.option("--port", default=8080, type=int, help="Server port (default: 8080)")
+@click.option("--access-key", required=True, help="AWS access key ID for authentication")
+@click.option("--secret-key", required=True, help="AWS secret access key for authentication")
+@click.option("--bucket-name", default="nexus", help="Virtual bucket name (default: nexus)")
+@add_backend_options
+def serve(
+    host: str,
+    port: int,
+    access_key: str,
+    secret_key: str,
+    bucket_name: str,
+    backend_config: BackendConfig,
+) -> None:
+    """Start HTTP server with S3-compatible API.
+
+    Exposes Nexus filesystem through an S3-compatible HTTP API, allowing
+    tools like rclone to interact with Nexus without modifications.
+
+    The server implements AWS SigV4 authentication and supports standard
+    S3 operations: ListObjectsV2, GetObject, PutObject, DeleteObject.
+
+    Examples:
+        # Start server with local backend
+        nexus serve --access-key mykey --secret-key mysecret
+
+        # Start server with GCS backend
+        nexus serve --backend=gcs --gcs-bucket=my-bucket \\
+            --access-key mykey --secret-key mysecret
+
+        # Use with rclone (configure once)
+        rclone config create nexus s3 \\
+            provider=Other \\
+            endpoint=http://localhost:8080 \\
+            access_key_id=mykey \\
+            secret_access_key=mysecret \\
+            force_path_style=true
+
+        # Then use rclone commands
+        rclone ls nexus:nexus/
+        rclone copy local_file.txt nexus:nexus/remote_file.txt
+    """
+    import logging
+
+    # Set up logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    try:
+        # Import server components
+        from nexus.server.api import NexusHTTPServer
+        from nexus.server.auth import SigV4Validator, create_simple_credentials_store
+
+        # Get filesystem instance
+        nx = get_filesystem(backend_config)
+
+        # Create credentials store
+        credentials_store = create_simple_credentials_store(access_key, secret_key)
+
+        # Create auth validator
+        auth_validator = SigV4Validator(credentials_store)
+
+        # Create and start server
+        console.print(f"[green]Starting Nexus HTTP server...[/green]")
+        console.print(f"  Host: [cyan]{host}[/cyan]")
+        console.print(f"  Port: [cyan]{port}[/cyan]")
+        console.print(f"  Bucket: [cyan]{bucket_name}[/cyan]")
+        console.print(f"  Backend: [cyan]{backend_config.backend}[/cyan]")
+        if backend_config.backend == "gcs":
+            console.print(f"  GCS Bucket: [cyan]{backend_config.gcs_bucket}[/cyan]")
+        else:
+            console.print(f"  Data Dir: [cyan]{backend_config.data_dir}[/cyan]")
+        console.print()
+        console.print("[yellow]Configure rclone with:[/yellow]")
+        console.print(f"  rclone config create nexus s3 \\")
+        console.print(f"    provider=Other \\")
+        console.print(f"    endpoint=http://{host}:{port} \\")
+        console.print(f"    access_key_id={access_key} \\")
+        console.print(f"    secret_access_key={secret_key} \\")
+        console.print(f"    force_path_style=true")
+        console.print()
+        console.print("[green]Press Ctrl+C to stop server[/green]")
+
+        server = NexusHTTPServer(
+            nexus_fs=nx,
+            auth_validator=auth_validator,
+            host=host,
+            port=port,
+            bucket_name=bucket_name,
+        )
+
+        server.serve_forever()
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Server stopped by user[/yellow]")
+    except Exception as e:
+        handle_error(e)
+
+
 if __name__ == "__main__":
     main()

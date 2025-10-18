@@ -1,5 +1,7 @@
 """Unit tests for metadata caching."""
 
+import gc
+import platform
 import tempfile
 import time
 from pathlib import Path
@@ -7,6 +9,13 @@ from pathlib import Path
 from nexus import LocalBackend, NexusFS
 from nexus.core.metadata import FileMetadata
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+
+
+def cleanup_windows_db():
+    """Force cleanup of database connections on Windows."""
+    gc.collect()  # Force garbage collection to release connections
+    if platform.system() == "Windows":
+        time.sleep(0.05)  # 50ms delay for Windows file handle release
 
 
 class TestMetadataCache:
@@ -356,6 +365,7 @@ class TestMetadataCache:
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Create filesystem with caching enabled
             fs = NexusFS(
+                auto_parse=False,
                 backend=LocalBackend(tmp_dir),
                 db_path=Path(tmp_dir) / "metadata.db",
                 enable_metadata_cache=True,
@@ -377,12 +387,14 @@ class TestMetadataCache:
             assert stats["path_cache_size"] > 0
 
             fs.close()
+            cleanup_windows_db()
 
     def test_embedded_without_cache(self):
         """Test that Embedded filesystem can disable caching."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Create filesystem with caching disabled
             fs = NexusFS(
+                auto_parse=False,
                 backend=LocalBackend(tmp_dir),
                 db_path=Path(tmp_dir) / "metadata.db",
                 enable_metadata_cache=False,
@@ -398,6 +410,7 @@ class TestMetadataCache:
             assert stats is None
 
             fs.close()
+            cleanup_windows_db()
 
     def test_cache_with_negative_results(self, tmp_path: Path):
         """Test that negative results (not found) are also cached."""

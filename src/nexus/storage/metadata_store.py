@@ -96,6 +96,15 @@ class SQLAlchemyMetadataStore(MetadataStore):
             # Create SQL views for work detection
             self._create_views()
 
+        # Enable WAL mode for better concurrency and to avoid journal files
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(text("PRAGMA journal_mode=WAL"))
+                conn.commit()
+        except Exception:
+            # Ignore if WAL mode cannot be enabled
+            pass
+
     def _ensure_parent_exists(self) -> None:
         """Create parent directory for database if it doesn't exist."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -350,7 +359,50 @@ class SQLAlchemyMetadataStore(MetadataStore):
     def close(self) -> None:
         """Close database connection and dispose of engine."""
         if hasattr(self, "engine"):
+            # For SQLite, checkpoint WAL/journal files before disposing
+            try:
+                # Create a new connection to ensure we have exclusive access
+                with self.engine.connect() as conn:
+                    # Checkpoint WAL file to merge changes back to main database
+                    conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+                    conn.commit()
+
+                    # Switch to DELETE mode to remove WAL files
+                    conn.execute(text("PRAGMA journal_mode=DELETE"))
+                    conn.commit()
+
+                    # Close the connection explicitly
+                    conn.close()
+            except Exception:
+                # Ignore errors during checkpoint (e.g., database already closed)
+                pass
+
+            # Dispose of the connection pool - this closes all connections
             self.engine.dispose()
+
+            # Give the OS time to release file handles (especially on Windows)
+            import time
+
+            time.sleep(0.01)  # 10ms should be enough
+
+            # Additional cleanup: Try to remove any lingering SQLite temp files
+            # This helps with test cleanup when using tempfile.TemporaryDirectory()
+            try:
+                import os
+
+                for suffix in ["-wal", "-shm", "-journal"]:
+                    temp_file = Path(str(self.db_path) + suffix)
+                    if temp_file.exists():
+                        # On Windows, retry a few times if file is locked
+                        for _ in range(3):
+                            try:
+                                os.remove(temp_file)
+                                break
+                            except (OSError, PermissionError):
+                                time.sleep(0.01)
+            except Exception:
+                # Ignore errors - these files may not exist or may be locked
+                pass
 
     def get_cache_stats(self) -> dict[str, Any] | None:
         """

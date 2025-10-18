@@ -50,6 +50,8 @@ dependencies = [
     "cachetools>=5.3.0",
     # Cloud Storage Backends
     "google-cloud-storage>=2.14.0",
+    # Document Parsing (v0.2.0)
+    "markitdown[all]>=0.0.1a2",  # Includes PDF, Excel, PowerPoint, etc.
     # Note: Dependencies will be added incrementally as features are implemented
     # v0.1.0: Will add SQLAlchemy, aiosqlite, cachetools
     # v0.2.0: Will add pypdf, openpyxl, pandas, qdrant-client

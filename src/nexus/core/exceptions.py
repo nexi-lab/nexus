@@ -70,3 +70,13 @@ class ValidationError(NexusError):
 
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path)
+
+
+class ParserError(NexusError):
+    """Raised when document parsing fails."""
+
+    def __init__(self, message: str, path: str | None = None, parser: str | None = None):
+        self.parser = parser
+        if parser:
+            message = f"[{parser}] {message}"
+        super().__init__(message, path)

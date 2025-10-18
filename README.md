@@ -1053,15 +1053,35 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] **Background parsing** - Async content parsing on write
 - [ ] **FUSE performance optimizations** - Caching, read-ahead, lazy loading
 
-### v0.3.0 - File Permissions & Security
-- [ ] UNIX-style file permissions (owner, group, mode)
-- [ ] Permission operations (chmod, chown, chgrp)
-- [ ] Default permission policies per namespace
-- [ ] Permission inheritance for new files
-- [ ] Permission checking in all file operations
-- [ ] ACL (Access Control List) support
-- [ ] Permission migration for existing files
-- [ ] Comprehensive permission tests
+### v0.3.0 - File Permissions & Skills System
+- [ ] **UNIX-style file permissions** (owner, group, mode)
+- [ ] **Permission operations** (chmod, chown, chgrp)
+- [ ] **Default permission policies** per namespace
+- [ ] **Permission inheritance** for new files
+- [ ] **Permission checking** in all file operations
+- [ ] **ACL (Access Control List)** support
+- [ ] **ReBAC (Relationship-Based Access Control)** - Zanzibar-style authorization
+- [ ] **Relationship types** - member-of, owner-of, parent-of, shared-with
+- [ ] **Permission inheritance via relationships** - Team ownership, group membership
+- [ ] **Relationship graph queries** - Transitive closure, path existence checks
+- [ ] **Namespaced tuples** - (subject, relation, object) authorization model
+- [ ] **Check API** - Fast permission checks with caching
+- [ ] **Expand API** - Discover all subjects with specific permissions
+- [ ] **Relationship management** - Create, delete, query relationships
+- [ ] **Permission migration** for existing files
+- [ ] **Comprehensive permission tests**
+- [ ] **Skills System integration** - Anthropic-compatible SKILL.md format
+- [ ] **Skill discovery & loading** - Progressive disclosure, lazy loading
+- [ ] **Agent-specific skills** - `/workspace/{tenant}/{agent}/.nexus/skills/`
+- [ ] **Tenant-wide skill library** - `/shared/{tenant}/skills/`
+- [ ] **System skills** - `/system/skills/` (Anthropic official)
+- [ ] **Skill templates** - Pre-built templates for common patterns
+- [ ] **Skill versioning** - CAS-backed version control
+- [ ] **Skill composition** - Automatic dependency resolution
+- [ ] **Skill analytics** - Usage tracking, success rates
+- [ ] **Skill marketplace** - Org-wide skill catalog
+- [ ] **Skill CLI commands** - create, fork, publish, search
+- [ ] **Semantic skill search** - Find skills by description
 
 ### v0.4.0 - AI Integration
 - [ ] LLM provider abstraction

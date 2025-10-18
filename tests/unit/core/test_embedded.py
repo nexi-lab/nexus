@@ -20,7 +20,7 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def embedded(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create an Embedded filesystem instance."""
-    nx = NexusFS(backend=LocalBackend(temp_dir), db_path=temp_dir / "metadata.db")
+    nx = NexusFS(backend=LocalBackend(temp_dir), db_path=temp_dir / "metadata.db", auto_parse=False)
     yield nx
     nx.close()
 
@@ -30,7 +30,7 @@ def test_init_creates_directories(temp_dir: Path) -> None:
     data_dir = temp_dir / "nexus-data"
     assert not data_dir.exists()
 
-    nx = NexusFS(backend=LocalBackend(data_dir), db_path=data_dir / "metadata.db")
+    nx = NexusFS(backend=LocalBackend(data_dir), db_path=data_dir / "metadata.db", auto_parse=False)
 
     assert data_dir.exists()
     assert (data_dir / "cas").exists()  # CAS content storage
@@ -337,7 +337,9 @@ def test_context_manager(temp_dir: Path) -> None:
     """Test using Embedded as context manager."""
     content = b"Test content"
 
-    with NexusFS(backend=LocalBackend(temp_dir), db_path=temp_dir / "metadata.db") as nx:
+    with NexusFS(
+        backend=LocalBackend(temp_dir), db_path=temp_dir / "metadata.db", auto_parse=False
+    ) as nx:
         nx.write("/test.txt", content)
         result = nx.read("/test.txt")
         assert result == content

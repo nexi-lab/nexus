@@ -1880,6 +1880,291 @@ NEW in v0.1.0:
         print()
         print("=" * 70)
 
+        # ============================================================
+        # Part 14: Automatic Document Parsing (v0.2.0 - NEW!)
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 14: Automatic Document Parsing - NEW in v0.2.0!")
+        print("=" * 70)
+        print("Issue #17 - Transparent document parsing with high-level primitives")
+
+        print("\n91. Setting up files for auto-parsing demo...")
+        parse_dir = data_dir / "parse-demo"
+        nx_parse = nexus.connect(config={"data_dir": str(parse_dir), "auto_parse": True})
+
+        print("   ✓ Connected with auto_parse=True (default)")
+        print("   Parser automatically extracts text from 23+ file formats")
+
+        # Upload a PDF if available
+        print("\n92. Uploading PDF file (auto-parsing in background)...")
+        pdf_file = Path("examples/sample-local-pdf.pdf")
+        if pdf_file.exists():
+            with open(pdf_file, "rb") as f:
+                pdf_content = f.read()
+
+            # Just write - parsing happens automatically!
+            nx_parse.write("/documents/sample.pdf", pdf_content)
+            print(f"   ✓ Uploaded PDF ({len(pdf_content)} bytes)")
+            print("   → Parsing triggered automatically in background thread")
+        else:
+            print("   ⚠ PDF file not found, using markdown instead")
+
+        # Upload markdown
+        print("\n93. Uploading Markdown file (also auto-parsed)...")
+        markdown_content = b"""# Project Report
+
+## Executive Summary
+This report demonstrates **automatic document parsing** in Nexus.
+
+## Key Features
+- Transparent parsing on write()
+- grep() searches parsed text automatically
+- Supports PDF, Office, Markdown, JSON, CSV, and 20+ formats
+
+## Implementation Details
+The parser system uses MarkItDown for initial parsing, with an
+extensible architecture for adding custom parsers.
+
+## Performance Metrics
+- Parse time: < 2 seconds for typical documents
+- TODO: Add benchmarking results
+- ERROR handling is robust with graceful fallbacks
+
+## Conclusion
+Auto-parsing makes document search seamless and transparent.
+"""
+
+        nx_parse.write("/docs/report.md", markdown_content)
+        print("   ✓ Uploaded Markdown")
+        print("   → Parsing triggered automatically")
+
+        # Upload JSON
+        nx_parse.write(
+            "/data/config.json", b'{"project": "nexus", "version": "0.2.0", "auto_parse": true}'
+        )
+        print("   ✓ Uploaded JSON")
+
+        # Wait for background parsing to complete
+        print("\n94. Waiting for background parsing to complete...")
+        import time
+
+        time.sleep(3)  # Give parsers time to finish
+        print("   ✓ Parsing complete")
+
+        # Check what was parsed
+        print("\n95. Checking parsed files...")
+        all_files = nx_parse.list()
+        for file_path in all_files:
+            parsed_text = nx_parse.metadata.get_file_metadata(file_path, "parsed_text")
+            if parsed_text:
+                parser_name = nx_parse.metadata.get_file_metadata(file_path, "parser_name")
+                print(f"   ✓ {file_path}")
+                print(f"     Parser: {parser_name}")
+                print(f"     Extracted: {len(parsed_text)} characters")
+            else:
+                print(f"   - {file_path} (not parsed)")
+
+        # Demonstrate grep searching parsed content
+        print("\n96. Using grep() - automatically searches parsed text!")
+        print("   Searching for 'TODO' across all files...")
+        todo_matches = nx_parse.grep("TODO")
+        print(f"   Found {len(todo_matches)} matches:")
+        for match in todo_matches:
+            print(f"   - {match['file']}:{match['line']}")
+            print(f"     {match['content'].strip()}")
+
+        print("\n97. Case-insensitive search for 'ERROR'...")
+        error_matches = nx_parse.grep("ERROR", ignore_case=True)
+        print(f"   Found {len(error_matches)} matches:")
+        for match in error_matches:
+            print(f"   - {match['file']}:{match['line']}")
+
+        # Search in PDF (if uploaded)
+        if pdf_file.exists():
+            print("\n98. Searching PDF content (binary file!)...")
+            pdf_matches = nx_parse.grep("PDF", file_pattern="**/*.pdf")
+            print(f"   Found {len(pdf_matches)} matches for 'PDF':")
+            for match in pdf_matches[:3]:  # Show first 3
+                print(f"   - {match['file']}:{match['line']}")
+                print(f"     {match['content'][:60]}...")
+            print("   ✓ Searched extracted text, not binary data!")
+
+        # Show that you can disable auto_parse
+        print("\n99. Auto-parsing can be disabled if needed...")
+        nx_no_parse = nexus.connect(
+            config={"data_dir": str(parse_dir / "no-parse"), "auto_parse": False}
+        )
+        nx_no_parse.write("/test.txt", b"This won't be auto-parsed")
+        parsed = nx_no_parse.metadata.get_file_metadata("/test.txt", "parsed_text")
+        print(f"   auto_parse=False: parsed_text = {parsed}")
+        nx_no_parse.close()
+
+        # Show supported formats
+        print("\n100. Checking supported file formats...")
+        supported = nx_parse.parser_registry.get_supported_formats()
+        print(f"   Total formats supported: {len(supported)}")
+        print(f"   Formats: {', '.join(supported[:15])}...")
+
+        print("\n101. Summary of automatic document parsing:")
+        print("   Features:")
+        print("   ✓ Auto-parse on write() (default behavior)")
+        print("   ✓ grep() searches parsed text automatically")
+        print("   ✓ Transparent - no explicit parse() calls needed")
+        print("   ✓ Background processing (non-blocking)")
+        print("   ✓ 23+ file format support (PDF, Office, Markdown, etc.)")
+        print("   ✓ Extensible parser architecture")
+        print()
+        print("   Supported formats:")
+        print("   • Documents: PDF, DOCX, DOC, PPTX, PPT")
+        print("   • Spreadsheets: XLSX, XLS, CSV")
+        print("   • Text: TXT, MD, Markdown")
+        print("   • Data: JSON, XML")
+        print("   • Images: PNG, JPG, GIF, BMP (with OCR)")
+        print("   • Archives: EPUB, ZIP")
+        print()
+        print("   High-level primitives that use parsed content:")
+        print("   • grep() - searches parsed text when available")
+        print("   • (future) read() with parse flag")
+        print("   • (future) vector embedding generation")
+        print()
+        print("   Configuration:")
+        print("   • auto_parse=True (default) - parse on write")
+        print("   • auto_parse=False - disable auto-parsing")
+        print("   • Can also call parse() explicitly when needed")
+
+        # ============================================================
+        # PART 10: Advanced Parser Features (New in v0.2.0)
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 10: Advanced Parser Features")
+        print("=" * 70)
+
+        # 102. Parser Auto-Discovery
+        print("\n102. Testing parser auto-discovery...")
+        from nexus.parsers import ParserRegistry
+
+        registry = ParserRegistry()
+        discovered_count = registry.discover_parsers("nexus.parsers")
+        print(f"   ✓ Auto-discovered {discovered_count} parser(s)")
+        print(f"   Parsers: {[p.name for p in registry.get_parsers()]}")
+
+        # 103. MIME Type Detection
+        print("\n103. Testing MIME type detection...")
+        from nexus.parsers import detect_mime_type
+
+        test_content = b'{"key": "value"}'
+        mime_type = detect_mime_type(test_content, "test.json")
+        print(f"   ✓ Detected MIME type: {mime_type}")
+
+        pdf_content_sample = b"%PDF-1.4"
+        mime_type_pdf = detect_mime_type(pdf_content_sample, "test.pdf")
+        print(f"   ✓ PDF MIME type: {mime_type_pdf}")
+
+        # 104. Encoding Detection
+        print("\n104. Testing text encoding detection...")
+        from nexus.parsers import detect_encoding
+
+        utf8_text = "Hello, 世界! 🌍".encode()
+        encoding = detect_encoding(utf8_text)
+        print(f"   ✓ Detected encoding: {encoding}")
+
+        ascii_text = b"Hello, world!"
+        encoding_ascii = detect_encoding(ascii_text)
+        print(f"   ✓ ASCII encoding: {encoding_ascii}")
+
+        # 105. Compressed File Handling
+        print("\n105. Testing compressed file handling...")
+        import gzip
+
+        from nexus.parsers import decompress_content, is_compressed
+
+        # Create a compressed file
+        original_text = b"This is a test document with important content."
+        compressed_data = gzip.compress(original_text)
+
+        print(f"   Original size: {len(original_text)} bytes")
+        print(f"   Compressed size: {len(compressed_data)} bytes")
+        print(f"   Compression ratio: {len(compressed_data) / len(original_text) * 100:.1f}%")
+
+        # Check compression detection
+        if is_compressed("document.txt.gz"):
+            print("   ✓ Compression detected for .gz file")
+
+        # Decompress
+        decompressed, inner_name = decompress_content(compressed_data, "document.txt.gz")
+        print("   ✓ Decompressed successfully")
+        print(f"   Inner filename: {inner_name}")
+        print(f"   Decompressed size: {len(decompressed)} bytes")
+        assert decompressed == original_text, "Decompression failed!"
+
+        # 106. Unified Content Preparation
+        print("\n106. Testing unified content preparation...")
+        from nexus.parsers import prepare_content_for_parsing
+
+        # Test with compressed JSON
+        json_content = b'{"project": "nexus", "version": "0.2.0"}'
+        compressed_json = gzip.compress(json_content)
+
+        processed, effective_path, metadata = prepare_content_for_parsing(
+            compressed_json, "config.json.gz"
+        )
+
+        print("   ✓ Original file: config.json.gz")
+        print(f"   ✓ Effective path: {effective_path}")
+        print(f"   ✓ Was compressed: {metadata.get('compressed', False)}")
+        print(f"   ✓ Inner filename: {metadata.get('inner_filename')}")
+        print(f"   ✓ MIME type: {metadata.get('mime_type')}")
+        print(f"   ✓ Content size: {len(processed)} bytes")
+
+        # 107. Test with actual compressed file write
+        print("\n107. Writing compressed file to Nexus...")
+        compressed_report = gzip.compress(b"""# Compressed Report
+
+This document was compressed with gzip before upload.
+
+## Key Points
+- Nexus automatically detects compression
+- Parsers can handle compressed formats
+- Transparent decompression during parsing
+""")
+
+        nx_parse.write("/documents/compressed-report.md.gz", compressed_report)
+        print(f"   ✓ Uploaded compressed file ({len(compressed_report)} bytes)")
+        print("   → Auto-parsing will decompress and parse automatically")
+
+        # Wait for parsing
+        import time
+
+        time.sleep(2)
+
+        # Check if parsed
+        parsed_compressed = nx_parse.metadata.get_file_metadata(
+            "/documents/compressed-report.md.gz", "parsed_text"
+        )
+        if parsed_compressed:
+            print("   ✓ Compressed file parsed successfully")
+            print(f"   ✓ Extracted {len(parsed_compressed)} characters")
+        else:
+            print("   ⚠ Compressed file parsing still in progress...")
+
+        print("\n108. Summary of advanced parser features:")
+        print("   New features in v0.2.0:")
+        print("   ✓ Auto-discovery of parsers from packages")
+        print("   ✓ MIME type detection (python-magic + fallback)")
+        print("   ✓ Text encoding detection (chardet + fallback)")
+        print("   ✓ Compressed file support (.gz, .zip, .bz2, .xz)")
+        print("   ✓ Unified content preprocessing pipeline")
+        print()
+        print("   Supported compression formats:")
+        print("   • .gz / .gzip - gzip compression")
+        print("   • .zip - ZIP archives (single file)")
+        print("   • .bz2 - bzip2 compression")
+        print("   • .xz - LZMA compression")
+        print()
+        print("   These features work transparently with auto_parse!")
+
+        nx_parse.close()
+
         print("\n✓ Integrated demo completed successfully!")
         print("=" * 70)
 

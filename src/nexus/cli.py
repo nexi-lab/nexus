@@ -800,6 +800,8 @@ def import_metadata(
             sys.exit(1)
 
         # Handle deprecated options for backward compatibility
+        _ = _no_skip_existing  # Deprecated parameter, kept for backward compatibility
+
         if overwrite:
             console.print(
                 "[yellow]Warning:[/yellow] --overwrite is deprecated, use --conflict-mode=overwrite"

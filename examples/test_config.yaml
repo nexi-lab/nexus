@@ -1,0 +1,8 @@
+# Test configuration for custom parser loading
+parsers:
+  - module: "examples.test_custom_parser"
+    class: "TestCustomParser"
+    priority: 60
+    enabled: true
+
+auto_parse: true

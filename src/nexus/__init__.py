@@ -27,6 +27,7 @@ __license__ = "Apache-2.0"
 
 from pathlib import Path
 
+from nexus.backends.backend import Backend
 from nexus.backends.gcs import GCSBackend
 from nexus.backends.local import LocalBackend
 from nexus.config import NexusConfig, load_config
@@ -114,6 +115,7 @@ def connect(
             ]
 
         # Create backend based on configuration
+        backend: Backend
         if cfg.backend == "gcs":
             # GCS backend
             if not cfg.gcs_bucket_name:
@@ -130,7 +132,7 @@ def connect(
             db_path = cfg.db_path
             if db_path is None:
                 # Store metadata DB locally
-                db_path = Path("./nexus-gcs-metadata.db")
+                db_path = str(Path("./nexus-gcs-metadata.db"))
         else:
             # Local backend (default)
             data_dir = cfg.data_dir if cfg.data_dir is not None else "./nexus-data"
@@ -138,7 +140,7 @@ def connect(
             # Default db_path for local backend
             db_path = cfg.db_path
             if db_path is None:
-                db_path = Path(data_dir) / "metadata.db"
+                db_path = str(Path(data_dir) / "metadata.db")
 
         return NexusFS(
             backend=backend,

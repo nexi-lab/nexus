@@ -1,6 +1,5 @@
 """Core components for Nexus filesystem."""
 
-from nexus.core.embedded import Embedded
 from nexus.core.exceptions import (
     BackendError,
     InvalidPathError,
@@ -11,10 +10,11 @@ from nexus.core.exceptions import (
     ValidationError,
 )
 from nexus.core.filesystem import NexusFilesystem
+from nexus.core.nexus_fs import NexusFS
 
 __all__ = [
     "NexusFilesystem",
-    "Embedded",
+    "NexusFS",
     "NexusError",
     "NexusFileNotFoundError",
     "NexusPermissionError",

@@ -27,8 +27,10 @@ __license__ = "Apache-2.0"
 
 from pathlib import Path
 
+from nexus.backends.backend import Backend
+from nexus.backends.gcs import GCSBackend
+from nexus.backends.local import LocalBackend
 from nexus.config import NexusConfig, load_config
-from nexus.core.embedded import Embedded
 from nexus.core.exceptions import (
     BackendError,
     InvalidPathError,
@@ -38,6 +40,7 @@ from nexus.core.exceptions import (
     NexusPermissionError,
 )
 from nexus.core.filesystem import NexusFilesystem
+from nexus.core.nexus_fs import NexusFS
 from nexus.core.router import NamespaceConfig
 
 # TODO: Import other modules when they are implemented
@@ -63,9 +66,9 @@ def connect(
 
     Returns:
         NexusFilesystem instance (mode-dependent):
-            - Embedded mode: Returns Embedded instance
-            - Monolithic mode: Returns MonolithClient (not yet implemented)
-            - Distributed mode: Returns DistributedClient (not yet implemented)
+            - Embedded mode: Returns NexusFS with LocalBackend
+            - Server mode: Returns NexusFS with GCSBackend
+            - Cloud mode: Returns CloudClient (not yet implemented)
 
         All modes implement the NexusFilesystem interface, ensuring consistent
         API across deployment modes.
@@ -74,20 +77,30 @@ def connect(
         ValueError: If configuration is invalid
         NotImplementedError: If mode is not yet implemented
 
-    Example:
+    Examples:
         >>> import nexus
+
+        # Use local backend (default)
         >>> nx = nexus.connect()
         >>> nx.write("/workspace/file.txt", b"Hello World")
         >>> content = nx.read("/workspace/file.txt")
+
+        # Use GCS backend via config
+        >>> nx = nexus.connect(config={
+        ...     "backend": "gcs",
+        ...     "gcs_bucket_name": "my-bucket",
+        ... })
+
+        # Use GCS backend via environment variables
+        # export NEXUS_BACKEND=gcs
+        # export NEXUS_GCS_BUCKET_NAME=my-bucket
+        >>> nx = nexus.connect()
     """
     # Load configuration
     cfg = load_config(config)
 
     # Return appropriate client based on mode
     if cfg.mode == "embedded":
-        # Provide default if None (shouldn't happen due to config defaults, but type checker needs this)
-        data_dir = cfg.data_dir if cfg.data_dir is not None else "./nexus-data"
-
         # Parse custom namespaces from config
         custom_namespaces = None
         if cfg.namespaces:
@@ -101,9 +114,37 @@ def connect(
                 for ns in cfg.namespaces
             ]
 
-        return Embedded(
-            data_dir=data_dir,
-            db_path=cfg.db_path,
+        # Create backend based on configuration
+        backend: Backend
+        if cfg.backend == "gcs":
+            # GCS backend
+            if not cfg.gcs_bucket_name:
+                raise ValueError(
+                    "gcs_bucket_name is required when backend='gcs'. "
+                    "Set gcs_bucket_name in your config or NEXUS_GCS_BUCKET_NAME environment variable."
+                )
+            backend = GCSBackend(
+                bucket_name=cfg.gcs_bucket_name,
+                project_id=cfg.gcs_project_id,
+                credentials_path=cfg.gcs_credentials_path,
+            )
+            # Default db_path for GCS backend
+            db_path = cfg.db_path
+            if db_path is None:
+                # Store metadata DB locally
+                db_path = str(Path("./nexus-gcs-metadata.db"))
+        else:
+            # Local backend (default)
+            data_dir = cfg.data_dir if cfg.data_dir is not None else "./nexus-data"
+            backend = LocalBackend(root_path=Path(data_dir).resolve())
+            # Default db_path for local backend
+            db_path = cfg.db_path
+            if db_path is None:
+                db_path = str(Path(data_dir) / "metadata.db")
+
+        return NexusFS(
+            backend=backend,
+            db_path=db_path,
             tenant_id=cfg.tenant_id,
             agent_id=cfg.agent_id,
             is_admin=cfg.is_admin,
@@ -136,8 +177,11 @@ __all__ = [
     "load_config",
     # Core interfaces
     "NexusFilesystem",  # Abstract base class for all filesystem modes
-    # Embedded mode (for advanced usage)
-    "Embedded",
+    # Filesystem implementation
+    "NexusFS",
+    # Backends
+    "LocalBackend",
+    "GCSBackend",
     # Exceptions
     "NexusError",
     "NexusFileNotFoundError",
@@ -145,4 +189,6 @@ __all__ = [
     "BackendError",
     "InvalidPathError",
     "MetadataError",
+    # Router
+    "NamespaceConfig",
 ]

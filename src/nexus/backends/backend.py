@@ -26,6 +26,17 @@ class Backend(ABC):
     - Compatible with path router and mounting
     """
 
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """
+        Backend identifier name.
+
+        Returns:
+            Backend name (e.g., "local", "gcs", "s3")
+        """
+        pass
+
     # === Content Operations (CAS) ===
 
     @abstractmethod

@@ -361,18 +361,29 @@ class SQLAlchemyMetadataStore(MetadataStore):
         if hasattr(self, "engine"):
             # For SQLite, checkpoint WAL/journal files before disposing
             try:
+                # Create a new connection to ensure we have exclusive access
                 with self.engine.connect() as conn:
                     # Checkpoint WAL file to merge changes back to main database
                     conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+                    conn.commit()
+
                     # Switch to DELETE mode to remove WAL files
                     conn.execute(text("PRAGMA journal_mode=DELETE"))
                     conn.commit()
+
+                    # Close the connection explicitly
+                    conn.close()
             except Exception:
                 # Ignore errors during checkpoint (e.g., database already closed)
                 pass
 
-            # Dispose of the connection pool
+            # Dispose of the connection pool - this closes all connections
             self.engine.dispose()
+
+            # Give the OS time to release file handles (especially on Windows)
+            import time
+
+            time.sleep(0.01)  # 10ms should be enough
 
             # Additional cleanup: Try to remove any lingering SQLite temp files
             # This helps with test cleanup when using tempfile.TemporaryDirectory()
@@ -382,7 +393,13 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 for suffix in ["-wal", "-shm", "-journal"]:
                     temp_file = Path(str(self.db_path) + suffix)
                     if temp_file.exists():
-                        os.remove(temp_file)
+                        # On Windows, retry a few times if file is locked
+                        for _ in range(3):
+                            try:
+                                os.remove(temp_file)
+                                break
+                            except (OSError, PermissionError):
+                                time.sleep(0.01)
             except Exception:
                 # Ignore errors - these files may not exist or may be locked
                 pass

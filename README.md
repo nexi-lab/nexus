@@ -111,6 +111,125 @@ async with nx:
 
 **For self-hosted deployments**, see [Deployment Guide](./docs/deployment.md) for Docker and Kubernetes setup instructions.
 
+## Storage Backends
+
+Nexus supports multiple storage backends through a unified API. All backends use **Content-Addressable Storage (CAS)** for automatic deduplication.
+
+### Local Backend (Default)
+
+Store files on local filesystem:
+
+```python
+import nexus
+
+# Auto-detected from config or uses default
+nx = nexus.connect()
+
+# Or explicitly configure
+nx = nexus.connect(config={
+    "backend": "local",
+    "data_dir": "./nexus-data"
+})
+```
+
+### Google Cloud Storage (GCS) Backend
+
+Store files in Google Cloud Storage with local metadata:
+
+```python
+import nexus
+
+# Connect with GCS backend
+nx = nexus.connect(config={
+    "backend": "gcs",
+    "gcs_bucket_name": "my-nexus-bucket",
+    "gcs_project_id": "my-gcp-project",  # Optional
+    "gcs_credentials_path": "/path/to/credentials.json",  # Optional
+})
+```
+
+**Authentication Methods:**
+1. **Service Account Key**: Provide `gcs_credentials_path`
+2. **Application Default Credentials** (if not provided):
+   - `GOOGLE_APPLICATION_CREDENTIALS` environment variable
+   - `gcloud auth application-default login` credentials
+   - GCE/Cloud Run service account (when running on GCP)
+
+**Using Config File (`nexus.yaml`):**
+```yaml
+backend: gcs
+gcs_bucket_name: my-nexus-bucket
+gcs_project_id: my-gcp-project  # Optional
+# gcs_credentials_path: /path/to/credentials.json  # Optional
+```
+
+**Using Environment Variables:**
+```bash
+export NEXUS_BACKEND=gcs
+export NEXUS_GCS_BUCKET_NAME=my-nexus-bucket
+export NEXUS_GCS_PROJECT_ID=my-gcp-project  # Optional
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json  # Optional
+```
+
+**CLI Usage with GCS:**
+```bash
+# Write file to GCS
+nexus write /workspace/data.txt "Hello GCS!" \
+  --backend=gcs \
+  --gcs-bucket=my-nexus-bucket
+
+# Or use config file (simpler!)
+nexus write /workspace/data.txt "Hello GCS!" --config=nexus.yaml
+```
+
+### Advanced: Direct Backend API
+
+For advanced use cases, instantiate backends directly:
+
+```python
+from nexus import NexusFS, LocalBackend, GCSBackend
+
+# Local backend
+nx_local = NexusFS(
+    backend=LocalBackend("/path/to/data"),
+    db_path="./metadata.db"
+)
+
+# GCS backend
+nx_gcs = NexusFS(
+    backend=GCSBackend(
+        bucket_name="my-bucket",
+        project_id="my-project",
+        credentials_path="/path/to/creds.json"
+    ),
+    db_path="./gcs-metadata.db"
+)
+
+# Same API for both!
+nx_local.write("/file.txt", b"data")
+nx_gcs.write("/file.txt", b"data")
+```
+
+### Backend Comparison
+
+| Feature | Local Backend | GCS Backend |
+|---------|--------------|-------------|
+| **Content Storage** | Local filesystem | Google Cloud Storage |
+| **Metadata Storage** | Local SQLite | Local SQLite |
+| **Deduplication** | ✅ CAS (30-50% savings) | ✅ CAS (30-50% savings) |
+| **Multi-machine Access** | ❌ Single machine | ✅ Shared across machines |
+| **Durability** | Single disk | 99.999999999% (11 nines) |
+| **Latency** | <1ms (local) | 10-50ms (network) |
+| **Cost** | Free (local disk) | GCS storage pricing |
+| **Use Case** | Development, single machine | Teams, production, backup |
+
+### Coming Soon
+
+- **Amazon S3 Backend** (v0.7.0)
+- **Azure Blob Storage** (v0.7.0)
+- **Google Drive** (v0.7.0)
+- **SharePoint** (v0.7.0)
+
 ## Installation
 
 ### Using pip (Recommended)
@@ -327,6 +446,78 @@ Get help for any command:
 nexus --help  # Show all commands
 nexus ls --help  # Show help for ls command
 nexus grep --help  # Show help for grep command
+```
+
+## S3-Compatible HTTP Server
+
+Nexus includes an S3-compatible HTTP server that allows you to access your Nexus filesystem using standard S3 tools like rclone, boto3, and AWS CLI.
+
+### Quick Start
+
+```bash
+# Start the server
+nexus serve --access-key mykey --secret-key mysecret
+
+# Configure rclone (one-time)
+rclone config create nexus s3 \
+    provider=Other \
+    endpoint=http://localhost:8080 \
+    access_key_id=mykey \
+    secret_access_key=mysecret \
+    force_path_style=true
+
+# Use rclone with Nexus
+rclone copy local-file.txt nexus:nexus/
+rclone ls nexus:nexus/
+rclone sync /local/dir nexus:nexus/remote/
+```
+
+### Features
+
+- **AWS SigV4 Authentication**: Secure authentication using AWS Signature Version 4
+- **S3 API Operations**: ListObjectsV2, GetObject, PutObject, DeleteObject, HeadObject
+- **Backend Agnostic**: Works with local and GCS backends
+- **Standard S3 Tools**: Compatible with rclone, boto3, AWS CLI, s3cmd, and more
+
+### Using with boto3
+
+```python
+import boto3
+
+s3 = boto3.client(
+    's3',
+    endpoint_url='http://localhost:8080',
+    aws_access_key_id='mykey',
+    aws_secret_access_key='mysecret',
+)
+
+# Upload file
+s3.put_object(Bucket='nexus', Key='file.txt', Body=b'Hello!')
+
+# List files
+response = s3.list_objects_v2(Bucket='nexus')
+for obj in response['Contents']:
+    print(obj['Key'])
+
+# Download file
+response = s3.get_object(Bucket='nexus', Key='file.txt')
+content = response['Body'].read()
+```
+
+### Server Options
+
+```bash
+# Start with GCS backend
+nexus serve --backend=gcs --gcs-bucket=my-bucket \
+    --access-key mykey --secret-key mysecret
+
+# Custom host and port
+nexus serve --host 0.0.0.0 --port 9000 \
+    --access-key mykey --secret-key mysecret
+
+# Custom data directory
+nexus serve --data-dir /path/to/data \
+    --access-key mykey --secret-key mysecret
 ```
 
 ## FUSE Mount: rclone-like Experience (Coming in v0.2.0)

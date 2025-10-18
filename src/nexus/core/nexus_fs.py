@@ -1,4 +1,4 @@
-"""Embedded mode implementation for Nexus."""
+"""Unified filesystem implementation for Nexus."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from typing import Any
 from sqlalchemy import select
 
 from nexus.backends.backend import Backend
-from nexus.backends.local import LocalBackend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.export_import import (
     CollisionDetail,
@@ -32,14 +31,16 @@ from nexus.parsers.types import ParseResult
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
 
-class Embedded(NexusFilesystem):
+class NexusFS(NexusFilesystem):
     """
-    Embedded mode filesystem for Nexus.
+    Unified filesystem for Nexus.
 
     Provides file operations (read, write, delete) with metadata tracking
     using content-addressable storage (CAS) for automatic deduplication.
 
-    All backends now use CAS by default for:
+    Works with any backend (local, GCS, S3, etc.) that implements the Backend interface.
+
+    All backends use CAS by default for:
     - Automatic deduplication (same content stored once)
     - Content integrity (hash verification)
     - Efficient storage
@@ -47,7 +48,7 @@ class Embedded(NexusFilesystem):
 
     def __init__(
         self,
-        data_dir: str | Path = "./nexus-data",
+        backend: Backend,
         db_path: str | Path | None = None,
         tenant_id: str | None = None,
         agent_id: str | None = None,
@@ -63,10 +64,10 @@ class Embedded(NexusFilesystem):
         custom_parsers: list[dict[str, Any]] | None = None,
     ):
         """
-        Initialize embedded filesystem.
+        Initialize filesystem.
 
         Args:
-            data_dir: Root directory for storing files
+            backend: Backend instance for storing file content (LocalBackend, GCSBackend, etc.)
             db_path: Path to SQLite metadata database (auto-generated if None)
             tenant_id: Tenant identifier for multi-tenant isolation (optional)
             agent_id: Agent identifier for agent-level isolation in /workspace (optional)
@@ -81,8 +82,8 @@ class Embedded(NexusFilesystem):
             auto_parse: Automatically parse files on write (default: True)
             custom_parsers: Custom parser configurations from config (optional)
         """
-        self.data_dir = Path(data_dir).resolve()
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        # Store backend
+        self.backend = backend
 
         # Store tenant and agent context
         self.tenant_id = tenant_id
@@ -92,7 +93,8 @@ class Embedded(NexusFilesystem):
 
         # Initialize metadata store (using new SQLAlchemy-based store)
         if db_path is None:
-            db_path = self.data_dir / "metadata.db"
+            # Default to current directory
+            db_path = Path("./nexus-metadata.db")
         self.metadata = SQLAlchemyMetadataStore(
             db_path=db_path,
             enable_cache=enable_metadata_cache,
@@ -111,8 +113,7 @@ class Embedded(NexusFilesystem):
             for ns_config in custom_namespaces:
                 self.router.register_namespace(ns_config)
 
-        # Initialize unified backend (always uses CAS)
-        self.backend: Backend = LocalBackend(self.data_dir)
+        # Mount backend
         self.router.add_mount("/", self.backend, priority=0)
 
         # Initialize parser registry with default MarkItDown parser
@@ -301,7 +302,7 @@ class Embedded(NexusFilesystem):
         # Store metadata with content hash as both etag and physical_path
         metadata = FileMetadata(
             path=path,
-            backend_name="local",
+            backend_name=self.backend.name,
             physical_path=content_hash,  # CAS: hash is the "physical" location
             size=len(content),
             etag=content_hash,  # SHA-256 hash for integrity
@@ -1378,5 +1379,5 @@ class Embedded(NexusFilesystem):
         return result
 
     def close(self) -> None:
-        """Close the embedded filesystem and release resources."""
+        """Close the filesystem and release resources."""
         self.metadata.close()

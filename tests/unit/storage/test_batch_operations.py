@@ -3,7 +3,7 @@
 import tempfile
 from pathlib import Path
 
-from nexus.core.embedded import Embedded
+from nexus import LocalBackend, NexusFS
 from nexus.core.metadata import FileMetadata
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
@@ -354,7 +354,7 @@ class TestBatchOperations:
     def test_embedded_rmdir_uses_batch_delete(self):
         """Test that Embedded.rmdir() uses batch delete for directories."""
         with tempfile.TemporaryDirectory() as tmp_dir:
-            fs = Embedded(data_dir=tmp_dir)
+            fs = NexusFS(backend=LocalBackend(tmp_dir), db_path=Path(tmp_dir) / "metadata.db")
 
             # Create directory with multiple files
             for i in range(10):

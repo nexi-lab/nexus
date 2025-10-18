@@ -52,6 +52,11 @@ class LocalBackend(Backend):
         self.dir_root = self.root_path / "dirs"  # Directory structure
         self._ensure_roots()
 
+    @property
+    def name(self) -> str:
+        """Backend identifier name."""
+        return "local"
+
     def _ensure_roots(self) -> None:
         """Create root directories if they don't exist."""
         try:

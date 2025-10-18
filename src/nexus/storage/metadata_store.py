@@ -350,6 +350,17 @@ class SQLAlchemyMetadataStore(MetadataStore):
     def close(self) -> None:
         """Close database connection and dispose of engine."""
         if hasattr(self, "engine"):
+            # For SQLite, checkpoint and close WAL files before disposing
+            try:
+                with self.engine.connect() as conn:
+                    # Checkpoint WAL file to merge changes back to main database
+                    conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+                    conn.commit()
+            except Exception:
+                # Ignore errors during checkpoint (e.g., if not using WAL mode)
+                pass
+
+            # Dispose of the connection pool
             self.engine.dispose()
 
     def get_cache_stats(self) -> dict[str, Any] | None:

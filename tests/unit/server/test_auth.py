@@ -1,10 +1,6 @@
 """Unit tests for AWS SigV4 authentication."""
 
 import hashlib
-import hmac
-from datetime import datetime
-
-import pytest
 
 from nexus.server.auth import Credentials, SigV4Validator, create_simple_credentials_store
 

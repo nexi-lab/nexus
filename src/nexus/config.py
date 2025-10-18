@@ -65,6 +65,16 @@ class NexusConfig(BaseModel):
         description="Custom namespace configurations (list of dicts with name, readonly, admin_only, requires_tenant)",
     )
 
+    # Parser configurations (v0.2.0)
+    parsers: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Custom parser configurations (list of dicts with module, class, priority, enabled)",
+    )
+    auto_parse: bool = Field(
+        default=True,
+        description="Automatically parse files on upload (default: True)",
+    )
+
     # Remote mode settings (monolithic/distributed)
     url: str | None = Field(default=None, description="Nexus server URL for remote modes")
     api_key: str | None = Field(default=None, description="API key for authentication")
@@ -175,6 +185,7 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_CACHE_KV_SIZE": "cache_kv_size",
         "NEXUS_CACHE_EXISTS_SIZE": "cache_exists_size",
         "NEXUS_CACHE_TTL_SECONDS": "cache_ttl_seconds",
+        "NEXUS_AUTO_PARSE": "auto_parse",
         "NEXUS_URL": "url",
         "NEXUS_API_KEY": "api_key",
         "NEXUS_TIMEOUT": "timeout",
@@ -201,11 +212,32 @@ def _load_from_environment() -> NexusConfig:
                 "enable_vector_search",
                 "enable_llm_cache",
                 "enable_metadata_cache",
+                "auto_parse",
             ]:
                 converted_value = value.lower() in ["true", "1", "yes", "on"]
             else:
                 converted_value = value
             env_config[config_key] = converted_value
+
+    # Handle NEXUS_PARSERS environment variable
+    # Format: "module:class:priority,module:class:priority,..."
+    # Example: "my_parsers.csv:CSVParser:60,my_parsers.log:LogParser:50"
+    parsers_env = os.getenv("NEXUS_PARSERS")
+    if parsers_env:
+        parsers_list = []
+        for parser_spec in parsers_env.split(","):
+            parts = parser_spec.strip().split(":")
+            if len(parts) >= 2:
+                parser_dict: dict[str, Any] = {
+                    "module": parts[0],
+                    "class": parts[1],
+                    "enabled": True,
+                }
+                if len(parts) >= 3:
+                    parser_dict["priority"] = int(parts[2])
+                parsers_list.append(parser_dict)
+        if parsers_list:
+            env_config["parsers"] = parsers_list
 
     return NexusConfig(**env_config)
 

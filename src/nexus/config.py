@@ -41,7 +41,8 @@ class NexusConfig(BaseModel):
         default=None, description="GCS bucket name (required when backend='gcs')"
     )
     gcs_project_id: str | None = Field(
-        default=None, description="GCP project ID (optional, inferred from credentials if not provided)"
+        default=None,
+        description="GCP project ID (optional, inferred from credentials if not provided)",
     )
     gcs_credentials_path: str | None = Field(
         default=None,

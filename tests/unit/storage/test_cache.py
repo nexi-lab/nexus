@@ -382,7 +382,11 @@ class TestMetadataCache:
         """Test that Embedded filesystem can disable caching."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Create filesystem with caching disabled
-            fs = NexusFS(backend=LocalBackend(tmp_dir), db_path=tmp_dir / "metadata.db", enable_metadata_cache=False)
+            fs = NexusFS(
+                backend=LocalBackend(tmp_dir),
+                db_path=tmp_dir / "metadata.db",
+                enable_metadata_cache=False,
+            )
 
             # Write and read files
             fs.write("/test.txt", b"Hello")

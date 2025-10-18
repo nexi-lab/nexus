@@ -1,12 +1,22 @@
 """Unit tests for nexus.connect() function."""
 
+import gc
+import platform
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
 
 import nexus
 from nexus import NexusFS
+
+
+def cleanup_windows_db():
+    """Force cleanup of database connections on Windows."""
+    gc.collect()  # Force garbage collection to release connections
+    if platform.system() == "Windows":
+        time.sleep(0.05)  # 50ms delay for Windows file handle release
 
 
 def test_connect_default_embedded_mode() -> None:
@@ -19,6 +29,7 @@ def test_connect_default_embedded_mode() -> None:
         assert nx.backend.root_path.resolve() == Path(tmpdir).resolve()
 
         nx.close()
+        cleanup_windows_db()
 
 
 def test_connect_with_config_dict() -> None:
@@ -35,6 +46,7 @@ def test_connect_with_config_dict() -> None:
         assert nx.backend.root_path.resolve() == Path(tmpdir).resolve()
 
         nx.close()
+        cleanup_windows_db()
 
 
 def test_connect_with_config_object() -> None:
@@ -48,6 +60,7 @@ def test_connect_with_config_object() -> None:
         assert nx.backend.root_path.resolve() == Path(tmpdir).resolve()
 
         nx.close()
+        cleanup_windows_db()
 
 
 def test_connect_monolithic_mode_not_implemented() -> None:
@@ -101,16 +114,16 @@ def test_connect_functional_workflow() -> None:
         assert not nx.exists("/test.txt")
 
         nx.close()
+        cleanup_windows_db()
 
 
 def test_connect_context_manager() -> None:
     """Test using connect() result as context manager."""
-    with (
-        tempfile.TemporaryDirectory() as tmpdir,
-        nexus.connect(config={"data_dir": tmpdir, "auto_parse": False}) as nx,
-    ):
-        nx.write("/test.txt", b"Content")
-        assert nx.exists("/test.txt")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with nexus.connect(config={"data_dir": tmpdir, "auto_parse": False}) as nx:
+            nx.write("/test.txt", b"Content")
+            assert nx.exists("/test.txt")
+        cleanup_windows_db()
 
 
 def test_connect_auto_discover() -> None:
@@ -120,6 +133,7 @@ def test_connect_auto_discover() -> None:
     nx = nexus.connect()
     assert isinstance(nx, NexusFS)
     nx.close()
+    cleanup_windows_db()
 
     # Clean up default directory if created
     default_dir = Path("./nexus-data")

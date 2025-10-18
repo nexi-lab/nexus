@@ -24,7 +24,11 @@ def temp_dir():
 @pytest.fixture
 def nx(temp_dir):
     """Create Nexus filesystem instance."""
-    fs = NexusFS(backend=LocalBackend(temp_dir / "data"), db_path=temp_dir / "data" / "metadata.db")
+    fs = NexusFS(
+        backend=LocalBackend(temp_dir / "data"),
+        db_path=temp_dir / "data" / "metadata.db",
+        auto_parse=False,
+    )
     yield fs
     fs.close()
 

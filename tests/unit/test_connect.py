@@ -105,7 +105,10 @@ def test_connect_functional_workflow() -> None:
 
 def test_connect_context_manager() -> None:
     """Test using connect() result as context manager."""
-    with tempfile.TemporaryDirectory() as tmpdir, nexus.connect(config={"data_dir": tmpdir}) as nx:
+    with (
+        tempfile.TemporaryDirectory() as tmpdir,
+        nexus.connect(config={"data_dir": tmpdir, "auto_parse": False}) as nx,
+    ):
         nx.write("/test.txt", b"Content")
         assert nx.exists("/test.txt")
 

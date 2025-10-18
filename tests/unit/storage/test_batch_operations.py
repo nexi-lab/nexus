@@ -3,7 +3,7 @@
 import tempfile
 from pathlib import Path
 
-from nexus import NexusFS, LocalBackend
+from nexus import LocalBackend, NexusFS
 from nexus.core.metadata import FileMetadata
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 

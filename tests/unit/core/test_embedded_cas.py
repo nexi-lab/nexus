@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus import NexusFS, LocalBackend
+from nexus import LocalBackend, NexusFS
 
 
 @pytest.fixture

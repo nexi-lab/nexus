@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from nexus.core.nexus_fs import NexusFS
 from nexus.backends.local import LocalBackend
 from nexus.core.export_import import CollisionDetail, ExportFilter, ImportOptions, ImportResult
+from nexus.core.nexus_fs import NexusFS
 
 
 @pytest.fixture

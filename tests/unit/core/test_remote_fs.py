@@ -7,8 +7,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from nexus import GCSBackend, NexusFS
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
-from nexus import NexusFS, GCSBackend
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@ import tempfile
 
 import pytest
 
-from nexus import NexusFS, LocalBackend
+from nexus import LocalBackend, NexusFS
 from nexus.core.router import AccessDeniedError
 
 

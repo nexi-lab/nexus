@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import nexus
-from nexus import NexusFS, LocalBackend
+from nexus import NexusFS
 
 
 def test_connect_default_embedded_mode() -> None:

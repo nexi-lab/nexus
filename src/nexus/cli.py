@@ -683,7 +683,7 @@ def export_metadata(
         nx = get_filesystem(backend_config)
 
         # Note: Only Embedded mode supports metadata export
-        if not isinstance(nx, Embedded):
+        if not isinstance(nx, NexusFS):
             console.print("[red]Error:[/red] Metadata export is only available in embedded mode")
             nx.close()
             sys.exit(1)
@@ -794,7 +794,7 @@ def import_metadata(
         nx = get_filesystem(backend_config)
 
         # Note: Only Embedded mode supports metadata import
-        if not isinstance(nx, Embedded):
+        if not isinstance(nx, NexusFS):
             console.print("[red]Error:[/red] Metadata import is only available in embedded mode")
             nx.close()
             sys.exit(1)
@@ -901,7 +901,7 @@ def work_command(
         nx = get_filesystem(backend_config)
 
         # Only Embedded mode has metadata store with work views
-        if not isinstance(nx, Embedded):
+        if not isinstance(nx, NexusFS):
             console.print("[red]Error:[/red] Work views are only available in embedded mode")
             nx.close()
             sys.exit(1)
@@ -1071,7 +1071,7 @@ def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig)
         nx = get_filesystem(backend_config)
 
         # Only Embedded mode supports batch_get_content_ids
-        if not isinstance(nx, Embedded):
+        if not isinstance(nx, NexusFS):
             console.print("[red]Error:[/red] find-duplicates is only available in embedded mode")
             nx.close()
             sys.exit(1)

@@ -29,7 +29,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import xml.etree.ElementTree as ET
-from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
@@ -182,7 +181,7 @@ class APIRequestHandler(BaseHTTPRequestHandler):
         full_url = f"{scheme}://{host}{self.path}"
 
         # Convert headers to dict
-        headers = {k: v for k, v in self.headers.items()}
+        headers = dict(self.headers.items())
 
         # Validate signature
         return self.auth_validator.validate_request(

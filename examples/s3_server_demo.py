@@ -17,7 +17,7 @@ import boto3
 
 import nexus
 from nexus.server.api import NexusHTTPServer
-from nexus.server.auth import create_simple_credentials_store, SigV4Validator
+from nexus.server.auth import SigV4Validator, create_simple_credentials_store
 
 
 def start_server_background(host="localhost", port=8080):
@@ -180,12 +180,12 @@ def main():
 
         # Show rclone config
         print("\nTo use with rclone, configure:")
-        print(f"  rclone config create nexus s3 \\")
-        print(f"    provider=Other \\")
+        print("  rclone config create nexus s3 \\")
+        print("    provider=Other \\")
         print(f"    endpoint={endpoint_url} \\")
         print(f"    access_key_id={access_key} \\")
         print(f"    secret_access_key={secret_key} \\")
-        print(f"    force_path_style=true")
+        print("    force_path_style=true")
 
     finally:
         # Cleanup

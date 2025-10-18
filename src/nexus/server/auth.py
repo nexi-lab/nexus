@@ -13,8 +13,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any
 from urllib.parse import quote, urlparse
 
 
@@ -294,7 +292,7 @@ class SigV4Validator:
         Returns:
             Signing key bytes
         """
-        k_date = hmac.new(f"AWS4{key}".encode("utf-8"), date_stamp.encode("utf-8"), hashlib.sha256).digest()
+        k_date = hmac.new(f"AWS4{key}".encode(), date_stamp.encode("utf-8"), hashlib.sha256).digest()
         k_region = hmac.new(k_date, region.encode("utf-8"), hashlib.sha256).digest()
         k_service = hmac.new(k_region, service.encode("utf-8"), hashlib.sha256).digest()
         k_signing = hmac.new(k_service, b"aws4_request", hashlib.sha256).digest()

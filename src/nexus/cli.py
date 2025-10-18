@@ -1233,7 +1233,7 @@ def serve(
         auth_validator = SigV4Validator(credentials_store)
 
         # Create and start server
-        console.print(f"[green]Starting Nexus HTTP server...[/green]")
+        console.print("[green]Starting Nexus HTTP server...[/green]")
         console.print(f"  Host: [cyan]{host}[/cyan]")
         console.print(f"  Port: [cyan]{port}[/cyan]")
         console.print(f"  Bucket: [cyan]{bucket_name}[/cyan]")
@@ -1244,12 +1244,12 @@ def serve(
             console.print(f"  Data Dir: [cyan]{backend_config.data_dir}[/cyan]")
         console.print()
         console.print("[yellow]Configure rclone with:[/yellow]")
-        console.print(f"  rclone config create nexus s3 \\")
-        console.print(f"    provider=Other \\")
+        console.print("  rclone config create nexus s3 \\")
+        console.print("    provider=Other \\")
         console.print(f"    endpoint=http://{host}:{port} \\")
         console.print(f"    access_key_id={access_key} \\")
         console.print(f"    secret_access_key={secret_key} \\")
-        console.print(f"    force_path_style=true")
+        console.print("    force_path_style=true")
         console.print()
         console.print("[green]Press Ctrl+C to stop server[/green]")
 

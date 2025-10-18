@@ -4,7 +4,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from nexus.core.embedded import Embedded
+from nexus import LocalBackend, NexusFS
 from nexus.core.metadata import FileMetadata
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
@@ -355,8 +355,9 @@ class TestMetadataCache:
         """Test that Embedded filesystem uses caching."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Create filesystem with caching enabled
-            fs = Embedded(
-                data_dir=tmp_dir,
+            fs = NexusFS(
+                backend=LocalBackend(tmp_dir),
+                db_path=Path(tmp_dir) / "metadata.db",
                 enable_metadata_cache=True,
                 cache_path_size=256,
                 cache_ttl_seconds=300,
@@ -381,7 +382,11 @@ class TestMetadataCache:
         """Test that Embedded filesystem can disable caching."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Create filesystem with caching disabled
-            fs = Embedded(data_dir=tmp_dir, enable_metadata_cache=False)
+            fs = NexusFS(
+                backend=LocalBackend(tmp_dir),
+                db_path=Path(tmp_dir) / "metadata.db",
+                enable_metadata_cache=False,
+            )
 
             # Write and read files
             fs.write("/test.txt", b"Hello")

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import nexus
-from nexus.core.embedded import Embedded
+from nexus import NexusFS
 
 
 def test_connect_default_embedded_mode() -> None:
@@ -14,9 +14,9 @@ def test_connect_default_embedded_mode() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = nexus.connect(config={"data_dir": tmpdir})
 
-        assert isinstance(nx, Embedded)
+        assert isinstance(nx, NexusFS)
         # Resolve both paths to handle symlinks (e.g., /var vs /private/var on macOS)
-        assert nx.data_dir.resolve() == Path(tmpdir).resolve()
+        assert nx.backend.root_path.resolve() == Path(tmpdir).resolve()
 
         nx.close()
 
@@ -31,8 +31,8 @@ def test_connect_with_config_dict() -> None:
 
         nx = nexus.connect(config=config)
 
-        assert isinstance(nx, Embedded)
-        assert nx.data_dir.resolve() == Path(tmpdir).resolve()
+        assert isinstance(nx, NexusFS)
+        assert nx.backend.root_path.resolve() == Path(tmpdir).resolve()
 
         nx.close()
 
@@ -44,8 +44,8 @@ def test_connect_with_config_object() -> None:
 
         nx = nexus.connect(config=config)
 
-        assert isinstance(nx, Embedded)
-        assert nx.data_dir.resolve() == Path(tmpdir).resolve()
+        assert isinstance(nx, NexusFS)
+        assert nx.backend.root_path.resolve() == Path(tmpdir).resolve()
 
         nx.close()
 
@@ -115,7 +115,7 @@ def test_connect_auto_discover() -> None:
     # Without any config, should use defaults (./nexus-data)
     # This test just verifies it doesn't crash
     nx = nexus.connect()
-    assert isinstance(nx, Embedded)
+    assert isinstance(nx, NexusFS)
     nx.close()
 
     # Clean up default directory if created

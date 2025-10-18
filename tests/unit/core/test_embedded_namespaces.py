@@ -1,6 +1,7 @@
 """Tests for namespace operations in Embedded mode using only user-facing APIs."""
 
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +14,7 @@ def test_workspace_namespace_operations():
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
             agent_id="agent1",
         )
@@ -42,7 +43,7 @@ def test_workspace_namespace_operations():
 def test_shared_namespace_operations():
     """Test basic operations in shared namespace."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        nx = NexusFS(backend=LocalBackend(tmpdir), db_path=tmpdir / "metadata.db", tenant_id="acme")
+        nx = NexusFS(backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db", tenant_id="acme")
 
         # Write to shared
         nx.write("/shared/acme/models/model.pkl", b"model data")
@@ -64,7 +65,7 @@ def test_shared_namespace_operations():
 def test_external_namespace_operations():
     """Test basic operations in external namespace."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        nx = NexusFS(backend=LocalBackend(tmpdir), db_path=tmpdir / "metadata.db")
+        nx = NexusFS(backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db")
 
         # External namespace doesn't require tenant isolation
         nx.write("/external/s3/bucket/file.txt", b"external data")
@@ -82,7 +83,7 @@ def test_external_namespace_operations():
 def test_archives_namespace_readonly():
     """Test that archives namespace is read-only."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        nx = NexusFS(backend=LocalBackend(tmpdir), db_path=tmpdir / "metadata.db", tenant_id="acme")
+        nx = NexusFS(backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db", tenant_id="acme")
 
         # Archives is read-only - cannot write
         with pytest.raises(AccessDeniedError) as exc_info:
@@ -96,7 +97,7 @@ def test_system_namespace_admin_only():
     """Test that system namespace requires admin privileges."""
     with tempfile.TemporaryDirectory() as tmpdir:
         # Non-admin cannot access system namespace
-        nx = NexusFS(backend=LocalBackend(tmpdir), db_path=tmpdir / "metadata.db", is_admin=False)
+        nx = NexusFS(backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db", is_admin=False)
 
         with pytest.raises(AccessDeniedError) as exc_info:
             nx.read("/system/config.json")
@@ -106,7 +107,7 @@ def test_system_namespace_admin_only():
 
         # Admin can access (but cannot write since read-only)
         nx_admin = NexusFS(
-            backend=LocalBackend(tmpdir), db_path=tmpdir / "metadata.db", is_admin=True
+            backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db", is_admin=True
         )
 
         with pytest.raises(AccessDeniedError) as exc_info:
@@ -122,7 +123,7 @@ def test_multi_namespace_operations_single_tenant():
         # Agent1 in ACME tenant
         nx_agent1 = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
             agent_id="agent1",
         )
@@ -146,7 +147,7 @@ def test_multi_namespace_operations_single_tenant():
         # Agent2 in same tenant
         nx_agent2 = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
             agent_id="agent2",
         )
@@ -172,7 +173,7 @@ def test_multi_namespace_operations_multi_tenant():
         # ACME tenant
         nx_acme = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
             agent_id="agent1",
         )
@@ -183,7 +184,7 @@ def test_multi_namespace_operations_multi_tenant():
         # TechInc tenant
         nx_tech = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             tenant_id="techinc",
             agent_id="agent1",
         )
@@ -221,7 +222,7 @@ def test_custom_namespace_configuration():
         # Create Embedded instance with custom namespace
         nx = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
             custom_namespaces=[custom_ns],
         )
@@ -238,7 +239,7 @@ def test_custom_namespace_configuration():
 
         nx_other = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             tenant_id="other",
             custom_namespaces=[custom_ns],
         )
@@ -259,7 +260,7 @@ def test_custom_namespace_readonly():
 
         nx = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             custom_namespaces=[readonly_ns],
         )
 
@@ -282,7 +283,7 @@ def test_custom_namespace_admin_only():
         # Non-admin cannot access
         nx = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             is_admin=False,
             custom_namespaces=[admin_ns],
         )
@@ -296,7 +297,7 @@ def test_custom_namespace_admin_only():
         # Admin can access
         nx_admin = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             is_admin=True,
             custom_namespaces=[admin_ns],
         )
@@ -313,7 +314,7 @@ def test_directory_operations_across_namespaces():
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
             agent_id="agent1",
         )
@@ -347,7 +348,7 @@ def test_list_operations_across_namespaces():
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
             agent_id="agent1",
         )
@@ -385,7 +386,7 @@ def test_admin_can_access_all_namespaces():
         # Regular user writes files
         nx_acme = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
             agent_id="agent1",
         )
@@ -396,7 +397,7 @@ def test_admin_can_access_all_namespaces():
         # Admin with different tenant_id can access all
         nx_admin = NexusFS(
             backend=LocalBackend(tmpdir),
-            db_path=tmpdir / "metadata.db",
+            db_path=Path(tmpdir) / "metadata.db",
             tenant_id="other",
             is_admin=True,
         )

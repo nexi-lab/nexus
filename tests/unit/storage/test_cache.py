@@ -357,7 +357,7 @@ class TestMetadataCache:
             # Create filesystem with caching enabled
             fs = NexusFS(
                 backend=LocalBackend(tmp_dir),
-                db_path=tmp_dir / "metadata.db",
+                db_path=Path(tmp_dir) / "metadata.db",
                 enable_metadata_cache=True,
                 cache_path_size=256,
                 cache_ttl_seconds=300,
@@ -384,7 +384,7 @@ class TestMetadataCache:
             # Create filesystem with caching disabled
             fs = NexusFS(
                 backend=LocalBackend(tmp_dir),
-                db_path=tmp_dir / "metadata.db",
+                db_path=Path(tmp_dir) / "metadata.db",
                 enable_metadata_cache=False,
             )
 

@@ -25,9 +25,7 @@ class TestSigV4Validator:
         """Set up test fixtures."""
         self.access_key = "test-access-key"
         self.secret_key = "test-secret-key"
-        self.credentials_store = create_simple_credentials_store(
-            self.access_key, self.secret_key
-        )
+        self.credentials_store = create_simple_credentials_store(self.access_key, self.secret_key)
         self.validator = SigV4Validator(self.credentials_store)
 
     def test_create_simple_credentials_store(self):
@@ -219,9 +217,7 @@ class TestSignatureComputation:
         """Set up test fixtures."""
         self.access_key = "AKIAIOSFODNN7EXAMPLE"
         self.secret_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-        self.credentials_store = {
-            self.access_key: Credentials(self.access_key, self.secret_key)
-        }
+        self.credentials_store = {self.access_key: Credentials(self.access_key, self.secret_key)}
         self.validator = SigV4Validator(self.credentials_store)
 
     def test_canonical_request_format(self):

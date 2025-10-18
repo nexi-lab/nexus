@@ -85,9 +85,7 @@ def demo_boto3(endpoint_url, access_key, secret_key, bucket):
     print("\n1. Uploading files...")
     s3.put_object(Bucket=bucket, Key="demo/file1.txt", Body=b"Hello from boto3!")
     s3.put_object(Bucket=bucket, Key="demo/file2.txt", Body=b"Nexus S3 API works!")
-    s3.put_object(
-        Bucket=bucket, Key="demo/data/nested.txt", Body=b"Nested directories work too!"
-    )
+    s3.put_object(Bucket=bucket, Key="demo/data/nested.txt", Body=b"Nested directories work too!")
     print("   ✓ Uploaded 3 files")
 
     # 2. List objects

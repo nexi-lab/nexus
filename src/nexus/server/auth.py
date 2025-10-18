@@ -201,7 +201,9 @@ class SigV4Validator:
 
         # Step 3: Calculate signature
         signing_key = self._get_signature_key(secret_key, date_stamp, region, service)
-        signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+        signature = hmac.new(
+            signing_key, string_to_sign.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
 
         return signature
 
@@ -235,6 +237,7 @@ class SigV4Validator:
             # AWS SigV4 requires: name=value pairs, sorted by name, URL-encoded
             # Per RFC 3986, unreserved characters (A-Z, a-z, 0-9, -, _, ., ~) should not be encoded
             from urllib.parse import parse_qsl
+
             query_params = parse_qsl(parsed.query, keep_blank_values=True)
             # Sort by parameter name
             query_params.sort()
@@ -292,16 +295,16 @@ class SigV4Validator:
         Returns:
             Signing key bytes
         """
-        k_date = hmac.new(f"AWS4{key}".encode(), date_stamp.encode("utf-8"), hashlib.sha256).digest()
+        k_date = hmac.new(
+            f"AWS4{key}".encode(), date_stamp.encode("utf-8"), hashlib.sha256
+        ).digest()
         k_region = hmac.new(k_date, region.encode("utf-8"), hashlib.sha256).digest()
         k_service = hmac.new(k_region, service.encode("utf-8"), hashlib.sha256).digest()
         k_signing = hmac.new(k_service, b"aws4_request", hashlib.sha256).digest()
         return k_signing
 
 
-def create_simple_credentials_store(
-    access_key: str, secret_key: str
-) -> dict[str, Credentials]:
+def create_simple_credentials_store(access_key: str, secret_key: str) -> dict[str, Credentials]:
     """Create a simple in-memory credentials store.
 
     Args:

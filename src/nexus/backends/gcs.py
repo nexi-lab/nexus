@@ -96,6 +96,11 @@ class GCSBackend(Backend):
                 f"Failed to initialize GCS backend: {e}", backend="gcs", path=bucket_name
             ) from e
 
+    @property
+    def name(self) -> str:
+        """Backend identifier name."""
+        return "gcs"
+
     # === Content Operations (CAS) ===
 
     def _compute_hash(self, content: bytes) -> str:

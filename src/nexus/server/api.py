@@ -30,7 +30,7 @@ import hashlib
 import logging
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, unquote, urlparse
 
 from nexus import NexusFilesystem
@@ -212,10 +212,12 @@ class APIRequestHandler(BaseHTTPRequestHandler):
             files_list = self.nexus_fs.list(prefix or "/", recursive=True, details=True)
 
             # Filter files
-            filtered_files = []
-            for file_info in files_list:
+            filtered_files: list[tuple[str, dict[str, Any]]] = []
+            for file_info_raw in files_list:
+                # Cast to dict for type checking
+                file_info = cast(dict[str, Any], file_info_raw)
                 # Remove leading / for S3 compatibility
-                s3_key = file_info["path"].lstrip("/")
+                s3_key = str(file_info["path"]).lstrip("/")
 
                 # Apply filters
                 if start_after and s3_key <= start_after:

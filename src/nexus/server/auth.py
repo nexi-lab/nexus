@@ -93,6 +93,11 @@ class SigV4Validator:
             if not all([credential_part, signed_headers_part, signature_part]):
                 return False, "Malformed Authorization header"
 
+            # Mypy type narrowing - all values are str after the check above
+            assert credential_part is not None
+            assert signed_headers_part is not None
+            assert signature_part is not None
+
             # Parse credential
             # Format: access_key/YYYYMMDD/region/s3/aws4_request
             credential_parts = credential_part.split("/")

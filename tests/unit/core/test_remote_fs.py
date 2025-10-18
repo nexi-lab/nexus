@@ -1,4 +1,4 @@
-"""Unit tests for RemoteFS filesystem with GCS backend."""
+"""Unit tests for NexusFS filesystem with GCS backend."""
 
 import tempfile
 from collections.abc import Generator
@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
-from nexus.core.remote_fs import RemoteFS
+from nexus import NexusFS, GCSBackend
 
 
 @pytest.fixture
@@ -21,43 +21,46 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def mock_gcs_backend() -> Mock:
     """Create a mock GCS backend."""
-    with patch("nexus.core.remote_fs.GCSBackend") as mock_backend_class:
+    with patch("nexus.backends.gcs.GCSBackend") as mock_backend_class:
         mock_backend = Mock()
         mock_backend_class.return_value = mock_backend
         yield mock_backend
 
 
 @pytest.fixture
-def remote_fs(temp_dir: Path, mock_gcs_backend: Mock) -> Generator[RemoteFS, None, None]:
-    """Create a RemoteFS instance with mocked GCS backend."""
+def remote_fs(temp_dir: Path, mock_gcs_backend: Mock) -> Generator[NexusFS, None, None]:
+    """Create a NexusFS instance with mocked GCS backend."""
     db_path = temp_dir / "test-metadata.db"
-    fs = RemoteFS(
+    backend = GCSBackend(
         bucket_name="test-bucket",
         project_id="test-project",
+    )
+    fs = NexusFS(
+        backend=backend,
         db_path=db_path,
     )
     yield fs
     fs.close()
 
 
-class TestRemoteFSInitialization:
-    """Test RemoteFS initialization."""
+class TestNexusFSInitialization:
+    """Test NexusFS initialization."""
 
     def test_init_creates_metadata_db(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
         """Test that initialization creates metadata database."""
         db_path = temp_dir / "metadata.db"
         assert not db_path.exists()
 
-        fs = RemoteFS(bucket_name="test-bucket", db_path=db_path)
+        fs = NexusFS(backend=GCSBackend(bucket_name="test-bucket"), db_path=db_path)
 
         assert db_path.exists()
         fs.close()
 
     def test_init_with_default_db_path(self, mock_gcs_backend: Mock) -> None:
         """Test initialization with default database path."""
-        fs = RemoteFS(bucket_name="test-bucket")
+        fs = NexusFS(backend=GCSBackend(bucket_name="test-bucket"))
 
-        assert fs.bucket_name == "test-bucket"
+        assert fs.backend.bucket_name == "test-bucket"
         # Should use default path
         assert fs.metadata is not None
         fs.close()
@@ -67,12 +70,12 @@ class TestRemoteFSInitialization:
 
     def test_init_with_credentials(self, temp_dir: Path) -> None:
         """Test initialization with explicit credentials."""
-        with patch("nexus.core.remote_fs.GCSBackend") as mock_backend_class:
+        with patch("nexus.backends.gcs.GCSBackend") as mock_backend_class:
             mock_backend = Mock()
             mock_backend_class.return_value = mock_backend
 
             db_path = temp_dir / "metadata.db"
-            fs = RemoteFS(
+            fs = NexusFS(
                 bucket_name="test-bucket",
                 project_id="my-project",
                 credentials_path="/path/to/creds.json",
@@ -90,8 +93,9 @@ class TestRemoteFSInitialization:
     def test_init_with_tenant_and_agent(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
         """Test initialization with tenant and agent context."""
         db_path = temp_dir / "metadata.db"
-        fs = RemoteFS(
-            bucket_name="test-bucket",
+        backend = GCSBackend(bucket_name="test-bucket")
+        fs = NexusFS(
+            backend=backend,
             db_path=db_path,
             tenant_id="tenant-123",
             agent_id="agent-456",
@@ -107,19 +111,19 @@ class TestRemoteFSInitialization:
 class TestPathValidation:
     """Test path validation."""
 
-    def test_validate_path_empty(self, remote_fs: RemoteFS) -> None:
+    def test_validate_path_empty(self, remote_fs: NexusFS) -> None:
         """Test that empty paths are rejected."""
         with pytest.raises(InvalidPathError) as exc_info:
             remote_fs._validate_path("")
 
         assert "cannot be empty" in str(exc_info.value).lower()
 
-    def test_validate_path_adds_leading_slash(self, remote_fs: RemoteFS) -> None:
+    def test_validate_path_adds_leading_slash(self, remote_fs: NexusFS) -> None:
         """Test that paths without leading slash get one added."""
         result = remote_fs._validate_path("test/path")
         assert result == "/test/path"
 
-    def test_validate_path_invalid_characters(self, remote_fs: RemoteFS) -> None:
+    def test_validate_path_invalid_characters(self, remote_fs: NexusFS) -> None:
         """Test that paths with invalid characters are rejected."""
         with pytest.raises(InvalidPathError):
             remote_fs._validate_path("/path/with\0null")
@@ -127,7 +131,7 @@ class TestPathValidation:
         with pytest.raises(InvalidPathError):
             remote_fs._validate_path("/path/with\nnewline")
 
-    def test_validate_path_parent_traversal(self, remote_fs: RemoteFS) -> None:
+    def test_validate_path_parent_traversal(self, remote_fs: NexusFS) -> None:
         """Test that parent directory traversal is rejected."""
         with pytest.raises(InvalidPathError) as exc_info:
             remote_fs._validate_path("/path/../etc/passwd")
@@ -138,9 +142,9 @@ class TestPathValidation:
 class TestWriteAndRead:
     """Test write and read operations."""
 
-    def test_write_and_read_basic(self, remote_fs: RemoteFS) -> None:
+    def test_write_and_read_basic(self, remote_fs: NexusFS) -> None:
         """Test basic write and read operations."""
-        content = b"Hello, RemoteFS!"
+        content = b"Hello, NexusFS!"
         path = "/test/file.txt"
 
         # Mock backend write_content to return a hash
@@ -163,7 +167,7 @@ class TestWriteAndRead:
         # Verify backend was called with correct hash
         remote_fs.backend.read_content.assert_called_once_with(content_hash)
 
-    def test_write_creates_metadata(self, remote_fs: RemoteFS) -> None:
+    def test_write_creates_metadata(self, remote_fs: NexusFS) -> None:
         """Test that writing creates metadata."""
         content = b"Test content"
         path = "/test.txt"
@@ -184,7 +188,7 @@ class TestWriteAndRead:
         assert meta.etag == content_hash
         assert meta.physical_path == content_hash
 
-    def test_write_overwrites_existing(self, remote_fs: RemoteFS) -> None:
+    def test_write_overwrites_existing(self, remote_fs: NexusFS) -> None:
         """Test that writing overwrites existing file."""
         path = "/test.txt"
         content1 = b"Version 1"
@@ -212,12 +216,12 @@ class TestWriteAndRead:
         assert meta2.etag == hash2
         assert meta2.size == len(content2)
 
-    def test_read_nonexistent_file(self, remote_fs: RemoteFS) -> None:
+    def test_read_nonexistent_file(self, remote_fs: NexusFS) -> None:
         """Test reading a nonexistent file."""
         with pytest.raises(NexusFileNotFoundError):
             remote_fs.read("/nonexistent.txt")
 
-    def test_read_file_without_etag(self, remote_fs: RemoteFS) -> None:
+    def test_read_file_without_etag(self, remote_fs: NexusFS) -> None:
         """Test reading a file with missing etag."""
         path = "/test.txt"
 
@@ -245,7 +249,7 @@ class TestWriteAndRead:
 class TestDelete:
     """Test delete operations."""
 
-    def test_delete_existing_file(self, remote_fs: RemoteFS) -> None:
+    def test_delete_existing_file(self, remote_fs: NexusFS) -> None:
         """Test deleting an existing file."""
         path = "/test.txt"
         content = b"test"
@@ -266,7 +270,7 @@ class TestDelete:
         # Verify metadata is gone
         assert not remote_fs.exists(path)
 
-    def test_delete_nonexistent_file(self, remote_fs: RemoteFS) -> None:
+    def test_delete_nonexistent_file(self, remote_fs: NexusFS) -> None:
         """Test deleting a nonexistent file."""
         with pytest.raises(NexusFileNotFoundError):
             remote_fs.delete("/nonexistent.txt")
@@ -275,7 +279,7 @@ class TestDelete:
 class TestExists:
     """Test file existence checking."""
 
-    def test_exists_true(self, remote_fs: RemoteFS) -> None:
+    def test_exists_true(self, remote_fs: NexusFS) -> None:
         """Test exists returns True for existing file."""
         path = "/test.txt"
         content_hash = "hash123"
@@ -285,11 +289,11 @@ class TestExists:
 
         assert remote_fs.exists(path) is True
 
-    def test_exists_false(self, remote_fs: RemoteFS) -> None:
+    def test_exists_false(self, remote_fs: NexusFS) -> None:
         """Test exists returns False for nonexistent file."""
         assert remote_fs.exists("/nonexistent.txt") is False
 
-    def test_exists_invalid_path(self, remote_fs: RemoteFS) -> None:
+    def test_exists_invalid_path(self, remote_fs: NexusFS) -> None:
         """Test exists returns False for invalid path."""
         assert remote_fs.exists("/invalid/../path") is False
 
@@ -297,12 +301,12 @@ class TestExists:
 class TestList:
     """Test list operations."""
 
-    def test_list_empty_directory(self, remote_fs: RemoteFS) -> None:
+    def test_list_empty_directory(self, remote_fs: NexusFS) -> None:
         """Test listing an empty directory."""
         files = remote_fs.list("/workspace")
         assert files == []
 
-    def test_list_with_files(self, remote_fs: RemoteFS) -> None:
+    def test_list_with_files(self, remote_fs: NexusFS) -> None:
         """Test listing directory with files."""
         # Create some files
         files_to_create = [
@@ -320,7 +324,7 @@ class TestList:
         assert len(files) == 3
         assert all(f in files for f in files_to_create)
 
-    def test_list_non_recursive(self, remote_fs: RemoteFS) -> None:
+    def test_list_non_recursive(self, remote_fs: NexusFS) -> None:
         """Test listing directory non-recursively."""
         # Create files at different levels
         remote_fs.backend.write_content.return_value = "hash1"
@@ -340,7 +344,7 @@ class TestList:
         assert "/workspace/file2.txt" in files
         assert "/workspace/subdir/file3.txt" not in files
 
-    def test_list_with_details(self, remote_fs: RemoteFS) -> None:
+    def test_list_with_details(self, remote_fs: NexusFS) -> None:
         """Test listing with detailed metadata."""
         path = "/test.txt"
         content = b"test content"
@@ -364,7 +368,7 @@ class TestList:
 class TestGlob:
     """Test glob pattern matching."""
 
-    def test_glob_wildcard(self, remote_fs: RemoteFS) -> None:
+    def test_glob_wildcard(self, remote_fs: NexusFS) -> None:
         """Test glob with wildcard pattern."""
         # Create test files
         files = [
@@ -386,7 +390,7 @@ class TestGlob:
         assert "/data/file2.txt" in matches
         assert "/data/file3.csv" not in matches
 
-    def test_glob_recursive(self, remote_fs: RemoteFS) -> None:
+    def test_glob_recursive(self, remote_fs: NexusFS) -> None:
         """Test glob with recursive pattern."""
         # Create test files
         files = [
@@ -405,7 +409,7 @@ class TestGlob:
         assert len(matches) == 3
         assert all(f in matches for f in files)
 
-    def test_glob_no_matches(self, remote_fs: RemoteFS) -> None:
+    def test_glob_no_matches(self, remote_fs: NexusFS) -> None:
         """Test glob with no matches."""
         remote_fs.backend.write_content.return_value = "hash"
         remote_fs.write("/test.txt", b"content")
@@ -417,7 +421,7 @@ class TestGlob:
 class TestGrep:
     """Test grep content search."""
 
-    def test_grep_basic(self, remote_fs: RemoteFS) -> None:
+    def test_grep_basic(self, remote_fs: NexusFS) -> None:
         """Test basic grep search."""
         # Create test files with searchable content
         files = {
@@ -449,7 +453,7 @@ class TestGrep:
         assert any(m["file"] == "/file3.txt" for m in matches)
         assert all("TODO" in m["content"] for m in matches)
 
-    def test_grep_case_insensitive(self, remote_fs: RemoteFS) -> None:
+    def test_grep_case_insensitive(self, remote_fs: NexusFS) -> None:
         """Test case-insensitive grep."""
         content = b"Error: something failed\nerror in line 2"
         path = "/test.txt"
@@ -463,7 +467,7 @@ class TestGrep:
 
         assert len(matches) == 2
 
-    def test_grep_with_file_pattern(self, remote_fs: RemoteFS) -> None:
+    def test_grep_with_file_pattern(self, remote_fs: NexusFS) -> None:
         """Test grep with file pattern filter."""
         files = {
             "/test.py": b"def test():\n    pass",
@@ -486,7 +490,7 @@ class TestGrep:
 class TestDirectoryOperations:
     """Test directory operations."""
 
-    def test_mkdir(self, remote_fs: RemoteFS) -> None:
+    def test_mkdir(self, remote_fs: NexusFS) -> None:
         """Test creating directory."""
         path = "/workspace/data"
 
@@ -495,7 +499,7 @@ class TestDirectoryOperations:
         # Verify backend mkdir was called
         remote_fs.backend.mkdir.assert_called_once()
 
-    def test_rmdir(self, remote_fs: RemoteFS) -> None:
+    def test_rmdir(self, remote_fs: NexusFS) -> None:
         """Test removing directory."""
         path = "/workspace/data"
 
@@ -507,7 +511,7 @@ class TestDirectoryOperations:
         # Verify backend rmdir was called
         remote_fs.backend.rmdir.assert_called_once()
 
-    def test_is_directory(self, remote_fs: RemoteFS) -> None:
+    def test_is_directory(self, remote_fs: NexusFS) -> None:
         """Test checking if path is directory."""
         path = "/workspace"
 
@@ -524,7 +528,7 @@ class TestClose:
     def test_close(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
         """Test that close releases resources."""
         db_path = temp_dir / "metadata.db"
-        fs = RemoteFS(bucket_name="test-bucket", db_path=db_path)
+        fs = NexusFS(backend=GCSBackend(bucket_name="test-bucket"), db_path=db_path)
 
         # Close should not raise
         fs.close()
@@ -536,7 +540,7 @@ class TestClose:
 class TestComputeEtag:
     """Test ETag computation."""
 
-    def test_compute_etag(self, remote_fs: RemoteFS) -> None:
+    def test_compute_etag(self, remote_fs: NexusFS) -> None:
         """Test ETag computation."""
         content = b"test content"
         etag = remote_fs._compute_etag(content)
@@ -554,7 +558,7 @@ class TestComputeEtag:
 class TestReadOnlyPaths:
     """Test read-only path handling."""
 
-    def test_write_to_readonly_path(self, remote_fs: RemoteFS) -> None:
+    def test_write_to_readonly_path(self, remote_fs: NexusFS) -> None:
         """Test that writing to readonly path raises PermissionError."""
         # Mock readonly route
         from unittest.mock import Mock
@@ -568,7 +572,7 @@ class TestReadOnlyPaths:
 
         assert "read-only" in str(exc_info.value).lower()
 
-    def test_delete_from_readonly_path(self, remote_fs: RemoteFS) -> None:
+    def test_delete_from_readonly_path(self, remote_fs: NexusFS) -> None:
         """Test that deleting from readonly path raises PermissionError."""
         # First create a file
         path = "/test.txt"
@@ -588,7 +592,7 @@ class TestReadOnlyPaths:
 
         assert "read-only" in str(exc_info.value).lower()
 
-    def test_mkdir_in_readonly_path(self, remote_fs: RemoteFS) -> None:
+    def test_mkdir_in_readonly_path(self, remote_fs: NexusFS) -> None:
         """Test that mkdir in readonly path raises PermissionError."""
         from unittest.mock import Mock
 
@@ -601,7 +605,7 @@ class TestReadOnlyPaths:
 
         assert "read-only" in str(exc_info.value).lower()
 
-    def test_rmdir_in_readonly_path(self, remote_fs: RemoteFS) -> None:
+    def test_rmdir_in_readonly_path(self, remote_fs: NexusFS) -> None:
         """Test that rmdir in readonly path raises PermissionError."""
         from unittest.mock import Mock
 
@@ -618,7 +622,7 @@ class TestReadOnlyPaths:
 class TestRmdirWithFiles:
     """Test rmdir with files in directory."""
 
-    def test_rmdir_non_empty_non_recursive(self, remote_fs: RemoteFS) -> None:
+    def test_rmdir_non_empty_non_recursive(self, remote_fs: NexusFS) -> None:
         """Test that rmdir fails on non-empty directory without recursive flag."""
         import errno
 
@@ -633,7 +637,7 @@ class TestRmdirWithFiles:
 
         assert exc_info.value.errno == errno.ENOTEMPTY
 
-    def test_rmdir_non_empty_recursive(self, remote_fs: RemoteFS) -> None:
+    def test_rmdir_non_empty_recursive(self, remote_fs: NexusFS) -> None:
         """Test that rmdir succeeds on non-empty directory with recursive flag."""
         # Create files in directory
         files = [
@@ -657,14 +661,14 @@ class TestRmdirWithFiles:
 class TestGrepEdgeCases:
     """Test grep edge cases."""
 
-    def test_grep_invalid_regex(self, remote_fs: RemoteFS) -> None:
+    def test_grep_invalid_regex(self, remote_fs: NexusFS) -> None:
         """Test grep with invalid regex pattern."""
         with pytest.raises(ValueError) as exc_info:
             remote_fs.grep("[invalid")
 
         assert "Invalid regex pattern" in str(exc_info.value)
 
-    def test_grep_max_results(self, remote_fs: RemoteFS) -> None:
+    def test_grep_max_results(self, remote_fs: NexusFS) -> None:
         """Test grep respects max_results limit."""
         # Create file with many matches
         content = b"\n".join([b"TODO: item " + str(i).encode() for i in range(100)])
@@ -680,7 +684,7 @@ class TestGrepEdgeCases:
 
         assert len(matches) == 10
 
-    def test_grep_binary_file(self, remote_fs: RemoteFS) -> None:
+    def test_grep_binary_file(self, remote_fs: NexusFS) -> None:
         """Test grep skips binary files that can't be decoded as UTF-8."""
         # Create binary file with invalid UTF-8 sequences
         binary_content = b"\x80\x81\x82\x83\xff\xfe\xfd"
@@ -701,7 +705,7 @@ class TestGrepEdgeCases:
 class TestListDeprecatedAPI:
     """Test backward compatibility with deprecated list API."""
 
-    def test_list_with_prefix_parameter(self, remote_fs: RemoteFS) -> None:
+    def test_list_with_prefix_parameter(self, remote_fs: NexusFS) -> None:
         """Test deprecated prefix parameter still works."""
         # Create files
         files = [

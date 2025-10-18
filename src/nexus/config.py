@@ -25,10 +25,30 @@ class NexusConfig(BaseModel):
         description="Deployment mode: embedded, monolithic, or distributed",
     )
 
-    # Embedded mode settings
-    data_dir: str | None = Field(
-        default="./nexus-data", description="Data directory for embedded mode"
+    # Backend selection
+    backend: str = Field(
+        default="local",
+        description="Storage backend: 'local' for local filesystem, 'gcs' for Google Cloud Storage",
     )
+
+    # Local backend settings
+    data_dir: str | None = Field(
+        default="./nexus-data", description="Data directory for local backend"
+    )
+
+    # GCS backend settings
+    gcs_bucket_name: str | None = Field(
+        default=None, description="GCS bucket name (required when backend='gcs')"
+    )
+    gcs_project_id: str | None = Field(
+        default=None, description="GCP project ID (optional, inferred from credentials if not provided)"
+    )
+    gcs_credentials_path: str | None = Field(
+        default=None,
+        description="Path to GCS service account credentials JSON (optional, uses ADC if not provided)",
+    )
+
+    # General settings
     cache_size_mb: int = Field(default=100, description="Cache size in megabytes")
     enable_vector_search: bool = Field(default=True, description="Enable vector search")
     enable_llm_cache: bool = Field(default=True, description="Enable LLM KV cache")
@@ -77,6 +97,28 @@ class NexusConfig(BaseModel):
         allowed = ["embedded", "monolithic", "distributed"]
         if v not in allowed:
             raise ValueError(f"mode must be one of {allowed}, got {v}")
+        return v
+
+    @field_validator("backend")
+    @classmethod
+    def validate_backend(cls, v: str) -> str:
+        """Validate backend type."""
+        allowed = ["local", "gcs"]
+        if v not in allowed:
+            raise ValueError(f"backend must be one of {allowed}, got {v}")
+        return v
+
+    @field_validator("gcs_bucket_name")
+    @classmethod
+    def validate_gcs_bucket(cls, v: str | None, info: Any) -> str | None:
+        """Validate GCS bucket name is provided when backend is gcs."""
+        backend = info.data.get("backend")
+        if backend == "gcs" and not v:
+            # Check if we can get from environment
+            env_bucket = os.getenv("NEXUS_GCS_BUCKET_NAME")
+            if env_bucket:
+                return env_bucket
+            raise ValueError("gcs_bucket_name is required when backend='gcs'")
         return v
 
     @field_validator("url")
@@ -164,7 +206,11 @@ def _load_from_environment() -> NexusConfig:
     # Map environment variables to config fields
     env_mapping = {
         "NEXUS_MODE": "mode",
+        "NEXUS_BACKEND": "backend",
         "NEXUS_DATA_DIR": "data_dir",
+        "NEXUS_GCS_BUCKET_NAME": "gcs_bucket_name",
+        "NEXUS_GCS_PROJECT_ID": "gcs_project_id",
+        "NEXUS_GCS_CREDENTIALS_PATH": "gcs_credentials_path",
         "NEXUS_CACHE_SIZE_MB": "cache_size_mb",
         "NEXUS_ENABLE_VECTOR_SEARCH": "enable_vector_search",
         "NEXUS_ENABLE_LLM_CACHE": "enable_llm_cache",

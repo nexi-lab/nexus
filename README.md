@@ -111,6 +111,125 @@ async with nx:
 
 **For self-hosted deployments**, see [Deployment Guide](./docs/deployment.md) for Docker and Kubernetes setup instructions.
 
+## Storage Backends
+
+Nexus supports multiple storage backends through a unified API. All backends use **Content-Addressable Storage (CAS)** for automatic deduplication.
+
+### Local Backend (Default)
+
+Store files on local filesystem:
+
+```python
+import nexus
+
+# Auto-detected from config or uses default
+nx = nexus.connect()
+
+# Or explicitly configure
+nx = nexus.connect(config={
+    "backend": "local",
+    "data_dir": "./nexus-data"
+})
+```
+
+### Google Cloud Storage (GCS) Backend
+
+Store files in Google Cloud Storage with local metadata:
+
+```python
+import nexus
+
+# Connect with GCS backend
+nx = nexus.connect(config={
+    "backend": "gcs",
+    "gcs_bucket_name": "my-nexus-bucket",
+    "gcs_project_id": "my-gcp-project",  # Optional
+    "gcs_credentials_path": "/path/to/credentials.json",  # Optional
+})
+```
+
+**Authentication Methods:**
+1. **Service Account Key**: Provide `gcs_credentials_path`
+2. **Application Default Credentials** (if not provided):
+   - `GOOGLE_APPLICATION_CREDENTIALS` environment variable
+   - `gcloud auth application-default login` credentials
+   - GCE/Cloud Run service account (when running on GCP)
+
+**Using Config File (`nexus.yaml`):**
+```yaml
+backend: gcs
+gcs_bucket_name: my-nexus-bucket
+gcs_project_id: my-gcp-project  # Optional
+# gcs_credentials_path: /path/to/credentials.json  # Optional
+```
+
+**Using Environment Variables:**
+```bash
+export NEXUS_BACKEND=gcs
+export NEXUS_GCS_BUCKET_NAME=my-nexus-bucket
+export NEXUS_GCS_PROJECT_ID=my-gcp-project  # Optional
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json  # Optional
+```
+
+**CLI Usage with GCS:**
+```bash
+# Write file to GCS
+nexus write /workspace/data.txt "Hello GCS!" \
+  --backend=gcs \
+  --gcs-bucket=my-nexus-bucket
+
+# Or use config file (simpler!)
+nexus write /workspace/data.txt "Hello GCS!" --config=nexus.yaml
+```
+
+### Advanced: Direct Backend API
+
+For advanced use cases, instantiate backends directly:
+
+```python
+from nexus import NexusFS, LocalBackend, GCSBackend
+
+# Local backend
+nx_local = NexusFS(
+    backend=LocalBackend("/path/to/data"),
+    db_path="./metadata.db"
+)
+
+# GCS backend
+nx_gcs = NexusFS(
+    backend=GCSBackend(
+        bucket_name="my-bucket",
+        project_id="my-project",
+        credentials_path="/path/to/creds.json"
+    ),
+    db_path="./gcs-metadata.db"
+)
+
+# Same API for both!
+nx_local.write("/file.txt", b"data")
+nx_gcs.write("/file.txt", b"data")
+```
+
+### Backend Comparison
+
+| Feature | Local Backend | GCS Backend |
+|---------|--------------|-------------|
+| **Content Storage** | Local filesystem | Google Cloud Storage |
+| **Metadata Storage** | Local SQLite | Local SQLite |
+| **Deduplication** | ✅ CAS (30-50% savings) | ✅ CAS (30-50% savings) |
+| **Multi-machine Access** | ❌ Single machine | ✅ Shared across machines |
+| **Durability** | Single disk | 99.999999999% (11 nines) |
+| **Latency** | <1ms (local) | 10-50ms (network) |
+| **Cost** | Free (local disk) | GCS storage pricing |
+| **Use Case** | Development, single machine | Teams, production, backup |
+
+### Coming Soon
+
+- **Amazon S3 Backend** (v0.7.0)
+- **Azure Blob Storage** (v0.7.0)
+- **Google Drive** (v0.7.0)
+- **SharePoint** (v0.7.0)
+
 ## Installation
 
 ### Using pip (Recommended)

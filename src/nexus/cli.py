@@ -15,10 +15,8 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 import nexus
-from nexus import NexusFilesystem
-from nexus.core.embedded import Embedded
+from nexus import NexusFilesystem, NexusFS
 from nexus.core.exceptions import NexusError, NexusFileNotFoundError, ValidationError
-from nexus.core.remote_fs import RemoteFS
 
 console = Console()
 
@@ -129,15 +127,18 @@ def get_filesystem(backend_config: BackendConfig) -> NexusFilesystem:
             # Use explicit config file
             return nexus.connect(config=backend_config.config_path)
         elif backend_config.backend == "gcs":
-            # Use GCS backend
+            # Use GCS backend via nexus.connect()
             if not backend_config.gcs_bucket:
                 console.print("[red]Error:[/red] --gcs-bucket is required when using --backend=gcs")
                 sys.exit(1)
-            return RemoteFS(
-                bucket_name=backend_config.gcs_bucket,
-                project_id=backend_config.gcs_project,
-                credentials_path=backend_config.gcs_credentials,
-            )
+            config = {
+                "backend": "gcs",
+                "gcs_bucket_name": backend_config.gcs_bucket,
+                "gcs_project_id": backend_config.gcs_project,
+                "gcs_credentials_path": backend_config.gcs_credentials,
+                "db_path": str(Path(backend_config.data_dir) / "nexus-gcs-metadata.db"),
+            }
+            return nexus.connect(config=config)
         else:
             # Use local backend (default)
             return nexus.connect(config={"data_dir": backend_config.data_dir})
@@ -594,9 +595,9 @@ def info(
             return
 
         # Get file metadata from metadata store
-        # Note: Only Embedded mode has direct metadata access
-        if not isinstance(nx, (Embedded, RemoteFS)):
-            console.print("[red]Error:[/red] File info is only available in embedded mode")
+        # Note: Only NexusFS mode has direct metadata access
+        if not isinstance(nx, NexusFS):
+            console.print("[red]Error:[/red] File info is only available for NexusFS instances")
             nx.close()
             return
 

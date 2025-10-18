@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.core.embedded import Embedded
+from nexus import NexusFS, LocalBackend
 
 
 @pytest.fixture
@@ -17,14 +17,14 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def embedded_cas(temp_dir: Path) -> Generator[Embedded, None, None]:
+def embedded_cas(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create an Embedded instance (CAS always enabled)."""
-    emb = Embedded(data_dir=temp_dir)
+    emb = NexusFS(backend=LocalBackend(temp_dir), db_path=temp_dir / "metadata.db")
     yield emb
     emb.close()
 
 
-def test_cas_write_and_read(embedded_cas: Embedded) -> None:
+def test_cas_write_and_read(embedded_cas: NexusFS) -> None:
     """Test writing and reading with CAS."""
     content = b"Hello, CAS World!"
 
@@ -34,7 +34,7 @@ def test_cas_write_and_read(embedded_cas: Embedded) -> None:
     assert result == content
 
 
-def test_cas_automatic_deduplication(embedded_cas: Embedded) -> None:
+def test_cas_automatic_deduplication(embedded_cas: NexusFS) -> None:
     """Test that identical content is automatically deduplicated."""
     content = b"Duplicate content"
 
@@ -59,7 +59,7 @@ def test_cas_automatic_deduplication(embedded_cas: Embedded) -> None:
     assert embedded_cas.backend.get_ref_count(meta1.etag) == 2
 
 
-def test_cas_delete_with_ref_counting(embedded_cas: Embedded) -> None:
+def test_cas_delete_with_ref_counting(embedded_cas: NexusFS) -> None:
     """Test that delete properly handles reference counting."""
     content = b"Shared content"
 
@@ -93,7 +93,7 @@ def test_cas_delete_with_ref_counting(embedded_cas: Embedded) -> None:
     assert not embedded_cas.backend.content_exists(content_hash)
 
 
-def test_cas_update_file_content(embedded_cas: Embedded) -> None:
+def test_cas_update_file_content(embedded_cas: NexusFS) -> None:
     """Test updating file content handles ref counting correctly."""
     content1 = b"Original content"
     content2 = b"Updated content"
@@ -122,7 +122,7 @@ def test_cas_update_file_content(embedded_cas: Embedded) -> None:
     assert embedded_cas.backend.get_ref_count(hash2) == 1
 
 
-def test_cas_storage_efficiency(embedded_cas: Embedded) -> None:
+def test_cas_storage_efficiency(embedded_cas: NexusFS) -> None:
     """Test storage efficiency with multiple files."""
     content = b"x" * 1000  # 1KB
 
@@ -145,7 +145,7 @@ def test_cas_storage_efficiency(embedded_cas: Embedded) -> None:
     assert embedded_cas.backend.get_content_size(content_hash) == 1000
 
 
-def test_cas_different_content_different_hashes(embedded_cas: Embedded) -> None:
+def test_cas_different_content_different_hashes(embedded_cas: NexusFS) -> None:
     """Test that different content produces different hashes."""
     embedded_cas.write("/file1.txt", b"Content A")
     embedded_cas.write("/file2.txt", b"Content B")
@@ -157,7 +157,7 @@ def test_cas_different_content_different_hashes(embedded_cas: Embedded) -> None:
     assert meta1.etag != meta2.etag
 
 
-def test_cas_list_files(embedded_cas: Embedded) -> None:
+def test_cas_list_files(embedded_cas: NexusFS) -> None:
     """Test listing files with CAS."""
     embedded_cas.write("/dir1/file1.txt", b"Content 1")
     embedded_cas.write("/dir1/file2.txt", b"Content 2")
@@ -170,7 +170,7 @@ def test_cas_list_files(embedded_cas: Embedded) -> None:
     assert "/dir2/file3.txt" in all_files
 
 
-def test_cas_binary_content(embedded_cas: Embedded) -> None:
+def test_cas_binary_content(embedded_cas: NexusFS) -> None:
     """Test CAS with binary content."""
     content = bytes(range(256))
 
@@ -180,7 +180,7 @@ def test_cas_binary_content(embedded_cas: Embedded) -> None:
     assert result == content
 
 
-def test_cas_empty_content(embedded_cas: Embedded) -> None:
+def test_cas_empty_content(embedded_cas: NexusFS) -> None:
     """Test CAS with empty content."""
     embedded_cas.write("/empty.txt", b"")
 
@@ -188,7 +188,7 @@ def test_cas_empty_content(embedded_cas: Embedded) -> None:
     assert result == b""
 
 
-def test_cas_large_content(embedded_cas: Embedded) -> None:
+def test_cas_large_content(embedded_cas: NexusFS) -> None:
     """Test CAS with large content."""
     content = b"x" * (1024 * 1024)  # 1MB
 
@@ -199,7 +199,7 @@ def test_cas_large_content(embedded_cas: Embedded) -> None:
     assert result == content
 
 
-def test_cas_metadata_stored_correctly(embedded_cas: Embedded) -> None:
+def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
     """Test that metadata is stored correctly with CAS."""
     content = b"Test metadata"
 
@@ -214,7 +214,7 @@ def test_cas_metadata_stored_correctly(embedded_cas: Embedded) -> None:
     assert len(meta.etag) == 64  # SHA-256 hash length
 
 
-def test_cas_concurrent_deduplication(embedded_cas: Embedded) -> None:
+def test_cas_concurrent_deduplication(embedded_cas: NexusFS) -> None:
     """Test deduplication with multiple writes of same content."""
     content = b"Concurrent content"
 
@@ -242,7 +242,7 @@ def test_cas_concurrent_deduplication(embedded_cas: Embedded) -> None:
     assert not embedded_cas.backend.content_exists(content_hash)
 
 
-def test_cas_update_preserves_timestamps(embedded_cas: Embedded) -> None:
+def test_cas_update_preserves_timestamps(embedded_cas: NexusFS) -> None:
     """Test that updating content preserves created_at timestamp."""
     embedded_cas.write("/test.txt", b"Original")
 

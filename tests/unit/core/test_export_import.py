@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from nexus.core.embedded import Embedded
+from nexus.core.nexus_fs import NexusFS
+from nexus.backends.local import LocalBackend
 from nexus.core.export_import import CollisionDetail, ExportFilter, ImportOptions, ImportResult
 
 
@@ -23,7 +24,7 @@ def temp_dir():
 @pytest.fixture
 def nx(temp_dir):
     """Create Nexus filesystem instance."""
-    fs = Embedded(data_dir=temp_dir / "data")
+    fs = NexusFS(backend=LocalBackend(temp_dir / "data"), db_path=temp_dir / "data" / "metadata.db")
     yield fs
     fs.close()
 

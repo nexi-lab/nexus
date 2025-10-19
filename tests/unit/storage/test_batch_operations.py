@@ -1,6 +1,5 @@
 """Unit tests for batch metadata operations."""
 
-import tempfile
 from pathlib import Path
 
 from nexus import LocalBackend, NexusFS
@@ -351,11 +350,12 @@ class TestBatchOperations:
 
         store.close()
 
-    def test_embedded_rmdir_uses_batch_delete(self):
+    def test_embedded_rmdir_uses_batch_delete(self, tmp_path: Path):
         """Test that Embedded.rmdir() uses batch delete for directories."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            fs = NexusFS(backend=LocalBackend(tmp_dir), db_path=Path(tmp_dir) / "metadata.db")
+        db_path = tmp_path / "metadata.db"
+        fs = NexusFS(backend=LocalBackend(tmp_path), db_path=db_path)
 
+        try:
             # Create directory with multiple files
             for i in range(10):
                 fs.write(f"/testdir/file{i}.txt", b"content")
@@ -371,7 +371,7 @@ class TestBatchOperations:
             # Verify all files are deleted
             for i in range(10):
                 assert not fs.exists(f"/testdir/file{i}.txt")
-
+        finally:
             fs.close()
 
     def test_batch_operations_with_cache_invalidation(self, tmp_path: Path):

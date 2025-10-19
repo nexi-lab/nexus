@@ -489,6 +489,21 @@ Nexus includes a JSON-RPC server that exposes the full NexusFileSystem interface
 
 ### Quick Start
 
+#### Method 1: Using the Startup Script (Recommended)
+
+```bash
+# Navigate to nexus directory
+cd /path/to/nexus
+
+# Start with defaults (host: 0.0.0.0, port: 8080, no auth)
+./start-server.sh
+
+# Or with custom options
+./start-server.sh --host localhost --port 8080 --api-key mysecret
+```
+
+#### Method 2: Direct Command
+
 ```bash
 # Start the server (optional API key authentication)
 nexus serve --host 0.0.0.0 --port 8080 --api-key mysecret
@@ -548,6 +563,60 @@ nexus serve --backend=gcs --gcs-bucket=my-bucket --api-key mysecret
 
 # Custom data directory
 nexus serve --data-dir /path/to/data
+```
+
+### Testing the Server
+
+Once the server is running, verify it's working:
+
+```bash
+# Health check
+curl http://localhost:8080/health
+# Expected: {"status": "healthy", "service": "nexus-rpc"}
+
+# Check available methods
+curl http://localhost:8080/api/nfs/status
+# Expected: {"status": "running", "service": "nexus-rpc", "version": "1.0", "methods": [...]}
+
+# List files (JSON-RPC)
+curl -X POST http://localhost:8080/api/nfs/list \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "list",
+    "params": {"path": "/", "recursive": false, "details": true},
+    "id": 1
+  }'
+
+# With API key
+curl -X POST http://localhost:8080/api/nfs/list \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer mysecretkey" \
+  -d '{"jsonrpc": "2.0", "method": "list", "params": {"path": "/"}, "id": 1}'
+```
+
+### Troubleshooting
+
+**Port Already in Use:**
+```bash
+# Find and kill process using port 8080
+lsof -ti:8080 | xargs kill -9
+
+# Or use a different port
+nexus serve --port 8081
+```
+
+**Module Not Found:**
+```bash
+# Activate virtual environment and install
+source .venv/bin/activate
+pip install -e .
+```
+
+**Permission Denied:**
+```bash
+# Use a directory you have write access to
+nexus serve --data-dir ~/nexus-data
 ```
 
 ### Deploying Nexus Server

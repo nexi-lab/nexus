@@ -758,6 +758,113 @@ test_command "Test compressed file with Nexus (end-to-end)" \
 
 echo -e "${GREEN}✓ All parser system tests passed!${NC}\n"
 
+# ============================================================
+# rclone-style CLI Commands (Issue #81 - v0.2.0)
+# ============================================================
+echo -e "\n${BLUE}Testing rclone-style CLI commands...${NC}"
+
+# Create test directories for sync/copy operations
+SYNC_TEST_DIR="$TEST_WORKSPACE/sync-test"
+mkdir -p "$SYNC_TEST_DIR/source"
+mkdir -p "$SYNC_TEST_DIR/dest"
+
+# Create test files in source directory
+echo "File 1 content" > "$SYNC_TEST_DIR/source/file1.txt"
+echo "File 2 content" > "$SYNC_TEST_DIR/source/file2.txt"
+mkdir -p "$SYNC_TEST_DIR/source/subdir"
+echo "File 3 content" > "$SYNC_TEST_DIR/source/subdir/file3.txt"
+
+# Test 57: Tree command
+test_command "Tree command - show directory structure" \
+    nexus tree /workspace --data-dir "$DATA_DIR"
+
+# Test 58: Tree with depth limit
+test_command "Tree command with depth limit" \
+    nexus tree /workspace -L 1 --data-dir "$DATA_DIR"
+
+# Test 59: Tree with sizes
+test_command "Tree command with file sizes" \
+    nexus tree /workspace --show-size --data-dir "$DATA_DIR"
+
+# Test 60: Size command
+test_command "Size command - calculate directory size" \
+    nexus size /workspace --data-dir "$DATA_DIR"
+
+# Test 61: Size with human-readable output
+test_command "Size command with human-readable output" \
+    nexus size /workspace --human --data-dir "$DATA_DIR"
+
+# Test 62: Size with details (top 10 largest files)
+test_command "Size command with details" \
+    nexus size /workspace --human --details --data-dir "$DATA_DIR"
+
+# Test 63: Copy command - single file
+test_command "Copy command - single file" \
+    nexus copy /workspace/hello.txt /workspace/hello_copied.txt --data-dir "$DATA_DIR"
+
+# Test 64: Copy command - recursive (Nexus to Nexus)
+# First, create a source directory with files
+nexus write /copy-source/file1.txt "Copy test 1" --data-dir "$DATA_DIR"
+nexus write /copy-source/file2.txt "Copy test 2" --data-dir "$DATA_DIR"
+nexus write /copy-source/subdir/file3.txt "Copy test 3" --data-dir "$DATA_DIR"
+
+test_command "Copy command - recursive copy within Nexus" \
+    nexus copy /copy-source/ /copy-dest/ --recursive --data-dir "$DATA_DIR"
+
+# Test 65: Verify copied files exist
+test_command "Verify recursive copy succeeded" \
+    nexus cat /copy-dest/file1.txt --data-dir "$DATA_DIR"
+
+# Test 66: Copy with checksum (should skip identical files)
+test_command "Copy command - skip identical files with checksum" \
+    nexus copy /copy-source/ /copy-dest/ --recursive --data-dir "$DATA_DIR"
+
+# Test 67: Move command
+nexus write /move-test/source.txt "Move me" --data-dir "$DATA_DIR"
+test_command "Move command - rename file" \
+    nexus move /move-test/source.txt /move-test/destination.txt --force --data-dir "$DATA_DIR"
+
+# Test 68: Verify move succeeded (source should not exist)
+test_command "Verify move deleted source" \
+    bash -c "! nexus cat /move-test/source.txt --data-dir $DATA_DIR 2>/dev/null"
+
+# Test 69: Verify move succeeded (destination should exist)
+test_command "Verify move created destination" \
+    nexus cat /move-test/destination.txt --data-dir "$DATA_DIR"
+
+# Test 70: Sync command - dry run
+test_command "Sync command - dry run mode" \
+    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest/ --dry-run --data-dir "$DATA_DIR"
+
+# Test 71: Sync command - actual sync
+test_command "Sync command - sync local to Nexus" \
+    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest/ --data-dir "$DATA_DIR"
+
+# Test 72: Verify sync created files
+test_command "Verify sync created files in Nexus" \
+    nexus cat /sync-dest/file1.txt --data-dir "$DATA_DIR"
+
+# Test 73: Re-sync (should skip identical files)
+test_command "Sync command - re-sync should skip identical files" \
+    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest/ --data-dir "$DATA_DIR"
+
+# Test 74: Sync with delete flag
+# Add extra file to destination
+nexus write /sync-dest/extra.txt "This should be deleted" --data-dir "$DATA_DIR"
+
+test_command "Sync command - sync with delete flag" \
+    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest/ --delete --data-dir "$DATA_DIR"
+
+# Test 75: Verify extra file was deleted
+test_command "Verify sync --delete removed extra file" \
+    bash -c "! nexus cat /sync-dest/extra.txt --data-dir $DATA_DIR 2>/dev/null"
+
+# Test 76: Sync with --no-checksum (force copy all)
+test_command "Sync command - disable checksum verification" \
+    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest-no-check/ --no-checksum --data-dir "$DATA_DIR"
+
+echo -e "${GREEN}✓ All rclone-style CLI tests passed!${NC}\n"
+
 # Summary
 echo -e "${BLUE}================================${NC}"
 echo -e "${BLUE}Test Summary${NC}"

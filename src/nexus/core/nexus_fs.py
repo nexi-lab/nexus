@@ -124,6 +124,10 @@ class NexusFS(NexusFilesystem):
         if custom_parsers:
             self._load_custom_parsers(custom_parsers)
 
+        # Track active parser threads for graceful shutdown
+        self._parser_threads: list[threading.Thread] = []
+        self._parser_threads_lock = threading.Lock()
+
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
         """
         Dynamically load and register custom parsers from configuration.
@@ -333,6 +337,9 @@ class NexusFS(NexusFilesystem):
                 args=(path,),
                 daemon=True,
             )
+            # Track thread for graceful shutdown
+            with self._parser_threads_lock:
+                self._parser_threads.append(thread)
             thread.start()
         except Exception:
             # Silently ignore if no parser available or parsing fails
@@ -1411,4 +1418,15 @@ class NexusFS(NexusFilesystem):
 
     def close(self) -> None:
         """Close the filesystem and release resources."""
+        # Wait for all parser threads to complete before closing metadata store
+        # This prevents database corruption from threads writing during shutdown
+        with self._parser_threads_lock:
+            threads_to_join = list(self._parser_threads)
+
+        for thread in threads_to_join:
+            # Wait up to 5 seconds for each thread
+            # Parser threads should complete quickly, but we don't want to hang forever
+            thread.join(timeout=5.0)
+
+        # Close metadata store after all parsers have finished
         self.metadata.close()

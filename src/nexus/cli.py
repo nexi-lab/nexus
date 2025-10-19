@@ -365,7 +365,7 @@ def cp(
     dest: str,
     backend_config: BackendConfig,
 ) -> None:
-    """Copy a file.
+    """Copy a file (simple copy - for recursive copy use 'copy' command).
 
     Examples:
         nexus cp /workspace/source.txt /workspace/dest.txt
@@ -382,6 +382,221 @@ def cp(
         nx.close()
 
         console.print(f"[green]✓[/green] Copied [cyan]{source}[/cyan] → [cyan]{dest}[/cyan]")
+    except Exception as e:
+        handle_error(e)
+
+
+@main.command(name="copy")
+@click.argument("source", type=str)
+@click.argument("dest", type=str)
+@click.option("-r", "--recursive", is_flag=True, help="Copy directories recursively")
+@click.option("--checksum", is_flag=True, help="Skip identical files (hash-based)", default=True)
+@click.option("--no-checksum", is_flag=True, help="Disable checksum verification")
+@add_backend_options
+def copy_cmd(
+    source: str,
+    dest: str,
+    recursive: bool,
+    checksum: bool,
+    no_checksum: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """Smart copy with deduplication.
+
+    Copy files from source to destination with automatic deduplication.
+    Uses content hashing to skip identical files.
+
+    Supports both local filesystem paths and Nexus paths:
+    - /path/in/nexus - Nexus virtual path
+    - ./local/path or /local/path - Local filesystem path
+
+    Examples:
+        # Copy local directory to Nexus
+        nexus copy ./local/data/ /workspace/data/ --recursive
+
+        # Copy within Nexus
+        nexus copy /workspace/source/ /workspace/dest/ --recursive
+
+        # Copy Nexus to local
+        nexus copy /workspace/data/ ./backup/ --recursive
+
+        # Copy single file
+        nexus copy /workspace/file.txt /workspace/copy.txt
+    """
+    try:
+        from nexus.sync import copy_file, copy_recursive, is_local_path
+
+        nx = get_filesystem(backend_config)
+
+        # Handle --no-checksum flag
+        use_checksum = checksum and not no_checksum
+
+        if recursive:
+            # Use progress bar from sync module (tqdm)
+            stats = copy_recursive(nx, source, dest, checksum=use_checksum, progress=True)
+            nx.close()
+
+            # Display results
+            console.print("[bold green]✓ Copy Complete![/bold green]")
+            console.print(f"  Files checked: [cyan]{stats.files_checked}[/cyan]")
+            console.print(f"  Files copied: [green]{stats.files_copied}[/green]")
+            console.print(f"  Files skipped: [yellow]{stats.files_skipped}[/yellow] (identical)")
+            console.print(f"  Bytes transferred: [cyan]{stats.bytes_transferred:,}[/cyan]")
+
+            if stats.errors:
+                console.print(f"\n[bold red]Errors:[/bold red] {len(stats.errors)}")
+                for error in stats.errors[:10]:  # Show first 10 errors
+                    console.print(f"  [red]•[/red] {error}")
+
+        else:
+            # Single file copy
+            is_source_local = is_local_path(source)
+            is_dest_local = is_local_path(dest)
+
+            bytes_copied = copy_file(nx, source, dest, is_source_local, is_dest_local, use_checksum)
+
+            nx.close()
+
+            if bytes_copied > 0:
+                console.print(
+                    f"[green]✓[/green] Copied [cyan]{source}[/cyan] → [cyan]{dest}[/cyan] "
+                    f"({bytes_copied:,} bytes)"
+                )
+            else:
+                console.print(
+                    f"[yellow]⊘[/yellow] Skipped [cyan]{source}[/cyan] (identical content)"
+                )
+
+    except Exception as e:
+        handle_error(e)
+
+
+@main.command(name="move")
+@click.argument("source", type=str)
+@click.argument("dest", type=str)
+@click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation")
+@add_backend_options
+def move_cmd(
+    source: str,
+    dest: str,
+    force: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """Move files or directories.
+
+    Move files from source to destination. This is an efficient rename
+    when possible, otherwise copy + delete.
+
+    Examples:
+        nexus move /workspace/old.txt /workspace/new.txt
+        nexus move /workspace/old_dir/ /workspace/new_dir/ --force
+    """
+    try:
+        from nexus.sync import move_file
+
+        nx = get_filesystem(backend_config)
+
+        # Confirm unless --force
+        if not force and not click.confirm(f"Move {source} to {dest}?"):
+            console.print("[yellow]Cancelled[/yellow]")
+            nx.close()
+            return
+
+        with console.status(f"[yellow]Moving {source} to {dest}...[/yellow]", spinner="dots"):
+            success = move_file(nx, source, dest)
+
+        nx.close()
+
+        if success:
+            console.print(f"[green]✓[/green] Moved [cyan]{source}[/cyan] → [cyan]{dest}[/cyan]")
+        else:
+            console.print(f"[red]Error:[/red] Failed to move {source}")
+            sys.exit(1)
+
+    except Exception as e:
+        handle_error(e)
+
+
+@main.command(name="sync")
+@click.argument("source", type=str)
+@click.argument("dest", type=str)
+@click.option("--delete", is_flag=True, help="Delete files in dest that don't exist in source")
+@click.option("--dry-run", is_flag=True, help="Preview changes without making them")
+@click.option("--no-checksum", is_flag=True, help="Disable hash-based comparison")
+@add_backend_options
+def sync_cmd(
+    source: str,
+    dest: str,
+    delete: bool,
+    dry_run: bool,
+    no_checksum: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """One-way sync from source to destination.
+
+    Efficiently synchronizes files from source to destination using
+    hash-based change detection. Only copies changed files.
+
+    Supports both local filesystem paths and Nexus paths.
+
+    Examples:
+        # Sync local to Nexus
+        nexus sync ./local/dataset/ /workspace/training/
+
+        # Preview changes (dry run)
+        nexus sync ./local/data/ /workspace/data/ --dry-run
+
+        # Sync with deletion (mirror)
+        nexus sync /workspace/source/ /workspace/dest/ --delete
+
+        # Disable checksum (copy all files)
+        nexus sync ./data/ /workspace/ --no-checksum
+    """
+    try:
+        from nexus.sync import sync_directories
+
+        nx = get_filesystem(backend_config)
+
+        use_checksum = not no_checksum
+
+        # Display sync configuration
+        console.print(f"[cyan]Syncing:[/cyan] {source} → {dest}")
+        if delete:
+            console.print("  [yellow]⚠ Delete mode enabled[/yellow]")
+        if dry_run:
+            console.print("  [yellow]DRY RUN - No changes will be made[/yellow]")
+        if not use_checksum:
+            console.print("  [yellow]Checksum disabled - copying all files[/yellow]")
+        console.print()
+
+        # Use progress bar from sync module (tqdm)
+        stats = sync_directories(
+            nx, source, dest, delete=delete, dry_run=dry_run, checksum=use_checksum, progress=True
+        )
+
+        nx.close()
+
+        # Display results
+        if dry_run:
+            console.print("[bold yellow]DRY RUN RESULTS:[/bold yellow]")
+        else:
+            console.print("[bold green]✓ Sync Complete![/bold green]")
+
+        console.print(f"  Files checked: [cyan]{stats.files_checked}[/cyan]")
+        console.print(f"  Files copied: [green]{stats.files_copied}[/green]")
+        console.print(f"  Files skipped: [yellow]{stats.files_skipped}[/yellow] (identical)")
+
+        if delete:
+            console.print(f"  Files deleted: [red]{stats.files_deleted}[/red]")
+
+        if not dry_run:
+            console.print(f"  Bytes transferred: [cyan]{stats.bytes_transferred:,}[/cyan]")
+
+        if stats.errors:
+            console.print(f"\n[bold red]Errors:[/bold red] {len(stats.errors)}")
+            for error in stats.errors[:10]:  # Show first 10 errors
+                console.print(f"  [red]•[/red] {error}")
+
     except Exception as e:
         handle_error(e)
 
@@ -795,7 +1010,7 @@ def import_metadata(
     dry_run: bool,
     no_preserve_ids: bool,
     overwrite: bool,
-    _no_skip_existing: bool,
+    no_skip_existing: bool,
     backend_config: BackendConfig,
 ) -> None:
     """Import metadata from JSONL file.
@@ -830,7 +1045,7 @@ def import_metadata(
             sys.exit(1)
 
         # Handle deprecated options for backward compatibility
-        _ = _no_skip_existing  # Deprecated parameter, kept for backward compatibility
+        _ = no_skip_existing  # Deprecated parameter, kept for backward compatibility
 
         if overwrite:
             console.print(
@@ -1194,6 +1409,213 @@ def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig)
                 f"  Files that could be deduplicated: [yellow]{duplicate_files - duplicate_groups}[/yellow]"
             )
             console.print("  (CAS automatically deduplicates - no action needed!)")
+
+    except Exception as e:
+        handle_error(e)
+
+
+@main.command(name="tree")
+@click.argument("path", default="/", type=str)
+@click.option("-L", "--level", type=int, default=None, help="Max depth to display")
+@click.option("--show-size", is_flag=True, help="Show file sizes")
+@add_backend_options
+def tree(
+    path: str,
+    level: int | None,
+    show_size: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """Display directory tree structure.
+
+    Shows an ASCII tree view of files and directories with optional
+    size information and depth limiting.
+
+    Examples:
+        nexus tree /workspace
+        nexus tree /workspace -L 2
+        nexus tree /workspace --show-size
+    """
+    try:
+        nx = get_filesystem(backend_config)
+
+        # Get all files recursively
+        files_raw = nx.list(path, recursive=True, details=show_size)
+        nx.close()
+
+        if not files_raw:
+            console.print(f"[yellow]No files found in {path}[/yellow]")
+            return
+
+        # Build tree structure
+        from collections import defaultdict
+        from pathlib import PurePosixPath
+
+        tree_dict: dict[str, Any] = defaultdict(dict)
+
+        if show_size:
+            files = cast(list[dict[str, Any]], files_raw)
+            for file in files:
+                file_path = file["path"]
+                parts = PurePosixPath(file_path).parts
+                current = tree_dict
+                for i, part in enumerate(parts):
+                    if i == len(parts) - 1:  # Leaf node (file)
+                        current[part] = file["size"]
+                    else:  # Directory
+                        if part not in current or not isinstance(current[part], dict):
+                            current[part] = {}
+                        current = current[part]
+        else:
+            file_paths = cast(list[str], files_raw)
+            for file_path in file_paths:
+                parts = PurePosixPath(file_path).parts
+                current = tree_dict
+                for i, part in enumerate(parts):
+                    if i == len(parts) - 1:  # Leaf node (file)
+                        current[part] = None
+                    else:  # Directory
+                        if part not in current or not isinstance(current[part], dict):
+                            current[part] = {}
+                        current = current[part]
+
+        # Display tree
+        def format_size(size: int) -> str:
+            """Format size in human-readable format."""
+            size_float = float(size)
+            for unit in ["B", "KB", "MB", "GB", "TB"]:
+                if size_float < 1024.0:
+                    return f"{size_float:.1f} {unit}"
+                size_float /= 1024.0
+            return f"{size_float:.1f} PB"
+
+        def print_tree(
+            node: dict[str, Any],
+            prefix: str = "",
+            current_level: int = 0,
+        ) -> tuple[int, int]:
+            """Recursively print tree structure. Returns (file_count, total_size)."""
+            if level is not None and current_level >= level:
+                return 0, 0
+
+            items = sorted(node.items())
+            total_files = 0
+            total_size = 0
+
+            for i, (name, value) in enumerate(items):
+                is_last_item = i == len(items) - 1
+                connector = "└── " if is_last_item else "├── "
+                extension = "    " if is_last_item else "│   "
+
+                if isinstance(value, dict):
+                    # Directory
+                    console.print(f"{prefix}{connector}[bold cyan]{name}/[/bold cyan]")
+                    files, size = print_tree(
+                        value,
+                        prefix + extension,
+                        current_level + 1,
+                    )
+                    total_files += files
+                    total_size += size
+                else:
+                    # File
+                    total_files += 1
+                    if show_size and value is not None:
+                        size_str = format_size(value)
+                        console.print(f"{prefix}{connector}{name} [dim]({size_str})[/dim]")
+                        total_size += value
+                    else:
+                        console.print(f"{prefix}{connector}{name}")
+
+            return total_files, total_size
+
+        # Print header
+        console.print(f"[bold green]{path}[/bold green]")
+
+        # Print tree
+        file_count, total_size = print_tree(tree_dict)
+
+        # Print summary
+        console.print()
+        if show_size:
+            console.print(f"[dim]{file_count} files, {format_size(total_size)} total[/dim]")
+        else:
+            console.print(f"[dim]{file_count} files[/dim]")
+
+    except Exception as e:
+        handle_error(e)
+
+
+@main.command(name="size")
+@click.argument("path", default="/", type=str)
+@click.option("--human", "-h", is_flag=True, help="Human-readable output")
+@click.option("--details", is_flag=True, help="Show per-file breakdown")
+@add_backend_options
+def size(
+    path: str,
+    human: bool,
+    details: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """Calculate total size of files in a path.
+
+    Recursively calculates the total size of all files under a given path.
+
+    Examples:
+        nexus size /workspace
+        nexus size /workspace --human
+        nexus size /workspace --details
+    """
+    try:
+        nx = get_filesystem(backend_config)
+
+        # Get all files with details
+        with console.status(f"[yellow]Calculating size of {path}...[/yellow]", spinner="dots"):
+            files_raw = nx.list(path, recursive=True, details=True)
+
+        nx.close()
+
+        if not files_raw:
+            console.print(f"[yellow]No files found in {path}[/yellow]")
+            return
+
+        files = cast(list[dict[str, Any]], files_raw)
+
+        # Calculate total size
+        total_size = sum(f["size"] for f in files)
+        file_count = len(files)
+
+        def format_size(size: int) -> str:
+            """Format size in human-readable format."""
+            if not human:
+                return f"{size:,} bytes"
+
+            size_float = float(size)
+            for unit in ["B", "KB", "MB", "GB", "TB"]:
+                if size_float < 1024.0:
+                    return f"{size_float:.1f} {unit}"
+                size_float /= 1024.0
+            return f"{size_float:.1f} PB"
+
+        # Display summary
+        console.print(f"[bold cyan]Size of {path}:[/bold cyan]")
+        console.print(f"  Total size: [green]{format_size(total_size)}[/green]")
+        console.print(f"  File count: [cyan]{file_count:,}[/cyan]")
+
+        if details:
+            console.print()
+            console.print("[bold]Top 10 largest files:[/bold]")
+
+            # Sort by size and show top 10
+            sorted_files = sorted(files, key=lambda f: f["size"], reverse=True)[:10]
+
+            table = Table()
+            table.add_column("Size", justify="right", style="green")
+            table.add_column("Path", style="cyan")
+
+            for file in sorted_files:
+                table.add_row(format_size(file["size"]), file["path"])
+
+            console.print(table)
 
     except Exception as e:
         handle_error(e)

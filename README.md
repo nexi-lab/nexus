@@ -109,7 +109,7 @@ async with nx:
     content = await nx.read("/workspace/data.txt")
 ```
 
-**For self-hosted deployments**, see [Deployment Guide](./docs/deployment.md) for Docker and Kubernetes setup instructions.
+**For self-hosted deployments**, see the [S3-Compatible HTTP Server](#s3-compatible-http-server) section below for deployment instructions.
 
 ## Storage Backends
 
@@ -518,6 +518,122 @@ nexus serve --host 0.0.0.0 --port 9000 \
 # Custom data directory
 nexus serve --data-dir /path/to/data \
     --access-key mykey --secret-key mysecret
+```
+
+### Deploying Nexus Server
+
+For production use, deploy Nexus to a VM with persistent storage for metadata:
+
+**Quick Deploy to Google Compute Engine:**
+
+```bash
+# 1. Build and push Docker image
+cd /path/to/nexus
+gcloud builds submit --tag gcr.io/YOUR-PROJECT-ID/nexus-server:latest
+
+# 2. Create Ubuntu VM
+gcloud compute instances create nexus-server \
+  --zone=us-west1-a \
+  --machine-type=e2-small \
+  --boot-disk-size=20GB \
+  --image-family=ubuntu-2204-lts \
+  --image-project=ubuntu-os-cloud \
+  --scopes=storage-rw,logging-write \
+  --tags=nexus-server
+
+# 3. SSH into VM and run Nexus
+gcloud compute ssh nexus-server --zone=us-west1-a
+
+# On the VM:
+curl -fsSL https://get.docker.com | sudo sh
+sudo gcloud auth configure-docker gcr.io --quiet
+sudo docker run -d \
+  --name nexus-server \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v /var/lib/nexus:/app/data \
+  -e NEXUS_ACCESS_KEY="your-access-key" \
+  -e NEXUS_SECRET_KEY="your-secret-key" \
+  -e NEXUS_STORAGE_BACKEND=gcs \
+  -e NEXUS_GCS_BUCKET="your-bucket-name" \
+  -e NEXUS_GCS_PROJECT="YOUR-PROJECT-ID" \
+  -e NEXUS_BUCKET="your-bucket-name" \
+  -e NEXUS_DB_PATH="/app/data/nexus-metadata.db" \
+  gcr.io/YOUR-PROJECT-ID/nexus-server:latest
+
+# 4. Create firewall rule
+gcloud compute firewall-rules create allow-nexus-8080 \
+  --allow tcp:8080 \
+  --source-ranges 0.0.0.0/0 \
+  --target-tags nexus-server
+```
+
+**Deployment Features:**
+- **Persistent Metadata**: SQLite database stored on VM disk at `/var/lib/nexus/`
+- **Automatic Backup**: Database synced to GCS every 60 seconds
+- **Disaster Recovery**: On restart, downloads latest DB from GCS
+- **Content Storage**: All file content stored in GCS bucket (deduplication via CAS)
+- **Cost**: ~$15/month for e2-small VM + GCS storage costs
+
+### Mounting Nexus with rclone
+
+Once deployed, mount your Nexus server as a local directory using rclone:
+
+```bash
+# Configure rclone (one-time setup)
+rclone config create nexus s3 \
+    provider=Other \
+    endpoint=http://YOUR-VM-IP:8080 \
+    access_key_id=your-access-key \
+    secret_access_key=your-secret-key \
+    force_path_style=true
+
+# Mount to local directory (macOS/Linux)
+mkdir -p ~/nexus
+rclone mount nexus:your-bucket-name ~/nexus \
+    --daemon \
+    --vfs-cache-mode full \
+    --vfs-cache-max-age 24h \
+    --vfs-cache-max-size 10G \
+    --allow-other
+
+# Now use standard file commands!
+ls -la ~/nexus/
+echo "Hello from Nexus!" > ~/nexus/test.txt
+cat ~/nexus/test.txt
+cp /path/to/invoice.pdf ~/nexus/
+
+# Unmount when done
+umount ~/nexus  # Linux
+diskutil unmount ~/nexus  # macOS
+```
+
+**Mount Features:**
+- **Standard Tools**: Use `ls`, `cat`, `grep`, `find`, `cp`, etc.
+- **Full VFS Cache**: Fast reads with local caching
+- **Automatic Sync**: Changes immediately synced to backend
+- **Cross-Platform**: Works on macOS, Linux, and Windows
+
+**Helper Scripts:**
+
+The repository includes convenience scripts for mounting (see [scripts/](scripts/)):
+
+```bash
+# Configure endpoint in nexus-mount.sh
+cd scripts/
+./nexus-mount.sh    # Mount ~/nexus
+./nexus-unmount.sh  # Unmount ~/nexus
+```
+
+**Example rclone Configuration:**
+```ini
+[nexus]
+type = s3
+provider = Other
+endpoint = http://136.118.6.93:8080
+access_key_id = nexus-key
+secret_access_key = nexus-secret
+force_path_style = true
 ```
 
 ## FUSE Mount: rclone-like Experience (Coming in v0.2.0)
@@ -1053,35 +1169,15 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] **Background parsing** - Async content parsing on write
 - [ ] **FUSE performance optimizations** - Caching, read-ahead, lazy loading
 
-### v0.3.0 - File Permissions & Skills System
-- [ ] **UNIX-style file permissions** (owner, group, mode)
-- [ ] **Permission operations** (chmod, chown, chgrp)
-- [ ] **Default permission policies** per namespace
-- [ ] **Permission inheritance** for new files
-- [ ] **Permission checking** in all file operations
-- [ ] **ACL (Access Control List)** support
-- [ ] **ReBAC (Relationship-Based Access Control)** - Zanzibar-style authorization
-- [ ] **Relationship types** - member-of, owner-of, parent-of, shared-with
-- [ ] **Permission inheritance via relationships** - Team ownership, group membership
-- [ ] **Relationship graph queries** - Transitive closure, path existence checks
-- [ ] **Namespaced tuples** - (subject, relation, object) authorization model
-- [ ] **Check API** - Fast permission checks with caching
-- [ ] **Expand API** - Discover all subjects with specific permissions
-- [ ] **Relationship management** - Create, delete, query relationships
-- [ ] **Permission migration** for existing files
-- [ ] **Comprehensive permission tests**
-- [ ] **Skills System integration** - Anthropic-compatible SKILL.md format
-- [ ] **Skill discovery & loading** - Progressive disclosure, lazy loading
-- [ ] **Agent-specific skills** - `/workspace/{tenant}/{agent}/.nexus/skills/`
-- [ ] **Tenant-wide skill library** - `/shared/{tenant}/skills/`
-- [ ] **System skills** - `/system/skills/` (Anthropic official)
-- [ ] **Skill templates** - Pre-built templates for common patterns
-- [ ] **Skill versioning** - CAS-backed version control
-- [ ] **Skill composition** - Automatic dependency resolution
-- [ ] **Skill analytics** - Usage tracking, success rates
-- [ ] **Skill marketplace** - Org-wide skill catalog
-- [ ] **Skill CLI commands** - create, fork, publish, search
-- [ ] **Semantic skill search** - Find skills by description
+### v0.3.0 - File Permissions & Security
+- [ ] UNIX-style file permissions (owner, group, mode)
+- [ ] Permission operations (chmod, chown, chgrp)
+- [ ] Default permission policies per namespace
+- [ ] Permission inheritance for new files
+- [ ] Permission checking in all file operations
+- [ ] ACL (Access Control List) support
+- [ ] Permission migration for existing files
+- [ ] Comprehensive permission tests
 
 ### v0.4.0 - AI Integration
 - [ ] LLM provider abstraction

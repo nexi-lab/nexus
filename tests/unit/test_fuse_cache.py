@@ -6,17 +6,12 @@ attribute caching, content caching, parsed content caching, and cache invalidati
 
 from __future__ import annotations
 
-import sys
 import threading
 import time
-from unittest.mock import MagicMock
 
 import pytest
 
-# Mock the fuse module to allow tests to run without libfuse installed
-sys.modules["fuse"] = MagicMock()
-
-from nexus.fuse.cache import FUSECacheManager  # noqa: E402
+from nexus.fuse.cache import FUSECacheManager
 
 
 @pytest.fixture

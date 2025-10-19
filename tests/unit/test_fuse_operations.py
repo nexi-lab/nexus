@@ -14,27 +14,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Mock the fuse module to allow tests to run without libfuse installed
-sys.modules["fuse"] = MagicMock()
+from nexus.fuse.mount import MountMode
+from nexus.fuse.operations import NexusFUSEOperations
 
-
-# Create mock FuseOSError class
-class FuseOSError(OSError):
-    """Mock FuseOSError for testing."""
-
-    def __init__(self, errno: int):
-        """Initialize with errno."""
-        super().__init__(errno, os.strerror(errno))
-        self.errno = errno
-
-
-# Inject mock into fuse module
-sys.modules["fuse"].FuseOSError = FuseOSError
-sys.modules["fuse"].Operations = object
-sys.modules["fuse"].FUSE = MagicMock
-
-from nexus.fuse.mount import MountMode  # noqa: E402
-from nexus.fuse.operations import NexusFUSEOperations  # noqa: E402
+# Get FuseOSError from the mocked fuse module (set by conftest.py)
+FuseOSError = sys.modules["fuse"].FuseOSError
 
 if TYPE_CHECKING:
     pass

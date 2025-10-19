@@ -6,7 +6,6 @@ for the FUSE mount manager.
 
 from __future__ import annotations
 
-import sys
 import threading
 import time
 from pathlib import Path
@@ -14,12 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Mock the fuse module to allow tests to run without libfuse installed
-sys.modules["fuse"] = MagicMock()
-sys.modules["fuse"].FUSE = MagicMock
-sys.modules["fuse"].Operations = object
-
-from nexus.fuse.mount import MountMode, NexusFUSE, mount_nexus  # noqa: E402
+from nexus.fuse.mount import MountMode, NexusFUSE, mount_nexus
 
 
 @pytest.fixture

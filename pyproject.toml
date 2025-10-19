@@ -38,6 +38,7 @@ dependencies = [
     # CLI (needed for basic CLI stub)
     "click>=8.1.7",
     "rich>=13.7.0",
+    "tqdm>=4.66.0",  # Progress bars for sync operations
     # Configuration
     "pydantic>=2.5.0",
     "pyyaml>=6.0.1",

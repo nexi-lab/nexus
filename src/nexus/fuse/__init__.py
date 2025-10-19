@@ -26,6 +26,7 @@ Example usage:
     >>> # $ cat /mnt/nexus/workspace/file.pdf.txt
 """
 
+from nexus.fuse.cache import FUSECacheManager
 from nexus.fuse.mount import MountMode, NexusFUSE, mount_nexus
 from nexus.fuse.operations import NexusFUSEOperations
 
@@ -34,4 +35,5 @@ __all__ = [
     "NexusFUSEOperations",
     "MountMode",
     "mount_nexus",
+    "FUSECacheManager",
 ]

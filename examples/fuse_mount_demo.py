@@ -106,9 +106,95 @@ def main() -> None:
             print(f"  {code}")
         print()
 
-        # Example 2: Virtual File Views
+        # Clean up first mount
+        fuse.unmount()
+        print()
+
+        # Example 2: Custom Cache Configuration
         print("-" * 70)
-        print("Example 2: Virtual File Views (.txt, .md)")
+        print("Example 2: Custom Cache Configuration (Performance Tuning)")
+        print("-" * 70)
+
+        # Mount with custom cache settings and metrics enabled
+        print("🔧 Mounting with custom cache configuration...")
+        cache_config = {
+            "attr_cache_size": 2048,  # Double the default
+            "attr_cache_ttl": 120,  # Cache attributes for 2 minutes
+            "content_cache_size": 200,  # Cache more files
+            "parsed_cache_size": 100,  # Cache more parsed content
+            "enable_metrics": True,  # Track cache performance
+        }
+
+        from nexus.fuse import mount_nexus
+
+        fuse2 = mount_nexus(
+            nx,
+            str(mount_point),
+            mode="smart",
+            cache_config=cache_config,
+            foreground=False,
+        )
+        print("✅ Mounted with custom cache config")
+        print("  - Attribute cache: 2048 entries, 120s TTL")
+        print("  - Content cache: 200 files")
+        print("  - Parsed cache: 100 files")
+        print("  - Metrics: Enabled")
+        print()
+
+        time.sleep(0.5)
+
+        # Do some file operations to populate cache
+        print("📊 Performing file operations to populate cache...")
+        for _ in range(3):  # Repeat to generate cache hits
+            files = os.listdir(mount_point / "workspace")
+            with open(mount_point / "workspace" / "hello.txt") as f:
+                _ = f.read()
+        print("  ✅ Operations complete")
+        print()
+
+        # View cache metrics
+        print("📈 Cache Performance Metrics:")
+        try:
+            # Access the cache manager from the FUSE operations
+            cache_mgr = fuse2.fuse.operations.cache
+            metrics = cache_mgr.get_metrics()
+
+            if metrics:
+                print("  Attribute cache:")
+                print(f"    - Hits: {metrics['attr_hits']}")
+                print(f"    - Misses: {metrics['attr_misses']}")
+                print(f"    - Hit rate: {metrics['attr_hit_rate']:.1%}")
+                print()
+                print("  Content cache:")
+                print(f"    - Hits: {metrics['content_hits']}")
+                print(f"    - Misses: {metrics['content_misses']}")
+                print(f"    - Hit rate: {metrics['content_hit_rate']:.1%}")
+                print()
+                print("  Cache sizes:")
+                print(f"    - Attributes: {metrics['cache_sizes']['attr']} entries")
+                print(f"    - Content: {metrics['cache_sizes']['content']} files")
+                print(f"    - Parsed: {metrics['cache_sizes']['parsed']} files")
+                print()
+                print("  💡 Higher hit rates = better performance! Cache is working automatically.")
+        except Exception as e:
+            print(f"  ⚠️  Could not retrieve metrics: {e}")
+        print()
+
+        # Unmount
+        fuse2.unmount()
+        print("🔧 Unmounted")
+        print()
+
+        # Re-mount for remaining examples (without custom config)
+        print("🔧 Re-mounting with default settings for remaining examples...")
+        fuse = NexusFUSE(nx, str(mount_point), mode=MountMode.SMART)
+        fuse.mount(foreground=False)
+        time.sleep(0.5)
+        print()
+
+        # Example 3: Virtual File Views
+        print("-" * 70)
+        print("Example 3: Virtual File Views (.txt, .md)")
         print("-" * 70)
 
         # In smart mode, binary files get virtual .txt and .md views
@@ -128,9 +214,9 @@ def main() -> None:
                 print(f"  {content[:100]}...")
         print()
 
-        # Example 3: Using Python Tools on Mounted Files
+        # Example 4: Using Python Tools on Mounted Files
         print("-" * 70)
-        print("Example 3: Using Python Tools (pathlib, glob, etc.)")
+        print("Example 4: Using Python Tools (pathlib, glob, etc.)")
         print("-" * 70)
 
         # Use pathlib
@@ -150,9 +236,9 @@ def main() -> None:
             print(f"  - {Path(txt_file).name}")
         print()
 
-        # Example 4: Writing Files
+        # Example 5: Writing Files
         print("-" * 70)
-        print("Example 4: Writing Files via Mount")
+        print("Example 5: Writing Files via Mount")
         print("-" * 70)
 
         new_file = mount_point / "workspace" / "new_file.txt"
@@ -171,9 +257,9 @@ def main() -> None:
             print("  ✅ File also exists in Nexus filesystem!")
         print()
 
-        # Example 5: Using Standard Library Tools
+        # Example 6: Using Standard Library Tools
         print("-" * 70)
-        print("Example 5: Using Standard Library (csv, json, etc.)")
+        print("Example 6: Using Standard Library (csv, json, etc.)")
         print("-" * 70)
 
         # Read CSV using Python's csv module
@@ -187,9 +273,9 @@ def main() -> None:
                 print(f"  {row['Name']}: {row['Age']} years old, lives in {row['City']}")
         print()
 
-        # Example 6: Accessing Raw Binary via .raw/
+        # Example 7: Accessing Raw Binary via .raw/
         print("-" * 70)
-        print("Example 6: Accessing Original Binary via .raw/")
+        print("Example 7: Accessing Original Binary via .raw/")
         print("-" * 70)
 
         print("🗄️  Accessing raw binary file:")
@@ -199,9 +285,9 @@ def main() -> None:
             print(f"  Raw bytes (first 50): {raw_content[:50]}")
         print()
 
-        # Example 7: Directory Operations
+        # Example 8: Directory Operations
         print("-" * 70)
-        print("Example 7: Directory Operations")
+        print("Example 8: Directory Operations")
         print("-" * 70)
 
         # Create a new directory
@@ -233,10 +319,12 @@ def main() -> None:
     print()
     print("Key Takeaways:")
     print("  1. ✅ FUSE mount makes Nexus look like a regular directory")
-    print("  2. ✅ Use standard Python file operations (open, read, write)")
-    print("  3. ✅ Virtual .txt/.md views for binary files in smart mode")
-    print("  4. ✅ Access raw files via .raw/ directory")
-    print("  5. ✅ Works with all Python stdlib tools (csv, json, pathlib, etc.)")
+    print("  2. ✅ Customize cache config for better performance (optional)")
+    print("  3. ✅ Track cache metrics to measure performance")
+    print("  4. ✅ Use standard Python file operations (open, read, write)")
+    print("  5. ✅ Virtual .txt/.md views for binary files in smart mode")
+    print("  6. ✅ Access raw files via .raw/ directory")
+    print("  7. ✅ Works with all Python stdlib tools (csv, json, pathlib, etc.)")
     print()
 
 

@@ -1,9 +1,8 @@
 """Unit tests for Nexus server __main__ module."""
 
 import threading
-import time
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 from nexus.server.__main__ import DatabaseSyncManager
 
@@ -140,9 +139,8 @@ class TestDatabaseSyncManager:
         )
 
         # Mock file existence
-        with patch.object(Path, "exists", return_value=True):
-            with patch.object(Path, "unlink"):
-                manager.upload_to_gcs()
+        with patch.object(Path, "exists", return_value=True), patch.object(Path, "unlink"):
+            manager.upload_to_gcs()
 
         mock_client.bucket.assert_called_with(self.gcs_bucket)
         mock_shutil.copy2.assert_called_once()

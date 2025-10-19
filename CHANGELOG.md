@@ -222,21 +222,164 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ORM**: SQLAlchemy 2.0+
 - **Migrations**: Alembic 1.13+
 
-## [0.2.0] - TBD
+## [0.2.0] - 2025-10-19
 
-### Planned
-- UNIX-style file permissions (owner, group, mode)
-- Permission operations (chmod, chown, chgrp)
-- Access Control Lists (ACL)
-- Permission inheritance and policies
+### Added
+
+#### FUSE Filesystem Mount (Issues #78, #79, #81, #82)
+- **FUSE Integration**: Mount Nexus to local path (e.g., `/mnt/nexus`)
+  - Use any standard Unix tools: `ls`, `cat`, `grep`, `vim`, `find`, etc.
+  - Full read/write support with automatic metadata sync
+  - Background daemon mode with `--daemon` flag
+- **Mount Modes**: Three modes for different use cases
+  - `smart` (default): Auto-detect file types, parse PDFs/Excel intelligently
+  - `text`: Parse everything aggressively to text
+  - `binary`: No parsing, return raw bytes
+- **Virtual File Views**: Auto-generate `.txt` and `.md` views for binary files
+  - `report.pdf.txt` - Parsed text view
+  - `report.pdf.md` - Markdown view
+  - Access original via `.raw/` directory
+- **Auto-Parse Mode**: Binary files return text directly (grep PDFs without .txt suffix)
+  - `grep "pattern" /mnt/nexus/**/*.pdf` works directly!
+  - Access raw binary via `.raw/` when needed
+- **All FUSE Operations**: Complete filesystem support
+  - read, write, create, delete, mkdir, rmdir, rename, truncate, getattr
+  - Proper Unix semantics (file handles, offsets, etc.)
+  - Windows path compatibility (automatic separator conversion)
+- **CLI Commands**:
+  - `nexus mount /mnt/nexus` - Mount filesystem
+  - `nexus mount /mnt/nexus --auto-parse --daemon` - Background auto-parse mode
+  - `nexus unmount /mnt/nexus` - Unmount filesystem
+
+#### Performance Optimizations (Issue #82)
+- **Multi-Layer Caching**: TTL and LRU caches for optimal performance
+  - Attribute cache (1024 entries, 60s TTL): Faster `ls` and `stat` operations
+  - Content cache (100 files, LRU): Speed up repeated file reads
+  - Parsed cache (50 files, LRU): Accelerate PDF/Excel text extraction
+- **Automatic Cache Invalidation**: Always consistent
+  - Invalidates on write, delete, rename, create operations
+  - Thread-safe with RLock protection
+- **Cache Metrics**: Optional performance tracking
+  - Track hit/miss rates for all cache types
+  - Measure cache effectiveness
+- **Configurable Cache**: Tune for your workload
+  - Custom cache sizes and TTL
+  - Enable/disable metrics tracking
+  - Python API: `cache_config` parameter in `mount_nexus()`
+- **Performance**: Default settings work for most use cases
+  - No configuration needed
+  - Transparent performance boost
+
+#### Content Parser Framework (Issue #80)
+- **MarkItDown Integration**: Production-ready document parsing
+  - PDF parser: Extract text and markdown from PDFs
+  - Excel/CSV parser: Parse spreadsheets to structured data
+  - Word/PowerPoint support: Extract text from Office documents
+  - Extensible architecture for custom parsers
+- **Document Type Detection**: Automatic MIME type detection and routing
+- **Content-Aware Grep**: Search inside binary files (Issue #80)
+  - Three search modes: `auto`, `parsed`, `raw`
+  - `nexus grep "pattern" --file-pattern "**/*.pdf" --search-mode=parsed`
+  - Results show source type: `(parsed)` or `(raw)`
+  - Database-backed for fast searches
+- **Parser Registry**: Automatic parser selection by file extension
+  - Lazy loading for performance
+  - Fallback to raw content if parsing fails
+
+#### rclone-Style CLI Commands (Issue #81)
+- **Sync Command**: One-way synchronization with hash-based change detection
+  - `nexus sync ./local/dir/ /workspace/remote/`
+  - `--dry-run` - Preview changes
+  - `--delete` - Mirror sync (delete extra files)
+  - Only copies changed files (hash comparison)
+- **Copy Command**: Smart copy with automatic deduplication
+  - `nexus copy ./data/ /workspace/ --recursive`
+  - Skips identical files automatically
+  - Leverages CAS deduplication
+- **Move Command**: Efficient file/directory moves
+  - `nexus move /old/path /new/path`
+  - Confirmation prompts (skip with `--force`)
+- **Tree Command**: Visualize directory structure
+  - `nexus tree /workspace/ -L 2` - Limit depth
+  - `nexus tree /workspace/ --show-size` - Show file sizes
+  - ASCII tree output
+- **Size Command**: Calculate directory sizes
+  - `nexus size /workspace/ --human` - Human-readable (KB, MB, GB)
+  - `nexus size /workspace/ --details` - Show top files
+- **Features**:
+  - Progress bars for long operations
+  - Cross-platform paths (local ↔ Nexus)
+  - Hash-based deduplication
+  - Dry-run mode for all operations
+
+#### Remote RPC Server
+- **JSON-RPC Server**: Expose full NexusFileSystem API over HTTP
+  - All filesystem operations: read, write, list, glob, grep, mkdir, etc.
+  - JSON-RPC 2.0 protocol with proper error handling
+  - Optional API key authentication (Bearer token)
+- **Remote Client**: `RemoteNexusFS` for network access
+  - Same API as local filesystem
+  - Transparent remote operations
+  - Works with all backends (local, GCS)
+- **FUSE Compatible**: Mount remote Nexus servers locally
+  - Network-attached Nexus filesystem
+  - Access remote files as if local
+- **CLI Command**: `nexus serve`
+  - `nexus serve --host 0.0.0.0 --port 8080 --api-key mysecret`
+  - Supports all backend types
+  - Production-ready with proper logging
+- **Deployment Ready**: Docker-compatible server mode
+  - Persistent metadata storage
+  - Backend-agnostic (GCS, local, etc.)
+  - Full NFS API over network
+
+### Fixed
+- **Windows Path Separators**: Automatic conversion in `copy_recursive` (Issue #97)
+- **SQLite File Locking**: Fixed Windows-specific test failures in `test_connect_functional_workflow`
+- **Binary File Handling**: Proper encoding detection in grep operations
+
+### Changed
+- **Grep Output**: Now shows source type `(parsed)` or `(raw)` for transparency
+- **FUSE Mount**: Default mode changed to `smart` (was `binary`)
+- **Cache**: Enabled by default with sensible defaults (no config needed)
+
+### Documentation
+- **README Updates**:
+  - Complete FUSE mount guide with examples
+  - Performance & caching configuration
+  - Remote server deployment instructions
+  - rclone-style commands reference
+- **Examples**:
+  - `examples/fuse_mount_demo.py` - Python SDK examples with cache config
+  - `examples/fuse_cli_demo.sh` - Shell script examples
+- **Architecture**: Updated with cache implementation details
+
+### Technical Details
+- **New Modules**:
+  - `src/nexus/fuse/cache.py` - FUSE cache manager (TTL/LRU)
+  - `src/nexus/fuse/mount.py` - FUSE mount manager
+  - `src/nexus/fuse/operations.py` - FUSE operations implementation
+  - `src/nexus/parsers/` - Content parser framework
+  - `src/nexus/server/rpc_server.py` - JSON-RPC server
+  - `src/nexus/remote.py` - Remote filesystem client
+  - `src/nexus/sync.py` - Sync/copy operations
+- **Dependencies Added**:
+  - `fusepy>=3.0.1` - FUSE Python bindings
+  - `markitdown>=0.0.1a2` - Document parsing
+  - `httpx>=0.27.0` - HTTP client for remote mode
+  - `cachetools>=5.3.0` - LRU/TTL cache implementations
+- **Tests**: 35+ unit tests for FUSE operations, 62% cache module coverage
 
 ## [0.3.0] - TBD
 
 ### Planned
-- Monolithic server mode
-- REST API with FastAPI
-- Multi-tenancy with authentication
-- Docker deployment
+- **UNIX-style file permissions** (owner, group, mode)
+- **Permission operations** (chmod, chown, chgrp)
+- **Access Control Lists (ACL)**
+- **ReBAC (Relationship-Based Access Control)** - Zanzibar-style authorization
+- **Skills System** - Anthropic-compatible SKILL.md format
+- **Skill management** - create, fork, publish, search
+- **Semantic skill search** - Find skills by description
 
 ---
 

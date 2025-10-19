@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 class DatabaseSyncManager:
     """Manages SQLite database synchronization with GCS for Cloud Run persistence."""
 
-    def __init__(self, gcs_bucket: str, local_db_path: Path, gcs_db_path: str = "nexus-metadata.db"):
+    def __init__(
+        self, gcs_bucket: str, local_db_path: Path, gcs_db_path: str = "nexus-metadata.db"
+    ):
         """Initialize database sync manager.
 
         Args:
@@ -54,6 +56,7 @@ class DatabaseSyncManager:
         """Lazy initialization of GCS client."""
         if self._storage_client is None:
             from google.cloud import storage
+
             self._storage_client = storage.Client()
         return self._storage_client
 
@@ -84,7 +87,9 @@ class DatabaseSyncManager:
         """Upload database to GCS."""
         try:
             if not self.local_db_path.exists():
-                logger.warning(f"Local database {self.local_db_path} does not exist, skipping upload")
+                logger.warning(
+                    f"Local database {self.local_db_path} does not exist, skipping upload"
+                )
                 return
 
             bucket = self.storage_client.bucket(self.gcs_bucket)
@@ -172,7 +177,7 @@ def main() -> None:
                 db_sync_manager = DatabaseSyncManager(
                     gcs_bucket=gcs_bucket,
                     local_db_path=local_db_path,
-                    gcs_db_path="metadata/nexus-metadata.db"
+                    gcs_db_path="metadata/nexus-metadata.db",
                 )
                 db_sync_manager.sync_interval = db_sync_interval
 
@@ -207,6 +212,7 @@ def main() -> None:
             storage_path_obj = Path(storage_path)
             storage_path_obj.mkdir(parents=True, exist_ok=True)
             from nexus.backends.local import LocalBackend
+
             backend = LocalBackend(root_path=storage_path_obj)
             db_path_local = storage_path_obj / "metadata.db"
             nexus_fs = NexusFS(backend=backend, db_path=str(db_path_local))

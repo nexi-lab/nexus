@@ -15,7 +15,7 @@ def check_server(endpoint_url, access_key, secret_key):
     try:
         # Create S3 client
         s3 = boto3.client(
-            's3',
+            "s3",
             endpoint_url=endpoint_url,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
@@ -23,12 +23,12 @@ def check_server(endpoint_url, access_key, secret_key):
 
         # Try to list buckets/objects
         print("Attempting to connect...")
-        response = s3.list_objects_v2(Bucket='nexus', MaxKeys=1)
+        response = s3.list_objects_v2(Bucket="nexus", MaxKeys=1)
 
         print("✅ Server is RUNNING and accessible!")
         print("   Status: Connected successfully")
 
-        if 'Contents' in response:
+        if "Contents" in response:
             print(f"   Objects found: {response['KeyCount']}")
         else:
             print("   No objects in bucket")
@@ -42,9 +42,9 @@ def check_server(endpoint_url, access_key, secret_key):
         return False
 
     except ClientError as e:
-        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        error_code = e.response.get("Error", {}).get("Code", "Unknown")
 
-        if error_code == '403' or 'AccessDenied' in str(e):
+        if error_code == "403" or "AccessDenied" in str(e):
             print("⚠️  Server is running but authentication failed")
             print("   Error: Invalid credentials")
             return True  # Server is running, just auth issue
@@ -57,6 +57,7 @@ def check_server(endpoint_url, access_key, secret_key):
         print("❌ Unexpected error")
         print(f"   Error: {e}")
         return False
+
 
 if __name__ == "__main__":
     # Default values - override with command line args

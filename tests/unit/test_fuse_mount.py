@@ -7,7 +7,6 @@ for the FUSE mount manager.
 from __future__ import annotations
 
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -475,7 +474,7 @@ class TestMountNexusFunction:
 
         cache_config = {"attr_cache_size": 2048}
 
-        result = mount_nexus(
+        mount_nexus(
             mock_nexus_fs,
             str(temp_mount_point),
             mode="binary",

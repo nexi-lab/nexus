@@ -489,10 +489,8 @@ class TestCacheIntegration:
         fd = fuse_ops.create("/file.txt", 0o644)
         fuse_ops.write("/file.txt", b"new content", 0, fd)
 
-        # Cache should be invalidated - verify by checking metrics
-        metrics = fuse_ops.cache.get_metrics()
-        # The invalidate was called during write
-        assert True  # Cache invalidation happens but we can't easily verify without metrics
+        # Cache invalidation happens during write - just verify write succeeded
+        assert fd > 0
 
     def test_read_uses_content_cache(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
         """Test that reading uses content cache."""

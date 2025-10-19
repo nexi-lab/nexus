@@ -167,7 +167,7 @@ class RemoteNexusFS(NexusFilesystem):
     def read(self, path: str) -> bytes:
         """Read file content as bytes."""
         result = self._call_rpc("read", {"path": path})
-        return result  # type: ignore[return-value]
+        return result  # type: ignore[no-any-return]
 
     def write(self, path: str, content: bytes) -> None:
         """Write content to a file."""
@@ -180,7 +180,7 @@ class RemoteNexusFS(NexusFilesystem):
     def exists(self, path: str) -> bool:
         """Check if a file exists."""
         result = self._call_rpc("exists", {"path": path})
-        return result["exists"]  # type: ignore[return-value]
+        return result["exists"]  # type: ignore[no-any-return]
 
     # ============================================================
     # File Discovery Operations
@@ -203,12 +203,12 @@ class RemoteNexusFS(NexusFilesystem):
                 "prefix": prefix,
             },
         )
-        return result["files"]  # type: ignore[return-value]
+        return result["files"]  # type: ignore[no-any-return]
 
     def glob(self, pattern: str, path: str = "/") -> builtins.list[str]:
         """Find files matching a glob pattern."""
         result = self._call_rpc("glob", {"pattern": pattern, "path": path})
-        return result["matches"]  # type: ignore[return-value]
+        return result["matches"]  # type: ignore[no-any-return]
 
     def grep(  # type: ignore[override]
         self,
@@ -229,7 +229,7 @@ class RemoteNexusFS(NexusFilesystem):
                 "max_results": max_results,
             },
         )
-        return result["results"]  # type: ignore[return-value]
+        return result["results"]  # type: ignore[no-any-return]
 
     # ============================================================
     # Directory Operations
@@ -246,7 +246,7 @@ class RemoteNexusFS(NexusFilesystem):
     def is_directory(self, path: str) -> bool:
         """Check if path is a directory."""
         result = self._call_rpc("is_directory", {"path": path})
-        return result["is_directory"]  # type: ignore[return-value]
+        return result["is_directory"]  # type: ignore[no-any-return]
 
     # ============================================================
     # Lifecycle Management

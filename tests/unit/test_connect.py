@@ -16,7 +16,7 @@ def cleanup_windows_db():
     """Force cleanup of database connections on Windows."""
     gc.collect()  # Force garbage collection to release connections
     if platform.system() == "Windows":
-        time.sleep(0.05)  # 50ms delay for Windows file handle release
+        time.sleep(0.2)  # 200ms delay for Windows file handle release
 
 
 def test_connect_default_embedded_mode() -> None:
@@ -94,7 +94,8 @@ def test_connect_invalid_mode() -> None:
 
 def test_connect_functional_workflow() -> None:
     """Test full workflow using connect()."""
-    with tempfile.TemporaryDirectory() as tmpdir:
+    tmpdir = tempfile.mkdtemp()
+    try:
         # Connect
         nx = nexus.connect(config={"data_dir": tmpdir})
 
@@ -113,8 +114,34 @@ def test_connect_functional_workflow() -> None:
         nx.delete("/test.txt")
         assert not nx.exists("/test.txt")
 
+        # Close and cleanup
         nx.close()
+
+        # Force cleanup of database connections
         cleanup_windows_db()
+
+        # Additional wait on Windows for SQLite to release file handles
+        if platform.system() == "Windows":
+            time.sleep(0.5)  # 500ms for SQLite to fully release
+    finally:
+        # Cleanup with retry on Windows
+        import shutil
+
+        if platform.system() == "Windows":
+            # Retry cleanup with longer delays on Windows
+            for attempt in range(5):  # Increased from 3 to 5 attempts
+                try:
+                    shutil.rmtree(tmpdir)
+                    break
+                except PermissionError:
+                    if attempt < 4:
+                        # Progressive backoff: 200ms, 400ms, 600ms, 800ms
+                        time.sleep(0.2 * (attempt + 1))
+                        gc.collect()  # Force GC on each retry
+                    else:
+                        raise
+        else:
+            shutil.rmtree(tmpdir)
 
 
 def test_connect_context_manager() -> None:

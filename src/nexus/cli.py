@@ -1169,6 +1169,180 @@ def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig)
         handle_error(e)
 
 
+@main.command(name="mount")
+@click.argument("mount_point", type=click.Path())
+@click.option(
+    "--mode",
+    type=click.Choice(["binary", "text", "smart"]),
+    default="smart",
+    help="Mount mode: binary (raw), text (parsed), smart (auto-detect)",
+    show_default=True,
+)
+@click.option(
+    "--daemon",
+    is_flag=True,
+    help="Run in background (daemon mode)",
+)
+@click.option(
+    "--allow-other",
+    is_flag=True,
+    help="Allow other users to access the mount",
+)
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Enable FUSE debug output",
+)
+@add_backend_options
+def mount(
+    mount_point: str,
+    mode: str,
+    daemon: bool,
+    allow_other: bool,
+    debug: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """Mount Nexus filesystem to a local path.
+
+    Mounts the Nexus filesystem using FUSE, allowing standard Unix tools
+    to work seamlessly with Nexus files.
+
+    Mount Modes:
+    - binary: Return raw file content (no parsing)
+    - text: Parse all files and return text representation
+    - smart (default): Auto-detect file type and return appropriate format
+
+    Virtual File Views:
+    - .raw/ directory: Access original binary content
+    - .txt suffix: View parsed text representation
+    - .md suffix: View formatted markdown representation
+
+    Examples:
+        # Mount in smart mode (default)
+        nexus mount /mnt/nexus
+
+        # Mount in binary mode (raw files only)
+        nexus mount /mnt/nexus --mode=binary
+
+        # Mount in background
+        nexus mount /mnt/nexus --daemon
+
+        # Mount with debug output
+        nexus mount /mnt/nexus --debug
+
+        # Use standard Unix tools
+        ls /mnt/nexus
+        cat /mnt/nexus/workspace/document.pdf.txt
+        grep "TODO" /mnt/nexus/workspace/**/*.py
+        vim /mnt/nexus/workspace/file.txt
+    """
+    try:
+        from nexus.fuse import mount_nexus
+
+        # Get filesystem instance
+        nx = get_filesystem(backend_config)
+
+        # Create mount point if it doesn't exist
+        mount_path = Path(mount_point)
+        if not mount_path.exists():
+            mount_path.mkdir(parents=True, exist_ok=True)
+            console.print(f"[green]✓[/green] Created mount point [cyan]{mount_point}[/cyan]")
+
+        # Display mount info
+        console.print("[green]Mounting Nexus filesystem...[/green]")
+        console.print(f"  Mount point: [cyan]{mount_point}[/cyan]")
+        console.print(f"  Mode: [cyan]{mode}[/cyan]")
+        console.print(f"  Backend: [cyan]{backend_config.backend}[/cyan]")
+        if daemon:
+            console.print("  [yellow]Running in background (daemon mode)[/yellow]")
+
+        console.print()
+        console.print("[bold cyan]Virtual File Views:[/bold cyan]")
+        console.print("  • [cyan].raw/[/cyan] - Access original binary content")
+        console.print("  • [cyan]file.txt[/cyan] - View parsed text representation")
+        console.print("  • [cyan]file.md[/cyan] - View formatted markdown")
+        console.print()
+
+        # Mount filesystem
+        fuse = mount_nexus(
+            nx,
+            mount_point,
+            mode=mode,
+            foreground=not daemon,
+            allow_other=allow_other,
+            debug=debug,
+        )
+
+        if daemon:
+            console.print(f"[green]✓[/green] Mounted Nexus to [cyan]{mount_point}[/cyan]")
+            console.print()
+            console.print("[yellow]To unmount:[/yellow]")
+            console.print(f"  nexus unmount {mount_point}")
+        else:
+            console.print(f"[green]Mounted Nexus to [cyan]{mount_point}[/cyan][/green]")
+            console.print("[yellow]Press Ctrl+C to unmount[/yellow]")
+
+            # Wait for signal (foreground mode)
+            try:
+                fuse.wait()
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Unmounting...[/yellow]")
+                fuse.unmount()
+                console.print("[green]✓[/green] Unmounted")
+
+    except ImportError:
+        console.print(
+            "[red]Error:[/red] FUSE support not available. "
+            "Install with: pip install 'nexus-ai-fs[fuse]'"
+        )
+        sys.exit(1)
+    except Exception as e:
+        handle_error(e)
+
+
+@main.command(name="unmount")
+@click.argument("mount_point", type=click.Path(exists=True))
+def unmount(mount_point: str) -> None:
+    """Unmount a Nexus filesystem.
+
+    Examples:
+        nexus unmount /mnt/nexus
+    """
+    try:
+        import platform
+        import subprocess
+
+        system = platform.system()
+
+        console.print(f"[yellow]Unmounting {mount_point}...[/yellow]")
+
+        try:
+            if system == "Darwin":  # macOS
+                subprocess.run(
+                    ["umount", mount_point],
+                    check=True,
+                    capture_output=True,
+                )
+            elif system == "Linux":
+                subprocess.run(
+                    ["fusermount", "-u", mount_point],
+                    check=True,
+                    capture_output=True,
+                )
+            else:
+                console.print(f"[red]Error:[/red] Unsupported platform: {system}")
+                sys.exit(1)
+
+            console.print(f"[green]✓[/green] Unmounted [cyan]{mount_point}[/cyan]")
+        except subprocess.CalledProcessError as e:
+            error_msg = e.stderr.decode() if e.stderr else str(e)
+            console.print(f"[red]Error:[/red] Failed to unmount: {error_msg}")
+            sys.exit(1)
+
+    except Exception as e:
+        handle_error(e)
+
+
 @main.command(name="serve")
 @click.option("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
 @click.option("--port", default=8080, type=int, help="Server port (default: 8080)")

@@ -364,6 +364,32 @@ nexus grep "TODO" --search-mode=raw  # Only raw text (skip parsing)
 # Match: TODO (raw) ← from source code
 ```
 
+#### File Permissions (v0.3.0)
+
+```bash
+# Change file permissions
+nexus chmod 755 /workspace/script.sh
+nexus chmod rw-r--r-- /workspace/data.txt
+
+# Change file owner and group
+nexus chown alice /workspace/file.txt
+nexus chgrp developers /workspace/code/
+
+# View ACL entries
+nexus getfacl /workspace/file.txt
+
+# Manage ACL entries
+nexus setfacl user:alice:rw- /workspace/file.txt
+nexus setfacl group:developers:r-x /workspace/code/
+nexus setfacl deny:user:bob /workspace/secret.txt
+nexus setfacl user:alice:rwx /workspace/file.txt --remove
+```
+
+**Supported Formats:**
+- **Octal**: `755`, `0o644`, `0755`
+- **Symbolic**: `rwxr-xr-x`, `rw-r--r--`
+- **ACL Entries**: `user:<name>:rwx`, `group:<name>:r-x`, `deny:user:<name>`
+
 #### Work Queue Operations
 
 ```bash
@@ -1217,8 +1243,8 @@ nexus server --config config.yaml
 1. **API Key Authentication**: Tenant and agent identification
 2. **Row-Level Security (RLS)**: Database-level tenant isolation
 3. **Type-Level Validation**: Fail-fast validation before database operations
-4. **UNIX-Style Permissions**: Owner, group, and mode bits (coming in v0.2.0)
-5. **ACL Permissions**: Fine-grained access control lists (coming in v0.2.0)
+4. **UNIX-Style Permissions**: Owner, group, and mode bits (v0.3.0)
+5. **ACL Permissions**: Fine-grained access control lists (v0.3.0)
 
 ### Type-Level Validation (NEW in v0.1.0)
 
@@ -1358,12 +1384,15 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] **Image OCR parser** - Extract text from images (PNG, JPEG)
 
 ### v0.3.0 - File Permissions & Skills System
-- [ ] **UNIX-style file permissions** (owner, group, mode)
-- [ ] **Permission operations** (chmod, chown, chgrp)
+- [x] **UNIX-style file permissions** (owner, group, mode)
+- [x] **Permission operations** (chmod, chown, chgrp)
+- [x] **ACL (Access Control List)** support
+- [x] **CLI commands** (getfacl, setfacl)
+- [x] **Database schema** for permissions and ACL entries
+- [x] **Comprehensive tests** (91 passing tests)
 - [ ] **Default permission policies** per namespace
 - [ ] **Permission inheritance** for new files
 - [ ] **Permission checking** in all file operations
-- [ ] **ACL (Access Control List)** support
 - [ ] **ReBAC (Relationship-Based Access Control)** - Zanzibar-style authorization
 - [ ] **Relationship types** - member-of, owner-of, parent-of, shared-with
 - [ ] **Permission inheritance via relationships** - Team ownership, group membership

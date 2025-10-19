@@ -109,7 +109,7 @@ async with nx:
     content = await nx.read("/workspace/data.txt")
 ```
 
-**For self-hosted deployments**, see [Deployment Guide](./docs/deployment.md) for Docker and Kubernetes setup instructions.
+**For self-hosted deployments**, see the [S3-Compatible HTTP Server](#s3-compatible-http-server) section below for deployment instructions.
 
 ## Storage Backends
 
@@ -518,6 +518,122 @@ nexus serve --host 0.0.0.0 --port 9000 \
 # Custom data directory
 nexus serve --data-dir /path/to/data \
     --access-key mykey --secret-key mysecret
+```
+
+### Deploying Nexus Server
+
+For production use, deploy Nexus to a VM with persistent storage for metadata:
+
+**Quick Deploy to Google Compute Engine:**
+
+```bash
+# 1. Build and push Docker image
+cd /path/to/nexus
+gcloud builds submit --tag gcr.io/YOUR-PROJECT-ID/nexus-server:latest
+
+# 2. Create Ubuntu VM
+gcloud compute instances create nexus-server \
+  --zone=us-west1-a \
+  --machine-type=e2-small \
+  --boot-disk-size=20GB \
+  --image-family=ubuntu-2204-lts \
+  --image-project=ubuntu-os-cloud \
+  --scopes=storage-rw,logging-write \
+  --tags=nexus-server
+
+# 3. SSH into VM and run Nexus
+gcloud compute ssh nexus-server --zone=us-west1-a
+
+# On the VM:
+curl -fsSL https://get.docker.com | sudo sh
+sudo gcloud auth configure-docker gcr.io --quiet
+sudo docker run -d \
+  --name nexus-server \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v /var/lib/nexus:/app/data \
+  -e NEXUS_ACCESS_KEY="your-access-key" \
+  -e NEXUS_SECRET_KEY="your-secret-key" \
+  -e NEXUS_STORAGE_BACKEND=gcs \
+  -e NEXUS_GCS_BUCKET="your-bucket-name" \
+  -e NEXUS_GCS_PROJECT="YOUR-PROJECT-ID" \
+  -e NEXUS_BUCKET="your-bucket-name" \
+  -e NEXUS_DB_PATH="/app/data/nexus-metadata.db" \
+  gcr.io/YOUR-PROJECT-ID/nexus-server:latest
+
+# 4. Create firewall rule
+gcloud compute firewall-rules create allow-nexus-8080 \
+  --allow tcp:8080 \
+  --source-ranges 0.0.0.0/0 \
+  --target-tags nexus-server
+```
+
+**Deployment Features:**
+- **Persistent Metadata**: SQLite database stored on VM disk at `/var/lib/nexus/`
+- **Automatic Backup**: Database synced to GCS every 60 seconds
+- **Disaster Recovery**: On restart, downloads latest DB from GCS
+- **Content Storage**: All file content stored in GCS bucket (deduplication via CAS)
+- **Cost**: ~$15/month for e2-small VM + GCS storage costs
+
+### Mounting Nexus with rclone
+
+Once deployed, mount your Nexus server as a local directory using rclone:
+
+```bash
+# Configure rclone (one-time setup)
+rclone config create nexus s3 \
+    provider=Other \
+    endpoint=http://YOUR-VM-IP:8080 \
+    access_key_id=your-access-key \
+    secret_access_key=your-secret-key \
+    force_path_style=true
+
+# Mount to local directory (macOS/Linux)
+mkdir -p ~/nexus
+rclone mount nexus:your-bucket-name ~/nexus \
+    --daemon \
+    --vfs-cache-mode full \
+    --vfs-cache-max-age 24h \
+    --vfs-cache-max-size 10G \
+    --allow-other
+
+# Now use standard file commands!
+ls -la ~/nexus/
+echo "Hello from Nexus!" > ~/nexus/test.txt
+cat ~/nexus/test.txt
+cp /path/to/invoice.pdf ~/nexus/
+
+# Unmount when done
+umount ~/nexus  # Linux
+diskutil unmount ~/nexus  # macOS
+```
+
+**Mount Features:**
+- **Standard Tools**: Use `ls`, `cat`, `grep`, `find`, `cp`, etc.
+- **Full VFS Cache**: Fast reads with local caching
+- **Automatic Sync**: Changes immediately synced to backend
+- **Cross-Platform**: Works on macOS, Linux, and Windows
+
+**Helper Scripts:**
+
+The repository includes convenience scripts for mounting (see [scripts/](scripts/)):
+
+```bash
+# Configure endpoint in nexus-mount.sh
+cd scripts/
+./nexus-mount.sh    # Mount ~/nexus
+./nexus-unmount.sh  # Unmount ~/nexus
+```
+
+**Example rclone Configuration:**
+```ini
+[nexus]
+type = s3
+provider = Other
+endpoint = http://136.118.6.93:8080
+access_key_id = nexus-key
+secret_access_key = nexus-secret
+force_path_style = true
 ```
 
 ## FUSE Mount: Use Standard Unix Tools (v0.2.0)

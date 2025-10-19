@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Git
+.git/
+.github/
+
+# Tests
+tests/
+test_*.py
+htmlcov/
+.coverage
+
+# IDE
+.vscode/
+.idea/
+
+# Docs
+docs/
+
+# Examples
+examples/
+
+# Local files
+.env
+*.local
+*.db
+*.sqlite
+
+# DO NOT IGNORE README.md - it's required for package build!

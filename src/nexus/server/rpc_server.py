@@ -179,7 +179,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return False
 
         token = auth_header[7:]  # Remove "Bearer " prefix
-        return token == self.api_key
+        return bool(token == self.api_key)
 
     def _handle_rpc_call(self, request: RPCRequest) -> None:
         """Handle RPC method call.

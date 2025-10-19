@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from fuse import FuseOSError, Operations
 
 from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.fuse.cache import FUSECacheManager
 
 if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
@@ -36,6 +37,7 @@ class NexusFUSEOperations(Operations):
         nexus_fs: NexusFilesystem,
         mode: MountMode,
         auto_parse: bool = False,
+        cache_config: dict[str, Any] | None = None,
     ) -> None:
         """Initialize FUSE operations.
 
@@ -44,12 +46,28 @@ class NexusFUSEOperations(Operations):
             mode: Mount mode (binary, text, smart)
             auto_parse: If True, binary files return parsed text directly.
                        If False (default), use .txt/.md suffixes for parsed views.
+            cache_config: Optional cache configuration dict with keys:
+                         - attr_cache_size: int (default: 1024)
+                         - attr_cache_ttl: int (default: 60)
+                         - content_cache_size: int (default: 100)
+                         - parsed_cache_size: int (default: 50)
+                         - enable_metrics: bool (default: False)
         """
         self.nexus_fs = nexus_fs
         self.mode = mode
         self.auto_parse = auto_parse
         self.fd_counter = 0
         self.open_files: dict[int, dict[str, Any]] = {}
+
+        # Initialize cache manager
+        cache_config = cache_config or {}
+        self.cache = FUSECacheManager(
+            attr_cache_size=cache_config.get("attr_cache_size", 1024),
+            attr_cache_ttl=cache_config.get("attr_cache_ttl", 60),
+            content_cache_size=cache_config.get("content_cache_size", 100),
+            parsed_cache_size=cache_config.get("parsed_cache_size", 50),
+            enable_metrics=cache_config.get("enable_metrics", False),
+        )
 
     # ============================================================
     # Filesystem Metadata Operations
@@ -69,6 +87,11 @@ class NexusFUSEOperations(Operations):
             FuseOSError: If file not found
         """
         try:
+            # Check cache first
+            cached_attrs = self.cache.get_attr(path)
+            if cached_attrs is not None:
+                return cached_attrs
+
             # Handle virtual views (.raw, .txt, .md)
             original_path, view_type = self._parse_virtual_path(path)
 
@@ -103,7 +126,7 @@ class NexusFUSEOperations(Operations):
                 uid = 0
                 gid = 0
 
-            return {
+            attrs = {
                 "st_mode": stat.S_IFREG | 0o644,
                 "st_nlink": 1,
                 "st_size": len(content),
@@ -113,6 +136,11 @@ class NexusFUSEOperations(Operations):
                 "st_uid": uid,
                 "st_gid": gid,
             }
+
+            # Cache the result
+            self.cache.cache_attr(path, attrs)
+
+            return attrs
         except NexusFileNotFoundError:
             raise FuseOSError(errno.ENOENT) from None
         except FuseOSError:
@@ -298,6 +326,11 @@ class NexusFUSEOperations(Operations):
             # Write to Nexus
             self.nexus_fs.write(original_path, new_content)
 
+            # Invalidate caches for this path
+            self.cache.invalidate_path(original_path)
+            if path != original_path:
+                self.cache.invalidate_path(path)
+
             return len(data)
         except FuseOSError:
             raise
@@ -342,6 +375,11 @@ class NexusFUSEOperations(Operations):
             # Create empty file
             self.nexus_fs.write(original_path, b"")
 
+            # Invalidate caches for this path (in case it existed before)
+            self.cache.invalidate_path(original_path)
+            if path != original_path:
+                self.cache.invalidate_path(path)
+
             # Generate file descriptor
             self.fd_counter += 1
             fd = self.fd_counter
@@ -377,6 +415,11 @@ class NexusFUSEOperations(Operations):
 
             # Delete file
             self.nexus_fs.delete(original_path)
+
+            # Invalidate caches for this path
+            self.cache.invalidate_path(original_path)
+            if path != original_path:
+                self.cache.invalidate_path(path)
         except NexusFileNotFoundError:
             raise FuseOSError(errno.ENOENT) from None
         except FuseOSError:
@@ -456,6 +499,14 @@ class NexusFUSEOperations(Operations):
             content = self.nexus_fs.read(old_path)
             self.nexus_fs.write(new_path, content)
             self.nexus_fs.delete(old_path)
+
+            # Invalidate caches for both old and new paths
+            self.cache.invalidate_path(old_path)
+            self.cache.invalidate_path(new_path)
+            if old != old_path:
+                self.cache.invalidate_path(old)
+            if new != new_path:
+                self.cache.invalidate_path(new)
         except NexusFileNotFoundError:
             raise FuseOSError(errno.ENOENT) from None
         except FuseOSError:
@@ -526,6 +577,11 @@ class NexusFUSEOperations(Operations):
 
             # Write back
             self.nexus_fs.write(original_path, content)
+
+            # Invalidate caches for this path
+            self.cache.invalidate_path(original_path)
+            if path != original_path:
+                self.cache.invalidate_path(path)
         except FuseOSError:
             raise
         except Exception as e:
@@ -629,8 +685,18 @@ class NexusFUSEOperations(Operations):
         Returns:
             File content as bytes
         """
-        # Read raw content
-        content = self.nexus_fs.read(path)
+        # Check parsed cache first if we need parsing
+        if view_type and (self.mode.value == "text" or self.mode.value == "smart"):
+            cached_parsed = self.cache.get_parsed(path, view_type)
+            if cached_parsed is not None:
+                return cached_parsed
+
+        # Check content cache for raw content
+        content = self.cache.get_content(path)
+        if content is None:
+            # Read from filesystem and cache
+            content = self.nexus_fs.read(path)
+            self.cache.cache_content(path, content)
 
         # In binary mode or raw access, return as-is
         if self.mode.value == "binary" or view_type is None:
@@ -641,7 +707,10 @@ class NexusFUSEOperations(Operations):
             try:
                 # Try to decode as text first
                 try:
-                    return content.decode("utf-8").encode("utf-8")
+                    decoded_content = content.decode("utf-8").encode("utf-8")
+                    # Cache the parsed result
+                    self.cache.cache_parsed(path, view_type, decoded_content)
+                    return decoded_content
                 except UnicodeDecodeError:
                     # Use parser for non-text files
                     from nexus.parsers import ParserRegistry, prepare_content_for_parsing
@@ -668,7 +737,10 @@ class NexusFUSEOperations(Operations):
                         result = loop.run_until_complete(parser.parse(processed_content, metadata))
 
                         if result and result.text:
-                            return result.text.encode("utf-8")
+                            parsed_content = result.text.encode("utf-8")
+                            # Cache the parsed result
+                            self.cache.cache_parsed(path, view_type, parsed_content)
+                            return parsed_content
             except Exception as e:
                 logger.warning(f"Error parsing file {path}: {e}")
 

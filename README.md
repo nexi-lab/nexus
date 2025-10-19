@@ -748,29 +748,156 @@ cat /mnt/nexus/workspace/file.txt
 nexus unmount /mnt/nexus
 ```
 
-### rclone-style CLI Commands
+### Performance & Caching (v0.2.0)
+
+FUSE mounts include automatic caching for improved performance. Caching is **enabled by default** with sensible defaults - no configuration needed for most users.
+
+**Default Performance:**
+- ✅ Attribute caching (1024 entries, 60s TTL) - Makes `ls` and `stat` operations faster
+- ✅ Content caching (100 files) - Speeds up repeated file reads
+- ✅ Parsed content caching (50 files) - Accelerates PDF/Excel text extraction
+- ✅ Automatic cache invalidation on writes/deletes - Always consistent
+
+**Advanced: Custom Cache Configuration**
+
+For power users with specific performance requirements:
+
+```python
+from nexus import connect
+from nexus.fuse import mount_nexus
+
+nx = connect(config={"data_dir": "./nexus-data"})
+
+# Custom cache configuration
+cache_config = {
+    "attr_cache_size": 2048,      # Double the attribute cache (default: 1024)
+    "attr_cache_ttl": 120,         # Cache attributes for 2 minutes (default: 60s)
+    "content_cache_size": 200,     # Cache 200 files (default: 100)
+    "parsed_cache_size": 100,      # Cache 100 parsed files (default: 50)
+    "enable_metrics": True         # Track cache hit/miss rates (default: False)
+}
+
+fuse = mount_nexus(
+    nx,
+    "/mnt/nexus",
+    mode="smart",
+    cache_config=cache_config,
+    foreground=False
+)
+
+# View cache performance (if metrics enabled)
+# Note: Access via fuse.fuse.operations.cache
+```
+
+**Cache Configuration Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `attr_cache_size` | 1024 | Max number of cached file attribute entries |
+| `attr_cache_ttl` | 60 | Time-to-live for attributes in seconds |
+| `content_cache_size` | 100 | Max number of cached file contents |
+| `parsed_cache_size` | 50 | Max number of cached parsed contents (PDFs, etc.) |
+| `enable_metrics` | False | Enable cache hit/miss tracking |
+
+**When to Tune Cache Settings:**
+
+- **Large directory listings**: Increase `attr_cache_size` to 2048+ and `attr_cache_ttl` to 120+
+- **Many small files**: Increase `content_cache_size` to 500+
+- **Heavy PDF/Excel use**: Increase `parsed_cache_size` to 200+
+- **Performance analysis**: Enable `enable_metrics` to measure cache effectiveness
+- **Memory-constrained**: Decrease all cache sizes (e.g., 512 / 50 / 25)
+
+**Notes:**
+- Caches are **thread-safe** - safe for concurrent access
+- Caches are **automatically invalidated** on file writes, deletes, and renames
+- Default settings work well for most use cases - tune only if needed
+
+### rclone-style CLI Commands (v0.2.0)
+
+Nexus provides efficient file operations inspired by rclone, with automatic deduplication and progress tracking:
+
+#### Sync Command
+One-way synchronization with hash-based change detection:
 
 ```bash
-# Smart sync (only copy changed files)
-nexus sync /local/dir/ /workspace/backup/
-nexus sync /workspace/project/ /mnt/nexus/backup/
+# Sync local directory to Nexus (only copies changed files)
+nexus sync ./local/dataset/ /workspace/training/
 
-# Copy with deduplication
-nexus copy /local/data/ /workspace/project/
+# Preview changes before syncing (dry-run)
+nexus sync ./data/ /workspace/backup/ --dry-run
 
-# Move files efficiently
-nexus move /workspace/old/ /archives/2024/
+# Mirror sync - delete extra files in destination
+nexus sync /workspace/source/ /workspace/dest/ --delete
 
-# Visual directory tree
+# Disable hash comparison (force copy all files)
+nexus sync ./data/ /workspace/ --no-checksum
+```
+
+#### Copy Command
+Smart copy with automatic deduplication:
+
+```bash
+# Copy directory recursively (skips identical files)
+nexus copy ./local/data/ /workspace/project/ --recursive
+
+# Copy within Nexus (leverages CAS deduplication)
+nexus copy /workspace/source/ /workspace/dest/ --recursive
+
+# Copy Nexus to local
+nexus copy /workspace/data/ ./backup/ --recursive
+
+# Copy single file
+nexus copy /workspace/file.txt /workspace/copy.txt
+
+# Disable checksum verification
+nexus copy ./data/ /workspace/ --recursive --no-checksum
+```
+
+#### Move Command
+Efficient file/directory moves with confirmation prompts:
+
+```bash
+# Move file (rename if possible, copy+delete otherwise)
+nexus move /workspace/old.txt /workspace/new.txt
+
+# Move directory without confirmation
+nexus move /workspace/old_dir/ /archives/2024/ --force
+```
+
+#### Tree Command
+Visualize directory structure as ASCII tree:
+
+```bash
+# Show full directory tree
 nexus tree /workspace/
 
-# Calculate size
+# Limit depth to 2 levels
+nexus tree /workspace/ -L 2
+
+# Show file sizes
+nexus tree /workspace/ --show-size
+```
+
+#### Size Command
+Calculate directory sizes with human-readable output:
+
+```bash
+# Calculate total size
 nexus size /workspace/project/
 
-# Serve over HTTP/WebDAV
-nexus serve http /workspace/ --port 8080
-nexus serve webdav /workspace/ --port 8081
+# Human-readable output (KB, MB, GB)
+nexus size /workspace/ --human
+
+# Show top 10 largest files
+nexus size /workspace/ --human --details
 ```
+
+**Features:**
+- **Hash-based deduplication** - Only copies changed files
+- **Progress bars** - Visual feedback for long operations
+- **Dry-run mode** - Preview changes before execution
+- **Cross-platform paths** - Works with local filesystem and Nexus paths
+- **Automatic deduplication** - Leverages Content-Addressable Storage (CAS)
 
 ### Performance Comparison
 
@@ -1225,9 +1352,9 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [x] **Background daemon mode** - Run mount in background with `--daemon`
 - [x] **All FUSE operations** - read, write, create, delete, mkdir, rmdir, rename, truncate
 - [x] **Unit tests** - Comprehensive test coverage for FUSE operations
-- [ ] **rclone-style CLI commands** - `sync`, `copy`, `move`, `tree`, `size`
+- [x] **rclone-style CLI commands** - `sync`, `copy`, `move`, `tree`, `size` with progress bars
 - [ ] **Background parsing** - Async content parsing on write
-- [ ] **FUSE performance optimizations** - Caching, read-ahead, lazy loading
+- [x] **FUSE performance optimizations** - Caching (TTL/LRU), cache invalidation, metrics
 - [ ] **Image OCR parser** - Extract text from images (PNG, JPEG)
 
 ### v0.3.0 - File Permissions & Skills System

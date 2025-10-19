@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  nexus-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nexus-server:latest
+    container_name: nexus-server
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      - NEXUS_HOST=0.0.0.0
+      - NEXUS_PORT=8080
+      - NEXUS_DATA_DIR=/app/data
+      - NEXUS_API_KEY=${NEXUS_API_KEY:-}
+      - NEXUS_BACKEND=${NEXUS_BACKEND:-local}
+      # GCS Backend (if using)
+      - NEXUS_GCS_BUCKET_NAME=${NEXUS_GCS_BUCKET_NAME:-}
+      - NEXUS_GCS_PROJECT_ID=${NEXUS_GCS_PROJECT_ID:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      # Persistent data directory
+      - nexus-data:/app/data
+      # Optional: Mount GCS credentials
+      - ${GCS_CREDENTIALS_PATH:-./gcs-credentials.json}:/app/gcs-credentials.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  nexus-data:
+    driver: local
+
+networks:
+  nexus-network:
+    driver: bridge

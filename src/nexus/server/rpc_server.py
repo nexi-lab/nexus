@@ -55,6 +55,19 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         """Override to use Python logging instead of stderr."""
         logger.info(f"{self.address_string()} - {format % args}")
 
+    def _set_cors_headers(self) -> None:
+        """Set CORS headers to allow requests from frontend."""
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Max-Age", "86400")
+
+    def do_OPTIONS(self) -> None:
+        """Handle OPTIONS requests (CORS preflight)."""
+        self.send_response(200)
+        self._set_cors_headers()
+        self.end_headers()
+
     def do_POST(self) -> None:
         """Handle POST requests (all RPC methods)."""
         try:
@@ -337,6 +350,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         body = encode_rpc_message(response_dict)
 
         self.send_response(200)
+        self._set_cors_headers()
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -366,6 +380,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         body = encode_rpc_message(data)
 
         self.send_response(status_code)
+        self._set_cors_headers()
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()

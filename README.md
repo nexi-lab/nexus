@@ -489,6 +489,21 @@ Nexus includes a JSON-RPC server that exposes the full NexusFileSystem interface
 
 ### Quick Start
 
+#### Method 1: Using the Startup Script (Recommended)
+
+```bash
+# Navigate to nexus directory
+cd /path/to/nexus
+
+# Start with defaults (host: 0.0.0.0, port: 8080, no auth)
+./start-server.sh
+
+# Or with custom options
+./start-server.sh --host localhost --port 8080 --api-key mysecret
+```
+
+#### Method 2: Direct Command
+
 ```bash
 # Start the server (optional API key authentication)
 nexus serve --host 0.0.0.0 --port 8080 --api-key mysecret
@@ -550,30 +565,122 @@ nexus serve --backend=gcs --gcs-bucket=my-bucket --api-key mysecret
 nexus serve --data-dir /path/to/data
 ```
 
-### Deploying Nexus Server
+### Testing the Server
 
-For production use, deploy Nexus to a VM with persistent storage for metadata:
-
-**Example Docker Deployment:**
+Once the server is running, verify it's working:
 
 ```bash
-# Build Docker image
-cd /path/to/nexus
-docker build -t nexus-server:latest .
+# Health check
+curl http://localhost:8080/health
+# Expected: {"status": "healthy", "service": "nexus-rpc"}
 
-# Run server with GCS backend
+# Check available methods
+curl http://localhost:8080/api/nfs/status
+# Expected: {"status": "running", "service": "nexus-rpc", "version": "1.0", "methods": [...]}
+
+# List files (JSON-RPC)
+curl -X POST http://localhost:8080/api/nfs/list \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "list",
+    "params": {"path": "/", "recursive": false, "details": true},
+    "id": 1
+  }'
+
+# With API key
+curl -X POST http://localhost:8080/api/nfs/list \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer mysecretkey" \
+  -d '{"jsonrpc": "2.0", "method": "list", "params": {"path": "/"}, "id": 1}'
+```
+
+### Troubleshooting
+
+**Port Already in Use:**
+```bash
+# Find and kill process using port 8080
+lsof -ti:8080 | xargs kill -9
+
+# Or use a different port
+nexus serve --port 8081
+```
+
+**Module Not Found:**
+```bash
+# Activate virtual environment and install
+source .venv/bin/activate
+pip install -e .
+```
+
+**Permission Denied:**
+```bash
+# Use a directory you have write access to
+nexus serve --data-dir ~/nexus-data
+```
+
+### Deploying Nexus Server
+
+#### Google Cloud Platform (Recommended)
+
+Deploy to GCP with a single command using the automated deployment script:
+
+```bash
+# Quick start
+./deploy-gcp.sh --project-id YOUR-PROJECT-ID --api-key mysecret
+
+# With GCS backend
+./deploy-gcp.sh \
+  --project-id YOUR-PROJECT-ID \
+  --gcs-bucket your-nexus-bucket \
+  --api-key mysecret \
+  --machine-type e2-standard-2
+```
+
+**Features:**
+- ✅ Automated VM provisioning (Ubuntu 22.04)
+- ✅ Systemd service with auto-restart
+- ✅ Firewall configuration
+- ✅ GCS backend support
+- ✅ Production-ready setup
+
+**See [GCP Deployment Guide](docs/deployment/GCP_DEPLOYMENT.md) for complete instructions.**
+
+#### Docker Deployment
+
+Deploy using Docker for consistent environments and easy management:
+
+```bash
+# Quick start with Docker Compose
+cp .env.docker.example .env
+# Edit .env with your configuration
+docker-compose up -d
+
+# Or run directly
+docker build -t nexus-server:latest .
 docker run -d \
   --name nexus-server \
   --restart unless-stopped \
   -p 8080:8080 \
-  -v /var/lib/nexus:/app/data \
+  -v nexus-data:/app/data \
   -e NEXUS_API_KEY="your-api-key" \
-  -e NEXUS_BACKEND=gcs \
-  -e NEXUS_GCS_BUCKET="your-bucket-name" \
-  -e NEXUS_GCS_PROJECT="YOUR-PROJECT-ID" \
-  -e NEXUS_DB_PATH="/app/data/nexus-metadata.db" \
   nexus-server:latest
+
+# Deploy to GCP with Docker (automated)
+./deploy-gcp-docker.sh \
+  --project-id your-project-id \
+  --api-key mysecret \
+  --build-local
 ```
+
+**Features:**
+- ✅ Multi-stage build for optimized image size (~300MB)
+- ✅ Non-root user for security
+- ✅ Health checks and auto-restart
+- ✅ GCS backend support
+- ✅ Docker Compose for easy orchestration
+
+**See [Docker Deployment Guide](docs/deployment/DOCKER_DEPLOYMENT.md) for complete instructions.**
 
 **Deployment Features:**
 - **Persistent Metadata**: SQLite database stored on VM disk at `/var/lib/nexus/`

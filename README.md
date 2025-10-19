@@ -353,6 +353,15 @@ nexus grep "TODO"  # Find all TODO comments
 nexus grep "def \w+" --file-pattern "**/*.py"  # Find function definitions
 nexus grep "error" --ignore-case  # Case-insensitive search
 nexus grep "TODO" --max-results 50  # Limit results
+
+# Search modes (v0.2.0+)
+nexus grep "revenue" --file-pattern "**/*.pdf"  # Auto mode: tries parsed first
+nexus grep "revenue" --file-pattern "**/*.pdf" --search-mode=parsed  # Only parsed content
+nexus grep "TODO" --search-mode=raw  # Only raw text (skip parsing)
+
+# Result shows source type
+# Match: TODO (parsed) ← from parsed PDF
+# Match: TODO (raw) ← from source code
 ```
 
 #### Work Queue Operations

@@ -468,6 +468,13 @@ def glob(
 @click.option("-f", "--file-pattern", help="Filter files by glob pattern (e.g., *.py)")
 @click.option("-i", "--ignore-case", is_flag=True, help="Case-insensitive search")
 @click.option("-n", "--max-results", default=100, help="Maximum results to show")
+@click.option(
+    "--search-mode",
+    type=click.Choice(["auto", "parsed", "raw"]),
+    default="auto",
+    help="Search mode: auto (try parsed, fallback to raw), parsed (only parsed), raw (only raw)",
+    show_default=True,
+)
 @add_backend_options
 def grep(
     pattern: str,
@@ -475,12 +482,27 @@ def grep(
     file_pattern: str | None,
     ignore_case: bool,
     max_results: int,
+    search_mode: str,
     backend_config: BackendConfig,
 ) -> None:
     """Search file contents using regex patterns.
 
+    Search Modes:
+    - auto: Try parsed text first, fallback to raw (default)
+    - parsed: Only search parsed text (great for PDFs/docs)
+    - raw: Only search raw file content (skip parsing)
+
     Examples:
+        # Search all files (auto mode - tries parsed first)
         nexus grep "TODO"
+
+        # Search only parsed content from PDFs
+        nexus grep "revenue" --file-pattern "**/*.pdf" --search-mode=parsed
+
+        # Search only raw content (skip parsing)
+        nexus grep "TODO" --search-mode=raw
+
+        # Other options
         nexus grep "def \\w+" --file-pattern "**/*.py"
         nexus grep "error" --ignore-case
         nexus grep "TODO" --path /workspace
@@ -493,6 +515,7 @@ def grep(
             file_pattern=file_pattern,
             ignore_case=ignore_case,
             max_results=max_results,
+            search_mode=search_mode,
         )
         nx.close()
 
@@ -500,7 +523,8 @@ def grep(
             console.print(f"[yellow]No matches found for:[/yellow] {pattern}")
             return
 
-        console.print(f"[green]Found {len(matches)} matches[/green] for [cyan]{pattern}[/cyan]:\n")
+        console.print(f"[green]Found {len(matches)} matches[/green] for [cyan]{pattern}[/cyan]")
+        console.print(f"[dim]Search mode: {search_mode}[/dim]\n")
 
         current_file = None
         for match in matches:
@@ -508,8 +532,14 @@ def grep(
                 current_file = match["file"]
                 console.print(f"[bold cyan]{current_file}[/bold cyan]")
 
+            # Display source type
+            source = match.get("source", "raw")
+            source_color = "magenta" if source == "parsed" else "dim"
             console.print(f"  [yellow]{match['line']}:[/yellow] {match['content']}")
-            console.print(f"      [dim]Match: [green]{match['match']}[/green][/dim]")
+            console.print(
+                f"      [dim]Match: [green]{match['match']}[/green] "
+                f"[{source_color}]({source})[/{source_color}][/dim]"
+            )
     except Exception as e:
         handle_error(e)
 

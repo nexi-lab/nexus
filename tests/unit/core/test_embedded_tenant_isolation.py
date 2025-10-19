@@ -1,6 +1,9 @@
 """Tests for tenant isolation in Embedded mode."""
 
+import gc
+import platform
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -9,11 +12,19 @@ from nexus import LocalBackend, NexusFS
 from nexus.core.router import AccessDeniedError
 
 
+def cleanup_windows_db():
+    """Force cleanup of database connections on Windows."""
+    gc.collect()  # Force garbage collection to release connections
+    if platform.system() == "Windows":
+        time.sleep(0.05)  # 50ms delay for Windows file handle release
+
+
 def test_tenant_isolation_read():
     """Test that tenants cannot read other tenants' files."""
     with tempfile.TemporaryDirectory() as tmpdir:
         # Tenant ACME writes a file
         nx_acme = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -21,9 +32,11 @@ def test_tenant_isolation_read():
         )
         nx_acme.write("/workspace/acme/agent1/secret.txt", b"ACME secret data")
         nx_acme.close()
+        cleanup_windows_db()
 
         # Tenant ACME can read their own file
         nx_acme2 = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -32,9 +45,11 @@ def test_tenant_isolation_read():
         content = nx_acme2.read("/workspace/acme/agent1/secret.txt")
         assert content == b"ACME secret data"
         nx_acme2.close()
+        cleanup_windows_db()
 
         # Tenant TechInc cannot read ACME's file
         nx_tech = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="techinc",
@@ -44,6 +59,7 @@ def test_tenant_isolation_read():
             nx_tech.read("/workspace/acme/agent1/secret.txt")
         assert "cannot access" in str(exc_info.value)
         nx_tech.close()
+        cleanup_windows_db()
 
 
 def test_tenant_isolation_write():
@@ -51,6 +67,7 @@ def test_tenant_isolation_write():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Tenant TechInc tries to write to ACME's workspace
         nx_tech = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="techinc",
@@ -60,6 +77,7 @@ def test_tenant_isolation_write():
             nx_tech.write("/workspace/acme/agent1/malicious.txt", b"hacked!")
         assert "cannot access" in str(exc_info.value)
         nx_tech.close()
+        cleanup_windows_db()
 
 
 def test_tenant_isolation_delete():
@@ -67,6 +85,7 @@ def test_tenant_isolation_delete():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Tenant ACME creates a file
         nx_acme = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -74,9 +93,11 @@ def test_tenant_isolation_delete():
         )
         nx_acme.write("/workspace/acme/agent1/important.txt", b"important data")
         nx_acme.close()
+        cleanup_windows_db()
 
         # Tenant TechInc cannot delete ACME's file
         nx_tech = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="techinc",
@@ -86,6 +107,7 @@ def test_tenant_isolation_delete():
             nx_tech.delete("/workspace/acme/agent1/important.txt")
         assert "cannot access" in str(exc_info.value)
         nx_tech.close()
+        cleanup_windows_db()
 
 
 def test_admin_can_access_all_tenants():
@@ -93,6 +115,7 @@ def test_admin_can_access_all_tenants():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Tenant ACME writes a file
         nx_acme = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -100,9 +123,11 @@ def test_admin_can_access_all_tenants():
         )
         nx_acme.write("/workspace/acme/agent1/data.txt", b"ACME data")
         nx_acme.close()
+        cleanup_windows_db()
 
         # Admin (even with different tenant_id) can read it
         nx_admin = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="other",
@@ -117,6 +142,7 @@ def test_admin_can_access_all_tenants():
         # Admin can delete any tenant's files
         nx_admin.delete("/workspace/acme/agent1/data.txt")
         nx_admin.close()
+        cleanup_windows_db()
 
 
 def test_readonly_namespace_enforcement():
@@ -124,6 +150,7 @@ def test_readonly_namespace_enforcement():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Try to write to /archives (read-only namespace)
         nx = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -134,6 +161,7 @@ def test_readonly_namespace_enforcement():
             nx.write("/archives/acme/backup.tar", b"backup data")
         assert "read-only" in str(exc_info.value)
         nx.close()
+        cleanup_windows_db()
 
 
 def test_admin_only_namespace_enforcement():
@@ -141,6 +169,7 @@ def test_admin_only_namespace_enforcement():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Non-admin cannot access /system
         nx = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -151,9 +180,11 @@ def test_admin_only_namespace_enforcement():
             nx.write("/system/config.json", b'{"setting": "value"}')
         assert "requires admin" in str(exc_info.value)
         nx.close()
+        cleanup_windows_db()
 
         # Admin can access /system
         nx_admin = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -164,6 +195,7 @@ def test_admin_only_namespace_enforcement():
             nx_admin.write("/system/config.json", b'{"setting": "value"}')
         assert "read-only" in str(exc_info.value)
         nx_admin.close()
+        cleanup_windows_db()
 
 
 def test_shared_namespace_tenant_isolation():
@@ -171,6 +203,7 @@ def test_shared_namespace_tenant_isolation():
     with tempfile.TemporaryDirectory() as tmpdir:
         # ACME tenant writes to shared
         nx_acme = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -178,9 +211,11 @@ def test_shared_namespace_tenant_isolation():
         )
         nx_acme.write("/shared/acme/models/classifier.pkl", b"ACME model")
         nx_acme.close()
+        cleanup_windows_db()
 
         # TechInc cannot access ACME's shared data
         nx_tech = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="techinc",
@@ -190,6 +225,7 @@ def test_shared_namespace_tenant_isolation():
             nx_tech.read("/shared/acme/models/classifier.pkl")
         assert "cannot access" in str(exc_info.value)
         nx_tech.close()
+        cleanup_windows_db()
 
 
 def test_no_tenant_id_bypasses_isolation():
@@ -197,6 +233,7 @@ def test_no_tenant_id_bypasses_isolation():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Without tenant_id, can write anywhere (for backwards compatibility)
         nx = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id=None,
@@ -212,6 +249,7 @@ def test_no_tenant_id_bypasses_isolation():
         assert content1 == b"data"
         assert content2 == b"data"
         nx.close()
+        cleanup_windows_db()
 
 
 def test_directory_operations_enforce_isolation():
@@ -219,6 +257,7 @@ def test_directory_operations_enforce_isolation():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Tenant ACME creates a directory
         nx_acme = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -226,9 +265,11 @@ def test_directory_operations_enforce_isolation():
         )
         nx_acme.mkdir("/workspace/acme/agent1/data", parents=True, exist_ok=True)
         nx_acme.close()
+        cleanup_windows_db()
 
         # Tenant TechInc cannot remove ACME's directory
         nx_tech = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="techinc",
@@ -238,6 +279,7 @@ def test_directory_operations_enforce_isolation():
             nx_tech.rmdir("/workspace/acme/agent1/data", recursive=True)
         assert "cannot access" in str(exc_info.value)
         nx_tech.close()
+        cleanup_windows_db()
 
 
 # === Agent Isolation Tests ===
@@ -248,6 +290,7 @@ def test_agent_isolation_read():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Agent1 writes to their workspace
         nx_agent1 = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -255,9 +298,11 @@ def test_agent_isolation_read():
         )
         nx_agent1.write("/workspace/acme/agent1/private.txt", b"agent1 secret")
         nx_agent1.close()
+        cleanup_windows_db()
 
         # Agent1 can read their own file
         nx_agent1_again = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -266,9 +311,11 @@ def test_agent_isolation_read():
         content = nx_agent1_again.read("/workspace/acme/agent1/private.txt")
         assert content == b"agent1 secret"
         nx_agent1_again.close()
+        cleanup_windows_db()
 
         # Agent2 cannot read Agent1's file
         nx_agent2 = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -278,6 +325,7 @@ def test_agent_isolation_read():
             nx_agent2.read("/workspace/acme/agent1/private.txt")
         assert "agent 'agent2' cannot access agent 'agent1' workspace" in str(exc_info.value)
         nx_agent2.close()
+        cleanup_windows_db()
 
 
 def test_agent_isolation_write():
@@ -285,6 +333,7 @@ def test_agent_isolation_write():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Agent2 tries to write to Agent1's workspace
         nx_agent2 = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -294,6 +343,7 @@ def test_agent_isolation_write():
             nx_agent2.write("/workspace/acme/agent1/hacked.txt", b"malicious")
         assert "agent 'agent2' cannot access agent 'agent1' workspace" in str(exc_info.value)
         nx_agent2.close()
+        cleanup_windows_db()
 
 
 def test_agent_isolation_delete():
@@ -301,6 +351,7 @@ def test_agent_isolation_delete():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Agent1 creates a file
         nx_agent1 = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -308,9 +359,11 @@ def test_agent_isolation_delete():
         )
         nx_agent1.write("/workspace/acme/agent1/important.txt", b"critical data")
         nx_agent1.close()
+        cleanup_windows_db()
 
         # Agent2 cannot delete Agent1's file
         nx_agent2 = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -320,6 +373,7 @@ def test_agent_isolation_delete():
             nx_agent2.delete("/workspace/acme/agent1/important.txt")
         assert "agent 'agent2' cannot access agent 'agent1' workspace" in str(exc_info.value)
         nx_agent2.close()
+        cleanup_windows_db()
 
 
 def test_agent_isolation_mkdir():
@@ -327,6 +381,7 @@ def test_agent_isolation_mkdir():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Agent2 tries to create directory in Agent1's workspace
         nx_agent2 = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -336,6 +391,7 @@ def test_agent_isolation_mkdir():
             nx_agent2.mkdir("/workspace/acme/agent1/newdir", parents=True)
         assert "agent 'agent2' cannot access agent 'agent1' workspace" in str(exc_info.value)
         nx_agent2.close()
+        cleanup_windows_db()
 
 
 def test_agent_isolation_rmdir():
@@ -343,6 +399,7 @@ def test_agent_isolation_rmdir():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Agent1 creates a directory
         nx_agent1 = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -350,9 +407,11 @@ def test_agent_isolation_rmdir():
         )
         nx_agent1.mkdir("/workspace/acme/agent1/data", parents=True)
         nx_agent1.close()
+        cleanup_windows_db()
 
         # Agent2 cannot remove Agent1's directory
         nx_agent2 = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -362,6 +421,7 @@ def test_agent_isolation_rmdir():
             nx_agent2.rmdir("/workspace/acme/agent1/data", recursive=True)
         assert "agent 'agent2' cannot access agent 'agent1' workspace" in str(exc_info.value)
         nx_agent2.close()
+        cleanup_windows_db()
 
 
 def test_agents_can_access_shared_namespace():
@@ -369,6 +429,7 @@ def test_agents_can_access_shared_namespace():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Agent1 writes to shared
         nx_agent1 = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -376,9 +437,11 @@ def test_agents_can_access_shared_namespace():
         )
         nx_agent1.write("/shared/acme/models/v1.pkl", b"model data")
         nx_agent1.close()
+        cleanup_windows_db()
 
         # Agent2 can read from shared
         nx_agent2 = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -390,9 +453,11 @@ def test_agents_can_access_shared_namespace():
         # Agent2 can write to shared
         nx_agent2.write("/shared/acme/models/v2.pkl", b"new model")
         nx_agent2.close()
+        cleanup_windows_db()
 
         # Agent1 can read Agent2's shared file
         nx_agent1_again = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -401,6 +466,7 @@ def test_agents_can_access_shared_namespace():
         content2 = nx_agent1_again.read("/shared/acme/models/v2.pkl")
         assert content2 == b"new model"
         nx_agent1_again.close()
+        cleanup_windows_db()
 
 
 def test_admin_can_access_all_agents():
@@ -408,6 +474,7 @@ def test_admin_can_access_all_agents():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Agent1 writes to their workspace
         nx_agent1 = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -415,9 +482,11 @@ def test_admin_can_access_all_agents():
         )
         nx_agent1.write("/workspace/acme/agent1/data.txt", b"agent1 data")
         nx_agent1.close()
+        cleanup_windows_db()
 
         # Admin can read any agent's workspace
         nx_admin = NexusFS(
+            auto_parse=False,
             backend=LocalBackend(tmpdir),
             db_path=Path(tmpdir) / "metadata.db",
             tenant_id="acme",
@@ -429,6 +498,7 @@ def test_admin_can_access_all_agents():
         # Admin can write to any agent's workspace
         nx_admin.write("/workspace/acme/agent1/admin-edit.txt", b"admin was here")
         nx_admin.close()
+        cleanup_windows_db()
 
 
 def test_no_agent_id_allows_access_to_any_agent():
@@ -436,7 +506,10 @@ def test_no_agent_id_allows_access_to_any_agent():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Without agent_id, can write to any agent's workspace
         nx = NexusFS(
-            backend=LocalBackend(tmpdir), db_path=Path(tmpdir) / "metadata.db", tenant_id="acme"
+            auto_parse=False,
+            backend=LocalBackend(tmpdir),
+            db_path=Path(tmpdir) / "metadata.db",
+            tenant_id="acme",
         )
         nx.write("/workspace/acme/agent1/file1.txt", b"data1")
         nx.write("/workspace/acme/agent2/file2.txt", b"data2")
@@ -448,3 +521,4 @@ def test_no_agent_id_allows_access_to_any_agent():
         assert content1 == b"data1"
         assert content2 == b"data2"
         nx.close()
+        cleanup_windows_db()

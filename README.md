@@ -520,15 +520,28 @@ nexus serve --data-dir /path/to/data \
     --access-key mykey --secret-key mysecret
 ```
 
-## FUSE Mount: rclone-like Experience (Coming in v0.2.0)
+## FUSE Mount: Use Standard Unix Tools (v0.2.0)
 
-Mount Nexus to a local path and use **any standard Linux command** - just like rclone!
+Mount Nexus to a local path and use **any standard Unix tool** seamlessly - `ls`, `cat`, `grep`, `vim`, and more!
+
+### Installation
+
+First, install FUSE support:
+
+```bash
+# Install Nexus with FUSE support
+pip install nexus-ai-fs[fuse]
+
+# Platform-specific FUSE library:
+# macOS: Install macFUSE from https://osxfuse.github.io/
+# Linux: sudo apt-get install fuse3  # or equivalent for your distro
+```
 
 ### Quick Start
 
 ```bash
-# Mount Nexus to local path
-nexus mount /mnt/nexus --data-dir ./nexus-data
+# Mount Nexus to local path (smart mode by default)
+nexus mount /mnt/nexus
 
 # Now use ANY standard Unix tools!
 ls -la /mnt/nexus/workspace/
@@ -536,42 +549,168 @@ cat /mnt/nexus/workspace/notes.txt
 grep -r "TODO" /mnt/nexus/workspace/
 find /mnt/nexus -name "*.py"
 vim /mnt/nexus/workspace/code.py
+git clone /some/repo /mnt/nexus/repos/myproject
 
 # Unmount when done
 nexus unmount /mnt/nexus
 ```
 
-### Content-Aware Operations
+### Quick Start Examples
 
-Nexus automatically parses binary files (PDFs, images, Excel) so standard tools work seamlessly:
+**Example 1: Default (Explicit Views) - Best for Mixed Workflows**
 
 ```bash
-# PDFs are automatically parsed!
-grep "TODO" /mnt/nexus/docs/report.pdf  # ✅ Searches parsed text
-cat /mnt/nexus/docs/report.pdf          # ✅ Shows readable content
-less /mnt/nexus/docs/report.pdf         # ✅ Page through text
+# Mount normally
+nexus mount /mnt/nexus
 
-# Virtual .txt and .md views auto-generated
+# Binary tools work directly
+evince /mnt/nexus/docs/report.pdf     # PDF viewer works ✓
+
+# Add .txt for text operations
+cat /mnt/nexus/docs/report.pdf.txt    # Read as text
+grep "results" /mnt/nexus/docs/*.pdf.txt
+
+# Virtual views auto-generated
 ls /mnt/nexus/docs/
-# report.pdf          <- Original binary
-# report.pdf.txt      <- Virtual text view (parsed)
-# report.pdf.md       <- Virtual markdown view (formatted)
-
-# Access original binary via .raw
-evince /mnt/nexus/.raw/docs/report.pdf  # PDF viewer gets original
+# → report.pdf
+# → report.pdf.txt  (virtual)
+# → report.pdf.md   (virtual)
 ```
 
-### Mount Modes
+**Example 2: Auto-Parse - Best for Search-Heavy Workflows**
 
 ```bash
-# Smart mode (default) - Returns parsed text for binary files
+# Mount with auto-parse
+nexus mount /mnt/nexus --auto-parse
+
+# grep works directly on PDFs!
+grep "results" /mnt/nexus/docs/*.pdf      # No .txt needed! ✓
+cat /mnt/nexus/docs/report.pdf            # Returns text ✓
+
+# Search across everything
+grep -r "TODO" /mnt/nexus/workspace/      # Searches PDFs, Excel, etc.
+
+# Binary via .raw/ when needed
+evince /mnt/nexus/.raw/docs/report.pdf   # For PDF viewer
+```
+
+**Example 3: Real-World Script**
+
+```bash
+#!/bin/bash
+# Find all PDFs mentioning "invoice"
+
+nexus mount /mnt/nexus --auto-parse --daemon
+
+# Now grep works on PDFs!
+grep -l "invoice" /mnt/nexus/documents/*.pdf
+
+# Process results
+for pdf in $(grep -l "invoice" /mnt/nexus/documents/*.pdf); do
+    echo "Found in: $pdf"
+    grep -n "invoice" "$pdf" | head -5
+done
+
+nexus unmount /mnt/nexus
+```
+
+### File Access: Two Modes
+
+Nexus supports **two ways** to access files - choose what fits your workflow:
+
+#### 1. Explicit Views (Default) - Best for Compatibility
+
+Binary files return binary, use `.txt`/`.md` suffixes for parsed content:
+
+```bash
+nexus mount /mnt/nexus
+
+# Binary files work with native tools
+evince /mnt/nexus/docs/report.pdf      # PDF viewer gets binary ✓
+libreoffice /mnt/nexus/data/sheet.xlsx # Excel app gets binary ✓
+
+# Add .txt to search/read as text
+cat /mnt/nexus/docs/report.pdf.txt     # Returns parsed text
+grep "pattern" /mnt/nexus/docs/*.pdf.txt
+
+# Virtual views appear automatically
+ls /mnt/nexus/docs/
+# → report.pdf
+# → report.pdf.txt  (virtual view)
+# → report.pdf.md   (virtual view)
+```
+
+**When to use:** You want both binary tools AND text search to work
+
+#### 2. Auto-Parse Mode - Best for Search/Grep
+
+Binary files return parsed text directly, use `.raw/` for binary:
+
+```bash
+nexus mount /mnt/nexus --auto-parse
+
+# Binary files return text directly - perfect for grep!
+cat /mnt/nexus/docs/report.pdf         # Returns parsed text ✓
+grep "pattern" /mnt/nexus/docs/*.pdf   # Works directly! ✓
+less /mnt/nexus/docs/report.pdf        # Page through text ✓
+
+# Access binary via .raw/ when needed
+evince /mnt/nexus/.raw/docs/report.pdf # PDF viewer gets binary
+
+# No .txt/.md suffixes - files return text by default
+ls /mnt/nexus/docs/
+# → report.pdf  (returns text when read)
+```
+
+**When to use:** Text search is your primary use case, binary tools are secondary
+
+### Mount Modes (Content Parsing)
+
+Control **what** gets parsed:
+
+```bash
+# Smart mode (default) - Auto-detect file types
 nexus mount /mnt/nexus --mode=smart
+# ✅ PDFs, Excel, Word → parsed
+# ✅ .py, .txt, .md → pass-through
+# ✅ Best for mixed content
 
-# Text mode - Always return text (best for grep/search)
+# Text mode - Parse everything aggressively
 nexus mount /mnt/nexus --mode=text
+# ✅ All files parsed to text
+# ⚠️  Slower (always parses)
 
-# Binary mode - Return original binary (for compatibility)
+# Binary mode - No parsing at all
 nexus mount /mnt/nexus --mode=binary
+# ✅ All files return binary
+# ❌ grep won't work on PDFs
+```
+
+### Comparison Table
+
+| Feature | Explicit Views (default) | Auto-Parse Mode (`--auto-parse`) |
+|---------|-------------------------|-----------------------------------|
+| **PDF viewers work** | ✅ `evince file.pdf` | ⚠️  `evince .raw/file.pdf` |
+| **grep on PDFs** | ⚠️  `grep *.pdf.txt` | ✅ `grep *.pdf` |
+| **Excel apps work** | ✅ `libreoffice file.xlsx` | ⚠️  `libreoffice .raw/file.xlsx` |
+| **Best for** | Binary tools + search | Text search primary use case |
+| **Virtual views** | `.txt`, `.md` suffixes | No suffixes needed |
+| **Binary access** | Direct (`file.pdf`) | Via `.raw/` directory |
+
+### Background (Daemon) Mode
+
+Run the mount in the background so you can close your terminal:
+
+```bash
+# Mount in background
+nexus mount /mnt/nexus --daemon
+
+# Do your work...
+ls /mnt/nexus
+cat /mnt/nexus/workspace/file.txt
+
+# Later, unmount when done
+nexus unmount /mnt/nexus
 ```
 
 ### rclone-style CLI Commands
@@ -1036,22 +1175,25 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [x] Batch operations (avoid N+1 queries)
 - [x] Type-level validation
 
-### v0.2.0 - FUSE Mount & Content-Aware Operations
-- [ ] **FUSE filesystem mount** - Mount Nexus to local path (e.g., `/mnt/nexus`)
-- [ ] **Smart read mode** - Return parsed text for binary files (PDFs, images)
-- [ ] **Virtual file views** - Auto-generate `.txt` and `.md` views for binary files
-- [ ] **Content parser framework** - Extensible parser system for document types
-- [ ] **PDF parser** - Extract text and markdown from PDFs
-- [ ] **Image OCR parser** - Extract text from images (PNG, JPEG)
-- [ ] **Excel/CSV parser** - Parse spreadsheets to structured data
-- [ ] **Content-aware grep** - Search parsed content automatically
-- [ ] **Document type detection** - Auto-detect MIME types and route to parsers
-- [ ] **Parsed content storage** - Store parsed text as metadata
-- [ ] **Mount CLI commands** - `nexus mount`, `nexus unmount`
-- [ ] **Mount modes** - Binary, text, and smart modes
+### v0.2.0 - FUSE Mount & Content-Aware Operations (Current)
+- [x] **FUSE filesystem mount** - Mount Nexus to local path (e.g., `/mnt/nexus`)
+- [x] **Smart read mode** - Return parsed text for binary files (PDFs, Excel, etc.)
+- [x] **Virtual file views** - Auto-generate `.txt` and `.md` views for binary files
+- [x] **Content parser framework** - Extensible parser system for document types (MarkItDown)
+- [x] **PDF parser** - Extract text and markdown from PDFs
+- [x] **Excel/CSV parser** - Parse spreadsheets to structured data
+- [x] **Content-aware file access** - Access parsed content via virtual views
+- [x] **Document type detection** - Auto-detect MIME types and route to parsers
+- [x] **Mount CLI commands** - `nexus mount`, `nexus unmount`
+- [x] **Mount modes** - Binary, text, and smart modes
+- [x] **.raw directory** - Access original binary files
+- [x] **Background daemon mode** - Run mount in background with `--daemon`
+- [x] **All FUSE operations** - read, write, create, delete, mkdir, rmdir, rename, truncate
+- [x] **Unit tests** - Comprehensive test coverage for FUSE operations
 - [ ] **rclone-style CLI commands** - `sync`, `copy`, `move`, `tree`, `size`
 - [ ] **Background parsing** - Async content parsing on write
 - [ ] **FUSE performance optimizations** - Caching, read-ahead, lazy loading
+- [ ] **Image OCR parser** - Extract text from images (PNG, JPEG)
 
 ### v0.3.0 - File Permissions & Skills System
 - [ ] **UNIX-style file permissions** (owner, group, mode)

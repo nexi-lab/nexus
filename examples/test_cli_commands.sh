@@ -15,6 +15,9 @@ NC='\033[0m' # No Color
 TEST_WORKSPACE="/tmp/nexus-cli-test-$$"
 DATA_DIR="$TEST_WORKSPACE/nexus-data"
 
+# Set NEXUS_DATA_DIR environment variable so we don't need --data-dir on every command
+export NEXUS_DATA_DIR="$DATA_DIR"
+
 echo -e "${BLUE}================================${NC}"
 echo -e "${BLUE}Nexus CLI Test Suite${NC}"
 echo -e "${BLUE}================================${NC}"
@@ -67,107 +70,107 @@ test_command "Initialize workspace" \
 
 # Test 2: List empty workspace
 test_command "List empty workspace" \
-    nexus ls /workspace --data-dir "$DATA_DIR"
+    nexus ls /workspace
 
 # Test 3: Create directory
 test_command "Create directory" \
-    nexus mkdir /workspace/data --data-dir "$DATA_DIR"
+    nexus mkdir /workspace/data
 
 # Test 4: Create nested directory with --parents
 test_command "Create nested directory" \
-    nexus mkdir /workspace/deep/nested/dir --parents --data-dir "$DATA_DIR"
+    nexus mkdir /workspace/deep/nested/dir --parents
 
 # Test 5: Write file with string content
 test_command "Write file with string content" \
-    nexus write /workspace/hello.txt "Hello, Nexus!" --data-dir "$DATA_DIR"
+    nexus write /workspace/hello.txt "Hello, Nexus!"
 
 # Test 6: Write Python file
 test_command "Write Python file" \
-    bash -c "echo 'def hello():\n    print(\"Hello World\")' | nexus write /workspace/code.py --input - --data-dir $DATA_DIR"
+    bash -c "echo 'def hello():\n    print(\"Hello World\")' | nexus write /workspace/code.py --input -"
 
 # Test 7: Write JSON file
 test_command "Write JSON file" \
-    bash -c "echo '{\"name\": \"test\", \"value\": 42}' | nexus write /workspace/data.json --input - --data-dir $DATA_DIR"
+    bash -c "echo '{\"name\": \"test\", \"value\": 42}' | nexus write /workspace/data.json --input -"
 
 # Test 8: Write Markdown file
 test_command "Write Markdown file" \
-    bash -c "echo '# Test Document\n\n## Section 1\n\nSome content here.' | nexus write /workspace/README.md --input - --data-dir $DATA_DIR"
+    bash -c "echo '# Test Document\n\n## Section 1\n\nSome content here.' | nexus write /workspace/README.md --input -"
 
 # Test 9: List files
 test_command "List files in /workspace" \
-    nexus ls /workspace --data-dir "$DATA_DIR"
+    nexus ls /workspace
 
 # Test 10: List files recursively
 test_command "List files recursively" \
-    nexus ls /workspace --recursive --data-dir "$DATA_DIR"
+    nexus ls /workspace --recursive
 
 # Test 11: List files with details
 test_command "List files with details" \
-    nexus ls /workspace --long --data-dir "$DATA_DIR"
+    nexus ls /workspace --long
 
 # Test 12: Cat text file
 test_command "Display text file" \
-    nexus cat /workspace/hello.txt --data-dir "$DATA_DIR"
+    nexus cat /workspace/hello.txt
 
 # Test 13: Cat Python file (with syntax highlighting)
 test_command "Display Python file with syntax highlighting" \
-    nexus cat /workspace/code.py --data-dir "$DATA_DIR"
+    nexus cat /workspace/code.py
 
 # Test 14: Copy file
 test_command "Copy file" \
-    nexus cp /workspace/hello.txt /workspace/hello_copy.txt --data-dir "$DATA_DIR"
+    nexus cp /workspace/hello.txt /workspace/hello_copy.txt
 
 # Test 15: Glob - find all .txt files
 test_command "Find all .txt files" \
-    nexus glob "*.txt" --path /workspace --data-dir "$DATA_DIR"
+    nexus glob "*.txt" --path /workspace
 
 # Test 16: Glob - find all files recursively
 test_command "Find all files with ** pattern" \
-    nexus glob "**/*" --data-dir "$DATA_DIR"
+    nexus glob "**/*"
 
 # Test 17: Glob - find Python files
 test_command "Find Python files" \
-    nexus glob "**/*.py" --data-dir "$DATA_DIR"
+    nexus glob "**/*.py"
 
 # Test 18: Grep - search for "Hello"
 test_command "Grep search for 'Hello'" \
-    nexus grep "Hello" --data-dir "$DATA_DIR"
+    nexus grep "Hello"
 
 # Test 19: Grep - search in Python files only
 test_command "Grep in Python files only" \
-    nexus grep "def" --file-pattern "**/*.py" --data-dir "$DATA_DIR"
+    nexus grep "def" --file-pattern "**/*.py"
 
 # Test 20: Grep - case-insensitive search
 test_command "Grep case-insensitive search" \
-    nexus grep "HELLO" --ignore-case --data-dir "$DATA_DIR"
+    nexus grep "HELLO" --ignore-case
 
 # Test 21: Info - show file details
 test_command "Show file information" \
-    nexus info /workspace/hello.txt --data-dir "$DATA_DIR"
+    nexus info /workspace/hello.txt
 
 # Test 22: Delete file
 test_command "Delete file" \
-    nexus rm /workspace/hello_copy.txt --force --data-dir "$DATA_DIR"
+    nexus rm /workspace/hello_copy.txt --force
 
 # Test 23: Verify deletion
 test_command "Verify file was deleted" \
-    bash -c "! nexus cat /workspace/hello_copy.txt --data-dir $DATA_DIR 2>/dev/null"
+    bash -c "! nexus cat /workspace/hello_copy.txt 2>/dev/null"
 
 # Populate /workspace/data for rmdir test
 echo -e "${BLUE}Populating /workspace/data for rmdir test...${NC}"
-nexus write /workspace/data/testfile.txt "test content" --data-dir "$DATA_DIR"
+nexus write /workspace/data/testfile.txt "test content"
 
 # Test 24: Remove directory (should fail - not empty)
 test_command "Try to remove non-empty directory" \
-    bash -c "! nexus rmdir /workspace/data --force --data-dir $DATA_DIR 2>/dev/null"
+    bash -c "! nexus rmdir /workspace/data --force 2>/dev/null"
 
 # Test 25: Remove directory recursively
 test_command "Remove directory recursively" \
-    nexus rmdir /workspace/data --recursive --force --data-dir "$DATA_DIR"
+    nexus rmdir /workspace/data --recursive --force
 
 # Test 26: Version command
 test_command "Show version information" \
-    nexus version --data-dir "$DATA_DIR"
+    nexus version
 
 # Test 27: Help command
 test_command "Show help" \
@@ -179,16 +182,16 @@ test_command "Show ls command help" \
 
 # Test 29: Write multiple test files for advanced grep
 echo -e "${BLUE}Creating test files for advanced operations...${NC}"
-nexus write /workspace/test1.py "# TODO: implement feature\ndef test():\n    pass" --data-dir "$DATA_DIR"
-nexus write /workspace/test2.py "def another_test():\n    # TODO: add tests\n    return 42" --data-dir "$DATA_DIR"
-nexus write /workspace/test3.txt "This file has TODO items\nAnd ERROR messages" --data-dir "$DATA_DIR"
+nexus write /workspace/test1.py "# TODO: implement feature\ndef test():\n    pass"
+nexus write /workspace/test2.py "def another_test():\n    # TODO: add tests\n    return 42"
+nexus write /workspace/test3.txt "This file has TODO items\nAnd ERROR messages"
 
 test_command "Grep with multiple matches" \
-    nexus grep "TODO" --data-dir "$DATA_DIR"
+    nexus grep "TODO"
 
 # Test 30: Complex glob pattern
 test_command "Complex glob with test_*.py pattern" \
-    nexus glob "test*.py" --path /workspace --data-dir "$DATA_DIR"
+    nexus glob "test*.py" --path /workspace
 
 # ============================================================
 # Auto-Parse Tests (Transparent Document Parsing)
@@ -198,7 +201,7 @@ echo -e "\n${BLUE}Testing automatic document parsing...${NC}"
 # Test 30a: Upload actual PDF file (if it exists)
 if [ -f "examples/sample-local-pdf.pdf" ]; then
     test_command "Upload PDF file for auto-parse test" \
-        nexus write /documents/sample.pdf --input examples/sample-local-pdf.pdf --data-dir "$DATA_DIR"
+        nexus write /documents/sample.pdf --input examples/sample-local-pdf.pdf
 
     # Test 30b: Wait briefly for async parsing to complete
     echo -e "${YELLOW}Waiting for background PDF parsing...${NC}"
@@ -206,11 +209,11 @@ if [ -f "examples/sample-local-pdf.pdf" ]; then
 
     # Test 30c: Grep should find "PDF" in parsed content (not binary!)
     test_command "Grep finds text in auto-parsed PDF (not binary)" \
-        nexus grep "PDF" --file-pattern "**/*.pdf" --data-dir "$DATA_DIR"
+        nexus grep "PDF" --file-pattern "**/*.pdf"
 
     # Test 30d: Grep for "testing" which appears in the PDF
     test_command "Grep finds 'testing' in parsed PDF content" \
-        nexus grep "testing" --file-pattern "**/*.pdf" --data-dir "$DATA_DIR"
+        nexus grep "testing" --file-pattern "**/*.pdf"
 
     echo -e "${GREEN}✓ Auto-parsing works transparently with PDF!${NC}\n"
 else
@@ -219,19 +222,19 @@ fi
 
 # Test 30e: Also test with Markdown
 test_command "Write Markdown file for auto-parse test" \
-    bash -c "echo '# Documentation\n\n## Features\nAUTO_PARSE_KEYWORD in markdown' | nexus write /workspace/auto_parse_test.md --input - --data-dir $DATA_DIR"
+    bash -c "echo '# Documentation\n\n## Features\nAUTO_PARSE_KEYWORD in markdown' | nexus write /workspace/auto_parse_test.md --input -"
 
 echo -e "${YELLOW}Waiting for background Markdown parsing...${NC}"
 sleep 2
 
 test_command "Grep finds content in auto-parsed Markdown" \
-    nexus grep "AUTO_PARSE_KEYWORD" --data-dir "$DATA_DIR"
+    nexus grep "AUTO_PARSE_KEYWORD"
 
 echo -e "${GREEN}✓ Auto-parsing works with multiple formats!${NC}\n"
 
 # Test 31: Export metadata to JSONL
 test_command "Export all metadata to JSONL" \
-    nexus export "$TEST_WORKSPACE/metadata-export.jsonl" --data-dir "$DATA_DIR"
+    nexus export "$TEST_WORKSPACE/metadata-export.jsonl"
 
 # Test 32: Verify export file exists
 test_command "Verify export file was created" \
@@ -239,33 +242,36 @@ test_command "Verify export file was created" \
 
 # Test 33: Export with prefix filter
 test_command "Export only /workspace metadata" \
-    nexus export "$TEST_WORKSPACE/workspace-export.jsonl" --prefix /workspace --data-dir "$DATA_DIR"
+    nexus export "$TEST_WORKSPACE/workspace-export.jsonl" --prefix /workspace
 
 # Test 34: Create a new test workspace for import testing
 IMPORT_DATA_DIR="$TEST_WORKSPACE/import-test-data"
 test_command "Create import test workspace" \
     mkdir -p "$IMPORT_DATA_DIR"
 
+# Switch to import data directory for import tests
+export NEXUS_DATA_DIR="$IMPORT_DATA_DIR"
+
 # Test 35: Import metadata to new workspace
 test_command "Import metadata from export file" \
-    nexus import "$TEST_WORKSPACE/metadata-export.jsonl" --data-dir "$IMPORT_DATA_DIR"
+    nexus import "$TEST_WORKSPACE/metadata-export.jsonl"
 
 # Test 36: Verify imported files exist in metadata
 test_command "List imported files" \
-    nexus ls / --data-dir "$IMPORT_DATA_DIR"
+    nexus ls /
 
 # Test 37: Re-import with skip existing (should skip all)
 test_command "Re-import should skip existing files" \
-    nexus import "$TEST_WORKSPACE/metadata-export.jsonl" --data-dir "$IMPORT_DATA_DIR"
+    nexus import "$TEST_WORKSPACE/metadata-export.jsonl"
 
 # Test 38: Import with overwrite
 test_command "Import with overwrite flag" \
-    nexus import "$TEST_WORKSPACE/metadata-export.jsonl" --overwrite --data-dir "$IMPORT_DATA_DIR"
+    nexus import "$TEST_WORKSPACE/metadata-export.jsonl" --overwrite
 
 # Test 39: Test export/import workflow end-to-end
 test_command "End-to-end export/import workflow" \
-    bash -c "nexus export $TEST_WORKSPACE/full-backup.jsonl --data-dir $DATA_DIR && \
-             nexus import $TEST_WORKSPACE/full-backup.jsonl --data-dir $IMPORT_DATA_DIR"
+    bash -c "nexus export $TEST_WORKSPACE/full-backup.jsonl && \
+             NEXUS_DATA_DIR=$IMPORT_DATA_DIR nexus import $TEST_WORKSPACE/full-backup.jsonl"
 
 # ============================================================
 # Advanced Export/Import Tests (Issue #35)
@@ -274,15 +280,18 @@ echo -e "\n${BLUE}Testing advanced export/import features...${NC}"
 
 # Test 39a: Import with conflict-mode=overwrite
 test_command "Import with conflict-mode=overwrite" \
-    nexus import "$TEST_WORKSPACE/metadata-export.jsonl" --conflict-mode overwrite --data-dir "$IMPORT_DATA_DIR"
+    nexus import "$TEST_WORKSPACE/metadata-export.jsonl" --conflict-mode overwrite
 
 # Test 39b: Import with conflict-mode=skip (default)
 test_command "Import with conflict-mode=skip" \
-    nexus import "$TEST_WORKSPACE/metadata-export.jsonl" --conflict-mode skip --data-dir "$IMPORT_DATA_DIR"
+    nexus import "$TEST_WORKSPACE/metadata-export.jsonl" --conflict-mode skip
 
 # Test 39c: Import with dry-run mode
 test_command "Import with dry-run mode (no changes)" \
-    nexus import "$TEST_WORKSPACE/metadata-export.jsonl" --dry-run --data-dir "$IMPORT_DATA_DIR"
+    nexus import "$TEST_WORKSPACE/metadata-export.jsonl" --dry-run
+
+# Switch back to main data directory
+export NEXUS_DATA_DIR="$DATA_DIR"
 
 # ============================================================
 # Work Detection CLI Tests (Issue #69)
@@ -297,6 +306,9 @@ test_command "Create work test workspace" \
 # Test 40: Initialize work workspace
 test_command "Initialize work test workspace" \
     nexus init "$WORK_DATA_DIR"
+
+# Switch to work data directory
+export NEXUS_DATA_DIR="$WORK_DATA_DIR/nexus-data"
 
 # Create work items using Python for setup
 cat > "$TEST_WORKSPACE/setup_work.py" << 'EOF'
@@ -350,35 +362,38 @@ test_command "Setup work items with metadata" \
 
 # Test 42: Query ready work items
 test_command "Query ready work items" \
-    nexus work ready --data-dir "$WORK_DATA_DIR/nexus-data"
+    nexus work ready
 
 # Test 43: Query ready work with limit
 test_command "Query ready work with limit" \
-    nexus work ready --limit 1 --data-dir "$WORK_DATA_DIR/nexus-data"
+    nexus work ready --limit 1
 
 # Test 44: Query pending work items
 test_command "Query pending work items" \
-    nexus work pending --data-dir "$WORK_DATA_DIR/nexus-data"
+    nexus work pending
 
 # Test 45: Query blocked work items
 test_command "Query blocked work items" \
-    nexus work blocked --data-dir "$WORK_DATA_DIR/nexus-data"
+    nexus work blocked
 
 # Test 46: Query in-progress work items
 test_command "Query in-progress work items" \
-    nexus work in-progress --data-dir "$WORK_DATA_DIR/nexus-data"
+    nexus work in-progress
 
 # Test 47: Query work status (aggregate statistics)
 test_command "Query work queue status" \
-    nexus work status --data-dir "$WORK_DATA_DIR/nexus-data"
+    nexus work status
 
 # Test 48: Query ready work as JSON
 test_command "Query ready work as JSON output" \
-    nexus work ready --json --data-dir "$WORK_DATA_DIR/nexus-data"
+    nexus work ready --json
 
 # Test 49: Query status as JSON
 test_command "Query status as JSON output" \
-    nexus work status --json --data-dir "$WORK_DATA_DIR/nexus-data"
+    nexus work status --json
+
+# Switch back to main data directory
+export NEXUS_DATA_DIR="$DATA_DIR"
 
 # ============================================================
 # Validation Tests (Issue #37)
@@ -776,94 +791,358 @@ echo "File 3 content" > "$SYNC_TEST_DIR/source/subdir/file3.txt"
 
 # Test 57: Tree command
 test_command "Tree command - show directory structure" \
-    nexus tree /workspace --data-dir "$DATA_DIR"
+    nexus tree /workspace
 
 # Test 58: Tree with depth limit
 test_command "Tree command with depth limit" \
-    nexus tree /workspace -L 1 --data-dir "$DATA_DIR"
+    nexus tree /workspace -L 1
 
 # Test 59: Tree with sizes
 test_command "Tree command with file sizes" \
-    nexus tree /workspace --show-size --data-dir "$DATA_DIR"
+    nexus tree /workspace --show-size
 
 # Test 60: Size command
 test_command "Size command - calculate directory size" \
-    nexus size /workspace --data-dir "$DATA_DIR"
+    nexus size /workspace
 
 # Test 61: Size with human-readable output
 test_command "Size command with human-readable output" \
-    nexus size /workspace --human --data-dir "$DATA_DIR"
+    nexus size /workspace --human
 
 # Test 62: Size with details (top 10 largest files)
 test_command "Size command with details" \
-    nexus size /workspace --human --details --data-dir "$DATA_DIR"
+    nexus size /workspace --human --details
 
 # Test 63: Copy command - single file
 test_command "Copy command - single file" \
-    nexus copy /workspace/hello.txt /workspace/hello_copied.txt --data-dir "$DATA_DIR"
+    nexus copy /workspace/hello.txt /workspace/hello_copied.txt
 
 # Test 64: Copy command - recursive (Nexus to Nexus)
 # First, create a source directory with files
-nexus write /copy-source/file1.txt "Copy test 1" --data-dir "$DATA_DIR"
-nexus write /copy-source/file2.txt "Copy test 2" --data-dir "$DATA_DIR"
-nexus write /copy-source/subdir/file3.txt "Copy test 3" --data-dir "$DATA_DIR"
+nexus write /copy-source/file1.txt "Copy test 1"
+nexus write /copy-source/file2.txt "Copy test 2"
+nexus write /copy-source/subdir/file3.txt "Copy test 3"
 
 test_command "Copy command - recursive copy within Nexus" \
-    nexus copy /copy-source/ /copy-dest/ --recursive --data-dir "$DATA_DIR"
+    nexus copy /copy-source/ /copy-dest/ --recursive
 
 # Test 65: Verify copied files exist
 test_command "Verify recursive copy succeeded" \
-    nexus cat /copy-dest/file1.txt --data-dir "$DATA_DIR"
+    nexus cat /copy-dest/file1.txt
 
 # Test 66: Copy with checksum (should skip identical files)
 test_command "Copy command - skip identical files with checksum" \
-    nexus copy /copy-source/ /copy-dest/ --recursive --data-dir "$DATA_DIR"
+    nexus copy /copy-source/ /copy-dest/ --recursive
 
 # Test 67: Move command
-nexus write /move-test/source.txt "Move me" --data-dir "$DATA_DIR"
+nexus write /move-test/source.txt "Move me"
 test_command "Move command - rename file" \
-    nexus move /move-test/source.txt /move-test/destination.txt --force --data-dir "$DATA_DIR"
+    nexus move /move-test/source.txt /move-test/destination.txt --force
 
 # Test 68: Verify move succeeded (source should not exist)
 test_command "Verify move deleted source" \
-    bash -c "! nexus cat /move-test/source.txt --data-dir $DATA_DIR 2>/dev/null"
+    bash -c "! nexus cat /move-test/source.txt 2>/dev/null"
 
 # Test 69: Verify move succeeded (destination should exist)
 test_command "Verify move created destination" \
-    nexus cat /move-test/destination.txt --data-dir "$DATA_DIR"
+    nexus cat /move-test/destination.txt
 
 # Test 70: Sync command - dry run
 test_command "Sync command - dry run mode" \
-    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest/ --dry-run --data-dir "$DATA_DIR"
+    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest/ --dry-run
 
 # Test 71: Sync command - actual sync
 test_command "Sync command - sync local to Nexus" \
-    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest/ --data-dir "$DATA_DIR"
+    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest/
 
 # Test 72: Verify sync created files
 test_command "Verify sync created files in Nexus" \
-    nexus cat /sync-dest/file1.txt --data-dir "$DATA_DIR"
+    nexus cat /sync-dest/file1.txt
 
 # Test 73: Re-sync (should skip identical files)
 test_command "Sync command - re-sync should skip identical files" \
-    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest/ --data-dir "$DATA_DIR"
+    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest/
 
 # Test 74: Sync with delete flag
 # Add extra file to destination
-nexus write /sync-dest/extra.txt "This should be deleted" --data-dir "$DATA_DIR"
+nexus write /sync-dest/extra.txt "This should be deleted"
 
 test_command "Sync command - sync with delete flag" \
-    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest/ --delete --data-dir "$DATA_DIR"
+    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest/ --delete
 
 # Test 75: Verify extra file was deleted
 test_command "Verify sync --delete removed extra file" \
-    bash -c "! nexus cat /sync-dest/extra.txt --data-dir $DATA_DIR 2>/dev/null"
+    bash -c "! nexus cat /sync-dest/extra.txt 2>/dev/null"
 
 # Test 76: Sync with --no-checksum (force copy all)
 test_command "Sync command - disable checksum verification" \
-    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest-no-check/ --no-checksum --data-dir "$DATA_DIR"
+    nexus sync "$SYNC_TEST_DIR/source/" /sync-dest-no-check/ --no-checksum
 
 echo -e "${GREEN}✓ All rclone-style CLI tests passed!${NC}\n"
+
+# ============================================================
+# UNIX Permissions Tests (Issue #86 - v0.3.0)
+# ============================================================
+echo -e "\n${BLUE}Testing UNIX-style permissions...${NC}"
+
+# Create test files for permission tests
+PERM_DATA_DIR="$TEST_WORKSPACE/perm-test-data"
+test_command "Create permissions test workspace" \
+    mkdir -p "$PERM_DATA_DIR"
+
+test_command "Initialize permissions test workspace" \
+    nexus init "$PERM_DATA_DIR"
+
+# Switch to permission test data directory
+export NEXUS_DATA_DIR="$PERM_DATA_DIR/nexus-data"
+
+# Create test files
+nexus write /perm-test/file1.txt "Test file 1"
+nexus write /perm-test/file2.txt "Test file 2"
+nexus write /perm-test/secret.txt "Secret data"
+
+# Test 77: chmod - octal mode
+test_command "chmod - set octal mode 755" \
+    nexus chmod 755 /perm-test/file1.txt
+
+# Test 78: chmod - octal mode with 0o prefix
+test_command "chmod - set octal mode with 0o prefix (0o644)" \
+    nexus chmod 0o644 /perm-test/file2.txt
+
+# Test 79: chmod - symbolic mode
+test_command "chmod - set symbolic mode rwxr-xr-x" \
+    nexus chmod rwxr-xr-x /perm-test/file1.txt
+
+# Test 80: chmod - verify mode with ls -l
+test_command "ls -l shows permissions" \
+    nexus ls /perm-test --long
+
+# Test 81: chown - change file owner
+test_command "chown - change file owner to alice" \
+    nexus chown alice /perm-test/file1.txt
+
+# Test 82: chown - change another file owner
+test_command "chown - change file owner to bob" \
+    nexus chown bob /perm-test/file2.txt
+
+# Test 83: chgrp - change file group
+test_command "chgrp - change file group to developers" \
+    nexus chgrp developers /perm-test/file1.txt
+
+# Test 84: chgrp - change another file group
+test_command "chgrp - change file group to admins" \
+    nexus chgrp admins /perm-test/file2.txt
+
+# Test 85: info - verify permissions in file info
+test_command "info - verify permissions are shown" \
+    nexus info /perm-test/file1.txt
+
+# Test 86: ls -l - verify owner and group in listing
+test_command "ls -l shows owner and group" \
+    nexus ls /perm-test --long
+
+echo -e "${GREEN}✓ All UNIX permission tests passed!${NC}\n"
+
+# ============================================================
+# ACL (Access Control List) Tests (Issue #86 - v0.3.0)
+# ============================================================
+echo -e "\n${BLUE}Testing Access Control Lists (ACLs)...${NC}"
+
+# Test 87: setfacl - grant user permissions
+test_command "setfacl - grant alice read+write" \
+    nexus setfacl "user:alice:rw-" /perm-test/secret.txt
+
+# Test 88: getfacl - show ACL entries
+test_command "getfacl - display ACL for file" \
+    nexus getfacl /perm-test/secret.txt
+
+# Test 89: setfacl - grant group permissions
+test_command "setfacl - grant developers group read+execute" \
+    nexus setfacl "group:developers:r-x" /perm-test/secret.txt
+
+# Test 90: getfacl - verify multiple ACL entries
+test_command "getfacl - verify multiple ACL entries" \
+    nexus getfacl /perm-test/secret.txt
+
+# Test 91: setfacl - deny user access
+test_command "setfacl - deny bob access" \
+    nexus setfacl "deny:user:bob:---" /perm-test/secret.txt
+
+# Test 92: getfacl - verify deny entry
+test_command "getfacl - verify deny entry exists" \
+    nexus getfacl /perm-test/secret.txt
+
+# Test 93: setfacl - remove ACL entry
+test_command "setfacl - remove alice ACL entry" \
+    nexus setfacl "user:alice:rw-" /perm-test/secret.txt --remove
+
+# Test 94: getfacl - verify removal
+test_command "getfacl - verify alice entry removed" \
+    nexus getfacl /perm-test/secret.txt
+
+# Test 95: Combined permissions and ACLs
+# Create file with specific owner/group and add ACLs
+nexus write /perm-test/combined.txt "Combined test"
+nexus chmod 750 /perm-test/combined.txt
+nexus chown root /perm-test/combined.txt
+nexus chgrp wheel /perm-test/combined.txt
+nexus setfacl "user:charlie:r--" /perm-test/combined.txt
+
+test_command "Combined - verify permissions and ACL" \
+    bash -c "nexus info /perm-test/combined.txt && \
+             nexus getfacl /perm-test/combined.txt"
+
+# Test 96: Test Python API for permission checking
+cat > "$TEST_WORKSPACE/test_permission_api.py" << 'EOF'
+import sys
+import nexus
+from nexus.core.permissions import FileMode, FilePermissions
+
+data_dir = sys.argv[1]
+nx = nexus.connect(config={"data_dir": data_dir})
+
+# Create test file with permissions
+nx.write("/api-perm-test/test.txt", b"Test content")
+
+# Get metadata
+meta = nx.metadata.get("/api-perm-test/test.txt")
+assert meta is not None, "Failed to get metadata"
+
+# Set permissions (owner/group/mode may be None initially)
+meta.owner = "alice"
+meta.group = "developers"
+meta.mode = 0o755
+nx.metadata.put(meta)
+
+# Commit changes by closing and reopening (like CLI does)
+nx.close()
+nx = nexus.connect(config={"data_dir": data_dir})
+
+# Retrieve and verify
+meta = nx.metadata.get("/api-perm-test/test.txt")
+assert meta is not None, "Failed to get metadata after update"
+assert meta.owner == "alice", f"Owner mismatch: expected 'alice', got {meta.owner!r}"
+assert meta.group == "developers", f"Group mismatch: expected 'developers', got {meta.group!r}"
+assert meta.mode == 0o755, f"Mode mismatch: expected 0o755, got {oct(meta.mode) if meta.mode is not None else None}"
+
+# Test FileMode class
+mode = FileMode(0o755)
+assert mode.owner_can_read(), "Owner should be able to read"
+assert mode.owner_can_write(), "Owner should be able to write"
+assert mode.owner_can_execute(), "Owner should be able to execute"
+assert mode.group_can_read(), "Group should be able to read"
+assert not mode.group_can_write(), "Group should not be able to write"
+assert mode.group_can_execute(), "Group should be able to execute"
+
+# Test FilePermissions class
+perms = FilePermissions(owner="alice", group="developers", mode=mode)
+assert perms.can_read("alice", []), "Alice should be able to read (owner)"
+assert perms.can_write("alice", []), "Alice should be able to write (owner)"
+assert perms.can_execute("alice", []), "Alice should be able to execute (owner)"
+
+assert perms.can_read("bob", ["developers"]), "Bob should be able to read (group member)"
+assert not perms.can_write("bob", ["developers"]), "Bob should not be able to write (group member)"
+assert perms.can_execute("bob", ["developers"]), "Bob should be able to execute (group member)"
+
+assert perms.can_read("charlie", []), "Charlie should be able to read (other)"
+assert not perms.can_write("charlie", []), "Charlie should not be able to write (other)"
+assert perms.can_execute("charlie", []), "Charlie should be able to execute (other)"
+
+nx.close()
+print("All Python API permission tests passed!")
+EOF
+
+test_command "Python API - permission checking" \
+    bash -c "PYTHONPATH=\"$PWD/src\" python \"$TEST_WORKSPACE/test_permission_api.py\" \"$PERM_DATA_DIR/nexus-data\""
+
+# Test 97: Test ACL Python API
+cat > "$TEST_WORKSPACE/test_acl_api.py" << 'EOF'
+import sys
+import nexus
+from nexus.core.acl import ACL, ACLEntry, ACLEntryType, ACLPermission
+from nexus.storage.models import ACLEntryModel
+
+data_dir = sys.argv[1]
+nx = nexus.connect(config={"data_dir": data_dir})
+
+# Create test file
+nx.write("/api-acl-test/secret.txt", b"Secret content")
+
+# Get path_id using public API
+path_id = nx.metadata.get_path_id("/api-acl-test/secret.txt")
+
+if not path_id:
+    print("FAILED: Could not find path_id")
+    sys.exit(1)
+
+# Create ACL entries directly in database using SessionLocal
+with nx.metadata.SessionLocal() as session:
+    # Grant alice read+write
+    acl_entry1 = ACLEntryModel(
+        path_id=path_id,
+        entry_type="user",
+        identifier="alice",
+        permissions="rw-",
+        deny=False,
+    )
+    session.add(acl_entry1)
+
+    # Grant developers group read
+    acl_entry2 = ACLEntryModel(
+        path_id=path_id,
+        entry_type="group",
+        identifier="developers",
+        permissions="r--",
+        deny=False,
+    )
+    session.add(acl_entry2)
+
+    # Deny bob
+    acl_entry3 = ACLEntryModel(
+        path_id=path_id,
+        entry_type="user",
+        identifier="bob",
+        permissions="---",
+        deny=True,
+    )
+    session.add(acl_entry3)
+
+    session.commit()
+
+# Test ACL parsing and checking
+acl = ACL.from_strings([
+    "user:alice:rw-",
+    "group:developers:r--",
+    "deny:user:bob:---",
+])
+
+# Test permission checks
+result = acl.check_permission("alice", [], ACLPermission.READ)
+assert result == True, "Alice should be able to read"
+
+result = acl.check_permission("alice", [], ACLPermission.WRITE)
+assert result == True, "Alice should be able to write"
+
+result = acl.check_permission("bob", [], ACLPermission.READ)
+assert result == False, "Bob should be denied (explicit deny)"
+
+result = acl.check_permission("charlie", ["developers"], ACLPermission.READ)
+assert result == True, "Charlie should be able to read (via group)"
+
+result = acl.check_permission("charlie", ["developers"], ACLPermission.WRITE)
+assert result == None, "Charlie write should fall back to UNIX permissions"
+
+nx.close()
+print("All Python ACL API tests passed!")
+EOF
+
+test_command "Python API - ACL checking" \
+    bash -c "PYTHONPATH=\"$PWD/src\" python \"$TEST_WORKSPACE/test_acl_api.py\" \"$PERM_DATA_DIR/nexus-data\""
+
+# Switch back to main data directory
+export NEXUS_DATA_DIR="$DATA_DIR"
+
+echo -e "${GREEN}✓ All ACL tests passed!${NC}\n"
 
 # Summary
 echo -e "${BLUE}================================${NC}"

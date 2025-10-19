@@ -91,6 +91,11 @@ test = [
     "pytest-mock>=3.12.0",
 ]
 
+fuse = [
+    # FUSE filesystem support (v0.2.0)
+    "fusepy>=3.0.1",  # Python FUSE bindings
+]
+
 [project.urls]
 Homepage = "https://github.com/nexi-lab/nexus"
 Documentation = "https://github.com/nexi-lab/nexus/blob/main/README.md"

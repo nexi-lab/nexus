@@ -15,7 +15,7 @@
 # Options:
 #   --project-id PROJECT_ID      GCP project ID (required)
 #   --instance-name NAME         VM instance name (default: nexus-server)
-#   --zone ZONE                  GCP zone (default: us-central1-a)
+#   --zone ZONE                  GCP zone (default: us-west1-a)
 #   --machine-type TYPE          Machine type (default: e2-medium)
 #   --disk-size SIZE             Boot disk size in GB (default: 50)
 #   --api-key KEY                Nexus API key for authentication (optional)
@@ -29,7 +29,7 @@ set -euo pipefail
 
 # Default values
 INSTANCE_NAME="nexus-server"
-ZONE="us-central1-a"
+ZONE="us-west1-a"
 MACHINE_TYPE="e2-medium"
 DISK_SIZE="50"
 PORT="8080"

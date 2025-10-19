@@ -58,6 +58,7 @@ class NexusFUSE:
         mount_point: str,
         mode: MountMode = MountMode.SMART,
         auto_parse: bool = False,
+        cache_config: dict[str, int | bool] | None = None,
     ) -> None:
         """Initialize FUSE mount manager.
 
@@ -70,11 +71,18 @@ class NexusFUSE:
 
                        auto_parse=True:  cat file.pdf returns parsed text
                        auto_parse=False: cat file.pdf returns binary, cat file.pdf.txt returns text
+            cache_config: Optional cache configuration dict with keys:
+                         - attr_cache_size: int (default: 1024)
+                         - attr_cache_ttl: int (default: 60)
+                         - content_cache_size: int (default: 100)
+                         - parsed_cache_size: int (default: 50)
+                         - enable_metrics: bool (default: False)
         """
         self.nexus_fs = nexus_fs
         self.mount_point = Path(mount_point)
         self.mode = mode
         self.auto_parse = auto_parse
+        self.cache_config = cache_config
         self.fuse: FUSE | None = None
         self._mount_thread: threading.Thread | None = None
         self._mounted = False
@@ -112,7 +120,9 @@ class NexusFUSE:
             logger.warning(f"Mount point is not empty: {self.mount_point}")
 
         # Create FUSE operations
-        operations = NexusFUSEOperations(self.nexus_fs, self.mode, self.auto_parse)
+        operations = NexusFUSEOperations(
+            self.nexus_fs, self.mode, self.auto_parse, self.cache_config
+        )
 
         # Build FUSE options
         fuse_options = {
@@ -243,6 +253,7 @@ def mount_nexus(
     foreground: bool = True,
     allow_other: bool = False,
     debug: bool = False,
+    cache_config: dict[str, int | bool] | None = None,
 ) -> NexusFUSE:
     """Convenience function to mount Nexus filesystem.
 
@@ -254,6 +265,12 @@ def mount_nexus(
         foreground: Run in foreground (blocking)
         allow_other: Allow other users to access the mount
         debug: Enable FUSE debug output
+        cache_config: Optional cache configuration dict with keys:
+                     - attr_cache_size: int (default: 1024)
+                     - attr_cache_ttl: int (default: 60)
+                     - content_cache_size: int (default: 100)
+                     - parsed_cache_size: int (default: 50)
+                     - enable_metrics: bool (default: False)
 
     Returns:
         NexusFUSE instance
@@ -271,12 +288,22 @@ def mount_nexus(
         >>> # Auto-parse mode
         >>> fuse = mount_nexus(nx, "/mnt/nexus", mode="smart", auto_parse=True, foreground=False)
         >>> # grep "pattern" /mnt/nexus/**/*.pdf  (works directly!)
+        >>>
+        >>> # Custom cache configuration
+        >>> cache_config = {
+        ...     "attr_cache_size": 2048,
+        ...     "attr_cache_ttl": 120,
+        ...     "enable_metrics": True
+        ... }
+        >>> fuse = mount_nexus(nx, "/mnt/nexus", cache_config=cache_config, foreground=False)
     """
     # Parse mode
     mode_enum = MountMode(mode.lower())
 
     # Create and mount
-    fuse = NexusFUSE(nexus_fs, mount_point, mode=mode_enum, auto_parse=auto_parse)
+    fuse = NexusFUSE(
+        nexus_fs, mount_point, mode=mode_enum, auto_parse=auto_parse, cache_config=cache_config
+    )
     fuse.mount(foreground=foreground, allow_other=allow_other, debug=debug)
 
     return fuse

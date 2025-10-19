@@ -1718,31 +1718,8 @@ def mount(
             nx = get_filesystem(backend_config)
 
         # Create mount point if it doesn't exist
-        # Always try mkdir to detect stale mounts (exist_ok=True makes it safe)
         mount_path = Path(mount_point)
-        try:
-            mount_path.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            # If we get "Device not configured", try to unmount first
-            if e.errno == 6:  # Device not configured
-                console.print(f"[yellow]Warning:[/yellow] Stale mount detected, unmounting...")
-                try:
-                    import platform
-                    import subprocess
-
-                    if platform.system() == "Darwin":
-                        subprocess.run(["diskutil", "unmount", "force", mount_point], check=True, capture_output=True)
-                    else:
-                        subprocess.run(["fusermount", "-u", mount_point], check=True, capture_output=True)
-                    console.print("[green]✓[/green] Unmounted stale mount")
-
-                    # Try again
-                    mount_path.mkdir(parents=True, exist_ok=True)
-                except Exception as unmount_error:
-                    console.print(f"[red]Error:[/red] Could not clean up stale mount: {unmount_error}")
-                    raise
-            else:
-                raise
+        mount_path.mkdir(parents=True, exist_ok=True)
 
         # Display mount info
         console.print("[green]Mounting Nexus filesystem...[/green]")

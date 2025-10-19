@@ -173,7 +173,7 @@ def encode_rpc_message(data: dict[str, Any]) -> bytes:
 
 def decode_rpc_message(data: bytes) -> dict[str, Any]:
     """Decode RPC message from JSON bytes."""
-    return json.loads(data.decode("utf-8"), object_hook=rpc_decode_hook)
+    return json.loads(data.decode("utf-8"), object_hook=rpc_decode_hook)  # type: ignore[no-any-return]
 
 
 # ============================================================

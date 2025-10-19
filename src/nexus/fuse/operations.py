@@ -89,6 +89,16 @@ class NexusFUSEOperations(Operations):
 
             # Return file attributes
             now = time.time()
+
+            # Get uid/gid with Windows compatibility
+            try:
+                uid = os.getuid()
+                gid = os.getgid()
+            except AttributeError:
+                # Windows doesn't have getuid/getgid
+                uid = 0
+                gid = 0
+
             return {
                 "st_mode": stat.S_IFREG | 0o644,
                 "st_nlink": 1,
@@ -96,8 +106,8 @@ class NexusFUSEOperations(Operations):
                 "st_ctime": now,
                 "st_mtime": now,
                 "st_atime": now,
-                "st_uid": os.getuid(),
-                "st_gid": os.getgid(),
+                "st_uid": uid,
+                "st_gid": gid,
             }
         except NexusFileNotFoundError:
             raise FuseOSError(errno.ENOENT) from None
@@ -668,6 +678,16 @@ class NexusFUSEOperations(Operations):
             Dictionary with directory attributes
         """
         now = time.time()
+
+        # Get uid/gid with Windows compatibility
+        try:
+            uid = os.getuid()
+            gid = os.getgid()
+        except AttributeError:
+            # Windows doesn't have getuid/getgid
+            uid = 0
+            gid = 0
+
         return {
             "st_mode": stat.S_IFDIR | 0o755,
             "st_nlink": 2,
@@ -675,6 +695,6 @@ class NexusFUSEOperations(Operations):
             "st_ctime": now,
             "st_mtime": now,
             "st_atime": now,
-            "st_uid": os.getuid(),
-            "st_gid": os.getgid(),
+            "st_uid": uid,
+            "st_gid": gid,
         }

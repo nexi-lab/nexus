@@ -2,8 +2,10 @@
 """Check if Nexus S3 server is running and accessible."""
 
 import sys
+
 import boto3
 from botocore.exceptions import ClientError, EndpointConnectionError
+
 
 def check_server(endpoint_url, access_key, secret_key):
     """Check if server is accessible."""
@@ -24,12 +26,12 @@ def check_server(endpoint_url, access_key, secret_key):
         response = s3.list_objects_v2(Bucket='nexus', MaxKeys=1)
 
         print("✅ Server is RUNNING and accessible!")
-        print(f"   Status: Connected successfully")
+        print("   Status: Connected successfully")
 
         if 'Contents' in response:
             print(f"   Objects found: {response['KeyCount']}")
         else:
-            print(f"   No objects in bucket")
+            print("   No objects in bucket")
 
         return True
 
@@ -44,7 +46,7 @@ def check_server(endpoint_url, access_key, secret_key):
 
         if error_code == '403' or 'AccessDenied' in str(e):
             print("⚠️  Server is running but authentication failed")
-            print(f"   Error: Invalid credentials")
+            print("   Error: Invalid credentials")
             return True  # Server is running, just auth issue
         else:
             print("❌ Server error")
@@ -62,7 +64,7 @@ if __name__ == "__main__":
     access_key = sys.argv[2] if len(sys.argv) > 2 else "testkey"
     secret_key = sys.argv[3] if len(sys.argv) > 3 else "testsecret"
 
-    print(f"""
+    print("""
 Usage: python check_server.py [ENDPOINT] [ACCESS_KEY] [SECRET_KEY]
 
 Examples:

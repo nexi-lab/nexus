@@ -183,7 +183,7 @@ def main() -> None:
                 db_sync_manager.start_periodic_sync()
 
                 # Register cleanup handlers
-                def cleanup_handler(signum=None, frame=None):
+                def cleanup_handler(signum=None, frame=None):  # noqa: ARG001
                     logger.info("Received shutdown signal, cleaning up...")
                     if db_sync_manager:
                         db_sync_manager.stop()

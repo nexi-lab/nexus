@@ -56,6 +56,9 @@ def fuse_ops(mock_nexus_fs: MagicMock) -> NexusFUSEOperations:
     """Create FUSE operations with mock filesystem."""
     # Reset the mock to avoid side_effect pollution from other tests
     mock_nexus_fs.reset_mock()
+    # Explicitly clear side_effect as reset_mock doesn't clear it
+    for attr in ["read", "write", "delete", "exists", "list", "is_directory", "mkdir", "rmdir"]:
+        getattr(mock_nexus_fs, attr).side_effect = None
     # Create with empty cache config to avoid metrics issues
     return NexusFUSEOperations(mock_nexus_fs, MountMode.SMART, cache_config={})
 

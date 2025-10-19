@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from nexus import NexusFS
 from nexus.server.api import NexusHTTPServer
@@ -48,14 +49,14 @@ class DatabaseSyncManager:
         self.gcs_db_path = gcs_db_path
         self.sync_interval = 60  # Sync every 60 seconds
         self.running = False
-        self.sync_thread = None
-        self._storage_client = None
+        self.sync_thread: threading.Thread | None = None
+        self._storage_client: Any = None
 
     @property
-    def storage_client(self):
+    def storage_client(self) -> Any:
         """Lazy initialization of GCS client."""
         if self._storage_client is None:
-            from google.cloud import storage
+            from google.cloud import storage  # type: ignore[import-untyped]
 
             self._storage_client = storage.Client()
         return self._storage_client
@@ -188,7 +189,7 @@ def main() -> None:
                 db_sync_manager.start_periodic_sync()
 
                 # Register cleanup handlers
-                def cleanup_handler(signum=None, frame=None):  # noqa: ARG001
+                def cleanup_handler(signum: Any = None, frame: Any = None) -> None:  # noqa: ARG001
                     logger.info("Received shutdown signal, cleaning up...")
                     if db_sync_manager:
                         db_sync_manager.stop()
@@ -213,7 +214,7 @@ def main() -> None:
             storage_path_obj.mkdir(parents=True, exist_ok=True)
             from nexus.backends.local import LocalBackend
 
-            backend = LocalBackend(root_path=storage_path_obj)
+            backend = LocalBackend(root_path=storage_path_obj)  # type: ignore[assignment]
             db_path_local = storage_path_obj / "metadata.db"
             nexus_fs = NexusFS(backend=backend, db_path=str(db_path_local))
 

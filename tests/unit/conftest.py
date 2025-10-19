@@ -18,22 +18,28 @@ class FuseOSError(OSError):
         super().__init__(errno, f"FUSE error: {errno}")
 
 
+# Mock the fuse module at import time (before any test imports happen)
+# This ensures the fuse module is available when nexus.fuse modules are imported
+_fuse_mock = MagicMock()
+_fuse_mock.FUSE = MagicMock
+_fuse_mock.Operations = object
+_fuse_mock.FuseOSError = FuseOSError
+sys.modules["fuse"] = _fuse_mock
+
+
 @pytest.fixture(autouse=True)
 def mock_fuse_module():
-    """Mock the fuse module for all FUSE tests.
+    """Reset the fuse module mock before each test.
 
     This fixture automatically runs before each test to ensure
     a fresh fuse module mock, preventing test pollution.
     """
-    # Create a fresh mock for the fuse module
-    fuse_mock = MagicMock()
-    fuse_mock.FUSE = MagicMock
-    fuse_mock.Operations = object
-    fuse_mock.FuseOSError = FuseOSError
+    # Reset the existing mock to clear any side_effects
+    _fuse_mock.reset_mock()
+    _fuse_mock.FUSE = MagicMock
+    _fuse_mock.Operations = object
+    _fuse_mock.FuseOSError = FuseOSError
 
-    # Set it in sys.modules
-    sys.modules["fuse"] = fuse_mock
+    yield _fuse_mock
 
-    yield fuse_mock
-
-    # Cleanup is automatic - pytest will create a new mock for the next test
+    # Cleanup happens automatically before next test

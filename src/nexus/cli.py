@@ -15,8 +15,9 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 import nexus
-from nexus import NexusFilesystem, NexusFS
+from nexus import NexusFilesystem
 from nexus.core.exceptions import NexusError, NexusFileNotFoundError, ValidationError
+from nexus.core.nexus_fs import NexusFS
 
 console = Console()
 
@@ -1645,6 +1646,18 @@ def size(
     is_flag=True,
     help="Enable FUSE debug output",
 )
+@click.option(
+    "--remote-url",
+    type=str,
+    default=None,
+    help="Remote Nexus RPC server URL (e.g., http://localhost:8080)",
+)
+@click.option(
+    "--remote-api-key",
+    type=str,
+    default=None,
+    help="API key for remote server authentication (optional)",
+)
 @add_backend_options
 def mount(
     mount_point: str,
@@ -1652,6 +1665,8 @@ def mount(
     daemon: bool,
     allow_other: bool,
     debug: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
     backend_config: BackendConfig,
 ) -> None:
     """Mount Nexus filesystem to a local path.
@@ -1692,19 +1707,31 @@ def mount(
         from nexus.fuse import mount_nexus
 
         # Get filesystem instance
-        nx = get_filesystem(backend_config)
+        nx: NexusFilesystem
+        if remote_url:
+            # Use remote NexusFS
+            from nexus.remote import RemoteNexusFS
+
+            nx = RemoteNexusFS(
+                server_url=remote_url,
+                api_key=remote_api_key,
+            )
+        else:
+            # Use local or GCS backend
+            nx = get_filesystem(backend_config)
 
         # Create mount point if it doesn't exist
         mount_path = Path(mount_point)
-        if not mount_path.exists():
-            mount_path.mkdir(parents=True, exist_ok=True)
-            console.print(f"[green]✓[/green] Created mount point [cyan]{mount_point}[/cyan]")
+        mount_path.mkdir(parents=True, exist_ok=True)
 
         # Display mount info
         console.print("[green]Mounting Nexus filesystem...[/green]")
         console.print(f"  Mount point: [cyan]{mount_point}[/cyan]")
         console.print(f"  Mode: [cyan]{mode}[/cyan]")
-        console.print(f"  Backend: [cyan]{backend_config.backend}[/cyan]")
+        if remote_url:
+            console.print(f"  Remote URL: [cyan]{remote_url}[/cyan]")
+        else:
+            console.print(f"  Backend: [cyan]{backend_config.backend}[/cyan]")
         if daemon:
             console.print("  [yellow]Running in background (daemon mode)[/yellow]")
 
@@ -1730,6 +1757,14 @@ def mount(
             console.print()
             console.print("[yellow]To unmount:[/yellow]")
             console.print(f"  nexus unmount {mount_point}")
+
+            # Keep process alive by waiting on the mount thread
+            try:
+                fuse.wait()
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Unmounting...[/yellow]")
+                fuse.unmount()
+                console.print("[green]✓[/green] Unmounted")
         else:
             console.print(f"[green]Mounted Nexus to [cyan]{mount_point}[/cyan][/green]")
             console.print("[yellow]Press Ctrl+C to unmount[/yellow]")

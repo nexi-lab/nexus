@@ -95,6 +95,10 @@ class NexusFUSEOperations(Operations):
             # Handle virtual views (.raw, .txt, .md)
             original_path, view_type = self._parse_virtual_path(path)
 
+            # Special case: root directory always exists
+            if original_path == "/":
+                return self._dir_attrs()
+
             # Check if it's the .raw directory itself
             if path == "/.raw":
                 return self._dir_attrs()
@@ -738,7 +742,14 @@ class NexusFUSEOperations(Operations):
                             self.cache.cache_parsed(path, view_type, parsed_content)
                             return parsed_content
             except Exception as e:
-                logger.warning(f"Error parsing file {path}: {e}")
+                # ParserError is expected for files without parsers (e.g., .bin files)
+                # Just fall back to raw content silently
+                from nexus.core.exceptions import ParserError
+
+                if isinstance(e, ParserError):
+                    logger.debug(f"No parser available for {path}, using raw content")
+                else:
+                    logger.warning(f"Error parsing file {path}: {e}")
 
         # Fallback to raw content
         return content

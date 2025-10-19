@@ -125,9 +125,10 @@ class NexusFUSE:
         )
 
         # Build FUSE options
+        # Note: Always use foreground=True because we handle backgrounding ourselves via threading
         fuse_options = {
             "nothreads": False,
-            "foreground": foreground,
+            "foreground": True,  # Always run FUSE in foreground mode (within our thread)
             "debug": debug,
         }
 
@@ -162,7 +163,8 @@ class NexusFUSE:
                 finally:
                     self._mounted = False
 
-            self._mount_thread = threading.Thread(target=mount_thread, daemon=True)
+            # Use daemon=False so the thread keeps the process alive
+            self._mount_thread = threading.Thread(target=mount_thread, daemon=False)
             self._mount_thread.start()
             self._mounted = True
 

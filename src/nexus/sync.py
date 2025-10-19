@@ -164,9 +164,9 @@ def sync_directories(
     # Get source files
     if is_source_local:
         source_files = list_local_files(source)
-        # Convert to relative paths
+        # Convert to relative paths with forward slashes (POSIX-style)
         source_path = Path(source)
-        source_files_rel = [str(Path(f).relative_to(source_path)) for f in source_files]
+        source_files_rel = [Path(f).relative_to(source_path).as_posix() for f in source_files]
     else:
         source_files_abs = nx.list(source, recursive=True)
         # Ensure we have a list of strings (paths)
@@ -187,7 +187,8 @@ def sync_directories(
         if is_dest_local:
             dest_files = list_local_files(dest)
             dest_path = Path(dest)
-            dest_files_rel = [str(Path(f).relative_to(dest_path)) for f in dest_files]
+            # Convert to relative paths with forward slashes (POSIX-style)
+            dest_files_rel = [Path(f).relative_to(dest_path).as_posix() for f in dest_files]
         else:
             dest_files_abs = nx.list(dest, recursive=True)
             # Ensure we have a list of strings (paths)

@@ -838,29 +838,92 @@ cat /mnt/nexus/workspace/file.txt
 nexus unmount /mnt/nexus
 ```
 
-### rclone-style CLI Commands
+### rclone-style CLI Commands (v0.2.0)
+
+Nexus provides efficient file operations inspired by rclone, with automatic deduplication and progress tracking:
+
+#### Sync Command
+One-way synchronization with hash-based change detection:
 
 ```bash
-# Smart sync (only copy changed files)
-nexus sync /local/dir/ /workspace/backup/
-nexus sync /workspace/project/ /mnt/nexus/backup/
+# Sync local directory to Nexus (only copies changed files)
+nexus sync ./local/dataset/ /workspace/training/
 
-# Copy with deduplication
-nexus copy /local/data/ /workspace/project/
+# Preview changes before syncing (dry-run)
+nexus sync ./data/ /workspace/backup/ --dry-run
 
-# Move files efficiently
-nexus move /workspace/old/ /archives/2024/
+# Mirror sync - delete extra files in destination
+nexus sync /workspace/source/ /workspace/dest/ --delete
 
-# Visual directory tree
+# Disable hash comparison (force copy all files)
+nexus sync ./data/ /workspace/ --no-checksum
+```
+
+#### Copy Command
+Smart copy with automatic deduplication:
+
+```bash
+# Copy directory recursively (skips identical files)
+nexus copy ./local/data/ /workspace/project/ --recursive
+
+# Copy within Nexus (leverages CAS deduplication)
+nexus copy /workspace/source/ /workspace/dest/ --recursive
+
+# Copy Nexus to local
+nexus copy /workspace/data/ ./backup/ --recursive
+
+# Copy single file
+nexus copy /workspace/file.txt /workspace/copy.txt
+
+# Disable checksum verification
+nexus copy ./data/ /workspace/ --recursive --no-checksum
+```
+
+#### Move Command
+Efficient file/directory moves with confirmation prompts:
+
+```bash
+# Move file (rename if possible, copy+delete otherwise)
+nexus move /workspace/old.txt /workspace/new.txt
+
+# Move directory without confirmation
+nexus move /workspace/old_dir/ /archives/2024/ --force
+```
+
+#### Tree Command
+Visualize directory structure as ASCII tree:
+
+```bash
+# Show full directory tree
 nexus tree /workspace/
 
-# Calculate size
+# Limit depth to 2 levels
+nexus tree /workspace/ -L 2
+
+# Show file sizes
+nexus tree /workspace/ --show-size
+```
+
+#### Size Command
+Calculate directory sizes with human-readable output:
+
+```bash
+# Calculate total size
 nexus size /workspace/project/
 
-# Serve over HTTP/WebDAV
-nexus serve http /workspace/ --port 8080
-nexus serve webdav /workspace/ --port 8081
+# Human-readable output (KB, MB, GB)
+nexus size /workspace/ --human
+
+# Show top 10 largest files
+nexus size /workspace/ --human --details
 ```
+
+**Features:**
+- **Hash-based deduplication** - Only copies changed files
+- **Progress bars** - Visual feedback for long operations
+- **Dry-run mode** - Preview changes before execution
+- **Cross-platform paths** - Works with local filesystem and Nexus paths
+- **Automatic deduplication** - Leverages Content-Addressable Storage (CAS)
 
 ### Performance Comparison
 
@@ -1315,7 +1378,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [x] **Background daemon mode** - Run mount in background with `--daemon`
 - [x] **All FUSE operations** - read, write, create, delete, mkdir, rmdir, rename, truncate
 - [x] **Unit tests** - Comprehensive test coverage for FUSE operations
-- [ ] **rclone-style CLI commands** - `sync`, `copy`, `move`, `tree`, `size`
+- [x] **rclone-style CLI commands** - `sync`, `copy`, `move`, `tree`, `size` with progress bars
 - [ ] **Background parsing** - Async content parsing on write
 - [ ] **FUSE performance optimizations** - Caching, read-ahead, lazy loading
 - [ ] **Image OCR parser** - Extract text from images (PNG, JPEG)

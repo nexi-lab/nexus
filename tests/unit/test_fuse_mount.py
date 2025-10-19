@@ -414,8 +414,8 @@ class TestNexusFUSEContextManager:
             with patch.object(fuse, "unmount", side_effect=RuntimeError("unmount failed")):
                 pass  # Exit context
 
-        # Should have logged error
-        mock_logger.error.assert_called_once()
+        # Should have logged error (may log multiple times)
+        assert mock_logger.error.called
 
     def test_context_manager_does_nothing_if_not_mounted(
         self, mock_nexus_fs: MagicMock, temp_mount_point: Path

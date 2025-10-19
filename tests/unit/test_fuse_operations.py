@@ -52,7 +52,8 @@ def mock_nexus_fs() -> MagicMock:
 @pytest.fixture
 def fuse_ops(mock_nexus_fs: MagicMock) -> NexusFUSEOperations:
     """Create FUSE operations with mock filesystem."""
-    return NexusFUSEOperations(mock_nexus_fs, MountMode.SMART)
+    # Create with empty cache config to avoid metrics issues
+    return NexusFUSEOperations(mock_nexus_fs, MountMode.SMART, cache_config={})
 
 
 class TestVirtualPathParsing:

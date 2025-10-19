@@ -621,28 +621,66 @@ nexus serve --data-dir ~/nexus-data
 
 ### Deploying Nexus Server
 
-For production use, deploy Nexus to a VM with persistent storage for metadata:
+#### Google Cloud Platform (Recommended)
 
-**Example Docker Deployment:**
+Deploy to GCP with a single command using the automated deployment script:
 
 ```bash
-# Build Docker image
-cd /path/to/nexus
-docker build -t nexus-server:latest .
+# Quick start
+./deploy-gcp.sh --project-id YOUR-PROJECT-ID --api-key mysecret
 
-# Run server with GCS backend
+# With GCS backend
+./deploy-gcp.sh \
+  --project-id YOUR-PROJECT-ID \
+  --gcs-bucket your-nexus-bucket \
+  --api-key mysecret \
+  --machine-type e2-standard-2
+```
+
+**Features:**
+- ✅ Automated VM provisioning (Ubuntu 22.04)
+- ✅ Systemd service with auto-restart
+- ✅ Firewall configuration
+- ✅ GCS backend support
+- ✅ Production-ready setup
+
+**See [GCP Deployment Guide](docs/deployment/GCP_DEPLOYMENT.md) for complete instructions.**
+
+#### Docker Deployment
+
+Deploy using Docker for consistent environments and easy management:
+
+```bash
+# Quick start with Docker Compose
+cp .env.docker.example .env
+# Edit .env with your configuration
+docker-compose up -d
+
+# Or run directly
+docker build -t nexus-server:latest .
 docker run -d \
   --name nexus-server \
   --restart unless-stopped \
   -p 8080:8080 \
-  -v /var/lib/nexus:/app/data \
+  -v nexus-data:/app/data \
   -e NEXUS_API_KEY="your-api-key" \
-  -e NEXUS_BACKEND=gcs \
-  -e NEXUS_GCS_BUCKET="your-bucket-name" \
-  -e NEXUS_GCS_PROJECT="YOUR-PROJECT-ID" \
-  -e NEXUS_DB_PATH="/app/data/nexus-metadata.db" \
   nexus-server:latest
+
+# Deploy to GCP with Docker (automated)
+./deploy-gcp-docker.sh \
+  --project-id your-project-id \
+  --api-key mysecret \
+  --build-local
 ```
+
+**Features:**
+- ✅ Multi-stage build for optimized image size (~300MB)
+- ✅ Non-root user for security
+- ✅ Health checks and auto-restart
+- ✅ GCS backend support
+- ✅ Docker Compose for easy orchestration
+
+**See [Docker Deployment Guide](docs/deployment/DOCKER_DEPLOYMENT.md) for complete instructions.**
 
 **Deployment Features:**
 - **Persistent Metadata**: SQLite database stored on VM disk at `/var/lib/nexus/`

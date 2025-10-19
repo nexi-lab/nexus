@@ -56,7 +56,7 @@ class DatabaseSyncManager:
     def storage_client(self) -> Any:
         """Lazy initialization of GCS client."""
         if self._storage_client is None:
-            from google.cloud import storage  # type: ignore[import-untyped]
+            from google.cloud import storage  # type: ignore[attr-defined]
 
             self._storage_client = storage.Client()
         return self._storage_client

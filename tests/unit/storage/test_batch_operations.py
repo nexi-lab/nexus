@@ -1,6 +1,5 @@
 """Unit tests for batch metadata operations."""
 
-import tempfile
 from pathlib import Path
 
 from nexus import LocalBackend, NexusFS

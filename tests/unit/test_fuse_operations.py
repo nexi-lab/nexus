@@ -560,25 +560,38 @@ class TestErrorHandling:
 class TestWindowsCompatibility:
     """Test Windows compatibility features."""
 
-    @patch("os.getuid", side_effect=AttributeError("Windows"))
-    @patch("os.getgid", side_effect=AttributeError("Windows"))
     def test_getattr_windows_compatibility(
-        self,
-        mock_gid: MagicMock,
-        mock_uid: MagicMock,
-        fuse_ops: NexusFUSEOperations,
-        mock_nexus_fs: MagicMock,
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
     ) -> None:
         """Test that getattr works on Windows (no getuid/getgid)."""
         mock_nexus_fs.is_directory.return_value = False
         mock_nexus_fs.exists.return_value = True
         mock_nexus_fs.read.return_value = b"content"
 
-        attrs = fuse_ops.getattr("/file.txt")
+        # Temporarily hide os.getuid and os.getgid to simulate Windows
+        import os
 
-        # Should use fallback values
-        assert attrs["st_uid"] == 0
-        assert attrs["st_gid"] == 0
+        original_getuid = getattr(os, "getuid", None)
+        original_getgid = getattr(os, "getgid", None)
+
+        try:
+            # Remove the functions if they exist
+            if original_getuid is not None:
+                delattr(os, "getuid")
+            if original_getgid is not None:
+                delattr(os, "getgid")
+
+            attrs = fuse_ops.getattr("/file.txt")
+
+            # Should use fallback values
+            assert attrs["st_uid"] == 0
+            assert attrs["st_gid"] == 0
+        finally:
+            # Restore the functions
+            if original_getuid is not None:
+                os.getuid = original_getuid
+            if original_getgid is not None:
+                os.getgid = original_getgid
 
 
 class TestAutoParseMode:

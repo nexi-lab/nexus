@@ -361,6 +361,12 @@ echo "   $ nexus mount /mnt/nexus"
 echo "   $ grep 'pattern' /mnt/nexus/**/*.pdf.txt"
 echo ""
 
+print_info "💡 NEW: CLI grep with --search-mode (v0.2.0):"
+echo "   $ nexus grep 'revenue' --file-pattern '**/*.pdf' --search-mode=parsed"
+echo "   $ nexus grep 'TODO' --search-mode=raw"
+echo "   Results show source type: (parsed) or (raw)"
+echo ""
+
 # ============================================================================
 # Example 5: Find Command
 # ============================================================================

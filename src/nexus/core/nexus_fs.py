@@ -587,6 +587,7 @@ class NexusFS(NexusFilesystem):
         file_pattern: str | None = None,
         ignore_case: bool = False,
         max_results: int = 1000,
+        search_mode: str = "auto",
     ) -> builtins.list[dict[str, Any]]:
         r"""
         Search file contents using regex patterns.
@@ -597,6 +598,10 @@ class NexusFS(NexusFilesystem):
             file_pattern: Optional glob pattern to filter files (e.g., "*.py")
             ignore_case: If True, perform case-insensitive search (default: False)
             max_results: Maximum number of results to return (default: 1000)
+            search_mode: Content search mode (default: "auto")
+                - "auto": Try parsed text first, fallback to raw (default)
+                - "parsed": Only search parsed text (skip files without parsed content)
+                - "raw": Only search raw file content (skip parsing)
 
         Returns:
             List of match dicts, each containing:
@@ -604,19 +609,34 @@ class NexusFS(NexusFilesystem):
             - line: Line number (1-indexed)
             - content: Matched line content
             - match: The matched text
+            - source: Source type - "parsed" or "raw"
 
         Examples:
-            # Search for "TODO" in all files
-            fs.grep("TODO")  # Returns: [{"file": "/main.py", "line": 42, "content": "# TODO: ...", ...}, ...]
+            # Search for "TODO" in all files (auto mode - tries parsed first)
+            fs.grep("TODO")
+            # Returns: [{"file": "/main.py", "line": 42, "content": "...", "source": "raw"}, ...]
 
             # Search for function definitions in Python files
             fs.grep(r"def \w+", file_pattern="**/*.py")
+
+            # Search only parsed text from PDFs
+            fs.grep("revenue", file_pattern="**/*.pdf", search_mode="parsed")
+
+            # Search only raw content (skip parsing)
+            fs.grep("TODO", search_mode="raw")
 
             # Case-insensitive search
             fs.grep("error", ignore_case=True)
         """
         if path:
             path = self._validate_path(path)
+
+        # Validate search_mode
+        valid_modes = {"auto", "parsed", "raw"}
+        if search_mode not in valid_modes:
+            raise ValueError(
+                f"Invalid search_mode: {search_mode}. Must be one of: {', '.join(valid_modes)}"
+            )
 
         # Compile regex pattern
         flags = re.IGNORECASE if ignore_case else 0
@@ -644,22 +664,32 @@ class NexusFS(NexusFilesystem):
                 break
 
             try:
-                # Try to get parsed text first (if auto-parsing is enabled)
-                parsed_text = self.metadata.get_file_metadata(file_path, "parsed_text")
+                text: str | None = None
+                source: str = "raw"
 
-                if parsed_text:
-                    # Use parsed text for search
-                    text = parsed_text
-                else:
-                    # Fall back to reading raw content
+                # Get parsed text if needed
+                if search_mode in ("auto", "parsed"):
+                    parsed_text = self.metadata.get_file_metadata(file_path, "parsed_text")
+                    if parsed_text:
+                        text = parsed_text
+                        source = "parsed"
+
+                # Get raw text if needed
+                if text is None and search_mode in ("auto", "raw"):
+                    # Read raw content
                     content = self.read(file_path)
 
                     # Try to decode as text
                     try:
                         text = content.decode("utf-8")
+                        source = "raw"
                     except UnicodeDecodeError:
                         # Skip binary files
                         continue
+
+                # Skip if no text available
+                if text is None:
+                    continue
 
                 # Search line by line
                 for line_num, line in enumerate(text.splitlines(), start=1):
@@ -674,6 +704,7 @@ class NexusFS(NexusFilesystem):
                                 "line": line_num,
                                 "content": line,
                                 "match": match.group(0),
+                                "source": source,
                             }
                         )
 

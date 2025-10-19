@@ -176,6 +176,7 @@ class NexusFilesystem(ABC):
         file_pattern: str | None = None,
         ignore_case: bool = False,
         max_results: int = 1000,
+        search_mode: str = "auto",
     ) -> builtins.list[dict[str, Any]]:
         """
         Search file contents using regex patterns.
@@ -186,6 +187,10 @@ class NexusFilesystem(ABC):
             file_pattern: Optional glob pattern to filter files (e.g., "*.py")
             ignore_case: If True, perform case-insensitive search (default: False)
             max_results: Maximum number of results to return (default: 1000)
+            search_mode: Content search mode (default: "auto")
+                - "auto": Try parsed text first, fallback to raw
+                - "parsed": Only search parsed text
+                - "raw": Only search raw file content
 
         Returns:
             List of match dicts, each containing:
@@ -193,6 +198,7 @@ class NexusFilesystem(ABC):
             - line: Line number (1-indexed)
             - content: Matched line content
             - match: The matched text
+            - source: Source type - "parsed" or "raw"
 
         Examples:
             # Search for "TODO" in all files
@@ -200,6 +206,9 @@ class NexusFilesystem(ABC):
 
             # Search for function definitions in Python files
             fs.grep(r"def \\w+", file_pattern="**/*.py")
+
+            # Search only parsed PDFs
+            fs.grep("revenue", file_pattern="**/*.pdf", search_mode="parsed")
 
             # Case-insensitive search
             fs.grep("error", ignore_case=True)

@@ -994,6 +994,24 @@ def main() -> None:
             print(f"   - {match['file']}:{match['line']}")
             print(f"     {match['content'].strip()}")
 
+        # NEW in v0.2.0 - search_mode parameter
+        print("\n62a. Testing grep() with search_mode parameter (v0.2.0)...")
+        print("   search_mode='auto': Try parsed text first, fallback to raw (default)")
+        auto_matches = nx_discover.grep("TODO", search_mode="auto")
+        print(f"   Found {len(auto_matches)} matches with auto mode")
+        for match in auto_matches[:2]:
+            source = match.get("source", "raw")
+            print(f"   - {match['file']}:{match['line']} (source: {source})")
+
+        print("\n   search_mode='raw': Only search raw file content (skip parsing)")
+        raw_matches = nx_discover.grep("TODO", search_mode="raw")
+        print(f"   Found {len(raw_matches)} matches with raw mode")
+
+        print("\n   search_mode='parsed': Only search parsed text (for PDFs/docs)")
+        parsed_matches = nx_discover.grep("TODO", search_mode="parsed")
+        print(f"   Found {len(parsed_matches)} matches with parsed mode")
+        print("   (Only includes files with parsed content)")
+
         print("\n63. Summary of file discovery operations:")
         print("   list() enhancements:")
         print("   ✓ recursive parameter - control depth of listing")

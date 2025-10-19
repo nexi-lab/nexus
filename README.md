@@ -722,6 +722,70 @@ cat /mnt/nexus/workspace/file.txt
 nexus unmount /mnt/nexus
 ```
 
+### Performance & Caching (v0.2.0)
+
+FUSE mounts include automatic caching for improved performance. Caching is **enabled by default** with sensible defaults - no configuration needed for most users.
+
+**Default Performance:**
+- ✅ Attribute caching (1024 entries, 60s TTL) - Makes `ls` and `stat` operations faster
+- ✅ Content caching (100 files) - Speeds up repeated file reads
+- ✅ Parsed content caching (50 files) - Accelerates PDF/Excel text extraction
+- ✅ Automatic cache invalidation on writes/deletes - Always consistent
+
+**Advanced: Custom Cache Configuration**
+
+For power users with specific performance requirements:
+
+```python
+from nexus import connect
+from nexus.fuse import mount_nexus
+
+nx = connect(config={"data_dir": "./nexus-data"})
+
+# Custom cache configuration
+cache_config = {
+    "attr_cache_size": 2048,      # Double the attribute cache (default: 1024)
+    "attr_cache_ttl": 120,         # Cache attributes for 2 minutes (default: 60s)
+    "content_cache_size": 200,     # Cache 200 files (default: 100)
+    "parsed_cache_size": 100,      # Cache 100 parsed files (default: 50)
+    "enable_metrics": True         # Track cache hit/miss rates (default: False)
+}
+
+fuse = mount_nexus(
+    nx,
+    "/mnt/nexus",
+    mode="smart",
+    cache_config=cache_config,
+    foreground=False
+)
+
+# View cache performance (if metrics enabled)
+# Note: Access via fuse.fuse.operations.cache
+```
+
+**Cache Configuration Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `attr_cache_size` | 1024 | Max number of cached file attribute entries |
+| `attr_cache_ttl` | 60 | Time-to-live for attributes in seconds |
+| `content_cache_size` | 100 | Max number of cached file contents |
+| `parsed_cache_size` | 50 | Max number of cached parsed contents (PDFs, etc.) |
+| `enable_metrics` | False | Enable cache hit/miss tracking |
+
+**When to Tune Cache Settings:**
+
+- **Large directory listings**: Increase `attr_cache_size` to 2048+ and `attr_cache_ttl` to 120+
+- **Many small files**: Increase `content_cache_size` to 500+
+- **Heavy PDF/Excel use**: Increase `parsed_cache_size` to 200+
+- **Performance analysis**: Enable `enable_metrics` to measure cache effectiveness
+- **Memory-constrained**: Decrease all cache sizes (e.g., 512 / 50 / 25)
+
+**Notes:**
+- Caches are **thread-safe** - safe for concurrent access
+- Caches are **automatically invalidated** on file writes, deletes, and renames
+- Default settings work well for most use cases - tune only if needed
+
 ### rclone-style CLI Commands (v0.2.0)
 
 Nexus provides efficient file operations inspired by rclone, with automatic deduplication and progress tracking:
@@ -1264,7 +1328,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [x] **Unit tests** - Comprehensive test coverage for FUSE operations
 - [x] **rclone-style CLI commands** - `sync`, `copy`, `move`, `tree`, `size` with progress bars
 - [ ] **Background parsing** - Async content parsing on write
-- [ ] **FUSE performance optimizations** - Caching, read-ahead, lazy loading
+- [x] **FUSE performance optimizations** - Caching (TTL/LRU), cache invalidation, metrics
 - [ ] **Image OCR parser** - Extract text from images (PNG, JPEG)
 
 ### v0.3.0 - File Permissions & Skills System

@@ -72,6 +72,10 @@ class NexusFUSEOperations(Operations):
             # Handle virtual views (.raw, .txt, .md)
             original_path, view_type = self._parse_virtual_path(path)
 
+            # Special case: root directory always exists
+            if original_path == "/":
+                return self._dir_attrs()
+
             # Check if it's the .raw directory itself
             if path == "/.raw":
                 return self._dir_attrs()

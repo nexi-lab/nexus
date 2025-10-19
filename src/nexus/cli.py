@@ -17,6 +17,7 @@ from rich.table import Table
 import nexus
 from nexus import NexusFilesystem
 from nexus.core.exceptions import NexusError, NexusFileNotFoundError, ValidationError
+from nexus.core.nexus_fs import NexusFS
 
 console = Console()
 
@@ -1706,6 +1707,7 @@ def mount(
         from nexus.fuse import mount_nexus
 
         # Get filesystem instance
+        nx: NexusFilesystem
         if remote_url:
             # Use remote NexusFS
             from nexus.remote import RemoteNexusFS

@@ -121,26 +121,32 @@ class TestNexusFUSEMount:
         temp_mount_point: Path,
     ) -> None:
         """Test mounting in background mode."""
+        import threading
+
         fuse_manager = NexusFUSE(mock_nexus_fs, str(temp_mount_point))
 
-        # Mock FUSE to not block
-        mock_fuse_instance = MagicMock()
-        mock_fuse_class.return_value = mock_fuse_instance
+        # Mock FUSE to block briefly so thread stays alive
+        block_event = threading.Event()
+
+        def blocking_fuse(*args, **kwargs):
+            block_event.wait(timeout=1)  # Block for up to 1 second
+
+        mock_fuse_class.side_effect = blocking_fuse
 
         # Mount in background
         fuse_manager.mount(foreground=False)
 
-        # Should have started a thread
-        assert fuse_manager._mount_thread is not None
-        assert fuse_manager._mount_thread.is_alive()
-        assert fuse_manager._mounted is True
-
-        # Wait a bit for thread to start
-        time.sleep(0.1)
-
-        # Clean up
-        fuse_manager._mounted = False
-        fuse_manager._mount_thread.join(timeout=1)
+        try:
+            # Should have started a thread
+            assert fuse_manager._mount_thread is not None
+            assert fuse_manager._mount_thread.is_alive()
+            assert fuse_manager._mounted is True
+        finally:
+            # Clean up - unblock FUSE and wait for thread
+            block_event.set()
+            fuse_manager._mounted = False
+            if fuse_manager._mount_thread:
+                fuse_manager._mount_thread.join(timeout=2)
 
     def test_mount_already_mounted_raises_error(
         self, mock_nexus_fs: MagicMock, temp_mount_point: Path

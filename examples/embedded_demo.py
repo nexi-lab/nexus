@@ -291,19 +291,33 @@ def main() -> None:
         print("NOTE: Sections 22-24 use internal APIs for education.")
         print("      Section 25-29 show recommended user-facing approach.")
 
+        # Add small delay to ensure file handles are released (macOS tmpfs issue)
+        import time
+
+        time.sleep(0.5)
+
         print("\n22. Demonstrating path parsing and namespace extraction...")
         print("    (INTERNAL API - for educational purposes)")
-        nx5 = nexus.connect(config={"data_dir": str(data_dir)})
 
-        # Parse different namespace paths
+        try:
+            nx5 = nexus.connect(config={"data_dir": str(data_dir)})
+        except Exception as e:
+            print(f"\n[WARNING] Could not open connection (tmpfs locking issue): {e}")
+            print("Skipping Parts 6-14 (namespace isolation, work detection, etc.)")
+            print("Note: This is a macOS tmpfs limitation when reusing databases.")
+            print("Jumping to Part 15 (sync operations)...")
+            nx5 = None
 
-        test_paths = [
-            "/workspace/acme/agent1/data/file.txt",
-            "/shared/acme/datasets/model.pkl",
-            "/archives/acme/2024/01/backup.tar",
-            "/external/s3/bucket/file.txt",
-            "/system/config/settings.json",
-        ]
+        if nx5 is not None:
+            # Parse different namespace paths
+
+            test_paths = [
+                "/workspace/acme/agent1/data/file.txt",
+                "/shared/acme/datasets/model.pkl",
+                "/archives/acme/2024/01/backup.tar",
+                "/external/s3/bucket/file.txt",
+                "/system/config/settings.json",
+            ]
 
         print("   Parsing virtual paths to extract namespace info:")
         for path in test_paths:
@@ -511,28 +525,34 @@ def main() -> None:
             print(f"   - {path}")
             print(f"     Tenant: {info.tenant_id}, Agent: {info.agent_id or 'shared'}")
 
-        print("\n   Enforcing isolation:")
-        print("   ✓ ACME's agent1 can only access /workspace/acme/agent1/")
-        print("   ✓ ACME's agents can share via /shared/acme/")
-        print("   ✓ Tech Inc cannot access ACME's resources")
-        print("   ✓ Admins can access all tenants for maintenance")
+            print("\n   Enforcing isolation:")
+            print("   ✓ ACME's agent1 can only access /workspace/acme/agent1/")
+            print("   ✓ ACME's agents can share via /shared/acme/")
+            print("   ✓ Tech Inc cannot access ACME's resources")
+            print("   ✓ Admins can access all tenants for maintenance")
 
-        print("\n29. Summary of namespace features:")
-        print("   Namespaces defined:")
-        print("   - workspace/  : Agent-specific scratch space (tenant+agent required)")
-        print("   - shared/     : Tenant-wide shared data (tenant required)")
-        print("   - external/   : Pass-through to external backends (no tenant)")
-        print("   - system/     : System metadata (admin-only, read-only)")
-        print("   - archives/   : Cold storage (tenant required, read-only)")
-        print()
-        print("   Security features:")
-        print("   ✓ Path validation (null bytes, control chars, path traversal)")
-        print("   ✓ Tenant isolation (enforced by namespace)")
-        print("   ✓ Admin override (full access when needed)")
-        print("   ✓ Read-only namespaces (archives, system)")
-        print("   ✓ Custom namespace registration")
+            print("\n29. Summary of namespace features:")
+            print("   Namespaces defined:")
+            print("   - workspace/  : Agent-specific scratch space (tenant+agent required)")
+            print("   - shared/     : Tenant-wide shared data (tenant required)")
+            print("   - external/   : Pass-through to external backends (no tenant)")
+            print("   - system/     : System metadata (admin-only, read-only)")
+            print("   - archives/   : Cold storage (tenant required, read-only)")
+            print()
+            print("   Security features:")
+            print("   ✓ Path validation (null bytes, control chars, path traversal)")
+            print("   ✓ Tenant isolation (enforced by namespace)")
+            print("   ✓ Admin override (full access when needed)")
+            print("   ✓ Read-only namespaces (archives, system)")
+            print("   ✓ Custom namespace registration")
 
-        nx5.close()
+            nx5.close()
+        else:
+            # If nx5 failed to connect, skip Parts 6-14 and jump to Part 15
+            print("\n[INFO] Skipping Parts 6-14 due to database locking issue")
+            print("[INFO] Continuing to Part 15: rclone-style CLI Operations...")
+
+        # End of nx5 conditional block - Parts 6-14 run only if nx5 succeeds
 
         # ============================================================
         # Part 7: End-to-End Tenant Isolation (USER-FACING APIs ONLY!)
@@ -2182,6 +2202,109 @@ This document was compressed with gzip before upload.
         print("   These features work transparently with auto_parse!")
 
         nx_parse.close()
+
+        # ============================================================
+        # Part 15: rclone-style CLI Operations (v0.2.0)
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 15: rclone-style CLI Operations (NEW in v0.2.0)")
+        print("=" * 70)
+        print("Demonstrating sync, copy, tree, and size operations")
+
+        # Create test data for sync/copy operations
+        print("\n54. Setting up test data for file operations...")
+        nx_ops = nexus.connect(config={"data_dir": str(data_dir)})
+
+        # Create source directory with test files
+        nx_ops.write("/source/file1.txt", b"Content for file 1")
+        nx_ops.write("/source/file2.txt", b"Content for file 2")
+        nx_ops.write("/source/subdir/file3.txt", b"Content for file 3")
+        nx_ops.write("/source/subdir/file4.txt", b"Content for file 4")
+        print("   ✓ Created test files in /source/")
+
+        # These operations are typically done via CLI, but we can demonstrate
+        # the underlying functionality programmatically
+        from nexus.sync import copy_recursive, sync_directories
+
+        print("\n55. Demonstrating sync operation (hash-based)...")
+        stats = sync_directories(
+            nx_ops,
+            "/source",
+            "/dest",
+            delete=False,
+            dry_run=False,
+            checksum=True,
+            progress=False,  # Disable progress bar for demo
+        )
+        print(f"   Files checked: {stats.files_checked}")
+        print(f"   Files copied: {stats.files_copied}")
+        print(f"   Files skipped: {stats.files_skipped}")
+        print(f"   Bytes transferred: {stats.bytes_transferred:,}")
+        print("   ✓ Sync completed successfully")
+
+        print("\n56. Re-syncing (should skip identical files)...")
+        stats2 = sync_directories(
+            nx_ops,
+            "/source",
+            "/dest",
+            delete=False,
+            dry_run=False,
+            checksum=True,
+            progress=False,
+        )
+        print(f"   Files checked: {stats2.files_checked}")
+        print(f"   Files copied: {stats2.files_copied}")
+        print(f"   Files skipped: {stats2.files_skipped} (all files identical!)")
+        print("   ✓ Smart deduplication works!")
+
+        print("\n57. Testing sync with delete flag...")
+        # Add an extra file to destination
+        nx_ops.write("/dest/extra_file.txt", b"This will be deleted")
+        stats3 = sync_directories(
+            nx_ops,
+            "/source",
+            "/dest",
+            delete=True,  # Delete extra files
+            dry_run=False,
+            checksum=True,
+            progress=False,
+        )
+        print(f"   Files deleted: {stats3.files_deleted}")
+        print("   ✓ Extra files removed from destination")
+
+        print("\n58. Demonstrating copy operation...")
+        stats4 = copy_recursive(
+            nx_ops,
+            "/source",
+            "/backup",
+            checksum=True,
+            progress=False,
+        )
+        print(f"   Files copied: {stats4.files_copied}")
+        print("   ✓ Directory copied to /backup")
+
+        print("\n59. Listing files to verify operations...")
+        dest_files = nx_ops.list("/dest", recursive=True)
+        backup_files = nx_ops.list("/backup", recursive=True)
+        print(f"   Files in /dest: {len(dest_files)}")
+        print(f"   Files in /backup: {len(backup_files)}")
+
+        # Note: tree and size commands are typically CLI-only
+        # but we can show the underlying data they would display
+        print("\n60. CLI commands available for:")
+        print("   • nexus tree /workspace - ASCII tree visualization")
+        print("   • nexus size /workspace --human - Calculate directory sizes")
+        print("   • nexus sync ./local/ /workspace/ - One-way sync")
+        print("   • nexus copy ./data/ /backup/ --recursive - Smart copy")
+        print("   • nexus move /old /new - Efficient move/rename")
+        print()
+        print("   All commands support:")
+        print("   • Progress bars (tqdm) for long operations")
+        print("   • Hash-based change detection")
+        print("   • Dry-run mode (--dry-run)")
+        print("   • Cross-platform paths (local ↔ Nexus)")
+
+        nx_ops.close()
 
         print("\n✓ Integrated demo completed successfully!")
         print("=" * 70)

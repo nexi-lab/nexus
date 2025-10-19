@@ -465,7 +465,9 @@ class TestMountModes:
 class TestCacheIntegration:
     """Test cache integration in FUSE operations."""
 
-    def test_getattr_uses_cache(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
+    def test_getattr_uses_cache(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
         """Test that getattr uses cache for repeated requests."""
         mock_nexus_fs.is_directory.return_value = False
         mock_nexus_fs.exists.return_value = True
@@ -480,7 +482,9 @@ class TestCacheIntegration:
         assert attrs1 == attrs2
         assert mock_nexus_fs.read.call_count == 1
 
-    def test_write_invalidates_cache(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
+    def test_write_invalidates_cache(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
         """Test that writing invalidates cache."""
         # Set up file
         mock_nexus_fs.exists.return_value = False
@@ -492,7 +496,9 @@ class TestCacheIntegration:
         # Cache invalidation happens during write - just verify write succeeded
         assert fd > 0
 
-    def test_read_uses_content_cache(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
+    def test_read_uses_content_cache(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
         """Test that reading uses content cache."""
         mock_nexus_fs.exists.return_value = True
         mock_nexus_fs.read.return_value = b"cached content"
@@ -510,7 +516,9 @@ class TestCacheIntegration:
 class TestErrorHandling:
     """Test error handling in FUSE operations."""
 
-    def test_getattr_with_invalid_path(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
+    def test_getattr_with_invalid_path(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
         """Test getattr with filesystem errors."""
         mock_nexus_fs.is_directory.side_effect = Exception("Filesystem error")
 
@@ -519,7 +527,9 @@ class TestErrorHandling:
 
         assert exc_info.value.errno == errno.EIO
 
-    def test_readdir_with_filesystem_error(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
+    def test_readdir_with_filesystem_error(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
         """Test readdir handling of filesystem errors."""
         mock_nexus_fs.list.side_effect = Exception("List error")
 
@@ -528,7 +538,9 @@ class TestErrorHandling:
 
         assert exc_info.value.errno == errno.EIO
 
-    def test_open_with_filesystem_error(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
+    def test_open_with_filesystem_error(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
         """Test open handling of filesystem errors."""
         mock_nexus_fs.exists.side_effect = Exception("Exists error")
 
@@ -544,7 +556,9 @@ class TestErrorHandling:
 
         assert exc_info.value.errno == errno.EBADF
 
-    def test_read_with_filesystem_error(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
+    def test_read_with_filesystem_error(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
         """Test read handling of filesystem errors."""
         mock_nexus_fs.exists.return_value = True
         mock_nexus_fs.read.side_effect = Exception("Read error")
@@ -562,7 +576,13 @@ class TestWindowsCompatibility:
 
     @patch("os.getuid", side_effect=AttributeError("Windows"))
     @patch("os.getgid", side_effect=AttributeError("Windows"))
-    def test_getattr_windows_compatibility(self, mock_gid: MagicMock, mock_uid: MagicMock, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
+    def test_getattr_windows_compatibility(
+        self,
+        mock_gid: MagicMock,
+        mock_uid: MagicMock,
+        fuse_ops: NexusFUSEOperations,
+        mock_nexus_fs: MagicMock,
+    ) -> None:
         """Test that getattr works on Windows (no getuid/getgid)."""
         mock_nexus_fs.is_directory.return_value = False
         mock_nexus_fs.exists.return_value = True
@@ -676,7 +696,9 @@ class TestRawDirectory:
 class TestComplexPaths:
     """Test handling of complex file paths."""
 
-    def test_nested_directory_structure(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
+    def test_nested_directory_structure(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
         """Test handling deeply nested paths."""
         mock_nexus_fs.list.return_value = ["/a/b/c/d/file.txt"]
         mock_nexus_fs.is_directory.return_value = False
@@ -685,7 +707,9 @@ class TestComplexPaths:
 
         assert "file.txt" in entries
 
-    def test_path_with_special_characters(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
+    def test_path_with_special_characters(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
         """Test paths with special characters."""
         special_path = "/workspace/file-name_2024.txt"
         mock_nexus_fs.exists.side_effect = [False, True]  # virtual check, then exists check

@@ -56,9 +56,7 @@ class TestMountMode:
 class TestNexusFUSEInit:
     """Test NexusFUSE initialization."""
 
-    def test_init_default_params(
-        self, mock_nexus_fs: MagicMock, temp_mount_point: Path
-    ) -> None:
+    def test_init_default_params(self, mock_nexus_fs: MagicMock, temp_mount_point: Path) -> None:
         """Test initialization with default parameters."""
         fuse = NexusFUSE(mock_nexus_fs, str(temp_mount_point))
 
@@ -71,9 +69,7 @@ class TestNexusFUSEInit:
         assert fuse._mount_thread is None
         assert fuse._mounted is False
 
-    def test_init_custom_params(
-        self, mock_nexus_fs: MagicMock, temp_mount_point: Path
-    ) -> None:
+    def test_init_custom_params(self, mock_nexus_fs: MagicMock, temp_mount_point: Path) -> None:
         """Test initialization with custom parameters."""
         cache_config = {"attr_cache_size": 2048}
         fuse = NexusFUSE(
@@ -373,9 +369,7 @@ class TestNexusFUSEWait:
 
         assert not thread.is_alive()
 
-    def test_wait_with_no_thread(
-        self, mock_nexus_fs: MagicMock, temp_mount_point: Path
-    ) -> None:
+    def test_wait_with_no_thread(self, mock_nexus_fs: MagicMock, temp_mount_point: Path) -> None:
         """Test that wait does nothing when no mount thread exists."""
         fuse_manager = NexusFUSE(mock_nexus_fs, str(temp_mount_point))
 
@@ -458,9 +452,7 @@ class TestMountNexusFunction:
         )
 
         # Should have called mount
-        mock_instance.mount.assert_called_once_with(
-            foreground=True, allow_other=False, debug=False
-        )
+        mock_instance.mount.assert_called_once_with(foreground=True, allow_other=False, debug=False)
 
         assert result == mock_instance
 
@@ -495,9 +487,7 @@ class TestMountNexusFunction:
         )
 
         # Should have called mount with correct params
-        mock_instance.mount.assert_called_once_with(
-            foreground=False, allow_other=True, debug=True
-        )
+        mock_instance.mount.assert_called_once_with(foreground=False, allow_other=True, debug=True)
 
     @patch("nexus.fuse.mount.NexusFUSE")
     def test_mount_nexus_mode_conversion(

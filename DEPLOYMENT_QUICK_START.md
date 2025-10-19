@@ -54,11 +54,18 @@ curl http://localhost:8080/health
 **Best for:** Custom VM setups, full control over environment
 
 ```bash
-# Automated deployment
+# Initial deployment
 ./deploy-gcp.sh \
   --project-id your-gcp-project \
+  --instance-name nexus-server \
   --api-key $(openssl rand -hex 32) \
   --machine-type e2-standard-2
+
+# Redeploy code to existing instance (recommended for updates)
+./deploy-gcp.sh \
+  --project-id your-gcp-project \
+  --instance-name nexus-server \
+  --deploy-only
 ```
 
 **Docs:** [GCP Deployment Guide](docs/deployment/GCP_DEPLOYMENT.md)
@@ -125,6 +132,13 @@ docker-compose pull && docker-compose up -d  # Update
 # GCP + Docker
 gcloud compute ssh instance-name --zone=us-central1-a \
   --command='sudo docker logs -f $(sudo docker ps -q)'  # View logs
+
+# GCP Direct Install
+gcloud compute ssh nexus-server --zone=us-west1-a \
+  --command='sudo journalctl -u nexus-server -f'  # View logs
+gcloud compute ssh nexus-server --zone=us-west1-a \
+  --command='sudo systemctl restart nexus-server'  # Restart
+./deploy-gcp.sh --project-id PROJECT_ID --instance-name nexus-server --deploy-only  # Redeploy code
 
 # Local
 ./start-server.sh               # Start

@@ -38,4 +38,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/nexus').read()" || exit 1
 
 # Run the server
-CMD ["python", "-m", "nexus.server"]
+CMD ["nexus", "serve", "--host", "0.0.0.0", "--port", "8080"]

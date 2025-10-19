@@ -22,6 +22,6 @@ repos:
     rev: v1.8.0
     hooks:
       - id: mypy
-        additional_dependencies: [pydantic, types-PyYAML, alembic, sqlalchemy, cachetools, types-cachetools]
+        additional_dependencies: [pydantic, types-PyYAML, alembic, sqlalchemy, cachetools, types-cachetools, types-requests]
         args: [--ignore-missing-imports]
         exclude: ^(tests/|alembic/|examples/)

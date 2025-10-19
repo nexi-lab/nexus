@@ -21,6 +21,10 @@ class FileMetadata:
     created_at: datetime | None = None
     modified_at: datetime | None = None
     version: int = 1
+    # UNIX-style permissions (v0.3.0)
+    owner: str | None = None
+    group: str | None = None
+    mode: int | None = None  # Permission bits (e.g., 0o644)
 
     def validate(self) -> None:
         """Validate file metadata before database operations.

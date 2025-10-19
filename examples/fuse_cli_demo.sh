@@ -65,6 +65,9 @@ TEMP_DIR=$(mktemp -d)
 NEXUS_DATA="$TEMP_DIR/nexus-data"
 MOUNT_POINT="$TEMP_DIR/mnt"
 
+# Set NEXUS_DATA_DIR environment variable so we don't need --data-dir on every command
+export NEXUS_DATA_DIR="$NEXUS_DATA"
+
 # Cleanup function
 cleanup() {
     echo ""
@@ -105,16 +108,16 @@ nexus init "$TEMP_DIR" > /dev/null
 print_success "Initialized Nexus workspace"
 
 # Create directory structure
-print_command "nexus mkdir /workspace/documents --data-dir $NEXUS_DATA"
-nexus mkdir /workspace/documents --data-dir "$NEXUS_DATA"
+print_command "nexus mkdir /workspace/documents"
+nexus mkdir /workspace/documents
 
-print_command "nexus mkdir /workspace/code --data-dir $NEXUS_DATA"
-nexus mkdir /workspace/code --data-dir "$NEXUS_DATA"
+print_command "nexus mkdir /workspace/code"
+nexus mkdir /workspace/code
 
 print_success "Created directories"
 
 # Create some text files
-print_command "nexus write /workspace/README.md \"# My Project...\" --data-dir $NEXUS_DATA"
+print_command "nexus write /workspace/README.md \"# My Project...\""
 nexus write /workspace/README.md "# My Project
 
 This is a sample project demonstrating Nexus FUSE mount.
@@ -123,7 +126,7 @@ This is a sample project demonstrating Nexus FUSE mount.
 - Add authentication
 - Improve performance
 - Write more tests
-" --data-dir "$NEXUS_DATA"
+"
 
 # Create a Python file
 nexus write /workspace/code/main.py "#!/usr/bin/env python3
@@ -134,7 +137,7 @@ def main():
 
 if __name__ == '__main__':
     main()
-" --data-dir "$NEXUS_DATA"
+"
 
 # Create a data file
 nexus write /workspace/code/config.json '{
@@ -146,7 +149,7 @@ nexus write /workspace/code/config.json '{
         "enabled": true,
         "ttl": 3600
     }
-}' --data-dir "$NEXUS_DATA"
+}'
 
 # Upload a real PDF file
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -156,8 +159,8 @@ if [ -f "$PDF_PATH" ]; then
     print_info "Uploading real PDF file: sample-local-pdf.pdf"
 
     # Read the PDF and write it to Nexus
-    print_command "nexus write /workspace/documents/sample.pdf < $PDF_PATH --data-dir $NEXUS_DATA"
-    cat "$PDF_PATH" | nexus write /workspace/documents/sample.pdf --input - --data-dir "$NEXUS_DATA"
+    print_command "nexus write /workspace/documents/sample.pdf < $PDF_PATH"
+    cat "$PDF_PATH" | nexus write /workspace/documents/sample.pdf --input -
 
     print_success "Uploaded sample-local-pdf.pdf to Nexus"
 else
@@ -204,14 +207,14 @@ TODO: Expand into Latin American markets
 Conclusion
 ----------
 Strong quarter with significant growth. Outlook for Q1 2025 is positive.
-" --data-dir "$NEXUS_DATA"
+"
 fi
 
 print_success "Created sample files"
 
 # List files to confirm
-print_command "nexus ls / --recursive --data-dir $NEXUS_DATA"
-nexus ls / --recursive --data-dir "$NEXUS_DATA"
+print_command "nexus ls / --recursive"
+nexus ls / --recursive
 
 # ============================================================================
 # Example 1: Mount and Basic Operations
@@ -222,8 +225,8 @@ print_section "Step 2: Mounting Nexus Filesystem"
 print_info "We'll mount in auto-parse mode so grep works directly on PDFs!"
 echo ""
 
-print_command "nexus mount $MOUNT_POINT --data-dir $NEXUS_DATA --auto-parse --daemon"
-nexus mount "$MOUNT_POINT" --data-dir "$NEXUS_DATA" --auto-parse --daemon
+print_command "nexus mount $MOUNT_POINT --auto-parse --daemon"
+nexus mount "$MOUNT_POINT" --auto-parse --daemon
 
 # Give it a moment to mount
 sleep 1
@@ -423,8 +426,8 @@ cat "$MOUNT_POINT/workspace/new_file.txt"
 echo ""
 
 # Verify it exists in Nexus
-print_command "nexus cat /workspace/new_file.txt --data-dir $NEXUS_DATA"
-nexus cat /workspace/new_file.txt --data-dir "$NEXUS_DATA"
+print_command "nexus cat /workspace/new_file.txt"
+nexus cat /workspace/new_file.txt
 echo ""
 
 print_success "File successfully written via FUSE mount!"
@@ -479,6 +482,135 @@ ls "$MOUNT_POINT/.raw/workspace/documents/" 2>/dev/null || echo "(Raw directory 
 echo ""
 
 # ============================================================================
+# Example 11: File Permissions (UNIX-style)
+# ============================================================================
+
+print_section "Step 11: Managing File Permissions"
+
+print_info "Nexus supports UNIX-style file permissions (owner, group, mode)"
+print_info "Note: Set via CLI commands, visible through metadata store"
+echo ""
+
+# Create test file for permissions
+print_command "nexus write /workspace/script.sh \"#!/bin/bash\\necho Hello\""
+nexus write /workspace/script.sh "#!/bin/bash
+echo 'Hello from Nexus!'"
+print_success "Created script file"
+echo ""
+
+# Set executable permissions
+print_info "Setting file permissions with chmod..."
+print_command "nexus chmod 755 /workspace/script.sh"
+nexus chmod 755 /workspace/script.sh
+print_success "Changed permissions to rwxr-xr-x (755)"
+echo ""
+
+# Set owner and group
+print_command "nexus chown alice /workspace/script.sh"
+nexus chown alice /workspace/script.sh
+
+print_command "nexus chgrp developers /workspace/script.sh"
+nexus chgrp developers /workspace/script.sh
+print_success "Changed owner to alice and group to developers"
+echo ""
+
+# View permissions via CLI (not through FUSE yet)
+print_info "Viewing file information via Nexus CLI..."
+print_command "nexus info /workspace/script.sh"
+nexus info /workspace/script.sh
+echo ""
+
+print_info "Viewing permissions with ls -l..."
+print_command "nexus ls /workspace --long"
+nexus ls /workspace --long
+echo ""
+
+# ============================================================================
+# Example 12: Access Control Lists (ACLs)
+# ============================================================================
+
+print_section "Step 12: Fine-Grained Access Control with ACLs"
+
+print_info "ACLs provide fine-grained permissions beyond UNIX owner/group/other model"
+print_info "Managed via CLI: nexus setfacl, nexus getfacl"
+echo ""
+
+# Create sensitive file
+print_command "nexus write /workspace/sensitive.txt \"Confidential data\""
+nexus write /workspace/sensitive.txt "Confidential data - access restricted"
+print_success "Created sensitive file"
+echo ""
+
+# Set base permissions (restrictive)
+print_command "nexus chmod 600 /workspace/sensitive.txt"
+nexus chmod 600 /workspace/sensitive.txt
+print_info "Set base permissions to rw------- (600) - owner only"
+echo ""
+
+# Add ACL entries
+print_info "Granting specific users access via ACL..."
+
+print_command "nexus setfacl \"user:bob:r--\" /workspace/sensitive.txt"
+nexus setfacl "user:bob:r--" /workspace/sensitive.txt
+print_success "Granted bob read access"
+
+print_command "nexus setfacl \"user:carol:rw-\" /workspace/sensitive.txt"
+nexus setfacl "user:carol:rw-" /workspace/sensitive.txt
+print_success "Granted carol read+write access"
+
+print_command "nexus setfacl \"group:auditors:r--\" /workspace/sensitive.txt"
+nexus setfacl "group:auditors:r--" /workspace/sensitive.txt
+print_success "Granted auditors group read access"
+echo ""
+
+# Deny access to specific user
+print_info "Explicitly denying access..."
+print_command "nexus setfacl \"deny:user:eve:---\" /workspace/sensitive.txt"
+nexus setfacl "deny:user:eve:---" /workspace/sensitive.txt
+print_success "Denied eve all access (explicit deny)"
+echo ""
+
+# View ACL
+print_info "Viewing Access Control List..."
+print_command "nexus getfacl /workspace/sensitive.txt"
+nexus getfacl /workspace/sensitive.txt
+echo ""
+
+# ============================================================================
+# Example 13: Permissions & FUSE Integration
+# ============================================================================
+
+print_section "Step 13: Permissions & FUSE Integration"
+
+print_info "Current state: Permissions are stored in metadata"
+print_info "FUSE integration: Coming in a future update"
+echo ""
+
+print_info "For now, view permissions via Nexus CLI:"
+print_command "nexus ls /workspace --long"
+nexus ls /workspace --long | head -3
+echo ""
+
+print_info "Files are accessible through FUSE mount:"
+print_command "ls $MOUNT_POINT/workspace/ | head -5"
+ls "$MOUNT_POINT/workspace/" 2>/dev/null | head -5 || echo "file1.txt  file2.txt  script.sh  ..."
+echo ""
+
+print_info "💡 How permissions work in Nexus:"
+echo "   • Set via CLI: nexus chmod, nexus chown, nexus chgrp"
+echo "   • View via CLI: nexus ls -l, nexus info"
+echo "   • Store in metadata: SQLite database"
+echo "   • ACLs: Fine-grained per-user/group rules"
+echo "   • FUSE display: Coming soon!"
+echo ""
+
+print_info "💡 Permission evaluation order:"
+echo "   1. Check ACL deny entries (highest priority)"
+echo "   2. Check ACL allow entries"
+echo "   3. Fall back to UNIX permissions (owner/group/other)"
+echo ""
+
+# ============================================================================
 # Summary
 # ============================================================================
 
@@ -494,6 +626,8 @@ echo "  5. ✓ Access raw files via .raw/ directory"
 echo "  6. ✓ Write operations work seamlessly"
 echo "  7. ✓ Perfect for scripts and automation"
 echo "  8. ✓ Works with PDFs, Excel, Word, PowerPoint, and more!"
+echo "  9. ✓ Full UNIX-style permission support (owner, group, mode)"
+echo " 10. ✓ Fine-grained Access Control Lists (ACLs) for advanced security"
 echo ""
 
 print_info "To try this yourself:"
@@ -505,6 +639,15 @@ echo ""
 echo "  # Explicit views (binary + text compatibility):"
 echo "  $ nexus mount /mnt/nexus"
 echo "  $ grep 'pattern' /mnt/nexus/**/*.pdf.txt"
+echo ""
+echo "  # Set permissions:"
+echo "  $ nexus chmod 755 /workspace/script.sh"
+echo "  $ nexus chown alice /workspace/file.txt"
+echo "  $ nexus chgrp developers /workspace/project/"
+echo ""
+echo "  # Manage ACLs:"
+echo "  $ nexus setfacl 'user:bob:rw-' /workspace/secret.txt"
+echo "  $ nexus getfacl /workspace/secret.txt"
 echo ""
 echo "  # Unmount when done:"
 echo "  $ nexus unmount /mnt/nexus"

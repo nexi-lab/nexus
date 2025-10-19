@@ -179,6 +179,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     created_at=file_path.created_at,
                     modified_at=file_path.updated_at,
                     version=1,  # Not tracking versions yet in simplified schema
+                    # UNIX-style permissions (v0.3.0)
+                    owner=file_path.owner,
+                    group=file_path.group,
+                    mode=file_path.mode,
                 )
 
                 # Cache the result
@@ -216,6 +220,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     existing.content_hash = metadata.etag
                     existing.file_type = metadata.mime_type
                     existing.updated_at = metadata.modified_at or datetime.now(UTC)
+                    # Update permissions (v0.3.0)
+                    existing.owner = metadata.owner
+                    existing.group = metadata.group
+                    existing.mode = metadata.mode
                 else:
                     # Create new record
                     file_path = FilePathModel(
@@ -229,6 +237,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         file_type=metadata.mime_type,
                         created_at=metadata.created_at or datetime.now(UTC),
                         updated_at=metadata.modified_at or datetime.now(UTC),
+                        # UNIX-style permissions (v0.3.0)
+                        owner=metadata.owner,
+                        group=metadata.group,
+                        mode=metadata.mode,
                     )
                     # Validate model before inserting
                     file_path.validate()
@@ -345,6 +357,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             created_at=file_path.created_at,
                             modified_at=file_path.updated_at,
                             version=1,
+                            # UNIX-style permissions (v0.3.0)
+                            owner=file_path.owner,
+                            group=file_path.group,
+                            mode=file_path.mode,
                         )
                     )
 
@@ -480,6 +496,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         created_at=file_path.created_at,
                         modified_at=file_path.updated_at,
                         version=1,
+                        # UNIX-style permissions (v0.3.0)
+                        owner=file_path.owner,
+                        group=file_path.group,
+                        mode=file_path.mode,
                     )
                     result[file_path.virtual_path] = metadata
                     found_paths.add(file_path.virtual_path)
@@ -573,6 +593,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         file_path.content_hash = metadata.etag
                         file_path.file_type = metadata.mime_type
                         file_path.updated_at = metadata.modified_at or datetime.now(UTC)
+                        # Update permissions (v0.3.0)
+                        file_path.owner = metadata.owner
+                        file_path.group = metadata.group
+                        file_path.mode = metadata.mode
                     else:
                         # Create new record
                         file_path = FilePathModel(
@@ -586,6 +610,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             file_type=metadata.mime_type,
                             created_at=metadata.created_at or datetime.now(UTC),
                             updated_at=metadata.modified_at or datetime.now(UTC),
+                            # UNIX-style permissions (v0.3.0)
+                            owner=metadata.owner,
+                            group=metadata.group,
+                            mode=metadata.mode,
                         )
                         # Validate model before inserting
                         file_path.validate()

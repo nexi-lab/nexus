@@ -7,7 +7,7 @@ import boto3
 from botocore.exceptions import ClientError, EndpointConnectionError
 
 
-def check_server(endpoint_url, access_key, secret_key):
+def check_server(endpoint_url: str, access_key: str, secret_key: str) -> bool:
     """Check if server is accessible."""
     print(f"Checking server at: {endpoint_url}")
     print("=" * 60)

@@ -42,6 +42,7 @@ from nexus.core.exceptions import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.router import NamespaceConfig
+from nexus.remote import RemoteNexusFS
 
 # TODO: Import other modules when they are implemented
 # from nexus.core.client import NexusClient
@@ -181,6 +182,7 @@ __all__ = [
     "NexusFilesystem",  # Abstract base class for all filesystem modes
     # Filesystem implementation
     "NexusFS",
+    "RemoteNexusFS",  # Remote filesystem client
     # Backends
     "LocalBackend",
     "GCSBackend",

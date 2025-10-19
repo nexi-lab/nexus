@@ -87,6 +87,9 @@ cython_debug/
 
 # Nexus specific
 nexus-data/
+.nexus-server-data/
+test-nexus-data/
+test-server-data/
 *.db
 *.db-shm
 *.db-wal

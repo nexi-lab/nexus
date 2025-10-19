@@ -1718,11 +1718,10 @@ def mount(
             nx = get_filesystem(backend_config)
 
         # Create mount point if it doesn't exist
+        # Always try mkdir to detect stale mounts (exist_ok=True makes it safe)
         mount_path = Path(mount_point)
         try:
-            if not mount_path.exists():
-                mount_path.mkdir(parents=True, exist_ok=True)
-                console.print(f"[green]✓[/green] Created mount point [cyan]{mount_point}[/cyan]")
+            mount_path.mkdir(parents=True, exist_ok=True)
         except OSError as e:
             # If we get "Device not configured", try to unmount first
             if e.errno == 6:  # Device not configured
@@ -1738,9 +1737,7 @@ def mount(
                     console.print("[green]✓[/green] Unmounted stale mount")
 
                     # Try again
-                    if not mount_path.exists():
-                        mount_path.mkdir(parents=True, exist_ok=True)
-                        console.print(f"[green]✓[/green] Created mount point [cyan]{mount_point}[/cyan]")
+                    mount_path.mkdir(parents=True, exist_ok=True)
                 except Exception as unmount_error:
                     console.print(f"[red]Error:[/red] Could not clean up stale mount: {unmount_error}")
                     raise

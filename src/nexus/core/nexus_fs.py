@@ -540,7 +540,7 @@ class NexusFS(NexusFilesystem):
 
             # Combine and sort
             all_results = file_results + dir_results
-            all_results.sort(key=lambda x: x["path"])
+            all_results.sort(key=lambda x: str(x["path"]))
             return all_results
         else:
             # Return paths only

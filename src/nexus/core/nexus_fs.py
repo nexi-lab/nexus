@@ -485,8 +485,68 @@ class NexusFS(NexusFilesystem):
         # Sort by path name
         results.sort(key=lambda m: m.path)
 
+        # Add directories to results (infer from file paths + check backend)
+        # This ensures empty directories show up in listings
+        directories = set()
+
+        if not recursive:
+            # For non-recursive listings, infer immediate subdirectories from file paths
+            base_path = path if path != "/" else ""
+
+            # Get all files to infer directories
+            all_files_for_dirs = self.metadata.list(base_path)
+            for meta in all_files_for_dirs:
+                # Get relative path
+                rel_path = meta.path[len(path):] if path != "/" else meta.path[1:]
+                # Check if there's a directory component
+                if "/" in rel_path:
+                    # Extract first directory component
+                    dir_name = rel_path.split("/")[0]
+                    dir_path = path + dir_name if path != "/" else "/" + dir_name
+                    directories.add(dir_path)
+
+            # Check backend for empty directories (directories with no files)
+            # This catches newly created directories
+            try:
+                # For root path, directly use the backend
+                if path == "/":
+                    if hasattr(self.backend, 'list_dir'):
+                        try:
+                            entries = self.backend.list_dir("")
+                            for entry in entries:
+                                if entry.endswith('/'):  # Directory marker
+                                    dir_name = entry.rstrip('/')
+                                    dir_path = "/" + dir_name
+                                    directories.add(dir_path)
+                        except Exception:
+                            pass
+                else:
+                    route = self.router.route(
+                        path.rstrip("/"),
+                        tenant_id=self.tenant_id,
+                        agent_id=self.agent_id,
+                        is_admin=self.is_admin,
+                        check_write=False,
+                    )
+                    backend_path = route.backend_path
+
+                    # Use backend's list_dir method if available (for LocalBackend)
+                    if hasattr(route.backend, 'list_dir'):
+                        try:
+                            entries = route.backend.list_dir(backend_path)
+                            for entry in entries:
+                                if entry.endswith('/'):  # Directory marker
+                                    dir_name = entry.rstrip('/')
+                                    dir_path = path + dir_name if path != "/" else "/" + dir_name
+                                    directories.add(dir_path)
+                        except Exception:
+                            pass
+            except Exception:
+                # Ignore errors - directory detection is best-effort
+                pass
+
         if details:
-            return [
+            file_results = [
                 {
                     "path": meta.path,
                     "size": meta.size,
@@ -494,11 +554,34 @@ class NexusFS(NexusFilesystem):
                     "created_at": meta.created_at,
                     "etag": meta.etag,
                     "mime_type": meta.mime_type,
+                    "is_directory": False,
                 }
                 for meta in results
             ]
+
+            # Add directory entries
+            dir_results = [
+                {
+                    "path": dir_path,
+                    "size": 0,
+                    "modified_at": None,
+                    "created_at": None,
+                    "etag": None,
+                    "mime_type": None,
+                    "is_directory": True,
+                }
+                for dir_path in sorted(directories)
+            ]
+
+            # Combine and sort
+            all_results = file_results + dir_results
+            all_results.sort(key=lambda x: x["path"])
+            return all_results
         else:
-            return [meta.path for meta in results]
+            # Return paths only
+            all_paths = [meta.path for meta in results] + sorted(directories)
+            all_paths.sort()
+            return all_paths
 
     def glob(self, pattern: str, path: str = "/") -> builtins.list[str]:
         """

@@ -340,6 +340,43 @@ class LocalBackend(Backend):
         except Exception:
             return False
 
+    def list_dir(self, path: str) -> list[str]:
+        """List immediate contents of a directory.
+
+        Returns a list of entry names (not full paths).
+        Directory names are marked with a trailing '/' to distinguish them from files.
+
+        Args:
+            path: Directory path to list
+
+        Returns:
+            List of entry names (directories have trailing '/')
+
+        Raises:
+            FileNotFoundError: If directory doesn't exist
+            NotADirectoryError: If path is not a directory
+        """
+        try:
+            full_path = self.dir_root / path.lstrip("/")
+            if not full_path.exists():
+                raise FileNotFoundError(f"Directory not found: {path}")
+            if not full_path.is_dir():
+                raise NotADirectoryError(f"Not a directory: {path}")
+
+            entries = []
+            for entry in full_path.iterdir():
+                name = entry.name
+                # Mark directories with trailing slash
+                if entry.is_dir():
+                    name += '/'
+                entries.append(name)
+
+            return sorted(entries)
+        except (FileNotFoundError, NotADirectoryError):
+            raise
+        except Exception as e:
+            raise OSError(f"Failed to list directory {path}: {e}") from e
+
 
 class FileLock:
     """

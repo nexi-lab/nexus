@@ -311,7 +311,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 existing = session.scalar(stmt_new)
 
                 if existing:
-                    raise MetadataError(f"Destination path already exists: {new_path}", path=new_path)
+                    raise MetadataError(
+                        f"Destination path already exists: {new_path}", path=new_path
+                    )
 
                 # Update the virtual path (metadata-only, no CAS I/O!)
                 file_path.virtual_path = new_path
@@ -323,8 +325,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 self._cache.invalidate_path(old_path)
                 self._cache.invalidate_path(new_path)
                 # Also invalidate parent directories
-                old_parent = old_path.rsplit('/', 1)[0] or '/'
-                new_parent = new_path.rsplit('/', 1)[0] or '/'
+                old_parent = old_path.rsplit("/", 1)[0] or "/"
+                new_parent = new_path.rsplit("/", 1)[0] or "/"
                 self._cache.invalidate_list(old_parent)
                 if old_parent != new_parent:
                     self._cache.invalidate_list(new_parent)

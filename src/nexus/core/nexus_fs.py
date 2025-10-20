@@ -897,7 +897,8 @@ class NexusFS(NexusFilesystem):
         Get list of available namespace directories.
 
         Returns the built-in namespaces that should appear at root level.
-        Filters based on tenant and admin context.
+        Filters based on admin context only - tenant filtering happens
+        when accessing files within namespaces, not for listing directories.
 
         Returns:
             List of namespace names (e.g., ["workspace", "shared", "external"])
@@ -905,18 +906,16 @@ class NexusFS(NexusFilesystem):
         Examples:
             # Get namespaces for current user context
             namespaces = fs.get_available_namespaces()
-            # Returns: ["workspace", "shared", "external", "archives"]
+            # Returns: ["archives", "external", "shared", "workspace"]
             # (excludes "system" if not admin)
         """
         namespaces = []
 
         for name, config in self.router._namespaces.items():
-            # Include namespace if:
-            # - It's not admin-only OR user is admin
-            # - It doesn't require tenant OR user has a tenant
-            if (not config.admin_only or self.is_admin) and (
-                not config.requires_tenant or self.tenant_id
-            ):
+            # Include namespace if it's not admin-only OR user is admin
+            # Note: We show all namespaces regardless of tenant_id.
+            # Tenant filtering happens when accessing files within the namespace.
+            if not config.admin_only or self.is_admin:
                 namespaces.append(name)
 
         return sorted(namespaces)

@@ -73,7 +73,7 @@ class NexusConfig(BaseModel):
 
     # Multi-tenant isolation settings
     tenant_id: str | None = Field(
-        default="default", description="Tenant identifier for multi-tenant isolation"
+        default=None, description="Tenant identifier for multi-tenant isolation"
     )
     agent_id: str | None = Field(
         default=None, description="Agent identifier for agent-level isolation in /workspace"

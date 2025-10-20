@@ -390,6 +390,58 @@ nexus setfacl user:alice:rwx /workspace/file.txt --remove
 - **Symbolic**: `rwxr-xr-x`, `rw-r--r--`
 - **ACL Entries**: `user:<name>:rwx`, `group:<name>:r-x`, `deny:user:<name>`
 
+#### ReBAC - Relationship-Based Access Control (v0.3.0)
+
+Nexus implements Zanzibar-style relationship-based authorization for team-based permissions, hierarchical access, and dynamic permission inheritance.
+
+```bash
+# Create relationship tuples
+nexus rebac create agent alice member-of group eng-team
+nexus rebac create group eng-team owner-of file project-docs
+nexus rebac create file folder-parent parent-of file folder-child
+
+# Check permissions (with graph traversal)
+nexus rebac check agent alice member-of group eng-team  # Direct check
+nexus rebac check agent alice owner-of file project-docs  # Inherited via group
+
+# Find all subjects with a permission
+nexus rebac expand owner-of file project-docs  # Returns: alice (via eng-team)
+nexus rebac expand member-of group eng-team    # Returns: alice, bob, ...
+
+# Delete relationships
+nexus rebac delete <tuple-id>
+
+# Create temporary access (expires automatically)
+nexus rebac create agent alice viewer-of file temp-report \
+  --expires "2025-12-31T23:59:59"
+```
+
+**ReBAC Features:**
+- **Relationship Types**: `member-of`, `owner-of`, `viewer-of`, `editor-of`, `parent-of`
+- **Graph Traversal**: Recursive permission checking through relationship chains
+- **Permission Inheritance**: Team ownership, hierarchical folders, group membership
+- **Caching**: 5-minute TTL with automatic invalidation on changes
+- **Expiring Access**: Temporary permissions with automatic cleanup
+- **Cycle Detection**: Prevents infinite loops in relationship graphs
+
+**Example Use Cases:**
+```bash
+# Team-based file access
+nexus rebac create agent alice member-of group engineering
+nexus rebac create group engineering owner-of file /projects/backend
+# alice now has owner permission on /projects/backend
+
+# Hierarchical folder permissions
+nexus rebac create agent bob owner-of file /workspace/parent-folder
+nexus rebac create file /workspace/parent-folder parent-of file /workspace/parent-folder/child
+# bob automatically has owner permission on child folder
+
+# Temporary collaborator access
+nexus rebac create agent charlie viewer-of file /reports/q4.pdf \
+  --expires "2025-01-31T23:59:59"
+# charlie's access expires automatically on Jan 31, 2025
+```
+
 #### Work Queue Operations
 
 ```bash
@@ -1245,6 +1297,7 @@ nexus server --config config.yaml
 3. **Type-Level Validation**: Fail-fast validation before database operations
 4. **UNIX-Style Permissions**: Owner, group, and mode bits (v0.3.0)
 5. **ACL Permissions**: Fine-grained access control lists (v0.3.0)
+6. **ReBAC (Relationship-Based Access Control)**: Zanzibar-style authorization (v0.3.0)
 
 ### Type-Level Validation (NEW in v0.1.0)
 
@@ -1384,37 +1437,57 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] **Image OCR parser** - Extract text from images (PNG, JPEG)
 
 ### v0.3.0 - File Permissions & Skills System
+
+**Permissions (Complete):**
 - [x] **UNIX-style file permissions** (owner, group, mode)
 - [x] **Permission operations** (chmod, chown, chgrp)
 - [x] **ACL (Access Control List)** support
 - [x] **CLI commands** (getfacl, setfacl)
 - [x] **Database schema** for permissions and ACL entries
 - [x] **Comprehensive tests** (91 passing tests)
+- [x] **ReBAC (Relationship-Based Access Control)** - Zanzibar-style authorization
+- [x] **Relationship types** - member-of, owner-of, viewer-of, editor-of, parent-of
+- [x] **Permission inheritance via relationships** - Team ownership, group membership
+- [x] **Relationship graph queries** - Graph traversal with cycle detection
+- [x] **Namespaced tuples** - (subject, relation, object) authorization model
+- [x] **Check API** - Fast permission checks with 5-minute TTL caching
+- [x] **Expand API** - Discover all subjects with specific permissions
+- [x] **Relationship management** - Create, delete, query relationships via CLI
+- [x] **Expiring tuples** - Temporary permissions with automatic cleanup
+- [x] **Comprehensive ReBAC tests** (14 passing tests, 100% pass rate)
+
+**Permissions (Remaining):**
 - [ ] **Default permission policies** per namespace
 - [ ] **Permission inheritance** for new files
 - [ ] **Permission checking** in all file operations
-- [ ] **ReBAC (Relationship-Based Access Control)** - Zanzibar-style authorization
-- [ ] **Relationship types** - member-of, owner-of, parent-of, shared-with
-- [ ] **Permission inheritance via relationships** - Team ownership, group membership
-- [ ] **Relationship graph queries** - Transitive closure, path existence checks
-- [ ] **Namespaced tuples** - (subject, relation, object) authorization model
-- [ ] **Check API** - Fast permission checks with caching
-- [ ] **Expand API** - Discover all subjects with specific permissions
-- [ ] **Relationship management** - Create, delete, query relationships
 - [ ] **Permission migration** for existing files
-- [ ] **Comprehensive permission tests**
-- [ ] **Skills System integration** - Anthropic-compatible SKILL.md format
-- [ ] **Skill discovery & loading** - Progressive disclosure, lazy loading
-- [ ] **Agent-specific skills** - `/workspace/{tenant}/{agent}/.nexus/skills/`
-- [ ] **Tenant-wide skill library** - `/shared/{tenant}/skills/`
-- [ ] **System skills** - `/system/skills/` (Anthropic official)
-- [ ] **Skill templates** - Pre-built templates for common patterns
-- [ ] **Skill versioning** - CAS-backed version control
-- [ ] **Skill composition** - Automatic dependency resolution
-- [ ] **Skill analytics** - Usage tracking, success rates
-- [ ] **Skill marketplace** - Org-wide skill catalog
-- [ ] **Skill CLI commands** - create, fork, publish, search
-- [ ] **Semantic skill search** - Find skills by description
+
+**Skills System (Core - Vendor Neutral):**
+- [ ] **SKILL.md parser** - Parse Anthropic-compatible SKILL.md with frontmatter
+- [ ] **Skill registry** - Progressive disclosure, lazy loading, three-tier hierarchy
+- [ ] **Skill discovery** - Scan `/workspace/.nexus/skills/`, `/shared/skills/`, `/system/skills/`
+- [ ] **Dependency resolution** - Automatic DAG resolution with cycle detection
+- [ ] **Skill templates** - Pre-built templates for common skill patterns
+- [ ] **Skill versioning** - CAS-backed version control with history tracking
+- [ ] **Skill lifecycle** - Create, fork, publish workflows
+- [ ] **Skill analytics** - Usage tracking, success rates, execution time
+- [ ] **Semantic skill search** - Vector search across skill descriptions
+- [ ] **CLI commands** - `list`, `create`, `fork`, `publish`, `search`, `info`, `analytics`
+- [ ] **Skill export** - Export to generic formats (validate, pack, size check)
+
+**Note**: External integrations (Claude API upload/download, OpenAI, etc.) will be implemented as **plugins** in v0.3.5+ to maintain vendor neutrality. Core Nexus provides generic skill export (`nexus skills export --format claude`), while `nexus-plugin-anthropic` handles API-specific operations.
+
+### v0.3.5 - Plugin System & External Integrations
+- [ ] **Plugin discovery** - Entry point-based plugin discovery
+- [ ] **Plugin registry** - Register and manage installed plugins
+- [ ] **Plugin CLI namespace** - `nexus <plugin-name> <command>` pattern
+- [ ] **Plugin hooks** - Lifecycle hooks (before_write, after_read, etc.)
+- [ ] **Plugin configuration** - Per-plugin config in `~/.nexus/plugins/<name>/`
+- [ ] **Plugin manager** - `nexus plugins list/install/uninstall/info`
+- [ ] **First-party plugins:**
+  - [ ] `nexus-plugin-anthropic` - Claude API integration (upload/download skills)
+  - [ ] `nexus-plugin-openai` - OpenAI API integration
+  - [ ] `nexus-plugin-skill-seekers` - Integration with Skill_Seekers scraper
 
 ### v0.4.0 - AI Integration
 - [ ] LLM provider abstraction

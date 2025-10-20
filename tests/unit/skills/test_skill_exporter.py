@@ -34,7 +34,13 @@ class MockFilesystem:
         search_path = path if path.endswith("/") else path + "/"
         return any(f.startswith(search_path) for f in self._files)
 
-    def list(self, path: str, recursive: bool = False) -> list[str]:
+    def list(
+        self,
+        path: str = "/",
+        recursive: bool = True,
+        details: bool = False,
+        prefix: str | None = None,
+    ) -> list[str] | list[dict]:
         if not path.endswith("/"):
             path += "/"
         files = []
@@ -46,6 +52,9 @@ class MockFilesystem:
                     rel_path = file_path[len(path) :]
                     if "/" not in rel_path:
                         files.append(file_path)
+        # Return list of dicts if details=True, otherwise list of strings
+        if details:
+            return [{"path": f, "size": len(self._files[f])} for f in files]
         return files
 
     def read(self, path: str) -> bytes:

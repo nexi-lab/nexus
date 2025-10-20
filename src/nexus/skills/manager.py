@@ -29,7 +29,13 @@ class NexusFilesystem(Protocol):
         """Check if path is a directory."""
         ...
 
-    def list(self, path: str, recursive: bool = False) -> list[str]:
+    def list(
+        self,
+        path: str = "/",
+        recursive: bool = True,
+        details: bool = False,
+        prefix: str | None = None,
+    ) -> list[str] | list[dict]:
         """List files in directory."""
         ...
 

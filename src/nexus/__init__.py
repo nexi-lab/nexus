@@ -44,6 +44,20 @@ from nexus.core.nexus_fs import NexusFS
 from nexus.core.router import NamespaceConfig
 from nexus.remote import RemoteNexusFS
 
+# Skills system (v0.3.0)
+from nexus.skills import (
+    Skill,
+    SkillDependencyError,
+    SkillExporter,
+    SkillExportError,
+    SkillExportManifest,
+    SkillMetadata,
+    SkillNotFoundError,
+    SkillParseError,
+    SkillParser,
+    SkillRegistry,
+)
+
 # TODO: Import other modules when they are implemented
 # from nexus.core.client import NexusClient
 # from nexus.interface import NexusInterface
@@ -195,4 +209,15 @@ __all__ = [
     "MetadataError",
     # Router
     "NamespaceConfig",
+    # Skills System (v0.3.0)
+    "SkillRegistry",
+    "SkillExporter",
+    "SkillParser",
+    "Skill",
+    "SkillMetadata",
+    "SkillExportManifest",
+    "SkillNotFoundError",
+    "SkillDependencyError",
+    "SkillParseError",
+    "SkillExportError",
 ]

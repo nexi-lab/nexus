@@ -270,6 +270,29 @@ class NexusFilesystem(ABC):
         ...
 
     # ============================================================
+    # Namespace Operations
+    # ============================================================
+
+    @abstractmethod
+    def get_available_namespaces(self) -> builtins.list[str]:
+        """
+        Get list of available namespace directories.
+
+        Returns the built-in namespaces that should appear at root level.
+        Filters based on tenant and admin context.
+
+        Returns:
+            List of namespace names (e.g., ['workspace', 'shared', 'external'])
+
+        Examples:
+            # Get available namespaces
+            namespaces = fs.get_available_namespaces()
+            # ['workspace', 'shared', 'external'] for regular users
+            # ['workspace', 'shared', 'external', 'system'] for admins
+        """
+        ...
+
+    # ============================================================
     # Lifecycle Management
     # ============================================================
 

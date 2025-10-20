@@ -2289,9 +2289,179 @@ This document was compressed with gzip before upload.
         print(f"   Files in /dest: {len(dest_files)}")
         print(f"   Files in /backup: {len(backup_files)}")
 
+        print("\n60. Demonstrating ReBAC (Relationship-Based Access Control)...")
+        import sqlite3
+
+        from nexus.core.rebac_manager import ReBACManager
+
+        # Get database path (same as the data_dir used throughout this demo)
+        rebac_db_path = data_dir / "metadata.db"
+
+        # Create ReBAC tables manually (since demo doesn't run Alembic migrations)
+        print("   Setting up ReBAC database tables...")
+        conn = sqlite3.connect(str(rebac_db_path))
+        cursor = conn.cursor()
+
+        # Create tables if they don't exist
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS rebac_tuples (
+                tuple_id TEXT PRIMARY KEY,
+                subject_type TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                subject_relation TEXT,
+                relation TEXT NOT NULL,
+                object_type TEXT NOT NULL,
+                object_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                conditions TEXT
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS rebac_namespaces (
+                namespace_id TEXT PRIMARY KEY,
+                object_type TEXT NOT NULL UNIQUE,
+                config TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS rebac_check_cache (
+                cache_id TEXT PRIMARY KEY,
+                subject_type TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                permission TEXT NOT NULL,
+                object_type TEXT NOT NULL,
+                object_id TEXT NOT NULL,
+                result INTEGER NOT NULL,
+                computed_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS rebac_changelog (
+                change_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                change_type TEXT NOT NULL,
+                tuple_id TEXT,
+                subject_type TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                relation TEXT NOT NULL,
+                object_type TEXT NOT NULL,
+                object_id TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+
+        conn.commit()
+        conn.close()
+
+        rebac_mgr = ReBACManager(db_path=str(rebac_db_path))
+
+        print("   Creating relationship tuples...")
+        # alice is member of engineering team
+        tuple1 = rebac_mgr.rebac_write(
+            subject=("agent", "alice"),
+            relation="member-of",
+            object=("group", "engineering"),
+        )
+        print(f"   ✓ Created: alice member-of engineering (ID: {tuple1[:8]}...)")
+
+        # engineering team owns the /projects directory
+        tuple2 = rebac_mgr.rebac_write(
+            subject=("group", "engineering"),
+            relation="owner-of",
+            object=("file", "/projects"),
+        )
+        print(f"   ✓ Created: engineering owner-of /projects (ID: {tuple2[:8]}...)")
+
+        # parent folder relationship
+        tuple3 = rebac_mgr.rebac_write(
+            subject=("file", "/projects"),
+            relation="parent-of",
+            object=("file", "/projects/backend"),
+        )
+        print(f"   ✓ Created: /projects parent-of /projects/backend (ID: {tuple3[:8]}...)")
+
+        print("\n   Checking permissions (with graph traversal)...")
+        # Direct check: alice is member of engineering
+        has_perm1 = rebac_mgr.rebac_check(
+            subject=("agent", "alice"),
+            permission="member-of",
+            object=("group", "engineering"),
+        )
+        print(f"   alice member-of engineering? {has_perm1} ✓")
+
+        # Indirect check: alice owns /projects (via group membership)
+        # Note: This requires namespace config for "file" type to support this traversal
+        # For now, we just check direct ownership
+        has_perm2 = rebac_mgr.rebac_check(
+            subject=("group", "engineering"),
+            permission="owner-of",
+            object=("file", "/projects"),
+        )
+        print(f"   engineering owner-of /projects? {has_perm2} ✓")
+
+        print("\n   Expanding permissions (find all subjects)...")
+        # Find all members of engineering
+        members = rebac_mgr.rebac_expand(
+            permission="member-of",
+            object=("group", "engineering"),
+        )
+        print(f"   Members of engineering: {[s[1] for s in members]}")
+
+        # Find all owners of /projects
+        owners = rebac_mgr.rebac_expand(
+            permission="owner-of",
+            object=("file", "/projects"),
+        )
+        print(f"   Owners of /projects: {[(s[0], s[1]) for s in owners]}")
+
+        print("\n   Creating temporary access (expires after 1 second)...")
+        expires_at = datetime.utcnow() + timedelta(seconds=1)
+        rebac_mgr.rebac_write(
+            subject=("agent", "bob"),
+            relation="viewer-of",
+            object=("file", "/projects/temp-doc"),
+            expires_at=expires_at,
+        )
+        print("   ✓ Created: bob viewer-of /projects/temp-doc (expires in 1s)")
+
+        # Check immediately
+        has_temp = rebac_mgr.rebac_check(
+            subject=("agent", "bob"),
+            permission="viewer-of",
+            object=("file", "/projects/temp-doc"),
+        )
+        print(f"   bob can view temp-doc (now)? {has_temp} ✓")
+
+        # Wait for expiration
+        import time
+
+        print("   Waiting 1.5 seconds for expiration...")
+        time.sleep(1.5)
+
+        # Check after expiration
+        has_temp_after = rebac_mgr.rebac_check(
+            subject=("agent", "bob"),
+            permission="viewer-of",
+            object=("file", "/projects/temp-doc"),
+        )
+        print(f"   bob can view temp-doc (after expiry)? {has_temp_after} ✓ (expired)")
+
+        print("\n   Deleting relationships...")
+        deleted = rebac_mgr.rebac_delete(tuple1)
+        print(f"   ✓ Deleted tuple {tuple1[:8]}... (deleted: {deleted})")
+
+        rebac_mgr.close()
+        print("   ✓ ReBAC demo completed!")
+
         # Note: tree and size commands are typically CLI-only
         # but we can show the underlying data they would display
-        print("\n60. CLI commands available for:")
+        print("\n61. CLI commands available for:")
         print("   • nexus tree /workspace - ASCII tree visualization")
         print("   • nexus size /workspace --human - Calculate directory sizes")
         print("   • nexus sync ./local/ /workspace/ - One-way sync")

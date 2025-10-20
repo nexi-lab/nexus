@@ -820,9 +820,11 @@ evince /mnt/nexus/.raw/docs/report.pdf   # For PDF viewer
 #!/bin/bash
 # Find all PDFs mentioning "invoice"
 
+# Mount in background - command returns immediately!
 nexus mount /mnt/nexus --auto-parse --daemon
+# (No blocking - script continues immediately)
 
-# Now grep works on PDFs!
+# Mount is ready - grep works on PDFs!
 grep -l "invoice" /mnt/nexus/documents/*.pdf
 
 # Process results
@@ -831,6 +833,32 @@ for pdf in $(grep -l "invoice" /mnt/nexus/documents/*.pdf); do
     grep -n "invoice" "$pdf" | head -5
 done
 
+# Clean up
+nexus unmount /mnt/nexus
+```
+
+**Remote server example:**
+
+```bash
+#!/bin/bash
+# Search PDFs on remote Nexus server
+
+# Mount remote server in background
+nexus mount /mnt/nexus \
+  --remote-url http://nexus-server:8080 \
+  --auto-parse \
+  --daemon
+
+# Command returns immediately - daemon process runs in background
+# You can now use standard Unix tools on remote filesystem!
+
+# Search across remote PDFs
+grep -r "TODO" /mnt/nexus/workspace/ | head -20
+
+# Find large files
+find /mnt/nexus -type f -size +10M
+
+# Clean up when done
 nexus unmount /mnt/nexus
 ```
 
@@ -919,18 +947,52 @@ nexus mount /mnt/nexus --mode=binary
 
 ### Background (Daemon) Mode
 
-Run the mount in the background so you can close your terminal:
+Run the mount in the background and return to your shell immediately:
 
 ```bash
-# Mount in background
+# Mount in background - command returns immediately
 nexus mount /mnt/nexus --daemon
+# ✓ Mounted Nexus to /mnt/nexus
+#
+# To unmount:
+#   nexus unmount /mnt/nexus
+#
+# (Shell prompt returns immediately, mount runs in background)
 
-# Do your work...
+# Mount is active - you can use it immediately
 ls /mnt/nexus
 cat /mnt/nexus/workspace/file.txt
 
+# Check daemon status
+ps aux | grep "nexus mount" | grep -v grep
+# jinjingzhou  43097  ... nexus mount /mnt/nexus --daemon
+
 # Later, unmount when done
 nexus unmount /mnt/nexus
+```
+
+**How it works:**
+- Command returns to shell immediately (using double-fork technique)
+- Background daemon process keeps mount active
+- Daemon survives terminal close and persists until unmount
+- Safe to close your terminal - mount stays active
+
+**Local Mount:**
+```bash
+# Mount local Nexus data in background
+nexus mount /mnt/nexus --daemon
+```
+
+**Remote Mount:**
+```bash
+# Mount remote Nexus server in background
+nexus mount /mnt/nexus --remote-url http://your-server:8080 --daemon
+
+# With API key authentication
+nexus mount /mnt/nexus \
+  --remote-url http://your-server:8080 \
+  --api-key your-secret-key \
+  --daemon
 ```
 
 ### Performance & Caching (v0.2.0)
@@ -996,6 +1058,124 @@ fuse = mount_nexus(
 - Caches are **thread-safe** - safe for concurrent access
 - Caches are **automatically invalidated** on file writes, deletes, and renames
 - Default settings work well for most use cases - tune only if needed
+
+### Troubleshooting FUSE Mounts
+
+#### Check Mount Status
+
+```bash
+# Check if daemon process is running
+ps aux | grep "nexus mount" | grep -v grep
+
+# Check mount points
+mount | grep nexus
+
+# List files in mount point (should show files, not empty)
+ls -la /mnt/nexus/
+```
+
+#### Common Issues
+
+**Mount appears empty or shows "Transport endpoint is not connected":**
+```bash
+# Unmount the stale mount point
+nexus unmount /mnt/nexus
+
+# Or force unmount (macOS)
+umount -f /mnt/nexus
+
+# Or force unmount (Linux)
+fusermount -u /mnt/nexus
+
+# Then remount
+nexus mount /mnt/nexus --daemon
+```
+
+**Process won't die (stuck in 'D' or 'U' state):**
+```bash
+# Find stuck processes
+ps aux | grep nexus | grep -E "D|U"
+
+# Force kill
+kill -9 <PID>
+
+# If process is still stuck (uninterruptible I/O), try:
+# macOS: umount -f /mnt/nexus
+# Linux: fusermount -uz /mnt/nexus
+
+# Note: Stuck processes in 'D' state typically resolve after unmount
+# If they persist, they'll be cleaned up on system reboot
+```
+
+**"Directory not empty" error when mounting:**
+```bash
+# Unmount first
+nexus unmount /mnt/nexus
+
+# Or remove and recreate the mount point
+rm -rf /mnt/nexus && mkdir /mnt/nexus
+
+# Then mount
+nexus mount /mnt/nexus --daemon
+```
+
+**Permission denied errors:**
+```bash
+# Ensure FUSE is installed
+# macOS: Install macFUSE from https://osxfuse.github.io/
+# Linux: sudo apt-get install fuse3
+
+# Check mount point permissions
+ls -ld /mnt/nexus
+# Should be owned by your user
+
+# Create mount point with correct permissions
+mkdir -p /mnt/nexus
+chmod 755 /mnt/nexus
+```
+
+**Connection refused (remote mounts):**
+```bash
+# Check server is running
+curl http://your-server:8080/health
+
+# Test connectivity
+ping your-server
+
+# Verify API key (if required)
+nexus mount /mnt/nexus \
+  --remote-url http://your-server:8080 \
+  --api-key your-key \
+  --daemon
+```
+
+**Multiple mounts to same mount point:**
+```bash
+# Check for existing mounts
+mount | grep /mnt/nexus
+
+# Unmount all instances
+nexus unmount /mnt/nexus
+
+# Kill any lingering processes
+pkill -f "nexus mount /mnt/nexus"
+
+# Clean mount and remount
+rm -rf /mnt/nexus && mkdir /mnt/nexus
+nexus mount /mnt/nexus --daemon
+```
+
+#### Debug Mode
+
+For detailed debugging output:
+
+```bash
+# Run in foreground with debug output
+nexus mount /mnt/nexus --debug
+
+# This will show all FUSE operations in real-time
+# Press Ctrl+C to stop
+```
 
 ### rclone-style CLI Commands (v0.2.0)
 

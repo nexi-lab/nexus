@@ -400,6 +400,67 @@ class NexusFS(NexusFilesystem):
         # Remove from metadata
         self.metadata.delete(path)
 
+    def rename(self, old_path: str, new_path: str) -> None:
+        """
+        Rename/move a file by updating its path in metadata.
+
+        This is a metadata-only operation that does NOT copy file content.
+        The file's content remains in the same location in CAS storage,
+        only the virtual path is updated in the metadata database.
+
+        This makes rename/move operations instant, regardless of file size.
+
+        Args:
+            old_path: Current virtual path
+            new_path: New virtual path
+
+        Raises:
+            NexusFileNotFoundError: If source file doesn't exist
+            FileExistsError: If destination path already exists
+            InvalidPathError: If either path is invalid
+            PermissionError: If either path is read-only
+            AccessDeniedError: If access is denied (tenant isolation)
+
+        Example:
+            >>> nx.rename('/workspace/old.txt', '/workspace/new.txt')
+            >>> nx.rename('/folder-a/file.txt', '/shared/folder-a/file.txt')
+        """
+        old_path = self._validate_path(old_path)
+        new_path = self._validate_path(new_path)
+
+        # Route both paths
+        old_route = self.router.route(
+            old_path,
+            tenant_id=self.tenant_id,
+            agent_id=self.agent_id,
+            is_admin=self.is_admin,
+            check_write=True,  # Need write access to source
+        )
+        new_route = self.router.route(
+            new_path,
+            tenant_id=self.tenant_id,
+            agent_id=self.agent_id,
+            is_admin=self.is_admin,
+            check_write=True,  # Need write access to destination
+        )
+
+        # Check if paths are read-only
+        if old_route.readonly:
+            raise PermissionError(f"Cannot rename from read-only path: {old_path}")
+        if new_route.readonly:
+            raise PermissionError(f"Cannot rename to read-only path: {new_path}")
+
+        # Check if source exists
+        if not self.metadata.exists(old_path):
+            raise NexusFileNotFoundError(old_path)
+
+        # Check if destination already exists
+        if self.metadata.exists(new_path):
+            raise FileExistsError(f"Destination path already exists: {new_path}")
+
+        # Perform metadata-only rename (no CAS I/O!)
+        self.metadata.rename_path(old_path, new_path)
+
     def exists(self, path: str) -> bool:
         """
         Check if a file exists.

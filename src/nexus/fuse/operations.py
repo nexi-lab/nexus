@@ -530,19 +530,17 @@ class NexusFUSEOperations(Operations):
 
                         logger.debug(f"  Moving file {src_file} to {dest_file}")
 
-                        # Read and write each file
-                        content = self.nexus_fs.read(src_file)
-                        self.nexus_fs.write(dest_file, content)
+                        # Metadata-only rename - instant, no content copy!
+                        self.nexus_fs.rename(src_file, dest_file)
 
                 # Delete source directory recursively
                 logger.debug(f"Removing source directory {old_path}")
                 self.nexus_fs.rmdir(old_path, recursive=True)
             else:
-                # Handle file rename/move (existing logic)
+                # Handle file rename/move using metadata-only operation
                 logger.debug(f"Renaming file {old_path} to {new_path}")
-                content = self.nexus_fs.read(old_path)
-                self.nexus_fs.write(new_path, content)
-                self.nexus_fs.delete(old_path)
+                # Metadata-only rename - instant, no content copy!
+                self.nexus_fs.rename(old_path, new_path)
 
             # Invalidate caches for both old and new paths
             self.cache.invalidate_path(old_path)

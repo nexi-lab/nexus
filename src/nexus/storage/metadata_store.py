@@ -279,6 +279,61 @@ class SQLAlchemyMetadataStore(MetadataStore):
         except Exception as e:
             raise MetadataError(f"Failed to delete metadata: {e}", path=path) from e
 
+    def rename_path(self, old_path: str, new_path: str) -> None:
+        """
+        Rename/move a file by updating its virtual path in metadata.
+
+        This is a metadata-only operation that does NOT touch the actual
+        file content in CAS storage. Only the virtual_path is updated.
+
+        Args:
+            old_path: Current virtual path
+            new_path: New virtual path
+
+        Raises:
+            MetadataError: If the old path doesn't exist or new path already exists
+        """
+        try:
+            with self.SessionLocal() as session:
+                # Check if source exists
+                stmt_old = select(FilePathModel).where(
+                    FilePathModel.virtual_path == old_path, FilePathModel.deleted_at.is_(None)
+                )
+                file_path = session.scalar(stmt_old)
+
+                if not file_path:
+                    raise MetadataError(f"Source path not found: {old_path}", path=old_path)
+
+                # Check if destination already exists
+                stmt_new = select(FilePathModel).where(
+                    FilePathModel.virtual_path == new_path, FilePathModel.deleted_at.is_(None)
+                )
+                existing = session.scalar(stmt_new)
+
+                if existing:
+                    raise MetadataError(f"Destination path already exists: {new_path}", path=new_path)
+
+                # Update the virtual path (metadata-only, no CAS I/O!)
+                file_path.virtual_path = new_path
+                file_path.updated_at = datetime.now(UTC)
+                session.commit()
+
+            # Invalidate cache for both paths
+            if self._cache_enabled and self._cache:
+                self._cache.invalidate_path(old_path)
+                self._cache.invalidate_path(new_path)
+                # Also invalidate parent directories
+                old_parent = old_path.rsplit('/', 1)[0] or '/'
+                new_parent = new_path.rsplit('/', 1)[0] or '/'
+                self._cache.invalidate_list(old_parent)
+                if old_parent != new_parent:
+                    self._cache.invalidate_list(new_parent)
+
+        except MetadataError:
+            raise
+        except Exception as e:
+            raise MetadataError(f"Failed to rename path: {e}", path=old_path) from e
+
     def exists(self, path: str) -> bool:
         """
         Check if metadata exists for a path.

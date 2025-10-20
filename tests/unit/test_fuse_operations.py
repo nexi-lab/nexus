@@ -354,18 +354,22 @@ class TestRename:
     """Test rename operation."""
 
     def test_rename_file(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
-        """Test renaming a file."""
+        """Test renaming a file using metadata-only operation."""
         # Mock that neither path is a virtual view
         mock_nexus_fs.exists.return_value = False
         mock_nexus_fs.is_directory.return_value = False  # Source is a file, not a directory
-        mock_nexus_fs.read.return_value = b"content"
+        mock_nexus_fs.rename = MagicMock()  # Add rename method to mock
 
         fuse_ops.rename("/workspace/old.txt", "/workspace/new.txt")
 
+        # Verify metadata-only rename was called (no read/write/delete!)
         mock_nexus_fs.is_directory.assert_called_with("/workspace/old.txt")
-        mock_nexus_fs.read.assert_called_with("/workspace/old.txt")
-        mock_nexus_fs.write.assert_called_with("/workspace/new.txt", b"content")
-        mock_nexus_fs.delete.assert_called_with("/workspace/old.txt")
+        mock_nexus_fs.rename.assert_called_with("/workspace/old.txt", "/workspace/new.txt")
+
+        # Verify NO content I/O happened
+        mock_nexus_fs.read.assert_not_called()
+        mock_nexus_fs.write.assert_not_called()
+        mock_nexus_fs.delete.assert_not_called()
 
     def test_rename_virtual_view_fails(
         self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
@@ -389,10 +393,11 @@ class TestRename:
         assert exc_info.value.errno == errno.EROFS
 
     def test_rename_directory(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
-        """Test renaming a directory with files."""
+        """Test renaming a directory with files using metadata-only operations."""
         # Mock that source is a directory
         mock_nexus_fs.exists.return_value = False
         mock_nexus_fs.is_directory.return_value = True
+        mock_nexus_fs.rename = MagicMock()  # Add rename method to mock
 
         # Mock directory contents
         mock_nexus_fs.list.return_value = [
@@ -400,9 +405,6 @@ class TestRename:
             {'path': '/workspace/old_dir/subdir', 'is_directory': True},
             {'path': '/workspace/old_dir/subdir/file2.txt', 'is_directory': False},
         ]
-
-        # Mock file reads
-        mock_nexus_fs.read.side_effect = [b"content1", b"content2"]
 
         fuse_ops.rename("/workspace/old_dir", "/workspace/new_dir")
 
@@ -412,11 +414,14 @@ class TestRename:
         # Verify files were listed
         mock_nexus_fs.list.assert_called_with("/workspace/old_dir", recursive=True, details=True)
 
-        # Verify files were moved
-        assert mock_nexus_fs.read.call_count == 2
-        assert mock_nexus_fs.write.call_count == 2
-        mock_nexus_fs.write.assert_any_call("/workspace/new_dir/file1.txt", b"content1")
-        mock_nexus_fs.write.assert_any_call("/workspace/new_dir/subdir/file2.txt", b"content2")
+        # Verify files were moved using metadata-only rename (no content I/O!)
+        assert mock_nexus_fs.rename.call_count == 2
+        mock_nexus_fs.rename.assert_any_call("/workspace/old_dir/file1.txt", "/workspace/new_dir/file1.txt")
+        mock_nexus_fs.rename.assert_any_call("/workspace/old_dir/subdir/file2.txt", "/workspace/new_dir/subdir/file2.txt")
+
+        # Verify NO content I/O happened
+        mock_nexus_fs.read.assert_not_called()
+        mock_nexus_fs.write.assert_not_called()
 
         # Verify source directory was deleted
         mock_nexus_fs.rmdir.assert_called_with("/workspace/old_dir", recursive=True)

@@ -432,6 +432,22 @@ class TestRename:
         # Verify source directory was deleted
         mock_nexus_fs.rmdir.assert_called_with("/workspace/old_dir", recursive=True)
 
+    def test_rename_destination_exists_error(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
+        """Test that renaming to an existing path fails with EEXIST."""
+        import errno
+
+        from fuse import FuseOSError
+
+        # Destination already exists (either file or directory)
+        mock_nexus_fs.exists.return_value = True
+
+        with pytest.raises(FuseOSError) as exc_info:
+            fuse_ops.rename("/workspace/test1", "/workspace/existing_path")
+
+        assert exc_info.value.errno == errno.EEXIST
+
 
 class TestTruncate:
     """Test truncate operation."""

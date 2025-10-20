@@ -513,6 +513,11 @@ class NexusFUSEOperations(Operations):
             if old.startswith("/.raw/") or new.startswith("/.raw/"):
                 raise FuseOSError(errno.EROFS)
 
+            # Check if destination already exists - error out to prevent overwriting
+            if self.nexus_fs.exists(new_path):
+                logger.error(f"Destination {new_path} already exists")
+                raise FuseOSError(errno.EEXIST)
+
             # Check if source is a directory and handle recursively
             if self.nexus_fs.is_directory(old_path):
                 # Handle directory rename/move

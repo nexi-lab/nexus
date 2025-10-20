@@ -467,10 +467,11 @@ def test_list_recursive(embedded: NexusFS) -> None:
     assert "/dir1/subdir/file3.txt" in files
     assert "/dir2/file4.txt" in files
 
-    # Non-recursive list of dir1
+    # Non-recursive list of dir1 (includes subdirectories now)
     files = embedded.list("/dir1", recursive=False)
-    assert len(files) == 1
+    assert len(files) == 2  # file2.txt + subdir
     assert "/dir1/file2.txt" in files
+    assert "/dir1/subdir" in files
 
     # Recursive list of dir1
     files = embedded.list("/dir1", recursive=True)

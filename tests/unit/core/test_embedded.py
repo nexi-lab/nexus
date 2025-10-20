@@ -452,10 +452,12 @@ def test_list_recursive(embedded: NexusFS) -> None:
     embedded.write("/dir1/subdir/file3.txt", b"Content 3")
     embedded.write("/dir2/file4.txt", b"Content 4")
 
-    # Non-recursive list of root
+    # Non-recursive list of root (includes directories now)
     files = embedded.list("/", recursive=False)
-    assert len(files) == 1
+    assert len(files) == 3  # file1.txt + dir1 + dir2
     assert "/file1.txt" in files
+    assert "/dir1" in files
+    assert "/dir2" in files
 
     # Recursive list of root
     files = embedded.list("/", recursive=True)

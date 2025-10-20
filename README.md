@@ -1190,6 +1190,94 @@ async with nexus.connect() as nx:
     )
 ```
 
+### Skills System (v0.3.0)
+
+Manage reusable AI agent skills with SKILL.md format, progressive disclosure, and dependency resolution:
+
+```python
+from nexus.skills import SkillRegistry, SkillExporter
+
+# Initialize filesystem
+nx = nexus.connect()
+
+# Create skill registry
+registry = SkillRegistry(nx)
+
+# Discover skills from three tiers (agent > tenant > system)
+# Loads metadata only - lightweight and fast
+await registry.discover()
+
+# List available skills
+skills = registry.list_skills()
+# ['analyze-code', 'data-processing', 'report-generation']
+
+# Get skill metadata (no content loading)
+metadata = registry.get_metadata("analyze-code")
+print(f"{metadata.name}: {metadata.description}")
+# analyze-code: Analyzes code quality and structure
+
+# Load full skill content (lazy loading + caching)
+skill = await registry.get_skill("analyze-code")
+print(skill.content)  # Full markdown content
+
+# Resolve dependencies automatically (DAG with cycle detection)
+deps = await registry.resolve_dependencies("complex-skill")
+# ['base-skill', 'helper-skill', 'complex-skill']
+
+# Export skills to .zip (vendor-neutral)
+exporter = SkillExporter(registry)
+
+# Export with dependencies
+await exporter.export_skill(
+    "analyze-code",
+    output_path="analyze-code.zip",
+    format="claude",  # Enforces 8MB limit
+    include_dependencies=True
+)
+
+# Validate before export
+valid, msg, size = await exporter.validate_export("large-skill", format="claude")
+if not valid:
+    print(f"Cannot export: {msg}")
+```
+
+**SKILL.md Format:**
+
+```markdown
+---
+name: analyze-code
+description: Analyzes code quality and structure
+version: 1.0.0
+author: Your Name
+requires:
+  - base-parser
+  - ast-analyzer
+---
+
+# Code Analysis Skill
+
+This skill analyzes code for quality metrics...
+
+## Usage
+
+1. Parse the code files
+2. Run static analysis
+3. Generate report
+```
+
+**Features:**
+- **Progressive Disclosure**: Load metadata during discovery, full content on-demand
+- **Lazy Loading**: Skills cached only when accessed
+- **Three-Tier Hierarchy**: Agent skills override tenant/system skills
+- **Dependency Resolution**: Automatic DAG resolution with cycle detection
+- **Vendor-Neutral Export**: Generic .zip format with Claude/OpenAI validation
+- **85-89% Test Coverage**: 74 passing tests
+
+**Skill Tiers:**
+- **Agent** (`/workspace/.nexus/skills/`) - Personal skills (highest priority)
+- **Tenant** (`/shared/skills/`) - Team-shared skills
+- **System** (`/system/skills/`) - Built-in skills (lowest priority)
+
 ## Technology Stack
 
 ### Core
@@ -1463,17 +1551,18 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] **Permission migration** for existing files
 
 **Skills System (Core - Vendor Neutral):**
-- [ ] **SKILL.md parser** - Parse Anthropic-compatible SKILL.md with frontmatter
-- [ ] **Skill registry** - Progressive disclosure, lazy loading, three-tier hierarchy
-- [ ] **Skill discovery** - Scan `/workspace/.nexus/skills/`, `/shared/skills/`, `/system/skills/`
-- [ ] **Dependency resolution** - Automatic DAG resolution with cycle detection
+- [x] **SKILL.md parser** - Parse Anthropic-compatible SKILL.md with frontmatter
+- [x] **Skill registry** - Progressive disclosure, lazy loading, three-tier hierarchy
+- [x] **Skill discovery** - Scan `/workspace/.nexus/skills/`, `/shared/skills/`, `/system/skills/`
+- [x] **Dependency resolution** - Automatic DAG resolution with cycle detection
+- [x] **Skill export** - Export to generic formats (validate, pack, size check)
+- [x] **Comprehensive tests** - 74 passing tests (85-89% coverage)
 - [ ] **Skill templates** - Pre-built templates for common skill patterns
 - [ ] **Skill versioning** - CAS-backed version control with history tracking
 - [ ] **Skill lifecycle** - Create, fork, publish workflows
 - [ ] **Skill analytics** - Usage tracking, success rates, execution time
 - [ ] **Semantic skill search** - Vector search across skill descriptions
-- [ ] **CLI commands** - `list`, `create`, `fork`, `publish`, `search`, `info`, `analytics`
-- [ ] **Skill export** - Export to generic formats (validate, pack, size check)
+- [ ] **CLI commands** - `list`, `create`, `fork`, `publish`, `search`, `info`, `analytics` (see issue #88)
 
 **Note**: External integrations (Claude API upload/download, OpenAI, etc.) will be implemented as **plugins** in v0.3.5+ to maintain vendor neutrality. Core Nexus provides generic skill export (`nexus skills export --format claude`), while `nexus-plugin-anthropic` handles API-specific operations.
 

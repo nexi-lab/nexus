@@ -103,6 +103,16 @@ class NexusFUSEOperations(Operations):
             if path == "/.raw":
                 return self._dir_attrs()
 
+            # Check if it's a namespace directory (e.g., /workspace, /shared, /archives, /external, /system)
+            if path.startswith("/") and "/" not in path[1:]:  # Top-level directory
+                try:
+                    namespaces = self.nexus_fs.get_available_namespaces()
+                    namespace_name = path[1:]  # Remove leading /
+                    if namespace_name in namespaces:
+                        return self._dir_attrs()
+                except (AttributeError, Exception):
+                    pass
+
             # Check if it's a directory
             if self.nexus_fs.is_directory(original_path):
                 return self._dir_attrs()
@@ -166,9 +176,17 @@ class NexusFUSEOperations(Operations):
             # Standard directory entries
             entries = [".", ".."]
 
-            # Add .raw directory at root
+            # At root level, add built-in namespace directories and .raw
             if path == "/":
                 entries.append(".raw")
+
+                # Add namespace directories (workspace, shared, external, etc.)
+                try:
+                    namespaces = self.nexus_fs.get_available_namespaces()
+                    entries.extend(namespaces)
+                except (AttributeError, Exception):
+                    # Fallback if method doesn't exist or fails
+                    pass
 
             # List files in directory (non-recursive) - returns list[str]
             files_raw = self.nexus_fs.list(path, recursive=False, details=False)

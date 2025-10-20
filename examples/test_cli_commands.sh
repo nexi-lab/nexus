@@ -1144,6 +1144,239 @@ export NEXUS_DATA_DIR="$DATA_DIR"
 
 echo -e "${GREEN}✓ All ACL tests passed!${NC}\n"
 
+# ============================================================
+# ReBAC (Relationship-Based Access Control) Tests (v0.3.0)
+# ============================================================
+echo -e "\n${BLUE}Testing ReBAC (Zanzibar-style Authorization)...${NC}"
+
+# Create separate workspace for ReBAC tests
+REBAC_DATA_DIR="$TEST_WORKSPACE/rebac-test-data"
+test_command "Create ReBAC test workspace" \
+    mkdir -p "$REBAC_DATA_DIR"
+
+test_command "Initialize ReBAC test workspace" \
+    nexus init "$REBAC_DATA_DIR"
+
+# Switch to ReBAC test data directory
+export NEXUS_DATA_DIR="$REBAC_DATA_DIR/nexus-data"
+
+# Create ReBAC tables (required for ReBAC to work)
+echo -e "${BLUE}Setting up ReBAC database tables...${NC}"
+cat > "$TEST_WORKSPACE/setup_rebac_tables.py" << 'EOF'
+import sys
+import sqlite3
+from pathlib import Path
+
+data_dir = sys.argv[1]
+db_path = Path(data_dir) / "metadata.db"
+
+conn = sqlite3.connect(str(db_path))
+cursor = conn.cursor()
+
+# Create ReBAC tables
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS rebac_tuples (
+        tuple_id TEXT PRIMARY KEY,
+        subject_type TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        subject_relation TEXT,
+        relation TEXT NOT NULL,
+        object_type TEXT NOT NULL,
+        object_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT,
+        conditions TEXT
+    )
+""")
+
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS rebac_namespaces (
+        namespace_id TEXT PRIMARY KEY,
+        object_type TEXT NOT NULL UNIQUE,
+        config TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+""")
+
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS rebac_check_cache (
+        cache_id TEXT PRIMARY KEY,
+        subject_type TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        permission TEXT NOT NULL,
+        object_type TEXT NOT NULL,
+        object_id TEXT NOT NULL,
+        result INTEGER NOT NULL,
+        computed_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+    )
+""")
+
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS rebac_changelog (
+        change_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        change_type TEXT NOT NULL,
+        tuple_id TEXT,
+        subject_type TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        relation TEXT NOT NULL,
+        object_type TEXT NOT NULL,
+        object_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+""")
+
+conn.commit()
+conn.close()
+print("ReBAC tables created successfully")
+EOF
+
+bash -c "PYTHONPATH=\"$PWD/src\" python \"$TEST_WORKSPACE/setup_rebac_tables.py\" \"$REBAC_DATA_DIR/nexus-data\""
+
+# Test 98: Create relationship tuple (agent member-of group)
+test_command "rebac create - alice member-of engineering" \
+    bash -c "nexus rebac create agent alice member-of group engineering 2>&1 | grep -i 'tuple id'"
+
+# Test 99: Create another relationship tuple (group owner-of file)
+test_command "rebac create - engineering owner-of /projects" \
+    bash -c "nexus rebac create group engineering owner-of file /projects 2>&1 | grep -i 'tuple id'"
+
+# Test 100: Create hierarchical relationship (parent-of)
+test_command "rebac create - parent folder relationship" \
+    bash -c "nexus rebac create file /projects parent-of file /projects/backend 2>&1 | grep -i 'tuple id'"
+
+# Test 101: Check direct permission
+test_command "rebac check - alice member-of engineering (direct)" \
+    bash -c "nexus rebac check agent alice member-of group engineering 2>&1 | grep 'GRANTED'"
+
+# Test 102: Check group ownership
+test_command "rebac check - engineering owner-of /projects" \
+    bash -c "nexus rebac check group engineering owner-of file /projects 2>&1 | grep 'GRANTED'"
+
+# Test 103: Expand API - find all members of engineering
+test_command "rebac expand - find all members of engineering" \
+    bash -c "nexus rebac expand member-of group engineering 2>&1 | grep -E '(alice|Subjects)'"
+
+# Test 104: Expand API - find all owners of /projects
+test_command "rebac expand - find all owners of /projects" \
+    bash -c "nexus rebac expand owner-of file /projects 2>&1 | grep -E '(engineering|Subjects)'"
+
+# Test 105: Create additional team members
+test_command "rebac create - bob member-of engineering" \
+    bash -c "nexus rebac create agent bob member-of group engineering 2>&1 | grep -i 'tuple id'"
+
+test_command "rebac create - charlie member-of engineering" \
+    bash -c "nexus rebac create agent charlie member-of group engineering 2>&1 | grep -i 'tuple id'"
+
+# Test 106: Expand should show multiple members
+test_command "rebac expand - multiple engineering members" \
+    bash -c "nexus rebac expand member-of group engineering 2>&1 | grep -c 'agent' | grep -E '[3-9]|[1-9][0-9]+'"
+
+# Test 107: Create temporary access with expiration
+test_command "rebac create - temporary viewer access" \
+    bash -c "nexus rebac create agent temp-user viewer-of file /temp-doc --expires '2099-12-31T23:59:59' 2>&1 | grep -i 'tuple id'"
+
+# Test 108: Check temporary access (should work before expiry)
+test_command "rebac check - temporary access before expiry" \
+    bash -c "nexus rebac check agent temp-user viewer-of file /temp-doc 2>&1 | grep 'GRANTED'"
+
+# Test 109: Test viewer relationship
+test_command "rebac create - david viewer-of /reports" \
+    bash -c "nexus rebac create agent david viewer-of file /reports 2>&1 | grep -i 'tuple id'"
+
+test_command "rebac check - david viewer-of /reports" \
+    bash -c "nexus rebac check agent david viewer-of file /reports 2>&1 | grep 'GRANTED'"
+
+# Test 110: Test negative check (permission not granted)
+test_command "rebac check - eve NOT member-of engineering" \
+    bash -c "nexus rebac check agent eve member-of group engineering 2>&1 | grep 'DENIED'"
+
+# Test 111: Test rebac help
+test_command "rebac --help shows all commands" \
+    bash -c "nexus rebac --help | grep -E '(create|delete|check|expand)'"
+
+# Test 112: Test rebac create help
+test_command "rebac create --help shows usage" \
+    bash -c "nexus rebac create --help | grep 'Create a relationship tuple'"
+
+# Test 113: Test rebac check help
+test_command "rebac check --help shows usage" \
+    bash -c "nexus rebac check --help | grep 'Check if subject has permission'"
+
+# Test 114: Test rebac expand help
+test_command "rebac expand --help shows usage" \
+    bash -c "nexus rebac expand --help | grep 'Find all subjects'"
+
+# Test 115: Python API - ReBAC operations
+cat > "$TEST_WORKSPACE/test_rebac_api.py" << 'EOF'
+import sys
+from pathlib import Path
+from nexus.core.rebac_manager import ReBACManager
+
+data_dir = sys.argv[1]
+db_path = Path(data_dir) / "metadata.db"
+rebac_mgr = ReBACManager(db_path=str(db_path))
+
+# Create relationships
+tuple1 = rebac_mgr.rebac_write(
+    subject=("agent", "frank"),
+    relation="member-of",
+    object=("group", "data-science"),
+)
+print(f"Created tuple: {tuple1}")
+
+tuple2 = rebac_mgr.rebac_write(
+    subject=("group", "data-science"),
+    relation="owner-of",
+    object=("file", "/datasets"),
+)
+print(f"Created tuple: {tuple2}")
+
+# Check permission
+has_perm = rebac_mgr.rebac_check(
+    subject=("agent", "frank"),
+    permission="member-of",
+    object=("group", "data-science"),
+)
+assert has_perm == True, "Frank should be member of data-science"
+print("✓ Permission check passed")
+
+# Expand members
+members = rebac_mgr.rebac_expand(
+    permission="member-of",
+    object=("group", "data-science"),
+)
+assert len(members) >= 1, "Should have at least 1 member"
+assert ("agent", "frank") in members, "Frank should be in members list"
+print(f"✓ Expand returned {len(members)} member(s)")
+
+# Delete relationship
+deleted = rebac_mgr.rebac_delete(tuple1)
+assert deleted == True, "Should successfully delete tuple"
+print("✓ Delete succeeded")
+
+# Check after deletion
+has_perm_after = rebac_mgr.rebac_check(
+    subject=("agent", "frank"),
+    permission="member-of",
+    object=("group", "data-science"),
+)
+assert has_perm_after == False, "Frank should no longer be member after deletion"
+print("✓ Permission revoked after delete")
+
+rebac_mgr.close()
+print("All Python ReBAC API tests passed!")
+EOF
+
+test_command "Python API - ReBAC operations" \
+    bash -c "PYTHONPATH=\"$PWD/src\" python \"$TEST_WORKSPACE/test_rebac_api.py\" \"$REBAC_DATA_DIR/nexus-data\""
+
+# Switch back to main data directory
+export NEXUS_DATA_DIR="$DATA_DIR"
+
+echo -e "${GREEN}✓ All ReBAC tests passed!${NC}\n"
+
 # Summary
 echo -e "${BLUE}================================${NC}"
 echo -e "${BLUE}Test Summary${NC}"

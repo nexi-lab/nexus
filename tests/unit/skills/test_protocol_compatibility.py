@@ -8,7 +8,6 @@ to be synchronized.
 """
 
 import inspect
-from typing import get_type_hints
 
 import pytest
 

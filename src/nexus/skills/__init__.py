@@ -47,7 +47,20 @@ Example:
     >>> await exporter.export_skill("analyze-code", "output.zip", format="claude")
 """
 
+from nexus.skills.analytics import (
+    DashboardMetrics,
+    SkillAnalytics,
+    SkillAnalyticsTracker,
+    SkillUsageRecord,
+)
+from nexus.skills.audit import AuditAction, AuditLogEntry, SkillAuditLogger
 from nexus.skills.exporter import SkillExporter, SkillExportError
+from nexus.skills.governance import (
+    ApprovalStatus,
+    GovernanceError,
+    SkillApproval,
+    SkillGovernance,
+)
 from nexus.skills.manager import SkillManager, SkillManagerError
 from nexus.skills.models import Skill, SkillExportManifest, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
@@ -86,4 +99,18 @@ __all__ = [
     "list_templates",
     "get_template_description",
     "TemplateError",
+    # Analytics
+    "SkillAnalyticsTracker",
+    "SkillAnalytics",
+    "SkillUsageRecord",
+    "DashboardMetrics",
+    # Governance
+    "SkillGovernance",
+    "SkillApproval",
+    "ApprovalStatus",
+    "GovernanceError",
+    # Audit
+    "SkillAuditLogger",
+    "AuditLogEntry",
+    "AuditAction",
 ]

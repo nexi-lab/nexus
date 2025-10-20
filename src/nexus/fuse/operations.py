@@ -523,6 +523,9 @@ class NexusFUSEOperations(Operations):
 
                 # Move all files (not directories, as they're implicit in Nexus)
                 for file_info in files:
+                    # Type guard: ensure file_info is a dict (details=True returns dicts)
+                    if not isinstance(file_info, dict):
+                        continue
                     if not file_info.get("is_directory", False):
                         src_file = file_info["path"]
                         # Replace old path prefix with new path prefix

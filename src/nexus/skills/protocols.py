@@ -93,6 +93,26 @@ class NexusFilesystem(Protocol):
         """
         ...
 
+    def rename(self, old_path: str, new_path: str) -> None:
+        """
+        Rename/move a file (metadata-only operation).
+
+        This is a metadata-only operation that does NOT copy file content.
+        Only the virtual path is updated in metadata.
+
+        Args:
+            old_path: Current virtual path
+            new_path: New virtual path
+
+        Raises:
+            NexusFileNotFoundError: If source file doesn't exist
+            FileExistsError: If destination already exists
+            InvalidPathError: If either path is invalid
+            AccessDeniedError: If access is denied
+            PermissionError: If either path is read-only
+        """
+        ...
+
     def exists(self, path: str) -> bool:
         """
         Check if a file exists.

@@ -8,6 +8,10 @@ The Skills System provides:
 5. Three-tier hierarchy (agent > tenant > system)
 6. Dependency resolution with DAG and cycle detection
 7. Export to .zip packages with format validation
+8. Usage analytics and dashboard metrics (NEW in v0.3.0)
+9. Governance and approval workflows (NEW in v0.3.0)
+10. Audit logging and compliance tracking (NEW in v0.3.0)
+11. Semantic skill search (NEW in v0.3.0)
 
 Features demonstrated:
 - Create skills from templates
@@ -16,6 +20,10 @@ Features demonstrated:
 - Progressive disclosure and lazy loading
 - Dependency resolution
 - Export/import workflows
+- Track skill usage and analytics
+- Approval workflows for org-wide skills
+- Audit logging for compliance
+- Search skills by description
 """
 
 import asyncio
@@ -399,6 +407,150 @@ async def skills_demo(nx: nexus.NexusFilesystem, data_dir: Path) -> None:
     print("   • Vendor-Neutral Export: Generic .zip with format validation")
     print("   • Skill Lifecycle: Create from templates, fork with lineage, publish to teams")
     print("   • Template System: 5 pre-built templates for common patterns")
+
+    # ============================================================
+    # Part 7: Enterprise Features (NEW in v0.3.0)
+    # ============================================================
+    print("\n" + "=" * 70)
+    print("PART 7: Enterprise Features (NEW in v0.3.0)")
+    print("=" * 70)
+
+    # Analytics
+    print("\n22. Usage Analytics - Track skill performance...")
+    from nexus.skills import SkillAnalyticsTracker
+
+    tracker = SkillAnalyticsTracker()  # In-memory for demo
+    print("   ✓ Analytics tracker created")
+
+    # Simulate some usage
+    print("\n   Tracking skill usage:")
+    await tracker.track_usage("my-first-skill", agent_id="alice", execution_time=1.2, success=True)
+    await tracker.track_usage("my-first-skill", agent_id="bob", execution_time=0.8, success=True)
+    await tracker.track_usage(
+        "my-first-skill",
+        agent_id="alice",
+        execution_time=2.5,
+        success=False,
+        error_message="Test error",
+    )
+    await tracker.track_usage(
+        "customer-analytics", agent_id="charlie", execution_time=3.1, success=True
+    )
+    print("   ✓ Tracked 4 skill executions")
+
+    # Get analytics for a skill
+    print("\n   Getting analytics for 'my-first-skill':")
+    analytics = await tracker.get_skill_analytics("my-first-skill")
+    print(f"   • Usage count: {analytics.usage_count}")
+    print(f"   • Success rate: {analytics.success_rate:.1%}")
+    print(f"   • Avg execution time: {analytics.avg_execution_time:.2f}s")
+    print(f"   • Unique users: {analytics.unique_users}")
+
+    # Dashboard metrics
+    print("\n   Getting dashboard metrics:")
+    dashboard = await tracker.get_dashboard_metrics()
+    print(f"   • Total skills used: {dashboard.total_skills}")
+    print(f"   • Total operations: {dashboard.total_usage_count}")
+    print(f"   • Active users: {dashboard.total_users}")
+    print("   • Most used skills:")
+    for skill_name, count in dashboard.most_used_skills[:3]:
+        print(f"     - {skill_name}: {count} times")
+
+    # Governance
+    print("\n23. Governance - Approval workflows for org-wide skills...")
+    from nexus.skills import SkillGovernance
+
+    gov = SkillGovernance()  # In-memory for demo
+    print("   ✓ Governance system created")
+
+    # Submit for approval
+    print("\n   Submitting 'customer-analytics' for approval:")
+    approval_id = await gov.submit_for_approval(
+        "customer-analytics",
+        submitted_by="alice",
+        reviewers=["bob", "charlie"],
+        comments="Ready for team-wide use",
+    )
+    print(f"   ✓ Submitted (approval ID: {approval_id[:8]}...)")
+
+    # Get pending approvals
+    pending = await gov.get_pending_approvals()
+    print(f"\n   Pending approvals: {len(pending)}")
+    for approval in pending:
+        print(f"   • {approval.skill_name} by {approval.submitted_by}")
+        print(f"     Status: {approval.status.value}")
+        print(f"     Reviewers: {', '.join(approval.reviewers or [])}")
+
+    # Approve
+    print("\n   Approving 'customer-analytics':")
+    await gov.approve_skill(approval_id, reviewed_by="bob", comments="Excellent work!")
+    is_approved = await gov.is_approved("customer-analytics")
+    print(f"   ✓ Approved: {is_approved}")
+
+    # Audit Logging
+    print("\n24. Audit Logging - Compliance tracking...")
+    from nexus.skills import AuditAction, SkillAuditLogger
+
+    audit = SkillAuditLogger()  # In-memory for demo
+    print("   ✓ Audit logger created")
+
+    # Log various actions
+    print("\n   Logging audit events:")
+    await audit.log("my-first-skill", AuditAction.CREATED, agent_id="alice")
+    await audit.log(
+        "my-first-skill",
+        AuditAction.EXECUTED,
+        agent_id="bob",
+        details={"execution_time": 1.2, "success": True},
+    )
+    await audit.log("customer-analytics", AuditAction.FORKED, agent_id="charlie")
+    await audit.log("my-first-skill", AuditAction.PUBLISHED, agent_id="alice")
+    print("   ✓ Logged 4 audit events")
+
+    # Query logs
+    print("\n   Querying audit logs for 'my-first-skill':")
+    logs = await audit.query_logs(skill_name="my-first-skill")
+    print(f"   Found {len(logs)} events:")
+    for log in logs:
+        print(f"   • {log.action.value} by {log.agent_id} at {log.timestamp.strftime('%H:%M:%S')}")
+
+    # Compliance report
+    print("\n   Generating compliance report:")
+    report = await audit.generate_compliance_report()
+    print(f"   • Total operations: {report['total_operations']}")
+    print(f"   • Skills used: {report['skills_used']}")
+    print(f"   • Active agents: {report['active_agents']}")
+    print("   • Top skills:")
+    for skill_name, count in report["top_skills"][:3]:
+        print(f"     - {skill_name}: {count} operations")
+
+    # Semantic Search
+    print("\n25. Semantic Search - Find skills by description...")
+    print("\n   Searching for 'customer analytics':")
+    results = await manager.search_skills("customer analytics", limit=5)
+    print(f"   Found {len(results)} matching skills:")
+    for skill_name, score in results:
+        meta = local_registry.get_metadata(skill_name)
+        print(f"   • {skill_name} (score: {score:.1f})")
+        print(f"     {meta.description}")
+
+    print("\n   Searching for 'parser':")
+    results = await manager.search_skills("parser", limit=5)
+    print(f"   Found {len(results)} matching skills:")
+    for skill_name, score in results:
+        meta = local_registry.get_metadata(skill_name)
+        print(f"   • {skill_name} (score: {score:.1f})")
+        print(f"     {meta.description}")
+
+    print("\n" + "=" * 70)
+    print("Enterprise Features Demo Complete!")
+    print("=" * 70)
+
+    print("\n✨ Enterprise Features:")
+    print("   • Usage Analytics: Track performance, success rates, and trends")
+    print("   • Governance: Approval workflows for team-wide skill publication")
+    print("   • Audit Logging: Complete compliance tracking and reporting")
+    print("   • Semantic Search: Find skills by description with relevance scoring")
 
     # Restore original tier paths
     SkillRegistry.TIER_PATHS = original_tier_paths

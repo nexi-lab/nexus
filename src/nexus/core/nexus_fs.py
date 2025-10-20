@@ -935,7 +935,7 @@ class NexusFS(NexusFilesystem):
 
     def is_directory(self, path: str) -> bool:
         """
-        Check if path is a directory.
+        Check if path is a directory (explicit or implicit).
 
         Args:
             path: Virtual path to check
@@ -953,7 +953,11 @@ class NexusFS(NexusFilesystem):
                 is_admin=self.is_admin,
                 check_write=False,
             )
-            return route.backend.is_directory(route.backend_path)
+            # Check if it's an explicit directory in the backend
+            if route.backend.is_directory(route.backend_path):
+                return True
+            # Check if it's an implicit directory (has files beneath it)
+            return self.metadata.is_implicit_directory(path)
         except (InvalidPathError, Exception):
             return False
 

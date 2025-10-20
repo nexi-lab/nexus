@@ -523,8 +523,8 @@ class NexusFUSEOperations(Operations):
 
                 # Move all files (not directories, as they're implicit in Nexus)
                 for file_info in files:
-                    if not file_info.get('is_directory', False):
-                        src_file = file_info['path']
+                    if not file_info.get("is_directory", False):
+                        src_file = file_info["path"]
                         # Replace old path prefix with new path prefix
                         dest_file = src_file.replace(old_path, new_path, 1)
 
@@ -547,8 +547,8 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(new_path)
 
             # Also invalidate parent directories to update listings
-            old_parent = old_path.rsplit('/', 1)[0] or '/'
-            new_parent = new_path.rsplit('/', 1)[0] or '/'
+            old_parent = old_path.rsplit("/", 1)[0] or "/"
+            new_parent = new_path.rsplit("/", 1)[0] or "/"
             self.cache.invalidate_path(old_parent)
             if old_parent != new_parent:
                 self.cache.invalidate_path(new_parent)

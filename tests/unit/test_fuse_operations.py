@@ -28,7 +28,17 @@ if TYPE_CHECKING:
 def mock_nexus_fs() -> MagicMock:
     """Create a mock Nexus filesystem."""
     fs = MagicMock(
-        spec=["read", "write", "delete", "exists", "list", "is_directory", "mkdir", "rmdir"]
+        spec=[
+            "read",
+            "write",
+            "delete",
+            "exists",
+            "list",
+            "is_directory",
+            "mkdir",
+            "rmdir",
+            "get_available_namespaces",
+        ]
     )
     return fs
 
@@ -130,7 +140,13 @@ class TestReaddir:
 
     def test_readdir_root(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
         """Test listing root directory."""
-        mock_nexus_fs.list.return_value = ["/workspace/", "/shared/"]
+        mock_nexus_fs.list.return_value = []
+        mock_nexus_fs.get_available_namespaces.return_value = [
+            "archives",
+            "external",
+            "shared",
+            "workspace",
+        ]
 
         entries = fuse_ops.readdir("/")
 
@@ -139,6 +155,8 @@ class TestReaddir:
         assert ".raw" in entries
         assert "workspace" in entries
         assert "shared" in entries
+        assert "external" in entries
+        assert "archives" in entries
 
     def test_readdir_with_files(
         self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock

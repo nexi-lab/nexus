@@ -202,6 +202,9 @@ def test_protocol_runtime_checkable() -> None:
             def is_directory(self, path: str) -> bool:
                 return False
 
+            def get_available_namespaces(self):
+                return []
+
             def close(self) -> None:
                 pass
 

@@ -148,21 +148,35 @@ class SkillRegistry:
         """
         if self._filesystem:
             # Use NexusFS
-            if not self._filesystem.exists(tier_path):
-                logger.debug(f"Tier path does not exist: {tier_path}")
-                return 0
-
-            if not self._filesystem.is_directory(tier_path):
-                logger.warning(f"Tier path is not a directory: {tier_path}")
-                return 0
-
-            # List all SKILL.md files
+            # Note: In NexusFS, directories may not be explicitly created,
+            # so we check is_directory() first (which works for implicit dirs)
+            # and fall back to trying to list the directory
             try:
-                files = self._filesystem.list(tier_path, recursive=True)
-                skill_files = [f for f in files if Path(f).name.upper() == "SKILL.MD"]
-            except Exception as e:
-                logger.error(f"Failed to list tier directory {tier_path}: {e}")
-                return 0
+                is_dir = self._filesystem.is_directory(tier_path)
+            except Exception:
+                # Directory check failed, try to list anyway
+                is_dir = False
+
+            if not is_dir:
+                # Try to list the directory - if it has files, it exists
+                try:
+                    files = self._filesystem.list(tier_path, recursive=True)
+                    if not files:
+                        logger.debug(f"Tier path has no files: {tier_path}")
+                        return 0
+                    skill_files = [f for f in files if Path(f).name.upper() == "SKILL.MD"]
+                except Exception as e:
+                    # Directory doesn't exist or can't be listed
+                    logger.debug(f"Tier path does not exist or cannot be listed: {tier_path} ({e})")
+                    return 0
+            else:
+                # Directory exists, list it
+                try:
+                    files = self._filesystem.list(tier_path, recursive=True)
+                    skill_files = [f for f in files if Path(f).name.upper() == "SKILL.MD"]
+                except Exception as e:
+                    logger.error(f"Failed to list tier directory {tier_path}: {e}")
+                    return 0
         else:
             # Use local filesystem
             tier_dir = Path(tier_path)

@@ -152,6 +152,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                             "read",
                             "write",
                             "delete",
+                            "rename",
                             "exists",
                             "list",
                             "glob",
@@ -259,6 +260,10 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         elif method == "delete":
             self.nexus_fs.delete(params.path)
+            return {"success": True}
+
+        elif method == "rename":
+            self.nexus_fs.rename(params.old_path, params.new_path)
             return {"success": True}
 
         elif method == "exists":

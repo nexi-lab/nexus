@@ -263,6 +263,13 @@ class IsDirectoryParams:
     path: str
 
 
+@dataclass
+class GetAvailableNamespacesParams:
+    """Parameters for get_available_namespaces() method."""
+
+    pass
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -275,6 +282,7 @@ METHOD_PARAMS = {
     "mkdir": MkdirParams,
     "rmdir": RmdirParams,
     "is_directory": IsDirectoryParams,
+    "get_available_namespaces": GetAvailableNamespacesParams,
 }
 
 

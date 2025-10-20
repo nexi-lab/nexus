@@ -159,6 +159,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                             "mkdir",
                             "rmdir",
                             "is_directory",
+                            "get_available_namespaces",
                         ],
                     },
                 )

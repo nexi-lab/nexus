@@ -324,12 +324,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
             if self._cache_enabled and self._cache:
                 self._cache.invalidate_path(old_path)
                 self._cache.invalidate_path(new_path)
-                # Also invalidate parent directories
+                # Also invalidate parent directories (this invalidates their listings too)
                 old_parent = old_path.rsplit("/", 1)[0] or "/"
                 new_parent = new_path.rsplit("/", 1)[0] or "/"
-                self._cache.invalidate_list(old_parent)
+                self._cache.invalidate_path(old_parent)
                 if old_parent != new_parent:
-                    self._cache.invalidate_list(new_parent)
+                    self._cache.invalidate_path(new_parent)
 
         except MetadataError:
             raise

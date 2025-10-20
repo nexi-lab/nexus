@@ -21,7 +21,7 @@ Usage:
         content = await nx.read("/workspace/data.txt")
 """
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 __author__ = "Nexus Team"
 __license__ = "Apache-2.0"
 

@@ -513,14 +513,47 @@ class NexusFUSEOperations(Operations):
             if old.startswith("/.raw/") or new.startswith("/.raw/"):
                 raise FuseOSError(errno.EROFS)
 
-            # Read and write (Nexus doesn't have native rename)
-            content = self.nexus_fs.read(old_path)
-            self.nexus_fs.write(new_path, content)
-            self.nexus_fs.delete(old_path)
+            # Check if source is a directory and handle recursively
+            if self.nexus_fs.is_directory(old_path):
+                # Handle directory rename/move
+                logger.debug(f"Renaming directory {old_path} to {new_path}")
+
+                # List all files recursively
+                files = self.nexus_fs.list(old_path, recursive=True, details=True)
+
+                # Move all files (not directories, as they're implicit in Nexus)
+                for file_info in files:
+                    if not file_info.get('is_directory', False):
+                        src_file = file_info['path']
+                        # Replace old path prefix with new path prefix
+                        dest_file = src_file.replace(old_path, new_path, 1)
+
+                        logger.debug(f"  Moving file {src_file} to {dest_file}")
+
+                        # Read and write each file
+                        content = self.nexus_fs.read(src_file)
+                        self.nexus_fs.write(dest_file, content)
+
+                # Delete source directory recursively
+                logger.debug(f"Removing source directory {old_path}")
+                self.nexus_fs.rmdir(old_path, recursive=True)
+            else:
+                # Handle file rename/move (existing logic)
+                logger.debug(f"Renaming file {old_path} to {new_path}")
+                content = self.nexus_fs.read(old_path)
+                self.nexus_fs.write(new_path, content)
+                self.nexus_fs.delete(old_path)
 
             # Invalidate caches for both old and new paths
             self.cache.invalidate_path(old_path)
             self.cache.invalidate_path(new_path)
+
+            # Also invalidate parent directories to update listings
+            old_parent = old_path.rsplit('/', 1)[0] or '/'
+            new_parent = new_path.rsplit('/', 1)[0] or '/'
+            self.cache.invalidate_path(old_parent)
+            if old_parent != new_parent:
+                self.cache.invalidate_path(new_parent)
             if old != old_path:
                 self.cache.invalidate_path(old)
             if new != new_path:

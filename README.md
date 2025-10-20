@@ -235,12 +235,40 @@ nx_gcs.write("/file.txt", b"data")
 ### Using pip (Recommended)
 
 ```bash
-# Install from PyPI
+# Install core Nexus
 pip install nexus-ai-fs
+
+# Install with FUSE support
+pip install nexus-ai-fs[fuse]
+
+# Install everything
+pip install nexus-ai-fs[all]  # All features (FUSE + future plugins)
 
 # Verify installation
 nexus --version
 ```
+
+### Installing First-Party Plugins (Local Development)
+
+First-party plugins are in development and not yet published to PyPI. Install from source:
+
+```bash
+# Clone repository
+git clone https://github.com/nexi-lab/nexus.git
+cd nexus
+
+# Install Nexus
+pip install -e .
+
+# Install plugins from local source
+pip install -e ./nexus-plugin-anthropic      # Claude Skills API
+pip install -e ./nexus-plugin-skill-seekers  # Doc scraper
+
+# Verify plugins
+nexus plugins list
+```
+
+See [PLUGIN_INSTALLATION.md](./PLUGIN_INSTALLATION.md) for detailed instructions.
 
 ### From Source (Development)
 
@@ -525,6 +553,68 @@ nexus ls /workspace --data-dir /path/to/nexus-data
 nexus ls /workspace --config ./my-config.yaml --data-dir ./data
 ```
 
+### Plugin Management
+
+Nexus has a modular plugin system for external integrations:
+
+```bash
+# List installed plugins
+nexus plugins list
+
+# Get detailed plugin information
+nexus plugins info anthropic
+nexus plugins info skill-seekers
+
+# Install a plugin
+nexus plugins install anthropic
+nexus plugins install skill-seekers
+
+# Enable/disable plugins
+nexus plugins enable anthropic
+nexus plugins disable anthropic
+
+# Uninstall a plugin
+nexus plugins uninstall skill-seekers
+```
+
+**First-party plugins (local development only - not yet on PyPI):**
+- **anthropic** - Claude Skills API integration (upload/download/manage skills)
+- **skill-seekers** - Generate skills from documentation websites
+
+**Installation:**
+```bash
+# Install from local source
+pip install -e ./nexus-plugin-anthropic
+pip install -e ./nexus-plugin-skill-seekers
+```
+
+**Using plugin commands:**
+```bash
+# Anthropic plugin commands
+nexus anthropic upload-skill my-skill
+nexus anthropic list-skills
+nexus anthropic import-github canvas-design
+
+# Skill Seekers plugin commands
+nexus skill-seekers generate https://react.dev/ --name react-basics
+nexus skill-seekers import /path/to/SKILL.md
+nexus skill-seekers list
+```
+
+See detailed documentation:
+- [Plugin Installation Guide](./PLUGIN_INSTALLATION.md) - **Start here for setup**
+- [nexus-plugin-anthropic](./nexus-plugin-anthropic/README.md) - Anthropic plugin docs
+- [nexus-plugin-skill-seekers](./nexus-plugin-skill-seekers/README.md) - Skill Seekers docs
+
+**Try plugin examples:**
+```bash
+# CLI demo - plugin management commands
+./examples/plugin_cli_demo.sh
+
+# SDK demo - programmatic plugin usage
+python examples/plugin_sdk_demo.py
+```
+
 ### Help
 
 Get help for any command:
@@ -533,6 +623,7 @@ Get help for any command:
 nexus --help  # Show all commands
 nexus ls --help  # Show help for ls command
 nexus grep --help  # Show help for grep command
+nexus plugins --help  # Show plugin management commands
 ```
 
 ## Remote Nexus Server
@@ -1899,10 +1990,12 @@ pytest tests/performance/ --benchmark-only
 
 ## Documentation
 
-- [API Reference](./docs/api.md)
-- [Deployment Guide](./docs/deployment.md)
-- [Development Guide](./docs/development.md)
-- [MCP Integration](./docs/mcp.md)
+- [Plugin Development Guide](./docs/PLUGIN_DEVELOPMENT.md) - Create your own Nexus plugins
+- [Plugin System Overview](./docs/PLUGIN_SYSTEM.md) - Plugin architecture and design
+- [SQL Views for Work Detection](./docs/SQL_VIEWS_FOR_WORK_DETECTION.md) - Work queue patterns
+- [API Reference](./docs/api/) - Detailed API documentation
+- [Getting Started](./docs/getting-started/) - Quick start guides
+- [Deployment Guide](./docs/deployment/) - Production deployment
 
 ## Contributing
 

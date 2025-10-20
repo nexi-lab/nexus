@@ -892,6 +892,35 @@ class NexusFS(NexusFilesystem):
         except (InvalidPathError, Exception):
             return False
 
+    def get_available_namespaces(self) -> builtins.list[str]:
+        """
+        Get list of available namespace directories.
+
+        Returns the built-in namespaces that should appear at root level.
+        Filters based on tenant and admin context.
+
+        Returns:
+            List of namespace names (e.g., ["workspace", "shared", "external"])
+
+        Examples:
+            # Get namespaces for current user context
+            namespaces = fs.get_available_namespaces()
+            # Returns: ["workspace", "shared", "external", "archives"]
+            # (excludes "system" if not admin)
+        """
+        namespaces = []
+
+        for name, config in self.router._namespaces.items():
+            # Include namespace if:
+            # - It's not admin-only OR user is admin
+            # - It doesn't require tenant OR user has a tenant
+            if (not config.admin_only or self.is_admin) and (
+                not config.requires_tenant or self.tenant_id
+            ):
+                namespaces.append(name)
+
+        return sorted(namespaces)
+
     def _get_backend_directory_entries(self, path: str) -> set[str]:
         """
         Get directory entries from backend for empty directory detection.

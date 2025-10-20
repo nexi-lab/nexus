@@ -248,6 +248,18 @@ class RemoteNexusFS(NexusFilesystem):
         result = self._call_rpc("is_directory", {"path": path})
         return result["is_directory"]  # type: ignore[no-any-return]
 
+    def get_available_namespaces(self) -> builtins.list[str]:
+        """Get list of available namespace directories.
+
+        Returns the built-in namespaces that should appear at root level.
+        Filters based on tenant and admin context on the server side.
+
+        Returns:
+            List of namespace names (e.g., ["workspace", "shared", "external"])
+        """
+        result = self._call_rpc("get_available_namespaces", {})
+        return result["namespaces"]  # type: ignore[no-any-return]
+
     # ============================================================
     # Lifecycle Management
     # ============================================================

@@ -51,6 +51,8 @@ from nexus.skills import (
     SkillExporter,
     SkillExportError,
     SkillExportManifest,
+    SkillManager,
+    SkillManagerError,
     SkillMetadata,
     SkillNotFoundError,
     SkillParseError,
@@ -212,12 +214,14 @@ __all__ = [
     # Skills System (v0.3.0)
     "SkillRegistry",
     "SkillExporter",
+    "SkillManager",
     "SkillParser",
     "Skill",
     "SkillMetadata",
     "SkillExportManifest",
     "SkillNotFoundError",
     "SkillDependencyError",
+    "SkillManagerError",
     "SkillParseError",
     "SkillExportError",
 ]

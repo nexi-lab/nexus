@@ -204,6 +204,14 @@ class DeleteParams:
 
 
 @dataclass
+class RenameParams:
+    """Parameters for rename() method."""
+
+    old_path: str
+    new_path: str
+
+
+@dataclass
 class ExistsParams:
     """Parameters for exists() method."""
 
@@ -275,6 +283,7 @@ METHOD_PARAMS = {
     "read": ReadParams,
     "write": WriteParams,
     "delete": DeleteParams,
+    "rename": RenameParams,
     "exists": ExistsParams,
     "list": ListParams,
     "glob": GlobParams,

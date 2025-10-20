@@ -177,6 +177,10 @@ class RemoteNexusFS(NexusFilesystem):
         """Delete a file."""
         self._call_rpc("delete", {"path": path})
 
+    def rename(self, old_path: str, new_path: str) -> None:
+        """Rename/move a file (metadata-only operation)."""
+        self._call_rpc("rename", {"old_path": old_path, "new_path": new_path})
+
     def exists(self, path: str) -> bool:
         """Check if a file exists."""
         result = self._call_rpc("exists", {"path": path})

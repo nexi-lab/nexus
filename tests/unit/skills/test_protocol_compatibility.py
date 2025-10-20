@@ -167,6 +167,9 @@ def test_protocol_runtime_checkable() -> None:
             def delete(self, path: str) -> None:
                 pass
 
+            def rename(self, old_path: str, new_path: str) -> None:
+                pass
+
             def exists(self, path: str) -> bool:
                 return True
 

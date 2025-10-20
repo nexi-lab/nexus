@@ -463,17 +463,21 @@ class NexusFS(NexusFilesystem):
 
     def exists(self, path: str) -> bool:
         """
-        Check if a file exists.
+        Check if a file or directory exists.
 
         Args:
             path: Virtual path to check
 
         Returns:
-            True if file exists, False otherwise
+            True if file or implicit directory exists, False otherwise
         """
         try:
             path = self._validate_path(path)
-            return self.metadata.exists(path)
+            # Check if file exists explicitly
+            if self.metadata.exists(path):
+                return True
+            # Check if it's an implicit directory (has files beneath it)
+            return self.metadata.is_implicit_directory(path)
         except InvalidPathError:
             return False
 

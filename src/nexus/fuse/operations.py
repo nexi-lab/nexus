@@ -523,6 +523,12 @@ class NexusFUSEOperations(Operations):
                 # Handle directory rename/move
                 logger.debug(f"Renaming directory {old_path} to {new_path}")
 
+                # Create destination directory explicitly to ensure it shows up
+                try:
+                    self.nexus_fs.mkdir(new_path, parents=True, exist_ok=True)
+                except Exception as e:
+                    logger.debug(f"mkdir {new_path} failed (may already exist): {e}")
+
                 # List all files recursively
                 files = self.nexus_fs.list(old_path, recursive=True, details=True)
 
@@ -560,6 +566,10 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(old_parent)
             if old_parent != new_parent:
                 self.cache.invalidate_path(new_parent)
+                # Also invalidate grandparent of destination to show new subdirectories
+                new_grandparent = new_parent.rsplit("/", 1)[0] or "/"
+                if new_grandparent != new_parent:
+                    self.cache.invalidate_path(new_grandparent)
             if old != old_path:
                 self.cache.invalidate_path(old)
             if new != new_path:

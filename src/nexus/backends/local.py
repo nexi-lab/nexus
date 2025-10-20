@@ -333,10 +333,14 @@ class LocalBackend(Backend):
             ) from e
 
     def is_directory(self, path: str) -> bool:
-        """Check if path is a directory."""
+        """Check if path is a directory (explicit or implicit)."""
         try:
             full_path = self.dir_root / path.lstrip("/")
-            return full_path.exists() and full_path.is_dir()
+            # Check for explicit directory on disk
+            if full_path.exists() and full_path.is_dir():
+                return True
+            # Check for implicit directory (has files beneath it in metadata)
+            return self.metadata.is_implicit_directory(path)
         except Exception:
             return False
 

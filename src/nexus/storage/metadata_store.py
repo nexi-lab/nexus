@@ -367,6 +367,34 @@ class SQLAlchemyMetadataStore(MetadataStore):
         except Exception as e:
             raise MetadataError(f"Failed to check existence: {e}", path=path) from e
 
+    def is_implicit_directory(self, path: str) -> bool:
+        """
+        Check if path is an implicit directory (has files beneath it).
+
+        In NexusFS, directories are implicit - they exist if any files exist
+        with the directory path as a prefix.
+
+        Args:
+            path: Virtual path to check
+
+        Returns:
+            True if path is an implicit directory, False otherwise
+        """
+        try:
+            # Normalize path - ensure it ends with / for prefix matching
+            dir_path = path.rstrip("/") + "/"
+
+            with self.SessionLocal() as session:
+                # Check if any files exist with this path as a prefix
+                stmt = select(FilePathModel.path_id).where(
+                    FilePathModel.virtual_path.like(f"{dir_path}%"),
+                    FilePathModel.deleted_at.is_(None)
+                ).limit(1)
+                has_children = session.scalar(stmt) is not None
+                return has_children
+        except Exception:
+            return False
+
     def list(self, prefix: str = "") -> list[FileMetadata]:
         """
         List all files with given path prefix.

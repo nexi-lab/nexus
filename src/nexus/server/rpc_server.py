@@ -337,6 +337,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         elif method == "is_directory":
             return {"is_directory": self.nexus_fs.is_directory(params.path)}
 
+        elif method == "get_available_namespaces":
+            return {"namespaces": self.nexus_fs.get_available_namespaces()}
+
         else:
             raise ValueError(f"Unknown method: {method}")
 

@@ -497,7 +497,7 @@ class NexusFS(NexusFilesystem):
             all_files_for_dirs = self.metadata.list(base_path)
             for meta in all_files_for_dirs:
                 # Get relative path
-                rel_path = meta.path[len(path):] if path != "/" else meta.path[1:]
+                rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
                 # Check if there's a directory component
                 if "/" in rel_path:
                     # Extract first directory component
@@ -914,8 +914,8 @@ class NexusFS(NexusFilesystem):
                 try:
                     entries = self.backend.list_dir("")
                     for entry in entries:
-                        if entry.endswith('/'):  # Directory marker
-                            dir_name = entry.rstrip('/')
+                        if entry.endswith("/"):  # Directory marker
+                            dir_name = entry.rstrip("/")
                             dir_path = "/" + dir_name
                             directories.add(dir_path)
                 except NotImplementedError:
@@ -938,8 +938,8 @@ class NexusFS(NexusFilesystem):
                 try:
                     entries = route.backend.list_dir(backend_path)
                     for entry in entries:
-                        if entry.endswith('/'):  # Directory marker
-                            dir_name = entry.rstrip('/')
+                        if entry.endswith("/"):  # Directory marker
+                            dir_name = entry.rstrip("/")
                             dir_path = path + dir_name if path != "/" else "/" + dir_name
                             directories.add(dir_path)
                 except NotImplementedError:

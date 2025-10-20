@@ -431,24 +431,20 @@ class GCSBackend(Backend):
             # Add direct file blobs (excluding the directory marker itself)
             for blob in blobs:
                 # Get relative name from the prefix
-                name = blob.name[len(prefix):]
+                name = blob.name[len(prefix) :]
                 if name and name != "":  # Skip the directory marker itself
-                    entries.add(name.rstrip('/'))
+                    entries.add(name.rstrip("/"))
 
             # Add subdirectories (from prefixes returned by delimiter)
             for prefix_path in blobs.prefixes:
                 # Extract just the directory name
-                name = prefix_path[len(prefix):].rstrip('/')
+                name = prefix_path[len(prefix) :].rstrip("/")
                 if name:
-                    entries.add(name + '/')
+                    entries.add(name + "/")
 
             return sorted(entries)
 
         except (FileNotFoundError, NotADirectoryError):
             raise
         except Exception as e:
-            raise BackendError(
-                f"Failed to list directory: {e}",
-                backend="gcs",
-                path=path
-            ) from e
+            raise BackendError(f"Failed to list directory: {e}", backend="gcs", path=path) from e

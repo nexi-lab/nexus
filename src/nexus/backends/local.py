@@ -354,7 +354,7 @@ class LocalBackend(Backend):
                 name = entry.name
                 # Mark directories with trailing slash
                 if entry.is_dir():
-                    name += '/'
+                    name += "/"
                 entries.append(name)
 
             return sorted(entries)

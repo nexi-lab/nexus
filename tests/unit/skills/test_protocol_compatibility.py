@@ -170,7 +170,13 @@ def test_protocol_runtime_checkable() -> None:
             def exists(self, path: str) -> bool:
                 return True
 
-            def list(self, path: str = "/", recursive: bool = True, details: bool = False, prefix: str | None = None):
+            def list(
+                self,
+                path: str = "/",
+                recursive: bool = True,
+                details: bool = False,
+                prefix: str | None = None,
+            ):
                 return []
 
             def glob(self, pattern: str, path: str = "/"):

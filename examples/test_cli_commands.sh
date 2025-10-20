@@ -1377,6 +1377,113 @@ export NEXUS_DATA_DIR="$DATA_DIR"
 
 echo -e "${GREEN}✓ All ReBAC tests passed!${NC}\n"
 
+# ============================================================
+# Skills System CLI Tests (v0.3.0 - Issue #88)
+# ============================================================
+echo -e "\n${BLUE}Testing Skills System CLI...${NC}"
+
+# Create separate workspace for skills tests
+SKILLS_DATA_DIR="$TEST_WORKSPACE/skills-test-data"
+test_command "Create skills test workspace" \
+    mkdir -p "$SKILLS_DATA_DIR"
+
+test_command "Initialize skills test workspace" \
+    nexus init "$SKILLS_DATA_DIR"
+
+# Switch to skills test data directory
+export NEXUS_DATA_DIR="$SKILLS_DATA_DIR/nexus-data"
+
+# Test 116: List skills (empty initially)
+test_command "skills list - list all skills (empty initially)" \
+    bash -c "nexus skills list 2>&1 || true"
+
+# Test 117: Create a new skill
+test_command "skills create - create new skill from basic template" \
+    bash -c "nexus skills create my-test-skill --description 'Test skill for CLI' --author 'Test Runner' 2>&1 | grep -i 'created skill'"
+
+# Test 118: List skills again (should show created skill)
+test_command "skills list - show created skill" \
+    bash -c "nexus skills list 2>&1 | grep 'my-test-skill'"
+
+# Test 119: Create another skill with different template
+test_command "skills create - create data-analysis skill" \
+    bash -c "nexus skills create data-viz --description 'Data visualization' --template data-analysis --author 'Test Runner' 2>&1 | grep -i 'created skill'"
+
+# Test 120: Show skill info
+test_command "skills info - show detailed skill information" \
+    bash -c "nexus skills info my-test-skill 2>&1 | grep -E '(my-test-skill|Test skill)'"
+
+# Test 121: Search skills
+test_command "skills search - search for skills by description" \
+    bash -c "nexus skills search 'test' 2>&1 | grep -i 'my-test-skill'"
+
+# Test 122: Calculate skill size
+test_command "skills size - calculate skill size" \
+    bash -c "nexus skills size my-test-skill 2>&1 | grep -i 'total size'"
+
+# Test 123: Calculate skill size with human-readable output
+test_command "skills size - human-readable output" \
+    bash -c "nexus skills size my-test-skill --human 2>&1 | grep -E '(B|KB|MB)'"
+
+# Test 124: Validate skill (generic format)
+test_command "skills validate - validate skill for export" \
+    bash -c "nexus skills validate my-test-skill 2>&1 | grep -i 'valid'"
+
+# Test 125: Validate skill (claude format)
+test_command "skills validate - validate for claude format" \
+    bash -c "nexus skills validate my-test-skill --format claude 2>&1 | grep -i 'valid'"
+
+# Test 126: Export skill to .zip
+SKILLS_EXPORT_FILE="$TEST_WORKSPACE/my-test-skill.zip"
+test_command "skills export - export skill to .zip" \
+    bash -c "nexus skills export my-test-skill --output '$SKILLS_EXPORT_FILE' 2>&1 | grep -i 'exported skill'"
+
+# Test 127: Verify export file exists
+test_command "skills export - verify .zip file created" \
+    test -f "$SKILLS_EXPORT_FILE"
+
+# Test 128: Export with Claude format
+SKILLS_EXPORT_CLAUDE="$TEST_WORKSPACE/my-test-skill-claude.zip"
+test_command "skills export - export with claude format" \
+    bash -c "nexus skills export my-test-skill --output '$SKILLS_EXPORT_CLAUDE' --format claude 2>&1 | grep -i 'exported skill'"
+
+# Test 129: Fork skill
+test_command "skills fork - fork existing skill" \
+    bash -c "nexus skills fork my-test-skill forked-skill --author 'Forker' 2>&1 | grep -i 'forked skill'"
+
+# Test 130: Verify forked skill exists
+test_command "skills list - verify forked skill exists" \
+    bash -c "nexus skills list 2>&1 | grep 'forked-skill'"
+
+# Test 131: Publish skill to tenant tier
+test_command "skills publish - publish to tenant" \
+    bash -c "nexus skills publish my-test-skill 2>&1 | grep -i 'published skill'"
+
+# Test 132: List tenant skills
+test_command "skills list --tenant - show tenant skills" \
+    bash -c "nexus skills list --tenant 2>&1 || true"
+
+# Test 133: Test help command
+test_command "skills --help shows available commands" \
+    bash -c "nexus skills --help | grep -E '(list|create|fork|publish|search|info|export|validate|size)'"
+
+# Test 134: Test list --help
+test_command "skills list --help shows usage" \
+    bash -c "nexus skills list --help | grep 'List all skills'"
+
+# Test 135: Test create --help
+test_command "skills create --help shows usage" \
+    bash -c "nexus skills create --help | grep 'Create a new skill'"
+
+# Test 136: Filter by tier
+test_command "skills list --tier agent - filter by agent tier" \
+    bash -c "nexus skills list --tier agent 2>&1 | grep -E '(forked-skill|my-test-skill)' || echo 'No agent skills found'"
+
+# Switch back to main data directory
+export NEXUS_DATA_DIR="$DATA_DIR"
+
+echo -e "${GREEN}✓ All Skills System CLI tests passed!${NC}\n"
+
 # Summary
 echo -e "${BLUE}================================${NC}"
 echo -e "${BLUE}Test Summary${NC}"

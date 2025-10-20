@@ -1621,6 +1621,66 @@ for skill_name, score in results:
     print(f"{skill_name}: {score:.1f}")
 ```
 
+#### Skills CLI Commands (v0.3.0)
+
+Nexus provides comprehensive CLI commands for skill management:
+
+```bash
+# List all skills
+nexus skills list
+nexus skills list --tenant  # Show tenant skills
+nexus skills list --system  # Show system skills
+nexus skills list --tier agent  # Filter by tier
+
+# Create new skill from template
+nexus skills create my-skill --description "My custom skill"
+nexus skills create data-viz --description "Data visualization" --template data-analysis
+nexus skills create analyzer --description "Code analyzer" --author Alice
+
+# Fork existing skill
+nexus skills fork analyze-code my-analyzer
+nexus skills fork data-analysis custom-analysis --author Bob
+
+# Publish skill to tenant library
+nexus skills publish my-skill
+nexus skills publish shared-skill --from-tier tenant --to-tier system
+
+# Search skills by description
+nexus skills search "data analysis"
+nexus skills search "code" --tier tenant --limit 5
+
+# Show detailed skill information
+nexus skills info analyze-code
+nexus skills info data-analysis
+
+# Export skill to .zip package (vendor-neutral)
+nexus skills export my-skill --output ./my-skill.zip
+nexus skills export analyze-code --output ./export.zip --format claude
+nexus skills export my-skill --output ./export.zip --no-deps  # Exclude dependencies
+
+# Validate skill format and size limits
+nexus skills validate my-skill
+nexus skills validate analyze-code --format claude
+
+# Calculate skill size
+nexus skills size my-skill
+nexus skills size analyze-code --human
+```
+
+**Available Templates:**
+- `basic` - Simple skill template
+- `data-analysis` - Data processing and analysis
+- `code-generation` - Code generation and modification
+- `document-processing` - Document parsing and analysis
+- `api-integration` - API integration and data fetching
+
+**Export Formats:**
+- `generic` - Vendor-neutral .zip format (no size limit)
+- `claude` - Anthropic Claude format (8MB limit enforced)
+- `openai` - OpenAI format (validation only, ready for future plugins)
+
+**Note**: External API integrations (uploading to Claude API, OpenAI, etc.) will be implemented as plugins in v0.3.5+ to maintain vendor neutrality. The core CLI provides generic export functionality.
+
 **SKILL.md Format:**
 
 ```markdown
@@ -1951,7 +2011,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [x] **Audit trails** - Log all skill operations, compliance reporting, query by filters
 - [ ] **Skill versioning** - CAS-backed version control with history tracking
 - [ ] **Semantic skill search** - Vector-based search across skill descriptions
-- [ ] **CLI commands** - `list`, `create`, `fork`, `publish`, `search`, `info`, `analytics` (see issue #88)
+- [x] **CLI commands** - `list`, `create`, `fork`, `publish`, `search`, `info`, `export`, `validate`, `size` (see issue #88)
 
 **Note**: External integrations (Claude API upload/download, OpenAI, etc.) will be implemented as **plugins** in v0.3.5+ to maintain vendor neutrality. Core Nexus provides generic skill export (`nexus skills export --format claude`), while `nexus-plugin-anthropic` handles API-specific operations.
 

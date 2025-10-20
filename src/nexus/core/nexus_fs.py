@@ -485,8 +485,33 @@ class NexusFS(NexusFilesystem):
         # Sort by path name
         results.sort(key=lambda m: m.path)
 
+        # Add directories to results (infer from file paths + check backend)
+        # This ensures empty directories show up in listings
+        directories = set()
+
+        if not recursive:
+            # For non-recursive listings, infer immediate subdirectories from file paths
+            base_path = path if path != "/" else ""
+
+            # Get all files to infer directories
+            all_files_for_dirs = self.metadata.list(base_path)
+            for meta in all_files_for_dirs:
+                # Get relative path
+                rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
+                # Check if there's a directory component
+                if "/" in rel_path:
+                    # Extract first directory component
+                    dir_name = rel_path.split("/")[0]
+                    dir_path = path + dir_name if path != "/" else "/" + dir_name
+                    directories.add(dir_path)
+
+            # Check backend for empty directories (directories with no files)
+            # This catches newly created directories using the helper method
+            backend_dirs = self._get_backend_directory_entries(path)
+            directories.update(backend_dirs)
+
         if details:
-            return [
+            file_results = [
                 {
                     "path": meta.path,
                     "size": meta.size,
@@ -494,11 +519,34 @@ class NexusFS(NexusFilesystem):
                     "created_at": meta.created_at,
                     "etag": meta.etag,
                     "mime_type": meta.mime_type,
+                    "is_directory": False,
                 }
                 for meta in results
             ]
+
+            # Add directory entries
+            dir_results = [
+                {
+                    "path": dir_path,
+                    "size": 0,
+                    "modified_at": None,
+                    "created_at": None,
+                    "etag": None,
+                    "mime_type": None,
+                    "is_directory": True,
+                }
+                for dir_path in sorted(directories)
+            ]
+
+            # Combine and sort
+            all_results = file_results + dir_results
+            all_results.sort(key=lambda x: str(x["path"]))
+            return all_results
         else:
-            return [meta.path for meta in results]
+            # Return paths only
+            all_paths = [meta.path for meta in results] + sorted(directories)
+            all_paths.sort()
+            return all_paths
 
     def glob(self, pattern: str, path: str = "/") -> builtins.list[str]:
         """
@@ -843,6 +891,69 @@ class NexusFS(NexusFilesystem):
             return route.backend.is_directory(route.backend_path)
         except (InvalidPathError, Exception):
             return False
+
+    def _get_backend_directory_entries(self, path: str) -> set[str]:
+        """
+        Get directory entries from backend for empty directory detection.
+
+        This helper method queries the backend's list_dir() to find directories
+        that don't contain any files (empty directories). It handles routing
+        and error cases gracefully.
+
+        Args:
+            path: Virtual path to list (e.g., "/", "/workspace")
+
+        Returns:
+            Set of directory paths that exist in the backend
+        """
+        directories = set()
+
+        try:
+            # For root path, directly use the backend (router doesn't handle "/" well)
+            if path == "/":
+                try:
+                    entries = self.backend.list_dir("")
+                    for entry in entries:
+                        if entry.endswith("/"):  # Directory marker
+                            dir_name = entry.rstrip("/")
+                            dir_path = "/" + dir_name
+                            directories.add(dir_path)
+                except NotImplementedError:
+                    # Backend doesn't support list_dir - skip
+                    pass
+                except Exception:
+                    # Other errors - skip silently (best-effort)
+                    pass
+            else:
+                # Non-root path - use router
+                route = self.router.route(
+                    path.rstrip("/"),
+                    tenant_id=self.tenant_id,
+                    agent_id=self.agent_id,
+                    is_admin=self.is_admin,
+                    check_write=False,
+                )
+                backend_path = route.backend_path
+
+                try:
+                    entries = route.backend.list_dir(backend_path)
+                    for entry in entries:
+                        if entry.endswith("/"):  # Directory marker
+                            dir_name = entry.rstrip("/")
+                            dir_path = path + dir_name if path != "/" else "/" + dir_name
+                            directories.add(dir_path)
+                except NotImplementedError:
+                    # Backend doesn't support list_dir - skip
+                    pass
+                except Exception:
+                    # Other errors - skip silently (best-effort)
+                    pass
+
+        except Exception:
+            # Ignore routing errors - directory detection is best-effort
+            pass
+
+        return directories
 
     # === Metadata Export/Import ===
 

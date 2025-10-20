@@ -3,43 +3,13 @@
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Protocol
 
 from nexus.core.exceptions import ValidationError
 from nexus.skills.models import Skill, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
+from nexus.skills.protocols import NexusFilesystem
 
 logger = logging.getLogger(__name__)
-
-
-class NexusFilesystem(Protocol):
-    """Protocol for filesystem operations.
-
-    This allows the registry to work with both local filesystems and
-    NexusFS instances.
-    """
-
-    def exists(self, path: str) -> bool:
-        """Check if path exists."""
-        ...
-
-    def is_directory(self, path: str) -> bool:
-        """Check if path is a directory."""
-        ...
-
-    def list(
-        self,
-        path: str = "/",
-        recursive: bool = True,
-        details: bool = False,
-        prefix: str | None = None,
-    ) -> list[str] | list[dict]:
-        """List files in directory."""
-        ...
-
-    def read(self, path: str) -> bytes:
-        """Read file content."""
-        ...
 
 
 class SkillNotFoundError(ValidationError):

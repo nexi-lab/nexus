@@ -64,6 +64,7 @@ from nexus.skills.governance import (
 from nexus.skills.manager import SkillManager, SkillManagerError
 from nexus.skills.models import Skill, SkillExportManifest, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
+from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import (
     SkillDependencyError,
     SkillNotFoundError,
@@ -113,4 +114,6 @@ __all__ = [
     "SkillAuditLogger",
     "AuditLogEntry",
     "AuditAction",
+    # Protocols
+    "NexusFilesystem",
 ]

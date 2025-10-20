@@ -4,52 +4,15 @@ import contextlib
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from nexus.core.exceptions import ValidationError
 from nexus.skills.models import SkillMetadata
 from nexus.skills.parser import SkillParser
+from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import SkillNotFoundError, SkillRegistry
 
 logger = logging.getLogger(__name__)
-
-
-class NexusFilesystem(Protocol):
-    """Protocol for filesystem operations.
-
-    This allows the manager to work with both local filesystems and
-    NexusFS instances.
-    """
-
-    def exists(self, path: str) -> bool:
-        """Check if path exists."""
-        ...
-
-    def is_directory(self, path: str) -> bool:
-        """Check if path is a directory."""
-        ...
-
-    def list(
-        self,
-        path: str = "/",
-        recursive: bool = True,
-        details: bool = False,
-        prefix: str | None = None,
-    ) -> list[str] | list[dict]:
-        """List files in directory."""
-        ...
-
-    def read(self, path: str) -> bytes:
-        """Read file content."""
-        ...
-
-    def write(self, path: str, content: bytes) -> None:
-        """Write file content."""
-        ...
-
-    def mkdir(self, path: str, parents: bool = False) -> None:
-        """Create directory."""
-        ...
 
 
 class SkillManagerError(ValidationError):

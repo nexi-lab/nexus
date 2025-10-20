@@ -341,21 +341,7 @@ class LocalBackend(Backend):
             return False
 
     def list_dir(self, path: str) -> list[str]:
-        """List immediate contents of a directory.
-
-        Returns a list of entry names (not full paths).
-        Directory names are marked with a trailing '/' to distinguish them from files.
-
-        Args:
-            path: Directory path to list
-
-        Returns:
-            List of entry names (directories have trailing '/')
-
-        Raises:
-            FileNotFoundError: If directory doesn't exist
-            NotADirectoryError: If path is not a directory
-        """
+        """List directory contents using local filesystem."""
         try:
             full_path = self.dir_root / path.lstrip("/")
             if not full_path.exists():

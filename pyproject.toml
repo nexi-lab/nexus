@@ -99,6 +99,25 @@ fuse = [
     "fusepy>=3.0.1",  # Python FUSE bindings
 ]
 
+# First-party plugins (install manually for now - not yet published to PyPI)
+# anthropic = [
+#     "nexus-plugin-anthropic>=0.1.0",
+# ]
+#
+# skill-seekers = [
+#     "nexus-plugin-skill-seekers>=0.1.0",
+# ]
+#
+# plugins = [
+#     "nexus-plugin-anthropic>=0.1.0",
+#     "nexus-plugin-skill-seekers>=0.1.0",
+# ]
+
+all = [
+    # All optional features (plugins must be installed manually)
+    "fusepy>=3.0.1",
+]
+
 [project.urls]
 Homepage = "https://github.com/nexi-lab/nexus"
 Documentation = "https://github.com/nexi-lab/nexus/blob/main/README.md"
@@ -195,6 +214,15 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "nexus.backends.gcs"
 disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = [
+    "*.examples.*",
+    "examples.*",
+]
+# Relax strictness for example files
+disallow_untyped_defs = false
+warn_unused_ignores = false
 
 [tool.ruff]
 target-version = "py311"

@@ -357,10 +357,12 @@ class TestRename:
         """Test renaming a file."""
         # Mock that neither path is a virtual view
         mock_nexus_fs.exists.return_value = False
+        mock_nexus_fs.is_directory.return_value = False  # Source is a file, not a directory
         mock_nexus_fs.read.return_value = b"content"
 
         fuse_ops.rename("/workspace/old.txt", "/workspace/new.txt")
 
+        mock_nexus_fs.is_directory.assert_called_with("/workspace/old.txt")
         mock_nexus_fs.read.assert_called_with("/workspace/old.txt")
         mock_nexus_fs.write.assert_called_with("/workspace/new.txt", b"content")
         mock_nexus_fs.delete.assert_called_with("/workspace/old.txt")
@@ -385,6 +387,39 @@ class TestRename:
             fuse_ops.rename("/.raw/file.txt", "/workspace/file.txt")
 
         assert exc_info.value.errno == errno.EROFS
+
+    def test_rename_directory(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
+        """Test renaming a directory with files."""
+        # Mock that source is a directory
+        mock_nexus_fs.exists.return_value = False
+        mock_nexus_fs.is_directory.return_value = True
+
+        # Mock directory contents
+        mock_nexus_fs.list.return_value = [
+            {'path': '/workspace/old_dir/file1.txt', 'is_directory': False},
+            {'path': '/workspace/old_dir/subdir', 'is_directory': True},
+            {'path': '/workspace/old_dir/subdir/file2.txt', 'is_directory': False},
+        ]
+
+        # Mock file reads
+        mock_nexus_fs.read.side_effect = [b"content1", b"content2"]
+
+        fuse_ops.rename("/workspace/old_dir", "/workspace/new_dir")
+
+        # Verify directory was checked
+        mock_nexus_fs.is_directory.assert_called_with("/workspace/old_dir")
+
+        # Verify files were listed
+        mock_nexus_fs.list.assert_called_with("/workspace/old_dir", recursive=True, details=True)
+
+        # Verify files were moved
+        assert mock_nexus_fs.read.call_count == 2
+        assert mock_nexus_fs.write.call_count == 2
+        mock_nexus_fs.write.assert_any_call("/workspace/new_dir/file1.txt", b"content1")
+        mock_nexus_fs.write.assert_any_call("/workspace/new_dir/subdir/file2.txt", b"content2")
+
+        # Verify source directory was deleted
+        mock_nexus_fs.rmdir.assert_called_with("/workspace/old_dir", recursive=True)
 
 
 class TestTruncate:

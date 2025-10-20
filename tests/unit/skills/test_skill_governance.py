@@ -193,11 +193,16 @@ async def test_get_pending_approvals_by_reviewer() -> None:
 @pytest.mark.asyncio
 async def test_get_approval_history() -> None:
     """Test getting approval history for a skill."""
+    import asyncio
+
     gov = SkillGovernance()
 
-    # Submit, approve, then submit again
+    # Submit, approve, then submit again (with delay to ensure different timestamps)
     approval_id1 = await gov.submit_for_approval("test-skill", submitted_by="alice")
     await gov.approve_skill(approval_id1, reviewed_by="bob")
+
+    # Small delay to ensure different timestamps on fast systems
+    await asyncio.sleep(0.01)
 
     approval_id2 = await gov.submit_for_approval("test-skill", submitted_by="charlie")
     await gov.reject_skill(approval_id2, reviewed_by="bob")

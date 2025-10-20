@@ -1779,40 +1779,72 @@ def mount(
         console.print("  • [cyan]file.md[/cyan] - View formatted markdown")
         console.print()
 
-        # Mount filesystem
+        if daemon:
+            # Daemon mode: double-fork BEFORE mounting
+            import os
+            import sys
+
+            # First fork
+            pid = os.fork()
+
+            if pid > 0:
+                # Parent process - wait for intermediate child to exit, then return
+                os.waitpid(pid, 0)  # Reap intermediate child to avoid zombies
+                console.print(f"[green]✓[/green] Mounted Nexus to [cyan]{mount_point}[/cyan]")
+                console.print()
+                console.print("[yellow]To unmount:[/yellow]")
+                console.print(f"  nexus unmount {mount_point}")
+                return
+
+            # Intermediate child - detach and fork again
+            os.setsid()  # Create new session and become session leader
+
+            # Second fork
+            pid2 = os.fork()
+
+            if pid2 > 0:
+                # Intermediate child exits immediately
+                # This makes the grandchild process be adopted by init (PID 1)
+                os._exit(0)
+
+            # Grandchild (daemon process) - redirect I/O, mount, and wait
+            sys.stdin.close()
+            sys.stdout = open(os.devnull, "w")  # noqa: SIM115
+            sys.stderr = open(os.devnull, "w")  # noqa: SIM115
+
+            # Now mount the filesystem in the daemon process (foreground mode to block)
+            fuse = mount_nexus(
+                nx,
+                mount_point,
+                mode=mode,
+                foreground=True,  # Run in foreground to keep daemon process alive
+                allow_other=allow_other,
+                debug=debug,
+            )
+
+            # Exit cleanly when unmounted
+            os._exit(0)
+
+        # Non-daemon mode: mount in background thread
         fuse = mount_nexus(
             nx,
             mount_point,
             mode=mode,
-            foreground=not daemon,
+            foreground=False,  # Run in background thread
             allow_other=allow_other,
             debug=debug,
         )
 
-        if daemon:
-            console.print(f"[green]✓[/green] Mounted Nexus to [cyan]{mount_point}[/cyan]")
-            console.print()
-            console.print("[yellow]To unmount:[/yellow]")
-            console.print(f"  nexus unmount {mount_point}")
+        console.print(f"[green]Mounted Nexus to [cyan]{mount_point}[/cyan][/green]")
+        console.print("[yellow]Press Ctrl+C to unmount[/yellow]")
 
-            # Keep process alive by waiting on the mount thread
-            try:
-                fuse.wait()
-            except KeyboardInterrupt:
-                console.print("\n[yellow]Unmounting...[/yellow]")
-                fuse.unmount()
-                console.print("[green]✓[/green] Unmounted")
-        else:
-            console.print(f"[green]Mounted Nexus to [cyan]{mount_point}[/cyan][/green]")
-            console.print("[yellow]Press Ctrl+C to unmount[/yellow]")
-
-            # Wait for signal (foreground mode)
-            try:
-                fuse.wait()
-            except KeyboardInterrupt:
-                console.print("\n[yellow]Unmounting...[/yellow]")
-                fuse.unmount()
-                console.print("[green]✓[/green] Unmounted")
+        # Wait for signal (foreground mode)
+        try:
+            fuse.wait()
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Unmounting...[/yellow]")
+            fuse.unmount()
+            console.print("[green]✓[/green] Unmounted")
 
     except ImportError:
         console.print(

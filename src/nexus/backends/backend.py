@@ -188,3 +188,32 @@ class Backend(ABC):
             True if path is a directory, False otherwise
         """
         pass
+
+    def list_dir(self, path: str) -> list[str]:
+        """
+        List immediate contents of a directory.
+
+        Returns entry names (not full paths) with directories marked
+        by a trailing '/' to distinguish them from files.
+
+        This is an optional method that backends can implement to support
+        efficient directory listing. If not implemented, the filesystem
+        layer will infer directories from file metadata.
+
+        Args:
+            path: Directory path to list (relative to backend root)
+
+        Returns:
+            List of entry names (directories have trailing '/')
+            Example: ["file.txt", "subdir/", "image.png"]
+
+        Raises:
+            FileNotFoundError: If directory doesn't exist
+            NotADirectoryError: If path is not a directory
+            NotImplementedError: If backend doesn't support directory listing
+
+        Note:
+            The default implementation raises NotImplementedError.
+            Backends that support efficient directory listing should override this.
+        """
+        raise NotImplementedError(f"Backend '{self.name}' does not support directory listing")

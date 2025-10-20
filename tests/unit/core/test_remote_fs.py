@@ -328,13 +328,14 @@ class TestList:
         remote_fs.backend.write_content.return_value = "hash3"
         remote_fs.write("/workspace/subdir/file3.txt", b"content")
 
-        # List non-recursively
+        # List non-recursively (includes directories now)
         files = remote_fs.list("/workspace", recursive=False)
 
-        assert len(files) == 2
+        assert len(files) == 3  # file1.txt + file2.txt + subdir
         assert "/workspace/file1.txt" in files
         assert "/workspace/file2.txt" in files
-        assert "/workspace/subdir/file3.txt" not in files
+        assert "/workspace/subdir" in files  # Directory is now included
+        assert "/workspace/subdir/file3.txt" not in files  # But nested file is not
 
     def test_list_with_details(self, remote_fs: NexusFS) -> None:
         """Test listing with detailed metadata."""

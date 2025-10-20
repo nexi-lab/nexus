@@ -1809,8 +1809,8 @@ def mount(
 
             # Grandchild (daemon process) - redirect I/O, mount, and wait
             sys.stdin.close()
-            sys.stdout = open(os.devnull, 'w')
-            sys.stderr = open(os.devnull, 'w')
+            sys.stdout = open(os.devnull, 'w')  # noqa: SIM115
+            sys.stderr = open(os.devnull, 'w')  # noqa: SIM115
 
             # Now mount the filesystem in the daemon process (foreground mode to block)
             fuse = mount_nexus(

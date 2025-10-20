@@ -475,3 +475,238 @@ async def test_fork_skill_local_filesystem() -> None:
 
         finally:
             SkillRegistry.TIER_PATHS = original_paths
+
+
+@pytest.mark.asyncio
+async def test_search_skills_basic() -> None:
+    """Test basic skill search by description."""
+    fs = MockFilesystem()
+
+    # Create skills with different descriptions
+    skill1 = b"""---
+name: code-analyzer
+description: Analyzes code quality and structure
+---
+Content
+"""
+    skill2 = b"""---
+name: data-processor
+description: Processes and transforms data
+---
+Content
+"""
+    skill3 = b"""---
+name: code-generator
+description: Generates code from specifications
+---
+Content
+"""
+
+    fs.write("/workspace/.nexus/skills/code-analyzer/SKILL.md", skill1)
+    fs.write("/workspace/.nexus/skills/data-processor/SKILL.md", skill2)
+    fs.write("/workspace/.nexus/skills/code-generator/SKILL.md", skill3)
+
+    registry = SkillRegistry(filesystem=fs)
+    await registry.discover(tiers=["agent"])
+
+    manager = SkillManager(filesystem=fs, registry=registry)
+
+    # Search for "code"
+    results = await manager.search_skills("code")
+
+    assert len(results) > 0
+    skill_names = [name for name, score in results]
+    assert "code-analyzer" in skill_names
+    assert "code-generator" in skill_names
+
+
+@pytest.mark.asyncio
+async def test_search_skills_phrase_match() -> None:
+    """Test search with phrase matching."""
+    fs = MockFilesystem()
+
+    skill1 = b"""---
+name: skill1
+description: Analyzes code quality
+---
+Content
+"""
+    skill2 = b"""---
+name: skill2
+description: Analyzes data quality
+---
+Content
+"""
+
+    fs.write("/workspace/.nexus/skills/skill1/SKILL.md", skill1)
+    fs.write("/workspace/.nexus/skills/skill2/SKILL.md", skill2)
+
+    registry = SkillRegistry(filesystem=fs)
+    await registry.discover(tiers=["agent"])
+
+    manager = SkillManager(filesystem=fs, registry=registry)
+
+    # Search for exact phrase
+    results = await manager.search_skills("code quality")
+
+    assert len(results) > 0
+    # skill1 should rank higher (exact phrase match)
+    assert results[0][0] == "skill1"
+
+
+@pytest.mark.asyncio
+async def test_search_skills_name_match() -> None:
+    """Test search that matches skill name."""
+    fs = MockFilesystem()
+
+    skill = b"""---
+name: data-analyzer
+description: General purpose tool
+---
+Content
+"""
+
+    fs.write("/workspace/.nexus/skills/data-analyzer/SKILL.md", skill)
+
+    registry = SkillRegistry(filesystem=fs)
+    await registry.discover(tiers=["agent"])
+
+    manager = SkillManager(filesystem=fs, registry=registry)
+
+    # Search for name
+    results = await manager.search_skills("data")
+
+    assert len(results) == 1
+    assert results[0][0] == "data-analyzer"
+    assert results[0][1] > 0  # Should have positive score
+
+
+@pytest.mark.asyncio
+async def test_search_skills_tier_filter() -> None:
+    """Test search filtered by tier."""
+    fs = MockFilesystem()
+
+    agent_skill = b"""---
+name: agent-skill
+description: Agent skill for testing
+---
+Content
+"""
+    tenant_skill = b"""---
+name: tenant-skill
+description: Tenant skill for testing
+---
+Content
+"""
+
+    fs.write("/workspace/.nexus/skills/agent-skill/SKILL.md", agent_skill)
+    fs.write("/shared/skills/tenant-skill/SKILL.md", tenant_skill)
+
+    registry = SkillRegistry(filesystem=fs)
+    await registry.discover()
+
+    manager = SkillManager(filesystem=fs, registry=registry)
+
+    # Search only agent tier
+    results = await manager.search_skills("testing", tier="agent")
+
+    assert len(results) == 1
+    assert results[0][0] == "agent-skill"
+
+
+@pytest.mark.asyncio
+async def test_search_skills_with_limit() -> None:
+    """Test search with result limit."""
+    fs = MockFilesystem()
+
+    # Create many skills
+    for i in range(20):
+        skill = f"""---
+name: skill-{i}
+description: Test skill number {i}
+---
+Content
+""".encode()
+        fs.write(f"/workspace/.nexus/skills/skill-{i}/SKILL.md", skill)
+
+    registry = SkillRegistry(filesystem=fs)
+    await registry.discover(tiers=["agent"])
+
+    manager = SkillManager(filesystem=fs, registry=registry)
+
+    # Search with limit
+    results = await manager.search_skills("test", limit=5)
+
+    assert len(results) == 5
+
+
+@pytest.mark.asyncio
+async def test_search_skills_no_matches() -> None:
+    """Test search with no matching skills."""
+    fs = MockFilesystem()
+
+    skill = b"""---
+name: test-skill
+description: Something completely different
+---
+Content
+"""
+
+    fs.write("/workspace/.nexus/skills/test-skill/SKILL.md", skill)
+
+    registry = SkillRegistry(filesystem=fs)
+    await registry.discover(tiers=["agent"])
+
+    manager = SkillManager(filesystem=fs, registry=registry)
+
+    # Search for non-matching term
+    results = await manager.search_skills("nonexistent")
+
+    assert len(results) == 0
+
+
+@pytest.mark.asyncio
+async def test_search_skills_scoring() -> None:
+    """Test that search results are properly scored and sorted."""
+    fs = MockFilesystem()
+
+    # Skill with exact phrase match should rank highest
+    skill1 = b"""---
+name: skill1
+description: Machine learning model training
+---
+Content
+"""
+    # Skill with partial match should rank lower
+    skill2 = b"""---
+name: skill2
+description: This skill does machine things and learning activities
+---
+Content
+"""
+    # Skill with only one word match should rank lowest
+    skill3 = b"""---
+name: skill3
+description: Training documentation generator
+---
+Content
+"""
+
+    fs.write("/workspace/.nexus/skills/skill1/SKILL.md", skill1)
+    fs.write("/workspace/.nexus/skills/skill2/SKILL.md", skill2)
+    fs.write("/workspace/.nexus/skills/skill3/SKILL.md", skill3)
+
+    registry = SkillRegistry(filesystem=fs)
+    await registry.discover(tiers=["agent"])
+
+    manager = SkillManager(filesystem=fs, registry=registry)
+
+    # Search for phrase
+    results = await manager.search_skills("machine learning")
+
+    # Only skill1 and skill2 match (skill3 doesn't have "machine" or "learning")
+    assert len(results) == 2
+
+    # Verify ranking (exact phrase match first)
+    assert results[0][0] == "skill1"  # Exact phrase in description
+    assert results[0][1] > results[1][1]  # Higher score than skill2

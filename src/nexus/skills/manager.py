@@ -462,3 +462,83 @@ class SkillManager:
             f"Published skill '{name}' from '{source_tier}' to '{target_tier}' at {target_file}"
         )
         return target_file
+
+    async def search_skills(
+        self,
+        query: str,
+        tier: str | None = None,
+        limit: int | None = 10,
+    ) -> list[tuple[str, float]]:
+        """Search skills by description using text matching.
+
+        This provides a simple text-based search across skill descriptions.
+        For more advanced semantic search, use the Nexus semantic_search API.
+
+        Args:
+            query: Search query string
+            tier: Optional tier to filter by (agent, tenant, system)
+            limit: Maximum number of results (default: 10)
+
+        Returns:
+            List of (skill_name, score) tuples sorted by relevance
+
+        Example:
+            >>> # Search for code analysis skills
+            >>> results = await manager.search_skills("code analysis")
+            >>> for skill_name, score in results:
+            ...     print(f"{skill_name}: {score:.2f}")
+            >>>
+            >>> # Search only in tenant skills
+            >>> results = await manager.search_skills("data processing", tier="tenant")
+        """
+        # Ensure registry has discovered skills
+        if not self._registry._metadata_index:
+            await self._registry.discover()
+
+        query_lower = query.lower()
+        query_terms = query_lower.split()
+
+        # Score skills by relevance
+        scores: list[tuple[str, float]] = []
+
+        # Get metadata list (guaranteed to be SkillMetadata with include_metadata=True)
+        metadata_list_raw = self._registry.list_skills(tier=tier, include_metadata=True)
+        metadata_list: list[SkillMetadata] = metadata_list_raw  # type: ignore[assignment]
+
+        for metadata in metadata_list:
+            if not metadata.description:
+                continue
+
+            # Simple scoring: count matching terms in description and name
+            description_lower = metadata.description.lower()
+            name_lower = metadata.name.lower()
+
+            score = 0.0
+
+            # Exact phrase match in description (highest score)
+            if query_lower in description_lower:
+                score += 10.0
+
+            # Exact phrase match in name
+            if query_lower in name_lower:
+                score += 5.0
+
+            # Count individual term matches
+            for term in query_terms:
+                if term in description_lower:
+                    score += 2.0
+                if term in name_lower:
+                    score += 1.0
+
+            if score > 0:
+                scores.append((metadata.name, score))
+
+        # Sort by score descending
+        scores.sort(key=lambda x: x[1], reverse=True)
+
+        # Limit results
+        if limit:
+            scores = scores[:limit]
+
+        logger.debug(f"Search for '{query}' returned {len(scores)} results")
+        return scores

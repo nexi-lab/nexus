@@ -1266,6 +1266,72 @@ await exporter.export_skill(
 valid, msg, size = await exporter.validate_export("large-skill", format="claude")
 if not valid:
     print(f"Cannot export: {msg}")
+
+# Enterprise Features (NEW in v0.3.0)
+from nexus.skills import (
+    SkillAnalyticsTracker,
+    SkillGovernance,
+    SkillAuditLogger,
+    AuditAction
+)
+
+# Track skill usage and analytics
+tracker = SkillAnalyticsTracker(db_connection)
+await tracker.track_usage(
+    "analyze-code",
+    agent_id="alice",
+    execution_time=1.5,
+    success=True
+)
+
+# Get analytics for a skill
+analytics = await tracker.get_skill_analytics("analyze-code")
+print(f"Success rate: {analytics.success_rate:.1%}")
+print(f"Avg execution time: {analytics.avg_execution_time:.2f}s")
+
+# Get dashboard metrics
+dashboard = await tracker.get_dashboard_metrics()
+print(f"Total skills: {dashboard.total_skills}")
+print(f"Most used: {dashboard.most_used_skills[:5]}")
+
+# Governance - approval workflow for org-wide skills
+gov = SkillGovernance(db_connection)
+
+# Submit for approval
+approval_id = await gov.submit_for_approval(
+    "my-analyzer",
+    submitted_by="alice",
+    reviewers=["bob", "charlie"],
+    comments="Ready for team-wide use"
+)
+
+# Approve skill
+await gov.approve_skill(approval_id, reviewed_by="bob", comments="Excellent work!")
+is_approved = await gov.is_approved("my-analyzer")
+
+# Audit logging for compliance
+audit = SkillAuditLogger(db_connection)
+
+# Log skill operations
+await audit.log(
+    "analyze-code",
+    AuditAction.EXECUTED,
+    agent_id="alice",
+    details={"execution_time": 1.5, "success": True}
+)
+
+# Query audit logs
+logs = await audit.query_logs(skill_name="analyze-code", action=AuditAction.EXECUTED)
+
+# Generate compliance report
+report = await audit.generate_compliance_report(tenant_id="tenant1")
+print(f"Total operations: {report['total_operations']}")
+print(f"Top skills: {report['top_skills'][:5]}")
+
+# Search skills by description
+results = await manager.search_skills("code analysis", limit=5)
+for skill_name, score in results:
+    print(f"{skill_name}: {score:.1f}")
 ```
 
 **SKILL.md Format:**
@@ -1300,7 +1366,11 @@ This skill analyzes code for quality metrics...
 - **Skill Lifecycle**: Create, fork, and publish skills with lineage tracking
 - **Template System**: 5 pre-built templates (basic, data-analysis, code-generation, document-processing, api-integration)
 - **Vendor-Neutral Export**: Generic .zip format with Claude/OpenAI validation
-- **Comprehensive Tests**: 115 passing tests (88%+ coverage)
+- **Usage Analytics**: Track performance, success rates, dashboard metrics (NEW in v0.3.0)
+- **Governance**: Approval workflows for team-wide skill publication (NEW in v0.3.0)
+- **Audit Logging**: Complete compliance tracking and reporting (NEW in v0.3.0)
+- **Skill Search**: Find skills by description with relevance scoring (NEW in v0.3.0)
+- **Comprehensive Tests**: 156 passing tests (31%+ overall coverage, 65-91% skills module)
 
 **Skill Tiers:**
 - **Agent** (`/workspace/.nexus/skills/`) - Personal skills (highest priority)
@@ -1587,10 +1657,13 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [x] **Skill export** - Export to generic formats (validate, pack, size check)
 - [x] **Skill templates** - 5 pre-built templates (basic, data-analysis, code-generation, document-processing, api-integration)
 - [x] **Skill lifecycle** - Create, fork, publish workflows with lineage tracking
-- [x] **Comprehensive tests** - 115 passing tests (88%+ coverage)
+- [x] **Comprehensive tests** - 156 passing tests (31%+ overall coverage, 65-91% skills module)
+- [x] **Skill analytics** - Usage tracking, success rates, execution time, dashboard metrics
+- [x] **Skill search** - Text-based search across skill descriptions with relevance scoring
+- [x] **Skill governance** - Approval workflow for org-wide skills (submit, approve, reject)
+- [x] **Audit trails** - Log all skill operations, compliance reporting, query by filters
 - [ ] **Skill versioning** - CAS-backed version control with history tracking
-- [ ] **Skill analytics** - Usage tracking, success rates, execution time
-- [ ] **Semantic skill search** - Vector search across skill descriptions
+- [ ] **Semantic skill search** - Vector-based search across skill descriptions
 - [ ] **CLI commands** - `list`, `create`, `fork`, `publish`, `search`, `info`, `analytics` (see issue #88)
 
 **Note**: External integrations (Claude API upload/download, OpenAI, etc.) will be implemented as **plugins** in v0.3.5+ to maintain vendor neutrality. Core Nexus provides generic skill export (`nexus skills export --format claude`), while `nexus-plugin-anthropic` handles API-specific operations.

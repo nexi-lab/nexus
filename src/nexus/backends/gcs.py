@@ -409,3 +409,60 @@ class GCSBackend(Backend):
 
         except Exception:
             return False
+
+    def list_dir(self, path: str) -> list[str]:
+        """List immediate contents of a directory in GCS.
+
+        Returns a list of entry names (not full paths).
+        Directory names are marked with a trailing '/' to distinguish them from files.
+
+        Args:
+            path: Directory path to list
+
+        Returns:
+            List of entry names (directories have trailing '/')
+
+        Raises:
+            FileNotFoundError: If directory doesn't exist
+            NotADirectoryError: If path is not a directory
+        """
+        try:
+            # Normalize path
+            path = path.strip("/")
+
+            # Check if directory exists (except root)
+            if path and not self.is_directory(path):
+                raise FileNotFoundError(f"Directory not found: {path}")
+
+            # Build prefix for this directory
+            prefix = f"dirs/{path}/" if path else "dirs/"
+
+            # List blobs with this prefix
+            blobs = self.bucket.list_blobs(prefix=prefix, delimiter="/")
+
+            entries = set()
+
+            # Add direct file blobs (excluding the directory marker itself)
+            for blob in blobs:
+                # Get relative name from the prefix
+                name = blob.name[len(prefix):]
+                if name and name != "":  # Skip the directory marker itself
+                    entries.add(name.rstrip('/'))
+
+            # Add subdirectories (from prefixes returned by delimiter)
+            for prefix_path in blobs.prefixes:
+                # Extract just the directory name
+                name = prefix_path[len(prefix):].rstrip('/')
+                if name:
+                    entries.add(name + '/')
+
+            return sorted(entries)
+
+        except (FileNotFoundError, NotADirectoryError):
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to list directory: {e}",
+                backend="gcs",
+                path=path
+            ) from e

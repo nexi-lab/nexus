@@ -1479,10 +1479,10 @@ async with nexus.connect() as nx:
 
 ### Skills System (v0.3.0)
 
-Manage reusable AI agent skills with SKILL.md format, progressive disclosure, and dependency resolution:
+Manage reusable AI agent skills with SKILL.md format, progressive disclosure, lifecycle management, and dependency resolution:
 
 ```python
-from nexus.skills import SkillRegistry, SkillExporter
+from nexus.skills import SkillRegistry, SkillManager, SkillExporter
 
 # Initialize filesystem
 nx = nexus.connect()
@@ -1510,6 +1510,33 @@ print(skill.content)  # Full markdown content
 # Resolve dependencies automatically (DAG with cycle detection)
 deps = await registry.resolve_dependencies("complex-skill")
 # ['base-skill', 'helper-skill', 'complex-skill']
+
+# Create skill manager for lifecycle operations
+manager = SkillManager(nx, registry)
+
+# Create new skill from template
+await manager.create_skill(
+    "my-analyzer",
+    description="Analyzes code quality and structure",
+    template="code-generation",  # basic, data-analysis, code-generation, document-processing, api-integration
+    author="Alice",
+    tier="agent"
+)
+
+# Fork existing skill with lineage tracking
+await manager.fork_skill(
+    "analyze-code",
+    "my-custom-analyzer",
+    tier="agent",
+    author="Bob"
+)
+
+# Publish skill to tenant library
+await manager.publish_skill(
+    "my-analyzer",
+    source_tier="agent",
+    target_tier="tenant"
+)
 
 # Export skills to .zip (vendor-neutral)
 exporter = SkillExporter(registry)
@@ -1557,8 +1584,10 @@ This skill analyzes code for quality metrics...
 - **Lazy Loading**: Skills cached only when accessed
 - **Three-Tier Hierarchy**: Agent skills override tenant/system skills
 - **Dependency Resolution**: Automatic DAG resolution with cycle detection
+- **Skill Lifecycle**: Create, fork, and publish skills with lineage tracking
+- **Template System**: 5 pre-built templates (basic, data-analysis, code-generation, document-processing, api-integration)
 - **Vendor-Neutral Export**: Generic .zip format with Claude/OpenAI validation
-- **85-89% Test Coverage**: 74 passing tests
+- **Comprehensive Tests**: 115 passing tests (88%+ coverage)
 
 **Skill Tiers:**
 - **Agent** (`/workspace/.nexus/skills/`) - Personal skills (highest priority)
@@ -1843,10 +1872,10 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [x] **Skill discovery** - Scan `/workspace/.nexus/skills/`, `/shared/skills/`, `/system/skills/`
 - [x] **Dependency resolution** - Automatic DAG resolution with cycle detection
 - [x] **Skill export** - Export to generic formats (validate, pack, size check)
-- [x] **Comprehensive tests** - 74 passing tests (85-89% coverage)
-- [ ] **Skill templates** - Pre-built templates for common skill patterns
+- [x] **Skill templates** - 5 pre-built templates (basic, data-analysis, code-generation, document-processing, api-integration)
+- [x] **Skill lifecycle** - Create, fork, publish workflows with lineage tracking
+- [x] **Comprehensive tests** - 115 passing tests (88%+ coverage)
 - [ ] **Skill versioning** - CAS-backed version control with history tracking
-- [ ] **Skill lifecycle** - Create, fork, publish workflows
 - [ ] **Skill analytics** - Usage tracking, success rates, execution time
 - [ ] **Semantic skill search** - Vector search across skill descriptions
 - [ ] **CLI commands** - `list`, `create`, `fork`, `publish`, `search`, `info`, `analytics` (see issue #88)

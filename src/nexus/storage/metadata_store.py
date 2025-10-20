@@ -386,10 +386,14 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
             with self.SessionLocal() as session:
                 # Check if any files exist with this path as a prefix
-                stmt = select(FilePathModel.path_id).where(
-                    FilePathModel.virtual_path.like(f"{dir_path}%"),
-                    FilePathModel.deleted_at.is_(None)
-                ).limit(1)
+                stmt = (
+                    select(FilePathModel.path_id)
+                    .where(
+                        FilePathModel.virtual_path.like(f"{dir_path}%"),
+                        FilePathModel.deleted_at.is_(None),
+                    )
+                    .limit(1)
+                )
                 has_children = session.scalar(stmt) is not None
                 return has_children
         except Exception:

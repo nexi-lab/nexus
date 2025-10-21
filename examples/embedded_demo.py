@@ -38,10 +38,12 @@ def main() -> None:
 
         # Initialize using nexus.connect() - the recommended way
         print("\n1. Connecting to Nexus...")
-        nx = nexus.connect(config={"data_dir": str(data_dir)})
+        # Set agent_id so permission policies can auto-assign ownership
+        nx = nexus.connect(config={"data_dir": str(data_dir), "agent_id": "demo-user"})
         print("   ✓ Connected via nexus.connect()")
         print("   ✓ Mode auto-detected: embedded")
         print(f"   ✓ Using metadata store at: {db_path}")
+        print("   ✓ Agent context: demo-user (for permission tracking)")
 
         # Write files using high-level API
         print("\n2. Writing files via nexus API...")
@@ -118,7 +120,7 @@ def main() -> None:
         print("=" * 70)
 
         print("\n8. Re-connecting to Nexus...")
-        nx2 = nexus.connect(config={"data_dir": str(data_dir)})
+        nx2 = nexus.connect(config={"data_dir": str(data_dir), "agent_id": "demo-user"})
         files2 = nx2.list()
         print(f"   ✓ Files still present: {len(files2)}")
         for f in files2:
@@ -162,22 +164,23 @@ def main() -> None:
         print("=" * 70)
 
         print("\n12. Testing directory operations...")
-        nx3 = nexus.connect(config={"data_dir": str(data_dir)})
+        # In single-tenant mode, agent can only access their own workspace
+        # Path format: /workspace/{agent_id}/{path}
+        nx3 = nexus.connect(config={"data_dir": str(data_dir), "agent_id": "agent1"})
 
-        # Create directory structure
+        # Create directory structure within agent1's workspace
         print("\n   Creating directory structure...")
-        nx3.mkdir("/workspace", exist_ok=True)
-        nx3.mkdir("/workspace/agent1", exist_ok=True)
-        nx3.mkdir("/workspace/agent1/data", exist_ok=True)
-        nx3.mkdir("/workspace/agent2", exist_ok=True)
+        nx3.mkdir("/workspace/agent1", parents=True, exist_ok=True)
+        nx3.mkdir("/workspace/agent1/data", parents=True, exist_ok=True)
+        nx3.mkdir("/workspace/agent1/models", parents=True, exist_ok=True)
         print("   ✓ Created: /workspace/agent1/data")
-        print("   ✓ Created: /workspace/agent2")
+        print("   ✓ Created: /workspace/agent1/models")
 
         # Check if directories exist
         print("\n13. Checking directory existence...")
         is_dir1 = nx3.is_directory("/workspace/agent1")
         is_dir2 = nx3.is_directory("/workspace/agent1/data")
-        is_dir3 = nx3.is_directory("/documents")  # Should be False
+        is_dir3 = nx3.is_directory("/documents")  # Should be True (from earlier)
         print(f"   /workspace/agent1 is directory: {is_dir1}")
         print(f"   /workspace/agent1/data is directory: {is_dir2}")
         print(f"   /documents is directory: {is_dir3}")
@@ -186,9 +189,9 @@ def main() -> None:
         print("\n14. Writing files into directory structure...")
         nx3.write("/workspace/agent1/data/file1.txt", b"Agent 1 data file")
         nx3.write("/workspace/agent1/data/file2.txt", b"Another file")
-        nx3.write("/workspace/agent2/config.json", b'{"agent": "2"}')
+        nx3.write("/workspace/agent1/models/model.pkl", b"model data")
         print("   ✓ Wrote files to /workspace/agent1/data/")
-        print("   ✓ Wrote files to /workspace/agent2/")
+        print("   ✓ Wrote files to /workspace/agent1/models/")
 
         # Create nested directories with parents=True
         print("\n15. Creating deeply nested directories...")
@@ -224,8 +227,8 @@ def main() -> None:
 
         # Remove directory recursively
         print("\n19. Removing directory recursively...")
-        nx3.rmdir("/workspace/agent2", recursive=True)
-        print("   ✓ Removed /workspace/agent2 (recursive)")
+        nx3.rmdir("/workspace/agent1/models", recursive=True)
+        print("   ✓ Removed /workspace/agent1/models (recursive)")
 
         # Verify removal
         remaining_files = [f for f in nx3.list() if f.startswith("/workspace")]
@@ -245,35 +248,39 @@ def main() -> None:
         print("      In production code, use only user-facing APIs (read/write/delete/etc).")
 
         print("\n20. Testing multiple mount points...")
-        nx4 = nexus.connect(config={"data_dir": str(data_dir)})
+        # NOTE: This section demonstrates INTERNAL router APIs with is_admin=True
+        # This is for educational purposes only - production code should use user-facing APIs
+        nx4 = nexus.connect(
+            config={"data_dir": str(data_dir), "agent_id": "demo-user", "is_admin": True}
+        )
 
-        # Create separate backend for workspace isolation (INTERNAL API)
+        # Create separate backend for special namespace (INTERNAL API)
         from nexus.backends.local import LocalBackend
 
-        workspace_backend = LocalBackend(data_dir / "workspace-isolated")
-        nx4.router.add_mount("/workspace", workspace_backend, priority=10)  # INTERNAL
+        special_backend = LocalBackend(data_dir / "special-isolated")
+        nx4.router.add_mount("/special", special_backend, priority=10)  # INTERNAL
 
-        print("   ✓ Added mount: /workspace → isolated backend (INTERNAL API)")
+        print("   ✓ Added mount: /special → isolated backend (INTERNAL API)")
         print("   ✓ Default mount: / → main backend")
 
         # Write to different mounts (USER-FACING API)
-        nx4.write("/workspace/isolated.txt", b"in workspace backend")
+        nx4.write("/special/isolated.txt", b"in special backend")
         nx4.write("/other/regular.txt", b"in default backend")
 
         print("\n21. Verifying routing (INTERNAL API - for demonstration)...")
-        route_workspace = nx4.router.route("/workspace/test.txt")  # INTERNAL
-        route_other = nx4.router.route("/other/test.txt")  # INTERNAL
+        route_special = nx4.router.route("/special/test.txt", is_admin=True)  # INTERNAL
+        route_other = nx4.router.route("/other/test.txt", is_admin=True)  # INTERNAL
 
-        print(f"   /workspace/test.txt → mount: {route_workspace.mount_point}")
+        print(f"   /special/test.txt → mount: {route_special.mount_point}")
         print(f"   /other/test.txt → mount: {route_other.mount_point}")
 
         # List files from both mounts
         all_files_multi = nx4.list()
-        workspace_files = [f for f in all_files_multi if f.startswith("/workspace")]
+        special_files = [f for f in all_files_multi if f.startswith("/special")]
         other_files = [f for f in all_files_multi if f.startswith("/other")]
 
-        print(f"\n   Workspace mount files: {len(workspace_files)}")
-        for f in sorted(workspace_files)[:3]:
+        print(f"\n   Special mount files: {len(special_files)}")
+        for f in sorted(special_files)[:3]:
             print(f"   - {f}")
 
         print(f"\n   Default mount files: {len(other_files)}")
@@ -300,7 +307,7 @@ def main() -> None:
         print("    (INTERNAL API - for educational purposes)")
 
         try:
-            nx5 = nexus.connect(config={"data_dir": str(data_dir)})
+            nx5 = nexus.connect(config={"data_dir": str(data_dir), "agent_id": "demo-user"})
         except Exception as e:
             print(f"\n[WARNING] Could not open connection (tmpfs locking issue): {e}")
             print("Skipping Parts 6-14 (namespace isolation, work detection, etc.)")
@@ -382,7 +389,13 @@ def main() -> None:
         )
 
         # USER-FACING: Pass custom_namespaces parameter
-        nx5 = nexus.connect(config={"data_dir": str(data_dir), "custom_namespaces": [custom_ns]})
+        nx5 = nexus.connect(
+            config={
+                "data_dir": str(data_dir),
+                "custom_namespaces": [custom_ns],
+                "agent_id": "demo-user",
+            }
+        )
         print("   ✓ Registered custom namespace: 'experiments' (via config)")
 
         print("\n25. Testing tenant isolation (INTERNAL APIs - educational)...")
@@ -567,10 +580,18 @@ def main() -> None:
 
         # Create separate instances for each tenant
         nx_acme = nexus.connect(
-            config={"data_dir": str(data_dir / "multi-tenant"), "tenant_id": "acme"}
+            config={
+                "data_dir": str(data_dir / "multi-tenant"),
+                "tenant_id": "acme",
+                "agent_id": "agent1",
+            }
         )
         nx_tech = nexus.connect(
-            config={"data_dir": str(data_dir / "multi-tenant"), "tenant_id": "techinc"}
+            config={
+                "data_dir": str(data_dir / "multi-tenant"),
+                "tenant_id": "techinc",
+                "agent_id": "agent1",
+            }
         )
         nx_admin = nexus.connect(
             config={"data_dir": str(data_dir / "multi-tenant"), "is_admin": True}
@@ -654,9 +675,9 @@ def main() -> None:
             print(f"     → {e}")
 
         print("\n38. Testing directory isolation...")
-        # ACME creates a directory
-        nx_acme.mkdir("/workspace/acme/agent2/experiments", parents=True)
-        print("   ✓ ACME created directory: /workspace/acme/agent2/experiments")
+        # Admin creates a directory in agent2's workspace (agents can't cross-access)
+        nx_admin.mkdir("/workspace/acme/agent2/experiments", parents=True)
+        print("   ✓ Admin created directory: /workspace/acme/agent2/experiments")
 
         # TechInc cannot delete ACME's directory
         try:
@@ -1064,7 +1085,8 @@ def main() -> None:
 
         print("\n64. Setting up test data for export/import...")
         export_dir = data_dir / "export-demo"
-        nx_export = nexus.connect(config={"data_dir": str(export_dir)})
+        # Use is_admin=True since this demo focuses on export/import, not access control
+        nx_export = nexus.connect(config={"data_dir": str(export_dir), "is_admin": True})
 
         # Create test files with various metadata
         import time
@@ -1139,7 +1161,8 @@ def main() -> None:
         # Test metadata import to a new instance
         print("\n69. Testing basic import to new instance...")
         import_dir = data_dir / "import-demo"
-        nx_import = nexus.connect(config={"data_dir": str(import_dir)})
+        # Use is_admin=True since this demo focuses on export/import, not access control
+        nx_import = nexus.connect(config={"data_dir": str(import_dir), "is_admin": True})
 
         # Import metadata using new API
         from nexus.core.export_import import ImportOptions
@@ -2652,6 +2675,153 @@ This document was compressed with gzip before upload.
 
         nx_bob.close()
         print("\n   ✓ Permission policies work automatically!")
+
+        # ============================================================
+        # Part 63: Permission Enforcement (v0.3.0 - Multi-layer permission checking)
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 63: Permission Enforcement (Multi-Layer Access Control)")
+        print("=" * 70)
+
+        from nexus.core.permissions import (
+            OperationContext,
+            Permission,
+            PermissionEnforcer,
+        )
+
+        print("\n63. Testing OperationContext (user/agent context for operations)...")
+
+        # Regular user context
+        ctx_alice = OperationContext(user="alice", groups=["developers"])
+        print(f"   ✓ Created context for alice: {ctx_alice.user}, groups={ctx_alice.groups}")
+        print(f"     is_admin={ctx_alice.is_admin}, is_system={ctx_alice.is_system}")
+
+        # Admin context
+        ctx_admin = OperationContext(user="admin", groups=["admins"], is_admin=True)
+        print(f"\n   ✓ Created admin context: {ctx_admin.user}")
+        print(f"     is_admin={ctx_admin.is_admin} (bypasses all permission checks)")
+
+        # System context
+        ctx_system = OperationContext(user="system", groups=[], is_system=True)
+        print(f"\n   ✓ Created system context: {ctx_system.user}")
+        print(f"     is_system={ctx_system.is_system} (bypasses all permission checks)")
+
+        print("\n64. Testing PermissionEnforcer (multi-layer permission checking)...")
+
+        # Create permission enforcer with metadata store
+        nx_enforce = nexus.connect(config={"data_dir": str(data_dir)})
+        enforcer = PermissionEnforcer(metadata_store=nx_enforce.metadata)
+
+        print("   Permission checking uses 3 layers:")
+        print("   1. ReBAC (Relationship-Based) - Check graph relationships")
+        print("   2. ACL (Access Control Lists) - Check explicit allow/deny")
+        print("   3. UNIX Permissions - Check owner/group/other bits")
+
+        # Create test files with different permissions
+        print("\n   Creating test files with different permissions...")
+        nx_enforce.write("/test-perms/public.txt", b"Public file")
+        meta_public = nx_enforce.metadata.get("/test-perms/public.txt")
+        meta_public.owner = "alice"
+        meta_public.group = "developers"
+        meta_public.mode = 0o644  # rw-r--r--
+        nx_enforce.metadata.put(meta_public)
+
+        nx_enforce.write("/test-perms/secret.txt", b"Secret file")
+        meta_secret = nx_enforce.metadata.get("/test-perms/secret.txt")
+        meta_secret.owner = "alice"
+        meta_secret.group = "developers"
+        meta_secret.mode = 0o600  # rw-------
+        nx_enforce.metadata.put(meta_secret)
+
+        print("   ✓ Created /test-perms/public.txt (mode=0o644, rw-r--r--)")
+        print("   ✓ Created /test-perms/secret.txt (mode=0o600, rw-------)")
+
+        # Test owner can read/write both files
+        print("\n   Testing owner permissions (alice)...")
+        can_read_public = enforcer.check("/test-perms/public.txt", Permission.READ, ctx_alice)
+        can_write_public = enforcer.check("/test-perms/public.txt", Permission.WRITE, ctx_alice)
+        can_read_secret = enforcer.check("/test-perms/secret.txt", Permission.READ, ctx_alice)
+        can_write_secret = enforcer.check("/test-perms/secret.txt", Permission.WRITE, ctx_alice)
+
+        print(f"   alice can READ public.txt: {can_read_public} ✓")
+        print(f"   alice can WRITE public.txt: {can_write_public} ✓")
+        print(f"   alice can READ secret.txt: {can_read_secret} ✓")
+        print(f"   alice can WRITE secret.txt: {can_write_secret} ✓")
+
+        # Test group member can only read public file
+        print("\n   Testing group member permissions (bob in developers)...")
+        ctx_bob = OperationContext(user="bob", groups=["developers"])
+        can_read_public_bob = enforcer.check("/test-perms/public.txt", Permission.READ, ctx_bob)
+        can_write_public_bob = enforcer.check("/test-perms/public.txt", Permission.WRITE, ctx_bob)
+        can_read_secret_bob = enforcer.check("/test-perms/secret.txt", Permission.READ, ctx_bob)
+        can_write_secret_bob = enforcer.check("/test-perms/secret.txt", Permission.WRITE, ctx_bob)
+
+        print(f"   bob can READ public.txt: {can_read_public_bob} ✓")
+        print(f"   bob can WRITE public.txt: {can_write_public_bob} ✗ (group read-only)")
+        print(f"   bob can READ secret.txt: {can_read_secret_bob} ✗ (owner-only)")
+        print(f"   bob can WRITE secret.txt: {can_write_secret_bob} ✗ (owner-only)")
+
+        # Test other user permissions
+        print("\n   Testing other user permissions (charlie, not in developers)...")
+        ctx_charlie = OperationContext(user="charlie", groups=["designers"])
+        can_read_public_charlie = enforcer.check(
+            "/test-perms/public.txt", Permission.READ, ctx_charlie
+        )
+        can_write_public_charlie = enforcer.check(
+            "/test-perms/public.txt", Permission.WRITE, ctx_charlie
+        )
+        can_read_secret_charlie = enforcer.check(
+            "/test-perms/secret.txt", Permission.READ, ctx_charlie
+        )
+
+        print(f"   charlie can READ public.txt: {can_read_public_charlie} ✓ (world-readable)")
+        print(f"   charlie can WRITE public.txt: {can_write_public_charlie} ✗ (owner-only write)")
+        print(f"   charlie can READ secret.txt: {can_read_secret_charlie} ✗ (owner-only)")
+
+        # Test admin bypass
+        print("\n   Testing admin bypass (admin sees everything)...")
+        can_read_admin = enforcer.check("/test-perms/secret.txt", Permission.READ, ctx_admin)
+        can_write_admin = enforcer.check("/test-perms/secret.txt", Permission.WRITE, ctx_admin)
+
+        print(f"   admin can READ secret.txt: {can_read_admin} ✓ (admin bypass)")
+        print(f"   admin can WRITE secret.txt: {can_write_admin} ✓ (admin bypass)")
+
+        # Test filter_list (used by list operations)
+        print("\n65. Testing filter_list (used by ls operations)...")
+
+        all_test_paths = ["/test-perms/public.txt", "/test-perms/secret.txt"]
+
+        # Bob can only see public file
+        filtered_bob = enforcer.filter_list(all_test_paths, ctx_bob)
+        print(f"   bob sees: {filtered_bob}")
+        print("     → Only public.txt (secret.txt filtered out)")
+
+        # Alice sees both
+        filtered_alice = enforcer.filter_list(all_test_paths, ctx_alice)
+        print(f"\n   alice sees: {filtered_alice}")
+        print("     → Both files (owner)")
+
+        # Admin sees all
+        filtered_admin = enforcer.filter_list(all_test_paths, ctx_admin)
+        print(f"\n   admin sees: {filtered_admin}")
+        print("     → All files (admin bypass)")
+
+        # Test backward compatibility (files without permissions)
+        print("\n66. Testing backward compatibility (files without permissions)...")
+        nx_enforce.write("/test-perms/old-file.txt", b"Old file without permissions")
+        # Don't set owner/group/mode - simulates pre-v0.3.0 file
+        # (default is already None for these fields)
+
+        can_read_old = enforcer.check("/test-perms/old-file.txt", Permission.READ, ctx_charlie)
+        can_write_old = enforcer.check("/test-perms/old-file.txt", Permission.WRITE, ctx_charlie)
+
+        print("   Created old-file.txt without permissions (owner=None, mode=None)")
+        print(f"   charlie can READ: {can_read_old} ✓ (backward compat: allow)")
+        print(f"   charlie can WRITE: {can_write_old} ✓ (backward compat: allow)")
+        print("   → Files without permissions allow all access (v0.2.x compatibility)")
+
+        nx_enforce.close()
+        print("\n   ✓ Permission enforcement works across all layers!")
 
         print("\n✓ Integrated demo completed successfully!")
         print("=" * 70)

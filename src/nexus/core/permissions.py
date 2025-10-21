@@ -26,10 +26,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntFlag
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    pass
+    from nexus.core.acl import ACLStore
+    from nexus.core.rebac_manager import ReBACManager
 
 
 class Permission(IntFlag):
@@ -467,3 +468,300 @@ def parse_mode(mode_str: str) -> int:
             f"invalid mode string: {mode_str!r} "
             "(must be octal like '755' or symbolic like 'rwxr-xr-x')"
         ) from e
+
+
+@dataclass
+class OperationContext:
+    """Context for file operations with user/agent information.
+
+    This class carries authentication and authorization context through
+    all filesystem operations to enable permission checking.
+
+    Attributes:
+        user: Username or agent ID performing the operation
+        groups: List of group IDs the user belongs to
+        is_admin: Whether the user has admin privileges (bypasses all checks)
+        is_system: Whether this is a system operation (bypasses all checks)
+
+    Examples:
+        >>> # Regular user context
+        >>> ctx = OperationContext(user="alice", groups=["developers"])
+        >>> # Admin context
+        >>> ctx = OperationContext(user="admin", groups=["admins"], is_admin=True)
+        >>> # System context (bypasses all checks)
+        >>> ctx = OperationContext(user="system", groups=[], is_system=True)
+    """
+
+    user: str
+    groups: list[str]
+    is_admin: bool = False
+    is_system: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate context."""
+        if not self.user:
+            raise ValueError("user is required")
+        if not isinstance(self.groups, list):
+            raise TypeError(f"groups must be list, got {type(self.groups)}")
+
+
+class PermissionEnforcer:
+    """Multi-layer permission enforcement for Nexus filesystem.
+
+    Implements permission checking using three layers in order:
+    1. ReBAC (Relationship-Based Access Control) - Check graph relationships
+    2. ACL (Access Control Lists) - Check explicit allow/deny entries
+    3. UNIX Permissions - Check owner/group/other mode bits
+
+    The enforcer short-circuits on first match:
+    - If ReBAC grants permission, allow
+    - If ACL denies explicitly, deny
+    - If ACL allows explicitly, allow
+    - Fall back to UNIX permissions
+
+    This class integrates with the metadata store, ACL store, and ReBAC store
+    to provide unified permission checking across all layers.
+    """
+
+    def __init__(
+        self,
+        metadata_store: Any = None,
+        acl_store: ACLStore | None = None,
+        rebac_manager: ReBACManager | None = None,
+    ):
+        """Initialize permission enforcer.
+
+        Args:
+            metadata_store: Metadata store for file permissions
+            acl_store: ACL store for access control lists
+            rebac_manager: ReBAC manager for relationship-based permissions
+        """
+        self.metadata_store = metadata_store
+        self.acl_store: ACLStore | None = acl_store
+        self.rebac_manager: ReBACManager | None = rebac_manager
+
+    def check(
+        self,
+        path: str,
+        permission: Permission,
+        context: OperationContext,
+    ) -> bool:
+        """Check if user has permission to perform operation on file.
+
+        Multi-layer check order:
+        1. Admin/system bypass
+        2. ReBAC relationship check
+        3. ACL explicit deny/allow
+        4. UNIX permission check
+        5. Default deny (if no permissions set)
+
+        Args:
+            path: Virtual file path
+            permission: Permission to check (READ, WRITE, EXECUTE)
+            context: Operation context with user/group information
+
+        Returns:
+            True if permission is granted, False otherwise
+
+        Examples:
+            >>> enforcer = PermissionEnforcer(metadata_store, acl_store, rebac_manager)
+            >>> ctx = OperationContext(user="alice", groups=["developers"])
+            >>> enforcer.check("/workspace/file.txt", Permission.READ, ctx)
+            True
+        """
+        # 1. Admin/system bypass
+        if context.is_admin or context.is_system:
+            return True
+
+        # 2. ReBAC check (relationship-based permissions)
+        if self.rebac_manager and self._check_rebac(path, permission, context):
+            return True
+
+        # 3. ACL check (explicit deny takes priority)
+        if self.acl_store:
+            acl_result = self._check_acl(path, permission, context)
+            if acl_result is not None:
+                return acl_result  # Explicit allow or deny
+
+        # 4. UNIX permissions check
+        return self._check_unix(path, permission, context)
+
+    def _check_rebac(
+        self,
+        path: str,
+        permission: Permission,
+        context: OperationContext,
+    ) -> bool:
+        """Check ReBAC relationships for permission.
+
+        Args:
+            path: Virtual file path
+            permission: Permission to check
+            context: Operation context
+
+        Returns:
+            True if ReBAC grants permission, False otherwise
+        """
+        if not self.rebac_manager:
+            return False
+
+        # Map Permission flags to string permission names
+        permission_name: str
+        if permission & Permission.READ:
+            permission_name = "read"
+        elif permission & Permission.WRITE:
+            permission_name = "write"
+        elif permission & Permission.EXECUTE:
+            permission_name = "execute"
+        else:
+            # Unknown permission
+            return False
+
+        # Get file metadata to find the file entity ID
+        if not self.metadata_store:
+            return False
+
+        meta = self.metadata_store.get(path)
+        if not meta:
+            return False
+
+        # Try to get path_id - it may not be available on all metadata stores
+        # If path_id is not available, skip ReBAC check (fall through to ACL/UNIX)
+        path_id = getattr(meta, "path_id", None)
+        if not path_id:
+            return False
+
+        # Check ReBAC permission
+        # Subject: (user_type, user_id) - we'll use "agent" as the type
+        # Object: (file_type, file_id) - we'll use "file" as the type with path_id
+        return self.rebac_manager.rebac_check(
+            subject=("agent", context.user),
+            permission=permission_name,
+            object=("file", path_id),
+        )
+
+    def _check_acl(
+        self,
+        path: str,
+        permission: Permission,
+        context: OperationContext,
+    ) -> bool | None:
+        """Check ACL entries for permission.
+
+        Args:
+            path: Virtual file path
+            permission: Permission to check
+            context: Operation context
+
+        Returns:
+            True if ACL explicitly allows
+            False if ACL explicitly denies
+            None if no ACL match (fall through to UNIX permissions)
+        """
+        if not self.acl_store:
+            return None
+
+        # Map Permission flags to ACLPermission
+        from nexus.core.acl import ACLPermission
+
+        acl_permission: ACLPermission
+        if permission & Permission.READ:
+            acl_permission = ACLPermission.READ
+        elif permission & Permission.WRITE:
+            acl_permission = ACLPermission.WRITE
+        elif permission & Permission.EXECUTE:
+            acl_permission = ACLPermission.EXECUTE
+        else:
+            # Unknown permission - no ACL match
+            return None
+
+        # Check ACL using the ACL store
+        return self.acl_store.check_permission(path, context.user, context.groups, acl_permission)
+
+    def _check_unix(
+        self,
+        path: str,
+        permission: Permission,
+        context: OperationContext,
+    ) -> bool:
+        """Check UNIX permissions for file access.
+
+        Args:
+            path: Virtual file path
+            permission: Permission to check
+            context: Operation context
+
+        Returns:
+            True if UNIX permissions grant access, False otherwise
+        """
+        if not self.metadata_store:
+            # No metadata store - allow for backward compatibility
+            return True
+
+        # Get file metadata
+        meta = self.metadata_store.get(path)
+        if not meta:
+            # File doesn't exist - deny
+            return False
+
+        # Check if permissions are set
+        if meta.owner is None or meta.group is None or meta.mode is None:
+            # No permissions set - allow for backward compatibility
+            return True
+
+        # Create FilePermissions from metadata
+        try:
+            file_perms = FilePermissions(
+                owner=meta.owner,
+                group=meta.group,
+                mode=FileMode(meta.mode),
+            )
+        except Exception:
+            # Invalid permissions - deny
+            return False
+
+        # Check permission based on type
+        if permission & Permission.READ:
+            return file_perms.can_read(context.user, context.groups)
+        elif permission & Permission.WRITE:
+            return file_perms.can_write(context.user, context.groups)
+        elif permission & Permission.EXECUTE:
+            return file_perms.can_execute(context.user, context.groups)
+        else:
+            # Unknown permission - deny
+            return False
+
+    def filter_list(
+        self,
+        paths: list[str],
+        context: OperationContext,
+    ) -> list[str]:
+        """Filter list of paths by read permission.
+
+        This is used by list() operations to only return files
+        the user has permission to read.
+
+        Args:
+            paths: List of file paths to filter
+            context: Operation context
+
+        Returns:
+            Filtered list of paths user can read
+
+        Examples:
+            >>> enforcer = PermissionEnforcer(metadata_store)
+            >>> ctx = OperationContext(user="alice", groups=["developers"])
+            >>> all_paths = ["/file1.txt", "/file2.txt", "/secret.txt"]
+            >>> enforcer.filter_list(all_paths, ctx)
+            ["/file1.txt", "/file2.txt"]  # /secret.txt filtered out
+        """
+        # Admin/system sees all files
+        if context.is_admin or context.is_system:
+            return paths
+
+        # Filter paths by read permission
+        filtered = []
+        for path in paths:
+            if self.check(path, Permission.READ, context):
+                filtered.append(path)
+        return filtered

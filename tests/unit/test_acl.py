@@ -535,3 +535,89 @@ class TestACLManager:
         # Should have only one entry (deny)
         assert len(acl.entries) == 1
         assert acl.entries[0].deny
+
+    def test_acl_default_entry_to_string(self):
+        """Test default ACL entry string representation."""
+        entry = ACLEntry(
+            entry_type=ACLEntryType.USER,
+            identifier="alice",
+            permissions={ACLPermission.READ, ACLPermission.WRITE},
+            is_default=True,
+        )
+        assert entry.to_string() == "default:user:alice:rw-"
+
+    def test_acl_default_entry_from_string(self):
+        """Test parsing default ACL entry from string."""
+        entry = ACLEntry.from_string("default:user:alice:rw-")
+        assert entry.entry_type == ACLEntryType.USER
+        assert entry.identifier == "alice"
+        assert entry.is_default is True
+        assert ACLPermission.READ in entry.permissions
+        assert ACLPermission.WRITE in entry.permissions
+
+    def test_get_default_entries(self):
+        """Test get_default_entries returns only default entries."""
+        acl = ACL(
+            entries=[
+                ACLEntry(ACLEntryType.USER, "alice", {ACLPermission.READ}, is_default=True),
+                ACLEntry(ACLEntryType.USER, "bob", {ACLPermission.WRITE}, is_default=False),
+                ACLEntry(ACLEntryType.GROUP, "devs", {ACLPermission.READ}, is_default=True),
+            ]
+        )
+
+        default_entries = acl.get_default_entries()
+        assert len(default_entries) == 2
+        assert all(e.is_default for e in default_entries)
+
+    def test_apply_default_entries_to_child(self):
+        """Test applying default ACL entries to child file."""
+        # Parent directory with default entries
+        parent_acl = ACL(
+            entries=[
+                ACLEntry(
+                    ACLEntryType.USER,
+                    "alice",
+                    {ACLPermission.READ, ACLPermission.WRITE, ACLPermission.EXECUTE},
+                    is_default=True,
+                ),
+                ACLEntry(
+                    ACLEntryType.GROUP,
+                    "devs",
+                    {ACLPermission.READ, ACLPermission.EXECUTE},
+                    is_default=True,
+                ),
+                ACLEntry(
+                    ACLEntryType.USER, "bob", {ACLPermission.READ}, is_default=False
+                ),  # Not inherited
+            ]
+        )
+
+        # Create child ACL
+        child_acl = parent_acl.apply_default_entries_to_child()
+
+        # Should have 2 entries (only default entries, converted to regular)
+        assert len(child_acl.entries) == 2
+
+        # All child entries should be non-default
+        assert all(not e.is_default for e in child_acl.entries)
+
+        # Verify permissions were copied
+        alice_entry = next(e for e in child_acl.entries if e.identifier == "alice")
+        assert ACLPermission.READ in alice_entry.permissions
+        assert ACLPermission.WRITE in alice_entry.permissions
+        assert ACLPermission.EXECUTE in alice_entry.permissions
+
+        devs_entry = next(e for e in child_acl.entries if e.identifier == "devs")
+        assert ACLPermission.READ in devs_entry.permissions
+        assert ACLPermission.EXECUTE in devs_entry.permissions
+
+    def test_default_and_deny_entry(self):
+        """Test default deny entry string representation."""
+        entry = ACLEntry(
+            entry_type=ACLEntryType.USER,
+            identifier="alice",
+            permissions=set(),
+            deny=True,
+            is_default=True,
+        )
+        assert entry.to_string() == "default:deny:user:alice:---"

@@ -29,6 +29,11 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.core.virtual_views import (
+    add_virtual_views_to_listing,
+    get_parsed_content,
+    parse_virtual_path,
+)
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
@@ -252,7 +257,16 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         """
         # Core file operations
         if method == "read":
-            return self.nexus_fs.read(params.path)
+            # Check if this is a virtual view request (.txt or .md)
+            original_path, view_type = parse_virtual_path(params.path, self.nexus_fs.exists)
+
+            if view_type:
+                # Read raw content and parse it
+                raw_content = self.nexus_fs.read(original_path)
+                return get_parsed_content(raw_content, original_path, view_type)
+            else:
+                # Return raw content
+                return self.nexus_fs.read(params.path)
 
         elif method == "write":
             self.nexus_fs.write(params.path, params.content)
@@ -267,7 +281,14 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return {"success": True}
 
         elif method == "exists":
-            return {"exists": self.nexus_fs.exists(params.path)}
+            # Check if this is a virtual view request
+            original_path, view_type = parse_virtual_path(params.path, self.nexus_fs.exists)
+
+            if view_type:
+                # Virtual view exists if the original file exists
+                return {"exists": self.nexus_fs.exists(original_path)}
+            else:
+                return {"exists": self.nexus_fs.exists(params.path)}
 
         # Discovery operations
         elif method == "list":
@@ -300,6 +321,15 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         )
                     else:
                         serializable_files.append(str(file))
+
+            # Add virtual views (.txt and .md) for parseable files
+            # Only add if not recursive (to avoid clutter in full tree listings)
+            if not params.recursive:
+                serializable_files = add_virtual_views_to_listing(
+                    serializable_files,
+                    self.nexus_fs.is_directory,
+                )
+
             return {"files": serializable_files}
 
         elif method == "glob":

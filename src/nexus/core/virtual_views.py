@@ -203,13 +203,7 @@ def add_virtual_views_to_listing(
         >>> add_virtual_views_to_listing(files, is_dir_fn)
         ["/file.xlsx", "/file.xlsx.txt", "/file.xlsx.md", "/file.txt", "/dir/"]
     """
-    virtual_files: list[str] | list[dict[str, Any]]
-
-    # Determine the type and initialize virtual_files accordingly
-    if files and isinstance(files[0], str):
-        virtual_files = []
-    else:
-        virtual_files = []
+    virtual_files: list[str] | list[dict[str, Any]] = []
 
     for file in files:
         # Get the file path (handle both string and dict formats)
@@ -243,4 +237,4 @@ def add_virtual_views_to_listing(
                 md_file["path"] = f"{file_path}.md"
                 virtual_files.append(md_file)  # type: ignore[arg-type]
 
-    return files + virtual_files
+    return files + virtual_files  # type: ignore[operator]

@@ -197,6 +197,83 @@ echo "     Method 2: nexus plugins uninstall skill-seekers"
 echo ""
 
 # ============================================================
+# Part 8: Version Tracking & History (v0.3.5)
+# ============================================================
+echo -e "${CYAN}Part 8: Version Tracking & History${NC}"
+echo ""
+
+echo -e "${GREEN}16. Initialize test environment${NC}"
+export NEXUS_DATA_DIR="/tmp/version-demo-$$"
+echo "   Using temp directory: $NEXUS_DATA_DIR"
+echo ""
+
+echo -e "${GREEN}17. Create and modify a file${NC}"
+echo "   Creating document.txt and making edits..."
+echo "Version 1: Initial draft" | nexus write /docs/document.txt --input -
+echo "   ✓ Wrote v1"
+echo "Version 2: Added introduction" | nexus write /docs/document.txt --input -
+echo "   ✓ Wrote v2"
+echo "Version 3: Added conclusion" | nexus write /docs/document.txt --input -
+echo "   ✓ Wrote v3"
+echo ""
+
+echo -e "${GREEN}18. View version history${NC}"
+echo "   Command: nexus versions history /docs/document.txt"
+nexus versions history /docs/document.txt
+echo ""
+
+echo -e "${GREEN}19. Retrieve specific version${NC}"
+echo "   Command: nexus versions get /docs/document.txt --version 1"
+nexus versions get /docs/document.txt --version 1
+echo ""
+
+echo -e "${GREEN}20. Compare versions${NC}"
+echo "   Command: nexus versions diff /docs/document.txt --v1 1 --v2 3"
+nexus versions diff /docs/document.txt --v1 1 --v2 3
+echo ""
+
+echo -e "${GREEN}21. Rollback to previous version${NC}"
+echo "   Current content:"
+nexus cat /docs/document.txt
+echo ""
+echo "   Rollback to v2:"
+echo "   Command: nexus versions rollback /docs/document.txt --version 2 --yes"
+nexus versions rollback /docs/document.txt --version 2 --yes
+echo ""
+echo "   Content after rollback:"
+nexus cat /docs/document.txt
+echo ""
+
+echo -e "${GREEN}22. Version tracking with Skills${NC}"
+echo "   Creating skill and tracking changes..."
+echo "---
+name: test-skill
+version: 1.0.0
+---
+# Test Skill
+Initial version" | nexus write /skills/test-skill/SKILL.md --input -
+echo "   ✓ Created skill v1.0.0"
+echo ""
+
+echo "---
+name: test-skill
+version: 2.0.0
+---
+# Test Skill
+Major update" | nexus write /skills/test-skill/SKILL.md --input -
+echo "   ✓ Updated to v2.0.0"
+echo ""
+
+echo "   View skill version history:"
+nexus versions history /skills/test-skill/SKILL.md
+echo ""
+
+echo -e "${GREEN}23. Cleanup${NC}"
+rm -rf "$NEXUS_DATA_DIR"
+echo "   ✓ Cleaned up test directory"
+echo ""
+
+# ============================================================
 # Summary
 # ============================================================
 echo -e "${BLUE}========================================${NC}"
@@ -234,6 +311,13 @@ echo "  # Skill Seekers plugin"
 echo "  nexus skill-seekers generate https://react.dev/ --name react-basics"
 echo "  nexus skill-seekers import /path/to/SKILL.md"
 echo "  nexus skill-seekers list"
+echo ""
+
+echo -e "${GREEN}Version Tracking Commands (NEW in v0.3.5):${NC}"
+echo "  • nexus versions history <path>          - View version history"
+echo "  • nexus versions get <path> --version N  - Get specific version"
+echo "  • nexus versions diff <path> --v1 N --v2 M - Compare versions"
+echo "  • nexus versions rollback <path> --version N - Rollback to version"
 echo ""
 
 echo -e "${GREEN}Next Steps:${NC}"

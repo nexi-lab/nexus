@@ -84,6 +84,9 @@ class FilePathModel(Base):
         Integer, nullable=True
     )  # Permission bits (0o644, etc.)
 
+    # Version tracking (v0.3.5)
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
     # Relationships
     metadata_entries: Mapped[list["FileMetadataModel"]] = relationship(
         "FileMetadataModel", back_populates="file_path", cascade="all, delete-orphan"
@@ -450,3 +453,117 @@ class PermissionPolicyModel(Base):
         # Validate priority
         if self.priority < 0:
             raise ValidationError(f"priority must be non-negative, got {self.priority}")
+
+
+class VersionHistoryModel(Base):
+    """Version history tracking for files and memories.
+
+    Unified version tracking system that works for:
+    - File versions (SKILL.md, documents, etc.)
+    - Memory versions (agent memories, facts, etc.)
+
+    CAS-backed: Each version points to immutable content via content_hash.
+    """
+
+    __tablename__ = "version_history"
+
+    # Primary key
+    version_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Resource identification
+    resource_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # 'file', 'memory', 'skill', etc.
+    resource_id: Mapped[str] = mapped_column(
+        String(255), nullable=False
+    )  # path_id for files, memory_id for memories
+
+    # Version information
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)  # SHA-256 hash (CAS key)
+
+    # Content metadata (snapshot of metadata at this version)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Lineage tracking
+    parent_version_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("version_history.version_id", ondelete="SET NULL"), nullable=True
+    )
+    source_type: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )  # 'original', 'fork', 'merge', 'consolidated', etc.
+
+    # Change tracking
+    change_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    # Additional metadata (JSON)
+    extra_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON as string
+
+    # Relationships
+    parent_version: Mapped["VersionHistoryModel | None"] = relationship(
+        "VersionHistoryModel", remote_side=[version_id], foreign_keys=[parent_version_id]
+    )
+
+    # Indexes and constraints
+    __table_args__ = (
+        UniqueConstraint("resource_type", "resource_id", "version_number", name="uq_version"),
+        Index("idx_version_history_resource", "resource_type", "resource_id"),
+        Index("idx_version_history_content_hash", "content_hash"),
+        Index("idx_version_history_created_at", "created_at"),
+        Index("idx_version_history_parent", "parent_version_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<VersionHistoryModel(version_id={self.version_id}, resource_type={self.resource_type}, version={self.version_number})>"
+
+    def validate(self) -> None:
+        """Validate version history model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate resource_type
+        valid_types = ["file", "memory", "skill"]
+        if self.resource_type not in valid_types:
+            raise ValidationError(
+                f"resource_type must be one of {valid_types}, got {self.resource_type}"
+            )
+
+        # Validate resource_id
+        if not self.resource_id:
+            raise ValidationError("resource_id is required")
+
+        # Validate version_number
+        if self.version_number < 1:
+            raise ValidationError(f"version_number must be >= 1, got {self.version_number}")
+
+        # Validate content_hash
+        if not self.content_hash:
+            raise ValidationError("content_hash is required")
+
+        # SHA-256 hashes are 64 hex characters
+        if len(self.content_hash) != 64:
+            raise ValidationError(
+                f"content_hash must be 64 characters (SHA-256), got {len(self.content_hash)}"
+            )
+
+        # Check if hash contains only valid hex characters
+        try:
+            int(self.content_hash, 16)
+        except ValueError:
+            raise ValidationError("content_hash must contain only hexadecimal characters") from None
+
+        # Validate size_bytes
+        if self.size_bytes < 0:
+            raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")

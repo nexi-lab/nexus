@@ -112,9 +112,7 @@ def get_parsed_content(content: bytes, path: str, view_type: str) -> bytes:  # n
 
         try:
             # Prepare content
-            processed_content, effective_path, metadata = prepare_content_for_parsing(
-                content, path
-            )
+            processed_content, effective_path, metadata = prepare_content_for_parsing(content, path)
 
             # Get parser - need to register MarkItDownParser
             registry = ParserRegistry()

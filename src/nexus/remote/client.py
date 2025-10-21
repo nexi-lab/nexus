@@ -22,6 +22,8 @@ Example:
 from __future__ import annotations
 
 import builtins
+import logging
+import time
 import uuid
 from typing import Any
 from urllib.parse import urljoin
@@ -43,6 +45,8 @@ from nexus.server.protocol import (
     decode_rpc_message,
     encode_rpc_message,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RemoteNexusFS(NexusFilesystem):
@@ -100,6 +104,10 @@ class RemoteNexusFS(NexusFilesystem):
         # Make HTTP request
         url = urljoin(self.server_url, f"/api/nfs/{method}")
 
+        # Log API call
+        start_time = time.time()
+        logger.debug(f"API call: {method} with params: {params}")
+
         try:
             response = self.session.post(
                 url,
@@ -108,8 +116,13 @@ class RemoteNexusFS(NexusFilesystem):
                 timeout=self.timeout,
             )
 
+            elapsed = time.time() - start_time
+
             # Check HTTP status
             if response.status_code != 200:
+                logger.error(
+                    f"API call failed: {method} - HTTP {response.status_code} ({elapsed:.3f}s)"
+                )
                 raise NexusError(f"HTTP {response.status_code}: {response.text}")
 
             # Decode response
@@ -123,11 +136,17 @@ class RemoteNexusFS(NexusFilesystem):
 
             # Check for RPC error
             if rpc_response.error:
+                logger.error(
+                    f"API call RPC error: {method} - {rpc_response.error.get('message')} ({elapsed:.3f}s)"
+                )
                 self._handle_rpc_error(rpc_response.error)
 
+            logger.info(f"API call completed: {method} ({elapsed:.3f}s)")
             return rpc_response.result
 
         except requests.RequestException as e:
+            elapsed = time.time() - start_time
+            logger.error(f"API call network error: {method} - {e} ({elapsed:.3f}s)")
             raise NexusError(f"Network error: {e}") from e
 
     def _handle_rpc_error(self, error: dict[str, Any]) -> None:

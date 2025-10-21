@@ -236,6 +236,118 @@ class NexusFS(NexusFilesystem):
         """
         return hashlib.md5(content).hexdigest()
 
+    def _get_parent_path(self, path: str) -> str | None:
+        """
+        Get parent directory path from a file path.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            Parent directory path, or None if path is root
+
+        Examples:
+            >>> fs._get_parent_path("/workspace/file.txt")
+            '/workspace'
+            >>> fs._get_parent_path("/file.txt")
+            '/'
+            >>> fs._get_parent_path("/")
+            None
+        """
+        if path == "/":
+            return None
+
+        # Remove trailing slash if present
+        path = path.rstrip("/")
+
+        # Find last slash
+        last_slash = path.rfind("/")
+        if last_slash == 0:
+            # Parent is root
+            return "/"
+        elif last_slash > 0:
+            return path[:last_slash]
+        else:
+            # No parent (shouldn't happen for valid paths)
+            return None
+
+    def _inherit_permissions_from_parent(
+        self, path: str, is_directory: bool
+    ) -> tuple[str | None, str | None, int | None]:
+        """
+        Inherit permissions from parent directory.
+
+        Args:
+            path: Virtual path of the new file/directory
+            is_directory: Whether the new item is a directory
+
+        Returns:
+            Tuple of (owner, group, mode) inherited from parent, or (None, None, None) if no inheritance
+        """
+        from nexus.core.permissions import FileMode, FilePermissions, PermissionInheritance
+
+        # Get parent path
+        parent_path = self._get_parent_path(path)
+        if parent_path is None:
+            # No parent (root level)
+            return (None, None, None)
+
+        # Get parent metadata
+        parent_meta = self.metadata.get(parent_path)
+        if parent_meta is None or parent_meta.owner is None:
+            # Parent doesn't exist or has no permissions set
+            return (None, None, None)
+
+        # Create FilePermissions from parent metadata
+        try:
+            parent_perms = FilePermissions(
+                owner=parent_meta.owner,
+                group=parent_meta.group or parent_meta.owner,
+                mode=FileMode(parent_meta.mode if parent_meta.mode is not None else 0o755),
+            )
+        except Exception:
+            # Failed to create parent permissions
+            return (None, None, None)
+
+        # Use PermissionInheritance to compute child permissions
+        inheritance = PermissionInheritance()
+        child_perms = inheritance.inherit_from_parent(parent_perms, is_directory)
+
+        return (child_perms.owner, child_perms.group, child_perms.mode.mode)
+
+    def _create_directory_metadata(self, path: str) -> None:
+        """
+        Create metadata entry for a directory.
+
+        Args:
+            path: Virtual path to directory
+        """
+        now = datetime.now(UTC)
+
+        # Inherit permissions from parent directory
+        owner, group, mode = self._inherit_permissions_from_parent(path, is_directory=True)
+
+        # Create a marker for the directory in metadata
+        # We use an empty content hash as a placeholder
+        empty_hash = hashlib.sha256(b"").hexdigest()
+
+        metadata = FileMetadata(
+            path=path,
+            backend_name=self.backend.name,
+            physical_path=empty_hash,  # Placeholder for directory
+            size=0,  # Directories have size 0
+            etag=empty_hash,
+            mime_type="inode/directory",  # MIME type for directories
+            created_at=now,
+            modified_at=now,
+            version=1,
+            owner=owner,
+            group=group,
+            mode=mode or 0o755,  # Default directory mode if no inheritance
+        )
+
+        self.metadata.put(metadata)
+
     def read(self, path: str) -> bytes:
         """
         Read file content as bytes.
@@ -324,7 +436,7 @@ class NexusFS(NexusFilesystem):
         # Apply permission policy for new files, preserve for existing files
         # Also apply policy if existing file has no permissions set (migration case)
         if meta is None or (meta.owner is None and meta.group is None and meta.mode is None):
-            # New file or existing file without permissions - apply policy
+            # New file or existing file without permissions - try policy first, then inheritance
             owner = None
             group = None
             mode = None
@@ -336,7 +448,7 @@ class NexusFS(NexusFilesystem):
                 "user_id": self.agent_id or "unknown",
             }
 
-            # Apply policy
+            # Try permission policy first
             policy_result = self.policy_matcher.apply_policy(
                 path=path,
                 tenant_id=self.tenant_id,
@@ -346,6 +458,9 @@ class NexusFS(NexusFilesystem):
 
             if policy_result:
                 owner, group, mode = policy_result
+            else:
+                # No policy matched - fall back to parent directory inheritance
+                owner, group, mode = self._inherit_permissions_from_parent(path, is_directory=False)
         else:  # Existing file with permissions - preserve them
             owner = meta.owner
             group = meta.group
@@ -361,9 +476,9 @@ class NexusFS(NexusFilesystem):
             created_at=meta.created_at if meta else now,
             modified_at=now,
             version=1,
-            owner=owner,  # Apply policy
-            group=group,  # Apply policy
-            mode=mode,  # Apply policy
+            owner=owner,  # Apply policy or inherit from parent
+            group=group,  # Apply policy or inherit from parent
+            mode=mode,  # Apply policy or inherit from parent
         )
 
         self.metadata.put(metadata)
@@ -919,8 +1034,41 @@ class NexusFS(NexusFilesystem):
         if route.readonly:
             raise PermissionError(f"Cannot create directory in read-only path: {path}")
 
+        # Check if directory already exists (either as file or implicit directory)
+        existing = self.metadata.get(path)
+        is_implicit_dir = existing is None and self.metadata.is_implicit_directory(path)
+
+        if existing is not None or is_implicit_dir:
+            if not exist_ok:
+                raise FileExistsError(f"Directory already exists: {path}")
+            # If exist_ok=True and directory exists, we still create metadata if it doesn't exist
+            if existing is not None:
+                # Metadata already exists, nothing to do
+                return
+
         # Create directory in backend
-        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=exist_ok)
+        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True)
+
+        # Create metadata entries for parent directories if parents=True
+        if parents:
+            # Create metadata for all parent directories that don't have it
+            parent_path = self._get_parent_path(path)
+            parents_to_create = []
+
+            while parent_path and parent_path != "/":
+                if not self.metadata.exists(parent_path):
+                    parents_to_create.append(parent_path)
+                else:
+                    # Parent exists, stop walking up
+                    break
+                parent_path = self._get_parent_path(parent_path)
+
+            # Create parents from top to bottom (reverse order)
+            for parent_dir in reversed(parents_to_create):
+                self._create_directory_metadata(parent_dir)
+
+        # Create explicit metadata entry for the directory
+        self._create_directory_metadata(path)
 
     def rmdir(self, path: str, recursive: bool = False) -> None:
         """

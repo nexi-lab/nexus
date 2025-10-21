@@ -61,12 +61,14 @@ class ACLEntry:
         identifier: User or group identifier (None for mask/other)
         permissions: Set of granted permissions
         deny: Whether this is a deny entry (default: False)
+        is_default: Whether this is a default ACL entry for inheritance (default: False)
     """
 
     entry_type: ACLEntryType
     identifier: str | None
     permissions: set[ACLPermission]
     deny: bool = False
+    is_default: bool = False
 
     def __post_init__(self) -> None:
         """Validate ACL entry."""
@@ -102,12 +104,15 @@ class ACLEntry:
         """Convert ACL entry to string format.
 
         Returns:
-            String representation (e.g., 'user:alice:rw-')
+            String representation (e.g., 'user:alice:rw-' or 'default:user:alice:rw-')
 
         Examples:
             >>> entry = ACLEntry(ACLEntryType.USER, "alice", {ACLPermission.READ, ACLPermission.WRITE})
             >>> entry.to_string()
             'user:alice:rw-'
+            >>> entry = ACLEntry(ACLEntryType.USER, "alice", {ACLPermission.READ}, is_default=True)
+            >>> entry.to_string()
+            'default:user:alice:r--'
         """
         # Build permission string
         r = "r" if ACLPermission.READ in self.permissions else "-"
@@ -115,8 +120,13 @@ class ACLEntry:
         x = "x" if ACLPermission.EXECUTE in self.permissions else "-"
         perms = f"{r}{w}{x}"
 
-        # Build entry string
-        prefix = "deny:" if self.deny else ""
+        # Build entry string with default and deny prefixes
+        prefix = ""
+        if self.is_default:
+            prefix = "default:"
+        if self.deny:
+            prefix += "deny:"
+
         if self.identifier:
             return f"{prefix}{self.entry_type.value}:{self.identifier}:{perms}"
         return f"{prefix}{self.entry_type.value}:{perms}"
@@ -126,7 +136,7 @@ class ACLEntry:
         """Parse ACL entry from string format.
 
         Args:
-            entry_str: String representation (e.g., 'user:alice:rw-')
+            entry_str: String representation (e.g., 'user:alice:rw-' or 'default:user:alice:rw-')
 
         Returns:
             ACLEntry instance
@@ -140,8 +150,17 @@ class ACLEntry:
             <ACLEntryType.USER: 'user'>
             >>> entry.identifier
             'alice'
+            >>> entry = ACLEntry.from_string('default:user:alice:rw-')
+            >>> entry.is_default
+            True
         """
         entry_str = entry_str.strip()
+
+        # Check for default prefix
+        is_default = False
+        if entry_str.startswith("default:"):
+            is_default = True
+            entry_str = entry_str[8:]
 
         # Check for deny prefix
         deny = False
@@ -193,7 +212,13 @@ class ACLEntry:
         elif perms_str[2] != "-":
             raise ValueError(f"invalid execute permission: {perms_str[2]}")
 
-        return cls(entry_type=entry_type, identifier=identifier, permissions=permissions, deny=deny)
+        return cls(
+            entry_type=entry_type,
+            identifier=identifier,
+            permissions=permissions,
+            deny=deny,
+            is_default=is_default,
+        )
 
     def __repr__(self) -> str:
         return f"ACLEntry({self.to_string()!r})"
@@ -341,6 +366,46 @@ class ACL:
             entries = [e for e in entries if e.identifier == identifier]
 
         return entries
+
+    def get_default_entries(self) -> list[ACLEntry]:
+        """Get all default ACL entries (for inheritance).
+
+        Returns:
+            List of default ACL entries
+        """
+        return [e for e in self.entries if e.is_default]
+
+    def apply_default_entries_to_child(self) -> ACL:
+        """Create a new ACL for a child file/directory by inheriting default entries.
+
+        This creates a new ACL where:
+        - Default entries from parent become regular entries for the child
+        - Default entries are preserved for directories (so they can be inherited further)
+        - Regular (non-default) entries are NOT inherited
+
+        Returns:
+            New ACL with inherited entries
+
+        Example:
+            Parent directory has: default:user:alice:rwx
+            Child file inherits:  user:alice:rwx
+            Child directory inherits: user:alice:rwx AND default:user:alice:rwx
+        """
+        default_entries = self.get_default_entries()
+        child_entries = []
+
+        for entry in default_entries:
+            # Create regular entry for child (not marked as default)
+            child_entry = ACLEntry(
+                entry_type=entry.entry_type,
+                identifier=entry.identifier,
+                permissions=entry.permissions.copy(),
+                deny=entry.deny,
+                is_default=False,  # Child gets regular entry
+            )
+            child_entries.append(child_entry)
+
+        return ACL(entries=child_entries)
 
     def to_strings(self) -> list[str]:
         """Convert ACL to list of strings.

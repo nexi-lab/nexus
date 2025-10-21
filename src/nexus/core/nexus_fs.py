@@ -25,6 +25,7 @@ from nexus.core.export_import import (
 )
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
+from nexus.core.permissions import OperationContext, Permission
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.parsers import MarkItDownParser, ParserRegistry
 from nexus.parsers.types import ParseResult
@@ -62,6 +63,7 @@ class NexusFS(NexusFilesystem):
         cache_ttl_seconds: int | None = 300,
         auto_parse: bool = True,
         custom_parsers: list[dict[str, Any]] | None = None,
+        enforce_permissions: bool = False,
     ):
         """
         Initialize filesystem.
@@ -81,6 +83,7 @@ class NexusFS(NexusFilesystem):
             cache_ttl_seconds: Cache TTL in seconds, None = no expiry (default: 300)
             auto_parse: Automatically parse files on write (default: True)
             custom_parsers: Custom parser configurations from config (optional)
+            enforce_permissions: Enable permission enforcement on file operations (default: False)
         """
         # Store backend
         self.backend = backend
@@ -145,6 +148,46 @@ class NexusFS(NexusFilesystem):
                 policies = default_policies
 
         self.policy_matcher = PolicyMatcher(policies)
+
+        # Initialize permission enforcer (v0.3.0)
+        from nexus.core.acl import ACLStore
+        from nexus.core.permissions import OperationContext, PermissionEnforcer
+        from nexus.core.rebac_manager import ReBACManager
+
+        # Create default operation context from init parameters
+        # This context is used for all operations unless overridden per-call
+        user = agent_id or tenant_id or "system"
+        groups: list[str] = []
+        if tenant_id:
+            groups.append(tenant_id)
+
+        self._default_context = OperationContext(
+            user=user,
+            groups=groups,
+            is_admin=is_admin,
+            is_system=(user == "system"),
+        )
+
+        # Initialize ACL and ReBAC stores for multi-layer permission checking
+        acl_store = ACLStore(metadata_store=self.metadata)
+
+        # Initialize ReBACManager with same database as metadata store
+        rebac_manager = ReBACManager(
+            db_path=str(self.metadata.db_path),
+            cache_ttl_seconds=cache_ttl_seconds or 300,
+            max_depth=10,
+        )
+
+        # Initialize permission enforcer with full multi-layer support
+        self._permission_enforcer = PermissionEnforcer(
+            metadata_store=self.metadata,
+            acl_store=acl_store,
+            rebac_manager=rebac_manager,
+        )
+
+        # Permission enforcement is opt-in for backward compatibility
+        # Set enforce_permissions=True in init to enable permission checks
+        self._enforce_permissions = enforce_permissions
 
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
         """
@@ -315,6 +358,36 @@ class NexusFS(NexusFilesystem):
 
         return (child_perms.owner, child_perms.group, child_perms.mode.mode)
 
+    def _check_permission(
+        self,
+        path: str,
+        permission: Permission,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Check if operation is permitted.
+
+        Args:
+            path: Virtual file path
+            permission: Permission to check (READ, WRITE, EXECUTE)
+            context: Optional operation context (defaults to self._default_context)
+
+        Raises:
+            PermissionError: If access is denied
+        """
+        # Skip if permission enforcement is disabled
+        if not self._enforce_permissions:
+            return
+
+        # Use default context if none provided
+        ctx = context or self._default_context
+
+        # Check permission using enforcer
+        if not self._permission_enforcer.check(path, permission, ctx):
+            raise PermissionError(
+                f"Access denied: User '{ctx.user}' does not have {permission.name} "
+                f"permission for '{path}'"
+            )
+
     def _create_directory_metadata(self, path: str) -> None:
         """
         Create metadata entry for a directory.
@@ -348,12 +421,13 @@ class NexusFS(NexusFilesystem):
 
         self.metadata.put(metadata)
 
-    def read(self, path: str) -> bytes:
+    def read(self, path: str, context: OperationContext | None = None) -> bytes:
         """
         Read file content as bytes.
 
         Args:
             path: Virtual path to read
+            context: Optional operation context for permission checks (uses default if not provided)
 
         Returns:
             File content as bytes
@@ -363,8 +437,12 @@ class NexusFS(NexusFilesystem):
             InvalidPathError: If path is invalid
             BackendError: If read operation fails
             AccessDeniedError: If access is denied based on tenant isolation
+            PermissionError: If user doesn't have read permission
         """
         path = self._validate_path(path)
+
+        # Check read permission (v0.3.0)
+        self._check_permission(path, Permission.READ, context)
 
         # Route to backend with access control
         route = self.router.route(
@@ -385,7 +463,7 @@ class NexusFS(NexusFilesystem):
 
         return content
 
-    def write(self, path: str, content: bytes) -> None:
+    def write(self, path: str, content: bytes, context: OperationContext | None = None) -> None:
         """
         Write content to a file.
 
@@ -397,14 +475,28 @@ class NexusFS(NexusFilesystem):
         Args:
             path: Virtual path to write
             content: File content as bytes
+            context: Optional operation context for permission checks (uses default if not provided)
 
         Raises:
             InvalidPathError: If path is invalid
             BackendError: If write operation fails
             AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
-            PermissionError: If path is read-only
+            PermissionError: If path is read-only or user doesn't have write permission
         """
         path = self._validate_path(path)
+
+        # Check write permission (v0.3.0)
+        # For existing files, check file's write permission
+        # For new files, check parent directory's write permission (if parent exists)
+        if self.metadata.exists(path):
+            # Existing file - check file's own write permission
+            self._check_permission(path, Permission.WRITE, context)
+        else:
+            # New file - check parent directory's write permission
+            # Only check if parent exists (parent will be created automatically if needed)
+            parent_path = self._get_parent_path(path)
+            if parent_path and self.metadata.exists(parent_path):
+                self._check_permission(parent_path, Permission.WRITE, context)
 
         # Route to backend with write access check
         route = self.router.route(
@@ -441,8 +533,8 @@ class NexusFS(NexusFilesystem):
             group = None
             mode = None
 
-            # Build context for variable substitution
-            context = {
+            # Build context for variable substitution in policy
+            policy_context = {
                 "agent_id": self.agent_id or "unknown",
                 "tenant_id": self.tenant_id or "default",
                 "user_id": self.agent_id or "unknown",
@@ -452,7 +544,7 @@ class NexusFS(NexusFilesystem):
             policy_result = self.policy_matcher.apply_policy(
                 path=path,
                 tenant_id=self.tenant_id,
-                context=context,
+                context=policy_context,
                 is_directory=False,
             )
 
@@ -522,7 +614,7 @@ class NexusFS(NexusFilesystem):
             # Run async parse in a new event loop (thread-safe)
             asyncio.run(self.parse(path, store_result=True))
 
-    def delete(self, path: str) -> None:
+    def delete(self, path: str, context: OperationContext | None = None) -> None:
         """
         Delete a file.
 
@@ -531,15 +623,19 @@ class NexusFS(NexusFilesystem):
 
         Args:
             path: Virtual path to delete
+            context: Optional operation context for permission checks (uses default if not provided)
 
         Raises:
             NexusFileNotFoundError: If file doesn't exist
             InvalidPathError: If path is invalid
             BackendError: If delete operation fails
             AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
-            PermissionError: If path is read-only
+            PermissionError: If path is read-only or user doesn't have write permission
         """
         path = self._validate_path(path)
+
+        # Check write permission for delete (v0.3.0)
+        self._check_permission(path, Permission.WRITE, context)
 
         # Route to backend with write access check (delete requires write permission)
         route = self.router.route(
@@ -653,6 +749,7 @@ class NexusFS(NexusFilesystem):
         recursive: bool = True,
         details: bool = False,
         prefix: str | None = None,
+        context: OperationContext | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """
         List files in a directory.
@@ -663,10 +760,12 @@ class NexusFS(NexusFilesystem):
             details: If True, return detailed metadata; if False, return paths only (default: False)
             prefix: (Deprecated) Path prefix to filter by - for backward compatibility.
                     When used, lists all files recursively with this prefix.
+            context: Optional operation context for permission filtering (uses default if not provided)
 
         Returns:
             List of file paths (if details=False) or list of file metadata dicts (if details=True).
             Each metadata dict contains: path, size, modified_at, etag
+            Results are filtered by read permission.
 
         Examples:
             # List all files recursively (default)
@@ -712,6 +811,14 @@ class NexusFS(NexusFilesystem):
                     # If there's no "/" in the relative path, it's in this directory
                     if "/" not in rel_path:
                         results.append(meta)
+
+        # Filter by read permission (v0.3.0)
+        if self._enforce_permissions:
+            ctx = context or self._default_context
+            result_paths = [meta.path for meta in results]
+            allowed_paths = self._permission_enforcer.filter_list(result_paths, ctx)
+            # Filter results to only include allowed paths
+            results = [meta for meta in results if meta.path in allowed_paths]
 
         # Sort by path name
         results.sort(key=lambda m: m.path)
@@ -1002,7 +1109,13 @@ class NexusFS(NexusFilesystem):
 
     # === Directory Operations ===
 
-    def mkdir(self, path: str, parents: bool = False, exist_ok: bool = False) -> None:
+    def mkdir(
+        self,
+        path: str,
+        parents: bool = False,
+        exist_ok: bool = False,
+        context: OperationContext | None = None,
+    ) -> None:
         """
         Create a directory.
 
@@ -1010,6 +1123,7 @@ class NexusFS(NexusFilesystem):
             path: Virtual path to directory
             parents: Create parent directories if needed (like mkdir -p)
             exist_ok: Don't raise error if directory exists
+            context: Optional operation context for permission checks (uses default if not provided)
 
         Raises:
             FileExistsError: If directory exists and exist_ok=False
@@ -1017,9 +1131,15 @@ class NexusFS(NexusFilesystem):
             InvalidPathError: If path is invalid
             BackendError: If operation fails
             AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
-            PermissionError: If path is read-only
+            PermissionError: If path is read-only or user doesn't have write permission on parent
         """
         path = self._validate_path(path)
+
+        # Check write permission on parent directory (v0.3.0)
+        # Only check if parent exists (skip permission check for root directory)
+        parent_path = self._get_parent_path(path)
+        if parent_path and self.metadata.exists(parent_path):
+            self._check_permission(parent_path, Permission.WRITE, context)
 
         # Route to backend with write access check (mkdir requires write permission)
         route = self.router.route(

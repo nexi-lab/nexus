@@ -612,12 +612,26 @@ class SQLAlchemyMetadataStore(MetadataStore):
             # Dispose of the connection pool - this closes all connections
             self.engine.dispose()
 
+            # Force garbage collection to ensure all Python objects holding
+            # database connections are cleaned up (especially important on Windows)
+            import gc
+
+            gc.collect()
+
             # SQLite-specific file cleanup
             if self.db_type == "sqlite" and self.db_path:
                 # Give the OS time to release file handles (especially on Windows)
+                import sys
                 import time
 
-                time.sleep(0.01)  # 10ms should be enough
+                # Windows needs significantly more time to release file locks
+                # This is critical for tests using tempfile.TemporaryDirectory()
+                if sys.platform == "win32":
+                    # On Windows, sleep 200ms initially
+                    time.sleep(0.2)
+                else:
+                    # On Unix-like systems, 10ms is usually enough
+                    time.sleep(0.01)
 
                 # Additional cleanup: Try to remove any lingering SQLite temp files
                 # This helps with test cleanup when using tempfile.TemporaryDirectory()
@@ -627,13 +641,23 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     for suffix in ["-wal", "-shm", "-journal"]:
                         temp_file = Path(str(self.db_path) + suffix)
                         if temp_file.exists():
-                            # On Windows, retry a few times if file is locked
-                            for _ in range(3):
+                            # On Windows, retry up to 15 times with exponential backoff
+                            # On other platforms, 3 retries is usually enough
+                            max_retries = 15 if sys.platform == "win32" else 3
+                            for attempt in range(max_retries):
                                 try:
                                     os.remove(temp_file)
                                     break
                                 except (OSError, PermissionError):
-                                    time.sleep(0.01)
+                                    # Exponential backoff: 10ms, 20ms, 40ms, 80ms, ...
+                                    # Cap at 1 second on Windows, 500ms elsewhere
+                                    wait_time = 0.01 * (2**attempt)
+                                    max_wait = 1.0 if sys.platform == "win32" else 0.5
+                                    time.sleep(min(wait_time, max_wait))
+                                    # On last retry, force garbage collection again
+                                    if attempt == max_retries - 1:
+                                        gc.collect()
+                                        time.sleep(0.1)
                 except Exception:
                     # Ignore errors - these files may not exist or may be locked
                     pass

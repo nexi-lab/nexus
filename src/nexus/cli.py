@@ -154,7 +154,9 @@ def get_filesystem(backend_config: BackendConfig) -> NexusFilesystem:
 
 def handle_error(e: Exception) -> None:
     """Handle errors with beautiful output."""
-    if isinstance(e, NexusFileNotFoundError):
+    if isinstance(e, PermissionError):
+        console.print(f"[red]Permission Denied:[/red] {e}")
+    elif isinstance(e, NexusFileNotFoundError):
         console.print(f"[red]Error:[/red] File not found: {e}")
     elif isinstance(e, ValidationError):
         console.print(f"[red]Validation Error:[/red] {e}")

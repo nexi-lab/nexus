@@ -174,6 +174,7 @@ def connect(
             cache_ttl_seconds=cfg.cache_ttl_seconds,
             auto_parse=cfg.auto_parse,
             custom_parsers=cfg.parsers,
+            enforce_permissions=cfg.enforce_permissions,
         )
     elif cfg.mode in ["monolithic", "distributed"]:
         # TODO: Implement in v0.2.0+

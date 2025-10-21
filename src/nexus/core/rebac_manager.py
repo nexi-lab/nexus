@@ -76,15 +76,21 @@ class ReBACManager:
 
     def _initialize_default_namespaces(self) -> None:
         """Initialize default namespace configurations if not present."""
-        # Check if file namespace exists
-        file_ns = self.get_namespace("file")
-        if file_ns is None:
-            self.create_namespace(DEFAULT_FILE_NAMESPACE)
+        try:
+            # Check if file namespace exists
+            file_ns = self.get_namespace("file")
+            if file_ns is None:
+                self.create_namespace(DEFAULT_FILE_NAMESPACE)
 
-        # Check if group namespace exists
-        group_ns = self.get_namespace("group")
-        if group_ns is None:
-            self.create_namespace(DEFAULT_GROUP_NAMESPACE)
+            # Check if group namespace exists
+            group_ns = self.get_namespace("group")
+            if group_ns is None:
+                self.create_namespace(DEFAULT_GROUP_NAMESPACE)
+        except Exception:
+            # If tables don't exist yet, skip initialization
+            # Tables will be created by Alembic migrations when metadata store initializes
+            # Default namespaces will be created on first use
+            pass
 
     def create_namespace(self, namespace: NamespaceConfig) -> None:
         """Create or update a namespace configuration.

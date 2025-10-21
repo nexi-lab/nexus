@@ -68,11 +68,18 @@ class TestRPCRequestHandler:
         """Test dispatching read method."""
         from nexus.server.protocol import ReadParams
 
+        # Configure mock to support virtual view path parsing
+        # When reading /test.txt, it will check if /test exists and read from /test
+        mock_filesystem.exists.return_value = True
+        mock_filesystem.read.return_value = b"test content"
+
         params = ReadParams(path="/test.txt")
         result = mock_handler._dispatch_method("read", params)
 
+        # Virtual view logic reads the base file (/test) and parses it
         assert result == b"test content"
-        mock_filesystem.read.assert_called_once_with("/test.txt")
+        mock_filesystem.exists.assert_called_with("/test")
+        mock_filesystem.read.assert_called_once_with("/test")
 
     def test_dispatch_write(self, mock_handler, mock_filesystem):
         """Test dispatching write method."""

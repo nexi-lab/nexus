@@ -949,7 +949,7 @@ echo -e "${GREEN}✓ All UNIX permission tests passed!${NC}\n"
 echo -e "\n${BLUE}Testing permission inheritance...${NC}"
 
 # Test 86a: Create parent directory with permissions
-nexus write /inherit-test/.keep ""
+echo "" | nexus write /inherit-test/.keep --input -
 test_command "Permission inheritance - set parent directory permissions" \
     bash -c "nexus chmod 755 /inherit-test && \
              nexus chown alice /inherit-test && \
@@ -970,7 +970,7 @@ test_command "Permission inheritance - verify execute bits cleared (0o644)" \
     bash -c "nexus info /inherit-test/new-file.txt | grep -E '(mode: 0o644|rw-r--r--)'"
 
 # Test 86d: Create another parent with different permissions
-nexus write /inherit-test-2/.keep ""
+echo "" | nexus write /inherit-test-2/.keep --input -
 test_command "Permission inheritance - set strict parent permissions (0o700)" \
     bash -c "nexus chmod 700 /inherit-test-2 && \
              nexus chown bob /inherit-test-2 && \

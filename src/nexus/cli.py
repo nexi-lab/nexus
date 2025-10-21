@@ -6,8 +6,10 @@ Beautiful CLI with Click and Rich for file operations, discovery, and management
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -1780,6 +1782,13 @@ def mount(
         console.print("  • [cyan]file.md[/cyan] - View formatted markdown")
         console.print()
 
+        # Create log file path for daemon mode (before forking)
+        log_file = None
+        if daemon:
+            log_file = f"/tmp/nexus-mount-{int(time.time())}.log"
+            console.print(f"  Logs: [cyan]{log_file}[/cyan]")
+            console.print()
+
         if daemon:
             # Daemon mode: double-fork BEFORE mounting
             import os
@@ -1795,6 +1804,9 @@ def mount(
                 console.print()
                 console.print("[yellow]To unmount:[/yellow]")
                 console.print(f"  nexus unmount {mount_point}")
+                console.print()
+                console.print("[yellow]To view logs:[/yellow]")
+                console.print(f"  tail -f {log_file}")
                 return
 
             # Intermediate child - detach and fork again
@@ -1808,22 +1820,46 @@ def mount(
                 # This makes the grandchild process be adopted by init (PID 1)
                 os._exit(0)
 
-            # Grandchild (daemon process) - redirect I/O, mount, and wait
+            # Grandchild (daemon process) - set up logging and redirect I/O
             sys.stdin.close()
-            sys.stdout = open(os.devnull, "w")  # noqa: SIM115
-            sys.stderr = open(os.devnull, "w")  # noqa: SIM115
 
-            # Now mount the filesystem in the daemon process (foreground mode to block)
-            fuse = mount_nexus(
-                nx,
-                mount_point,
-                mode=mode,
-                foreground=True,  # Run in foreground to keep daemon process alive
-                allow_other=allow_other,
-                debug=debug,
+            # Configure logging to file
+            logging.basicConfig(
+                filename=log_file,
+                level=logging.DEBUG if debug else logging.INFO,
+                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             )
 
+            # Redirect stdout/stderr to log file (for any print statements or uncaught errors)
+            sys.stdout = open(log_file, "a")  # noqa: SIM115
+            sys.stderr = open(log_file, "a")  # noqa: SIM115
+
+            # Log daemon startup
+            logging.info(f"Nexus FUSE daemon starting (PID: {os.getpid()})")
+            logging.info(f"Mount point: {mount_point}")
+            logging.info(f"Mode: {mode}")
+            if remote_url:
+                logging.info(f"Remote URL: {remote_url}")
+            else:
+                logging.info(f"Backend: {backend_config.backend}")
+
+            # Now mount the filesystem in the daemon process (foreground mode to block)
+            try:
+                fuse = mount_nexus(
+                    nx,
+                    mount_point,
+                    mode=mode,
+                    foreground=True,  # Run in foreground to keep daemon process alive
+                    allow_other=allow_other,
+                    debug=debug,
+                )
+                logging.info("Mount completed, waiting for unmount signal...")
+            except Exception as e:
+                logging.error(f"Failed to mount: {e}", exc_info=True)
+                os._exit(1)
+
             # Exit cleanly when unmounted
+            logging.info("Daemon shutting down")
             os._exit(0)
 
         # Non-daemon mode: mount in background thread

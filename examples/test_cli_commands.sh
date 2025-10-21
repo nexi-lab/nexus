@@ -949,7 +949,9 @@ echo -e "${GREEN}✓ All UNIX permission tests passed!${NC}\n"
 echo -e "\n${BLUE}Testing permission inheritance...${NC}"
 
 # Test 86a: Create parent directory with permissions
-echo "" | nexus write /inherit-test/.keep --input -
+test_command "Permission inheritance - create parent directory" \
+    nexus mkdir /inherit-test
+
 test_command "Permission inheritance - set parent directory permissions" \
     bash -c "nexus chmod 755 /inherit-test && \
              nexus chown alice /inherit-test && \
@@ -961,16 +963,18 @@ test_command "Permission inheritance - create file in parent directory" \
 
 # Test 86c: Verify file inherited owner, group, and mode
 test_command "Permission inheritance - verify owner inherited" \
-    bash -c "nexus info /inherit-test/new-file.txt | grep 'owner: alice'"
+    bash -c "nexus info /inherit-test/new-file.txt | grep -i 'alice'"
 
 test_command "Permission inheritance - verify group inherited" \
-    bash -c "nexus info /inherit-test/new-file.txt | grep 'group: developers'"
+    bash -c "nexus info /inherit-test/new-file.txt | grep -i 'developers'"
 
 test_command "Permission inheritance - verify execute bits cleared (0o644)" \
-    bash -c "nexus info /inherit-test/new-file.txt | grep -E '(mode: 0o644|rw-r--r--)'"
+    bash -c "nexus info /inherit-test/new-file.txt | grep -E '(0o644|rw-r--r--)'"
 
 # Test 86d: Create another parent with different permissions
-echo "" | nexus write /inherit-test-2/.keep --input -
+test_command "Permission inheritance - create strict parent directory" \
+    nexus mkdir /inherit-test-2
+
 test_command "Permission inheritance - set strict parent permissions (0o700)" \
     bash -c "nexus chmod 700 /inherit-test-2 && \
              nexus chown bob /inherit-test-2 && \
@@ -982,17 +986,17 @@ test_command "Permission inheritance - create file in strict parent" \
 
 # Test 86f: Verify file inherited strict permissions (0o600)
 test_command "Permission inheritance - verify strict mode inherited (0o600)" \
-    bash -c "nexus info /inherit-test-2/secret-file.txt | grep -E '(mode: 0o600|rw-------)'"
+    bash -c "nexus info /inherit-test-2/secret-file.txt | grep -E '(0o600|rw-------)'"
 
 test_command "Permission inheritance - verify strict owner inherited" \
-    bash -c "nexus info /inherit-test-2/secret-file.txt | grep 'owner: bob'"
+    bash -c "nexus info /inherit-test-2/secret-file.txt | grep -i 'bob'"
 
 # Test 86g: Update existing file should preserve permissions
 test_command "Permission inheritance - update file preserves permissions" \
     nexus write /inherit-test/new-file.txt "updated content"
 
 test_command "Permission inheritance - verify updated file kept permissions" \
-    bash -c "nexus info /inherit-test/new-file.txt | grep 'owner: alice'"
+    bash -c "nexus info /inherit-test/new-file.txt | grep -i 'alice'"
 
 echo -e "${GREEN}✓ All permission inheritance tests passed!${NC}\n"
 

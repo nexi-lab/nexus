@@ -108,7 +108,12 @@ def test_cas_delete_with_ref_counting(embedded_cas: NexusFS) -> None:
 
 
 def test_cas_update_file_content(embedded_cas: NexusFS) -> None:
-    """Test updating file content handles ref counting correctly."""
+    """Test updating file content with version tracking (v0.3.5).
+
+    With version tracking enabled, old content is preserved in CAS
+    so previous versions can be accessed. Content is NOT deleted
+    until all versions referencing it are deleted.
+    """
     content1 = b"Original content"
     content2 = b"Updated content"
 
@@ -128,10 +133,11 @@ def test_cas_update_file_content(embedded_cas: NexusFS) -> None:
     # Hash should be different
     assert hash1 != hash2
 
-    # Old content should be deleted
-    assert not embedded_cas.backend.content_exists(hash1)
+    # With version tracking (v0.3.5), old content is PRESERVED
+    # so previous versions can be accessed
+    assert embedded_cas.backend.content_exists(hash1)  # Old content still exists
 
-    # New content should exist
+    # New content should also exist
     assert embedded_cas.backend.content_exists(hash2)
     assert embedded_cas.backend.get_ref_count(hash2) == 1
 

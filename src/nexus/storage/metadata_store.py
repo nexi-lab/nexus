@@ -222,18 +222,47 @@ class SQLAlchemyMetadataStore(MetadataStore):
             raise MetadataError(f"Failed to run migrations: {e}") from e
 
     def _create_views(self) -> None:
-        """Create SQL views for work detection if they don't exist."""
+        """Create SQL views for work detection if they don't exist.
+
+        For PostgreSQL: Uses CREATE OR REPLACE VIEW (always updates views)
+        For SQLite: Uses CREATE VIEW IF NOT EXISTS (creates only if missing)
+        """
+        import sys
+
         try:
             from nexus.storage import views
 
+            # Get database-specific views
+            all_views = views.get_all_views(self.db_type)
+
             with self.engine.connect() as conn:
-                for _name, view_sql in views.ALL_VIEWS:
-                    conn.execute(view_sql)
-                    conn.commit()
-        except Exception:
-            # Views might already exist, which is fine
-            # Log or ignore the error
-            pass
+                for _name, view_sql in all_views:
+                    try:
+                        conn.execute(view_sql)
+                        conn.commit()
+                    except Exception:
+                        # For PostgreSQL, if CREATE OR REPLACE fails, rollback and try dropping first
+                        if self.db_type == "postgresql":
+                            try:
+                                # CRITICAL: Rollback the failed transaction first
+                                conn.rollback()
+                                conn.execute(text(f"DROP VIEW IF EXISTS {_name} CASCADE"))
+                                conn.commit()
+                                conn.execute(view_sql)
+                                conn.commit()
+                            except Exception:
+                                # Still failed - skip this view
+                                conn.rollback()  # Clean up after failure
+                                pass
+                        # For SQLite, IF NOT EXISTS should handle it - silently skip failures
+                        pass
+
+        except Exception as e:
+            # Log but don't fail initialization
+            print(f"[Nexus] ERROR: View creation failed: {e}", file=sys.stderr)
+            import traceback
+
+            traceback.print_exc(file=sys.stderr)
 
     def get(self, path: str) -> FileMetadata | None:
         """

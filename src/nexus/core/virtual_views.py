@@ -19,6 +19,7 @@ Safety features:
 import asyncio
 import logging
 from collections.abc import Callable
+from typing import Any, overload
 
 logger = logging.getLogger(__name__)
 
@@ -170,10 +171,24 @@ def should_add_virtual_views(file_path: str) -> bool:
     return any(file_path.endswith(ext) for ext in PARSEABLE_EXTENSIONS)
 
 
+@overload
 def add_virtual_views_to_listing(
-    files: list[str] | list[dict],
+    files: list[str],
     is_directory_fn: Callable[[str], bool],
-) -> list[str] | list[dict]:
+) -> list[str]: ...
+
+
+@overload
+def add_virtual_views_to_listing(
+    files: list[dict[str, Any]],
+    is_directory_fn: Callable[[str], bool],
+) -> list[dict[str, Any]]: ...
+
+
+def add_virtual_views_to_listing(
+    files: list[str] | list[dict[str, Any]],
+    is_directory_fn: Callable[[str], bool],
+) -> list[str] | list[dict[str, Any]]:
     """Add virtual .txt and .md views to a file listing.
 
     Args:
@@ -188,7 +203,13 @@ def add_virtual_views_to_listing(
         >>> add_virtual_views_to_listing(files, is_dir_fn)
         ["/file.xlsx", "/file.xlsx.txt", "/file.xlsx.md", "/file.txt", "/dir/"]
     """
-    virtual_files = []
+    virtual_files: list[str] | list[dict[str, Any]]
+
+    # Determine the type and initialize virtual_files accordingly
+    if files and isinstance(files[0], str):
+        virtual_files = []
+    else:
+        virtual_files = []
 
     for file in files:
         # Get the file path (handle both string and dict formats)
@@ -210,16 +231,16 @@ def add_virtual_views_to_listing(
         if should_add_virtual_views(file_path):
             # Add .txt and .md virtual views
             if isinstance(file, str):
-                virtual_files.append(f"{file_path}.txt")
-                virtual_files.append(f"{file_path}.md")
+                virtual_files.append(f"{file_path}.txt")  # type: ignore[arg-type]
+                virtual_files.append(f"{file_path}.md")  # type: ignore[arg-type]
             else:
                 # For dict format, create copies with modified path
                 txt_file = file.copy()
                 txt_file["path"] = f"{file_path}.txt"
-                virtual_files.append(txt_file)
+                virtual_files.append(txt_file)  # type: ignore[arg-type]
 
                 md_file = file.copy()
                 md_file["path"] = f"{file_path}.md"
-                virtual_files.append(md_file)
+                virtual_files.append(md_file)  # type: ignore[arg-type]
 
     return files + virtual_files

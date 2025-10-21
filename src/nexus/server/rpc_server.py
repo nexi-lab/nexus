@@ -325,8 +325,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             # Add virtual views (.txt and .md) for parseable files
             # Only add if not recursive (to avoid clutter in full tree listings)
             if not params.recursive:
-                serializable_files = add_virtual_views_to_listing(
-                    serializable_files,
+                serializable_files = add_virtual_views_to_listing(  # type: ignore[assignment]
+                    serializable_files,  # type: ignore[arg-type]
                     self.nexus_fs.is_directory,
                 )
 

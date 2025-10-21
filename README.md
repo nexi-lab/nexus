@@ -241,8 +241,11 @@ pip install nexus-ai-fs
 # Install with FUSE support
 pip install nexus-ai-fs[fuse]
 
+# Install with PostgreSQL support
+pip install nexus-ai-fs[postgres]
+
 # Install everything
-pip install nexus-ai-fs[all]  # All features (FUSE + future plugins)
+pip install nexus-ai-fs[all]  # All features (FUSE + PostgreSQL + future plugins)
 
 # Verify installation
 nexus --version
@@ -1820,7 +1823,7 @@ This skill analyzes code for quality metrics...
 ### Core
 - **Language**: Python 3.11+
 - **API Framework**: FastAPI
-- **Database**: PostgreSQL (prod) / SQLite (dev)
+- **Database**: PostgreSQL / SQLite (configurable via environment variable)
 - **Cache**: Redis (prod) / In-memory (dev)
 - **Vector DB**: Qdrant
 - **Object Storage**: S3-compatible, GCS, Azure Blob
@@ -1880,6 +1883,7 @@ mode: server  # local or server
 database:
   url: postgresql://user:pass@localhost/nexus
   # or for SQLite: sqlite:///./nexus.db
+  # Can also use NEXUS_DATABASE_URL or POSTGRES_URL environment variable
 
 cache:
   type: redis  # memory, redis
@@ -1992,6 +1996,7 @@ pytest tests/performance/ --benchmark-only
 
 - [Plugin Development Guide](./docs/PLUGIN_DEVELOPMENT.md) - Create your own Nexus plugins
 - [Plugin System Overview](./docs/PLUGIN_SYSTEM.md) - Plugin architecture and design
+- [PostgreSQL Setup Guide](./docs/POSTGRESQL_SETUP.md) - Configure PostgreSQL for production
 - [SQL Views for Work Detection](./docs/SQL_VIEWS_FOR_WORK_DETECTION.md) - Work queue patterns
 - [API Reference](./docs/api/) - Detailed API documentation
 - [Getting Started](./docs/getting-started/) - Quick start guides

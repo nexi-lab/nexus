@@ -615,9 +615,14 @@ class SQLAlchemyMetadataStore(MetadataStore):
             # SQLite-specific file cleanup
             if self.db_type == "sqlite" and self.db_path:
                 # Give the OS time to release file handles (especially on Windows)
+                import sys
                 import time
 
-                time.sleep(0.01)  # 10ms should be enough
+                # Windows needs more time to release file locks
+                sleep_time = (
+                    0.1 if sys.platform == "win32" else 0.01
+                )  # 100ms on Windows, 10ms elsewhere
+                time.sleep(sleep_time)
 
                 # Additional cleanup: Try to remove any lingering SQLite temp files
                 # This helps with test cleanup when using tempfile.TemporaryDirectory()
@@ -627,13 +632,16 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     for suffix in ["-wal", "-shm", "-journal"]:
                         temp_file = Path(str(self.db_path) + suffix)
                         if temp_file.exists():
-                            # On Windows, retry a few times if file is locked
-                            for _ in range(3):
+                            # On Windows, retry up to 10 times with exponential backoff
+                            max_retries = 10 if sys.platform == "win32" else 3
+                            for attempt in range(max_retries):
                                 try:
                                     os.remove(temp_file)
                                     break
                                 except (OSError, PermissionError):
-                                    time.sleep(0.01)
+                                    # Exponential backoff: 10ms, 20ms, 40ms, 80ms, ...
+                                    wait_time = 0.01 * (2**attempt)
+                                    time.sleep(min(wait_time, 0.5))  # Cap at 500ms
                 except Exception:
                     # Ignore errors - these files may not exist or may be locked
                     pass

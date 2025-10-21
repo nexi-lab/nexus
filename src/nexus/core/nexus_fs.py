@@ -297,6 +297,39 @@ class NexusFS(NexusFilesystem):
 
         return (child_perms.owner, child_perms.group, child_perms.mode.mode)
 
+    def _create_directory_metadata(self, path: str) -> None:
+        """
+        Create metadata entry for a directory.
+
+        Args:
+            path: Virtual path to directory
+        """
+        now = datetime.now(UTC)
+
+        # Inherit permissions from parent directory
+        owner, group, mode = self._inherit_permissions_from_parent(path, is_directory=True)
+
+        # Create a marker for the directory in metadata
+        # We use an empty content hash as a placeholder
+        empty_hash = hashlib.sha256(b"").hexdigest()
+
+        metadata = FileMetadata(
+            path=path,
+            backend_name=self.backend.name,
+            physical_path=empty_hash,  # Placeholder for directory
+            size=0,  # Directories have size 0
+            etag=empty_hash,
+            mime_type="inode/directory",  # MIME type for directories
+            created_at=now,
+            modified_at=now,
+            version=1,
+            owner=owner,
+            group=group,
+            mode=mode or 0o755,  # Default directory mode if no inheritance
+        )
+
+        self.metadata.put(metadata)
+
     def read(self, path: str) -> bytes:
         """
         Read file content as bytes.
@@ -964,8 +997,41 @@ class NexusFS(NexusFilesystem):
         if route.readonly:
             raise PermissionError(f"Cannot create directory in read-only path: {path}")
 
+        # Check if directory already exists (either as file or implicit directory)
+        existing = self.metadata.get(path)
+        is_implicit_dir = existing is None and self.metadata.is_implicit_directory(path)
+
+        if existing is not None or is_implicit_dir:
+            if not exist_ok:
+                raise FileExistsError(f"Directory already exists: {path}")
+            # If exist_ok=True and directory exists, we still create metadata if it doesn't exist
+            if existing is not None:
+                # Metadata already exists, nothing to do
+                return
+
         # Create directory in backend
-        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=exist_ok)
+        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True)
+
+        # Create metadata entries for parent directories if parents=True
+        if parents:
+            # Create metadata for all parent directories that don't have it
+            parent_path = self._get_parent_path(path)
+            parents_to_create = []
+
+            while parent_path and parent_path != "/":
+                if not self.metadata.exists(parent_path):
+                    parents_to_create.append(parent_path)
+                else:
+                    # Parent exists, stop walking up
+                    break
+                parent_path = self._get_parent_path(parent_path)
+
+            # Create parents from top to bottom (reverse order)
+            for parent_dir in reversed(parents_to_create):
+                self._create_directory_metadata(parent_dir)
+
+        # Create explicit metadata entry for the directory
+        self._create_directory_metadata(path)
 
     def rmdir(self, path: str, recursive: bool = False) -> None:
         """

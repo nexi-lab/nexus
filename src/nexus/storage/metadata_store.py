@@ -4,19 +4,21 @@ Production-ready metadata store using SQLAlchemy ORM with support for:
 - File path mapping (virtual path → physical backend path)
 - File metadata (arbitrary key-value pairs)
 - Content chunks (for deduplication)
+- Multiple database backends (SQLite, PostgreSQL)
 """
 
 from __future__ import annotations
 
 import builtins
 import json
+import os
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, pool, select, text
 from sqlalchemy.orm import sessionmaker
 
 from nexus.core.exceptions import MetadataError
@@ -27,17 +29,24 @@ from nexus.storage.models import Base, FileMetadataModel, FilePathModel
 
 class SQLAlchemyMetadataStore(MetadataStore):
     """
-    SQLAlchemy-based metadata store for embedded mode.
+    SQLAlchemy-based metadata store supporting multiple database backends.
 
     Uses SQLAlchemy ORM for database operations with support for:
     - File path mapping (virtual path -> physical backend path)
     - File metadata (arbitrary key-value pairs)
     - Content chunks (for deduplication)
+    - Multiple database backends (SQLite, PostgreSQL)
+
+    Environment Variables:
+        NEXUS_DATABASE_URL: Database connection URL (e.g., postgresql://user:pass@host/db)
+                           If not set, falls back to db_path parameter (SQLite)
+        POSTGRES_URL: Alternative to NEXUS_DATABASE_URL for PostgreSQL
     """
 
     def __init__(
         self,
-        db_path: str | Path,
+        db_path: str | Path | None = None,
+        db_url: str | None = None,
         run_migrations: bool = False,
         enable_cache: bool = True,
         cache_path_size: int = 512,
@@ -50,7 +59,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
         Initialize SQLAlchemy metadata store.
 
         Args:
-            db_path: Path to SQLite database file
+            db_path: Path to SQLite database file (deprecated, use db_url for flexibility)
+            db_url: Database URL (e.g., 'postgresql://user:pass@host/db' or 'sqlite:///path/to/db')
+                   If not provided, checks NEXUS_DATABASE_URL or POSTGRES_URL env vars,
+                   then falls back to db_path parameter
             run_migrations: If True, run Alembic migrations on startup (default: False)
             enable_cache: If True, enable in-memory caching (default: True)
             cache_path_size: Max entries for path metadata cache (default: 512)
@@ -59,17 +71,35 @@ class SQLAlchemyMetadataStore(MetadataStore):
             cache_exists_size: Max entries for existence check cache (default: 1024)
             cache_ttl_seconds: Cache TTL in seconds, None = no expiry (default: 300)
         """
-        self.db_path = Path(db_path)
-        self._ensure_parent_exists()
-
-        # Create engine and session factory
-        self.engine = create_engine(
-            f"sqlite:///{self.db_path}",
-            # Enable connection pooling for better concurrency
-            pool_pre_ping=True,
-            # Use NullPool for SQLite to avoid concurrency issues
-            poolclass=None,
+        # Determine database URL from multiple sources (priority order)
+        self.database_url: str = (
+            db_url
+            or os.getenv("NEXUS_DATABASE_URL")
+            or os.getenv("POSTGRES_URL")
+            or (f"sqlite:///{db_path}" if db_path else None)
+            or ""
         )
+
+        if not self.database_url:
+            raise MetadataError(
+                "Database URL must be provided via db_url parameter, db_path parameter, "
+                "NEXUS_DATABASE_URL, or POSTGRES_URL environment variable"
+            )
+
+        # Detect database type
+        self.db_type = self._detect_db_type(self.database_url)
+
+        # For SQLite, extract and ensure parent directory exists
+        self.db_path: Path | None
+        if self.db_type == "sqlite":
+            self.db_path = self._extract_sqlite_path(self.database_url)
+            self._ensure_parent_exists()
+        else:
+            self.db_path = None
+
+        # Create engine with database-specific configuration
+        engine_kwargs = self._get_engine_config()
+        self.engine = create_engine(self.database_url, **engine_kwargs)
 
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False)
 
@@ -96,18 +126,84 @@ class SQLAlchemyMetadataStore(MetadataStore):
             # Create SQL views for work detection
             self._create_views()
 
-        # Enable WAL mode for better concurrency and to avoid journal files
-        try:
-            with self.engine.connect() as conn:
-                conn.execute(text("PRAGMA journal_mode=WAL"))
-                conn.commit()
-        except Exception:
-            # Ignore if WAL mode cannot be enabled
+        # Apply database-specific optimizations
+        self._apply_db_optimizations()
+
+    def _detect_db_type(self, db_url: str) -> str:
+        """Detect database type from connection URL.
+
+        Args:
+            db_url: Database connection URL
+
+        Returns:
+            Database type: 'sqlite', 'postgresql', etc.
+        """
+        if db_url.startswith("sqlite"):
+            return "sqlite"
+        elif db_url.startswith(("postgres", "postgresql")):
+            return "postgresql"
+        else:
+            # Default to generic SQL database
+            return "unknown"
+
+    def _extract_sqlite_path(self, db_url: str) -> Path:
+        """Extract file path from SQLite URL.
+
+        Args:
+            db_url: SQLite database URL (e.g., 'sqlite:///path/to/db')
+
+        Returns:
+            Path object to the database file
+        """
+        # Remove sqlite:/// prefix
+        path_str = db_url.replace("sqlite:///", "")
+        return Path(path_str)
+
+    def _get_engine_config(self) -> dict[str, Any]:
+        """Get database-specific engine configuration.
+
+        Returns:
+            Dictionary of engine kwargs for create_engine()
+        """
+        config: dict[str, Any] = {
+            "pool_pre_ping": True,  # Check connections before using them
+        }
+
+        if self.db_type == "sqlite":
+            # SQLite-specific configuration
+            # Use NullPool to avoid concurrency issues with SQLite
+            config["poolclass"] = pool.NullPool
+        elif self.db_type == "postgresql":
+            # PostgreSQL-specific configuration
+            # Use QueuePool with reasonable defaults for production
+            config["poolclass"] = pool.QueuePool
+            config["pool_size"] = 5  # Number of connections to maintain
+            config["max_overflow"] = 10  # Max connections above pool_size
+            config["pool_timeout"] = 30  # Seconds to wait for connection
+            config["pool_recycle"] = 3600  # Recycle connections after 1 hour
+
+        return config
+
+    def _apply_db_optimizations(self) -> None:
+        """Apply database-specific performance optimizations."""
+        if self.db_type == "sqlite":
+            # Enable WAL mode for better concurrency and to avoid journal files
+            try:
+                with self.engine.connect() as conn:
+                    conn.execute(text("PRAGMA journal_mode=WAL"))
+                    conn.commit()
+            except Exception:
+                # Ignore if WAL mode cannot be enabled
+                pass
+        elif self.db_type == "postgresql":
+            # PostgreSQL optimizations can be set at connection level if needed
+            # Most optimizations are better set in postgresql.conf
             pass
 
     def _ensure_parent_exists(self) -> None:
-        """Create parent directory for database if it doesn't exist."""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        """Create parent directory for database if it doesn't exist (SQLite only)."""
+        if self.db_path:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _run_migrations(self) -> None:
         """Run Alembic migrations to create/update schema."""
@@ -118,7 +214,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
             # Configure Alembic
             alembic_cfg = Config("alembic.ini")
-            alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{self.db_path}")
+            alembic_cfg.set_main_option("sqlalchemy.url", self.database_url)
 
             # Run migrations
             command.upgrade(alembic_cfg, "head")
@@ -464,50 +560,54 @@ class SQLAlchemyMetadataStore(MetadataStore):
     def close(self) -> None:
         """Close database connection and dispose of engine."""
         if hasattr(self, "engine"):
-            # For SQLite, checkpoint WAL/journal files before disposing
-            try:
-                # Create a new connection to ensure we have exclusive access
-                with self.engine.connect() as conn:
-                    # Checkpoint WAL file to merge changes back to main database
-                    conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
-                    conn.commit()
+            # SQLite-specific cleanup
+            if self.db_type == "sqlite":
+                # For SQLite, checkpoint WAL/journal files before disposing
+                try:
+                    # Create a new connection to ensure we have exclusive access
+                    with self.engine.connect() as conn:
+                        # Checkpoint WAL file to merge changes back to main database
+                        conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+                        conn.commit()
 
-                    # Switch to DELETE mode to remove WAL files
-                    conn.execute(text("PRAGMA journal_mode=DELETE"))
-                    conn.commit()
+                        # Switch to DELETE mode to remove WAL files
+                        conn.execute(text("PRAGMA journal_mode=DELETE"))
+                        conn.commit()
 
-                    # Close the connection explicitly
-                    conn.close()
-            except Exception:
-                # Ignore errors during checkpoint (e.g., database already closed)
-                pass
+                        # Close the connection explicitly
+                        conn.close()
+                except Exception:
+                    # Ignore errors during checkpoint (e.g., database already closed)
+                    pass
 
             # Dispose of the connection pool - this closes all connections
             self.engine.dispose()
 
-            # Give the OS time to release file handles (especially on Windows)
-            import time
+            # SQLite-specific file cleanup
+            if self.db_type == "sqlite" and self.db_path:
+                # Give the OS time to release file handles (especially on Windows)
+                import time
 
-            time.sleep(0.01)  # 10ms should be enough
+                time.sleep(0.01)  # 10ms should be enough
 
-            # Additional cleanup: Try to remove any lingering SQLite temp files
-            # This helps with test cleanup when using tempfile.TemporaryDirectory()
-            try:
-                import os
+                # Additional cleanup: Try to remove any lingering SQLite temp files
+                # This helps with test cleanup when using tempfile.TemporaryDirectory()
+                try:
+                    import os
 
-                for suffix in ["-wal", "-shm", "-journal"]:
-                    temp_file = Path(str(self.db_path) + suffix)
-                    if temp_file.exists():
-                        # On Windows, retry a few times if file is locked
-                        for _ in range(3):
-                            try:
-                                os.remove(temp_file)
-                                break
-                            except (OSError, PermissionError):
-                                time.sleep(0.01)
-            except Exception:
-                # Ignore errors - these files may not exist or may be locked
-                pass
+                    for suffix in ["-wal", "-shm", "-journal"]:
+                        temp_file = Path(str(self.db_path) + suffix)
+                        if temp_file.exists():
+                            # On Windows, retry a few times if file is locked
+                            for _ in range(3):
+                                try:
+                                    os.remove(temp_file)
+                                    break
+                                except (OSError, PermissionError):
+                                    time.sleep(0.01)
+                except Exception:
+                    # Ignore errors - these files may not exist or may be locked
+                    pass
 
     def get_cache_stats(self) -> dict[str, Any] | None:
         """

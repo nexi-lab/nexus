@@ -33,6 +33,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 
 class ACLEntryType(str, Enum):
@@ -584,3 +585,126 @@ class ACLManager:
             entry_type=ACLEntryType.GROUP, identifier=group, permissions=set(), deny=True
         )
         acl.add_entry(entry)
+
+
+class ACLStore:
+    """Storage layer for ACL entries.
+
+    This class bridges between the in-memory ACL representation and the
+    database storage layer. It retrieves ACL entries from the database
+    and converts them to ACL objects for permission checking.
+    """
+
+    def __init__(self, metadata_store: Any):
+        """Initialize ACL store.
+
+        Args:
+            metadata_store: Metadata store with database connection
+        """
+        self.metadata_store = metadata_store
+
+    def get_acl(self, path: str) -> ACL | None:
+        """Get ACL for a file path.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            ACL object or None if no ACL entries exist
+
+        Example:
+            >>> store = ACLStore(metadata_store)
+            >>> acl = store.get_acl("/workspace/file.txt")
+            >>> if acl:
+            ...     result = acl.check_permission("alice", ["developers"], ACLPermission.READ)
+        """
+        # Get file metadata to find path_id
+        meta = self.metadata_store.get(path)
+        if not meta:
+            return None
+
+        # Try to get path_id - it may not be available on all metadata stores
+        path_id = getattr(meta, "path_id", None)
+        if not path_id:
+            return None
+
+        # Query ACL entries from database
+        from nexus.storage.models import ACLEntryModel
+
+        session = self.metadata_store.Session()
+        try:
+            acl_entries = (
+                session.query(ACLEntryModel)
+                .filter(ACLEntryModel.path_id == path_id)
+                .order_by(ACLEntryModel.created_at)
+                .all()
+            )
+
+            if not acl_entries:
+                return None
+
+            # Convert database models to ACL entries
+            entries = []
+            for db_entry in acl_entries:
+                # Parse entry_type
+                try:
+                    entry_type = ACLEntryType(db_entry.entry_type)
+                except ValueError:
+                    continue  # Skip invalid entry types
+
+                # Parse permissions from string (rwx format)
+                permissions: set[ACLPermission] = set()
+                if len(db_entry.permissions) >= 3:
+                    if db_entry.permissions[0] == "r":
+                        permissions.add(ACLPermission.READ)
+                    if db_entry.permissions[1] == "w":
+                        permissions.add(ACLPermission.WRITE)
+                    if db_entry.permissions[2] == "x":
+                        permissions.add(ACLPermission.EXECUTE)
+
+                entry = ACLEntry(
+                    entry_type=entry_type,
+                    identifier=db_entry.identifier,
+                    permissions=permissions,
+                    deny=db_entry.deny,
+                    is_default=db_entry.is_default,
+                )
+                entries.append(entry)
+
+            return ACL(entries=entries)
+
+        finally:
+            session.close()
+
+    def check_permission(
+        self, path: str, user: str, groups: list[str], permission: ACLPermission
+    ) -> bool | None:
+        """Check if user has permission via ACL.
+
+        This is a convenience method that gets the ACL and checks permission in one call.
+
+        Args:
+            path: Virtual file path
+            user: User ID
+            groups: List of group IDs
+            permission: Permission to check
+
+        Returns:
+            True if explicitly allowed
+            False if explicitly denied
+            None if no ACL entries exist or no match
+
+        Example:
+            >>> store = ACLStore(metadata_store)
+            >>> result = store.check_permission("/workspace/file.txt", "alice", ["developers"], ACLPermission.READ)
+            >>> if result is True:
+            ...     print("Explicitly allowed")
+            >>> elif result is False:
+            ...     print("Explicitly denied")
+            >>> else:
+            ...     print("Fall back to UNIX permissions")
+        """
+        acl = self.get_acl(path)
+        if not acl:
+            return None
+        return acl.check_permission(user, groups, permission)

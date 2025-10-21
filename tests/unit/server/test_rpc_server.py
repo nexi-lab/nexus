@@ -68,11 +68,18 @@ class TestRPCRequestHandler:
         """Test dispatching read method."""
         from nexus.server.protocol import ReadParams
 
+        # Configure mock to support virtual view path parsing
+        # When reading /test.txt, it will check if /test exists and read from /test
+        mock_filesystem.exists.return_value = True
+        mock_filesystem.read.return_value = b"test content"
+
         params = ReadParams(path="/test.txt")
         result = mock_handler._dispatch_method("read", params)
 
+        # Virtual view logic reads the base file (/test) and parses it
         assert result == b"test content"
-        mock_filesystem.read.assert_called_once_with("/test.txt")
+        mock_filesystem.exists.assert_called_with("/test")
+        mock_filesystem.read.assert_called_once_with("/test")
 
     def test_dispatch_write(self, mock_handler, mock_filesystem):
         """Test dispatching write method."""
@@ -98,11 +105,20 @@ class TestRPCRequestHandler:
         """Test dispatching exists method."""
         from nexus.server.protocol import ExistsParams
 
+        # Configure mock to support virtual view path parsing
+        # When checking /test.txt, it will first check if /test exists (virtual view logic)
+        mock_filesystem.exists.side_effect = lambda path: path in ["/test", "/test.txt"]
+
         params = ExistsParams(path="/test.txt")
         result = mock_handler._dispatch_method("exists", params)
 
         assert result == {"exists": True}
-        mock_filesystem.exists.assert_called_once_with("/test.txt")
+        # With virtual views, exists() is called twice:
+        # 1) Check if /test exists (base file for virtual view)
+        # 2) Return exists(/test) result
+        assert mock_filesystem.exists.call_count == 2
+        # Both calls check /test (the base file)
+        assert all(call.args[0] == "/test" for call in mock_filesystem.exists.call_args_list)
 
     def test_dispatch_unknown_method(self, mock_handler, mock_filesystem):
         """Test dispatching unknown method raises error."""

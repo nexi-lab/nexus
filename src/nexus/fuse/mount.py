@@ -126,7 +126,7 @@ class NexusFUSE:
 
         # Build FUSE options
         # Note: Always use foreground=True because we handle backgrounding ourselves via threading
-        fuse_options = {
+        fuse_options: dict[str, bool | str | int] = {
             "nothreads": False,
             "foreground": True,  # Always run FUSE in foreground mode (within our thread)
             "debug": debug,
@@ -134,6 +134,23 @@ class NexusFUSE:
 
         if allow_other:
             fuse_options["allow_other"] = True
+
+        # Add macOS-specific options to prevent Spotlight indexing and reduce overhead
+        # These options tell macOS not to index the filesystem and disable extended attributes
+        import platform
+
+        if platform.system() == "Darwin":  # macOS
+            logger.info("Applying macOS-specific FUSE options to reduce Spotlight indexing")
+            fuse_options.update(
+                {
+                    "volname": "Nexus",  # Custom volume name
+                    "noappledouble": True,  # Disable ._* AppleDouble files
+                    "noapplexattr": True,  # Disable extended attributes
+                    "daemon_timeout": 600,  # Keep daemon alive longer
+                    "auto_cache": True,  # Enable automatic kernel caching
+                }
+            )
+            logger.info(f"FUSE options: {fuse_options}")
 
         # Mount filesystem
         logger.info(f"Mounting Nexus to {self.mount_point} (mode={self.mode.value})")

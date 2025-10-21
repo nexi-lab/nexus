@@ -1831,6 +1831,9 @@ def mount(
             # Grandchild (daemon process) - set up logging and redirect I/O
             sys.stdin.close()
 
+            # log_file must be set when daemon=True
+            assert log_file is not None, "log_file must be set in daemon mode"
+
             # Configure logging to file
             logging.basicConfig(
                 filename=log_file,

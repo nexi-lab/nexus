@@ -231,6 +231,9 @@ class ACLEntryModel(Base):
     identifier: Mapped[str | None] = mapped_column(String(255), nullable=True)  # username/groupname
     permissions: Mapped[str] = mapped_column(String(10), nullable=False)  # rwx format
     deny: Mapped[bool] = mapped_column(default=False, nullable=False)  # Deny entry flag
+    is_default: Mapped[bool] = mapped_column(
+        default=False, nullable=False
+    )  # Default ACL entry (for inheritance)
 
     # Timestamp
     created_at: Mapped[datetime] = mapped_column(
@@ -244,6 +247,7 @@ class ACLEntryModel(Base):
     __table_args__ = (
         Index("idx_acl_entries_path_id", "path_id"),
         Index("idx_acl_entries_type_id", "entry_type", "identifier"),
+        Index("idx_acl_entries_is_default", "is_default"),
     )
 
     def __repr__(self) -> str:

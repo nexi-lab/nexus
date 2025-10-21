@@ -1202,6 +1202,110 @@ export NEXUS_DATA_DIR="$DATA_DIR"
 echo -e "${GREEN}✓ All ACL tests passed!${NC}\n"
 
 # ============================================================
+# Permission Policy Tests (v0.3.0 - Issue #110)
+# ============================================================
+echo -e "\n${BLUE}Testing Permission Policies (Automatic Assignment)...${NC}"
+
+# Create separate workspace for policy tests
+POLICY_DATA_DIR="$TEST_WORKSPACE/policy-test-data"
+test_command "Create policy test workspace" \
+    mkdir -p "$POLICY_DATA_DIR"
+
+test_command "Initialize policy test workspace" \
+    nexus init "$POLICY_DATA_DIR"
+
+# Test with Python API (policies work automatically)
+cat > "$TEST_WORKSPACE/test_permission_policies.py" << 'EOF'
+import sys
+import nexus
+
+data_dir = sys.argv[1]
+
+# Connect as agent alice in acme-corp tenant
+nx_alice = nexus.connect(config={
+    "data_dir": data_dir,
+    "tenant_id": "acme-corp",
+    "agent_id": "alice",
+})
+
+print("Testing automatic permission assignment...")
+
+# Test 1: Create file in /workspace - should get owner=alice
+nx_alice.write("/workspace/acme-corp/alice/code.py", b"# Alice's code")
+meta = nx_alice.metadata.get("/workspace/acme-corp/alice/code.py")
+
+assert meta.owner == "alice", f"Expected owner=alice, got {meta.owner}"
+assert meta.group == "agents", f"Expected group=agents, got {meta.group}"
+assert meta.mode == 0o644, f"Expected mode=0o644, got {oct(meta.mode) if meta.mode else None}"
+print("✓ /workspace policy applied correctly (owner=${agent_id})")
+
+# Test 2: Create file in /shared - should get owner=root, group=acme-corp
+nx_alice.write("/shared/acme-corp/data.txt", b"Shared data")
+meta_shared = nx_alice.metadata.get("/shared/acme-corp/data.txt")
+
+assert meta_shared.owner == "root", f"Expected owner=root, got {meta_shared.owner}"
+assert meta_shared.group == "acme-corp", f"Expected group=acme-corp, got {meta_shared.group}"
+assert meta_shared.mode == 0o664, f"Expected mode=0o664, got {oct(meta_shared.mode) if meta_shared.mode else None}"
+print("✓ /shared policy applied correctly (group=${tenant_id})")
+
+# Test 3: Update file - permissions should be preserved
+nx_alice.write("/workspace/acme-corp/alice/code.py", b"# Updated code")
+meta_updated = nx_alice.metadata.get("/workspace/acme-corp/alice/code.py")
+
+assert meta_updated.owner == "alice", "Owner should be preserved on update"
+assert meta_updated.group == "agents", "Group should be preserved on update"
+assert meta_updated.mode == 0o644, "Mode should be preserved on update"
+print("✓ Permissions preserved on file update")
+
+# Test 4: Different agent gets different ownership
+nx_alice.close()
+
+nx_bob = nexus.connect(config={
+    "data_dir": data_dir,
+    "tenant_id": "acme-corp",
+    "agent_id": "bob",
+})
+
+nx_bob.write("/workspace/acme-corp/bob/report.md", b"# Bob's report")
+meta_bob = nx_bob.metadata.get("/workspace/acme-corp/bob/report.md")
+
+assert meta_bob.owner == "bob", f"Expected owner=bob, got {meta_bob.owner}"
+assert meta_bob.group == "agents", f"Expected group=agents, got {meta_bob.group}"
+print("✓ Different agents get different ownership")
+
+# Test 5: Inspect policies in database
+from nexus.storage.policy_store import PolicyStore
+
+with nx_bob.metadata.SessionLocal() as session:
+    policy_store = PolicyStore(session)
+    policies = policy_store.list_policies(tenant_id=None)
+
+    assert len(policies) == 4, f"Expected 4 default policies, got {len(policies)}"
+
+    # Verify workspace policy
+    workspace_policy = next(p for p in policies if "/workspace/" in p.namespace_pattern)
+    assert workspace_policy.default_owner == "${agent_id}", "Workspace policy should use ${agent_id}"
+    assert workspace_policy.default_group == "agents", "Workspace policy should use agents group"
+    assert workspace_policy.default_mode == 0o644, "Workspace policy should use 0o644"
+
+    # Verify shared policy
+    shared_policy = next(p for p in policies if "/shared/" in p.namespace_pattern)
+    assert shared_policy.default_owner == "root", "Shared policy should use root owner"
+    assert shared_policy.default_group == "${tenant_id}", "Shared policy should use ${tenant_id}"
+    assert shared_policy.default_mode == 0o664, "Shared policy should use 0o664"
+
+    print(f"✓ Found {len(policies)} default policies in database")
+
+nx_bob.close()
+print("\nAll permission policy tests passed!")
+EOF
+
+test_command "Test permission policies - automatic assignment" \
+    bash -c "PYTHONPATH=\"$PWD/src\" python \"$TEST_WORKSPACE/test_permission_policies.py\" \"$POLICY_DATA_DIR/nexus-data\""
+
+echo -e "${GREEN}✓ All permission policy tests passed!${NC}\n"
+
+# ============================================================
 # ReBAC (Relationship-Based Access Control) Tests (v0.3.0)
 # ============================================================
 echo -e "\n${BLUE}Testing ReBAC (Zanzibar-style Authorization)...${NC}"

@@ -2562,6 +2562,97 @@ This document was compressed with gzip before upload.
 
         nx_ops.close()
 
+        # ============================================================
+        # Part 62: Permission Policies (v0.3.0 - Default permissions per namespace)
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 62: Permission Policies (Automatic Permission Assignment)")
+        print("=" * 70)
+
+        # Re-connect with agent context
+        nx_policy = nexus.connect(
+            config={
+                "data_dir": str(data_dir),
+                "tenant_id": "acme-corp",
+                "agent_id": "alice",
+            }
+        )
+
+        print("\n62. Testing automatic permission assignment...")
+        print("   Default policies apply permissions based on namespace:")
+        print("   • /workspace/* → owner=${agent_id}, group=agents, mode=0o644")
+        print("   • /shared/*    → owner=root, group=${tenant_id}, mode=0o664")
+        print("   • /archives/*  → owner=root, group=${tenant_id}, mode=0o444")
+        print("   • /system/*    → owner=root, group=root, mode=0o600")
+
+        # Create files in different namespaces
+        print("\n   Creating files in /workspace namespace...")
+        nx_policy.write("/workspace/acme-corp/alice/project.py", b"# Alice's code")
+
+        # Get metadata and check permissions
+        meta = nx_policy.metadata.get("/workspace/acme-corp/alice/project.py")
+        print(f"   ✓ File created: {meta.path}")
+        print(f"     Owner: {meta.owner} (substituted ${'{agent_id}'})")
+        print(f"     Group: {meta.group}")
+        print(f"     Mode: {oct(meta.mode) if meta.mode else 'None'} (rw-r--r--)")
+
+        print("\n   Creating files in /shared namespace...")
+        nx_policy.write("/shared/acme-corp/team-data.json", b'{"team": "engineering"}')
+
+        meta_shared = nx_policy.metadata.get("/shared/acme-corp/team-data.json")
+        print(f"   ✓ File created: {meta_shared.path}")
+        print(f"     Owner: {meta_shared.owner}")
+        print(f"     Group: {meta_shared.group} (substituted ${'{tenant_id}'})")
+        print(f"     Mode: {oct(meta_shared.mode) if meta_shared.mode else 'None'} (rw-rw-r--)")
+
+        # Test permission preservation on update
+        print("\n   Testing permission preservation on file update...")
+        nx_policy.write("/workspace/acme-corp/alice/project.py", b"# Updated code")
+
+        meta_updated = nx_policy.metadata.get("/workspace/acme-corp/alice/project.py")
+        print(f"   ✓ File updated: {meta_updated.path}")
+        print(f"     Owner: {meta_updated.owner} (preserved)")
+        print(f"     Group: {meta_updated.group} (preserved)")
+        print(f"     Mode: {oct(meta_updated.mode) if meta_updated.mode else 'None'} (preserved)")
+
+        # Test with different agent
+        nx_policy.close()
+        nx_bob = nexus.connect(
+            config={
+                "data_dir": str(data_dir),
+                "tenant_id": "acme-corp",
+                "agent_id": "bob",
+            }
+        )
+
+        print("\n   Creating file as different agent (bob)...")
+        nx_bob.write("/workspace/acme-corp/bob/report.md", b"# Bob's report")
+
+        meta_bob = nx_bob.metadata.get("/workspace/acme-corp/bob/report.md")
+        print(f"   ✓ File created: {meta_bob.path}")
+        print(f"     Owner: {meta_bob.owner} (substituted with bob)")
+        print(f"     Group: {meta_bob.group}")
+        print(f"     Mode: {oct(meta_bob.mode) if meta_bob.mode else 'None'}")
+
+        # Access policy store directly (advanced usage)
+        print("\n   Inspecting permission policies in database...")
+        from nexus.storage.policy_store import PolicyStore
+
+        with nx_bob.metadata.SessionLocal() as session:
+            policy_store = PolicyStore(session)
+            policies = policy_store.list_policies(tenant_id=None)  # System-wide policies
+
+            print(f"   Total policies: {len(policies)}")
+            for policy in policies[:2]:  # Show first 2
+                print(f"\n   Policy: {policy.namespace_pattern}")
+                print(f"     Default owner: {policy.default_owner}")
+                print(f"     Default group: {policy.default_group}")
+                print(f"     Default mode: {oct(policy.default_mode)}")
+                print(f"     Priority: {policy.priority}")
+
+        nx_bob.close()
+        print("\n   ✓ Permission policies work automatically!")
+
         print("\n✓ Integrated demo completed successfully!")
         print("=" * 70)
 

@@ -29,9 +29,15 @@ def upgrade() -> None:
     # Import views after op is available
     from nexus.storage import views
 
-    # Create all views
+    # Detect database type from connection
     connection = op.get_bind()
-    for _name, view_sql in views.ALL_VIEWS:
+    db_type = "sqlite"
+    if connection.dialect.name in ("postgresql", "postgres"):
+        db_type = "postgresql"
+
+    # Create all views with appropriate SQL for this database
+    all_views = views.get_all_views(db_type)
+    for _name, view_sql in all_views:
         connection.execute(view_sql)
         connection.commit()
 

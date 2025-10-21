@@ -366,3 +366,87 @@ class ContentChunkModel(Base):
         # Validate ref_count
         if self.ref_count < 0:
             raise ValidationError(f"ref_count cannot be negative, got {self.ref_count}")
+
+
+class PermissionPolicyModel(Base):
+    """Permission policies for automatic permission assignment.
+
+    Stores default permission policies per namespace pattern.
+    """
+
+    __tablename__ = "permission_policies"
+
+    # Primary key
+    policy_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Namespace pattern (glob-style, e.g., /workspace/*, /shared/*)
+    namespace_pattern: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Tenant ID (NULL = system-wide policy)
+    tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+    # Default permissions
+    default_owner: Mapped[str] = mapped_column(String(255), nullable=False)  # Supports ${agent_id}
+    default_group: Mapped[str] = mapped_column(String(255), nullable=False)  # Supports ${tenant_id}
+    default_mode: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )  # Permission bits (0o644, etc.)
+
+    # Priority for pattern matching (higher = more specific)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Timestamp
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_permission_policies_namespace", "namespace_pattern"),
+        Index("idx_permission_policies_tenant", "tenant_id"),
+        Index("idx_permission_policies_priority", "priority"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PermissionPolicyModel(policy_id={self.policy_id}, namespace_pattern={self.namespace_pattern})>"
+
+    def validate(self) -> None:
+        """Validate permission policy model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate policy_id
+        if not self.policy_id:
+            raise ValidationError("policy_id is required")
+
+        # Validate namespace_pattern
+        if not self.namespace_pattern:
+            raise ValidationError("namespace_pattern is required")
+
+        if len(self.namespace_pattern) > 255:
+            raise ValidationError(
+                f"namespace_pattern must be 255 characters or less, got {len(self.namespace_pattern)}"
+            )
+
+        # Validate default_owner
+        if not self.default_owner:
+            raise ValidationError("default_owner is required")
+
+        # Validate default_group
+        if not self.default_group:
+            raise ValidationError("default_group is required")
+
+        # Validate default_mode
+        if not 0 <= self.default_mode <= 0o777:
+            raise ValidationError(
+                f"default_mode must be between 0o000 and 0o777, got {oct(self.default_mode)}"
+            )
+
+        # Validate priority
+        if self.priority < 0:
+            raise ValidationError(f"priority must be non-negative, got {self.priority}")

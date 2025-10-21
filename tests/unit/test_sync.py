@@ -58,8 +58,10 @@ class TestCopyOperations:
         local_file = tmp_path / "source.txt"
         local_file.write_text("test content")
 
-        # Create Nexus instance
-        nx = connect(config={"data_dir": str(tmp_path / "nexus-data")})
+        # Create Nexus instance (disable permission enforcement for sync tests)
+        nx = connect(
+            config={"data_dir": str(tmp_path / "nexus-data"), "enforce_permissions": False}
+        )
 
         try:
             # Copy to Nexus
@@ -123,13 +125,15 @@ class TestCopyOperations:
         (source_dir / "subdir").mkdir()
         (source_dir / "subdir" / "file3.txt").write_text("content3")
 
-        # Create Nexus instance
-        nx = connect(config={"data_dir": str(tmp_path / "nexus-data")})
+        # Create Nexus instance (disable permission enforcement for sync tests)
+        nx = connect(
+            config={"data_dir": str(tmp_path / "nexus-data"), "enforce_permissions": False}
+        )
 
         try:
-            # Copy recursively
+            # Copy recursively (using /shared to avoid agent workspace isolation)
             stats = copy_recursive(
-                nx, str(source_dir), "/workspace/dest", checksum=False, progress=False
+                nx, str(source_dir), "/shared/backup", checksum=False, progress=False
             )
 
             assert stats.files_checked == 3
@@ -137,9 +141,9 @@ class TestCopyOperations:
             assert stats.files_skipped == 0
 
             # Verify files exist in Nexus
-            assert nx.exists("/workspace/dest/file1.txt")
-            assert nx.exists("/workspace/dest/file2.txt")
-            assert nx.exists("/workspace/dest/subdir/file3.txt")
+            assert nx.exists("/shared/backup/file1.txt")
+            assert nx.exists("/shared/backup/file2.txt")
+            assert nx.exists("/shared/backup/subdir/file3.txt")
 
         finally:
             nx.close()
@@ -156,15 +160,17 @@ class TestSyncOperations:
         (source_dir / "file1.txt").write_text("content1")
         (source_dir / "file2.txt").write_text("content2")
 
-        # Create Nexus instance
-        nx = connect(config={"data_dir": str(tmp_path / "nexus-data")})
+        # Create Nexus instance (disable permission enforcement for sync tests)
+        nx = connect(
+            config={"data_dir": str(tmp_path / "nexus-data"), "enforce_permissions": False}
+        )
 
         try:
-            # Sync to Nexus
+            # Sync to Nexus (using /shared to avoid agent workspace isolation)
             stats = sync_directories(
                 nx,
                 str(source_dir),
-                "/workspace/dest",
+                "/shared/sync",
                 delete=False,
                 dry_run=False,
                 checksum=False,
@@ -185,19 +191,21 @@ class TestSyncOperations:
         source_dir.mkdir()
         (source_dir / "file1.txt").write_text("content1")
 
-        # Create Nexus instance with existing file
-        nx = connect(config={"data_dir": str(tmp_path / "nexus-data")})
+        # Create Nexus instance with existing file (disable permission enforcement for sync tests)
+        nx = connect(
+            config={"data_dir": str(tmp_path / "nexus-data"), "enforce_permissions": False}
+        )
 
         try:
-            # Create files in destination
-            nx.write("/workspace/dest/file1.txt", b"old content")
-            nx.write("/workspace/dest/file2.txt", b"to be deleted")
+            # Create files in destination (using /shared to avoid agent workspace isolation)
+            nx.write("/shared/dest/file1.txt", b"old content")
+            nx.write("/shared/dest/file2.txt", b"to be deleted")
 
             # Sync with delete
             stats = sync_directories(
                 nx,
                 str(source_dir),
-                "/workspace/dest",
+                "/shared/dest",
                 delete=True,
                 dry_run=False,
                 checksum=False,
@@ -205,8 +213,8 @@ class TestSyncOperations:
             )
 
             assert stats.files_deleted == 1
-            assert not nx.exists("/workspace/dest/file2.txt")
-            assert nx.exists("/workspace/dest/file1.txt")
+            assert not nx.exists("/shared/dest/file2.txt")
+            assert nx.exists("/shared/dest/file1.txt")
 
         finally:
             nx.close()
@@ -220,11 +228,11 @@ class TestSyncOperations:
         nx = connect(config={"data_dir": str(tmp_path / "nexus-data")})
 
         try:
-            # Dry run sync
+            # Dry run sync (using /shared to avoid agent workspace isolation)
             stats = sync_directories(
                 nx,
                 str(source_dir),
-                "/workspace/dest",
+                "/shared/dest",
                 delete=False,
                 dry_run=True,
                 checksum=False,
@@ -235,7 +243,7 @@ class TestSyncOperations:
             assert stats.files_copied == 1  # Would copy
 
             # But file should not actually exist
-            assert not nx.exists("/workspace/dest/file1.txt")
+            assert not nx.exists("/shared/dest/file1.txt")
 
         finally:
             nx.close()

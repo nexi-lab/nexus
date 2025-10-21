@@ -164,7 +164,8 @@ class PathRouter:
         virtual_path = self.validate_path(virtual_path)
 
         # Parse path to extract namespace and tenant info
-        path_info = self.parse_path(virtual_path)
+        # Pass tenant_id context to handle single-tenant vs multi-tenant path formats
+        path_info = self.parse_path(virtual_path, _tenant_id=tenant_id)
 
         # Check access control
         self._check_access(path_info, tenant_id, agent_id, is_admin, check_write)
@@ -239,10 +240,20 @@ class PathRouter:
                 f"tenant '{path_info.tenant_id}' resources"
             )
 
-        # Check agent isolation for workspace namespace (only if path contains agent_id)
+        # Check agent isolation for workspace namespace
+        # Skip isolation check if agent_id looks like a filename or special directory:
+        # - Filenames typically contain dots (e.g., "file.txt", "dest.txt")
+        # - Special directories start with dot (e.g., ".nexus")
+        # This allows sync operations to /workspace/tenant/file.txt while protecting
+        # agent workspaces like /workspace/tenant/agent1/...
+        is_likely_file_or_special = path_info.agent_id and (
+            "." in path_info.agent_id or path_info.agent_id.startswith(".")
+        )
+
         if (
             path_info.namespace == "workspace"
             and path_info.agent_id
+            and not is_likely_file_or_special
             and not is_admin
             and agent_id
             and path_info.agent_id != agent_id
@@ -393,12 +404,13 @@ class PathRouter:
 
         return normalized
 
-    def parse_path(self, path: str) -> PathInfo:
+    def parse_path(self, path: str, _tenant_id: str | None = None) -> PathInfo:
         """
         Parse virtual path to extract namespace, tenant, and agent information.
 
         Supported formats:
-        - /workspace/{tenant}/{agent}/{path}  → workspace namespace
+        - /workspace/{tenant}/{agent}/{path}  → workspace namespace (multi-tenant mode)
+        - /workspace/{agent}/{path}           → workspace namespace (single-tenant mode, when tenant_id=None)
         - /shared/{tenant}/{path}             → shared namespace
         - /external/{backend}/{path}          → external namespace
         - /system/{path}                      → system namespace
@@ -406,6 +418,7 @@ class PathRouter:
 
         Args:
             path: Virtual path to parse (must be normalized)
+            _tenant_id: Reserved for future use (single-tenant vs multi-tenant mode)
 
         Returns:
             PathInfo with extracted components
@@ -440,7 +453,7 @@ class PathRouter:
 
         # Parse based on namespace type
         if namespace == "workspace":
-            # Format: /workspace/{tenant}/{agent}/{path}
+            # Workspace format: /workspace/{tenant}/{agent}/{path}
             # Allow partial paths for directory creation (e.g., /workspace, /workspace/tenant)
             if len(parts) >= 3:
                 return PathInfo(

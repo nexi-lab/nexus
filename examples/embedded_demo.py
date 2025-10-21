@@ -2204,6 +2204,92 @@ This document was compressed with gzip before upload.
         nx_parse.close()
 
         # ============================================================
+        # Part 14b: Permission Inheritance (v0.3.0 - Issue #111)
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 14b: Permission Inheritance (NEW in v0.3.0)")
+        print("=" * 70)
+        print("Demonstrating automatic permission inheritance for new files")
+
+        print("\n53b. Setting up permission inheritance demo...")
+        nx_inherit = nexus.connect(config={"data_dir": str(data_dir)})
+
+        # Create parent directory and set its permissions
+        print("\n   Creating parent directory with permissions...")
+        nx_inherit.write("/inherit-parent/.keep", b"")
+
+        # Get parent metadata and set permissions
+        parent_meta = nx_inherit.metadata.get("/inherit-parent")
+        if parent_meta:
+            parent_meta.owner = "alice"
+            parent_meta.group = "developers"
+            parent_meta.mode = 0o755  # rwxr-xr-x
+            nx_inherit.metadata.put(parent_meta)
+            print(
+                f"   ✓ Parent permissions: owner={parent_meta.owner}, group={parent_meta.group}, mode={oct(parent_meta.mode)}"
+            )
+
+        # Create new file - should automatically inherit permissions
+        print("\n   Creating child file (should inherit permissions)...")
+        nx_inherit.write("/inherit-parent/child-file.txt", b"This file inherits permissions")
+
+        # Check inherited permissions
+        child_meta = nx_inherit.metadata.get("/inherit-parent/child-file.txt")
+        if child_meta:
+            print(
+                f"   ✓ Child permissions: owner={child_meta.owner}, group={child_meta.group}, mode={oct(child_meta.mode) if child_meta.mode else 'None'}"
+            )
+
+            if child_meta.owner == "alice":
+                print("   ✓ Owner inherited from parent: alice")
+            if child_meta.group == "developers":
+                print("   ✓ Group inherited from parent: developers")
+            if child_meta.mode == 0o644:  # Execute bits cleared for files
+                print("   ✓ Mode inherited with execute bits cleared: 0o644 (rw-r--r--)")
+                print("   ✓ Parent was 0o755 (rwxr-xr-x) → child is 0o644 (rw-r--r--)")
+
+        # Create another parent with strict permissions
+        print("\n   Creating strict parent directory (0o700)...")
+        nx_inherit.write("/strict-parent/.keep", b"")
+        strict_parent = nx_inherit.metadata.get("/strict-parent")
+        if strict_parent:
+            strict_parent.owner = "bob"
+            strict_parent.group = "admins"
+            strict_parent.mode = 0o700  # rwx------
+            nx_inherit.metadata.put(strict_parent)
+            print(
+                f"   ✓ Strict parent: owner={strict_parent.owner}, group={strict_parent.group}, mode={oct(strict_parent.mode)}"
+            )
+
+        # Create file in strict parent
+        print("\n   Creating file in strict parent...")
+        nx_inherit.write("/strict-parent/secret.txt", b"Secret data")
+        strict_child = nx_inherit.metadata.get("/strict-parent/secret.txt")
+        if strict_child:
+            print(
+                f"   ✓ Strict child: owner={strict_child.owner}, group={strict_child.group}, mode={oct(strict_child.mode) if strict_child.mode else 'None'}"
+            )
+            if strict_child.mode == 0o600:  # 0o700 with execute bits cleared
+                print("   ✓ Strict permissions inherited: 0o600 (rw-------)")
+                print("   ✓ Parent was 0o700 (rwx------) → child is 0o600 (rw-------)")
+
+        # Update existing file - should preserve permissions
+        print("\n   Updating existing file (should preserve permissions)...")
+        nx_inherit.write("/inherit-parent/child-file.txt", b"Updated content")
+        updated_child = nx_inherit.metadata.get("/inherit-parent/child-file.txt")
+        if updated_child and updated_child.owner == "alice":
+            print("   ✓ Permissions preserved on update: owner still alice")
+
+        print("\n   Permission inheritance demo complete!")
+        print("   Key points:")
+        print("   • New files inherit owner, group, and mode from parent directory")
+        print("   • Execute bits are cleared for files (0o755 → 0o644)")
+        print("   • Updating existing files preserves their permissions")
+        print("   • Works automatically - no user action required!")
+
+        nx_inherit.close()
+
+        # ============================================================
         # Part 15: rclone-style CLI Operations (v0.2.0)
         # ============================================================
         print("\n" + "=" * 70)

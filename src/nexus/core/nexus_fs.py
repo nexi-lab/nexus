@@ -128,6 +128,24 @@ class NexusFS(NexusFilesystem):
         self._parser_threads: list[threading.Thread] = []
         self._parser_threads_lock = threading.Lock()
 
+        # Initialize permission policy system
+        from nexus.core.permission_policy import PolicyMatcher, create_default_policies
+        from nexus.storage.policy_store import PolicyStore
+
+        # Load policies from database
+        with self.metadata.SessionLocal() as session:
+            policy_store = PolicyStore(session)
+            policies = policy_store.list_policies(tenant_id=self.tenant_id)
+
+            # If no policies exist, create and store default ones
+            if not policies:
+                default_policies = create_default_policies()
+                for policy in default_policies:
+                    policy_store.create_policy(policy)
+                policies = default_policies
+
+        self.policy_matcher = PolicyMatcher(policies)
+
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
         """
         Dynamically load and register custom parsers from configuration.
@@ -303,6 +321,36 @@ class NexusFS(NexusFilesystem):
                 # Ignore errors if old content already deleted
                 route.backend.delete_content(meta.etag)
 
+        # Apply permission policy for new files, preserve for existing files
+        # Also apply policy if existing file has no permissions set (migration case)
+        if meta is None or (meta.owner is None and meta.group is None and meta.mode is None):
+            # New file or existing file without permissions - apply policy
+            owner = None
+            group = None
+            mode = None
+
+            # Build context for variable substitution
+            context = {
+                "agent_id": self.agent_id or "unknown",
+                "tenant_id": self.tenant_id or "default",
+                "user_id": self.agent_id or "unknown",
+            }
+
+            # Apply policy
+            policy_result = self.policy_matcher.apply_policy(
+                path=path,
+                tenant_id=self.tenant_id,
+                context=context,
+                is_directory=False,
+            )
+
+            if policy_result:
+                owner, group, mode = policy_result
+        else:  # Existing file with permissions - preserve them
+            owner = meta.owner
+            group = meta.group
+            mode = meta.mode
+
         # Store metadata with content hash as both etag and physical_path
         metadata = FileMetadata(
             path=path,
@@ -313,6 +361,9 @@ class NexusFS(NexusFilesystem):
             created_at=meta.created_at if meta else now,
             modified_at=now,
             version=1,
+            owner=owner,  # Apply policy
+            group=group,  # Apply policy
+            mode=mode,  # Apply policy
         )
 
         self.metadata.put(metadata)

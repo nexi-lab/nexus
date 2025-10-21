@@ -117,6 +117,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
         else:
             self._cache = None
 
+        # Track if store has been closed
+        self._closed = False
+
         # Initialize schema
         if run_migrations:
             self._run_migrations()
@@ -645,7 +648,19 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
     def close(self) -> None:
         """Close database connection and dispose of engine."""
-        if hasattr(self, "engine"):
+        import gc
+        import sys
+        import time
+
+        if not hasattr(self, "engine"):
+            return  # Already closed or never initialized
+
+        # Prevent double-close
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+
+        try:
             # SQLite-specific cleanup
             if self.db_type == "sqlite":
                 # For SQLite, checkpoint WAL/journal files before disposing
@@ -667,29 +682,24 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     pass
 
             # Dispose of the connection pool - this closes all connections
+            # Note: All sessions should be closed via context managers (with statements)
+            # before this point. The dispose() call will close any remaining connections.
             self.engine.dispose()
 
-            # Force garbage collection to ensure all Python objects holding
-            # database connections are cleaned up (especially important on Windows)
-            import gc
-
-            gc.collect()
+            # CRITICAL: On Windows, we need to be extra aggressive about cleanup
+            # Force multiple garbage collection passes
+            if sys.platform == "win32":
+                for _ in range(3):
+                    gc.collect()
+                    gc.collect(1)  # Collect generation 1
+                    gc.collect(2)  # Collect generation 2
+                time.sleep(0.3)  # Increased from 200ms to 300ms
+            else:
+                gc.collect()
+                time.sleep(0.01)
 
             # SQLite-specific file cleanup
             if self.db_type == "sqlite" and self.db_path:
-                # Give the OS time to release file handles (especially on Windows)
-                import sys
-                import time
-
-                # Windows needs significantly more time to release file locks
-                # This is critical for tests using tempfile.TemporaryDirectory()
-                if sys.platform == "win32":
-                    # On Windows, sleep 200ms initially
-                    time.sleep(0.2)
-                else:
-                    # On Unix-like systems, 10ms is usually enough
-                    time.sleep(0.01)
-
                 # Additional cleanup: Try to remove any lingering SQLite temp files
                 # This helps with test cleanup when using tempfile.TemporaryDirectory()
                 try:
@@ -698,9 +708,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     for suffix in ["-wal", "-shm", "-journal"]:
                         temp_file = Path(str(self.db_path) + suffix)
                         if temp_file.exists():
-                            # On Windows, retry up to 15 times with exponential backoff
+                            # On Windows, retry up to 20 times with exponential backoff
                             # On other platforms, 3 retries is usually enough
-                            max_retries = 15 if sys.platform == "win32" else 3
+                            max_retries = 20 if sys.platform == "win32" else 3
                             for attempt in range(max_retries):
                                 try:
                                     os.remove(temp_file)
@@ -713,11 +723,17 @@ class SQLAlchemyMetadataStore(MetadataStore):
                                     time.sleep(min(wait_time, max_wait))
                                     # On last retry, force garbage collection again
                                     if attempt == max_retries - 1:
-                                        gc.collect()
-                                        time.sleep(0.1)
+                                        for _ in range(3):
+                                            gc.collect()
+                                            gc.collect(1)
+                                            gc.collect(2)
+                                        time.sleep(0.2)
                 except Exception:
                     # Ignore errors - these files may not exist or may be locked
                     pass
+        finally:
+            # Mark as closed even if cleanup partially failed
+            self._closed = True
 
     def get_cache_stats(self) -> dict[str, Any] | None:
         """
@@ -1597,3 +1613,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit."""
         self.close()
+
+    def __del__(self) -> None:
+        """Destructor to ensure database is closed."""
+        from contextlib import suppress
+
+        with suppress(Exception):
+            self.close()

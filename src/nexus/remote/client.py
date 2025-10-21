@@ -284,6 +284,32 @@ class RemoteNexusFS(NexusFilesystem):
         return result["namespaces"]  # type: ignore[no-any-return]
 
     # ============================================================
+    # Version Tracking Operations (v0.3.5)
+    # ============================================================
+
+    def get_version(self, path: str, version: int) -> bytes:
+        """Get a specific version of a file."""
+        result = self._call_rpc("get_version", {"path": path, "version": version})
+        return result  # type: ignore[no-any-return]
+
+    def list_versions(self, path: str) -> builtins.list[dict[str, Any]]:
+        """List all versions of a file."""
+        result = self._call_rpc("list_versions", {"path": path})
+        return result["versions"]  # type: ignore[no-any-return]
+
+    def rollback(self, path: str, version: int, context: Any = None) -> None:  # noqa: ARG002
+        """Rollback file to a previous version."""
+        # context is unused in remote client (handled server-side)
+        self._call_rpc("rollback", {"path": path, "version": version})
+
+    def diff_versions(
+        self, path: str, v1: int, v2: int, mode: str = "metadata"
+    ) -> dict[str, Any] | str:
+        """Compare two versions of a file."""
+        result = self._call_rpc("diff_versions", {"path": path, "v1": v1, "v2": v2, "mode": mode})
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
     # Lifecycle Management
     # ============================================================
 

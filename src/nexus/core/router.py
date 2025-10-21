@@ -241,19 +241,21 @@ class PathRouter:
             )
 
         # Check agent isolation for workspace namespace
-        # Skip isolation check if agent_id looks like a filename or special directory:
-        # - Filenames typically contain dots (e.g., "file.txt", "dest.txt")
-        # - Special directories start with dot (e.g., ".nexus")
-        # This allows sync operations to /workspace/tenant/file.txt while protecting
-        # agent workspaces like /workspace/tenant/agent1/...
-        is_likely_file_or_special = path_info.agent_id and (
-            "." in path_info.agent_id or path_info.agent_id.startswith(".")
-        )
+        # Skip isolation check if:
+        # - agent_id looks like a filename (contains dot: e.g., "file.txt", "dest.txt")
+        # - agent_id is in a special directory (tenant_id starts with dot: e.g., ".nexus")
+        # This allows:
+        #   - Sync operations to /workspace/tenant/file.txt
+        #   - Skills access to /workspace/.nexus/skills/...
+        #   - Agent workspace protection for /workspace/tenant/agent1/...
+        is_likely_file = path_info.agent_id and "." in path_info.agent_id
+        is_special_directory = path_info.tenant_id and path_info.tenant_id.startswith(".")
 
         if (
             path_info.namespace == "workspace"
             and path_info.agent_id
-            and not is_likely_file_or_special
+            and not is_likely_file
+            and not is_special_directory
             and not is_admin
             and agent_id
             and path_info.agent_id != agent_id

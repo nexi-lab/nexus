@@ -30,8 +30,6 @@ from urllib.parse import urljoin
 
 import requests
 
-logger = logging.getLogger(__name__)
-
 from nexus.core.exceptions import (
     InvalidPathError,
     NexusError,
@@ -47,6 +45,8 @@ from nexus.server.protocol import (
     decode_rpc_message,
     encode_rpc_message,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RemoteNexusFS(NexusFilesystem):
@@ -120,7 +120,9 @@ class RemoteNexusFS(NexusFilesystem):
 
             # Check HTTP status
             if response.status_code != 200:
-                logger.error(f"API call failed: {method} - HTTP {response.status_code} ({elapsed:.3f}s)")
+                logger.error(
+                    f"API call failed: {method} - HTTP {response.status_code} ({elapsed:.3f}s)"
+                )
                 raise NexusError(f"HTTP {response.status_code}: {response.text}")
 
             # Decode response
@@ -134,7 +136,9 @@ class RemoteNexusFS(NexusFilesystem):
 
             # Check for RPC error
             if rpc_response.error:
-                logger.error(f"API call RPC error: {method} - {rpc_response.error.get('message')} ({elapsed:.3f}s)")
+                logger.error(
+                    f"API call RPC error: {method} - {rpc_response.error.get('message')} ({elapsed:.3f}s)"
+                )
                 self._handle_rpc_error(rpc_response.error)
 
             logger.info(f"API call completed: {method} ({elapsed:.3f}s)")

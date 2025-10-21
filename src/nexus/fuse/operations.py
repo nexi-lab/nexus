@@ -17,7 +17,6 @@ from fuse import FuseOSError, Operations
 
 from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.core.virtual_views import (
-    add_virtual_views_to_listing,
     get_parsed_content,
     parse_virtual_path,
     should_add_virtual_views,

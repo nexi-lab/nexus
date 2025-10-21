@@ -18,7 +18,7 @@ Safety features:
 
 import asyncio
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -88,13 +88,13 @@ def parse_virtual_path(path: str, exists_fn: Callable[[str], bool]) -> tuple[str
     return (path, None)
 
 
-def get_parsed_content(content: bytes, path: str, view_type: str) -> bytes:
+def get_parsed_content(content: bytes, path: str, view_type: str) -> bytes:  # noqa: ARG001
     """Get parsed content for a file.
 
     Args:
         content: Raw file content as bytes
         path: Original file path (for parser detection)
-        view_type: View type ("txt" or "md")
+        view_type: View type ("txt" or "md") - reserved for future use
 
     Returns:
         Parsed content as bytes (UTF-8 encoded text)

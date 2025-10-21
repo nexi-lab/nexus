@@ -96,6 +96,12 @@ class NexusConfig(BaseModel):
         description="Automatically parse files on upload (default: True)",
     )
 
+    # Permission enforcement settings (v0.3.0)
+    enforce_permissions: bool = Field(
+        default=True,
+        description="Enable permission enforcement on file operations (default: True)",
+    )
+
     # Remote mode settings (monolithic/distributed)
     url: str | None = Field(default=None, description="Nexus server URL for remote modes")
     api_key: str | None = Field(default=None, description="API key for authentication")
@@ -233,6 +239,10 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_CACHE_EXISTS_SIZE": "cache_exists_size",
         "NEXUS_CACHE_TTL_SECONDS": "cache_ttl_seconds",
         "NEXUS_AUTO_PARSE": "auto_parse",
+        "NEXUS_TENANT_ID": "tenant_id",
+        "NEXUS_AGENT_ID": "agent_id",
+        "NEXUS_IS_ADMIN": "is_admin",
+        "NEXUS_ENFORCE_PERMISSIONS": "enforce_permissions",
         "NEXUS_URL": "url",
         "NEXUS_API_KEY": "api_key",
         "NEXUS_TIMEOUT": "timeout",
@@ -260,11 +270,20 @@ def _load_from_environment() -> NexusConfig:
                 "enable_llm_cache",
                 "enable_metadata_cache",
                 "auto_parse",
+                "is_admin",
+                "enforce_permissions",
             ]:
                 converted_value = value.lower() in ["true", "1", "yes", "on"]
             else:
                 converted_value = value
             env_config[config_key] = converted_value
+
+    # Default agent_id to current system user if not specified (v0.3.0)
+    # This enables proper permission tracking for CLI operations
+    if "agent_id" not in env_config:
+        system_user = os.getenv("USER") or os.getenv("USERNAME")
+        if system_user:
+            env_config["agent_id"] = system_user
 
     # Handle NEXUS_PARSERS environment variable
     # Format: "module:class:priority,module:class:priority,..."

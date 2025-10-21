@@ -1962,6 +1962,72 @@ except ValidationError as e:
 - Content hashes must be valid 64-character SHA-256 hex strings
 - Metadata keys must be ≤ 255 characters
 
+### Permission Enforcement (v0.3.0 - NEW)
+
+**Permission enforcement is enabled by default** to provide secure-by-default behavior with multi-layer access control:
+
+```python
+import nexus
+from nexus.core.permissions import OperationContext
+
+# Enable permission enforcement
+nx = nexus.connect(config={
+    "data_dir": "./nexus-data",
+    "agent_id": "alice",
+    "tenant_id": "acme-corp",
+    "enforce_permissions": True  # Enable permission checks
+})
+
+# Operations now check permissions using multi-layer security
+nx.write("/workspace/file.txt", b"data")  # Uses default context (alice)
+nx.read("/workspace/file.txt")  # Permission check: alice can read?
+
+# Or provide explicit context for each operation
+ctx = OperationContext(user="bob", groups=["developers"])
+nx.read("/workspace/file.txt", context=ctx)  # Permission check: bob can read?
+```
+
+**Permission Evaluation Order:**
+1. **Admin/System Bypass** - Admin users and system operations bypass all checks
+2. **ReBAC** - Check relationship graph (team membership, hierarchical permissions)
+3. **ACL** - Check explicit allow/deny entries (highest priority)
+4. **UNIX Permissions** - Check owner/group/other mode bits (fallback)
+5. **Default Deny** - Deny if no permissions are set (when enforcement is enabled)
+
+**Enabling Permission Enforcement:**
+
+```bash
+# Enable via environment variable (CLI)
+export NEXUS_ENFORCE_PERMISSIONS=true
+export USER=alice  # User context for operations
+nexus write /workspace/file.txt "data"  # Permission checked!
+
+# Or via config file
+cat > nexus.yaml <<EOF
+enforce_permissions: true
+agent_id: alice
+tenant_id: acme-corp
+EOF
+nexus write /workspace/file.txt "data"
+```
+
+**CLI Operations:** The CLI automatically uses the current system user (`$USER` environment variable) as the operation context:
+
+```bash
+# CLI operations use $USER for context
+export USER=alice
+export NEXUS_ENFORCE_PERMISSIONS=true  # Enable enforcement
+nexus write /workspace/file.txt "data"  # Context: user=alice
+nexus ls /workspace/  # Results filtered by alice's permissions
+```
+
+**Configuration:**
+- Permission enforcement is **enabled by default** (`enforce_permissions=True`)
+- Provides secure-by-default behavior with multi-layer security
+- Disable if needed via `NEXUS_ENFORCE_PERMISSIONS=false` or config
+- CLI operations automatically use `$USER` as the operation context
+- When disabled, all operations succeed (no permission checks)
+
 ### Example: Multi-Tenancy Isolation
 
 ```sql
@@ -2088,11 +2154,24 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [x] **Expiring tuples** - Temporary permissions with automatic cleanup
 - [x] **Comprehensive ReBAC tests** (14 passing tests, 100% pass rate)
 
-**Permissions (Remaining):**
-- [ ] **Default permission policies** per namespace
-- [ ] **Permission inheritance** for new files
-- [ ] **Permission checking** in all file operations
-- [ ] **Permission migration** for existing files
+**Permissions (Phase 2 - Permission Enforcement):**
+- [x] **OperationContext dataclass** - Carry user/agent auth context through operations
+- [x] **PermissionEnforcer class** - Multi-layer security (ReBAC → ACL → UNIX)
+- [x] **Permission check helper** - `_check_permission()` method in NexusFS
+- [x] **Default context creation** - Auto-create from agent_id/tenant_id
+- [x] **Comprehensive tests** - 22 new tests for enforcement
+- [x] **Usage guide** - Complete documentation with examples
+- [x] **Example demos** - permission_enforcement_demo.py
+
+**Permissions (Phase 3 - Full Integration - Complete):**
+- [x] **Integrate permission checks** into all file operations (read, write, delete, list, mkdir)
+- [x] **CLI context creation** - Create OperationContext from system user
+- [x] **Optional context parameter** - All operations accept optional `context` parameter with sensible defaults
+- [x] **Permission enforcement enabled by default** - Secure-by-default with `enforce_permissions=True`
+- [x] **Automatic user detection** - CLI operations use `$USER` environment variable for context
+- [x] **Default permission policies** per namespace
+- [x] **Permission migration** for existing files
+- [x] **Full ACL and ReBAC integration** - Multi-layer security fully functional
 
 **Skills System (Core - Vendor Neutral):**
 - [x] **SKILL.md parser** - Parse Anthropic-compatible SKILL.md with frontmatter
@@ -2108,7 +2187,6 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [x] **Skill governance** - Approval workflow for org-wide skills (submit, approve, reject)
 - [x] **Audit trails** - Log all skill operations, compliance reporting, query by filters
 - [ ] **Skill versioning** - CAS-backed version control with history tracking
-- [ ] **Semantic skill search** - Vector-based search across skill descriptions
 - [x] **CLI commands** - `list`, `create`, `fork`, `publish`, `search`, `info`, `export`, `validate`, `size` (see issue #88)
 
 **Note**: External integrations (Claude API upload/download, OpenAI, etc.) will be implemented as **plugins** in v0.3.5+ to maintain vendor neutrality. Core Nexus provides generic skill export (`nexus skills export --format claude`), while `nexus-plugin-anthropic` handles API-specific operations.
@@ -2141,6 +2219,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Memory consolidation
 - [ ] Memory reflection phase (ACE-inspired: extract insights from execution trajectories)
 - [ ] Strategy/playbook organization (ACE-inspired: organize memories as reusable strategies)
+- [ ] Semantic skill search - Vector-based search across skill descriptions
 
 ### v0.6.0 - Server Mode (Self-Hosted & Managed)
 - [ ] FastAPI REST API

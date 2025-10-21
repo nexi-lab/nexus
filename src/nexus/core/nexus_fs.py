@@ -518,12 +518,10 @@ class NexusFS(NexusFilesystem):
         # Write to routed backend - returns content hash
         content_hash = route.backend.write_content(content)
 
-        # If updating existing file with different content, delete old content
-        if meta is not None and meta.etag and meta.etag != content_hash:
-            # Decrement ref count for old content
-            with contextlib.suppress(Exception):
-                # Ignore errors if old content already deleted
-                route.backend.delete_content(meta.etag)
+        # NOTE: Do NOT delete old content when updating a file!
+        # Version history (v0.3.5) preserves references to old content hashes.
+        # Old content should only be deleted when ALL versions are deleted.
+        # CAS reference counting handles cleanup automatically.
 
         # Apply permission policy for new files, preserve for existing files
         # Also apply policy if existing file has no permissions set (migration case)
@@ -1877,6 +1875,185 @@ class NexusFS(NexusFilesystem):
             duplicates = {h: paths for h, paths in by_hash.items() if len(paths) > 1}
         """
         return self.metadata.batch_get_content_ids(paths)
+
+    # === Version Tracking (v0.3.5) ===
+
+    def get_version(self, path: str, version: int) -> bytes:
+        """Get a specific version of a file.
+
+        Retrieves the content for a specific version from CAS using the
+        version's content hash.
+
+        Args:
+            path: Virtual file path
+            version: Version number to retrieve
+
+        Returns:
+            File content as bytes for the specified version
+
+        Raises:
+            NexusFileNotFoundError: If file or version doesn't exist
+            InvalidPathError: If path is invalid
+
+        Example:
+            >>> # Get version 2 of a file
+            >>> content_v2 = nx.get_version("/workspace/data.txt", version=2)
+        """
+        path = self._validate_path(path)
+
+        # Get version metadata
+        version_meta = self.metadata.get_version(path, version)
+        if version_meta is None:
+            raise NexusFileNotFoundError(f"{path} (version {version})")
+
+        # Ensure version has content hash
+        if version_meta.etag is None:
+            raise NexusFileNotFoundError(f"{path} (version {version}) has no content")
+
+        # Read content from CAS using the version's content hash
+        route = self.router.route(
+            path,
+            tenant_id=self.tenant_id,
+            agent_id=self.agent_id,
+            is_admin=self.is_admin,
+            check_write=False,
+        )
+
+        content = route.backend.read_content(version_meta.etag)
+        return content
+
+    def list_versions(self, path: str) -> builtins.list[dict[str, Any]]:
+        """List all versions of a file.
+
+        Returns version history with metadata for each version.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            List of version info dicts ordered by version number (newest first)
+
+        Raises:
+            InvalidPathError: If path is invalid
+
+        Example:
+            >>> versions = nx.list_versions("/workspace/SKILL.md")
+            >>> for v in versions:
+            ...     print(f"v{v['version']}: {v['size']} bytes, {v['created_at']}")
+        """
+        path = self._validate_path(path)
+        return self.metadata.list_versions(path)
+
+    def rollback(self, path: str, version: int, context: OperationContext | None = None) -> None:
+        """Rollback file to a previous version.
+
+        Updates the file to point to an older version's content from CAS.
+        Creates a new version entry marking this as a rollback.
+
+        Args:
+            path: Virtual file path
+            version: Version number to rollback to
+            context: Optional operation context for permission checks
+
+        Raises:
+            NexusFileNotFoundError: If file or version doesn't exist
+            InvalidPathError: If path is invalid
+            PermissionError: If user doesn't have write permission
+
+        Example:
+            >>> # Rollback to version 2
+            >>> nx.rollback("/workspace/data.txt", version=2)
+        """
+        path = self._validate_path(path)
+
+        # Check write permission
+        self._check_permission(path, Permission.WRITE, context)
+
+        # Route to backend
+        route = self.router.route(
+            path,
+            tenant_id=self.tenant_id,
+            agent_id=self.agent_id,
+            is_admin=self.is_admin,
+            check_write=True,
+        )
+
+        # Check readonly
+        if route.readonly:
+            raise PermissionError(f"Cannot rollback read-only path: {path}")
+
+        # Perform rollback in metadata store
+        self.metadata.rollback(path, version)
+
+        # Invalidate cache
+        if self.metadata._cache_enabled and self.metadata._cache:
+            self.metadata._cache.invalidate_path(path)
+
+    def diff_versions(
+        self, path: str, v1: int, v2: int, mode: str = "metadata"
+    ) -> dict[str, Any] | str:
+        """Compare two versions of a file.
+
+        Args:
+            path: Virtual file path
+            v1: First version number
+            v2: Second version number
+            mode: Diff mode - "metadata" (default) or "content"
+
+        Returns:
+            For "metadata" mode: Dict with metadata differences
+            For "content" mode: Unified diff string
+
+        Raises:
+            NexusFileNotFoundError: If file or version doesn't exist
+            InvalidPathError: If path is invalid
+            ValueError: If mode is invalid
+
+        Examples:
+            >>> # Get metadata diff
+            >>> diff = nx.diff_versions("/workspace/file.txt", v1=1, v2=3)
+            >>> print(f"Size changed: {diff['size_v1']} -> {diff['size_v2']}")
+
+            >>> # Get content diff
+            >>> diff_text = nx.diff_versions("/workspace/file.txt", v1=1, v2=3, mode="content")
+            >>> print(diff_text)
+        """
+        import difflib
+
+        path = self._validate_path(path)
+
+        if mode not in ("metadata", "content"):
+            raise ValueError(f"Invalid mode: {mode}. Must be 'metadata' or 'content'")
+
+        # Get metadata diff
+        meta_diff = self.metadata.get_version_diff(path, v1, v2)
+
+        if mode == "metadata":
+            return meta_diff
+
+        # Content diff mode
+        if not meta_diff["content_changed"]:
+            return "(no content changes)"
+
+        # Retrieve both versions' content
+        content1 = self.get_version(path, v1).decode("utf-8", errors="replace")
+        content2 = self.get_version(path, v2).decode("utf-8", errors="replace")
+
+        # Generate unified diff
+        lines1 = content1.splitlines(keepends=True)
+        lines2 = content2.splitlines(keepends=True)
+
+        diff_lines = list(
+            difflib.unified_diff(
+                lines1,
+                lines2,
+                fromfile=f"{path} (v{v1})",
+                tofile=f"{path} (v{v2})",
+                lineterm="",
+            )
+        )
+
+        return "\n".join(diff_lines)
 
     async def parse(
         self,

@@ -16,6 +16,11 @@ from typing import TYPE_CHECKING, Any
 from fuse import FuseOSError, Operations
 
 from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.core.virtual_views import (
+    get_parsed_content,
+    parse_virtual_path,
+    should_add_virtual_views,
+)
 from nexus.fuse.cache import FUSECacheManager
 
 if TYPE_CHECKING:
@@ -210,8 +215,8 @@ class NexusFUSEOperations(Operations):
                     if (
                         not self.auto_parse
                         and self.mode.value != "binary"
+                        and should_add_virtual_views(name)
                         and not self.nexus_fs.is_directory(file_path)
-                        and not name.endswith((".txt", ".md"))
                     ):
                         # Add .txt and .md virtual views
                         entries.append(f"{name}.txt")
@@ -692,23 +697,8 @@ class NexusFUSEOperations(Operations):
         if self.auto_parse and self.nexus_fs.exists(path) and self._should_auto_parse(path):
             return (path, "txt")  # Return parsed text by default
 
-        # Handle .txt and .md virtual views (explicit mode)
-        # Only treat as virtual view if:
-        # 1. File ends with .txt or .md
-        # 2. The file without the extension actually exists
-        # 3. The file without the extension doesn't have that extension
-        if path.endswith(".txt") and not path.endswith(".txt.txt"):
-            base_path = path[:-4]
-            # Check if base file exists (this creates a virtual view)
-            if self.nexus_fs.exists(base_path):
-                return (base_path, "txt")
-        elif path.endswith(".md") and not path.endswith(".md.md"):
-            base_path = path[:-3]
-            # Check if base file exists (this creates a virtual view)
-            if self.nexus_fs.exists(base_path):
-                return (base_path, "md")
-
-        return (path, None)
+        # Use shared virtual view logic
+        return parse_virtual_path(path, self.nexus_fs.exists)
 
     def _should_auto_parse(self, path: str) -> bool:
         """Check if a file should be auto-parsed based on extension.
@@ -771,52 +761,11 @@ class NexusFUSEOperations(Operations):
 
         # In text mode, try to parse
         if self.mode.value == "text" or (self.mode.value == "smart" and view_type):
-            try:
-                # Try to decode as text first
-                try:
-                    decoded_content = content.decode("utf-8").encode("utf-8")
-                    # Cache the parsed result
-                    self.cache.cache_parsed(path, view_type, decoded_content)
-                    return decoded_content
-                except UnicodeDecodeError:
-                    # Use parser for non-text files
-                    from nexus.parsers import ParserRegistry, prepare_content_for_parsing
-
-                    # Prepare content
-                    processed_content, effective_path, metadata = prepare_content_for_parsing(
-                        content, path
-                    )
-
-                    # Get parser
-                    registry = ParserRegistry()
-                    parser = registry.get_parser(effective_path)
-
-                    if parser:
-                        # Parse synchronously (FUSE doesn't support async)
-                        import asyncio
-
-                        try:
-                            loop = asyncio.get_event_loop()
-                        except RuntimeError:
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-
-                        result = loop.run_until_complete(parser.parse(processed_content, metadata))
-
-                        if result and result.text:
-                            parsed_content = result.text.encode("utf-8")
-                            # Cache the parsed result
-                            self.cache.cache_parsed(path, view_type, parsed_content)
-                            return parsed_content
-            except Exception as e:
-                # ParserError is expected for files without parsers (e.g., .bin files)
-                # Just fall back to raw content silently
-                from nexus.core.exceptions import ParserError
-
-                if isinstance(e, ParserError):
-                    logger.debug(f"No parser available for {path}, using raw content")
-                else:
-                    logger.warning(f"Error parsing file {path}: {e}")
+            # Use shared parsing logic
+            parsed_content = get_parsed_content(content, path, view_type or "txt")
+            # Cache the parsed result
+            self.cache.cache_parsed(path, view_type, parsed_content)
+            return parsed_content
 
         # Fallback to raw content
         return content

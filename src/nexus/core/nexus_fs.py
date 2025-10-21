@@ -218,6 +218,85 @@ class NexusFS(NexusFilesystem):
         """
         return hashlib.md5(content).hexdigest()
 
+    def _get_parent_path(self, path: str) -> str | None:
+        """
+        Get parent directory path from a file path.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            Parent directory path, or None if path is root
+
+        Examples:
+            >>> fs._get_parent_path("/workspace/file.txt")
+            '/workspace'
+            >>> fs._get_parent_path("/file.txt")
+            '/'
+            >>> fs._get_parent_path("/")
+            None
+        """
+        if path == "/":
+            return None
+
+        # Remove trailing slash if present
+        path = path.rstrip("/")
+
+        # Find last slash
+        last_slash = path.rfind("/")
+        if last_slash == 0:
+            # Parent is root
+            return "/"
+        elif last_slash > 0:
+            return path[:last_slash]
+        else:
+            # No parent (shouldn't happen for valid paths)
+            return None
+
+    def _inherit_permissions_from_parent(
+        self, path: str, is_directory: bool
+    ) -> tuple[str | None, str | None, int | None]:
+        """
+        Inherit permissions from parent directory.
+
+        Args:
+            path: Virtual path of the new file/directory
+            is_directory: Whether the new item is a directory
+
+        Returns:
+            Tuple of (owner, group, mode) inherited from parent, or (None, None, None) if no inheritance
+        """
+        from nexus.core.permissions import FileMode, FilePermissions, PermissionInheritance
+
+        # Get parent path
+        parent_path = self._get_parent_path(path)
+        if parent_path is None:
+            # No parent (root level)
+            return (None, None, None)
+
+        # Get parent metadata
+        parent_meta = self.metadata.get(parent_path)
+        if parent_meta is None or parent_meta.owner is None:
+            # Parent doesn't exist or has no permissions set
+            return (None, None, None)
+
+        # Create FilePermissions from parent metadata
+        try:
+            parent_perms = FilePermissions(
+                owner=parent_meta.owner,
+                group=parent_meta.group or parent_meta.owner,
+                mode=FileMode(parent_meta.mode if parent_meta.mode is not None else 0o755),
+            )
+        except Exception:
+            # Failed to create parent permissions
+            return (None, None, None)
+
+        # Use PermissionInheritance to compute child permissions
+        inheritance = PermissionInheritance()
+        child_perms = inheritance.inherit_from_parent(parent_perms, is_directory)
+
+        return (child_perms.owner, child_perms.group, child_perms.mode.mode)
+
     def read(self, path: str) -> bytes:
         """
         Read file content as bytes.
@@ -303,6 +382,20 @@ class NexusFS(NexusFilesystem):
                 # Ignore errors if old content already deleted
                 route.backend.delete_content(meta.etag)
 
+        # Determine permissions (inherit from parent if creating new file)
+        owner = None
+        group = None
+        mode = None
+
+        if meta is None:
+            # New file - try to inherit permissions from parent
+            owner, group, mode = self._inherit_permissions_from_parent(path, is_directory=False)
+        else:
+            # Existing file - preserve existing permissions
+            owner = meta.owner
+            group = meta.group
+            mode = meta.mode
+
         # Store metadata with content hash as both etag and physical_path
         metadata = FileMetadata(
             path=path,
@@ -313,6 +406,9 @@ class NexusFS(NexusFilesystem):
             created_at=meta.created_at if meta else now,
             modified_at=now,
             version=1,
+            owner=owner,
+            group=group,
+            mode=mode,
         )
 
         self.metadata.put(metadata)

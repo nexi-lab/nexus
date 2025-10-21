@@ -7,6 +7,7 @@ from nexus.core.permissions import (
     FilePermissions,
     Permission,
     PermissionChecker,
+    PermissionInheritance,
     parse_mode,
 )
 
@@ -363,3 +364,87 @@ class TestParseMode:
         """Test parsing out of range mode."""
         with pytest.raises(ValueError, match="invalid mode string"):
             parse_mode("1000")  # Too large
+
+
+class TestPermissionInheritance:
+    """Test PermissionInheritance class."""
+
+    def test_inherit_from_parent_file_clears_execute_bits(self):
+        """Test that files inherit permissions with execute bits cleared."""
+        # Parent directory has rwxr-xr-x (0o755)
+        parent = FilePermissions("alice", "developers", FileMode(0o755))
+        inherit = PermissionInheritance()
+
+        # Child file should get rw-r--r-- (0o644)
+        child = inherit.inherit_from_parent(parent, is_directory=False)
+
+        assert child.owner == "alice"
+        assert child.group == "developers"
+        assert child.mode.mode == 0o644
+        assert not child.mode.owner_can_execute()
+        assert not child.mode.group_can_execute()
+        assert not child.mode.other_can_execute()
+
+    def test_inherit_from_parent_directory_keeps_execute_bits(self):
+        """Test that directories inherit permissions with execute bits preserved."""
+        # Parent directory has rwxr-xr-x (0o755)
+        parent = FilePermissions("alice", "developers", FileMode(0o755))
+        inherit = PermissionInheritance()
+
+        # Child directory should get rwxr-xr-x (0o755)
+        child = inherit.inherit_from_parent(parent, is_directory=True)
+
+        assert child.owner == "alice"
+        assert child.group == "developers"
+        assert child.mode.mode == 0o755
+        assert child.mode.owner_can_execute()
+        assert child.mode.group_can_execute()
+        assert child.mode.other_can_execute()
+
+    def test_inherit_owner_and_group(self):
+        """Test that owner and group are inherited."""
+        parent = FilePermissions("bob", "admins", FileMode(0o700))
+        inherit = PermissionInheritance()
+
+        child = inherit.inherit_from_parent(parent, is_directory=False)
+
+        assert child.owner == "bob"
+        assert child.group == "admins"
+
+    def test_inherit_with_different_parent_modes(self):
+        """Test inheritance with various parent modes."""
+        inherit = PermissionInheritance()
+
+        # Parent with 0o777 (rwxrwxrwx)
+        parent = FilePermissions("alice", "devs", FileMode(0o777))
+        child_file = inherit.inherit_from_parent(parent, is_directory=False)
+        assert child_file.mode.mode == 0o666  # rw-rw-rw- (no execute)
+
+        child_dir = inherit.inherit_from_parent(parent, is_directory=True)
+        assert child_dir.mode.mode == 0o777  # rwxrwxrwx (keeps execute)
+
+        # Parent with 0o700 (rwx------)
+        parent = FilePermissions("alice", "devs", FileMode(0o700))
+        child_file = inherit.inherit_from_parent(parent, is_directory=False)
+        assert child_file.mode.mode == 0o600  # rw------- (no execute)
+
+        # Parent with 0o750 (rwxr-x---)
+        parent = FilePermissions("alice", "devs", FileMode(0o750))
+        child_file = inherit.inherit_from_parent(parent, is_directory=False)
+        assert child_file.mode.mode == 0o640  # rw-r----- (no execute)
+
+    def test_inherit_preserves_read_write_permissions(self):
+        """Test that read and write permissions are preserved for files."""
+        # Parent with read/write for owner, read-only for group/other
+        parent = FilePermissions("alice", "devs", FileMode(0o644))
+        inherit = PermissionInheritance()
+
+        child = inherit.inherit_from_parent(parent, is_directory=False)
+
+        # Should preserve read/write pattern
+        assert child.mode.owner_can_read()
+        assert child.mode.owner_can_write()
+        assert child.mode.group_can_read()
+        assert not child.mode.group_can_write()
+        assert child.mode.other_can_read()
+        assert not child.mode.other_can_write()

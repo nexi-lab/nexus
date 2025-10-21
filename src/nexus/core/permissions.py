@@ -372,6 +372,55 @@ class PermissionChecker:
         return FilePermissions.default(owner, group)
 
 
+class PermissionInheritance:
+    """Helper class for permission inheritance from parent directories.
+
+    This class implements automatic permission assignment for new files and directories
+    based on the permissions of their parent directory.
+
+    Features:
+    - Inherits owner, group, and mode from parent directory
+    - Clears execute bits for files (preserves for directories)
+    - Works with both UNIX-style permissions and ACL entries
+    """
+
+    def inherit_from_parent(
+        self, parent_permissions: FilePermissions, is_directory: bool
+    ) -> FilePermissions:
+        """Inherit permissions from parent directory.
+
+        Args:
+            parent_permissions: Permissions of the parent directory
+            is_directory: Whether the new file is a directory
+
+        Returns:
+            FilePermissions for the new file/directory
+
+        Examples:
+            >>> parent = FilePermissions("alice", "developers", FileMode(0o755))
+            >>> inherit = PermissionInheritance()
+            >>> # For a file: clears execute bits
+            >>> child_file = inherit.inherit_from_parent(parent, is_directory=False)
+            >>> child_file.mode.mode
+            420  # 0o644 (rw-r--r--)
+            >>> # For a directory: keeps all bits
+            >>> child_dir = inherit.inherit_from_parent(parent, is_directory=True)
+            >>> child_dir.mode.mode
+            493  # 0o755 (rwxr-xr-x)
+        """
+        # Inherit owner and group
+        owner = parent_permissions.owner
+        group = parent_permissions.group
+
+        # Inherit mode, but clear execute bits for files
+        parent_mode = parent_permissions.mode.mode
+
+        # Directories keep all permission bits, files clear execute bits (mask out 0o111)
+        mode = parent_mode if is_directory else parent_mode & ~0o111
+
+        return FilePermissions(owner=owner, group=group, mode=FileMode(mode))
+
+
 def parse_mode(mode_str: str) -> int:
     """Parse mode from string (octal or symbolic).
 

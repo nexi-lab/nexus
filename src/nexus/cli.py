@@ -273,7 +273,11 @@ def list_files(
                     owner_str = meta.owner if meta and meta.owner else "-"
                     group_str = meta.group if meta and meta.group else "-"
                     size_str = f"{file['size']:,} bytes"
-                    modified_str = file["modified_at"].strftime("%Y-%m-%d %H:%M:%S")
+                    modified_str = (
+                        file["modified_at"].strftime("%Y-%m-%d %H:%M:%S")
+                        if file["modified_at"]
+                        else "N/A"
+                    )
 
                     table.add_row(
                         perms_str, owner_str, group_str, file["path"], size_str, modified_str
@@ -282,7 +286,11 @@ def list_files(
                 # Remote FS - no permission support yet
                 for file in files:
                     size_str = f"{file['size']:,} bytes"
-                    modified_str = file["modified_at"].strftime("%Y-%m-%d %H:%M:%S")
+                    modified_str = (
+                        file["modified_at"].strftime("%Y-%m-%d %H:%M:%S")
+                        if file["modified_at"]
+                        else "N/A"
+                    )
                     table.add_row("---------", "-", "-", file["path"], size_str, modified_str)
 
             console.print(table)

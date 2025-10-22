@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import platform
 import sys
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -43,3 +45,21 @@ def mock_fuse_module():
     yield _fuse_mock
 
     # Cleanup happens automatically before next test
+
+
+@pytest.fixture(autouse=True)
+def windows_db_cleanup():
+    """Cleanup fixture for Windows database tests.
+
+    Automatically runs after each test on Windows to release database connections.
+    Minimal overhead approach - just GC, no delay since close() should handle everything.
+    """
+    import gc
+
+    yield
+
+    # Only do GC on Windows to ensure connections are released
+    if platform.system() == "Windows":
+        # Force garbage collection to release any lingering database connections
+        # With proper close() calls in NexusFS, this should be enough
+        gc.collect()

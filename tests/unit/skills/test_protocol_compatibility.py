@@ -208,6 +208,18 @@ def test_protocol_runtime_checkable() -> None:
             def get_available_namespaces(self):
                 return []
 
+            def get_version(self, path: str, version: int) -> bytes:
+                return b""
+
+            def list_versions(self, path: str):
+                return []
+
+            def rollback(self, path: str, version: int, context=None) -> None:
+                pass
+
+            def diff_versions(self, path: str, v1: int, v2: int, mode: str = "metadata"):
+                return {} if mode == "metadata" else ""
+
             def close(self) -> None:
                 pass
 

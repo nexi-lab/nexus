@@ -24,7 +24,7 @@ from sqlalchemy.orm import sessionmaker
 from nexus.core.exceptions import MetadataError
 from nexus.core.metadata import FileMetadata, MetadataStore
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
-from nexus.storage.models import Base, FileMetadataModel, FilePathModel
+from nexus.storage.models import Base, FileMetadataModel, FilePathModel, VersionHistoryModel
 
 
 class SQLAlchemyMetadataStore(MetadataStore):
@@ -116,6 +116,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
             )
         else:
             self._cache = None
+
+        # Track if store has been closed
+        self._closed = False
 
         # Initialize schema
         if run_migrations:
@@ -303,7 +306,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     mime_type=file_path.file_type,
                     created_at=file_path.created_at,
                     modified_at=file_path.updated_at,
-                    version=1,  # Not tracking versions yet in simplified schema
+                    version=file_path.current_version,  # Version tracking (v0.3.5)
                     # UNIX-style permissions (v0.3.0)
                     owner=file_path.owner,
                     group=file_path.group,
@@ -320,7 +323,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
     def put(self, metadata: FileMetadata) -> None:
         """
-        Store or update file metadata.
+        Store or update file metadata WITH VERSION TRACKING.
+
+        When updating an existing file, creates a version history entry
+        preserving the old content hash before updating to new content.
 
         Args:
             metadata: File metadata to store
@@ -338,19 +344,53 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 existing = session.scalar(stmt)
 
                 if existing:
-                    # Update existing record
+                    # FILE UPDATE - Increment version and create history entry for NEW version
+
+                    # Update existing record with new content
                     existing.backend_id = metadata.backend_name
                     existing.physical_path = metadata.physical_path
                     existing.size_bytes = metadata.size
-                    existing.content_hash = metadata.etag
+                    existing.content_hash = metadata.etag  # NEW content hash
                     existing.file_type = metadata.mime_type
                     existing.updated_at = metadata.modified_at or datetime.now(UTC)
                     # Update permissions (v0.3.0)
                     existing.owner = metadata.owner
                     existing.group = metadata.group
                     existing.mode = metadata.mode
+
+                    # Only create version history if we have actual content (etag is not None)
+                    if metadata.etag is not None:
+                        # Get the current version entry to link lineage
+                        prev_version_stmt = (
+                            select(VersionHistoryModel)
+                            .where(
+                                VersionHistoryModel.resource_type == "file",
+                                VersionHistoryModel.resource_id == existing.path_id,
+                                VersionHistoryModel.version_number == existing.current_version,
+                            )
+                            .limit(1)
+                        )
+                        prev_version = session.scalar(prev_version_stmt)
+
+                        existing.current_version += 1  # Increment version
+
+                        # Create version history entry for NEW version
+                        version_entry = VersionHistoryModel(
+                            version_id=str(uuid.uuid4()),
+                            resource_type="file",
+                            resource_id=existing.path_id,
+                            version_number=existing.current_version,  # NEW version number
+                            content_hash=metadata.etag,  # NEW content hash
+                            size_bytes=metadata.size,
+                            mime_type=metadata.mime_type,
+                            parent_version_id=prev_version.version_id if prev_version else None,
+                            source_type="original",
+                            created_at=datetime.now(UTC),
+                        )
+                        version_entry.validate()
+                        session.add(version_entry)
                 else:
-                    # Create new record
+                    # NEW FILE - Create record and initial version history
                     file_path = FilePathModel(
                         path_id=str(uuid.uuid4()),
                         tenant_id=str(uuid.uuid4()),  # Default tenant for embedded mode
@@ -362,6 +402,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         file_type=metadata.mime_type,
                         created_at=metadata.created_at or datetime.now(UTC),
                         updated_at=metadata.modified_at or datetime.now(UTC),
+                        current_version=1,  # Initial version
                         # UNIX-style permissions (v0.3.0)
                         owner=metadata.owner,
                         group=metadata.group,
@@ -370,6 +411,25 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     # Validate model before inserting
                     file_path.validate()
                     session.add(file_path)
+                    session.flush()  # Get path_id
+
+                    # Only create version history if we have actual content (etag is not None)
+                    if metadata.etag is not None:
+                        # Create initial version history entry
+                        version_entry = VersionHistoryModel(
+                            version_id=str(uuid.uuid4()),
+                            resource_type="file",
+                            resource_id=file_path.path_id,
+                            version_number=1,
+                            content_hash=metadata.etag,
+                            size_bytes=metadata.size,
+                            mime_type=metadata.mime_type,
+                            parent_version_id=None,
+                            source_type="original",
+                            created_at=file_path.created_at,
+                        )
+                        version_entry.validate()
+                        session.add(version_entry)
 
                 session.commit()
 
@@ -570,7 +630,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             mime_type=file_path.file_type,
                             created_at=file_path.created_at,
                             modified_at=file_path.updated_at,
-                            version=1,
+                            version=file_path.current_version,  # Version tracking (v0.3.5)
                             # UNIX-style permissions (v0.3.0)
                             owner=file_path.owner,
                             group=file_path.group,
@@ -588,7 +648,31 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
     def close(self) -> None:
         """Close database connection and dispose of engine."""
-        if hasattr(self, "engine"):
+        import gc
+        import sys
+        import time
+
+        if not hasattr(self, "engine"):
+            return  # Already closed or never initialized
+
+        # Prevent double-close
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+
+        try:
+            # CRITICAL: Force garbage collection BEFORE closing database
+            # This ensures any lingering session references are cleaned up first
+            # Especially important on Windows where sessions may hold file locks
+            gc.collect()
+            gc.collect(1)
+            gc.collect(2)
+            # Brief wait to let OS release file handles
+            if sys.platform == "win32":
+                time.sleep(0.05)  # 50ms on Windows
+            else:
+                time.sleep(0.01)  # 10ms elsewhere
+
             # SQLite-specific cleanup
             if self.db_type == "sqlite":
                 # For SQLite, checkpoint WAL/journal files before disposing
@@ -610,29 +694,22 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     pass
 
             # Dispose of the connection pool - this closes all connections
+            # Note: All sessions should be closed via context managers (with statements)
+            # before this point. The dispose() call will close any remaining connections.
             self.engine.dispose()
 
-            # Force garbage collection to ensure all Python objects holding
-            # database connections are cleaned up (especially important on Windows)
-            import gc
-
+            # CRITICAL: On Windows, force GC after disposal to release lingering references
             gc.collect()
+            gc.collect(1)
+            gc.collect(2)
+            # Minimal wait for OS to release handles
+            if sys.platform == "win32":
+                time.sleep(0.1)  # 100ms on Windows
+            else:
+                time.sleep(0.01)  # 10ms elsewhere
 
             # SQLite-specific file cleanup
             if self.db_type == "sqlite" and self.db_path:
-                # Give the OS time to release file handles (especially on Windows)
-                import sys
-                import time
-
-                # Windows needs significantly more time to release file locks
-                # This is critical for tests using tempfile.TemporaryDirectory()
-                if sys.platform == "win32":
-                    # On Windows, sleep 200ms initially
-                    time.sleep(0.2)
-                else:
-                    # On Unix-like systems, 10ms is usually enough
-                    time.sleep(0.01)
-
                 # Additional cleanup: Try to remove any lingering SQLite temp files
                 # This helps with test cleanup when using tempfile.TemporaryDirectory()
                 try:
@@ -641,26 +718,30 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     for suffix in ["-wal", "-shm", "-journal"]:
                         temp_file = Path(str(self.db_path) + suffix)
                         if temp_file.exists():
-                            # On Windows, retry up to 15 times with exponential backoff
-                            # On other platforms, 3 retries is usually enough
-                            max_retries = 15 if sys.platform == "win32" else 3
+                            # Retry a few times with small delays
+                            # Windows needs more retries due to file locking behavior
+                            max_retries = 10 if sys.platform == "win32" else 3
                             for attempt in range(max_retries):
                                 try:
                                     os.remove(temp_file)
                                     break
                                 except (OSError, PermissionError):
-                                    # Exponential backoff: 10ms, 20ms, 40ms, 80ms, ...
-                                    # Cap at 1 second on Windows, 500ms elsewhere
+                                    # Short exponential backoff: 10ms, 20ms, 40ms, 80ms, ...
+                                    # Cap at 500ms to avoid long delays
                                     wait_time = 0.01 * (2**attempt)
-                                    max_wait = 1.0 if sys.platform == "win32" else 0.5
-                                    time.sleep(min(wait_time, max_wait))
-                                    # On last retry, force garbage collection again
+                                    time.sleep(min(wait_time, 0.5))
+                                    # On last attempt, do one final GC
                                     if attempt == max_retries - 1:
                                         gc.collect()
+                                        gc.collect(1)
+                                        gc.collect(2)
                                         time.sleep(0.1)
                 except Exception:
                     # Ignore errors - these files may not exist or may be locked
                     pass
+        finally:
+            # Mark as closed even if cleanup partially failed
+            self._closed = True
 
     def get_cache_stats(self) -> dict[str, Any] | None:
         """
@@ -737,7 +818,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         mime_type=file_path.file_type,
                         created_at=file_path.created_at,
                         modified_at=file_path.updated_at,
-                        version=1,
+                        version=file_path.current_version,  # Version tracking (v0.3.5)
                         # UNIX-style permissions (v0.3.0)
                         owner=file_path.owner,
                         group=file_path.group,
@@ -1255,6 +1336,284 @@ class SQLAlchemyMetadataStore(MetadataStore):
         except Exception as e:
             raise MetadataError(f"Failed to get work by priority: {e}") from e
 
+    # Version tracking methods (v0.3.5)
+
+    def get_version(self, path: str, version: int) -> FileMetadata | None:
+        """Get a specific version of a file.
+
+        Retrieves file metadata for a specific version from version history.
+        The content_hash in the returned metadata can be used to fetch the
+        actual content from CAS storage.
+
+        Args:
+            path: Virtual path
+            version: Version number to retrieve
+
+        Returns:
+            FileMetadata for the specified version, or None if not found
+
+        Example:
+            >>> # Get version 2 of a file
+            >>> metadata = store.get_version("/workspace/data.txt", version=2)
+            >>> if metadata:
+            ...     content_hash = metadata.etag
+            ...     # Use content_hash to fetch from CAS
+        """
+        try:
+            with self.SessionLocal() as session:
+                # Get the file's path_id
+                path_stmt = select(FilePathModel.path_id).where(
+                    FilePathModel.virtual_path == path,
+                    FilePathModel.deleted_at.is_(None),
+                )
+                path_id = session.scalar(path_stmt)
+
+                if not path_id:
+                    return None
+
+                # Get the version from history
+                version_stmt = select(VersionHistoryModel).where(
+                    VersionHistoryModel.resource_type == "file",
+                    VersionHistoryModel.resource_id == path_id,
+                    VersionHistoryModel.version_number == version,
+                )
+                version_entry = session.scalar(version_stmt)
+
+                if not version_entry:
+                    return None
+
+                # Build FileMetadata from version entry
+                # Note: We don't have backend info in version history, so use current file's backend
+                file_stmt = select(FilePathModel).where(FilePathModel.path_id == path_id)
+                file_path = session.scalar(file_stmt)
+
+                if not file_path:
+                    return None
+
+                return FileMetadata(
+                    path=file_path.virtual_path,
+                    backend_name=file_path.backend_id,
+                    physical_path=version_entry.content_hash,  # CAS: hash is the physical path
+                    size=version_entry.size_bytes,
+                    etag=version_entry.content_hash,
+                    mime_type=version_entry.mime_type,
+                    created_at=version_entry.created_at,
+                    modified_at=version_entry.created_at,
+                    version=version_entry.version_number,
+                    owner=file_path.owner,
+                    group=file_path.group,
+                    mode=file_path.mode,
+                )
+        except Exception as e:
+            raise MetadataError(f"Failed to get version {version}: {e}", path=path) from e
+
+    def list_versions(self, path: str) -> builtins.list[dict[str, Any]]:
+        """List all versions of a file.
+
+        Returns version history with metadata for each version.
+
+        Args:
+            path: Virtual path
+
+        Returns:
+            List of version info dicts ordered by version number (newest first)
+
+        Example:
+            >>> versions = store.list_versions("/workspace/SKILL.md")
+            >>> for v in versions:
+            ...     print(f"v{v['version']}: {v['size']} bytes, {v['created_at']}")
+        """
+        try:
+            with self.SessionLocal() as session:
+                # Get the file's path_id
+                path_stmt = select(FilePathModel.path_id).where(
+                    FilePathModel.virtual_path == path,
+                    FilePathModel.deleted_at.is_(None),
+                )
+                path_id = session.scalar(path_stmt)
+
+                if not path_id:
+                    return []
+
+                # Get all versions
+                versions_stmt = (
+                    select(VersionHistoryModel)
+                    .where(
+                        VersionHistoryModel.resource_type == "file",
+                        VersionHistoryModel.resource_id == path_id,
+                    )
+                    .order_by(VersionHistoryModel.version_number.desc())
+                )
+
+                versions = []
+                for v in session.scalars(versions_stmt):
+                    versions.append(
+                        {
+                            "version": v.version_number,
+                            "content_hash": v.content_hash,
+                            "size": v.size_bytes,
+                            "mime_type": v.mime_type,
+                            "created_at": v.created_at,
+                            "created_by": v.created_by,
+                            "change_reason": v.change_reason,
+                            "source_type": v.source_type,
+                            "parent_version_id": v.parent_version_id,
+                        }
+                    )
+
+                return versions
+        except Exception as e:
+            raise MetadataError(f"Failed to list versions: {e}", path=path) from e
+
+    def rollback(self, path: str, version: int) -> None:
+        """Rollback file to a previous version.
+
+        Updates the file to point to an older version's content.
+        Creates a new version entry marking this as a rollback.
+
+        Args:
+            path: Virtual path
+            version: Version number to rollback to
+
+        Example:
+            >>> # Rollback to version 2
+            >>> store.rollback("/workspace/data.txt", version=2)
+        """
+        try:
+            with self.SessionLocal() as session:
+                # Get current file
+                file_stmt = select(FilePathModel).where(
+                    FilePathModel.virtual_path == path,
+                    FilePathModel.deleted_at.is_(None),
+                )
+                file_path = session.scalar(file_stmt)
+
+                if not file_path:
+                    raise MetadataError(f"File not found: {path}", path=path)
+
+                # Get target version
+                version_stmt = select(VersionHistoryModel).where(
+                    VersionHistoryModel.resource_type == "file",
+                    VersionHistoryModel.resource_id == file_path.path_id,
+                    VersionHistoryModel.version_number == version,
+                )
+                target_version = session.scalar(version_stmt)
+
+                if not target_version:
+                    raise MetadataError(f"Version {version} not found for {path}", path=path)
+
+                # Get current version entry for lineage
+                current_version_stmt = select(VersionHistoryModel).where(
+                    VersionHistoryModel.resource_type == "file",
+                    VersionHistoryModel.resource_id == file_path.path_id,
+                    VersionHistoryModel.version_number == file_path.current_version,
+                )
+                current_version_entry = session.scalar(current_version_stmt)
+
+                # Update file to target version's content
+                file_path.content_hash = target_version.content_hash
+                file_path.size_bytes = target_version.size_bytes
+                file_path.file_type = target_version.mime_type
+                file_path.updated_at = datetime.now(UTC)
+                file_path.current_version += 1  # Increment to new version
+
+                # Create version history entry for the NEW version (rollback)
+                rollback_version_entry = VersionHistoryModel(
+                    version_id=str(uuid.uuid4()),
+                    resource_type="file",
+                    resource_id=file_path.path_id,
+                    version_number=file_path.current_version,  # NEW version number
+                    content_hash=target_version.content_hash,  # Points to old content
+                    size_bytes=target_version.size_bytes,
+                    mime_type=target_version.mime_type,
+                    parent_version_id=current_version_entry.version_id
+                    if current_version_entry
+                    else None,
+                    source_type="rollback",
+                    change_reason=f"Rollback to version {version}",
+                    created_at=datetime.now(UTC),
+                )
+                rollback_version_entry.validate()
+                session.add(rollback_version_entry)
+
+                session.commit()
+
+            # Invalidate cache
+            if self._cache_enabled and self._cache:
+                self._cache.invalidate_path(path)
+        except MetadataError:
+            raise
+        except Exception as e:
+            raise MetadataError(f"Failed to rollback to version {version}: {e}", path=path) from e
+
+    def get_version_diff(self, path: str, v1: int, v2: int) -> dict[str, Any]:
+        """Get diff information between two versions.
+
+        Returns metadata differences between versions.
+        For content diff, retrieve both versions and compare.
+
+        Args:
+            path: Virtual path
+            v1: First version number
+            v2: Second version number
+
+        Returns:
+            Dict with diff information
+
+        Example:
+            >>> diff = store.get_version_diff("/workspace/file.txt", v1=1, v2=3)
+            >>> print(f"Size changed: {diff['size_v1']} -> {diff['size_v2']}")
+            >>> print(f"Content changed: {diff['content_changed']}")
+        """
+        try:
+            with self.SessionLocal() as session:
+                # Get path_id
+                path_stmt = select(FilePathModel.path_id).where(
+                    FilePathModel.virtual_path == path,
+                    FilePathModel.deleted_at.is_(None),
+                )
+                path_id = session.scalar(path_stmt)
+
+                if not path_id:
+                    raise MetadataError(f"File not found: {path}", path=path)
+
+                # Get both versions
+                versions_stmt = select(VersionHistoryModel).where(
+                    VersionHistoryModel.resource_type == "file",
+                    VersionHistoryModel.resource_id == path_id,
+                    VersionHistoryModel.version_number.in_([v1, v2]),
+                )
+
+                versions_dict = {v.version_number: v for v in session.scalars(versions_stmt)}
+
+                if v1 not in versions_dict:
+                    raise MetadataError(f"Version {v1} not found", path=path)
+                if v2 not in versions_dict:
+                    raise MetadataError(f"Version {v2} not found", path=path)
+
+                version1 = versions_dict[v1]
+                version2 = versions_dict[v2]
+
+                return {
+                    "path": path,
+                    "v1": v1,
+                    "v2": v2,
+                    "content_hash_v1": version1.content_hash,
+                    "content_hash_v2": version2.content_hash,
+                    "content_changed": version1.content_hash != version2.content_hash,
+                    "size_v1": version1.size_bytes,
+                    "size_v2": version2.size_bytes,
+                    "size_delta": version2.size_bytes - version1.size_bytes,
+                    "created_at_v1": version1.created_at,
+                    "created_at_v2": version2.created_at,
+                    "mime_type_v1": version1.mime_type,
+                    "mime_type_v2": version2.mime_type,
+                }
+        except MetadataError:
+            raise
+        except Exception as e:
+            raise MetadataError(f"Failed to diff versions: {e}", path=path) from e
+
     def __enter__(self) -> SQLAlchemyMetadataStore:
         """Context manager entry."""
         return self
@@ -1262,3 +1621,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit."""
         self.close()
+
+    def __del__(self) -> None:
+        """Destructor to ensure database is closed."""
+        from contextlib import suppress
+
+        with suppress(Exception):
+            self.close()

@@ -35,7 +35,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -116,7 +116,7 @@ class ReBACTuple:
     relation: str
     object: Entity
     subject_relation: str | None = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime | None = None
     conditions: dict[str, Any] | None = None
 
@@ -135,7 +135,7 @@ class ReBACTuple:
         """Check if tuple has expired."""
         if self.expires_at is None:
             return False
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(UTC) > self.expires_at
 
     def to_dict(self) -> dict[str, Any]:
         """Convert tuple to dictionary."""
@@ -214,8 +214,8 @@ class NamespaceConfig:
     namespace_id: str
     object_type: str
     config: dict[str, Any]
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
         """Validate namespace config."""
@@ -308,8 +308,8 @@ class CheckCacheEntry:
     permission: str
     object: Entity
     result: bool
-    computed_at: datetime = field(default_factory=datetime.utcnow)
-    expires_at: datetime = field(default_factory=lambda: datetime.utcnow())
+    computed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    expires_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
         """Validate cache entry."""
@@ -324,7 +324,7 @@ class CheckCacheEntry:
 
     def is_expired(self) -> bool:
         """Check if cache entry has expired."""
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(UTC) > self.expires_at
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -376,7 +376,7 @@ class ChangelogEntry:
     relation: str
     object: Entity
     tuple_id: str | None = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
         """Validate changelog entry."""

@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from nexus.core.rebac import (
@@ -118,7 +118,7 @@ class ReBACManager:
                 """,
                 (
                     json.dumps(namespace.config),
-                    datetime.utcnow().isoformat(),
+                    datetime.now(UTC).isoformat(),
                     namespace.object_type,
                 ),
             )
@@ -223,7 +223,7 @@ class ReBACManager:
                 relation,
                 object_entity.entity_type,
                 object_entity.entity_id,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
                 expires_at.isoformat() if expires_at else None,
                 json.dumps(conditions) if conditions else None,
             ),
@@ -246,7 +246,7 @@ class ReBACManager:
                 relation,
                 object_entity.entity_type,
                 object_entity.entity_id,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
             ),
         )
 
@@ -307,7 +307,7 @@ class ReBACManager:
                 relation,
                 obj.entity_type,
                 obj.entity_id,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
             ),
         )
 
@@ -472,7 +472,7 @@ class ReBACManager:
                 relation,
                 obj.entity_type,
                 obj.entity_id,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
             ),
         )
 
@@ -504,7 +504,7 @@ class ReBACManager:
                 obj.entity_type,
                 obj.entity_id,
                 relation,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
             ),
         )
 
@@ -646,7 +646,7 @@ class ReBACManager:
                 relation,
                 obj.entity_type,
                 obj.entity_id,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
             ),
         )
 
@@ -681,7 +681,7 @@ class ReBACManager:
                 permission,
                 obj.entity_type,
                 obj.entity_id,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
             ),
         )
 
@@ -702,7 +702,7 @@ class ReBACManager:
             result: Check result
         """
         cache_id = str(uuid.uuid4())
-        computed_at = datetime.utcnow()
+        computed_at = datetime.now(UTC)
         expires_at = computed_at + timedelta(seconds=self.cache_ttl_seconds)
 
         conn = self._get_connection()
@@ -790,7 +790,7 @@ class ReBACManager:
         This method throttles cleanup operations to avoid checking on every rebac_check call.
         Only cleans up if more than 1 second has passed since last cleanup.
         """
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         # Throttle cleanup - only run if more than 1 second since last cleanup
         if self._last_cleanup_time is not None:
@@ -815,7 +815,7 @@ class ReBACManager:
 
         cursor.execute(
             "DELETE FROM rebac_check_cache WHERE expires_at <= ?",
-            (datetime.utcnow().isoformat(),),
+            (datetime.now(UTC).isoformat(),),
         )
 
         conn.commit()
@@ -837,7 +837,7 @@ class ReBACManager:
             FROM rebac_tuples
             WHERE expires_at IS NOT NULL AND expires_at <= ?
             """,
-            (datetime.utcnow().isoformat(),),
+            (datetime.now(UTC).isoformat(),),
         )
 
         expired_tuples = cursor.fetchall()
@@ -848,7 +848,7 @@ class ReBACManager:
             DELETE FROM rebac_tuples
             WHERE expires_at IS NOT NULL AND expires_at <= ?
             """,
-            (datetime.utcnow().isoformat(),),
+            (datetime.now(UTC).isoformat(),),
         )
 
         # Log to changelog and invalidate caches for expired tuples
@@ -869,7 +869,7 @@ class ReBACManager:
                     row["relation"],
                     row["object_type"],
                     row["object_id"],
-                    datetime.utcnow().isoformat(),
+                    datetime.now(UTC).isoformat(),
                 ),
             )
 

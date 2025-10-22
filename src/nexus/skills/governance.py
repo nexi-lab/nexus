@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Protocol
 
@@ -160,7 +160,7 @@ class SkillGovernance:
             )
 
         approval_id = str(uuid.uuid4())
-        submitted_at = datetime.utcnow()
+        submitted_at = datetime.now(UTC)
 
         approval = SkillApproval(
             approval_id=approval_id,
@@ -239,7 +239,7 @@ class SkillGovernance:
                 f"Approval {approval_id} is already {approval.status.value}, cannot approve"
             )
 
-        reviewed_at = datetime.utcnow()
+        reviewed_at = datetime.now(UTC)
 
         if self._db:
             # Update in database
@@ -304,7 +304,7 @@ class SkillGovernance:
                 f"Approval {approval_id} is already {approval.status.value}, cannot reject"
             )
 
-        reviewed_at = datetime.utcnow()
+        reviewed_at = datetime.now(UTC)
 
         if self._db:
             # Update in database

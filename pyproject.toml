@@ -132,6 +132,7 @@ Issues = "https://github.com/nexi-lab/nexus/issues"
 Changelog = "https://github.com/nexi-lab/nexus/blob/main/CHANGELOG.md"
 
 [project.scripts]
+# CLI entry point - now separated from library code
 nexus = "nexus.cli:main"
 
 [build-system]
@@ -172,7 +173,8 @@ omit = [
     "*/test_*.py",
     "*/__pycache__/*",
     "*/site-packages/*",
-    "*/cli.py",  # CLI is tested via integration tests in examples/test_cli_commands.sh
+    "*/cli.py",  # Old location (kept for backward compatibility)
+    "src/nexus/cli/*",  # CLI is tested via integration tests in examples/test_cli_commands.sh
 ]
 
 [tool.coverage.report]

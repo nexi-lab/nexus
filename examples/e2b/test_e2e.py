@@ -24,20 +24,29 @@ sandbox = Sandbox.create(template=template_name, api_key=e2b_api_key)
 print(f"✓ Sandbox created: {sandbox.sandbox_id}\n")
 
 try:
-    # Build mount command
-    mount_cmd = f"nexus mount {mount_path} --remote-url {nexus_url} --daemon"
+    # Build mount command with sudo and allow-other using nohup to properly detach
+    base_mount = f"sudo nexus mount {mount_path} --remote-url {nexus_url} --allow-other"
     if nexus_api_key:
-        mount_cmd += f" --remote-api-key {nexus_api_key}"
+        base_mount += f" --remote-api-key {nexus_api_key}"
+    mount_cmd = f"nohup {base_mount} > /tmp/nexus-mount.log 2>&1 &"
 
     print("Mounting Nexus...")
     print(f"Command: {mount_cmd}\n")
 
-    # Try mounting and capture any error
+    # Run mount in background and give it time to initialize
     try:
-        result = sandbox.commands.run(mount_cmd, timeout=30000)
-        print("✓ Mount command executed")
-        print(f"stdout: {result.stdout}")
-        print(f"stderr: {result.stderr}\n")
+        result = sandbox.commands.run(mount_cmd)
+        print("✓ Mount command started in background")
+        # Give it a few seconds to initialize
+        import time
+
+        time.sleep(5)
+        print("Waiting for mount to initialize...")
+
+        # Check the mount log
+        log_result = sandbox.commands.run("cat /tmp/nexus-mount.log")
+        if log_result.stdout:
+            print(f"Mount log: {log_result.stdout}\n")
         mount_success = True
     except Exception as e:
         print(f"✗ Mount failed with exception: {e}")
@@ -84,6 +93,6 @@ try:
 
 finally:
     print("\nCleaning up...")
-    sandbox.commands.run(f"nexus unmount {mount_path} 2>/dev/null || true")
+    sandbox.commands.run(f"sudo nexus unmount {mount_path} 2>/dev/null || true")
     sandbox.kill()
     print("✓ Sandbox killed")

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import platform
 import sys
-import time
 from unittest.mock import MagicMock
 
 import pytest

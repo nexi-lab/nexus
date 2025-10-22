@@ -70,6 +70,11 @@ try:
         result = sandbox.commands.run(f"echo 'Hello from E2B!' > {mount_path}/workspace/test.txt")
         if result.exit_code == 0:
             print("✓ Write succeeded")
+            # List workspace to show newly created file
+            list_result = sandbox.commands.run(f"ls -lah {mount_path}/workspace/")
+            if list_result.exit_code == 0:
+                print("\nWorkspace contents after write:")
+                print(list_result.stdout)
         else:
             print(f"✗ Write failed: {result.stderr}")
 

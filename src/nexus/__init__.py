@@ -155,8 +155,15 @@ def connect(
             data_dir = cfg.data_dir if cfg.data_dir is not None else "./nexus-data"
             backend = LocalBackend(root_path=Path(data_dir).resolve())
             # Default db_path for local backend
+            # Only use SQLite path if no database URL is configured
             db_path = cfg.db_path
-            if db_path is None:
+            import os
+
+            if (
+                db_path is None
+                and not os.getenv("NEXUS_DATABASE_URL")
+                and not os.getenv("POSTGRES_URL")
+            ):
                 db_path = str(Path(data_dir) / "metadata.db")
 
         return NexusFS(

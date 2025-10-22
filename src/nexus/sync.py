@@ -95,9 +95,13 @@ def copy_file(
 
         # Check if destination exists and has same content (if checksum enabled)
         if checksum and nx.exists(dest):
-            existing_content = nx.read(dest)
-            if existing_content == content:
-                return 0  # Skip - identical content
+            try:
+                existing_content = nx.read(dest)
+                if existing_content == content:
+                    return 0  # Skip - identical content
+            except Exception:
+                # Content is missing or corrupted - re-write it
+                pass
 
         nx.write(dest, content)
         return len(content)
@@ -125,9 +129,13 @@ def copy_file(
 
         # Check if destination exists and has same content (if checksum enabled)
         if checksum and nx.exists(dest):
-            existing_content = nx.read(dest)
-            if existing_content == content:
-                return 0  # Skip - identical content
+            try:
+                existing_content = nx.read(dest)
+                if existing_content == content:
+                    return 0  # Skip - identical content
+            except Exception:
+                # Content is missing or corrupted - re-write it
+                pass
 
         nx.write(dest, content)
         return len(content)

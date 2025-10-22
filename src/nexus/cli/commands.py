@@ -182,21 +182,54 @@ def list_files(
 
 @main.command()
 @click.argument("path", type=str)
+@click.option(
+    "--metadata",
+    is_flag=True,
+    help="Show file metadata (etag, version) for optimistic concurrency control",
+)
 @add_backend_options
 def cat(
     path: str,
+    metadata: bool,
     backend_config: BackendConfig,
 ) -> None:
     """Display file contents.
 
     Examples:
+        # Display file content
         nexus cat /workspace/data.txt
+
+        # Display with syntax highlighting
         nexus cat /workspace/code.py
+
+        # Show metadata (etag, version) for OCC
+        nexus cat /workspace/data.txt --metadata
     """
     try:
         nx = get_filesystem(backend_config)
-        content = nx.read(path)
-        nx.close()
+
+        if metadata:
+            # Read with metadata for OCC
+            data = nx.read(path, return_metadata=True)
+            nx.close()
+
+            # Type narrowing: when return_metadata=True, result is always dict
+            assert isinstance(data, dict), "Expected dict when return_metadata=True"
+
+            # Display metadata first
+            console.print("[bold]Metadata:[/bold]")
+            console.print(f"[dim]Path:[/dim]     {path}")
+            console.print(f"[dim]ETag:[/dim]     {data['etag']}")
+            console.print(f"[dim]Version:[/dim]  {data['version']}")
+            console.print(f"[dim]Size:[/dim]     {data['size']} bytes")
+            console.print(f"[dim]Modified:[/dim] {data['modified_at']}")
+            console.print()
+            console.print("[bold]Content:[/bold]")
+            content = data["content"]
+        else:
+            # Read normally
+            content = nx.read(path)
+            nx.close()
 
         # Try to detect file type for syntax highlighting
         try:
@@ -225,19 +258,57 @@ def cat(
 @click.argument("path", type=str)
 @click.argument("content", type=str, required=False)
 @click.option("-i", "--input", "input_file", type=click.File("rb"), help="Read from file or stdin")
+@click.option(
+    "--if-match",
+    type=str,
+    help="Only write if current ETag matches (optimistic concurrency control)",
+)
+@click.option(
+    "--if-none-match",
+    is_flag=True,
+    help="Only write if file doesn't exist (create-only mode)",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Force overwrite without version check (dangerous - can cause data loss!)",
+)
+@click.option(
+    "--show-metadata",
+    is_flag=True,
+    help="Show metadata (etag, version) after writing",
+)
 @add_backend_options
 def write(
     path: str,
     content: str | None,
     input_file: Any,
+    if_match: str | None,
+    if_none_match: bool,
+    force: bool,
+    show_metadata: bool,
     backend_config: BackendConfig,
 ) -> None:
-    """Write content to a file.
+    """Write content to a file with optional optimistic concurrency control.
 
     Examples:
+        # Simple write
         nexus write /workspace/data.txt "Hello World"
+
+        # Write from stdin
         echo "Hello World" | nexus write /workspace/data.txt --input -
+
+        # Write from file
         nexus write /workspace/data.txt --input local_file.txt
+
+        # Optimistic concurrency control (prevent overwriting concurrent changes)
+        nexus write /doc.txt "Updated content" --if-match abc123...
+
+        # Create-only mode (fail if file exists)
+        nexus write /new.txt "Initial content" --if-none-match
+
+        # Show metadata after writing
+        nexus write /doc.txt "Content" --show-metadata
     """
     try:
         nx = get_filesystem(backend_config)
@@ -254,10 +325,19 @@ def write(
             console.print("[red]Error:[/red] Must provide content or use --input")
             sys.exit(1)
 
-        nx.write(path, file_content)
+        # Write with OCC parameters
+        result = nx.write(
+            path, file_content, if_match=if_match, if_none_match=if_none_match, force=force
+        )
         nx.close()
 
         console.print(f"[green]✓[/green] Wrote {len(file_content)} bytes to [cyan]{path}[/cyan]")
+
+        if show_metadata:
+            console.print(f"[dim]ETag:[/dim]     {result['etag']}")
+            console.print(f"[dim]Version:[/dim]  {result['version']}")
+            console.print(f"[dim]Size:[/dim]     {result['size']} bytes")
+            console.print(f"[dim]Modified:[/dim] {result['modified_at']}")
     except Exception as e:
         handle_error(e)
 
@@ -281,6 +361,9 @@ def cp(
 
         # Read source
         content = nx.read(source)
+
+        # Type narrowing: when return_metadata=False (default), result is bytes
+        assert isinstance(content, bytes), "Expected bytes from read()"
 
         # Write to destination
         nx.write(dest, content)

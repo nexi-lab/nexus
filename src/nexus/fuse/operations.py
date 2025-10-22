@@ -377,7 +377,10 @@ class NexusFUSEOperations(Operations):
             # Read existing content if file exists
             existing_content = b""
             if self.nexus_fs.exists(original_path):
-                existing_content = self.nexus_fs.read(original_path)
+                raw_content = self.nexus_fs.read(original_path)
+                # Type narrowing: when return_metadata=False (default), result is bytes
+                assert isinstance(raw_content, bytes), "Expected bytes from read()"
+                existing_content = raw_content
 
             # Handle offset writes
             if offset > len(existing_content):
@@ -754,7 +757,10 @@ class NexusFUSEOperations(Operations):
 
             # Read existing content
             if self.nexus_fs.exists(original_path):
-                content = self.nexus_fs.read(original_path)
+                raw_content = self.nexus_fs.read(original_path)
+                # Type narrowing: when return_metadata=False (default), result is bytes
+                assert isinstance(raw_content, bytes), "Expected bytes from read()"
+                content = raw_content
             else:
                 content = b""
 
@@ -869,7 +875,10 @@ class NexusFUSEOperations(Operations):
         content = self.cache.get_content(path)
         if content is None:
             # Read from filesystem and cache
-            content = self.nexus_fs.read(path)
+            raw_content = self.nexus_fs.read(path)
+            # Type narrowing: when return_metadata=False (default), result is bytes
+            assert isinstance(raw_content, bytes), "Expected bytes from read()"
+            content = raw_content
             self.cache.cache_content(path, content)
 
         # In binary mode or raw access, return as-is

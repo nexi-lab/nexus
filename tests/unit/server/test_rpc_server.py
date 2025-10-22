@@ -15,7 +15,15 @@ class TestRPCRequestHandler:
         """Create mock filesystem."""
         fs = Mock()
         fs.read = Mock(return_value=b"test content")
-        fs.write = Mock()
+        # write() returns metadata dict (etag, version, modified_at, size)
+        fs.write = Mock(
+            return_value={
+                "etag": "abc123",
+                "version": 1,
+                "modified_at": "2024-01-01T00:00:00Z",
+                "size": 4,
+            }
+        )
         fs.delete = Mock()
         fs.exists = Mock(return_value=True)
         fs.list = Mock(return_value=["/file1.txt", "/file2.txt"])
@@ -88,8 +96,15 @@ class TestRPCRequestHandler:
         params = WriteParams(path="/test.txt", content=b"data")
         result = mock_handler._dispatch_method("write", params)
 
-        assert result == {"success": True}
-        mock_filesystem.write.assert_called_once_with("/test.txt", b"data")
+        # write() returns metadata dict, not {"success": True}
+        assert "etag" in result
+        assert "version" in result
+        assert "modified_at" in result
+        assert "size" in result
+        # Verify write was called with correct params (v0.3.9 adds OCC params)
+        mock_filesystem.write.assert_called_once_with(
+            "/test.txt", b"data", if_match=None, if_none_match=False, force=False
+        )
 
     def test_dispatch_list(self, mock_handler, mock_filesystem):
         """Test dispatching list method."""

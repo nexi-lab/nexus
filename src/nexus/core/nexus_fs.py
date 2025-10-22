@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy import select
 
 from nexus.backends.backend import Backend
-from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
+from nexus.core.exceptions import ConflictError, InvalidPathError, NexusFileNotFoundError
 from nexus.core.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -421,16 +421,26 @@ class NexusFS(NexusFilesystem):
 
         self.metadata.put(metadata)
 
-    def read(self, path: str, context: OperationContext | None = None) -> bytes:
+    def read(
+        self, path: str, context: OperationContext | None = None, return_metadata: bool = False
+    ) -> bytes | dict[str, Any]:
         """
         Read file content as bytes.
 
         Args:
             path: Virtual path to read
             context: Optional operation context for permission checks (uses default if not provided)
+            return_metadata: If True, return dict with content and metadata (etag, version, modified_at).
+                           If False, return only content bytes (default: False)
 
         Returns:
-            File content as bytes
+            If return_metadata=False: File content as bytes
+            If return_metadata=True: Dict with keys:
+                - content: File content as bytes
+                - etag: Content hash (SHA-256) for optimistic concurrency
+                - version: Current version number
+                - modified_at: Last modification timestamp
+                - size: File size in bytes
 
         Raises:
             NexusFileNotFoundError: If file doesn't exist
@@ -438,6 +448,19 @@ class NexusFS(NexusFilesystem):
             BackendError: If read operation fails
             AccessDeniedError: If access is denied based on tenant isolation
             PermissionError: If user doesn't have read permission
+
+        Examples:
+            >>> # Read content only
+            >>> content = nx.read("/workspace/data.json")
+            >>> print(content)
+            b'{"key": "value"}'
+
+            >>> # Read with metadata for optimistic concurrency
+            >>> result = nx.read("/workspace/data.json", return_metadata=True)
+            >>> content = result['content']
+            >>> etag = result['etag']
+            >>> # Later, write with version check
+            >>> nx.write("/workspace/data.json", new_content, if_match=etag)
         """
         path = self._validate_path(path)
 
@@ -461,11 +484,29 @@ class NexusFS(NexusFilesystem):
         # Read from routed backend using content hash
         content = route.backend.read_content(meta.etag)
 
+        # Return content with metadata if requested
+        if return_metadata:
+            return {
+                "content": content,
+                "etag": meta.etag,
+                "version": meta.version,
+                "modified_at": meta.modified_at,
+                "size": meta.size,
+            }
+
         return content
 
-    def write(self, path: str, content: bytes, context: OperationContext | None = None) -> None:
+    def write(
+        self,
+        path: str,
+        content: bytes,
+        context: OperationContext | None = None,
+        if_match: str | None = None,
+        if_none_match: bool = False,
+        force: bool = False,
+    ) -> dict[str, Any]:
         """
-        Write content to a file.
+        Write content to a file with optional optimistic concurrency control.
 
         Creates parent directories if needed. Overwrites existing files.
         Updates metadata store.
@@ -476,29 +517,47 @@ class NexusFS(NexusFilesystem):
             path: Virtual path to write
             content: File content as bytes
             context: Optional operation context for permission checks (uses default if not provided)
+            if_match: Optional etag for optimistic concurrency control (v0.3.9).
+                     If provided, write only succeeds if current file etag matches this value.
+                     Prevents concurrent modification conflicts.
+            if_none_match: If True, write only if file doesn't exist (create-only mode)
+            force: If True, skip version check and overwrite unconditionally (dangerous!)
+
+        Returns:
+            Dict with metadata about the written file:
+                - etag: Content hash (SHA-256) of the written content
+                - version: New version number
+                - modified_at: Modification timestamp
+                - size: File size in bytes
 
         Raises:
             InvalidPathError: If path is invalid
             BackendError: If write operation fails
             AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
             PermissionError: If path is read-only or user doesn't have write permission
+            ConflictError: If if_match is provided and doesn't match current etag (v0.3.9)
+            FileExistsError: If if_none_match=True and file already exists
+
+        Examples:
+            >>> # Simple write (no version checking)
+            >>> result = nx.write("/workspace/data.json", b'{"key": "value"}')
+            >>> print(result['etag'], result['version'])
+
+            >>> # Optimistic concurrency control
+            >>> result = nx.read("/workspace/data.json", return_metadata=True)
+            >>> new_content = modify(result['content'])
+            >>> try:
+            ...     nx.write("/workspace/data.json", new_content, if_match=result['etag'])
+            ... except ConflictError:
+            ...     print("File was modified by another agent!")
+
+            >>> # Create-only mode
+            >>> nx.write("/workspace/new.txt", b'content', if_none_match=True)
         """
         path = self._validate_path(path)
 
-        # Check write permission (v0.3.0)
-        # For existing files, check file's write permission
-        # For new files, check parent directory's write permission (if parent exists)
-        if self.metadata.exists(path):
-            # Existing file - check file's own write permission
-            self._check_permission(path, Permission.WRITE, context)
-        else:
-            # New file - check parent directory's write permission
-            # Only check if parent exists (parent will be created automatically if needed)
-            parent_path = self._get_parent_path(path)
-            if parent_path and self.metadata.exists(parent_path):
-                self._check_permission(parent_path, Permission.WRITE, context)
-
-        # Route to backend with write access check
+        # Route to backend with write access check FIRST (to check tenant/agent isolation)
+        # This must happen before permission check so AccessDeniedError is raised before PermissionError
         route = self.router.route(
             path,
             tenant_id=self.tenant_id,
@@ -511,9 +570,52 @@ class NexusFS(NexusFilesystem):
         if route.readonly:
             raise PermissionError(f"Path is read-only: {path}")
 
-        # Get existing metadata for update detection
+        # Get existing metadata for permission check and update detection (single query)
         now = datetime.now(UTC)
         meta = self.metadata.get(path)
+
+        # Check write permission (v0.3.0)
+        # Only check permissions if the file is owned by the current user
+        # This allows namespace routing to override Unix permissions when needed
+        # Rationale: Namespace isolation is PRIMARY, Unix permissions are SECONDARY
+        if meta is not None:
+            ctx = context or self._default_context
+
+            # Only check permissions if we own the file
+            # If someone else owns it but the router allows write access, namespace wins
+            if meta.owner == ctx.user:
+                # Existing file owned by us - check permissions to prevent accidental overwrites
+                self._check_permission(path, Permission.WRITE, context)
+            # If file is owned by someone else, skip permission check
+            # The router has already validated namespace-level access (tenant/agent isolation)
+        # NOTE: For new files, we do NOT check parent directory permissions because:
+        # 1. The router has already validated namespace-level access (tenant/agent isolation)
+        # 2. The new file will get correct owner/group/mode via permission policies
+        # 3. Checking parent permissions can cause false rejections when namespaces
+        #    allow access but parent was created by a different user
+
+        # Optimistic concurrency control (v0.3.9)
+        if not force:
+            # Check if_none_match (create-only mode)
+            if if_none_match and meta is not None:
+                raise FileExistsError(f"File already exists: {path}")
+
+            # Check if_match (version check)
+            if if_match is not None:
+                if meta is None:
+                    # File doesn't exist, can't match etag
+                    raise ConflictError(
+                        path=path,
+                        expected_etag=if_match,
+                        current_etag="(file does not exist)",
+                    )
+                elif meta.etag != if_match:
+                    # Version mismatch - conflict detected!
+                    raise ConflictError(
+                        path=path,
+                        expected_etag=if_match,
+                        current_etag=meta.etag or "(no etag)",
+                    )
 
         # Write to routed backend - returns content hash
         content_hash = route.backend.write_content(content)
@@ -556,6 +658,9 @@ class NexusFS(NexusFilesystem):
             group = meta.group
             mode = meta.mode
 
+        # Calculate new version number (increment if updating)
+        new_version = (meta.version + 1) if meta else 1
+
         # Store metadata with content hash as both etag and physical_path
         metadata = FileMetadata(
             path=path,
@@ -565,7 +670,7 @@ class NexusFS(NexusFilesystem):
             etag=content_hash,  # SHA-256 hash for integrity
             created_at=meta.created_at if meta else now,
             modified_at=now,
-            version=1,
+            version=new_version,
             owner=owner,  # Apply policy or inherit from parent
             group=group,  # Apply policy or inherit from parent
             mode=mode,  # Apply policy or inherit from parent
@@ -576,6 +681,14 @@ class NexusFS(NexusFilesystem):
         # Auto-parse file if enabled and format is supported
         if self.auto_parse:
             self._auto_parse_file(path)
+
+        # Return metadata for optimistic concurrency control (v0.3.9)
+        return {
+            "etag": content_hash,
+            "version": new_version,
+            "modified_at": now,
+            "size": len(content),
+        }
 
     def _auto_parse_file(self, path: str) -> None:
         """Auto-parse a file in the background (fire-and-forget).
@@ -1071,6 +1184,9 @@ class NexusFS(NexusFilesystem):
                 if text is None and search_mode in ("auto", "raw"):
                     # Read raw content
                     content = self.read(file_path)
+
+                    # Type narrowing: when return_metadata=False (default), result is bytes
+                    assert isinstance(content, bytes), "Expected bytes from read()"
 
                     # Try to decode as text
                     try:
@@ -2098,6 +2214,9 @@ class NexusFS(NexusFilesystem):
 
         # Read file content
         content = self.read(path)
+
+        # Type narrowing: when return_metadata=False (default), result is bytes
+        assert isinstance(content, bytes), "Expected bytes from read()"
 
         # Get file metadata for MIME type
         meta = self.metadata.get(path)

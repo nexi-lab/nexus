@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class NexusConfig(BaseModel):
@@ -151,10 +151,9 @@ class NexusConfig(BaseModel):
             raise ValueError(f"url is required for {mode} mode")
         return v
 
-    class Config:
-        """Pydantic config."""
-
-        frozen = False  # Allow modifications after creation
+    model_config = ConfigDict(
+        frozen=False,  # Allow modifications after creation
+    )
 
 
 def load_config(

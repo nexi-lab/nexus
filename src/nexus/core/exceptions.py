@@ -16,7 +16,7 @@ class NexusError(Exception):
         return self.message
 
 
-class NexusFileNotFoundError(NexusError):
+class NexusFileNotFoundError(NexusError, FileNotFoundError):
     """Raised when a file or directory does not exist."""
 
     def __init__(self, path: str, message: str | None = None):

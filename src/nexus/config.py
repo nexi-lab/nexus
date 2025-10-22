@@ -278,12 +278,10 @@ def _load_from_environment() -> NexusConfig:
                 converted_value = value
             env_config[config_key] = converted_value
 
-    # Default agent_id to current system user if not specified (v0.3.0)
-    # This enables proper permission tracking for CLI operations
-    if "agent_id" not in env_config:
-        system_user = os.getenv("USER") or os.getenv("USERNAME")
-        if system_user:
-            env_config["agent_id"] = system_user
+    # Do not auto-set agent_id - let it default to None
+    # When agent_id is None, NexusFS will use "system" user with system privileges
+    # This allows CLI operations to run without permission restrictions by default
+    # Users can explicitly set NEXUS_AGENT_ID environment variable if needed
 
     # Handle NEXUS_PARSERS environment variable
     # Format: "module:class:priority,module:class:priority,..."

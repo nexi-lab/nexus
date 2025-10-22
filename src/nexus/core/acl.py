@@ -618,21 +618,23 @@ class ACLStore:
             >>> if acl:
             ...     result = acl.check_permission("alice", ["developers"], ACLPermission.READ)
         """
-        # Get file metadata to find path_id
-        meta = self.metadata_store.get(path)
-        if not meta:
-            return None
+        # Get path_id using metadata store's method
+        try:
+            path_id = self.metadata_store.get_path_id(path)
+        except (AttributeError, Exception):
+            # If get_path_id method doesn't exist or fails, try legacy approach
+            meta = self.metadata_store.get(path)
+            if not meta:
+                return None
+            path_id = getattr(meta, "path_id", None)
 
-        # Try to get path_id - it may not be available on all metadata stores
-        path_id = getattr(meta, "path_id", None)
         if not path_id:
             return None
 
         # Query ACL entries from database
         from nexus.storage.models import ACLEntryModel
 
-        session = self.metadata_store.Session()
-        try:
+        with self.metadata_store.SessionLocal() as session:
             acl_entries = (
                 session.query(ACLEntryModel)
                 .filter(ACLEntryModel.path_id == path_id)
@@ -672,9 +674,6 @@ class ACLStore:
                 entries.append(entry)
 
             return ACL(entries=entries)
-
-        finally:
-            session.close()
 
     def check_permission(
         self, path: str, user: str, groups: list[str], permission: ACLPermission

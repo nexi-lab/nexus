@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     fuse \
     libfuse2 \
     libfuse-dev \
+    sudo \
     curl \
     git \
     && rm -rf /var/lib/apt/lists/*
@@ -23,6 +24,13 @@ RUN python3.11 -m pip install --upgrade pip && \
 RUN useradd -m -s /bin/bash user && \
     mkdir -p /home/user/nexus && \
     chown -R user:user /home/user
+
+# Give user passwordless sudo for nexus commands
+RUN echo "user ALL=(ALL) NOPASSWD: /usr/local/bin/nexus" >> /etc/sudoers.d/nexus && \
+    chmod 0440 /etc/sudoers.d/nexus
+
+# Enable user_allow_other in fuse.conf so mounted filesystems can be accessed by non-root
+RUN echo "user_allow_other" >> /etc/fuse.conf
 
 # Set working directory
 WORKDIR /home/user

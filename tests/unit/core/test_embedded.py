@@ -23,6 +23,7 @@ def embedded(temp_dir: Path) -> Generator[NexusFS, None, None]:
     nx = NexusFS(backend=LocalBackend(temp_dir), db_path=temp_dir / "metadata.db", auto_parse=False)
     yield nx
     nx.close()
+    # Note: Windows cleanup delay is handled by windows_cleanup_delay fixture in conftest.py
 
 
 def test_init_creates_directories(temp_dir: Path) -> None:

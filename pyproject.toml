@@ -132,6 +132,7 @@ Issues = "https://github.com/nexi-lab/nexus/issues"
 Changelog = "https://github.com/nexi-lab/nexus/blob/main/CHANGELOG.md"
 
 [project.scripts]
+# CLI entry point - now separated from library code
 nexus = "nexus.cli:main"
 
 [build-system]

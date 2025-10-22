@@ -10,15 +10,29 @@ Three Deployment Modes, One Codebase:
 - Monolithic: Single server for teams
 - Distributed: Kubernetes-ready for enterprise scale
 
-Usage:
+SDK vs CLI:
+-----------
+For programmatic access (building tools, libraries, integrations), use the SDK:
+
+    from nexus.sdk import connect
+
+    nx = connect()
+    nx.write("/workspace/data.txt", b"Hello World")
+    content = nx.read("/workspace/data.txt")
+
+For command-line usage, use the nexus CLI:
+
+    $ nexus ls /workspace
+    $ nexus write /file.txt "content"
+
+Legacy Import (for backward compatibility):
+-------------------------------------------
     import nexus
 
-    # Mode auto-detected from config file or environment
-    nx = nexus.connect()
+    nx = nexus.connect()  # Still works, but prefer nexus.sdk.connect()
 
-    async with nx:
-        await nx.write("/workspace/data.txt", b"Hello World")
-        content = await nx.read("/workspace/data.txt")
+The main nexus module re-exports core functionality for backward compatibility,
+but new projects should use nexus.sdk for a cleaner, more stable API.
 """
 
 __version__ = "0.2.3"

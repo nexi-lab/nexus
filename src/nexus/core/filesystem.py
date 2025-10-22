@@ -38,15 +38,20 @@ class NexusFilesystem(ABC):
     # ============================================================
 
     @abstractmethod
-    def read(self, path: str) -> bytes:
+    def read(
+        self, path: str, context: Any = None, return_metadata: bool = False
+    ) -> bytes | dict[str, Any]:
         """
         Read file content as bytes.
 
         Args:
             path: Virtual path to read
+            context: Optional operation context for permission checks
+            return_metadata: If True, return dict with content and metadata (v0.3.9)
 
         Returns:
-            File content as bytes
+            If return_metadata=False: File content as bytes
+            If return_metadata=True: Dict with content, etag, version, etc.
 
         Raises:
             NexusFileNotFoundError: If file doesn't exist
@@ -56,20 +61,36 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
-    def write(self, path: str, content: bytes) -> None:
+    def write(
+        self,
+        path: str,
+        content: bytes,
+        context: Any = None,
+        if_match: str | None = None,
+        if_none_match: bool = False,
+        force: bool = False,
+    ) -> dict[str, Any]:
         """
-        Write content to a file.
+        Write content to a file with optional optimistic concurrency control.
 
         Creates parent directories if needed. Overwrites existing files.
 
         Args:
             path: Virtual path to write
             content: File content as bytes
+            context: Optional operation context for permission checks
+            if_match: Optional etag for OCC (v0.3.9)
+            if_none_match: If True, create-only mode (v0.3.9)
+            force: If True, skip version check (v0.3.9)
+
+        Returns:
+            Dict with metadata (etag, version, modified_at, size)
 
         Raises:
             InvalidPathError: If path is invalid
             AccessDeniedError: If access is denied
             PermissionError: If path is read-only
+            ConflictError: If if_match doesn't match current etag (v0.3.9)
         """
         ...
 

@@ -45,6 +45,7 @@ dependencies = [
     # HTTP client (for remote mode)
     "httpx>=0.27.0",
     "requests>=2.31.0",
+    "tenacity>=8.2.0",  # Retry logic with exponential backoff
     # Database (v0.1.0)
     "sqlalchemy>=2.0.0",
     "alembic>=1.13.0",

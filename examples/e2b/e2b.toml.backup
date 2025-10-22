@@ -1,0 +1,14 @@
+# This is a config for E2B sandbox template.
+# You can use template ID or template name (nexus-test) to create a sandbox:
+
+# Python SDK
+# from e2b import Sandbox, AsyncSandbox
+# sandbox = Sandbox("nexus-test") # Sync sandbox
+# sandbox = await AsyncSandbox.create("nexus-test") # Async sandbox
+
+# JS SDK
+# import { Sandbox } from 'e2b'
+# const sandbox = await Sandbox.create('nexus-test')
+
+dockerfile = "e2b.Dockerfile"
+template_name = "nexus-test"

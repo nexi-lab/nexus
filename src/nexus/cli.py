@@ -1698,6 +1698,12 @@ def size(
     show_default=True,
 )
 @click.option(
+    "--auto-parse",
+    is_flag=True,
+    help="Auto-parse binary files (PDFs, Office docs) as text by default. "
+    "Eliminates need for .txt suffix on parsed files.",
+)
+@click.option(
     "--daemon",
     is_flag=True,
     help="Run in background (daemon mode)",
@@ -1728,6 +1734,7 @@ def size(
 def mount(
     mount_point: str,
     mode: str,
+    auto_parse: bool,
     daemon: bool,
     allow_other: bool,
     debug: bool,
@@ -1878,6 +1885,7 @@ def mount(
                     nx,
                     mount_point,
                     mode=mode,
+                    auto_parse=auto_parse,
                     foreground=True,  # Run in foreground to keep daemon process alive
                     allow_other=allow_other,
                     debug=debug,
@@ -2086,8 +2094,6 @@ def chmod_cmd(
         nexus chmod rwxr-xr-x /workspace/file.txt
     """
     try:
-        from nexus.core.permissions import parse_mode
-
         nx = get_filesystem(backend_config)
 
         # Note: Only Embedded mode supports permissions
@@ -2102,28 +2108,13 @@ def chmod_cmd(
             nx.close()
             sys.exit(1)
 
-        # Parse mode
-        try:
-            mode_int = parse_mode(mode)
-        except ValueError as e:
-            console.print(f"[red]Error:[/red] {e}")
-            nx.close()
-            sys.exit(1)
-
-        # Get current metadata
-        file_meta = nx.metadata.get(path)
-        if not file_meta:
-            console.print(f"[red]Error:[/red] File not found: {path}")
-            nx.close()
-            sys.exit(1)
-
-        # Update mode
-        file_meta.mode = mode_int
-        nx.metadata.put(file_meta)
+        # Use chmod method with permission checks
+        nx.chmod(path, mode)
         nx.close()
 
-        from nexus.core.permissions import FileMode
+        from nexus.core.permissions import FileMode, parse_mode
 
+        mode_int = parse_mode(mode) if isinstance(mode, str) else mode
         mode_obj = FileMode(mode_int)
         console.print(
             f"[green]✓[/green] Changed mode of [cyan]{path}[/cyan] to [yellow]{mode_obj}[/yellow]"
@@ -2162,16 +2153,8 @@ def chown_cmd(
             nx.close()
             sys.exit(1)
 
-        # Get current metadata
-        file_meta = nx.metadata.get(path)
-        if not file_meta:
-            console.print(f"[red]Error:[/red] File not found: {path}")
-            nx.close()
-            sys.exit(1)
-
-        # Update owner
-        file_meta.owner = owner
-        nx.metadata.put(file_meta)
+        # Use chown method with permission checks
+        nx.chown(path, owner)
         nx.close()
 
         console.print(
@@ -2211,16 +2194,8 @@ def chgrp_cmd(
             nx.close()
             sys.exit(1)
 
-        # Get current metadata
-        file_meta = nx.metadata.get(path)
-        if not file_meta:
-            console.print(f"[red]Error:[/red] File not found: {path}")
-            nx.close()
-            sys.exit(1)
-
-        # Update group
-        file_meta.group = group
-        nx.metadata.put(file_meta)
+        # Use chgrp method with permission checks
+        nx.chgrp(path, group)
         nx.close()
 
         console.print(

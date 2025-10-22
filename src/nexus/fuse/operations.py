@@ -120,7 +120,9 @@ class NexusFUSEOperations(Operations):
 
             # Check if it's a directory
             if self.nexus_fs.is_directory(original_path):
-                return self._dir_attrs()
+                # Get directory metadata for permissions
+                metadata = self.nexus_fs.metadata.get(original_path)  # type: ignore[attr-defined]
+                return self._dir_attrs(metadata)
 
             # Check if file exists
             if not self.nexus_fs.exists(original_path):
@@ -129,10 +131,14 @@ class NexusFUSEOperations(Operations):
             # Get file content to determine size
             content = self._get_file_content(original_path, view_type)
 
+            # Get file metadata for permissions
+            metadata = self.nexus_fs.metadata.get(original_path)  # type: ignore[attr-defined]
+
             # Return file attributes
             now = time.time()
 
-            # Get uid/gid with Windows compatibility
+            # Map owner/group to uid/gid (Unix-only)
+            # Default to current user if not set or on Windows
             try:
                 uid = os.getuid()
                 gid = os.getgid()
@@ -141,8 +147,43 @@ class NexusFUSEOperations(Operations):
                 uid = 0
                 gid = 0
 
+            # Get permission mode from metadata (default to 0o644)
+            file_mode = 0o644
+            if metadata and metadata.mode is not None:
+                file_mode = metadata.mode
+
+            # Try to map owner/group to uid/gid
+            if metadata:
+                try:
+                    import grp
+                    import pwd
+
+                    if metadata.owner:
+                        try:
+                            uid = pwd.getpwnam(metadata.owner).pw_uid
+                        except KeyError:
+                            # Username not found, try as numeric
+                            import contextlib
+
+                            with contextlib.suppress(ValueError):
+                                uid = int(metadata.owner)
+
+                    if metadata.group:
+                        try:
+                            gid = grp.getgrnam(metadata.group).gr_gid
+                        except KeyError:
+                            # Group name not found, try as numeric
+                            import contextlib
+
+                            with contextlib.suppress(ValueError):
+                                gid = int(metadata.group)
+
+                except (ModuleNotFoundError, AttributeError):
+                    # Windows doesn't have pwd/grp - use defaults
+                    pass
+
             attrs = {
-                "st_mode": stat.S_IFREG | 0o644,
+                "st_mode": stat.S_IFREG | file_mode,
                 "st_nlink": 1,
                 "st_size": len(content),
                 "st_ctime": now,
@@ -596,13 +637,35 @@ class NexusFUSEOperations(Operations):
 
         Args:
             path: File path
-            mode: New mode
+            mode: New mode (POSIX permission bits)
 
-        Note:
-            This is a no-op as Nexus doesn't support POSIX permissions yet.
+        Raises:
+            FuseOSError: If chmod fails
         """
-        # No-op: Nexus doesn't support POSIX permissions yet
-        pass
+        try:
+            # Parse virtual path (reject virtual views)
+            original_path, view_type = self._parse_virtual_path(path)
+            if view_type:
+                raise FuseOSError(errno.EROFS)
+
+            # Extract just the permission bits (mask off file type bits)
+            permission_bits = mode & 0o777
+
+            # Call Nexus chmod
+            self.nexus_fs.chmod(original_path, permission_bits)  # type: ignore[attr-defined]
+
+            # Invalidate caches for this path
+            self.cache.invalidate_path(original_path)
+            if path != original_path:
+                self.cache.invalidate_path(path)
+
+        except NexusFileNotFoundError:
+            raise FuseOSError(errno.ENOENT) from None
+        except FuseOSError:
+            raise
+        except Exception as e:
+            logger.error(f"Error changing mode for {path}: {e}")
+            raise FuseOSError(errno.EIO) from e
 
     def chown(self, path: str, uid: int, gid: int) -> None:
         """Change file ownership.
@@ -612,11 +675,65 @@ class NexusFUSEOperations(Operations):
             uid: User ID
             gid: Group ID
 
+        Raises:
+            FuseOSError: If chown fails
+
         Note:
-            This is a no-op as Nexus doesn't support POSIX ownership yet.
+            On Unix systems, this maps uid/gid to usernames using pwd/grp modules.
+            On Windows, this is a no-op as Windows doesn't have uid/gid.
         """
-        # No-op: Nexus doesn't support POSIX ownership yet
-        pass
+        try:
+            # Parse virtual path (reject virtual views)
+            original_path, view_type = self._parse_virtual_path(path)
+            if view_type:
+                raise FuseOSError(errno.EROFS)
+
+            # Map uid/gid to usernames (Unix-only)
+            try:
+                import grp
+                import pwd
+
+                # Get current metadata to see if owner/group changed
+                metadata = self.nexus_fs.metadata.get(original_path)  # type: ignore[attr-defined]
+                if not metadata:
+                    raise FuseOSError(errno.ENOENT)
+
+                # Map uid to username (if uid != -1, which means "don't change")
+                if uid != -1:
+                    try:
+                        owner = pwd.getpwuid(uid).pw_name
+                        self.nexus_fs.chown(original_path, owner)  # type: ignore[attr-defined]
+                    except KeyError:
+                        # uid not found, use numeric string
+                        owner = str(uid)
+                        self.nexus_fs.chown(original_path, owner)  # type: ignore[attr-defined]
+
+                # Map gid to group name (if gid != -1, which means "don't change")
+                if gid != -1:
+                    try:
+                        group = grp.getgrgid(gid).gr_name
+                        self.nexus_fs.chgrp(original_path, group)  # type: ignore[attr-defined]
+                    except KeyError:
+                        # gid not found, use numeric string
+                        group = str(gid)
+                        self.nexus_fs.chgrp(original_path, group)  # type: ignore[attr-defined]
+
+                # Invalidate caches for this path
+                self.cache.invalidate_path(original_path)
+                if path != original_path:
+                    self.cache.invalidate_path(path)
+
+            except (ModuleNotFoundError, AttributeError):
+                # Windows doesn't have pwd/grp modules - silently ignore
+                pass
+
+        except NexusFileNotFoundError:
+            raise FuseOSError(errno.ENOENT) from None
+        except FuseOSError:
+            raise
+        except Exception as e:
+            logger.error(f"Error changing ownership for {path}: {e}")
+            raise FuseOSError(errno.EIO) from e
 
     def truncate(self, path: str, length: int, fh: int | None = None) -> None:  # noqa: ARG002
         """Truncate file to specified length.
@@ -770,8 +887,11 @@ class NexusFUSEOperations(Operations):
         # Fallback to raw content
         return content
 
-    def _dir_attrs(self) -> dict[str, Any]:
+    def _dir_attrs(self, metadata: Any = None) -> dict[str, Any]:
         """Get standard directory attributes.
+
+        Args:
+            metadata: Optional FileMetadata object for permission information
 
         Returns:
             Dictionary with directory attributes
@@ -787,8 +907,43 @@ class NexusFUSEOperations(Operations):
             uid = 0
             gid = 0
 
+        # Get permission mode from metadata (default to 0o755 for directories)
+        dir_mode = 0o755
+        if metadata and hasattr(metadata, "mode") and metadata.mode is not None:
+            dir_mode = metadata.mode
+
+        # Try to map owner/group to uid/gid
+        if metadata:
+            try:
+                import grp
+                import pwd
+
+                if hasattr(metadata, "owner") and metadata.owner:
+                    try:
+                        uid = pwd.getpwnam(metadata.owner).pw_uid
+                    except KeyError:
+                        # Username not found, try as numeric
+                        import contextlib
+
+                        with contextlib.suppress(ValueError):
+                            uid = int(metadata.owner)
+
+                if hasattr(metadata, "group") and metadata.group:
+                    try:
+                        gid = grp.getgrnam(metadata.group).gr_gid
+                    except KeyError:
+                        # Group name not found, try as numeric
+                        import contextlib
+
+                        with contextlib.suppress(ValueError):
+                            gid = int(metadata.group)
+
+            except (ModuleNotFoundError, AttributeError):
+                # Windows doesn't have pwd/grp - use defaults
+                pass
+
         return {
-            "st_mode": stat.S_IFDIR | 0o755,
+            "st_mode": stat.S_IFDIR | dir_mode,
             "st_nlink": 2,
             "st_size": 4096,
             "st_ctime": now,

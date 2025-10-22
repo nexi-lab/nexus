@@ -40,6 +40,9 @@ def mock_nexus_fs() -> MagicMock:
             "get_available_namespaces",
         ]
     )
+    # Add metadata mock (needed for getattr operations)
+    fs.metadata = MagicMock()
+    fs.metadata.get.return_value = None  # Default: no metadata found
     return fs
 
 

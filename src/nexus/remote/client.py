@@ -29,6 +29,14 @@ from typing import Any
 from urllib.parse import urljoin
 
 import requests
+from requests.adapters import HTTPAdapter
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+from urllib3.util.retry import Retry
 
 from nexus.core.exceptions import (
     ConflictError,
@@ -50,6 +58,58 @@ from nexus.server.protocol import (
 logger = logging.getLogger(__name__)
 
 
+class RemoteFilesystemError(NexusError):
+    """Enhanced remote filesystem error with detailed information.
+
+    Attributes:
+        message: Human-readable error message
+        status_code: HTTP status code (if applicable)
+        details: Additional error details
+        method: RPC method that failed
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        details: dict[str, Any] | None = None,
+        method: str | None = None,
+    ):
+        """Initialize remote filesystem error.
+
+        Args:
+            message: Error message
+            status_code: HTTP status code
+            details: Additional error details
+            method: RPC method that failed
+        """
+        self.message = message
+        self.status_code = status_code
+        self.details = details or {}
+        self.method = method
+
+        # Build detailed error message
+        error_parts = [message]
+        if method:
+            error_parts.append(f"(method: {method})")
+        if status_code:
+            error_parts.append(f"[HTTP {status_code}]")
+
+        super().__init__(" ".join(error_parts))
+
+
+class RemoteConnectionError(RemoteFilesystemError):
+    """Error connecting to remote Nexus server."""
+
+    pass
+
+
+class RemoteTimeoutError(RemoteFilesystemError):
+    """Timeout while communicating with remote server."""
+
+    pass
+
+
 class RemoteNexusFS(NexusFilesystem):
     """Remote Nexus filesystem client.
 
@@ -61,6 +121,10 @@ class RemoteNexusFS(NexusFilesystem):
         server_url: str,
         api_key: str | None = None,
         timeout: int = 30,
+        connect_timeout: int = 5,
+        max_retries: int = 3,
+        pool_connections: int = 10,
+        pool_maxsize: int = 20,
     ):
         """Initialize remote filesystem client.
 
@@ -68,18 +132,55 @@ class RemoteNexusFS(NexusFilesystem):
             server_url: Base URL of Nexus RPC server (e.g., "http://localhost:8080")
             api_key: Optional API key for authentication
             timeout: Request timeout in seconds (default: 30)
+            connect_timeout: Connection timeout in seconds (default: 5)
+            max_retries: Maximum number of retry attempts (default: 3)
+            pool_connections: Number of connection pools (default: 10)
+            pool_maxsize: Maximum pool size (default: 20)
         """
         self.server_url = server_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self.connect_timeout = connect_timeout
+        self.max_retries = max_retries
 
-        # Create HTTP session
+        # Create HTTP session with connection pooling
         self.session = requests.Session()
+
+        # Configure connection pooling with retry strategy
+        # Retry on connection errors, timeouts, and 5xx server errors
+        retry_strategy = Retry(
+            total=0,  # We'll handle retries with tenacity at RPC level
+            connect=0,
+            read=0,
+            status_forcelist=[500, 502, 503, 504],
+            backoff_factor=0,
+        )
+
+        adapter = HTTPAdapter(
+            pool_connections=pool_connections,
+            pool_maxsize=pool_maxsize,
+            max_retries=retry_strategy,
+        )
+
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+
         if api_key:
             self.session.headers["Authorization"] = f"Bearer {api_key}"
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type(
+            (requests.ConnectionError, requests.Timeout, RemoteConnectionError)
+        ),
+        reraise=True,
+    )
     def _call_rpc(self, method: str, params: dict[str, Any] | None = None) -> Any:
-        """Make RPC call to server.
+        """Make RPC call to server with automatic retry logic.
+
+        This method automatically retries on transient failures (connection errors,
+        timeouts) using exponential backoff (1s, 2s, 4s, up to 10s).
 
         Args:
             method: Method name
@@ -90,6 +191,9 @@ class RemoteNexusFS(NexusFilesystem):
 
         Raises:
             NexusError: On RPC error
+            RemoteConnectionError: On connection failure
+            RemoteTimeoutError: On timeout
+            RemoteFilesystemError: On other remote errors
         """
         # Build request
         request = RPCRequest(
@@ -110,11 +214,12 @@ class RemoteNexusFS(NexusFilesystem):
         logger.debug(f"API call: {method} with params: {params}")
 
         try:
+            # Use tuple for timeout: (connect_timeout, read_timeout)
             response = self.session.post(
                 url,
                 data=body,
                 headers={"Content-Type": "application/json"},
-                timeout=self.timeout,
+                timeout=(self.connect_timeout, self.timeout),
             )
 
             elapsed = time.time() - start_time
@@ -124,7 +229,11 @@ class RemoteNexusFS(NexusFilesystem):
                 logger.error(
                     f"API call failed: {method} - HTTP {response.status_code} ({elapsed:.3f}s)"
                 )
-                raise NexusError(f"HTTP {response.status_code}: {response.text}")
+                raise RemoteFilesystemError(
+                    f"Request failed: {response.text}",
+                    status_code=response.status_code,
+                    method=method,
+                )
 
             # Decode response
             response_dict = decode_rpc_message(response.content)
@@ -145,10 +254,35 @@ class RemoteNexusFS(NexusFilesystem):
             logger.info(f"API call completed: {method} ({elapsed:.3f}s)")
             return rpc_response.result
 
+        except requests.ConnectionError as e:
+            elapsed = time.time() - start_time
+            logger.error(f"API call connection error: {method} - {e} ({elapsed:.3f}s)")
+            raise RemoteConnectionError(
+                f"Failed to connect to server: {e}",
+                details={"server_url": self.server_url},
+                method=method,
+            ) from e
+
+        except requests.Timeout as e:
+            elapsed = time.time() - start_time
+            logger.error(f"API call timeout: {method} - {e} ({elapsed:.3f}s)")
+            raise RemoteTimeoutError(
+                f"Request timed out after {elapsed:.1f}s",
+                details={
+                    "connect_timeout": self.connect_timeout,
+                    "read_timeout": self.timeout,
+                },
+                method=method,
+            ) from e
+
         except requests.RequestException as e:
             elapsed = time.time() - start_time
             logger.error(f"API call network error: {method} - {e} ({elapsed:.3f}s)")
-            raise NexusError(f"Network error: {e}") from e
+            raise RemoteFilesystemError(
+                f"Network error: {e}",
+                details={"elapsed": elapsed},
+                method=method,
+            ) from e
 
     def _handle_rpc_error(self, error: dict[str, Any]) -> None:
         """Handle RPC error response.

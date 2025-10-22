@@ -25,6 +25,8 @@ from nexus.core.exceptions import MetadataError
 from nexus.core.metadata import FileMetadata, MetadataStore
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
 from nexus.storage.models import Base, FileMetadataModel, FilePathModel, VersionHistoryModel
+from nexus.storage.query_builder import WorkQueryBuilder
+from nexus.storage.version_manager import VersionManager
 
 
 class SQLAlchemyMetadataStore(MetadataStore):
@@ -1137,7 +1139,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
         except Exception as e:
             raise MetadataError(f"Failed to get path_id: {e}", path=path) from e
 
-    # Work detection queries (using SQL views)
+    # Work detection queries (using SQL views - delegated to WorkQueryBuilder)
 
     def get_ready_work(self, limit: int | None = None) -> builtins.list[dict[str, Any]]:
         """Get files that are ready for processing.
@@ -1152,34 +1154,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
         Returns:
             List of work item dicts with path, status, priority, etc.
         """
-        try:
-            with self.SessionLocal() as session:
-                query = "SELECT * FROM ready_work_items"
-                if limit:
-                    query += f" LIMIT {limit}"
-
-                result = session.execute(text(query))
-                rows = result.fetchall()
-
-                return [
-                    {
-                        "path_id": row[0],
-                        "tenant_id": row[1],
-                        "virtual_path": row[2],
-                        "backend_id": row[3],
-                        "physical_path": row[4],
-                        "file_type": row[5],
-                        "size_bytes": row[6],
-                        "content_hash": row[7],
-                        "created_at": row[8],
-                        "updated_at": row[9],
-                        "status": json.loads(row[10]) if row[10] else None,
-                        "priority": json.loads(row[11]) if row[11] else None,
-                    }
-                    for row in rows
-                ]
-        except Exception as e:
-            raise MetadataError(f"Failed to get ready work: {e}") from e
+        with self.SessionLocal() as session:
+            return WorkQueryBuilder.get_ready_work(session, limit)
 
     def get_pending_work(self, limit: int | None = None) -> builtins.list[dict[str, Any]]:
         """Get files with status='pending' ordered by priority.
@@ -1192,34 +1168,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
         Returns:
             List of work item dicts
         """
-        try:
-            with self.SessionLocal() as session:
-                query = "SELECT * FROM pending_work_items"
-                if limit:
-                    query += f" LIMIT {limit}"
-
-                result = session.execute(text(query))
-                rows = result.fetchall()
-
-                return [
-                    {
-                        "path_id": row[0],
-                        "tenant_id": row[1],
-                        "virtual_path": row[2],
-                        "backend_id": row[3],
-                        "physical_path": row[4],
-                        "file_type": row[5],
-                        "size_bytes": row[6],
-                        "content_hash": row[7],
-                        "created_at": row[8],
-                        "updated_at": row[9],
-                        "status": json.loads(row[10]) if row[10] else None,
-                        "priority": json.loads(row[11]) if row[11] else None,
-                    }
-                    for row in rows
-                ]
-        except Exception as e:
-            raise MetadataError(f"Failed to get pending work: {e}") from e
+        with self.SessionLocal() as session:
+            return WorkQueryBuilder.get_pending_work(session, limit)
 
     def get_blocked_work(self, limit: int | None = None) -> builtins.list[dict[str, Any]]:
         """Get files that are blocked by dependencies.
@@ -1232,35 +1182,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
         Returns:
             List of work item dicts with blocker_count
         """
-        try:
-            with self.SessionLocal() as session:
-                query = "SELECT * FROM blocked_work_items"
-                if limit:
-                    query += f" LIMIT {limit}"
-
-                result = session.execute(text(query))
-                rows = result.fetchall()
-
-                return [
-                    {
-                        "path_id": row[0],
-                        "tenant_id": row[1],
-                        "virtual_path": row[2],
-                        "backend_id": row[3],
-                        "physical_path": row[4],
-                        "file_type": row[5],
-                        "size_bytes": row[6],
-                        "content_hash": row[7],
-                        "created_at": row[8],
-                        "updated_at": row[9],
-                        "status": json.loads(row[10]) if row[10] else None,
-                        "priority": json.loads(row[11]) if row[11] else None,
-                        "blocker_count": row[12],
-                    }
-                    for row in rows
-                ]
-        except Exception as e:
-            raise MetadataError(f"Failed to get blocked work: {e}") from e
+        with self.SessionLocal() as session:
+            return WorkQueryBuilder.get_blocked_work(session, limit)
 
     def get_in_progress_work(self, limit: int | None = None) -> builtins.list[dict[str, Any]]:
         """Get files currently being processed.
@@ -1273,33 +1196,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
         Returns:
             List of work item dicts with worker_id and started_at
         """
-        try:
-            with self.SessionLocal() as session:
-                query = "SELECT * FROM in_progress_work"
-                if limit:
-                    query += f" LIMIT {limit}"
-
-                result = session.execute(text(query))
-                rows = result.fetchall()
-
-                return [
-                    {
-                        "path_id": row[0],
-                        "tenant_id": row[1],
-                        "virtual_path": row[2],
-                        "backend_id": row[3],
-                        "file_type": row[4],
-                        "size_bytes": row[5],
-                        "created_at": row[6],
-                        "updated_at": row[7],
-                        "status": json.loads(row[8]) if row[8] else None,
-                        "worker_id": json.loads(row[9]) if row[9] else None,
-                        "started_at": json.loads(row[10]) if row[10] else None,
-                    }
-                    for row in rows
-                ]
-        except Exception as e:
-            raise MetadataError(f"Failed to get in-progress work: {e}") from e
+        with self.SessionLocal() as session:
+            return WorkQueryBuilder.get_in_progress_work(session, limit)
 
     def get_work_by_priority(self, limit: int | None = None) -> builtins.list[dict[str, Any]]:
         """Get all work items ordered by priority.
@@ -1312,35 +1210,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
         Returns:
             List of work item dicts
         """
-        try:
-            with self.SessionLocal() as session:
-                query = "SELECT * FROM work_by_priority"
-                if limit:
-                    query += f" LIMIT {limit}"
+        with self.SessionLocal() as session:
+            return WorkQueryBuilder.get_work_by_priority(session, limit)
 
-                result = session.execute(text(query))
-                rows = result.fetchall()
-
-                return [
-                    {
-                        "path_id": row[0],
-                        "tenant_id": row[1],
-                        "virtual_path": row[2],
-                        "backend_id": row[3],
-                        "file_type": row[4],
-                        "size_bytes": row[5],
-                        "created_at": row[6],
-                        "updated_at": row[7],
-                        "status": json.loads(row[8]) if row[8] else None,
-                        "priority": json.loads(row[9]) if row[9] else None,
-                        "tags": json.loads(row[10]) if row[10] else None,
-                    }
-                    for row in rows
-                ]
-        except Exception as e:
-            raise MetadataError(f"Failed to get work by priority: {e}") from e
-
-    # Version tracking methods (v0.3.5)
+    # Version tracking methods (v0.3.5 - delegated to VersionManager)
 
     def get_version(self, path: str, version: int) -> FileMetadata | None:
         """Get a specific version of a file.
@@ -1363,53 +1236,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
             ...     content_hash = metadata.etag
             ...     # Use content_hash to fetch from CAS
         """
-        try:
-            with self.SessionLocal() as session:
-                # Get the file's path_id
-                path_stmt = select(FilePathModel.path_id).where(
-                    FilePathModel.virtual_path == path,
-                    FilePathModel.deleted_at.is_(None),
-                )
-                path_id = session.scalar(path_stmt)
-
-                if not path_id:
-                    return None
-
-                # Get the version from history
-                version_stmt = select(VersionHistoryModel).where(
-                    VersionHistoryModel.resource_type == "file",
-                    VersionHistoryModel.resource_id == path_id,
-                    VersionHistoryModel.version_number == version,
-                )
-                version_entry = session.scalar(version_stmt)
-
-                if not version_entry:
-                    return None
-
-                # Build FileMetadata from version entry
-                # Note: We don't have backend info in version history, so use current file's backend
-                file_stmt = select(FilePathModel).where(FilePathModel.path_id == path_id)
-                file_path = session.scalar(file_stmt)
-
-                if not file_path:
-                    return None
-
-                return FileMetadata(
-                    path=file_path.virtual_path,
-                    backend_name=file_path.backend_id,
-                    physical_path=version_entry.content_hash,  # CAS: hash is the physical path
-                    size=version_entry.size_bytes,
-                    etag=version_entry.content_hash,
-                    mime_type=version_entry.mime_type,
-                    created_at=version_entry.created_at,
-                    modified_at=version_entry.created_at,
-                    version=version_entry.version_number,
-                    owner=file_path.owner,
-                    group=file_path.group,
-                    mode=file_path.mode,
-                )
-        except Exception as e:
-            raise MetadataError(f"Failed to get version {version}: {e}", path=path) from e
+        # Use path@version format for VersionManager
+        versioned_path = f"{path}@{version}"
+        with self.SessionLocal() as session:
+            return VersionManager.get_version(session, versioned_path)
 
     def list_versions(self, path: str) -> builtins.list[dict[str, Any]]:
         """List all versions of a file.
@@ -1427,47 +1257,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
             >>> for v in versions:
             ...     print(f"v{v['version']}: {v['size']} bytes, {v['created_at']}")
         """
-        try:
-            with self.SessionLocal() as session:
-                # Get the file's path_id
-                path_stmt = select(FilePathModel.path_id).where(
-                    FilePathModel.virtual_path == path,
-                    FilePathModel.deleted_at.is_(None),
-                )
-                path_id = session.scalar(path_stmt)
-
-                if not path_id:
-                    return []
-
-                # Get all versions
-                versions_stmt = (
-                    select(VersionHistoryModel)
-                    .where(
-                        VersionHistoryModel.resource_type == "file",
-                        VersionHistoryModel.resource_id == path_id,
-                    )
-                    .order_by(VersionHistoryModel.version_number.desc())
-                )
-
-                versions = []
-                for v in session.scalars(versions_stmt):
-                    versions.append(
-                        {
-                            "version": v.version_number,
-                            "content_hash": v.content_hash,
-                            "size": v.size_bytes,
-                            "mime_type": v.mime_type,
-                            "created_at": v.created_at,
-                            "created_by": v.created_by,
-                            "change_reason": v.change_reason,
-                            "source_type": v.source_type,
-                            "parent_version_id": v.parent_version_id,
-                        }
-                    )
-
-                return versions
-        except Exception as e:
-            raise MetadataError(f"Failed to list versions: {e}", path=path) from e
+        with self.SessionLocal() as session:
+            return VersionManager.list_versions(session, path)
 
     def rollback(self, path: str, version: int) -> None:
         """Rollback file to a previous version.
@@ -1483,72 +1274,13 @@ class SQLAlchemyMetadataStore(MetadataStore):
             >>> # Rollback to version 2
             >>> store.rollback("/workspace/data.txt", version=2)
         """
-        try:
-            with self.SessionLocal() as session:
-                # Get current file
-                file_stmt = select(FilePathModel).where(
-                    FilePathModel.virtual_path == path,
-                    FilePathModel.deleted_at.is_(None),
-                )
-                file_path = session.scalar(file_stmt)
+        with self.SessionLocal() as session:
+            VersionManager.rollback(session, path, version)
+            session.commit()
 
-                if not file_path:
-                    raise MetadataError(f"File not found: {path}", path=path)
-
-                # Get target version
-                version_stmt = select(VersionHistoryModel).where(
-                    VersionHistoryModel.resource_type == "file",
-                    VersionHistoryModel.resource_id == file_path.path_id,
-                    VersionHistoryModel.version_number == version,
-                )
-                target_version = session.scalar(version_stmt)
-
-                if not target_version:
-                    raise MetadataError(f"Version {version} not found for {path}", path=path)
-
-                # Get current version entry for lineage
-                current_version_stmt = select(VersionHistoryModel).where(
-                    VersionHistoryModel.resource_type == "file",
-                    VersionHistoryModel.resource_id == file_path.path_id,
-                    VersionHistoryModel.version_number == file_path.current_version,
-                )
-                current_version_entry = session.scalar(current_version_stmt)
-
-                # Update file to target version's content
-                file_path.content_hash = target_version.content_hash
-                file_path.size_bytes = target_version.size_bytes
-                file_path.file_type = target_version.mime_type
-                file_path.updated_at = datetime.now(UTC)
-                file_path.current_version += 1  # Increment to new version
-
-                # Create version history entry for the NEW version (rollback)
-                rollback_version_entry = VersionHistoryModel(
-                    version_id=str(uuid.uuid4()),
-                    resource_type="file",
-                    resource_id=file_path.path_id,
-                    version_number=file_path.current_version,  # NEW version number
-                    content_hash=target_version.content_hash,  # Points to old content
-                    size_bytes=target_version.size_bytes,
-                    mime_type=target_version.mime_type,
-                    parent_version_id=current_version_entry.version_id
-                    if current_version_entry
-                    else None,
-                    source_type="rollback",
-                    change_reason=f"Rollback to version {version}",
-                    created_at=datetime.now(UTC),
-                )
-                rollback_version_entry.validate()
-                session.add(rollback_version_entry)
-
-                session.commit()
-
-            # Invalidate cache
-            if self._cache_enabled and self._cache:
-                self._cache.invalidate_path(path)
-        except MetadataError:
-            raise
-        except Exception as e:
-            raise MetadataError(f"Failed to rollback to version {version}: {e}", path=path) from e
+        # Invalidate cache
+        if self._cache_enabled and self._cache:
+            self._cache.invalidate_path(path)
 
     def get_version_diff(self, path: str, v1: int, v2: int) -> dict[str, Any]:
         """Get diff information between two versions.
@@ -1569,54 +1301,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
             >>> print(f"Size changed: {diff['size_v1']} -> {diff['size_v2']}")
             >>> print(f"Content changed: {diff['content_changed']}")
         """
-        try:
-            with self.SessionLocal() as session:
-                # Get path_id
-                path_stmt = select(FilePathModel.path_id).where(
-                    FilePathModel.virtual_path == path,
-                    FilePathModel.deleted_at.is_(None),
-                )
-                path_id = session.scalar(path_stmt)
-
-                if not path_id:
-                    raise MetadataError(f"File not found: {path}", path=path)
-
-                # Get both versions
-                versions_stmt = select(VersionHistoryModel).where(
-                    VersionHistoryModel.resource_type == "file",
-                    VersionHistoryModel.resource_id == path_id,
-                    VersionHistoryModel.version_number.in_([v1, v2]),
-                )
-
-                versions_dict = {v.version_number: v for v in session.scalars(versions_stmt)}
-
-                if v1 not in versions_dict:
-                    raise MetadataError(f"Version {v1} not found", path=path)
-                if v2 not in versions_dict:
-                    raise MetadataError(f"Version {v2} not found", path=path)
-
-                version1 = versions_dict[v1]
-                version2 = versions_dict[v2]
-
-                return {
-                    "path": path,
-                    "v1": v1,
-                    "v2": v2,
-                    "content_hash_v1": version1.content_hash,
-                    "content_hash_v2": version2.content_hash,
-                    "content_changed": version1.content_hash != version2.content_hash,
-                    "size_v1": version1.size_bytes,
-                    "size_v2": version2.size_bytes,
-                    "size_delta": version2.size_bytes - version1.size_bytes,
-                    "created_at_v1": version1.created_at,
-                    "created_at_v2": version2.created_at,
-                    "mime_type_v1": version1.mime_type,
-                    "mime_type_v2": version2.mime_type,
-                }
-        except MetadataError:
-            raise
-        except Exception as e:
-            raise MetadataError(f"Failed to diff versions: {e}", path=path) from e
+        with self.SessionLocal() as session:
+            return VersionManager.get_version_diff(session, path, v1, v2)
 
     def __enter__(self) -> SQLAlchemyMetadataStore:
         """Context manager entry."""

@@ -632,10 +632,8 @@ class NexusFS(NexusFilesystem):
         """
         path = self._validate_path(path)
 
-        # Check write permission for delete (v0.3.0)
-        self._check_permission(path, Permission.WRITE, context)
-
-        # Route to backend with write access check (delete requires write permission)
+        # Route to backend with write access check FIRST (to check tenant/agent isolation)
+        # This must happen before permission check so AccessDeniedError is raised before PermissionError
         route = self.router.route(
             path,
             tenant_id=self.tenant_id,
@@ -652,6 +650,10 @@ class NexusFS(NexusFilesystem):
         meta = self.metadata.get(path)
         if meta is None:
             raise NexusFileNotFoundError(path)
+
+        # Check write permission for delete (v0.3.0)
+        # This comes AFTER tenant isolation check so AccessDeniedError takes precedence
+        self._check_permission(path, Permission.WRITE, context)
 
         # Delete from routed backend CAS (decrements ref count)
         if meta.etag:

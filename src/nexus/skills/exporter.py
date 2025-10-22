@@ -318,7 +318,7 @@ class SkillExporter:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Open zip file
-        if isinstance(zip_path, (str, Path)):
+        if isinstance(zip_path, str | Path):
             zip_file = zipfile.ZipFile(zip_path, "r")
         else:
             zip_file = zipfile.ZipFile(zip_path, "r")

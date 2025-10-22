@@ -330,7 +330,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             # Convert to serializable format (handle dataclass objects)
             serializable_files = []
             for file in files:
-                if isinstance(file, (dict, str)):
+                if isinstance(file, dict | str):
                     serializable_files.append(file)
                 else:
                     # Convert dataclass/object to dict

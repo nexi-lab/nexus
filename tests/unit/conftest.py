@@ -48,24 +48,18 @@ def mock_fuse_module():
 
 
 @pytest.fixture(autouse=True)
-def windows_db_cleanup(request):
+def windows_db_cleanup():
     """Cleanup fixture for Windows database tests.
 
     Automatically runs after each test on Windows to release database connections.
-    Only applies delay to tests that use fixtures indicating database/filesystem usage.
+    Minimal overhead approach - just GC, no delay since close() should handle everything.
     """
     import gc
 
     yield
 
-    # Only add delay on Windows for tests that might use databases
+    # Only do GC on Windows to ensure connections are released
     if platform.system() == "Windows":
-        # Check if test uses any fixture that suggests database usage
-        fixture_names = request.fixturenames
-        needs_cleanup = any(
-            name in ("tmp_path", "temp_dir", "embedded", "tmp_dir") for name in fixture_names
-        )
-
-        if needs_cleanup:
-            gc.collect()
-            time.sleep(0.05)  # 50ms delay for Windows file handle release
+        # Force garbage collection to release any lingering database connections
+        # With proper close() calls in NexusFS, this should be enough
+        gc.collect()

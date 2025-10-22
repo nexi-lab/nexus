@@ -492,6 +492,96 @@ nexus work status --json
 
 **Note**: Work items are files with special metadata (status, priority, depends_on, worker_id). See `docs/SQL_VIEWS_FOR_WORK_DETECTION.md` for details on setting up work queues.
 
+#### Version Tracking & History (v0.3.5)
+
+Nexus provides CAS-backed version tracking for all files and skills. Every write operation automatically preserves the previous version with zero storage overhead through content deduplication.
+
+```bash
+# View version history for a file
+nexus versions history /workspace/document.txt
+# Output:
+# ┌─────────┬────────┬─────────────────────┬────────────┬──────────┬───────────────┐
+# │ Version │ Size   │ Created At          │ Created By │ Source   │ Change Reason │
+# ├─────────┼────────┼─────────────────────┼────────────┼──────────┼───────────────┤
+# │ 3       │ 1.2 KB │ 2025-01-20 14:30:00 │ alice      │ original │ -             │
+# │ 2       │ 1.0 KB │ 2025-01-20 10:15:00 │ alice      │ original │ -             │
+# │ 1       │ 0.8 KB │ 2025-01-19 09:00:00 │ alice      │ original │ -             │
+# └─────────┴────────┴─────────────────────┴────────────┴──────────┴───────────────┘
+
+# Retrieve specific version content
+nexus versions get /workspace/document.txt --version 1
+# Output: <content of version 1>
+
+# Save to file
+nexus versions get /workspace/document.txt --version 2 -o old_version.txt
+# ✓ Wrote version 2 to: old_version.txt
+
+# Compare two versions (metadata)
+nexus versions diff /workspace/document.txt --v1 1 --v2 3 --mode metadata
+# Output:
+# Size: 819 bytes → 1,234 bytes
+# Content changed: True
+# Hash v1: abc123...
+# Hash v3: def456...
+
+# Compare two versions (content)
+nexus versions diff /workspace/document.txt --v1 1 --v2 3
+# Output (unified diff format):
+# --- /workspace/document.txt (v1)
+# +++ /workspace/document.txt (v3)
+# @@ -1,3 +1,5 @@
+#  First line
+# -Second line
+# +Second line modified
+# +Third line added
+#  Last line
+
+# Rollback to previous version
+nexus versions rollback /workspace/document.txt --version 2
+# ✓ Rolled back /workspace/document.txt to version 2
+# New version: 4 (rollback creates new version, no data loss!)
+
+# Skip confirmation
+nexus versions rollback /workspace/document.txt --version 1 --yes
+```
+
+**Version Tracking Features:**
+- **Automatic Version Creation**: Every write operation preserves the previous version
+- **Zero Storage Overhead**: CAS deduplication means identical content is stored only once
+- **Complete History**: Never lose data - every version is preserved forever
+- **Rollback Support**: Revert to any previous version (creates new version, no destructive changes)
+- **Content Diff**: Compare versions with unified diff output
+- **Skills Versioning**: Track changes to SKILL.md files over time
+- **Time Travel**: Retrieve exact state from any point in time
+
+**Python SDK:**
+```python
+import nexus
+
+nx = nexus.connect()
+
+# Version history is automatic on every write
+nx.write("/workspace/doc.txt", b"Version 1")
+nx.write("/workspace/doc.txt", b"Version 2")
+nx.write("/workspace/doc.txt", b"Version 3")
+
+# List all versions
+versions = nx.list_versions("/workspace/doc.txt")
+print(f"Total versions: {len(versions)}")  # 3
+
+# Get specific version
+v1_content = nx.get_version("/workspace/doc.txt", version=1)
+print(f"V1: {v1_content}")  # b"Version 1"
+
+# Compare versions
+diff = nx.diff_versions("/workspace/doc.txt", v1=1, v2=3, mode="content")
+print(diff)  # Unified diff output
+
+# Rollback to v2
+nx.rollback("/workspace/doc.txt", version=2)
+# Current version is now 4, pointing to v2's content
+```
+
 ### Examples
 
 **Initialize and populate a workspace:**
@@ -2186,7 +2276,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [x] **Skill search** - Text-based search across skill descriptions with relevance scoring
 - [x] **Skill governance** - Approval workflow for org-wide skills (submit, approve, reject)
 - [x] **Audit trails** - Log all skill operations, compliance reporting, query by filters
-- [ ] **Skill versioning** - CAS-backed version control with history tracking
+- [x] **Skill versioning** - CAS-backed version control with history tracking
 - [x] **CLI commands** - `list`, `create`, `fork`, `publish`, `search`, `info`, `export`, `validate`, `size` (see issue #88)
 
 **Note**: External integrations (Claude API upload/download, OpenAI, etc.) will be implemented as **plugins** in v0.3.5+ to maintain vendor neutrality. Core Nexus provides generic skill export (`nexus skills export --format claude`), while `nexus-plugin-anthropic` handles API-specific operations.

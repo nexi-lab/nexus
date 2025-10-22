@@ -164,39 +164,37 @@ def main() -> None:
         print("=" * 70)
 
         print("\n12. Testing directory operations...")
-        # In single-tenant mode, agent can only access their own workspace
-        # Path format: /workspace/{agent_id}/{path}
+        # Use simple paths without workspace prefix to avoid routing conflicts
         nx3 = nexus.connect(config={"data_dir": str(data_dir), "agent_id": "agent1"})
 
-        # Create directory structure within agent1's workspace
+        # Create directory structure
         print("\n   Creating directory structure...")
-        nx3.mkdir("/workspace/agent1", parents=True, exist_ok=True)
-        nx3.mkdir("/workspace/agent1/data", parents=True, exist_ok=True)
-        nx3.mkdir("/workspace/agent1/models", parents=True, exist_ok=True)
-        print("   ✓ Created: /workspace/agent1/data")
-        print("   ✓ Created: /workspace/agent1/models")
+        nx3.mkdir("/projects/data", parents=True, exist_ok=True)
+        nx3.mkdir("/projects/models", parents=True, exist_ok=True)
+        print("   ✓ Created: /projects/data")
+        print("   ✓ Created: /projects/models")
 
         # Check if directories exist
         print("\n13. Checking directory existence...")
-        is_dir1 = nx3.is_directory("/workspace/agent1")
-        is_dir2 = nx3.is_directory("/workspace/agent1/data")
+        is_dir1 = nx3.is_directory("/projects")
+        is_dir2 = nx3.is_directory("/projects/data")
         is_dir3 = nx3.is_directory("/documents")  # Should be True (from earlier)
-        print(f"   /workspace/agent1 is directory: {is_dir1}")
-        print(f"   /workspace/agent1/data is directory: {is_dir2}")
+        print(f"   /projects is directory: {is_dir1}")
+        print(f"   /projects/data is directory: {is_dir2}")
         print(f"   /documents is directory: {is_dir3}")
 
         # Write files into created directories
         print("\n14. Writing files into directory structure...")
-        nx3.write("/workspace/agent1/data/file1.txt", b"Agent 1 data file")
-        nx3.write("/workspace/agent1/data/file2.txt", b"Another file")
-        nx3.write("/workspace/agent1/models/model.pkl", b"model data")
-        print("   ✓ Wrote files to /workspace/agent1/data/")
-        print("   ✓ Wrote files to /workspace/agent1/models/")
+        nx3.write("/projects/data/file1.txt", b"Agent 1 data file")
+        nx3.write("/projects/data/file2.txt", b"Another file")
+        nx3.write("/projects/models/model.pkl", b"model data")
+        print("   ✓ Wrote files to /projects/data/")
+        print("   ✓ Wrote files to /projects/models/")
 
         # Create nested directories with parents=True
         print("\n15. Creating deeply nested directories...")
-        nx3.mkdir("/projects/ml/experiments/run1", parents=True, exist_ok=True)
-        nx3.write("/projects/ml/experiments/run1/results.json", b'{"accuracy": 0.95}')
+        nx3.mkdir("/ml/experiments/run1", parents=True, exist_ok=True)
+        nx3.write("/ml/experiments/run1/results.json", b'{"accuracy": 0.95}')
         print("   ✓ Created: /projects/ml/experiments/run1 (with parents)")
         print("   ✓ Wrote: /projects/ml/experiments/run1/results.json")
 
@@ -213,26 +211,26 @@ def main() -> None:
         # Test path routing
         print("\n17. Demonstrating path routing...")
         print("   Router maps virtual paths to physical backend paths")
-        print("   Virtual: /workspace/agent1/data/file1.txt")
-        print("   → Backend: workspace/agent1/data/file1.txt")
-        print("   → Physical: {data_dir}/files/workspace/agent1/data/file1.txt")
+        print("   Virtual: /projects/data/file1.txt")
+        print("   → Backend: projects/data/file1.txt")
+        print("   → Physical: {data_dir}/files/<content_hash>")
 
         # Remove a directory (will fail - not empty)
         print("\n18. Testing rmdir (should fail - not empty)...")
         try:
-            nx3.rmdir("/workspace/agent1/data", recursive=False)
+            nx3.rmdir("/projects/data", recursive=False)
             print("   ✗ Should have failed!")
         except OSError as e:
             print(f"   ✓ Correctly failed: {e}")
 
         # Remove directory recursively
         print("\n19. Removing directory recursively...")
-        nx3.rmdir("/workspace/agent1/models", recursive=True)
-        print("   ✓ Removed /workspace/agent1/models (recursive)")
+        nx3.rmdir("/projects/models", recursive=True)
+        print("   ✓ Removed /projects/models (recursive)")
 
         # Verify removal
-        remaining_files = [f for f in nx3.list() if f.startswith("/workspace")]
-        print(f"   Remaining workspace files: {len(remaining_files)}")
+        remaining_files = [f for f in nx3.list() if f.startswith("/projects")]
+        print(f"   Remaining project files: {len(remaining_files)}")
         for f in sorted(remaining_files):
             print(f"   - {f}")
 
@@ -2822,6 +2820,110 @@ This document was compressed with gzip before upload.
 
         nx_enforce.close()
         print("\n   ✓ Permission enforcement works across all layers!")
+
+        # ============================================================
+        # Part 64: Version Tracking & History (v0.3.5)
+        # ============================================================
+        print("\n" + "=" * 70)
+        print("PART 64: Version Tracking & History (CAS-Backed)")
+        print("=" * 70)
+
+        print("\n67. Testing automatic version tracking on writes...")
+        nx_version = nexus.connect(config={"data_dir": str(data_dir), "agent_id": "vtest"})
+
+        # Create a file and modify it multiple times
+        print("\n   Creating file and making multiple edits...")
+        nx_version.write("/docs/document.txt", b"Version 1: Initial draft")
+        print("   ✓ Wrote v1: Initial draft")
+
+        nx_version.write("/docs/document.txt", b"Version 2: Added introduction")
+        print("   ✓ Wrote v2: Added introduction")
+
+        nx_version.write("/docs/document.txt", b"Version 3: Added conclusion")
+        print("   ✓ Wrote v3: Added conclusion")
+
+        nx_version.write("/docs/document.txt", b"Version 4: Final version")
+        print("   ✓ Wrote v4: Final version")
+
+        print("\n68. Listing version history...")
+        versions = nx_version.list_versions("/docs/document.txt")
+        print(f"   Total versions: {len(versions)}")
+        for v in versions:
+            print(f"   - v{v['version']}: {v['size']} bytes, created {v['created_at']}")
+
+        print("\n69. Retrieving specific version content...")
+        v1_content = nx_version.get_version("/docs/document.txt", version=1)
+        v2_content = nx_version.get_version("/docs/document.txt", version=2)
+        print(f"   v1 content: {v1_content.decode()}")
+        print(f"   v2 content: {v2_content.decode()}")
+
+        print("\n70. Comparing versions (metadata diff)...")
+        diff_meta = nx_version.diff_versions("/docs/document.txt", v1=1, v2=4, mode="metadata")
+        print(f"   Size change: {diff_meta['size_v1']} → {diff_meta['size_v2']} bytes")
+        print(f"   Hash changed: {diff_meta['content_changed']}")
+        print(f"   v1 hash: {diff_meta['content_hash_v1']}")
+        print(f"   v4 hash: {diff_meta['content_hash_v2']}")
+
+        print("\n71. Comparing versions (content diff)...")
+        diff_content = nx_version.diff_versions("/docs/document.txt", v1=1, v2=2, mode="content")
+        print("   Unified diff:")
+        print("   " + "\n   ".join(diff_content.split("\n")[:10]))  # First 10 lines
+
+        print("\n72. Testing rollback to previous version...")
+        current_content = nx_version.read("/docs/document.txt")
+        print(f"   Current (v4): {current_content.decode()}")
+
+        # Rollback to v2
+        nx_version.rollback("/docs/document.txt", version=2)
+        rollback_content = nx_version.read("/docs/document.txt")
+        print(f"\n   After rollback to v2: {rollback_content.decode()}")
+
+        # Check that rollback created a new version
+        versions_after = nx_version.list_versions("/docs/document.txt")
+        print(f"\n   Version count after rollback: {len(versions_after)}")
+        print("   ✓ Rollback creates new version pointing to old content (no data loss!)")
+
+        print("\n73. Testing version tracking with Skills...")
+        # Create a skill and update it
+        skill_path = "/skills/my-skill/SKILL.md"
+        nx_version.write(
+            skill_path,
+            b"---\nname: my-skill\nversion: 1.0.0\n---\n# My Skill\nInitial version",
+        )
+        print("   ✓ Created skill v1")
+
+        nx_version.write(
+            skill_path,
+            b"---\nname: my-skill\nversion: 1.1.0\n---\n# My Skill\nAdded feature A",
+        )
+        print("   ✓ Updated skill to v1.1.0")
+
+        nx_version.write(
+            skill_path,
+            b"---\nname: my-skill\nversion: 2.0.0\n---\n# My Skill\nMajor refactoring",
+        )
+        print("   ✓ Updated skill to v2.0.0")
+
+        # List skill versions
+        skill_versions = nx_version.list_versions(skill_path)
+        print(f"\n   Skill version history: {len(skill_versions)} versions")
+        for sv in skill_versions:
+            print(f"   - v{sv['version']}: {sv['size']} bytes")
+
+        # Compare skill versions
+        skill_diff = nx_version.diff_versions(skill_path, v1=1, v2=3, mode="content")
+        print("\n   Diff between v1 and v3 (first 5 lines):")
+        print("   " + "\n   ".join(skill_diff.split("\n")[:5]))
+
+        print("\n74. Testing CAS deduplication with versions...")
+        # Write the same content again (should reuse existing hash)
+        nx_version.write("/docs/duplicate.txt", b"Version 2: Added introduction")
+        print("   ✓ Wrote duplicate.txt with same content as document.txt v2")
+        print("   → CAS automatically deduplicates content (zero storage overhead!)")
+
+        nx_version.close()
+        print("\n   ✓ Version tracking works for files and skills!")
+        print("   ✓ Complete history preserved with CAS deduplication")
 
         print("\n✓ Integrated demo completed successfully!")
         print("=" * 70)

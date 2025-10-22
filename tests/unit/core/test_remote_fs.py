@@ -181,7 +181,11 @@ class TestWriteAndRead:
         assert meta.physical_path == content_hash
 
     def test_write_overwrites_existing(self, remote_fs: NexusFS) -> None:
-        """Test that writing overwrites existing file."""
+        """Test that writing overwrites existing file.
+
+        With version tracking (v0.3.5), old content is preserved
+        for accessing previous versions, not deleted.
+        """
         path = "/test.txt"
         content1 = b"Version 1"
         content2 = b"Version 2"
@@ -195,18 +199,21 @@ class TestWriteAndRead:
         meta1 = remote_fs.metadata.get(path)
         assert meta1 is not None
         assert meta1.etag == hash1
+        assert meta1.version == 1
 
         # Write second version
         remote_fs.backend.write_content.return_value = hash2
         remote_fs.write(path, content2)
 
-        # Should have called delete_content on old hash
-        remote_fs.backend.delete_content.assert_called_once_with(hash1)
+        # With version tracking (v0.3.5), old content is NOT deleted
+        # because it's needed for accessing previous versions
+        remote_fs.backend.delete_content.assert_not_called()
 
         meta2 = remote_fs.metadata.get(path)
         assert meta2 is not None
         assert meta2.etag == hash2
         assert meta2.size == len(content2)
+        assert meta2.version == 2  # Version incremented
 
     def test_read_nonexistent_file(self, remote_fs: NexusFS) -> None:
         """Test reading a nonexistent file."""

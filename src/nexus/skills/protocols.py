@@ -309,6 +309,85 @@ class NexusFilesystem(Protocol):
         ...
 
     # ============================================================
+    # Version Tracking Operations (v0.3.5)
+    # ============================================================
+
+    def get_version(self, path: str, version: int) -> bytes:
+        """Get a specific version of a file.
+
+        Retrieves the content for a specific version from CAS using the
+        version's content hash.
+
+        Args:
+            path: Virtual file path
+            version: Version number to retrieve
+
+        Returns:
+            File content as bytes for the specified version
+
+        Raises:
+            NexusFileNotFoundError: If file or version doesn't exist
+            InvalidPathError: If path is invalid
+        """
+        ...
+
+    def list_versions(self, path: str) -> builtins.list[dict[str, Any]]:
+        """List all versions of a file.
+
+        Returns version history with metadata for each version.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            List of version info dicts ordered by version number (newest first)
+
+        Raises:
+            InvalidPathError: If path is invalid
+        """
+        ...
+
+    def rollback(self, path: str, version: int, context: Any = None) -> None:
+        """Rollback file to a previous version.
+
+        Updates the file to point to an older version's content from CAS.
+        Creates a new version entry marking this as a rollback.
+
+        Args:
+            path: Virtual file path
+            version: Version number to rollback to
+            context: Optional operation context for permission checks
+
+        Raises:
+            NexusFileNotFoundError: If file or version doesn't exist
+            InvalidPathError: If path is invalid
+            PermissionError: If user doesn't have write permission
+        """
+        ...
+
+    def diff_versions(
+        self, path: str, v1: int, v2: int, mode: str = "metadata"
+    ) -> dict[str, Any] | str:
+        """Compare two versions of a file.
+
+        Args:
+            path: Virtual file path
+            v1: First version number
+            v2: Second version number
+            mode: Diff mode - "metadata" (default) or "content"
+
+        Returns:
+            For "metadata" mode: Dict with metadata differences
+            For "content" mode: Unified diff string
+
+        Raises:
+            NexusFileNotFoundError: If file or version doesn't exist
+            InvalidPathError: If path is invalid
+            ValueError: If mode is invalid
+        """
+        ...
+
+    # ============================================================
     # Lifecycle Management
     # ============================================================
 

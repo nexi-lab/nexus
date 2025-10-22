@@ -23,6 +23,7 @@ def embedded(temp_dir: Path) -> Generator[NexusFS, None, None]:
     nx = NexusFS(backend=LocalBackend(temp_dir), db_path=temp_dir / "metadata.db", auto_parse=False)
     yield nx
     nx.close()
+    # Note: Windows cleanup delay is handled by windows_cleanup_delay fixture in conftest.py
 
 
 def test_init_creates_directories(temp_dir: Path) -> None:
@@ -73,10 +74,10 @@ def test_write_creates_metadata(embedded: NexusFS) -> None:
 
 
 def test_write_updates_version(embedded: NexusFS) -> None:
-    """Test that rewriting a file updates metadata.
+    """Test that rewriting a file updates version number.
 
-    Note: Version tracking not implemented in v0.1.0 simplified schema.
-    Version will always be 1 until v0.2.0.
+    Version tracking implemented in v0.3.5.
+    Each write operation increments the version number.
     """
     path = "/test.txt"
 
@@ -86,20 +87,19 @@ def test_write_updates_version(embedded: NexusFS) -> None:
     assert meta1 is not None
     assert meta1.version == 1
 
-    # Rewrite file
+    # Rewrite file - version should increment
     embedded.write(path, b"Version 2")
     meta2 = embedded.metadata.get(path)
     assert meta2 is not None
-    # Version tracking will be added in v0.2.0
-    assert meta2.version == 1  # Changed from 2 for v0.1.0
+    assert meta2.version == 2  # Version tracking enabled in v0.3.5
     # But modified_at should be updated
     assert meta2.modified_at > meta1.modified_at
 
-    # Rewrite again
+    # Rewrite again - version should increment again
     embedded.write(path, b"Version 3")
     meta3 = embedded.metadata.get(path)
     assert meta3 is not None
-    assert meta3.version == 1  # Changed from 3 for v0.1.0
+    assert meta3.version == 3  # Version tracking enabled in v0.3.5
     assert meta3.modified_at > meta2.modified_at
 
 

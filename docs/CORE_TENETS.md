@@ -2,8 +2,6 @@
 
 This document defines the foundational principles that guide all design decisions in Nexus. When evaluating features, resolving tradeoffs, or reviewing contributions, these tenets serve as our north star.
 
-**Inspired by:** [jj-vcs core tenets](https://github.com/jj-vcs/jj/blob/main/docs/core_tenets.md), which showed us the value of explicit design principles.
-
 ---
 
 ## Table of Contents

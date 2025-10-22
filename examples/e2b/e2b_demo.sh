@@ -59,7 +59,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Build mount command
-MOUNT_CMD="nexus mount $MOUNT_PATH --remote $NEXUS_URL --daemon"
+MOUNT_CMD="sudo nexus mount $MOUNT_PATH --remote $NEXUS_URL --daemon --allow-other"
 if [ -n "$NEXUS_API_KEY" ]; then
     MOUNT_CMD="$MOUNT_CMD --api-key $NEXUS_API_KEY"
 fi

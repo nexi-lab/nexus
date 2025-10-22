@@ -172,7 +172,7 @@ class NexusFS(NexusFilesystem):
         acl_store = ACLStore(metadata_store=self.metadata)
 
         # Initialize ReBACManager with same database as metadata store
-        rebac_manager = ReBACManager(
+        self._rebac_manager = ReBACManager(
             db_path=str(self.metadata.db_path),
             cache_ttl_seconds=cache_ttl_seconds or 300,
             max_depth=10,
@@ -182,7 +182,7 @@ class NexusFS(NexusFilesystem):
         self._permission_enforcer = PermissionEnforcer(
             metadata_store=self.metadata,
             acl_store=acl_store,
-            rebac_manager=rebac_manager,
+            rebac_manager=self._rebac_manager,
         )
 
         # Permission enforcement is opt-in for backward compatibility
@@ -2134,3 +2134,7 @@ class NexusFS(NexusFilesystem):
 
         # Close metadata store after all parsers have finished
         self.metadata.close()
+
+        # Close ReBACManager to release database connection
+        if hasattr(self, "_rebac_manager"):
+            self._rebac_manager.close()

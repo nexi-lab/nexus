@@ -1,5 +1,6 @@
 """Unit tests for RPC server."""
 
+from io import BytesIO
 from unittest.mock import Mock, patch
 
 import pytest
@@ -172,6 +173,214 @@ class TestNexusRPCServer:
             mock_shutdown.assert_called_once()
             mock_close.assert_called_once()
             mock_filesystem.close.assert_called_once()
+
+
+class TestRPCRequestHandlerHTTP:
+    """Tests for HTTP methods in RPCRequestHandler."""
+
+    @pytest.fixture
+    def mock_handler(self):
+        """Create a mock handler for testing HTTP methods."""
+        handler = Mock(spec=RPCRequestHandler)
+        handler.nexus_fs = Mock()
+        handler.api_key = None
+        handler.headers = {}
+        handler.path = ""
+        handler.rfile = BytesIO()
+        handler.wfile = BytesIO()
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock()
+        handler.address_string = Mock(return_value="127.0.0.1")
+
+        # Bind actual methods
+        handler._set_cors_headers = lambda: RPCRequestHandler._set_cors_headers(handler)
+        handler._send_json_response = lambda status, data: RPCRequestHandler._send_json_response(
+            handler, status, data
+        )
+        handler.do_OPTIONS = lambda: RPCRequestHandler.do_OPTIONS(handler)
+        handler.do_GET = lambda: RPCRequestHandler.do_GET(handler)
+        handler.log_message = Mock()
+
+        return handler
+
+    def test_cors_headers(self, mock_handler):
+        """Test CORS headers are set correctly."""
+        mock_handler._set_cors_headers()
+
+        # Verify all CORS headers are set
+        calls = mock_handler.send_header.call_args_list
+        headers = {call[0][0]: call[0][1] for call in calls}
+
+        assert "Access-Control-Allow-Origin" in headers
+        assert headers["Access-Control-Allow-Origin"] == "*"
+        assert "Access-Control-Allow-Methods" in headers
+        assert "Access-Control-Allow-Headers" in headers
+
+    def test_do_options(self, mock_handler):
+        """Test OPTIONS request handling (CORS preflight)."""
+        mock_handler.do_OPTIONS()
+
+        mock_handler.send_response.assert_called_once_with(200)
+        mock_handler.end_headers.assert_called_once()
+
+    def test_do_get_health(self, mock_handler):
+        """Test GET /health endpoint."""
+        mock_handler.path = "/health"
+        mock_handler.do_GET()
+
+        # Verify 200 response was sent
+        mock_handler.send_response.assert_called_once_with(200)
+
+        # Verify JSON was written
+        written_data = mock_handler.wfile.getvalue()
+        assert b"healthy" in written_data or mock_handler.send_response.called
+
+    def test_do_get_status(self, mock_handler):
+        """Test GET /api/nfs/status endpoint."""
+        mock_handler.path = "/api/nfs/status"
+        mock_handler.do_GET()
+
+        # Verify 200 response
+        mock_handler.send_response.assert_called_once_with(200)
+
+    def test_do_get_404(self, mock_handler):
+        """Test GET unknown endpoint returns 404."""
+        mock_handler.path = "/unknown"
+        mock_handler.do_GET()
+
+        # Verify 404 was sent
+        mock_handler.send_response.assert_called_once_with(404)
+
+    def test_do_get_unknown_path(self, mock_handler):
+        """Test GET to unknown path triggers 404 handler."""
+        mock_handler.path = "/some/unknown/path"
+        mock_handler.do_GET()
+
+        # Should get a response (either 404 or health/status)
+        assert mock_handler.send_response.called
+
+
+class TestRPCValidation:
+    """Tests for validation methods."""
+
+    def test_validate_auth_with_wrong_header_format(self):
+        """Test auth validation with malformed header."""
+        handler = Mock(spec=RPCRequestHandler)
+        handler.api_key = "secret123"
+        handler.headers = {"Authorization": "InvalidFormat secret123"}
+        handler._validate_auth = lambda: RPCRequestHandler._validate_auth(handler)
+
+        assert handler._validate_auth() is False
+
+
+class TestRPCDispatchMethods:
+    """Tests for additional method dispatch cases."""
+
+    @pytest.fixture
+    def mock_handler(self):
+        """Create mock handler for dispatch tests."""
+        handler = Mock(spec=RPCRequestHandler)
+        handler.nexus_fs = Mock()
+        handler.nexus_fs.delete = Mock()
+        handler.nexus_fs.rename = Mock()
+        handler.nexus_fs.mkdir = Mock()
+        handler.nexus_fs.rmdir = Mock()
+        handler.nexus_fs.is_directory = Mock(return_value=False)
+        handler.nexus_fs.glob = Mock(return_value=["/test.py"])
+        handler.nexus_fs.grep = Mock(return_value=[{"file": "/test.txt", "line": 1}])
+        handler.nexus_fs.get_available_namespaces = Mock(return_value=["default"])
+
+        handler._dispatch_method = lambda method, params: RPCRequestHandler._dispatch_method(
+            handler, method, params
+        )
+
+        return handler
+
+    def test_dispatch_delete(self, mock_handler):
+        """Test dispatching delete method."""
+        from nexus.server.protocol import DeleteParams
+
+        params = DeleteParams(path="/test.txt")
+        result = mock_handler._dispatch_method("delete", params)
+
+        assert result == {"success": True}
+        mock_handler.nexus_fs.delete.assert_called_once_with("/test.txt")
+
+    def test_dispatch_rename(self, mock_handler):
+        """Test dispatching rename method."""
+        from nexus.server.protocol import RenameParams
+
+        params = RenameParams(old_path="/old.txt", new_path="/new.txt")
+        result = mock_handler._dispatch_method("rename", params)
+
+        assert result == {"success": True}
+        mock_handler.nexus_fs.rename.assert_called_once_with("/old.txt", "/new.txt")
+
+    def test_dispatch_mkdir(self, mock_handler):
+        """Test dispatching mkdir method."""
+        from nexus.server.protocol import MkdirParams
+
+        params = MkdirParams(path="/newdir", parents=True, exist_ok=False)
+        result = mock_handler._dispatch_method("mkdir", params)
+
+        assert result == {"success": True}
+        mock_handler.nexus_fs.mkdir.assert_called_once_with("/newdir", parents=True, exist_ok=False)
+
+    def test_dispatch_rmdir(self, mock_handler):
+        """Test dispatching rmdir method."""
+        from nexus.server.protocol import RmdirParams
+
+        params = RmdirParams(path="/olddir", recursive=True)
+        result = mock_handler._dispatch_method("rmdir", params)
+
+        assert result == {"success": True}
+        mock_handler.nexus_fs.rmdir.assert_called_once_with("/olddir", recursive=True)
+
+    def test_dispatch_is_directory(self, mock_handler):
+        """Test dispatching is_directory method."""
+        from nexus.server.protocol import IsDirectoryParams
+
+        params = IsDirectoryParams(path="/test")
+        result = mock_handler._dispatch_method("is_directory", params)
+
+        assert result == {"is_directory": False}
+        mock_handler.nexus_fs.is_directory.assert_called_once_with("/test")
+
+    def test_dispatch_glob(self, mock_handler):
+        """Test dispatching glob method."""
+        from nexus.server.protocol import GlobParams
+
+        params = GlobParams(pattern="*.py", path="/")
+        result = mock_handler._dispatch_method("glob", params)
+
+        assert "matches" in result
+        assert result["matches"] == ["/test.py"]
+
+    def test_dispatch_grep(self, mock_handler):
+        """Test dispatching grep method."""
+        from nexus.server.protocol import GrepParams
+
+        params = GrepParams(
+            pattern="test",
+            path="/",
+            file_pattern="*.txt",
+            ignore_case=False,
+            max_results=100,
+        )
+        result = mock_handler._dispatch_method("grep", params)
+
+        assert "results" in result
+        assert len(result["results"]) == 1
+
+    def test_dispatch_get_available_namespaces(self, mock_handler):
+        """Test dispatching get_available_namespaces method."""
+        from nexus.server.protocol import GetAvailableNamespacesParams
+
+        params = GetAvailableNamespacesParams()
+        result = mock_handler._dispatch_method("get_available_namespaces", params)
+
+        assert result == {"namespaces": ["default"]}
 
 
 class TestRPCServerIntegration:

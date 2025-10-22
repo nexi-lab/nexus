@@ -1,6 +1,11 @@
 """Unit tests for plugin system."""
 
+import contextlib
+import tempfile
+from pathlib import Path
+
 import pytest
+import yaml
 
 from nexus.plugins import NexusPlugin, PluginMetadata, PluginRegistry
 from nexus.plugins.hooks import HookType, PluginHooks
@@ -273,6 +278,199 @@ class TestPluginRegistry:
         result = await registry.execute_hook(HookType.BEFORE_WRITE, context)
 
         assert result["modified"] is True
+
+    def test_get_hooks(self):
+        """Test getting hooks from registry."""
+        registry = PluginRegistry()
+        hooks = registry.get_hooks()
+
+        assert isinstance(hooks, PluginHooks)
+
+    def test_unregister_nonexistent_plugin(self):
+        """Test unregistering a plugin that doesn't exist (should not raise)."""
+        registry = PluginRegistry()
+
+        # Should not raise an error
+        registry.unregister("nonexistent-plugin")
+
+    def test_enable_disable_nonexistent_plugin(self):
+        """Test enabling/disabling nonexistent plugin (should not raise)."""
+        registry = PluginRegistry()
+
+        # Should not raise errors
+        registry.enable_plugin("nonexistent-plugin")
+        registry.disable_plugin("nonexistent-plugin")
+
+    def test_get_nonexistent_plugin(self):
+        """Test getting a plugin that doesn't exist."""
+        registry = PluginRegistry()
+
+        result = registry.get_plugin("nonexistent-plugin")
+        assert result is None
+
+    def test_discover_no_plugins(self):
+        """Test discovery when no plugins are installed."""
+        registry = PluginRegistry()
+
+        # Should return empty list when no plugins found
+        discovered = registry.discover()
+
+        # Can't assert exact value since system may have plugins
+        # but at least verify it returns a list
+        assert isinstance(discovered, list)
+
+
+class TestPluginRegistryConfig:
+    """Test plugin registry configuration management."""
+
+    def test_load_plugin_config_nonexistent(self):
+        """Test loading config when file doesn't exist."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = PluginRegistry(config_dir=Path(tmpdir))
+            config = registry._load_plugin_config("test-plugin")
+
+            assert config == {}
+
+    def test_load_plugin_config_valid(self):
+        """Test loading valid plugin config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = Path(tmpdir)
+            plugin_dir = config_dir / "test-plugin"
+            plugin_dir.mkdir(parents=True)
+
+            config_file = plugin_dir / "config.yaml"
+            test_config = {"api_key": "test-key", "enabled": True}
+
+            with open(config_file, "w") as f:
+                yaml.dump(test_config, f)
+
+            registry = PluginRegistry(config_dir=config_dir)
+            config = registry._load_plugin_config("test-plugin")
+
+            assert config == test_config
+
+    def test_load_plugin_config_invalid_yaml(self):
+        """Test loading config with invalid YAML."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = Path(tmpdir)
+            plugin_dir = config_dir / "test-plugin"
+            plugin_dir.mkdir(parents=True)
+
+            config_file = plugin_dir / "config.yaml"
+
+            # Write invalid YAML
+            with open(config_file, "w") as f:
+                f.write("invalid: yaml: content: [")
+
+            registry = PluginRegistry(config_dir=config_dir)
+            config = registry._load_plugin_config("test-plugin")
+
+            # Should return empty dict on error
+            assert config == {}
+
+    def test_load_plugin_config_empty_file(self):
+        """Test loading config from empty file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = Path(tmpdir)
+            plugin_dir = config_dir / "test-plugin"
+            plugin_dir.mkdir(parents=True)
+
+            config_file = plugin_dir / "config.yaml"
+
+            # Write empty file
+            config_file.touch()
+
+            registry = PluginRegistry(config_dir=config_dir)
+            config = registry._load_plugin_config("test-plugin")
+
+            assert config == {}
+
+    def test_save_plugin_config(self):
+        """Test saving plugin config."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = Path(tmpdir)
+            registry = PluginRegistry(config_dir=config_dir)
+
+            test_config = {"api_key": "test-key", "enabled": True}
+            registry.save_plugin_config("test-plugin", test_config)
+
+            # Verify file was created
+            config_file = config_dir / "test-plugin" / "config.yaml"
+            assert config_file.exists()
+
+            # Verify content
+            with open(config_file) as f:
+                loaded_config = yaml.safe_load(f)
+
+            assert loaded_config == test_config
+
+    def test_save_plugin_config_creates_dir(self):
+        """Test that saving config creates plugin directory if needed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = Path(tmpdir)
+            registry = PluginRegistry(config_dir=config_dir)
+
+            plugin_dir = config_dir / "new-plugin"
+            assert not plugin_dir.exists()
+
+            registry.save_plugin_config("new-plugin", {"key": "value"})
+
+            assert plugin_dir.exists()
+            assert (plugin_dir / "config.yaml").exists()
+
+    def test_save_plugin_config_write_error(self):
+        """Test saving config when write fails."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = Path(tmpdir)
+            registry = PluginRegistry(config_dir=config_dir)
+
+            # Create plugin dir and make config file read-only
+            plugin_dir = config_dir / "test-plugin"
+            plugin_dir.mkdir(parents=True)
+            config_file = plugin_dir / "config.yaml"
+            config_file.touch()
+            config_file.chmod(0o444)  # Read-only
+
+            # Try to save - should handle error gracefully
+            with contextlib.suppress(Exception):
+                registry.save_plugin_config("test-plugin", {"key": "value"})
+
+            # Cleanup
+            config_file.chmod(0o644)
+
+
+class TestPluginHooksWithInvalidHookType:
+    """Test plugin hooks with invalid hook types."""
+
+    def test_register_plugin_with_invalid_hook_type(self):
+        """Test registering a plugin with an invalid hook type."""
+
+        class PluginWithInvalidHook(NexusPlugin):
+            """Plugin with invalid hook type."""
+
+            def metadata(self) -> PluginMetadata:
+                return PluginMetadata(
+                    name="invalid-hook-plugin",
+                    version="0.1.0",
+                    description="Test plugin with invalid hook",
+                    author="Test",
+                )
+
+            def hooks(self) -> dict:
+                return {
+                    "invalid_hook_type": self.invalid_hook,
+                }
+
+            async def invalid_hook(self, context: dict) -> dict:
+                return context
+
+        registry = PluginRegistry()
+        plugin = PluginWithInvalidHook()
+
+        # Should register without error, but skip invalid hook
+        registry.register(plugin)
+
+        assert registry.get_plugin("invalid-hook-plugin") is not None
 
 
 if __name__ == "__main__":

@@ -259,5 +259,6 @@ Apache 2.0 - see [LICENSE](https://github.com/nexi-lab/nexus/blob/main/LICENSE)
 
 - [GitHub Repository](https://github.com/nexi-lab/nexus)
 - [Issue Tracker](https://github.com/nexi-lab/nexus/issues)
+- [Core Tenets](CORE_TENETS.md) - Design principles and philosophy
 - [Getting Started Guide](getting-started/quickstart.md)
 - [Configuration Reference](getting-started/configuration.md)

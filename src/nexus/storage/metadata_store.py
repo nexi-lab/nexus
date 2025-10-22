@@ -194,9 +194,13 @@ class SQLAlchemyMetadataStore(MetadataStore):
             try:
                 with self.engine.connect() as conn:
                     conn.execute(text("PRAGMA journal_mode=WAL"))
+                    # Use FULL synchronous mode to prevent race conditions
+                    # This ensures commits are fully written to disk before returning
+                    # Critical for preventing "File not found" errors in CAS operations
+                    conn.execute(text("PRAGMA synchronous=FULL"))
                     conn.commit()
             except Exception:
-                # Ignore if WAL mode cannot be enabled
+                # Ignore if optimizations cannot be enabled
                 pass
         elif self.db_type == "postgresql":
             # PostgreSQL optimizations can be set at connection level if needed

@@ -63,7 +63,7 @@ class NexusFS(NexusFilesystem):
         cache_ttl_seconds: int | None = 300,
         auto_parse: bool = True,
         custom_parsers: list[dict[str, Any]] | None = None,
-        enforce_permissions: bool = False,
+        enforce_permissions: bool = True,
     ):
         """
         Initialize filesystem.
@@ -83,7 +83,7 @@ class NexusFS(NexusFilesystem):
             cache_ttl_seconds: Cache TTL in seconds, None = no expiry (default: 300)
             auto_parse: Automatically parse files on write (default: True)
             custom_parsers: Custom parser configurations from config (optional)
-            enforce_permissions: Enable permission enforcement on file operations (default: False)
+            enforce_permissions: Enable permission enforcement on file operations (default: True)
         """
         # Store backend
         self.backend = backend
@@ -1157,9 +1157,10 @@ class NexusFS(NexusFilesystem):
         is_implicit_dir = existing is None and self.metadata.is_implicit_directory(path)
 
         if existing is not None or is_implicit_dir:
-            if not exist_ok:
+            # When parents=True, behave like mkdir -p (don't raise error if exists)
+            if not exist_ok and not parents:
                 raise FileExistsError(f"Directory already exists: {path}")
-            # If exist_ok=True and directory exists, we still create metadata if it doesn't exist
+            # If exist_ok=True (or parents=True) and directory exists, we still create metadata if it doesn't exist
             if existing is not None:
                 # Metadata already exists, nothing to do
                 return
@@ -2119,6 +2120,183 @@ class NexusFS(NexusFilesystem):
             self.metadata.set_file_metadata(path, "parser_name", parser.name)
 
         return result
+
+    # === Permission Management (v0.3.0) ===
+
+    def chmod(
+        self,
+        path: str,
+        mode: int | str,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Change file mode (permissions).
+
+        Requires the user to be the owner of the file or an admin.
+
+        Args:
+            path: Virtual file path
+            mode: Permission mode (int like 0o644 or string like '755')
+            context: Optional operation context (defaults to self._default_context)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            PermissionError: If user is not owner and not admin
+            ValueError: If mode is invalid
+
+        Examples:
+            >>> nx.chmod("/workspace/file.txt", 0o644)
+            >>> nx.chmod("/workspace/file.txt", "755")
+            >>> nx.chmod("/workspace/file.txt", "rwxr-xr-x")
+        """
+        from nexus.core.permissions import parse_mode
+
+        path = self._validate_path(path)
+
+        # Get file metadata
+        file_meta = self.metadata.get(path)
+        if not file_meta:
+            raise NexusFileNotFoundError(path)
+
+        # Get context (use default if not provided)
+        ctx = context or self._default_context
+
+        # Check if user is owner or admin
+        # Must be owner to chmod (unless admin or system)
+        if (
+            not ctx.is_admin
+            and not ctx.is_system
+            and file_meta.owner
+            and file_meta.owner != ctx.user
+        ):
+            raise PermissionError(
+                f"Access denied: Only the owner ('{file_meta.owner}') or admin "
+                f"can change permissions for '{path}'"
+            )
+
+        # Parse mode (handles int, octal string, or symbolic string)
+        if isinstance(mode, str):
+            mode_int = parse_mode(mode)
+        elif isinstance(mode, int):
+            mode_int = mode
+        else:
+            raise ValueError(f"mode must be int or str, got {type(mode)}")
+
+        # Update mode
+        file_meta.mode = mode_int
+        self.metadata.put(file_meta)
+
+        # Invalidate cache
+        if self.metadata._cache_enabled and self.metadata._cache:
+            self.metadata._cache.invalidate_path(path)
+
+    def chown(
+        self,
+        path: str,
+        owner: str,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Change file owner.
+
+        Requires the user to be the current owner of the file or an admin.
+
+        Args:
+            path: Virtual file path
+            owner: New owner username
+            context: Optional operation context (defaults to self._default_context)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            PermissionError: If user is not owner and not admin
+
+        Examples:
+            >>> nx.chown("/workspace/file.txt", "alice")
+        """
+        path = self._validate_path(path)
+
+        # Get file metadata
+        file_meta = self.metadata.get(path)
+        if not file_meta:
+            raise NexusFileNotFoundError(path)
+
+        # Get context (use default if not provided)
+        ctx = context or self._default_context
+
+        # Check if user is owner or admin
+        # Must be owner to chown (unless admin or system)
+        if (
+            not ctx.is_admin
+            and not ctx.is_system
+            and file_meta.owner
+            and file_meta.owner != ctx.user
+        ):
+            raise PermissionError(
+                f"Access denied: Only the owner ('{file_meta.owner}') or admin "
+                f"can change ownership for '{path}'"
+            )
+
+        # Update owner
+        file_meta.owner = owner
+        self.metadata.put(file_meta)
+
+        # Invalidate cache
+        if self.metadata._cache_enabled and self.metadata._cache:
+            self.metadata._cache.invalidate_path(path)
+
+    def chgrp(
+        self,
+        path: str,
+        group: str,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Change file group.
+
+        Requires the user to be the owner of the file or an admin.
+
+        Args:
+            path: Virtual file path
+            group: New group name
+            context: Optional operation context (defaults to self._default_context)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            PermissionError: If user is not owner and not admin
+
+        Examples:
+            >>> nx.chgrp("/workspace/file.txt", "developers")
+        """
+        path = self._validate_path(path)
+
+        # Get file metadata
+        file_meta = self.metadata.get(path)
+        if not file_meta:
+            raise NexusFileNotFoundError(path)
+
+        # Get context (use default if not provided)
+        ctx = context or self._default_context
+
+        # Check if user is owner or admin
+        # Must be owner to chgrp (unless admin or system)
+        if (
+            not ctx.is_admin
+            and not ctx.is_system
+            and file_meta.owner
+            and file_meta.owner != ctx.user
+        ):
+            raise PermissionError(
+                f"Access denied: Only the owner ('{file_meta.owner}') or admin "
+                f"can change group for '{path}'"
+            )
+
+        # Update group
+        file_meta.group = group
+        self.metadata.put(file_meta)
+
+        # Invalidate cache
+        if self.metadata._cache_enabled and self.metadata._cache:
+            self.metadata._cache.invalidate_path(path)
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

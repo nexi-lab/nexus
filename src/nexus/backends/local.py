@@ -3,6 +3,7 @@
 import errno
 import hashlib
 import json
+import os
 import platform
 import shutil
 import tempfile
@@ -170,6 +171,8 @@ class LocalBackend(Backend):
             ) as tmp_file:
                 tmp_path = Path(tmp_file.name)
                 tmp_file.write(content)
+                tmp_file.flush()  # Flush Python buffers
+                os.fsync(tmp_file.fileno())  # Force OS to write to disk
 
             # Move to final location
             shutil.move(str(tmp_path), str(content_path))

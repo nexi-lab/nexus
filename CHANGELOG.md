@@ -370,20 +370,272 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `cachetools>=5.3.0` - LRU/TTL cache implementations
 - **Tests**: 35+ unit tests for FUSE operations, 62% cache module coverage
 
-## [0.3.0] - TBD
+## [0.3.0] - 2025-10-22
 
-### Planned
-- **UNIX-style file permissions** (owner, group, mode)
-- **Permission operations** (chmod, chown, chgrp)
-- **Access Control Lists (ACL)**
-- **ReBAC (Relationship-Based Access Control)** - Zanzibar-style authorization
-- **Skills System** - Anthropic-compatible SKILL.md format
-- **Skill management** - create, fork, publish, search
-- **Semantic skill search** - Find skills by description
+### Added
+
+#### UNIX-Style File Permissions & Security (Issue #84)
+- **File Ownership**: Full UNIX-style permission model
+  - Owner, group, and mode (e.g., 0o644, 0o755)
+  - Stored in metadata for every file and directory
+  - Enforced on all file operations (read, write, delete)
+- **Permission Operations**:
+  - `chmod`: Change file permissions (numeric or symbolic modes)
+  - `chown`: Change file owner
+  - `chgrp`: Change file group
+  - CLI: `nexus chmod 755 /file.txt`, `nexus chown alice /file.txt`
+- **Access Control Lists (ACL)**: Fine-grained permission control
+  - User-level and group-level ACLs
+  - Grant/deny READ, WRITE, EXECUTE permissions
+  - Per-file ACL rules stored in database
+  - CLI: `nexus acl grant alice READ /file.txt`
+- **Multi-Layer Permission Checks**: Defense in depth
+  1. UNIX permissions (owner/group/other)
+  2. ACL rules (user/group specific)
+  3. ReBAC relationships (Zanzibar-style)
+- **Permission Contexts**: Flexible operation contexts
+  - `OperationContext(user, groups, is_admin, is_system)`
+  - Per-operation permission override
+  - Default context from NexusFS init
+
+#### Permission Inheritance (Issue #111)
+- **Automatic Inheritance**: New files inherit parent directory permissions
+  - Owner, group, and mode propagated from parent
+  - Directories: Inherit parent mode with execute bits added
+  - Files: Inherit parent mode with execute bits removed
+- **Smart Mode Calculation**:
+  - Directories: Parent mode | 0o111 (add execute)
+  - Files: Parent mode & ~0o111 (remove execute)
+- **Example**: Parent dir (0o755) → Child file (0o644), Child dir (0o755)
+
+#### Default Permission Policies (Issue #110)
+- **Namespace-Level Policies**: Configure default permissions per namespace
+  - Match paths with glob patterns (e.g., `/workspace/*/private/*`)
+  - Set owner, group, mode with variable substitution
+  - Variables: `{tenant_id}`, `{agent_id}`, `{user_id}`
+- **Policy Priority**: Most specific pattern wins
+  - Longer patterns override shorter ones
+  - Explicit policies override defaults
+- **Example Policy**:
+  ```yaml
+  - path: "/workspace/{tenant_id}/{agent_id}/*"
+    owner: "{agent_id}"
+    group: "{tenant_id}"
+    mode: 0o644
+  ```
+- **CLI Command**: `nexus policy list`, `nexus policy create`
+
+#### ReBAC (Relationship-Based Access Control) (Issue #91)
+- **Zanzibar-Style Authorization**: Google-inspired fine-grained permissions
+  - Tuples: `(subject, relation, object)` format
+  - Example: `(alice, editor, doc1)`, `(doc1, parent, folder1)`
+  - Transitive relationships with configurable depth limits
+- **Relationship Types**:
+  - Direct relations: `owner`, `editor`, `viewer`
+  - Indirect relations: `parent`, `member`
+  - Permission resolution with graph traversal
+- **Database-Backed**: Efficient tuple storage and querying
+  - SQLite/PostgreSQL compatible
+  - Indexed for fast lookups
+  - TTL-based caching for performance
+- **API**:
+  - `check_permission(user, permission, path)` - Check access
+  - `add_tuple(subject, relation, object)` - Grant permission
+  - `remove_tuple(subject, relation, object)` - Revoke permission
+
+#### Skills System - Core Features (Issue #85)
+- **Anthropic-Compatible Format**: SKILL.md file format support
+  - Frontmatter: YAML metadata (name, version, description, tags)
+  - Instructions: Markdown content for AI agents
+  - Validation: Schema validation for metadata
+- **Skill Registry**: Discover and load skills from filesystem
+  - Auto-discovery from `/workspace/.nexus/skills/`
+  - Lazy loading for performance
+  - Caching for fast lookups
+- **Skill Parser**: Parse SKILL.md files
+  - Extract frontmatter (YAML)
+  - Parse markdown content
+  - Validate schema and dependencies
+- **Version Management**: Semantic versioning support
+  - Version comparison (1.0.0 > 0.9.0)
+  - Dependency resolution
+  - Upgrade notifications
+- **CLI Commands**:
+  - `nexus skills list` - Show all skills
+  - `nexus skills info <skill>` - Show skill details
+  - `nexus skills create <name>` - Create new skill from template
+
+#### Skills System - Management Features (Issue #86)
+- **Skill Creation**: Template-based skill generation
+  - Interactive prompts for metadata
+  - Pre-filled templates with examples
+  - Auto-generate SKILL.md with proper structure
+- **Skill Forking**: Copy and modify existing skills
+  - `nexus skills fork <source> <dest>`
+  - Preserves metadata and instructions
+  - Updates version and authorship
+- **Skill Export**: Export skills for sharing
+  - Export to standalone directory
+  - Include dependencies
+  - Tarball support for distribution
+- **Skill Import**: Import skills from external sources
+  - `nexus skills import <path>`
+  - Validate before import
+  - Conflict resolution
+
+#### Skills System - Enterprise Features (Issue #87)
+- **Skill Analytics**: Track skill usage and performance
+  - Execution count, success rate, error tracking
+  - Time-series metrics
+  - Usage trends over time
+- **Skill Governance**: Policy enforcement for skills
+  - Required tags (e.g., "approved", "production")
+  - Owner approval workflows
+  - Deprecation warnings
+- **Skill Audit**: Compliance and security auditing
+  - Track all skill modifications
+  - Who created/modified/executed skills
+  - Audit log with timestamps
+- **Skill Search**: Find skills by description/tags
+  - Full-text search in descriptions
+  - Tag-based filtering
+  - Relevance ranking
+
+#### Version Tracking (Issue #88)
+- **File Version History**: Track all versions of files
+  - Automatic versioning on every write
+  - Version number increments automatically
+  - Efficient storage using CAS (no duplication)
+- **Version Operations**:
+  - `get_version(path, version)` - Retrieve specific version
+  - `list_versions(path)` - Show version history
+  - `rollback(path, version)` - Restore old version
+  - `diff_versions(path, v1, v2)` - Compare versions
+- **CLI Commands**:
+  - `nexus versions <path>` - List all versions
+  - `nexus cat <path> --version 2` - Read specific version
+  - `nexus rollback <path> 2` - Restore to version 2
+  - `nexus diff <path> --v1 1 --v2 3` - Compare versions
+- **Metadata-Only**: No content duplication
+  - Versions reference CAS hashes
+  - Space-efficient storage
+  - Fast version switching
+
+#### Database Support
+- **PostgreSQL Support**: Production-ready relational database
+  - All features work with PostgreSQL
+  - Connection pooling and optimization
+  - Production deployment ready
+  - Environment variable: `NEXUS_DATABASE_URL`
+- **SQLite Compatibility**: Still fully supported
+  - Embedded mode for local development
+  - File-based storage
+  - No server required
+
+#### FUSE Improvements
+- **Metadata-Only Rename**: Instant file/directory moves
+  - No content copying (uses metadata update)
+  - Works for any file size
+  - Atomic operation
+- **Directory Move Support**: Move entire directories
+  - Recursive file renaming in metadata
+  - No content I/O
+  - Fast directory restructuring
+- **Virtual Views for Remote**: `.txt` and `.md` views work over network
+  - Remote mounts support parsed views
+  - Consistent behavior with local mounts
+  - Fix for issue #172
+- **Enhanced mv Behavior**: Proper Unix semantics
+  - Error if destination exists
+  - Create destination if it doesn't exist
+  - Confirmation prompts
+
+#### Plugin System (Issue #168)
+- **Extensibility Framework**: Hook-based plugin architecture
+  - Pre/post hooks for file operations
+  - Event-driven design
+  - Plugin discovery and loading
+- **Plugin API**:
+  - `on_read`, `on_write`, `on_delete` hooks
+  - Context access for all operations
+  - Error handling and logging
+- **Use Cases**:
+  - Custom validation logic
+  - Audit logging
+  - External integrations
+  - Custom transformations
+
+### Fixed
+- **Tenant Isolation**: Fixed delete operation to check tenant/agent isolation before permission checks
+  - Ensures `AccessDeniedError` is raised before `PermissionError`
+  - Fixes tests in `test_embedded_tenant_isolation.py`
+  - Reordered checks in `NexusFS.delete()` method
+- **FUSE Getattr Operations**: Added metadata mock to fix FUSE tests
+  - Fixed `FuseOSError: [Errno 5]` in getattr operations
+  - Added `metadata` attribute to mock filesystem
+  - Fixes 4 tests in `test_fuse_operations.py`
+- **Exception Hierarchy**: Made `NexusFileNotFoundError` inherit from `FileNotFoundError`
+  - Fixes permission operation tests expecting `FileNotFoundError`
+  - Proper exception hierarchy for Python compatibility
+  - Fixes 3 tests in `test_permission_operations.py`
+- **FUSE Mount Daemon Mode**: Fixed background daemon startup
+- **Windows Path Separators**: Proper handling in copy operations
+- **Virtual Views**: Fixed `.txt`/`.md` view generation for remote mounts
+
+### Changed
+- **Permission Enforcement**: Opt-in by default
+  - Set `enforce_permissions=True` in NexusFS init
+  - Backward compatible (disabled by default)
+  - Gradual migration path
+- **Delete Operation**: Reordered permission checks
+  - Router check (tenant isolation) before permission check
+  - Consistent error priority
+- **Test Coverage**: Improved from 29% to 40% for core modules
+
+### Documentation
+- **Permissions Implementation Guide**: Comprehensive guide to permission system
+  - Architecture overview
+  - Permission layers explained
+  - Usage examples and best practices
+- **Skills System Guide**: Complete documentation
+  - SKILL.md format specification
+  - Skill lifecycle management
+  - Enterprise features guide
+- **Deployment Guide**: Production deployment instructions
+  - PostgreSQL setup
+  - GCP Cloud Run deployment
+  - Docker configuration
+  - Environment variables
+
+### Technical Details
+- **New Modules**:
+  - `src/nexus/core/permissions.py` - Permission system core
+  - `src/nexus/core/acl.py` - ACL implementation
+  - `src/nexus/core/rebac.py` - ReBAC tuples and checks
+  - `src/nexus/core/rebac_manager.py` - ReBAC manager
+  - `src/nexus/core/permission_policy.py` - Policy matcher
+  - `src/nexus/skills/` - Complete skills system
+  - `src/nexus/plugins/` - Plugin framework
+- **New Database Tables**:
+  - `acl_entries` - ACL rules
+  - `rebac_tuples` - ReBAC relationships
+  - `permission_policies` - Default policies
+  - `skill_metrics` - Skill analytics
+  - `skill_audit_log` - Skill audit trail
+- **New Alembic Migrations**:
+  - `c0ff28ce` - Add UNIX permissions and ACL support
+- **New Tests**: 85+ new tests
+  - Permission system: 37 tests
+  - ACL: 24 tests
+  - Skills: 42 tests
+  - Tenant isolation: 17 tests
+- **Coverage**: Increased from 29% to 40% overall
 
 ---
 
-[Unreleased]: https://github.com/nexi-lab/nexus/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/nexi-lab/nexus/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/nexi-lab/nexus/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/nexi-lab/nexus/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/nexi-lab/nexus/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/nexi-lab/nexus/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/nexi-lab/nexus/compare/v0.1.0...v0.1.1

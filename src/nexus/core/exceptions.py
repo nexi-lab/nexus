@@ -80,3 +80,43 @@ class ParserError(NexusError):
         if parser:
             message = f"[{parser}] {message}"
         super().__init__(message, path)
+
+
+class ConflictError(NexusError):
+    """Raised when optimistic concurrency check fails.
+
+    This occurs when a write operation specifies an if_match etag/version
+    that doesn't match the current file version, indicating another agent
+    has modified the file concurrently.
+
+    Agents must handle this error explicitly by:
+    1. Retrying with a fresh read
+    2. Merging changes
+    3. Aborting the operation
+    4. Force overwriting (dangerous)
+
+    Examples:
+        >>> try:
+        ...     nx.write(path, content, if_match=old_etag)
+        ... except ConflictError as e:
+        ...     print(f"Conflict: expected {e.expected_etag}, got {e.current_etag}")
+        ...     # Retry with fresh read
+        ...     result = nx.read(path, return_metadata=True)
+        ...     nx.write(path, content, if_match=result['etag'])
+    """
+
+    def __init__(self, path: str, expected_etag: str, current_etag: str):
+        """Initialize conflict error.
+
+        Args:
+            path: Virtual file path that had the conflict
+            expected_etag: The etag value that was expected (from if_match)
+            current_etag: The actual current etag value in the database
+        """
+        self.expected_etag = expected_etag
+        self.current_etag = current_etag
+        message = (
+            f"Conflict detected - file was modified by another agent. "
+            f"Expected etag '{expected_etag[:16]}...', but current etag is '{current_etag[:16]}...'"
+        )
+        super().__init__(message, path)

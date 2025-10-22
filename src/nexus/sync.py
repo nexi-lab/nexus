@@ -96,7 +96,10 @@ def copy_file(
         # Check if destination exists and has same content (if checksum enabled)
         if checksum and nx.exists(dest):
             try:
-                existing_content = nx.read(dest)
+                raw_existing = nx.read(dest)
+                # Type narrowing: when return_metadata=False (default), result is bytes
+                assert isinstance(raw_existing, bytes), "Expected bytes from read()"
+                existing_content = raw_existing
                 if existing_content == content:
                     return 0  # Skip - identical content
             except Exception:
@@ -108,7 +111,10 @@ def copy_file(
 
     elif not is_source_local and is_dest_local:
         # Nexus to local
-        content = nx.read(source)
+        raw_content = nx.read(source)
+        # Type narrowing: when return_metadata=False (default), result is bytes
+        assert isinstance(raw_content, bytes), "Expected bytes from read()"
+        content = raw_content
 
         # Check if destination exists and has same content (if checksum enabled)
         if checksum and os.path.exists(dest):
@@ -125,12 +131,18 @@ def copy_file(
 
     else:
         # Nexus to Nexus
-        content = nx.read(source)
+        raw_content = nx.read(source)
+        # Type narrowing: when return_metadata=False (default), result is bytes
+        assert isinstance(raw_content, bytes), "Expected bytes from read()"
+        content = raw_content
 
         # Check if destination exists and has same content (if checksum enabled)
         if checksum and nx.exists(dest):
             try:
-                existing_content = nx.read(dest)
+                raw_existing = nx.read(dest)
+                # Type narrowing: when return_metadata=False (default), result is bytes
+                assert isinstance(raw_existing, bytes), "Expected bytes from read()"
+                existing_content = raw_existing
                 if existing_content == content:
                     return 0  # Skip - identical content
             except Exception:
@@ -320,7 +332,10 @@ def move_file(
         elif not is_source_local and not is_dest_local:
             # Nexus to Nexus - can potentially optimize
             # For now, copy then delete
-            content = nx.read(source)
+            raw_content = nx.read(source)
+            # Type narrowing: when return_metadata=False (default), result is bytes
+            assert isinstance(raw_content, bytes), "Expected bytes from read()"
+            content = raw_content
             nx.write(dest, content)
             nx.delete(source)
             return True

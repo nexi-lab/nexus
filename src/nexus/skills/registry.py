@@ -228,7 +228,10 @@ class SkillRegistry:
         """
         if self._filesystem:
             # Use NexusFS to read content and parse directly
-            content = self._filesystem.read(file_path).decode("utf-8")
+            raw_content = self._filesystem.read(file_path)
+            # Type narrowing: when return_metadata=False (default), result is bytes
+            assert isinstance(raw_content, bytes), "Expected bytes from read()"
+            content = raw_content.decode("utf-8")
             return self._parser.parse_metadata_from_content(content, file_path, tier)
         else:
             # Use local filesystem
@@ -267,7 +270,10 @@ class SkillRegistry:
         # Load full content
         try:
             if self._filesystem:
-                content = self._filesystem.read(metadata.file_path or "").decode("utf-8")
+                raw_content = self._filesystem.read(metadata.file_path or "")
+                # Type narrowing: when return_metadata=False (default), result is bytes
+                assert isinstance(raw_content, bytes), "Expected bytes from read()"
+                content = raw_content.decode("utf-8")
                 skill = self._parser.parse_content(content, metadata.file_path, metadata.tier)
             else:
                 skill = self._parser.parse_file(metadata.file_path or "", metadata.tier)

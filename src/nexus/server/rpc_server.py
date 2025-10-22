@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 from nexus import NexusFilesystem
 from nexus.core.exceptions import (
+    ConflictError,
     InvalidPathError,
     NexusError,
     NexusFileNotFoundError,
@@ -237,6 +238,18 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             self._send_error_response(request.id, RPCErrorCode.PERMISSION_ERROR, str(e))
         except ValidationError as e:
             self._send_error_response(request.id, RPCErrorCode.VALIDATION_ERROR, str(e))
+        except ConflictError as e:
+            # v0.3.9: Handle optimistic concurrency conflicts
+            self._send_error_response(
+                request.id,
+                RPCErrorCode.CONFLICT,
+                str(e),
+                data={
+                    "path": e.path,
+                    "expected_etag": e.expected_etag,
+                    "current_etag": e.current_etag,
+                },
+            )
         except NexusError as e:
             self._send_error_response(request.id, RPCErrorCode.INTERNAL_ERROR, f"Nexus error: {e}")
         except Exception as e:
@@ -261,16 +274,27 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             original_path, view_type = parse_virtual_path(params.path, self.nexus_fs.exists)
 
             if view_type:
-                # Read raw content and parse it
+                # Read raw content and parse it (virtual views don't support metadata)
                 raw_content = self.nexus_fs.read(original_path)
+                # Type narrowing: when return_metadata=False (default), result is bytes
+                assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 return get_parsed_content(raw_content, original_path, view_type)
             else:
-                # Return raw content
-                return self.nexus_fs.read(params.path)
+                # v0.3.9: Support return_metadata parameter
+                result = self.nexus_fs.read(params.path, return_metadata=params.return_metadata)
+                return result
 
         elif method == "write":
-            self.nexus_fs.write(params.path, params.content)
-            return {"success": True}
+            # v0.3.9: Support optimistic concurrency control parameters
+            result = self.nexus_fs.write(
+                params.path,
+                params.content,
+                if_match=params.if_match,
+                if_none_match=params.if_none_match,
+                force=params.force,
+            )
+            # Return metadata dict from write()
+            return result
 
         elif method == "delete":
             self.nexus_fs.delete(params.path)

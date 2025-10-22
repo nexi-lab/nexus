@@ -174,7 +174,7 @@ omit = [
     "*/__pycache__/*",
     "*/site-packages/*",
     "*/cli.py",  # Old location (kept for backward compatibility)
-    "*/cli/*",  # CLI is tested via integration tests in examples/test_cli_commands.sh
+    "src/nexus/cli/*",  # CLI is tested via integration tests in examples/test_cli_commands.sh
 ]
 
 [tool.coverage.report]

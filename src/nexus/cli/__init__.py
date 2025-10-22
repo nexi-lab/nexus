@@ -6,19 +6,21 @@ For programmatic access, use the nexus.sdk module instead.
 
 Architecture:
     - utils.py: Common utilities (BackendConfig, decorators, helpers)
-    - commands.py: All CLI commands (to be split into modules)
-
-Future modules (incremental refactoring):
-    - file_ops.py: File operations (init, ls, cat, write, cp, mv, rm, etc.)
-    - discovery.py: Discovery commands (glob, grep, find, tree, size)
-    - permissions.py: Permission commands (chmod, chown, chgrp, acl, rebac)
-    - skills.py: Skills management commands
-    - versions.py: Version tracking commands
-    - plugins.py: Plugin management commands
-    - mount.py: FUSE mount/unmount commands
-    - server.py: Server command
-    - work.py: Work queue commands
-    - metadata.py: Export/import metadata commands
+    - formatters.py: Rich output formatting utilities
+    - context.py: Global context management
+    - main.py: Main CLI entry point
+    - commands/: Modular command structure
+        - file_ops.py: File operations (init, cat, write, cp, mv, sync, rm)
+        - directory.py: Directory operations (ls, mkdir, rmdir, tree)
+        - search.py: Discovery commands (glob, grep, find-duplicates)
+        - permissions.py: Permission commands (chmod, chown, chgrp, getfacl, setfacl)
+        - rebac.py: Relationship-based access control
+        - skills.py: Skills management commands
+        - versions.py: Version tracking commands
+        - plugins.py: Plugin management commands
+        - server.py: Server commands (serve, mount, unmount)
+        - work.py: Work queue commands
+        - metadata.py: Metadata operations (info, version, export, import, size)
 
 Usage:
     From command line:
@@ -33,9 +35,8 @@ Usage:
 
 __all__ = ["main"]
 
-# Import the main CLI entry point from commands module
-# This is temporary - we'll refactor commands.py into smaller modules incrementally
-from nexus.cli.commands import main
+# Import the main CLI entry point from main module
+from nexus.cli.main import main
 
 # Re-export utilities for internal CLI use
 from nexus.cli.utils import (

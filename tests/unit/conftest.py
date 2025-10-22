@@ -48,22 +48,31 @@ def mock_fuse_module():
 
 
 @pytest.fixture(autouse=True)
-def windows_cleanup_delay():
+def windows_cleanup_delay(request):
     """Add cleanup delay on Windows to let OS release file handles.
 
     This fixture runs after every test on Windows to give the OS time
     to release database file locks before pytest tries to cleanup temp directories.
+
+    Only applies to tests that use temp directories or databases.
     """
     import gc
 
     yield
 
     # Only add delay on Windows after test completes
+    # Skip delay for tests that don't need it (no fixtures with 'tmp' or 'temp' in name)
     if platform.system() == "Windows":
-        # Force multiple GC passes to release any lingering references
-        for _ in range(3):
-            gc.collect()
-            gc.collect(1)
-            gc.collect(2)
-        # Increased delay for Windows CI - needs more time than local Windows
-        time.sleep(0.5)  # 500ms delay for Windows file handle release
+        # Check if test uses temp directories or database fixtures
+        fixture_names = [name.lower() for name in request.fixturenames]
+        needs_cleanup = any(
+            "tmp" in name or "temp" in name or "embedded" in name or "db" in name
+            for name in fixture_names
+        )
+
+        if needs_cleanup:
+            # Force garbage collection to release database connections
+            for _ in range(2):
+                gc.collect()
+            # Reduced delay - 100ms should be sufficient with proper close() calls
+            time.sleep(0.1)  # 100ms delay for Windows file handle release

@@ -360,7 +360,7 @@ class TestMetadataCache:
 
         store.close()
 
-    def test_embedded_with_cache(self):
+    def test_embedded_with_cache(self, windows_db_cleanup):
         """Test that Embedded filesystem uses caching."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Create filesystem with caching enabled
@@ -389,7 +389,7 @@ class TestMetadataCache:
             fs.close()
             cleanup_windows_db()
 
-    def test_embedded_without_cache(self):
+    def test_embedded_without_cache(self, windows_db_cleanup):
         """Test that Embedded filesystem can disable caching."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Create filesystem with caching disabled

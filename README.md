@@ -2150,6 +2150,7 @@ pytest tests/performance/ --benchmark-only
 
 ## Documentation
 
+- [Core Tenets](./docs/CORE_TENETS.md) - Design principles and philosophy
 - [Plugin Development Guide](./docs/PLUGIN_DEVELOPMENT.md) - Create your own Nexus plugins
 - [Plugin System Overview](./docs/PLUGIN_SYSTEM.md) - Plugin architecture and design
 - [PostgreSQL Setup Guide](./docs/POSTGRESQL_SETUP.md) - Configure PostgreSQL for production
@@ -2282,16 +2283,50 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 **Note**: External integrations (Claude API upload/download, OpenAI, etc.) will be implemented as **plugins** in v0.3.5+ to maintain vendor neutrality. Core Nexus provides generic skill export (`nexus skills export --format claude`), while `nexus-plugin-anthropic` handles API-specific operations.
 
 ### v0.3.5 - Plugin System & External Integrations
-- [ ] **Plugin discovery** - Entry point-based plugin discovery
-- [ ] **Plugin registry** - Register and manage installed plugins
-- [ ] **Plugin CLI namespace** - `nexus <plugin-name> <command>` pattern
-- [ ] **Plugin hooks** - Lifecycle hooks (before_write, after_read, etc.)
-- [ ] **Plugin configuration** - Per-plugin config in `~/.nexus/plugins/<name>/`
-- [ ] **Plugin manager** - `nexus plugins list/install/uninstall/info`
-- [ ] **First-party plugins:**
-  - [ ] `nexus-plugin-anthropic` - Claude API integration (upload/download skills)
-  - [ ] `nexus-plugin-openai` - OpenAI API integration
-  - [ ] `nexus-plugin-skill-seekers` - Integration with Skill_Seekers scraper
+- [x] **Plugin discovery** - Entry point-based plugin discovery
+- [x] **Plugin registry** - Register and manage installed plugins
+- [x] **Plugin CLI namespace** - `nexus <plugin-name> <command>` pattern
+- [x] **Plugin hooks** - Lifecycle hooks (before_write, after_read, etc.)
+- [x] **Plugin configuration** - Per-plugin config in `~/.nexus/plugins/<name>/`
+- [x] **Plugin manager** - `nexus plugins list/install/uninstall/info`
+- [x] **First-party plugins:**
+  - [x] `nexus-plugin-anthropic` - Claude API integration (upload/download skills)
+  - [x] `nexus-plugin-skill-seekers` - Integration with Skill_Seekers scraper
+
+### v0.3.9 - Architecture & Versioning Improvements
+- [ ] **Library/CLI Separation** - Clean SDK interface
+  - Pure business logic in nexus/core/
+  - CLI-only concerns in nexus/cli/
+  - Standalone SDK in nexus/sdk/
+  - Enable third-party GUIs, TUIs, web interfaces
+- [ ] **Workspace Versioning** - Time-travel for agent workspaces
+  - Workspace as versioned entity (CAS-backed snapshots)
+  - `nexus workspace log <agent>` - Show version history
+  - `nexus workspace restore <agent> <version>` - Rollback workspace
+  - `nexus workspace diff <agent> <v1> <v2>` - Compare versions
+  - Workspace branching for parallel experimentation
+  - Agent debugging: "What workspace state caused this failure?"
+- [ ] **Lock-Free Concurrency** - Optimistic concurrency control
+  - Remove file locks, use optimistic concurrency
+  - Conflict detection after operations complete
+  - Conflict resolution API (keep_latest, merge, manual)
+  - Multi-agent safe operations without lock contention
+  - Concurrent filesystem modifications (Dropbox/rsync safe)
+- [ ] **Operation Log** - Undo & audit trail
+  - operation_log table (parent_id, timestamp, agent, type, affected_paths)
+  - Log all operations (write, delete, mkdir, rename)
+  - `nexus ops log` - Show operation history
+  - `nexus undo` - Undo last operation
+  - `nexus op restore <op_id>` - Restore to specific operation
+  - Operation query: list by agent, time range, operation type
+  - CAS-backed operation snapshots
+- [ ] **Time-Travel Debugging** - Read files at historical points
+  - `--at-operation` flag for time-travel reads
+  - `nexus cat /file.txt --at-operation op_123456`
+  - `nexus ls /workspace/ --at-operation op_yesterday`
+  - Operation diff - Show changes between operations
+  - Agent operation debugging: "What did agent do 10 steps ago?"
+  - Concurrent operation visualization - Show divergent operations
 
 ### v0.4.0 - AI Integration
 - [ ] LLM provider abstraction
@@ -2307,8 +2342,8 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Custom command system (markdown)
 - [ ] Basic agent memory storage
 - [ ] Memory consolidation
-- [ ] Memory reflection phase (ACE-inspired: extract insights from execution trajectories)
-- [ ] Strategy/playbook organization (ACE-inspired: organize memories as reusable strategies)
+- [ ] Memory reflection phase - Extract insights from execution trajectories
+- [ ] Strategy/playbook organization - Organize memories as reusable strategies
 - [ ] Semantic skill search - Vector-based search across skill descriptions
 
 ### v0.6.0 - Server Mode (Self-Hosted & Managed)
@@ -2319,7 +2354,6 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Redis caching
 - [ ] Docker deployment
 - [ ] Batch/transaction APIs (atomic multi-operation updates)
-- [ ] Optimistic locking for concurrent writes
 - [ ] Auto-scaling configuration (for hosted deployments)
 
 ### v0.7.0 - Extended Features & Event System
@@ -2331,20 +2365,25 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [ ] Webhook/event system (file changes, memory updates, job events)
 - [ ] Watch API for real-time updates (streaming changes to clients)
 - [ ] Server-Sent Events (SSE) support for live monitoring
-- [ ] Simple admin UI (jobs, memories, files, operation logs)
-- [ ] Operation logs table (track storage operations for debugging)
+- [ ] Simple admin UI (jobs, memories, files, operations)
 
 ### v0.8.0 - Advanced AI Features & Rich Query
 - [ ] Advanced KV cache with context tracking
 - [ ] Memory versioning and lineage
 - [ ] Multi-agent memory sharing
 - [ ] Enhanced semantic search
-- [ ] Importance-based memory preservation (ACE-inspired: prevent brevity bias in consolidation)
-- [ ] Context-aware memory retrieval (include execution context in search)
-- [ ] Automated strategy extraction (LLM-powered extraction from successful trajectories)
-- [ ] Rich memory query language (filter by metadata, importance, task type, date ranges, etc.)
-- [ ] Memory query builder API (fluent interface for complex queries)
-- [ ] Combined vector + metadata search (hybrid search)
+- [ ] Importance-based memory preservation - Prevent brevity bias in consolidation
+- [ ] Context-aware memory retrieval - Include execution context in search
+- [ ] Automated strategy extraction - LLM-powered extraction from successful trajectories
+- [ ] **Rich File Query Language** - Advanced querying beyond glob/grep
+  - `nexus query "files where size > 1MB and created_after='2025-10-01'"`
+  - `nexus query "files modified_by='agent1' in last_7_days"`
+  - `nexus query "ancestors(file='/workspace/final.md')"` - File lineage
+  - Query operations log with filters
+  - Query file dependencies and relationships
+- [ ] Rich memory query language - Filter by metadata, importance, task type, date ranges
+- [ ] Memory query builder API - Fluent interface for complex queries
+- [ ] Combined vector + metadata search - Hybrid search
 
 ### v0.9.0 - Production Readiness
 - [ ] Monitoring and observability

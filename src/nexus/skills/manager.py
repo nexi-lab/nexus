@@ -2,7 +2,7 @@
 
 import contextlib
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -139,7 +139,7 @@ class SkillManager:
         template_content = get_template(template, name=name, description=description, **kwargs)
 
         # Create skill metadata
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         metadata = SkillMetadata(
             name=name,
             description=description,
@@ -254,7 +254,7 @@ class SkillManager:
                 raise SkillManagerError(f"Skill '{target_name}' already exists at {target_file}")
 
         # Create forked metadata
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         # Increment version (if source has version)
         new_version = source_skill.metadata.version or "1.0.0"
@@ -380,7 +380,7 @@ class SkillManager:
         target_file = f"{target_dir}SKILL.md"
 
         # Update metadata for publication
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         import yaml
 

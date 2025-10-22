@@ -661,21 +661,17 @@ class SQLAlchemyMetadataStore(MetadataStore):
         self._closed = True
 
         try:
-            # CRITICAL: Force aggressive garbage collection BEFORE closing database
+            # CRITICAL: Force garbage collection BEFORE closing database
             # This ensures any lingering session references are cleaned up first
             # Especially important on Windows where sessions may hold file locks
+            gc.collect()
+            gc.collect(1)
+            gc.collect(2)
+            # Brief wait to let OS release file handles
             if sys.platform == "win32":
-                # Extra aggressive on Windows - do multiple full GC cycles
-                for _ in range(5):
-                    gc.collect()
-                    gc.collect(1)
-                    gc.collect(2)
-                time.sleep(0.5)  # Give OS time to release file handles
+                time.sleep(0.05)  # 50ms on Windows
             else:
-                gc.collect()
-                gc.collect(1)
-                gc.collect(2)
-                time.sleep(0.1)
+                time.sleep(0.01)  # 10ms elsewhere
 
             # SQLite-specific cleanup
             if self.db_type == "sqlite":
@@ -702,17 +698,15 @@ class SQLAlchemyMetadataStore(MetadataStore):
             # before this point. The dispose() call will close any remaining connections.
             self.engine.dispose()
 
-            # CRITICAL: On Windows, we need to be extra aggressive about cleanup
-            # Force multiple garbage collection passes AFTER disposing engine
+            # CRITICAL: On Windows, force GC after disposal to release lingering references
+            gc.collect()
+            gc.collect(1)
+            gc.collect(2)
+            # Minimal wait for OS to release handles
             if sys.platform == "win32":
-                for _ in range(5):  # Increased from 3 to 5 cycles
-                    gc.collect()
-                    gc.collect(1)  # Collect generation 1
-                    gc.collect(2)  # Collect generation 2
-                time.sleep(0.8)  # Increased from 300ms to 800ms - give Windows more time
+                time.sleep(0.1)  # 100ms on Windows
             else:
-                gc.collect()
-                time.sleep(0.05)
+                time.sleep(0.01)  # 10ms elsewhere
 
             # SQLite-specific file cleanup
             if self.db_type == "sqlite" and self.db_path:
@@ -724,28 +718,24 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     for suffix in ["-wal", "-shm", "-journal"]:
                         temp_file = Path(str(self.db_path) + suffix)
                         if temp_file.exists():
-                            # On Windows, retry up to 30 times with exponential backoff (increased from 20)
-                            # On other platforms, 5 retries is usually enough (increased from 3)
-                            max_retries = 30 if sys.platform == "win32" else 5
+                            # Retry a few times with small delays
+                            # Windows needs more retries due to file locking behavior
+                            max_retries = 10 if sys.platform == "win32" else 3
                             for attempt in range(max_retries):
                                 try:
                                     os.remove(temp_file)
                                     break
                                 except (OSError, PermissionError):
-                                    # Exponential backoff: 20ms, 40ms, 80ms, 160ms, ... (doubled from 10ms base)
-                                    # Cap at 2 seconds on Windows (increased from 1s), 1s elsewhere (increased from 500ms)
-                                    wait_time = 0.02 * (2**attempt)
-                                    max_wait = 2.0 if sys.platform == "win32" else 1.0
-                                    time.sleep(min(wait_time, max_wait))
-                                    # Force garbage collection every 5 attempts (not just last)
-                                    if attempt % 5 == 4 or attempt == max_retries - 1:
-                                        for _ in range(5):  # More aggressive GC (increased from 3)
-                                            gc.collect()
-                                            gc.collect(1)
-                                            gc.collect(2)
-                                        time.sleep(
-                                            0.5
-                                        )  # Longer wait after GC (increased from 0.2s)
+                                    # Short exponential backoff: 10ms, 20ms, 40ms, 80ms, ...
+                                    # Cap at 500ms to avoid long delays
+                                    wait_time = 0.01 * (2**attempt)
+                                    time.sleep(min(wait_time, 0.5))
+                                    # On last attempt, do one final GC
+                                    if attempt == max_retries - 1:
+                                        gc.collect()
+                                        gc.collect(1)
+                                        gc.collect(2)
+                                        time.sleep(0.1)
                 except Exception:
                     # Ignore errors - these files may not exist or may be locked
                     pass

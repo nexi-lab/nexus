@@ -566,17 +566,24 @@ class NexusFS(NexusFilesystem):
             check_write=True,
         )
 
+        # Check if path is read-only
+        if route.readonly:
+            raise PermissionError(f"Path is read-only: {path}")
+
+        # Get existing metadata for permission check and update detection (single query)
+        now = datetime.now(UTC)
+        meta = self.metadata.get(path)
+
         # Check write permission (v0.3.0)
         # Only check permissions if the file is owned by the current user
         # This allows namespace routing to override Unix permissions when needed
         # Rationale: Namespace isolation is PRIMARY, Unix permissions are SECONDARY
-        if self.metadata.exists(path):
-            meta = self.metadata.get(path)
+        if meta is not None:
             ctx = context or self._default_context
 
             # Only check permissions if we own the file
             # If someone else owns it but the router allows write access, namespace wins
-            if meta and meta.owner == ctx.user:
+            if meta.owner == ctx.user:
                 # Existing file owned by us - check permissions to prevent accidental overwrites
                 self._check_permission(path, Permission.WRITE, context)
             # If file is owned by someone else, skip permission check
@@ -586,14 +593,6 @@ class NexusFS(NexusFilesystem):
         # 2. The new file will get correct owner/group/mode via permission policies
         # 3. Checking parent permissions can cause false rejections when namespaces
         #    allow access but parent was created by a different user
-
-        # Check if path is read-only
-        if route.readonly:
-            raise PermissionError(f"Path is read-only: {path}")
-
-        # Get existing metadata for update detection
-        now = datetime.now(UTC)
-        meta = self.metadata.get(path)
 
         # Optimistic concurrency control (v0.3.9)
         if not force:

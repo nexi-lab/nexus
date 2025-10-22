@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Protocol
 
@@ -150,7 +150,7 @@ class SkillAuditLogger:
             ... )
         """
         audit_id = str(uuid.uuid4())
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(UTC)
 
         entry = AuditLogEntry(
             audit_id=audit_id,
@@ -232,8 +232,8 @@ class SkillAuditLogger:
             >>> logs = await audit.query_logs(agent_id="alice")
             >>>
             >>> # Get recent activity
-            >>> from datetime import datetime, timedelta
-            >>> yesterday = datetime.utcnow() - timedelta(days=1)
+            >>> from datetime import datetime, timedelta, timezone
+            >>> yesterday = datetime.now(timezone.utc) - timedelta(days=1)
             >>> logs = await audit.query_logs(start_time=yesterday)
         """
         if self._db:
@@ -372,8 +372,8 @@ class SkillAuditLogger:
             Dictionary with compliance metrics
 
         Example:
-            >>> from datetime import datetime, timedelta
-            >>> start = datetime.utcnow() - timedelta(days=30)
+            >>> from datetime import datetime, timedelta, timezone
+            >>> start = datetime.now(timezone.utc) - timedelta(days=30)
             >>> report = await audit.generate_compliance_report(start_time=start)
             >>> print(f"Total operations: {report['total_operations']}")
             >>> print(f"Skills used: {report['skills_used']}")

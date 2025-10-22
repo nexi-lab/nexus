@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from nexus.core.exceptions import ValidationError
@@ -173,7 +173,7 @@ class SkillAnalyticsTracker:
             ... )
         """
         usage_id = str(uuid.uuid4())
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(UTC)
 
         record = SkillUsageRecord(
             usage_id=usage_id,

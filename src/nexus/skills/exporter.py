@@ -4,7 +4,7 @@ import io
 import json
 import logging
 import zipfile
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
 
@@ -129,7 +129,7 @@ class SkillExporter:
                 version=skill.metadata.version,
                 description=skill.metadata.description,
                 format=format,
-                exported_at=datetime.utcnow(),
+                exported_at=datetime.now(UTC),
                 files=files_added,
                 total_size_bytes=total_size,
             )

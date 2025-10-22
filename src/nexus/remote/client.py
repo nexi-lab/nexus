@@ -31,6 +31,7 @@ from urllib.parse import urljoin
 import requests
 
 from nexus.core.exceptions import (
+    ConflictError,
     InvalidPathError,
     NexusError,
     NexusFileNotFoundError,
@@ -176,6 +177,12 @@ class RemoteNexusFS(NexusFilesystem):
             raise NexusPermissionError(message)
         elif code == RPCErrorCode.VALIDATION_ERROR.value:
             raise ValidationError(message)
+        elif code == RPCErrorCode.CONFLICT.value:
+            # Extract etag info from data
+            expected_etag = data.get("expected_etag") if data else "(unknown)"
+            current_etag = data.get("current_etag") if data else "(unknown)"
+            path = data.get("path") if data else "unknown"
+            raise ConflictError(path, expected_etag, current_etag)
         else:
             raise NexusError(f"RPC error [{code}]: {message}")
 
@@ -183,14 +190,62 @@ class RemoteNexusFS(NexusFilesystem):
     # Core File Operations
     # ============================================================
 
-    def read(self, path: str) -> bytes:
-        """Read file content as bytes."""
-        result = self._call_rpc("read", {"path": path})
+    def read(
+        self,
+        path: str,
+        context: Any = None,  # noqa: ARG002
+        return_metadata: bool = False,
+    ) -> bytes | dict[str, Any]:
+        """Read file content as bytes.
+
+        Args:
+            path: Virtual path to read
+            context: Unused in remote client (handled server-side)
+            return_metadata: If True, return dict with content and metadata (v0.3.9)
+
+        Returns:
+            If return_metadata=False: File content as bytes
+            If return_metadata=True: Dict with content, etag, version, etc.
+        """
+        result = self._call_rpc("read", {"path": path, "return_metadata": return_metadata})
         return result  # type: ignore[no-any-return]
 
-    def write(self, path: str, content: bytes) -> None:
-        """Write content to a file."""
-        self._call_rpc("write", {"path": path, "content": content})
+    def write(
+        self,
+        path: str,
+        content: bytes,
+        context: Any = None,  # noqa: ARG002
+        if_match: str | None = None,
+        if_none_match: bool = False,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Write content to a file with optional optimistic concurrency control.
+
+        Args:
+            path: Virtual path to write
+            content: File content as bytes
+            context: Unused in remote client (handled server-side)
+            if_match: Optional etag for OCC (v0.3.9)
+            if_none_match: If True, create-only mode (v0.3.9)
+            force: If True, skip version check (v0.3.9)
+
+        Returns:
+            Dict with metadata (etag, version, modified_at, size)
+
+        Raises:
+            ConflictError: If if_match doesn't match current etag (v0.3.9)
+        """
+        result = self._call_rpc(
+            "write",
+            {
+                "path": path,
+                "content": content,
+                "if_match": if_match,
+                "if_none_match": if_none_match,
+                "force": force,
+            },
+        )
+        return result  # type: ignore[no-any-return]
 
     def delete(self, path: str) -> None:
         """Delete a file."""

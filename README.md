@@ -582,6 +582,178 @@ nx.rollback("/workspace/doc.txt", version=2)
 # Current version is now 4, pointing to v2's content
 ```
 
+#### Optimistic Concurrency Control (v0.3.9)
+
+Nexus provides lock-free concurrency control for multi-agent safe operations. No file locks - conflicts are detected and agents decide how to resolve them.
+
+**Why OCC?**
+- **Multi-Agent Safe**: Multiple agents can write concurrently without lock contention
+- **Conflict Detection**: Automatic detection when files change unexpectedly
+- **Agent-Controlled Resolution**: Agents choose resolution strategy (retry, merge, abort, force)
+- **No Silent Data Loss**: Prevents last-write-wins race conditions
+
+**Basic Usage - Python API:**
+
+```python
+import nexus
+from nexus.core.exceptions import ConflictError
+
+nx = nexus.connect()
+
+# Read file with metadata (includes etag and version)
+data = nx.read("/workspace/doc.txt", return_metadata=True)
+print(f"Content: {data['content'].decode()}")
+print(f"ETag: {data['etag']}")  # SHA-256 content hash
+print(f"Version: {data['version']}")
+
+# Conditional write - only succeeds if etag matches
+try:
+    result = nx.write(
+        "/workspace/doc.txt",
+        b"Updated content",
+        if_match=data["etag"]  # Check version before writing
+    )
+    print(f"Success! New version: {result['version']}")
+except ConflictError as e:
+    print(f"Conflict: {e.message}")
+    print(f"Expected: {e.expected_etag[:16]}...")
+    print(f"Current:  {e.current_etag[:16]}...")
+    # Handle conflict - see strategies below
+```
+
+**CLI Usage:**
+
+```bash
+# Write file and show metadata
+nexus write /doc.txt "Initial content" --show-metadata
+# Output:
+# ✓ Wrote 15 bytes to /doc.txt
+# ETag:     a591a6d40bf420404a011733cfb7b190d6edc0b79a1160c4fe2607efd9ec049b
+# Version:  1
+# ...
+
+# Read file with metadata
+nexus cat /doc.txt --metadata
+# Output:
+# Metadata:
+# Path:     /doc.txt
+# ETag:     a591a6d40bf420404a011733cfb7b190d6edc0b79a1160c4fe2607efd9ec049b
+# Version:  1
+# ...
+# Content:
+# Initial content
+
+# Conditional write (safe update)
+nexus write /doc.txt "Updated" \
+  --if-match a591a6d40bf420404a011733cfb7b190d6edc0b79a1160c4fe2607efd9ec049b
+# ✓ Wrote 7 bytes to /doc.txt
+
+# Create-only mode (fail if file exists)
+nexus write /new.txt "Content" --if-none-match
+# ✓ Wrote 7 bytes to /new.txt
+
+nexus write /new.txt "Duplicate" --if-none-match
+# Error: File already exists: /new.txt
+```
+
+**Conflict Resolution Strategies:**
+
+```python
+from nexus.core.exceptions import ConflictError
+
+nx = nexus.connect()
+
+# Strategy 1: Retry with Fresh Read (Most Common)
+def safe_update(path, new_content):
+    """Update with automatic retry on conflict."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            data = nx.read(path, return_metadata=True)
+            result = nx.write(path, new_content, if_match=data["etag"])
+            return result
+        except ConflictError:
+            if attempt == max_retries - 1:
+                raise  # Give up after max retries
+            continue  # Retry with fresh read
+
+# Strategy 2: Three-Way Merge (For Structured Data)
+try:
+    data = nx.read("/config.json", return_metadata=True)
+    my_changes = {"setting_a": 99}  # My update
+    nx.write("/config.json", json.dumps(my_changes).encode(), if_match=data["etag"])
+except ConflictError:
+    # Conflict - someone else modified the file
+    current = nx.read("/config.json", return_metadata=True)
+    current_config = json.loads(current["content"])
+
+    # Merge: Apply my changes on top of current state
+    merged_config = {**current_config, **my_changes}
+    nx.write("/config.json", json.dumps(merged_config).encode(), if_match=current["etag"])
+
+# Strategy 3: Abort on Conflict (For Critical Data)
+try:
+    data = nx.read("/critical.txt", return_metadata=True)
+    nx.write("/critical.txt", b"My changes", if_match=data["etag"])
+except ConflictError as e:
+    print(f"Conflict detected: {e.message}")
+    print("Aborting - manual review required")
+    # Notify user, log error, or escalate
+
+# Strategy 4: Force Overwrite (Dangerous!)
+# Skip version check - last write wins (can cause data loss)
+result = nx.write("/doc.txt", b"Force written", force=True)
+# ⚠️  Any concurrent changes are silently lost!
+```
+
+**Remote/Distributed Usage:**
+
+OCC works transparently across remote servers and multi-agent environments:
+
+```python
+from nexus.remote.client import RemoteNexusFS
+from nexus.core.exceptions import ConflictError
+
+# Connect to remote Nexus server
+nx = RemoteNexusFS("http://nexus.example.com:8080", api_key="your-key")
+
+# Read with metadata (works exactly like local)
+data = nx.read("/shared/document.txt", return_metadata=True)
+print(f"ETag: {data['etag']}")
+print(f"Version: {data['version']}")
+
+# Conditional write (prevents race conditions)
+try:
+    result = nx.write(
+        "/shared/document.txt",
+        b"Updated by Agent A",
+        if_match=data["etag"]
+    )
+    print(f"Success! New version: {result['version']}")
+except ConflictError as e:
+    # Another agent modified the file concurrently
+    print(f"Conflict: {e.message}")
+    # Retry with fresh read
+```
+
+**Features:**
+- **Lock-Free**: No file locking - better performance in distributed environments
+- **Automatic Versioning**: Every write increments version number automatically
+- **ETags**: SHA-256 content hashes for version identification
+- **Atomic Check**: Version check happens atomically at database level
+- **Backward Compatible**: All parameters optional - existing code works unchanged
+- **FUSE Compatible**: Works through FUSE mounts (operations don't use if_match by default)
+
+**Use Cases:**
+- **Multi-Agent Collaboration**: Prevent agents from overwriting each other's changes
+- **Distributed Teams**: Safe concurrent edits across remote servers
+- **Dropbox/rsync Safe**: Prevent race conditions during sync operations
+- **Critical Data**: Ensure updates don't silently overwrite concurrent modifications
+
+**See Examples:**
+- `examples/concurrency_demo.py` - Comprehensive Python examples
+- `examples/test_cli_occ.sh` - CLI usage examples and testing
+
 ### Examples
 
 **Initialize and populate a workspace:**
@@ -2294,7 +2466,7 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
   - [x] `nexus-plugin-skill-seekers` - Integration with Skill_Seekers scraper
 
 ### v0.3.9 - Architecture & Versioning Improvements
-- [ ] **Library/CLI Separation** - Clean SDK interface
+- [x] **Library/CLI Separation** - Clean SDK interface
   - Pure business logic in nexus/core/
   - CLI-only concerns in nexus/cli/
   - Standalone SDK in nexus/sdk/
@@ -2306,12 +2478,16 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
   - `nexus workspace diff <agent> <v1> <v2>` - Compare versions
   - Workspace branching for parallel experimentation
   - Agent debugging: "What workspace state caused this failure?"
-- [ ] **Lock-Free Concurrency** - Optimistic concurrency control
-  - Remove file locks, use optimistic concurrency
-  - Conflict detection after operations complete
-  - Conflict resolution API (keep_latest, merge, manual)
-  - Multi-agent safe operations without lock contention
-  - Concurrent filesystem modifications (Dropbox/rsync safe)
+- [x] **Lock-Free Concurrency** - Optimistic concurrency control
+  - ✅ ConflictError exception with etag details
+  - ✅ read() with return_metadata parameter
+  - ✅ write() with if_match, if_none_match, force parameters
+  - ✅ Atomic version checking at database level
+  - ✅ CLI support (--metadata, --if-match, --if-none-match, --force, --show-metadata)
+  - ✅ Remote client and RPC server support
+  - ✅ Comprehensive examples and tests
+  - ✅ Multi-agent safe operations without lock contention
+  - ✅ Concurrent filesystem modifications (Dropbox/rsync safe)
 - [ ] **Operation Log** - Undo & audit trail
   - operation_log table (parent_id, timestamp, agent, type, affected_paths)
   - Log all operations (write, delete, mkdir, rename)

@@ -63,6 +63,7 @@ class RPCErrorCode(Enum):
     ACCESS_DENIED = -32003
     PERMISSION_ERROR = -32004
     VALIDATION_ERROR = -32005
+    CONFLICT = -32006  # Optimistic concurrency conflict (v0.3.9)
 
 
 @dataclass
@@ -186,6 +187,7 @@ class ReadParams:
     """Parameters for read() method."""
 
     path: str
+    return_metadata: bool = False  # v0.3.9: Return dict with content + metadata
 
 
 @dataclass
@@ -194,6 +196,9 @@ class WriteParams:
 
     path: str
     content: bytes
+    if_match: str | None = None  # v0.3.9: Optimistic concurrency control
+    if_none_match: bool = False  # v0.3.9: Create-only mode
+    force: bool = False  # v0.3.9: Skip version check
 
 
 @dataclass

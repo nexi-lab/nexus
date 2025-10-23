@@ -158,6 +158,9 @@ def test_protocol_runtime_checkable() -> None:
 
         # Mock object with required methods should also pass
         class MockFilesystem:
+            agent_id: str | None = None
+            tenant_id: str | None = None
+
             def read(self, path: str) -> bytes:
                 return b""
 
@@ -222,6 +225,20 @@ def test_protocol_runtime_checkable() -> None:
 
             def diff_versions(self, path: str, v1: int, v2: int, mode: str = "metadata"):
                 return {} if mode == "metadata" else ""
+
+            def workspace_snapshot(
+                self, agent_id: str | None = None, description: str | None = None, tags=None
+            ):
+                return {}
+
+            def workspace_restore(self, snapshot_number: int, agent_id: str | None = None):
+                return {}
+
+            def workspace_log(self, agent_id: str | None = None, limit: int = 100):
+                return []
+
+            def workspace_diff(self, snapshot_1: int, snapshot_2: int, agent_id: str | None = None):
+                return {}
 
             def close(self) -> None:
                 pass

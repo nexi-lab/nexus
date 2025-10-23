@@ -9,12 +9,15 @@ import json
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
+
+if TYPE_CHECKING:
+    pass
 from nexus.core.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -31,6 +34,7 @@ from nexus.core.permissions import OperationContext, Permission
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.parsers import MarkItDownParser, ParserRegistry
 from nexus.parsers.types import ParseResult
+from nexus.storage.content_cache import ContentCache
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
 
@@ -69,6 +73,8 @@ class NexusFS(
         cache_kv_size: int = 256,
         cache_exists_size: int = 1024,
         cache_ttl_seconds: int | None = 300,
+        enable_content_cache: bool = True,
+        content_cache_size_mb: int = 256,
         auto_parse: bool = True,
         custom_parsers: list[dict[str, Any]] | None = None,
         enforce_permissions: bool = True,
@@ -89,10 +95,22 @@ class NexusFS(
             cache_kv_size: Max entries for file metadata KV cache (default: 256)
             cache_exists_size: Max entries for existence check cache (default: 1024)
             cache_ttl_seconds: Cache TTL in seconds, None = no expiry (default: 300)
+            enable_content_cache: Enable in-memory content caching for faster reads (default: True)
+            content_cache_size_mb: Maximum content cache size in megabytes (default: 256)
             auto_parse: Automatically parse files on write (default: True)
             custom_parsers: Custom parser configurations from config (optional)
             enforce_permissions: Enable permission enforcement on file operations (default: True)
         """
+        # Initialize content cache if enabled and backend supports it
+        if enable_content_cache:
+            # Import here to avoid circular import
+            from nexus.backends.local import LocalBackend
+
+            if isinstance(backend, LocalBackend):
+                # Create content cache and attach to LocalBackend
+                content_cache = ContentCache(max_size_mb=content_cache_size_mb)
+                backend.content_cache = content_cache
+
         # Store backend
         self.backend = backend
 

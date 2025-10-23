@@ -13,6 +13,7 @@ from typing import Any
 
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.storage.content_cache import ContentCache
 
 
 class LocalBackend(Backend):
@@ -42,16 +43,18 @@ class LocalBackend(Backend):
     - Directory support for compatibility
     """
 
-    def __init__(self, root_path: str | Path):
+    def __init__(self, root_path: str | Path, content_cache: ContentCache | None = None):
         """
         Initialize local backend.
 
         Args:
             root_path: Root directory for storage
+            content_cache: Optional content cache for faster reads (default: None)
         """
         self.root_path = Path(root_path).resolve()
         self.cas_root = self.root_path / "cas"  # CAS content storage
         self.dir_root = self.root_path / "dirs"  # Directory structure
+        self.content_cache = content_cache  # Optional content cache for fast reads
         self._ensure_roots()
 
     @property
@@ -198,6 +201,9 @@ class LocalBackend(Backend):
             metadata = self._read_metadata(content_hash)
             metadata["ref_count"] = metadata.get("ref_count", 0) + 1
             self._write_metadata(content_hash, metadata)
+            # Add to cache since we have the content in memory
+            if self.content_cache is not None:
+                self.content_cache.put(content_hash, content)
             return content_hash
 
         # Content doesn't exist - write atomically
@@ -230,6 +236,9 @@ class LocalBackend(Backend):
                     metadata = self._read_metadata(content_hash)
                     metadata["ref_count"] = metadata.get("ref_count", 0) + 1
                     self._write_metadata(content_hash, metadata)
+                    # Add to cache since we have the content in memory
+                    if self.content_cache is not None:
+                        self.content_cache.put(content_hash, content)
                     return content_hash
                 else:
                     # Some other error - re-raise
@@ -238,6 +247,10 @@ class LocalBackend(Backend):
             # Create metadata (only if we successfully wrote the file)
             metadata = {"ref_count": 1, "size": len(content)}
             self._write_metadata(content_hash, metadata)
+
+            # Add to cache since we have the content in memory
+            if self.content_cache is not None:
+                self.content_cache.put(content_hash, content)
 
             return content_hash
 
@@ -253,6 +266,13 @@ class LocalBackend(Backend):
 
     def read_content(self, content_hash: str) -> bytes:
         """Read content by its hash with retry for Windows file locking."""
+        # Check cache first for fast path
+        if self.content_cache is not None:
+            cached_content = self.content_cache.get(content_hash)
+            if cached_content is not None:
+                return cached_content
+
+        # Cache miss - read from disk
         content_path = self._hash_to_path(content_hash)
 
         # Retry logic for Windows file locking issues
@@ -286,6 +306,10 @@ class LocalBackend(Backend):
                         backend="local",
                         path=content_hash,
                     )
+
+                # Add to cache for future reads
+                if self.content_cache is not None:
+                    self.content_cache.put(content_hash, content)
 
                 return content
 

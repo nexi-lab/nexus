@@ -7,6 +7,207 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.9] - 2025-10-23
+
+### Added
+
+#### Time-Travel Debugging (Issue #186)
+- **Read Files at Historical Points**: Query filesystem state at any operation point
+  - `nexus cat /file.txt --at-operation <op_id>` - Read file at historical operation
+  - `nexus ls /workspace --at-operation <op_id>` - List directory at historical point
+  - `nexus ops diff /file.txt <op1> <op2> --show-content` - Full unified diff between operations
+- **Non-Destructive History Exploration**: Debug without modifying current state
+  - Query file content at any past operation
+  - Compare states between operations
+  - Understand agent behavior over time
+- **Full Content Access**: Returns complete file content and metadata
+  - CAS-backed content retrieval (zero storage overhead)
+  - Metadata reconstruction from operation snapshots
+  - Unified diff support (like `git diff`)
+- **Python SDK**: TimeTravelReader class for programmatic access
+  - `get_file_at_operation(path, operation_id)` - Read historical file
+  - `list_files_at_operation(path, operation_id)` - List historical directory
+  - `diff_operations(path, op1, op2)` - Compare file states
+- **Use Cases**:
+  - "What was the file content 10 operations ago?"
+  - Track agent modifications over time
+  - Post-mortem analysis without undo
+  - Concurrent agent debugging and analysis
+- **CLI Command**: `nexus ops diff`
+  - Metadata diff (default): Shows size changes, timestamps
+  - Content diff (`--show-content`): Full unified diff with line-by-line changes
+- **Tests**: 9 comprehensive unit tests with 83% coverage
+
+#### Operation Log - Undo & Audit Trail (Issue #185)
+- **Automatic Operation Logging**: Track all filesystem operations
+  - Write, delete, and rename operations logged automatically
+  - CAS-backed snapshots of previous content (zero storage overhead)
+  - Complete audit trail with timestamps
+- **Undo Capability**: Reverse any operation
+  - `nexus undo` - Undo last operation (with confirmation)
+  - `nexus undo --agent my-agent` - Undo agent-specific operation
+  - `nexus undo --yes` - Skip confirmation prompt
+- **Undo Behavior by Operation Type**:
+  - Write (new file): Deletes the newly created file
+  - Write (update): Restores previous version from CAS snapshot
+  - Delete: Restores file content and metadata from CAS
+  - Rename: Renames file back to original path
+- **Filtered Queries**: Search operations by multiple criteria
+  - `nexus ops log --agent my-agent` - Filter by agent
+  - `nexus ops log --type write` - Filter by operation type
+  - `nexus ops log --path /workspace/file.txt` - Filter by path
+  - `nexus ops log --status failure` - Show failed operations
+- **Python SDK**: OperationLogger class
+  - `list_operations(agent_id, operation_type, path, status)` - Query operations
+  - `get_last_operation(agent_id)` - Get most recent operation
+  - `get_path_history(path)` - Get all operations for a path
+- **Multi-Agent Safe**: Track operations per agent for team workflows
+- **Database Schema**: OperationLogModel with indexed queries
+  - operation_id, operation_type, path, agent_id, tenant_id
+  - snapshot_hash (previous content), metadata_snapshot (previous metadata)
+  - created_at timestamp, status (success/failure)
+- **Tests**: 12 comprehensive unit tests
+
+#### Workspace Versioning - Time-Travel for Agent Workspaces (Issue #183)
+- **Snapshot & Restore**: Save and restore entire workspace state
+  - Create point-in-time snapshots of all files
+  - Restore workspace to any previous snapshot
+  - Zero storage overhead (snapshots use CAS manifest files)
+- **Workspace Operations**:
+  - `create_snapshot(label)` - Create named snapshot
+  - `list_snapshots()` - View all snapshots
+  - `restore_snapshot(snapshot_id)` - Restore to snapshot
+  - `delete_snapshot(snapshot_id)` - Delete snapshot
+- **CLI Commands**:
+  - `nexus workspace snapshot --label "before-refactor"` - Create snapshot
+  - `nexus workspace list` - List all snapshots
+  - `nexus workspace restore <snapshot_id>` - Restore snapshot
+  - `nexus workspace delete <snapshot_id>` - Delete snapshot
+- **Manifest-Based Snapshots**: JSON manifests in CAS
+  - Lists all files and their content hashes
+  - Stored in CAS (deduplicated)
+  - Fast restoration (metadata updates only)
+- **Use Cases**:
+  - Safe experimentation ("snapshot before risky change")
+  - Checkpointing during long workflows
+  - Agent state recovery
+  - Rollback destructive operations
+
+#### Performance Optimizations
+
+**Content Caching (Issue #211)** - 10x faster reads
+- **LRU Content Cache**: Cache file content in memory
+  - Default 100 files, configurable size
+  - Automatic cache invalidation on writes
+  - Thread-safe with proper locking
+- **Performance**: 10x speedup for repeated reads
+  - Hot path optimization for AI workloads
+  - Transparent caching (no code changes needed)
+- **Configuration**:
+  ```python
+  nx = nexus.connect(config={"content_cache_size": 200})
+  ```
+
+**Batch Write API (Issue #212)** - 13x faster operations
+- **Bulk Upload**: Write multiple files in single transaction
+  - `write_batch([(path, content), ...])` - Batch write
+  - Single database transaction for all files
+  - Reduced overhead per file
+- **Performance**: 13x faster for small files
+  - 1000 small files: ~13 seconds → ~1 second
+  - Optimal for AI checkpoints and logs
+- **Use Cases**:
+  - Checkpoint uploads
+  - Log file batching
+  - Dataset imports
+- **Example**:
+  ```python
+  files = [(f"/logs/log_{i}.txt", f"Log {i}") for i in range(1000)]
+  nx.write_batch(files)  # 13x faster than individual writes
+  ```
+
+**Performance Benchmarking Suite (Issue #196)**
+- **Comprehensive Benchmarks**: Measure all core operations
+  - Read, write, list, glob, grep benchmarks
+  - Batch operations performance tests
+  - Cache effectiveness metrics
+- **CLI Command**: `nexus benchmark`
+  - Automatic performance testing
+  - Comparison with/without cache
+  - HTML report generation
+
+### Fixed
+- **Windows Concurrency**: Fixed file locking issues in LocalBackend
+  - Proper file handle management
+  - Windows-specific test stability
+- **CAS File Not Found**: Improved error messages for missing content
+  - Better error context and debugging info
+  - Graceful handling of edge cases
+- **Skills Tests**: Fixed PostgreSQL compatibility issues
+  - Proper workspace cleanup
+  - Database isolation in tests
+- **Remote Client**: Enhanced error handling
+  - Better network error messages
+  - Connection timeout handling
+- **Import Scope**: Fixed `NexusFS` variable scope in CLI commands
+  - Moved imports to function level for `ls --long` compatibility
+  - Proper error handling for import failures
+
+### Changed
+- **CLI Structure**: Reorganized commands for better UX
+  - Grouped related commands
+  - Consistent naming conventions
+  - Improved help text
+- **Operation Log**: Now required for workspace versioning
+  - Automatic integration
+  - Shared infrastructure
+
+### Documentation
+- **Time-Travel Guide**: Complete documentation with examples
+  - CLI usage examples
+  - Python SDK guide
+  - Use cases and best practices
+  - Demo scripts (Python + Shell)
+- **Operation Log Guide**: Comprehensive docs
+  - Undo behavior by operation type
+  - Query filtering examples
+  - Multi-agent workflows
+- **Workspace Versioning Guide**: Snapshot/restore documentation
+  - Snapshot creation and management
+  - Restoration procedures
+  - CAS manifest format
+- **Performance Guide**: Optimization best practices
+  - Cache configuration
+  - Batch write patterns
+  - Benchmarking results
+
+### Technical Details
+- **New Modules**:
+  - `src/nexus/storage/time_travel.py` - Time-travel debugging (118 lines)
+  - `src/nexus/storage/operation_logger.py` - Operation logging (194 lines)
+  - `src/nexus/core/workspace_manager.py` - Workspace snapshots
+- **New Database Tables**:
+  - `operation_log` - Operation audit trail
+  - `workspace_snapshots` - Workspace snapshot metadata
+- **New Alembic Migrations**:
+  - `add_operation_log` - Create operation_log table
+  - `add_workspace_snapshots` - Create workspace_snapshots table
+- **New Tests**: 21+ comprehensive tests
+  - Time-travel debugging: 9 tests (83% coverage)
+  - Operation log: 12 tests
+  - Workspace versioning: Tests included
+- **New Examples**:
+  - `examples/py_demo/time_travel_demo.py` - Python time-travel demo
+  - `examples/script_demo/time_travel_demo.sh` - Shell time-travel demo
+  - `examples/py_demo/operation_log_demo.py` - Operation log demo
+  - `examples/script_demo/operation_log_demo.sh` - Operation log shell demo
+
+### Performance Metrics
+- **Batch Write**: 13x faster for 1000 small files (13s → 1s)
+- **Content Cache**: 10x faster for repeated reads
+- **Time-Travel**: <100ms for historical file reads
+- **Operation Log**: Minimal overhead (<5% on write operations)
+
 ## [0.1.3] - 2025-10-17
 
 ### Added
@@ -633,7 +834,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/nexi-lab/nexus/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/nexi-lab/nexus/compare/v0.3.9...HEAD
+[0.3.9]: https://github.com/nexi-lab/nexus/compare/v0.3.0...v0.3.9
 [0.3.0]: https://github.com/nexi-lab/nexus/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nexi-lab/nexus/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/nexi-lab/nexus/compare/v0.1.2...v0.1.3

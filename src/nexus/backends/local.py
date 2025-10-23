@@ -1,5 +1,6 @@
 """Unified local filesystem backend with CAS and directory support."""
 
+import contextlib
 import errno
 import hashlib
 import json
@@ -107,23 +108,55 @@ class LocalBackend(Backend):
         if not meta_path.exists():
             return {"ref_count": 0, "size": 0}
 
-        try:
-            # Read directly without locking (metadata files are small and atomic)
-            content = meta_path.read_text(encoding="utf-8")
-            result: dict[str, Any] = json.loads(content)
-            return result
-        except (OSError, json.JSONDecodeError) as e:
-            raise BackendError(
-                f"Failed to read metadata: {e}", backend="local", path=content_hash
-            ) from e
+        # Retry logic for Windows file locking and race conditions
+        max_retries = 3
+        retry_delay = 0.01  # 10ms
+
+        for attempt in range(max_retries):
+            try:
+                # Read directly without locking (metadata files are small and atomic)
+                content = meta_path.read_text(encoding="utf-8")
+                result: dict[str, Any] = json.loads(content)
+                return result
+            except json.JSONDecodeError as e:
+                # Corrupted metadata - could be mid-write on Windows
+                if attempt < max_retries - 1:
+                    import time
+
+                    time.sleep(retry_delay)
+                    continue
+                # Last attempt failed - raise error
+                raise BackendError(
+                    f"Failed to read metadata: {e}: {content_hash}",
+                    backend="local",
+                    path=content_hash,
+                ) from e
+            except OSError as e:
+                # File might be locked on Windows - retry
+                if attempt < max_retries - 1:
+                    import time
+
+                    time.sleep(retry_delay)
+                    continue
+                raise BackendError(
+                    f"Failed to read metadata: {e}", backend="local", path=content_hash
+                ) from e
+
+        # Should never reach here
+        raise BackendError(
+            f"Failed to read metadata after {max_retries} retries",
+            backend="local",
+            path=content_hash,
+        )
 
     def _write_metadata(self, content_hash: str, metadata: dict[str, Any]) -> None:
         """Write metadata for content."""
         meta_path = self._get_meta_path(content_hash)
         meta_path.parent.mkdir(parents=True, exist_ok=True)
 
+        tmp_path = None
         try:
-            # Atomic write: write to temp file, then move
+            # Atomic write: write to temp file, then replace
             # This avoids Windows file locking issues
             with tempfile.NamedTemporaryFile(
                 mode="w", encoding="utf-8", dir=meta_path.parent, delete=False, suffix=".tmp"
@@ -131,12 +164,17 @@ class LocalBackend(Backend):
                 tmp_path = Path(tmp_file.name)
                 tmp_file.write(json.dumps(metadata))
                 tmp_file.flush()
+                # Force write to disk on Windows
+                os.fsync(tmp_file.fileno())
 
-            # Atomic move (replace)
-            shutil.move(str(tmp_path), str(meta_path))
+            # Atomic replace (works better than move on Windows)
+            os.replace(str(tmp_path), str(meta_path))
+            tmp_path = None  # Successfully moved
         except OSError as e:
-            if "tmp_path" in locals():
-                Path(tmp_path).unlink(missing_ok=True)
+            # Clean up temp file on error
+            if tmp_path is not None and tmp_path.exists():
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink()
             raise BackendError(
                 f"Failed to write metadata: {e}", backend="local", path=content_hash
             ) from e
@@ -150,6 +188,7 @@ class LocalBackend(Backend):
         Write content to CAS storage and return its hash.
 
         If content already exists, increments reference count.
+        Handles race conditions when multiple threads write the same content.
         """
         content_hash = self._compute_hash(content)
         content_path = self._hash_to_path(content_hash)
@@ -162,6 +201,7 @@ class LocalBackend(Backend):
             return content_hash
 
         # Content doesn't exist - write atomically
+        tmp_path = None
         try:
             content_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -174,49 +214,98 @@ class LocalBackend(Backend):
                 tmp_file.flush()  # Flush Python buffers
                 os.fsync(tmp_file.fileno())  # Force OS to write to disk
 
-            # Move to final location
-            shutil.move(str(tmp_path), str(content_path))
+            # Move to final location (atomic on Unix, best-effort on Windows)
+            # On Windows, os.rename fails if destination exists, so we need to handle that
+            try:
+                # Try atomic rename first (works on Unix, fails on Windows if exists)
+                os.replace(str(tmp_path), str(content_path))
+            except OSError:
+                # Race condition: another thread created the file between our check and now
+                # This is expected in concurrent scenarios - just increment ref count
+                if content_path.exists():
+                    # Clean up our temp file
+                    tmp_path.unlink(missing_ok=True)
+                    tmp_path = None
+                    # Increment ref count for the existing file
+                    metadata = self._read_metadata(content_hash)
+                    metadata["ref_count"] = metadata.get("ref_count", 0) + 1
+                    self._write_metadata(content_hash, metadata)
+                    return content_hash
+                else:
+                    # Some other error - re-raise
+                    raise
 
-            # Create metadata
+            # Create metadata (only if we successfully wrote the file)
             metadata = {"ref_count": 1, "size": len(content)}
             self._write_metadata(content_hash, metadata)
 
             return content_hash
 
         except OSError as e:
-            if "tmp_path" in locals():
-                tmp_path.unlink(missing_ok=True)
+            # Clean up temp file on any error
+            if tmp_path is not None and tmp_path.exists():
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink()
 
             raise BackendError(
                 f"Failed to write content: {e}", backend="local", path=content_hash
             ) from e
 
     def read_content(self, content_hash: str) -> bytes:
-        """Read content by its hash."""
+        """Read content by its hash with retry for Windows file locking."""
         content_path = self._hash_to_path(content_hash)
 
-        if not content_path.exists():
-            raise NexusFileNotFoundError(content_hash)
+        # Retry logic for Windows file locking issues
+        max_retries = 3
+        retry_delay = 0.01  # 10ms
 
-        try:
-            # Read directly without locking (content files are immutable after creation)
-            content = content_path.read_bytes()
+        for attempt in range(max_retries):
+            # Check if file exists (with retry for race conditions)
+            if not content_path.exists():
+                if attempt < max_retries - 1:
+                    # File might be mid-write - retry
+                    import time
 
-            # Verify hash
-            actual_hash = self._compute_hash(content)
-            if actual_hash != content_hash:
-                raise BackendError(
-                    f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
-                    backend="local",
+                    time.sleep(retry_delay)
+                    continue
+                # File genuinely doesn't exist
+                raise NexusFileNotFoundError(
                     path=content_hash,
+                    message=f"CAS content not found: {content_hash}",
                 )
 
-            return content
+            try:
+                # Read directly without locking (content files are immutable after creation)
+                content = content_path.read_bytes()
 
-        except OSError as e:
-            raise BackendError(
-                f"Failed to read content: {e}", backend="local", path=content_hash
-            ) from e
+                # Verify hash
+                actual_hash = self._compute_hash(content)
+                if actual_hash != content_hash:
+                    raise BackendError(
+                        f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
+                        backend="local",
+                        path=content_hash,
+                    )
+
+                return content
+
+            except OSError as e:
+                # File might be locked on Windows - retry
+                if attempt < max_retries - 1:
+                    import time
+
+                    time.sleep(retry_delay)
+                    continue
+                raise BackendError(
+                    f"Failed to read content: {e}", backend="local", path=content_hash
+                ) from e
+
+        # Should never reach here
+        raise BackendError(
+            f"Failed to read content after {max_retries} retries",
+            backend="local",
+            path=content_hash,
+        )
 
     def delete_content(self, content_hash: str) -> None:
         """Delete content by hash with reference counting."""

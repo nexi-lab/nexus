@@ -178,6 +178,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
             # SQLite-specific configuration
             # Use NullPool to avoid concurrency issues with SQLite
             config["poolclass"] = pool.NullPool
+            # Set a longer timeout for concurrent operations (30 seconds)
+            # This allows threads to wait for locks instead of failing immediately
+            config["connect_args"] = {"timeout": 30}
         elif self.db_type == "postgresql":
             # PostgreSQL-specific configuration
             # Use QueuePool with reasonable defaults for production
@@ -337,113 +340,151 @@ class SQLAlchemyMetadataStore(MetadataStore):
         Args:
             metadata: File metadata to store
         """
+        import random
+        import time
+
+        from sqlalchemy.exc import IntegrityError
+
         # Validate BEFORE database operation
         metadata.validate()
 
-        try:
-            with self.SessionLocal() as session:
-                # Check if file path already exists
-                stmt = select(FilePathModel).where(
-                    FilePathModel.virtual_path == metadata.path,
-                    FilePathModel.deleted_at.is_(None),
-                )
-                existing = session.scalar(stmt)
+        # Retry logic for handling concurrent version conflicts in SQLite
+        max_retries = 10  # Increased for high concurrency scenarios
+        retry_delay = 0.001  # Start with 1ms, faster initial retries
 
-                if existing:
-                    # FILE UPDATE - Increment version and create history entry for NEW version
-
-                    # Update existing record with new content
-                    existing.backend_id = metadata.backend_name
-                    existing.physical_path = metadata.physical_path
-                    existing.size_bytes = metadata.size
-                    existing.content_hash = metadata.etag  # NEW content hash
-                    existing.file_type = metadata.mime_type
-                    existing.updated_at = metadata.modified_at or datetime.now(UTC)
-                    # Update permissions (v0.3.0)
-                    existing.owner = metadata.owner
-                    existing.group = metadata.group
-                    existing.mode = metadata.mode
-
-                    # Only create version history if we have actual content (etag is not None)
-                    if metadata.etag is not None:
-                        # Get the current version entry to link lineage
-                        prev_version_stmt = (
-                            select(VersionHistoryModel)
-                            .where(
-                                VersionHistoryModel.resource_type == "file",
-                                VersionHistoryModel.resource_id == existing.path_id,
-                                VersionHistoryModel.version_number == existing.current_version,
-                            )
-                            .limit(1)
+        for attempt in range(max_retries):
+            try:
+                with self.SessionLocal() as session:
+                    # Check if file path already exists
+                    # Use row-level locking to prevent concurrent version conflicts
+                    stmt = (
+                        select(FilePathModel)
+                        .where(
+                            FilePathModel.virtual_path == metadata.path,
+                            FilePathModel.deleted_at.is_(None),
                         )
-                        prev_version = session.scalar(prev_version_stmt)
-
-                        existing.current_version += 1  # Increment version
-
-                        # Create version history entry for NEW version
-                        version_entry = VersionHistoryModel(
-                            version_id=str(uuid.uuid4()),
-                            resource_type="file",
-                            resource_id=existing.path_id,
-                            version_number=existing.current_version,  # NEW version number
-                            content_hash=metadata.etag,  # NEW content hash
-                            size_bytes=metadata.size,
-                            mime_type=metadata.mime_type,
-                            parent_version_id=prev_version.version_id if prev_version else None,
-                            source_type="original",
-                            created_at=datetime.now(UTC),
-                        )
-                        version_entry.validate()
-                        session.add(version_entry)
-                else:
-                    # NEW FILE - Create record and initial version history
-                    file_path = FilePathModel(
-                        path_id=str(uuid.uuid4()),
-                        tenant_id=str(uuid.uuid4()),  # Default tenant for embedded mode
-                        virtual_path=metadata.path,
-                        backend_id=metadata.backend_name,
-                        physical_path=metadata.physical_path,
-                        size_bytes=metadata.size,
-                        content_hash=metadata.etag,
-                        file_type=metadata.mime_type,
-                        created_at=metadata.created_at or datetime.now(UTC),
-                        updated_at=metadata.modified_at or datetime.now(UTC),
-                        current_version=1,  # Initial version
-                        # UNIX-style permissions (v0.3.0)
-                        owner=metadata.owner,
-                        group=metadata.group,
-                        mode=metadata.mode,
+                        .with_for_update()
                     )
-                    # Validate model before inserting
-                    file_path.validate()
-                    session.add(file_path)
-                    session.flush()  # Get path_id
+                    existing = session.scalar(stmt)
 
-                    # Only create version history if we have actual content (etag is not None)
-                    if metadata.etag is not None:
-                        # Create initial version history entry
-                        version_entry = VersionHistoryModel(
-                            version_id=str(uuid.uuid4()),
-                            resource_type="file",
-                            resource_id=file_path.path_id,
-                            version_number=1,
-                            content_hash=metadata.etag,
+                    if existing:
+                        # FILE UPDATE - Increment version and create history entry for NEW version
+
+                        # Update existing record with new content
+                        existing.backend_id = metadata.backend_name
+                        existing.physical_path = metadata.physical_path
+                        existing.size_bytes = metadata.size
+                        existing.content_hash = metadata.etag  # NEW content hash
+                        existing.file_type = metadata.mime_type
+                        existing.updated_at = metadata.modified_at or datetime.now(UTC)
+                        # Update permissions (v0.3.0)
+                        existing.owner = metadata.owner
+                        existing.group = metadata.group
+                        existing.mode = metadata.mode
+
+                        # Only create version history if we have actual content (etag is not None)
+                        if metadata.etag is not None:
+                            # Get the current version entry to link lineage
+                            prev_version_stmt = (
+                                select(VersionHistoryModel)
+                                .where(
+                                    VersionHistoryModel.resource_type == "file",
+                                    VersionHistoryModel.resource_id == existing.path_id,
+                                    VersionHistoryModel.version_number == existing.current_version,
+                                )
+                                .limit(1)
+                            )
+                            prev_version = session.scalar(prev_version_stmt)
+
+                            existing.current_version += 1  # Increment version
+
+                            # Create version history entry for NEW version
+                            version_entry = VersionHistoryModel(
+                                version_id=str(uuid.uuid4()),
+                                resource_type="file",
+                                resource_id=existing.path_id,
+                                version_number=existing.current_version,  # NEW version number
+                                content_hash=metadata.etag,  # NEW content hash
+                                size_bytes=metadata.size,
+                                mime_type=metadata.mime_type,
+                                parent_version_id=prev_version.version_id if prev_version else None,
+                                source_type="original",
+                                created_at=datetime.now(UTC),
+                            )
+                            version_entry.validate()
+                            session.add(version_entry)
+                    else:
+                        # NEW FILE - Create record and initial version history
+                        file_path = FilePathModel(
+                            path_id=str(uuid.uuid4()),
+                            tenant_id=str(uuid.uuid4()),  # Default tenant for embedded mode
+                            virtual_path=metadata.path,
+                            backend_id=metadata.backend_name,
+                            physical_path=metadata.physical_path,
                             size_bytes=metadata.size,
-                            mime_type=metadata.mime_type,
-                            parent_version_id=None,
-                            source_type="original",
-                            created_at=file_path.created_at,
+                            content_hash=metadata.etag,
+                            file_type=metadata.mime_type,
+                            created_at=metadata.created_at or datetime.now(UTC),
+                            updated_at=metadata.modified_at or datetime.now(UTC),
+                            current_version=1,  # Initial version
+                            # UNIX-style permissions (v0.3.0)
+                            owner=metadata.owner,
+                            group=metadata.group,
+                            mode=metadata.mode,
                         )
-                        version_entry.validate()
-                        session.add(version_entry)
+                        # Validate model before inserting
+                        file_path.validate()
+                        session.add(file_path)
+                        session.flush()  # Get path_id
 
-                session.commit()
+                        # Only create version history if we have actual content (etag is not None)
+                        if metadata.etag is not None:
+                            # Create initial version history entry
+                            version_entry = VersionHistoryModel(
+                                version_id=str(uuid.uuid4()),
+                                resource_type="file",
+                                resource_id=file_path.path_id,
+                                version_number=1,
+                                content_hash=metadata.etag,
+                                size_bytes=metadata.size,
+                                mime_type=metadata.mime_type,
+                                parent_version_id=None,
+                                source_type="original",
+                                created_at=file_path.created_at,
+                            )
+                            version_entry.validate()
+                            session.add(version_entry)
 
-            # Invalidate cache for this path
-            if self._cache_enabled and self._cache:
-                self._cache.invalidate_path(metadata.path)
-        except Exception as e:
-            raise MetadataError(f"Failed to store metadata: {e}", path=metadata.path) from e
+                    session.commit()
+
+                # Invalidate cache for this path
+                if self._cache_enabled and self._cache:
+                    self._cache.invalidate_path(metadata.path)
+
+                # Success - exit retry loop
+                break
+
+            except IntegrityError as e:
+                # Handle concurrent version conflicts
+                if "UNIQUE constraint failed: version_history" in str(e):
+                    if attempt < max_retries - 1:
+                        # Retry with exponential backoff + jitter to avoid thundering herd
+                        jitter = random.uniform(0, retry_delay * 0.5)  # Add up to 50% jitter
+                        time.sleep(retry_delay + jitter)
+                        retry_delay *= 2  # Exponential backoff
+                        continue
+                    else:
+                        # Final attempt failed
+                        raise MetadataError(
+                            f"Failed to store metadata after {max_retries} retries due to concurrent version conflict: {e}",
+                            path=metadata.path,
+                        ) from e
+                else:
+                    # Different integrity error - don't retry
+                    raise MetadataError(f"Failed to store metadata: {e}", path=metadata.path) from e
+            except Exception as e:
+                # Non-retryable error
+                raise MetadataError(f"Failed to store metadata: {e}", path=metadata.path) from e
 
     def delete(self, path: str) -> None:
         """
@@ -885,7 +926,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
     def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
         """
-        Store or update multiple file metadata entries in a single transaction.
+        Store or update multiple file metadata entries in a single transaction WITH VERSION TRACKING.
+
+        When updating existing files, creates version history entries for each update
+        preserving the old content hashes before updating to new content.
 
         This is more efficient than calling put() multiple times as it uses
         a single transaction instead of N transactions.
@@ -903,9 +947,15 @@ class SQLAlchemyMetadataStore(MetadataStore):
         try:
             with self.SessionLocal() as session:
                 # Get all paths to check for existing entries
+                # Use row-level locking to prevent concurrent version conflicts
                 paths: list[str] = [m.path for m in metadata_list]
-                stmt = select(FilePathModel).where(
-                    FilePathModel.virtual_path.in_(paths), FilePathModel.deleted_at.is_(None)
+                stmt = (
+                    select(FilePathModel)
+                    .where(
+                        FilePathModel.virtual_path.in_(paths),
+                        FilePathModel.deleted_at.is_(None),
+                    )
+                    .with_for_update()
                 )
 
                 # Build dict of existing entries
@@ -914,20 +964,54 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 # Update or create entries
                 for metadata in metadata_list:
                     if metadata.path in existing:
-                        # Update existing record
+                        # FILE UPDATE - Increment version and create history entry for NEW version
                         file_path = existing[metadata.path]
+
+                        # Update existing record with new content
                         file_path.backend_id = metadata.backend_name
                         file_path.physical_path = metadata.physical_path
                         file_path.size_bytes = metadata.size
-                        file_path.content_hash = metadata.etag
+                        file_path.content_hash = metadata.etag  # NEW content hash
                         file_path.file_type = metadata.mime_type
                         file_path.updated_at = metadata.modified_at or datetime.now(UTC)
                         # Update permissions (v0.3.0)
                         file_path.owner = metadata.owner
                         file_path.group = metadata.group
                         file_path.mode = metadata.mode
+
+                        # Only create version history if we have actual content (etag is not None)
+                        if metadata.etag is not None:
+                            # Get the current version entry to link lineage
+                            prev_version_stmt = (
+                                select(VersionHistoryModel)
+                                .where(
+                                    VersionHistoryModel.resource_type == "file",
+                                    VersionHistoryModel.resource_id == file_path.path_id,
+                                    VersionHistoryModel.version_number == file_path.current_version,
+                                )
+                                .limit(1)
+                            )
+                            prev_version = session.scalar(prev_version_stmt)
+
+                            file_path.current_version += 1  # Increment version
+
+                            # Create version history entry for NEW version
+                            version_entry = VersionHistoryModel(
+                                version_id=str(uuid.uuid4()),
+                                resource_type="file",
+                                resource_id=file_path.path_id,
+                                version_number=file_path.current_version,  # NEW version number
+                                content_hash=metadata.etag,  # NEW content hash
+                                size_bytes=metadata.size,
+                                mime_type=metadata.mime_type,
+                                parent_version_id=prev_version.version_id if prev_version else None,
+                                source_type="original",
+                                created_at=datetime.now(UTC),
+                            )
+                            version_entry.validate()
+                            session.add(version_entry)
                     else:
-                        # Create new record
+                        # NEW FILE - Create record and initial version history
                         file_path = FilePathModel(
                             path_id=str(uuid.uuid4()),
                             tenant_id=str(uuid.uuid4()),  # Default tenant for embedded mode
@@ -939,6 +1023,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             file_type=metadata.mime_type,
                             created_at=metadata.created_at or datetime.now(UTC),
                             updated_at=metadata.modified_at or datetime.now(UTC),
+                            current_version=1,  # Initial version
                             # UNIX-style permissions (v0.3.0)
                             owner=metadata.owner,
                             group=metadata.group,
@@ -947,6 +1032,25 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         # Validate model before inserting
                         file_path.validate()
                         session.add(file_path)
+                        session.flush()  # Get path_id
+
+                        # Only create version history if we have actual content (etag is not None)
+                        if metadata.etag is not None:
+                            # Create initial version history entry
+                            version_entry = VersionHistoryModel(
+                                version_id=str(uuid.uuid4()),
+                                resource_type="file",
+                                resource_id=file_path.path_id,
+                                version_number=1,
+                                content_hash=metadata.etag,
+                                size_bytes=metadata.size,
+                                mime_type=metadata.mime_type,
+                                parent_version_id=None,
+                                source_type="original",
+                                created_at=file_path.created_at,
+                            )
+                            version_entry.validate()
+                            session.add(version_entry)
 
                 session.commit()
 

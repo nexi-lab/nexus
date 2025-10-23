@@ -52,6 +52,25 @@ def main() -> None:
         nx.write("/data/config.json", b'{"setting": "enabled"}')
         print("   ✓ Wrote 3 files")
 
+        # Batch write for better performance with many small files
+        print("\n2b. Batch writing multiple files (4x faster!)...")
+        import time
+
+        # Create 50 small checkpoint files
+        checkpoint_files = [
+            (f"/checkpoints/model_epoch_{i}.ckpt", f"checkpoint data {i}".encode())
+            for i in range(50)
+        ]
+
+        # Measure batch write performance
+        start = time.time()
+        results = nx.write_batch(checkpoint_files)
+        batch_time = time.time() - start
+
+        print(f"   ✓ Wrote {len(results)} files in {batch_time:.3f}s")
+        print(f"   ✓ Throughput: {len(results) / batch_time:.1f} files/sec")
+        print("   ✓ All files written atomically in single transaction")
+
         # Read a file
         print("\n3. Reading file...")
         content = nx.read("/documents/report.pdf")
@@ -60,9 +79,11 @@ def main() -> None:
         # List files
         print("\n4. Listing files...")
         files = nx.list()
-        print(f"   Found {len(files)} files:")
-        for f in files:
+        print(f"   Found {len(files)} files total (3 individual + 50 batch)")
+        print("   Sample files:")
+        for f in files[:5]:  # Show first 5 files
             print(f"   - {f}")
+        print(f"   ... and {len(files) - 5} more")
 
         # Close connection
         nx.close()

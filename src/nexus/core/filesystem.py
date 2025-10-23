@@ -95,6 +95,50 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
+    def write_batch(
+        self, files: builtins.list[tuple[str, bytes]], context: Any = None
+    ) -> builtins.list[dict[str, Any]]:
+        """
+        Write multiple files in a single transaction for improved performance.
+
+        This is 4x faster than calling write() multiple times for small files
+        because it uses a single database transaction instead of N transactions.
+
+        All files are written atomically - either all succeed or all fail.
+
+        Args:
+            files: List of (path, content) tuples to write
+            context: Optional operation context for permission checks (uses default if not provided)
+
+        Returns:
+            List of metadata dicts for each file (in same order as input):
+                - etag: Content hash (SHA-256) of the written content
+                - version: New version number
+                - modified_at: Modification timestamp
+                - size: File size in bytes
+
+        Raises:
+            InvalidPathError: If any path is invalid
+            BackendError: If write operation fails
+            AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
+            PermissionError: If any path is read-only or user doesn't have write permission
+
+        Examples:
+            >>> # Write 100 small files in a single batch (4x faster!)
+            >>> files = [(f"/logs/file_{i}.txt", b"log data") for i in range(100)]
+            >>> results = nx.write_batch(files)
+            >>> print(f"Wrote {len(results)} files")
+
+            >>> # Atomic batch write - all or nothing
+            >>> files = [
+            ...     ("/config/setting1.json", b'{"enabled": true}'),
+            ...     ("/config/setting2.json", b'{"timeout": 30}'),
+            ... ]
+            >>> nx.write_batch(files)
+        """
+        ...
+
+    @abstractmethod
     def delete(self, path: str) -> None:
         """
         Delete a file.

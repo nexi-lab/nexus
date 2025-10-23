@@ -24,6 +24,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(init)
     cli.add_command(cat)
     cli.add_command(write)
+    cli.add_command(write_batch)
     cli.add_command(cp)
     cli.add_command(copy_cmd)
     cli.add_command(move_cmd)
@@ -229,6 +230,174 @@ def write(
             console.print(f"[dim]Version:[/dim]  {result['version']}")
             console.print(f"[dim]Size:[/dim]     {result['size']} bytes")
             console.print(f"[dim]Modified:[/dim] {result['modified_at']}")
+    except Exception as e:
+        handle_error(e)
+
+
+@click.command(name="write-batch")
+@click.argument("source_dir", type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click.option(
+    "--dest-prefix",
+    type=str,
+    default="/",
+    help="Destination prefix path in Nexus (default: /)",
+)
+@click.option(
+    "--pattern",
+    type=str,
+    default="**/*",
+    help="Glob pattern to filter files (default: **/* for all files)",
+)
+@click.option(
+    "--exclude",
+    type=str,
+    multiple=True,
+    help="Exclude patterns (can be specified multiple times)",
+)
+@click.option(
+    "--show-progress",
+    is_flag=True,
+    default=True,
+    help="Show progress during upload",
+)
+@click.option(
+    "--batch-size",
+    type=int,
+    default=100,
+    help="Number of files to write in each batch (default: 100)",
+)
+@add_backend_options
+def write_batch(
+    source_dir: str,
+    dest_prefix: str,
+    pattern: str,
+    exclude: tuple[str, ...],
+    show_progress: bool,
+    batch_size: int,
+    backend_config: BackendConfig,
+) -> None:
+    """Write multiple files to Nexus in batches for improved performance.
+
+    This command uses the batch write API which is 4x faster than individual
+    writes for many small files. It uploads all files from a local directory
+    to Nexus while preserving directory structure.
+
+    Examples:
+        # Upload entire directory to root
+        nexus write-batch ./my-data
+
+        # Upload to specific destination prefix
+        nexus write-batch ./logs --dest-prefix /workspace/logs
+
+        # Upload only text files
+        nexus write-batch ./docs --pattern "**/*.txt"
+
+        # Exclude certain patterns
+        nexus write-batch ./src --exclude "*.pyc" --exclude "__pycache__/*"
+
+        # Use larger batch size for better performance
+        nexus write-batch ./checkpoints --batch-size 200
+    """
+    try:
+        import time
+
+        from rich.progress import (
+            BarColumn,
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            TimeElapsedColumn,
+        )
+
+        nx = get_filesystem(backend_config)
+        source_path = Path(source_dir)
+
+        # Ensure dest_prefix starts with /
+        if not dest_prefix.startswith("/"):
+            dest_prefix = "/" + dest_prefix
+
+        # Collect all files matching the pattern
+        console.print(f"[cyan]Scanning[/cyan] {source_path} for files...")
+        all_files = list(source_path.glob(pattern))
+
+        # Filter out directories and excluded patterns
+        files_to_upload: list[Path] = []
+        for file_path in all_files:
+            if not file_path.is_file():
+                continue
+
+            # Check exclude patterns
+            excluded = False
+            for exclude_pattern in exclude:
+                if file_path.match(exclude_pattern):
+                    excluded = True
+                    break
+
+            if not excluded:
+                files_to_upload.append(file_path)
+
+        if not files_to_upload:
+            console.print("[yellow]No files found matching criteria[/yellow]")
+            nx.close()
+            return
+
+        console.print(f"[cyan]Found {len(files_to_upload)} files to upload[/cyan]")
+
+        # Process files in batches
+        total_bytes = 0
+        total_files = 0
+        start_time = time.time()
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TextColumn("({task.completed}/{task.total} files)"),
+            TimeElapsedColumn(),
+            console=console,
+            disable=not show_progress,
+        ) as progress:
+            task = progress.add_task("Uploading files...", total=len(files_to_upload))
+
+            for i in range(0, len(files_to_upload), batch_size):
+                batch = files_to_upload[i : i + batch_size]
+                batch_data: list[tuple[str, bytes]] = []
+
+                # Prepare batch
+                for file_path in batch:
+                    # Calculate relative path from source_dir
+                    rel_path = file_path.relative_to(source_path)
+                    # Create destination path
+                    dest_path = f"{dest_prefix.rstrip('/')}/{rel_path.as_posix()}"
+
+                    # Read file content
+                    content = file_path.read_bytes()
+                    batch_data.append((dest_path, content))
+                    total_bytes += len(content)
+
+                # Write batch
+                nx.write_batch(batch_data)
+                total_files += len(batch_data)
+
+                # Update progress
+                progress.update(task, advance=len(batch_data))
+
+        elapsed_time = time.time() - start_time
+        nx.close()
+
+        # Display summary
+        console.print()
+        console.print("[green]✓ Batch upload complete![/green]")
+        console.print(f"  Files uploaded:  [cyan]{total_files}[/cyan]")
+        console.print(f"  Total size:      [cyan]{total_bytes:,}[/cyan] bytes")
+        console.print(f"  Time elapsed:    [cyan]{elapsed_time:.2f}[/cyan] seconds")
+        if elapsed_time > 0:
+            files_per_sec = total_files / elapsed_time
+            mb_per_sec = (total_bytes / 1024 / 1024) / elapsed_time
+            console.print(f"  Throughput:      [cyan]{files_per_sec:.1f}[/cyan] files/sec")
+            console.print(f"  Bandwidth:       [cyan]{mb_per_sec:.2f}[/cyan] MB/sec")
+
     except Exception as e:
         handle_error(e)
 

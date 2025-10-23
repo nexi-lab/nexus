@@ -252,31 +252,60 @@ class LocalBackend(Backend):
             ) from e
 
     def read_content(self, content_hash: str) -> bytes:
-        """Read content by its hash."""
+        """Read content by its hash with retry for Windows file locking."""
         content_path = self._hash_to_path(content_hash)
 
-        if not content_path.exists():
-            raise NexusFileNotFoundError(content_hash)
+        # Retry logic for Windows file locking issues
+        max_retries = 3
+        retry_delay = 0.01  # 10ms
 
-        try:
-            # Read directly without locking (content files are immutable after creation)
-            content = content_path.read_bytes()
+        for attempt in range(max_retries):
+            # Check if file exists (with retry for race conditions)
+            if not content_path.exists():
+                if attempt < max_retries - 1:
+                    # File might be mid-write - retry
+                    import time
 
-            # Verify hash
-            actual_hash = self._compute_hash(content)
-            if actual_hash != content_hash:
-                raise BackendError(
-                    f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
-                    backend="local",
+                    time.sleep(retry_delay)
+                    continue
+                # File genuinely doesn't exist
+                raise NexusFileNotFoundError(
                     path=content_hash,
+                    message=f"CAS content not found: {content_hash}",
                 )
 
-            return content
+            try:
+                # Read directly without locking (content files are immutable after creation)
+                content = content_path.read_bytes()
 
-        except OSError as e:
-            raise BackendError(
-                f"Failed to read content: {e}", backend="local", path=content_hash
-            ) from e
+                # Verify hash
+                actual_hash = self._compute_hash(content)
+                if actual_hash != content_hash:
+                    raise BackendError(
+                        f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
+                        backend="local",
+                        path=content_hash,
+                    )
+
+                return content
+
+            except OSError as e:
+                # File might be locked on Windows - retry
+                if attempt < max_retries - 1:
+                    import time
+
+                    time.sleep(retry_delay)
+                    continue
+                raise BackendError(
+                    f"Failed to read content: {e}", backend="local", path=content_hash
+                ) from e
+
+        # Should never reach here
+        raise BackendError(
+            f"Failed to read content after {max_retries} retries",
+            backend="local",
+            path=content_hash,
+        )
 
     def delete_content(self, content_hash: str) -> None:
         """Delete content by hash with reference counting."""

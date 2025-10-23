@@ -455,6 +455,61 @@ class PermissionPolicyModel(Base):
             raise ValidationError(f"priority must be non-negative, got {self.priority}")
 
 
+class WorkspaceSnapshotModel(Base):
+    """Workspace snapshot tracking for agent workspaces.
+
+    Enables time-travel debugging and workspace rollback by capturing
+    complete workspace state at specific points in time.
+
+    CAS-backed: Snapshot manifest (list of files + hashes) stored in CAS.
+    Zero storage overhead due to content deduplication.
+
+    Workspace path format: /workspace/{tenant_id}/{agent_id}/
+    """
+
+    __tablename__ = "workspace_snapshots"
+
+    # Primary key
+    snapshot_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Workspace identification
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # Snapshot metadata
+    snapshot_number: Mapped[int] = mapped_column(Integer, nullable=False)  # Sequential version
+    manifest_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True
+    )  # SHA-256 hash of manifest (CAS key)
+
+    # Snapshot stats (for quick display)
+    file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    # Change tracking
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    tags: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of tags
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+    )
+
+    # Indexes and constraints
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "agent_id", "snapshot_number", name="uq_workspace_snapshot"),
+        Index("idx_workspace_snapshots_workspace", "tenant_id", "agent_id"),
+        Index("idx_workspace_snapshots_manifest", "manifest_hash"),
+        Index("idx_workspace_snapshots_created_at", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<WorkspaceSnapshotModel(snapshot_id={self.snapshot_id}, agent={self.agent_id}, version={self.snapshot_number})>"
+
+
 class VersionHistoryModel(Base):
     """Version history tracking for files and memories.
 

@@ -30,14 +30,14 @@ curl http://localhost:8080/health
 
 ```bash
 # One command deployment!
-./deploy-gcp-docker.sh \
+../../scripts/deploy-gcp-docker.sh \
   --project-id your-gcp-project \
   --api-key $(openssl rand -hex 32) \
   --machine-type e2-standard-2 \
   --build-local
 
 # With GCS backend
-./deploy-gcp-docker.sh \
+../../scripts/deploy-gcp-docker.sh \
   --project-id your-gcp-project \
   --api-key $(openssl rand -hex 32) \
   --gcs-bucket your-nexus-bucket \
@@ -55,14 +55,14 @@ curl http://localhost:8080/health
 
 ```bash
 # Initial deployment
-./deploy-gcp.sh \
+../../scripts/deploy-gcp.sh \
   --project-id your-gcp-project \
   --instance-name nexus-server \
   --api-key $(openssl rand -hex 32) \
   --machine-type e2-standard-2
 
 # Redeploy code to existing instance (recommended for updates)
-./deploy-gcp.sh \
+../../scripts/deploy-gcp.sh \
   --project-id your-gcp-project \
   --instance-name nexus-server \
   --deploy-only
@@ -138,7 +138,7 @@ gcloud compute ssh nexus-server --zone=us-west1-a \
   --command='sudo journalctl -u nexus-server -f'  # View logs
 gcloud compute ssh nexus-server --zone=us-west1-a \
   --command='sudo systemctl restart nexus-server'  # Restart
-./deploy-gcp.sh --project-id PROJECT_ID --instance-name nexus-server --deploy-only  # Redeploy code
+../../scripts/deploy-gcp.sh --project-id PROJECT_ID --instance-name nexus-server --deploy-only  # Redeploy code
 
 # Local
 ./start-server.sh               # Start

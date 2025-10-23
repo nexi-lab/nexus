@@ -1,0 +1,34 @@
+name: external-event-handler
+description: Handle events from external systems via webhooks
+version: 1.0
+
+triggers:
+  - type: webhook
+    webhook_id: github-webhook-12345
+
+actions:
+  - name: parse_webhook_payload
+    type: python
+    code: |
+      payload = trigger_context.get('payload', {})
+      event_type = payload.get('event_type', 'unknown')
+      print(f"Received webhook event: {event_type}")
+      result = {"event": event_type, "payload": payload}
+
+  - name: process_github_push
+    type: python
+    code: |
+      if parse_webhook_payload_output.get('event') == 'push':
+          print("Processing GitHub push event")
+          # Sync repository, update docs, etc.
+          result = {"processed": True}
+      else:
+          result = {"processed": False}
+
+  - name: notify_team
+    type: webhook
+    url: https://slack.example.com/api/webhook
+    method: POST
+    body:
+      text: "GitHub event received: {parse_webhook_payload_output.event}"
+      channel: "#deployments"

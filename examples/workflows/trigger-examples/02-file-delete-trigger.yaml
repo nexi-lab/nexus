@@ -1,0 +1,25 @@
+name: deletion-audit
+description: Track and audit file deletions
+version: 1.0
+
+triggers:
+  - type: file_delete
+    pattern: /workspace/**/*
+
+actions:
+  - name: log_deletion
+    type: python
+    code: |
+      from datetime import datetime
+      log_msg = f"DELETED: {file_path} at {datetime.now().isoformat()}"
+      print(log_msg)
+      result = {"event": "deletion", "path": file_path}
+
+  - name: notify_webhook
+    type: webhook
+    url: https://monitoring.example.com/api/file-deleted
+    method: POST
+    body:
+      event: deletion
+      file_path: "{file_path}"
+      timestamp: "{timestamp}"

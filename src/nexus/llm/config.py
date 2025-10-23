@@ -64,6 +64,11 @@ class LLMConfig(BaseModel):
         default=None, description="Folder for completion logs"
     )
 
+    # Async/cancellation configuration
+    cancellation_check_interval: float = Field(
+        default=1.0, ge=0.1, description="Interval in seconds to check for cancellation"
+    )
+
     class Config:
         """Pydantic config."""
 

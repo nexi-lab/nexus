@@ -71,7 +71,9 @@ class ParseAction(BaseAction):
             from nexus import connect
 
             nx = connect()
-            file_path = self.interpolate(self.config.get("file_path", context.file_path), context)
+            file_path = self.interpolate(
+                str(self.config.get("file_path", context.file_path)), context
+            )
             parser = self.config.get("parser", "auto")
 
             # Parse the file
@@ -94,7 +96,9 @@ class TagAction(BaseAction):
             from nexus import connect
 
             nx = connect()
-            file_path = self.interpolate(self.config.get("file_path", context.file_path), context)
+            file_path = self.interpolate(
+                str(self.config.get("file_path", context.file_path)), context
+            )
             tags = self.config.get("tags", [])
             remove = self.config.get("remove", False)
 
@@ -129,7 +133,7 @@ class MoveAction(BaseAction):
             from nexus import connect
 
             nx = connect()
-            source = self.interpolate(self.config.get("source", context.file_path), context)
+            source = self.interpolate(str(self.config.get("source", context.file_path)), context)
             destination = self.interpolate(self.config["destination"], context)
             create_parents = self.config.get("create_parents", False)
 
@@ -161,7 +165,9 @@ class MetadataAction(BaseAction):
             from nexus import connect
 
             nx = connect()
-            file_path = self.interpolate(self.config.get("file_path", context.file_path), context)
+            file_path = self.interpolate(
+                str(self.config.get("file_path", context.file_path)), context
+            )
             metadata = self.config.get("metadata", {})
 
             # Interpolate metadata values
@@ -195,8 +201,10 @@ class LLMAction(BaseAction):
             from nexus import connect
 
             nx = connect()
-            file_path = self.interpolate(self.config.get("file_path", context.file_path), context)
-            prompt = self.interpolate(self.config.get("prompt", ""), context)
+            file_path = self.interpolate(
+                str(self.config.get("file_path", context.file_path)), context
+            )
+            prompt = self.interpolate(str(self.config.get("prompt", "")), context)
             model = self.config.get("model", "claude-sonnet-4")
             output_format = self.config.get("output_format", "text")
 

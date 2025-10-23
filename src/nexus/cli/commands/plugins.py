@@ -17,6 +17,8 @@ from nexus.cli.utils import console, handle_error
 def register_commands(cli: click.Group) -> None:
     """Register all plugin commands."""
     cli.add_command(plugins)
+    # Register dynamic plugin commands (firecrawl, anthropic, etc.)
+    _register_plugin_commands(cli)
 
 
 @click.group(name="plugins")

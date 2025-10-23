@@ -14,6 +14,7 @@ import json
 import os
 import uuid
 from collections.abc import Sequence
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -1423,7 +1424,5 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
     def __del__(self) -> None:
         """Destructor to ensure database is closed."""
-        from contextlib import suppress
-
         with suppress(Exception):
             self.close()

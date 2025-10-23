@@ -1,11 +1,11 @@
-"""Real Nexus Integration Demo - Working Examples.
+"""Real Nexus Integration Demo - Workflows that actually process files.
 
-This demonstrates workflows with REAL Nexus file operations that actually work.
+This demo creates a temporary data directory that is cleaned up after running.
 """
 
 import asyncio
-import tempfile
-from pathlib import Path
+import os
+import shutil
 
 import nexus
 from nexus.workflows import TriggerType, WorkflowLoader, init_engine
@@ -13,296 +13,301 @@ from nexus.workflows.storage import WorkflowStore
 
 
 async def main():
-    """Demonstrate all trigger types with real Nexus operations."""
+    """Demonstrate workflows that actually process Nexus files."""
     print("=" * 80)
-    print("Nexus Workflow System - Real Integration Demo")
+    print("Nexus Workflow System - Real File Processing Demo")
     print("=" * 80)
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        data_dir = Path(temp_dir) / "nexus-data"
-        data_dir.mkdir()
+    # Use default data directory so Python actions can reconnect
+    data_dir = os.getenv("NEXUS_DATA_DIR", "./nexus-data-demo")
 
-        # Setup Nexus
-        nx = nexus.connect(config={"data_dir": str(data_dir)})
-        nx.mkdir("/inbox", exist_ok=True)
+    # Setup Nexus
+    nx = nexus.connect(config={"data_dir": data_dir})
+    nx.mkdir("/inbox", exist_ok=True)
+    nx.mkdir("/processed", exist_ok=True)
+    nx.mkdir("/archive", exist_ok=True)
 
-        # Setup workflow engine
-        session_factory = nx.metadata.SessionLocal
-        workflow_store = WorkflowStore(session_factory, tenant_id="demo")
-        engine = init_engine(metadata_store=nx.metadata, workflow_store=workflow_store)
+    # Setup workflow engine
+    session_factory = nx.metadata.SessionLocal
+    workflow_store = WorkflowStore(session_factory, tenant_id="demo")
+    engine = init_engine(metadata_store=nx.metadata, workflow_store=workflow_store)
 
-        # ================================================================
-        # DEMO 1: FILE_WRITE Trigger
-        # ================================================================
-        print("\n" + "─" * 80)
-        print("TRIGGER 1: FILE_WRITE")
-        print("─" * 80)
+    # ================================================================
+    # DEMO 1: Process text files - count lines and move
+    # ================================================================
+    print("\n" + "─" * 80)
+    print("DEMO 1: Process incoming text files")
+    print("─" * 80)
 
-        wf1 = {
-            "name": "on-file-write",
-            "version": "1.0",
-            "triggers": [{"type": "file_write", "pattern": "/inbox/*.txt"}],
-            "actions": [
-                {
-                    "name": "log_write",
-                    "type": "python",
-                    "code": 'print(f"✅ FILE_WRITE: {file_path}")',
-                }
-            ],
-        }
+    wf1 = {
+        "name": "process-text-files",
+        "version": "1.0",
+        "triggers": [{"type": "file_write", "pattern": "/inbox/*.txt"}],
+        "actions": [
+            {
+                "name": "log_file",
+                "type": "python",
+                "code": 'print(f"Processing: {file_path}")',
+            },
+            {
+                "name": "count_lines",
+                "type": "python",
+                "code": f"""
+import nexus
+nx = nexus.connect(config={{"data_dir": "{data_dir}"}})
+content = nx.read(file_path)
+lines = content.decode().split('\\n')
+result = {{"line_count": len(lines), "file": file_path}}
+print(f"  Lines: {{len(lines)}}")
+""",
+            },
+            {
+                "name": "move_to_processed",
+                "type": "python",
+                "code": f"""
+import nexus
+from pathlib import Path
+nx = nexus.connect(config={{"data_dir": "{data_dir}"}})
+filename = Path(file_path).name
+dest = f"/processed/{{filename}}"
+nx.rename(file_path, dest)
+print(f"  Moved to: {{dest}}")
+""",
+            },
+        ],
+    }
 
-        engine.load_workflow(WorkflowLoader.load_from_dict(wf1), enabled=True)
+    engine.load_workflow(WorkflowLoader.load_from_dict(wf1), enabled=True)
 
-        print("Real Nexus command: nx.write('/inbox/doc.txt', b'data')")
-        nx.write("/inbox/doc.txt", b"data")
+    # Write files and trigger workflow
+    print("\n1. Writing test files to /inbox/")
+    nx.write("/inbox/file1.txt", b"Line 1\nLine 2\nLine 3")
+    nx.write("/inbox/file2.txt", b"Single line")
 
-        print("Fire event:")
-        await engine.fire_event(TriggerType.FILE_WRITE, {"file_path": "/inbox/doc.txt"})
+    print("\n2. Triggering workflow for file1.txt:")
+    await engine.fire_event(TriggerType.FILE_WRITE, {"file_path": "/inbox/file1.txt"})
 
-        # ================================================================
-        # DEMO 2: FILE_DELETE Trigger
-        # ================================================================
-        print("\n" + "─" * 80)
-        print("TRIGGER 2: FILE_DELETE")
-        print("─" * 80)
+    print("\n3. Triggering workflow for file2.txt:")
+    await engine.fire_event(TriggerType.FILE_WRITE, {"file_path": "/inbox/file2.txt"})
 
-        wf2 = {
-            "name": "on-file-delete",
-            "version": "1.0",
-            "triggers": [{"type": "file_delete", "pattern": "/inbox/*"}],
-            "actions": [
-                {
-                    "name": "log_delete",
-                    "type": "python",
-                    "code": 'print(f"✅ FILE_DELETE: {file_path}")',
-                }
-            ],
-        }
+    # Verify files were moved
+    print("\n4. Verification:")
+    inbox_files = nx.list("/inbox")
+    processed_files = nx.list("/processed")
+    print(f"   Files in /inbox/: {len(inbox_files)}")
+    print(f"   Files in /processed/: {len(processed_files)}")
+    for f in processed_files:
+        print(f"     - {f}")
 
-        engine.load_workflow(WorkflowLoader.load_from_dict(wf2), enabled=True)
+    # ================================================================
+    # DEMO 2: Add metadata to files
+    # ================================================================
+    print("\n" + "─" * 80)
+    print("DEMO 2: Add metadata to processed files")
+    print("─" * 80)
 
-        print("Real Nexus command: nx.delete('/inbox/doc.txt')")
-        nx.delete("/inbox/doc.txt")
+    wf2 = {
+        "name": "add-metadata",
+        "version": "1.0",
+        "triggers": [{"type": "file_write", "pattern": "/processed/*"}],
+        "actions": [
+            {
+                "name": "add_timestamp",
+                "type": "python",
+                "code": f"""
+import nexus
+from datetime import datetime
+nx = nexus.connect(config={{"data_dir": "{data_dir}"}})
+nx.metadata.set_file_metadata(file_path, "processed_at", datetime.now().isoformat())
+nx.metadata.set_file_metadata(file_path, "status", "processed")
+print(f"Added metadata to: {{file_path}}")
+""",
+            },
+        ],
+    }
 
-        print("Fire event:")
-        await engine.fire_event(TriggerType.FILE_DELETE, {"file_path": "/inbox/doc.txt"})
+    engine.load_workflow(WorkflowLoader.load_from_dict(wf2), enabled=True)
 
-        # ================================================================
-        # DEMO 3: FILE_RENAME Trigger
-        # ================================================================
-        print("\n" + "─" * 80)
-        print("TRIGGER 3: FILE_RENAME")
-        print("─" * 80)
+    print("\n1. Triggering metadata workflow:")
+    for f in processed_files:
+        await engine.fire_event(TriggerType.FILE_WRITE, {"file_path": f})
 
-        wf3 = {
-            "name": "on-file-rename",
-            "version": "1.0",
-            "triggers": [{"type": "file_rename", "pattern": "/inbox/*"}],
-            "actions": [
-                {
-                    "name": "log_rename",
-                    "type": "python",
-                    "code": "print(f\"✅ FILE_RENAME: {variables.get('old_path')} → {variables.get('new_path')}\")",
-                }
-            ],
-        }
+    # Verify metadata
+    print("\n2. Checking metadata:")
+    for f in processed_files:
+        status = nx.metadata.get_file_metadata(f, "status")
+        processed_at = nx.metadata.get_file_metadata(f, "processed_at")
+        print(f"   {f}:")
+        print(f"     status: {status or 'N/A'}")
+        print(f"     processed_at: {processed_at or 'N/A'}")
 
-        engine.load_workflow(WorkflowLoader.load_from_dict(wf3), enabled=True)
+    # ================================================================
+    # DEMO 3: Archive processed files
+    # ================================================================
+    print("\n" + "─" * 80)
+    print("DEMO 3: Archive processed files")
+    print("─" * 80)
 
-        print("Real Nexus command: nx.rename('/inbox/old.txt', '/inbox/new.txt')")
-        nx.write("/inbox/old.txt", b"data")
-        nx.rename("/inbox/old.txt", "/inbox/new.txt")
+    wf3 = {
+        "name": "archive-files",
+        "version": "1.0",
+        "triggers": [{"type": "manual"}],
+        "actions": [
+            {
+                "name": "find_and_archive",
+                "type": "python",
+                "code": f"""
+import nexus
+nx = nexus.connect(config={{"data_dir": "{data_dir}"}})
+files = nx.list("/processed")
+archived_count = 0
+for file_path in files:
+    if file_path.endswith('.txt'):
+        from pathlib import Path
+        filename = Path(file_path).name
+        dest = f"/archive/{{filename}}"
+        nx.rename(file_path, dest)
+        archived_count += 1
+        print(f"  Archived: {{filename}}")
+result = {{"archived": archived_count}}
+print(f"Total archived: {{archived_count}}")
+""",
+            },
+        ],
+    }
 
-        print("Fire event:")
-        await engine.fire_event(
-            TriggerType.FILE_RENAME, {"old_path": "/inbox/old.txt", "new_path": "/inbox/new.txt"}
+    engine.load_workflow(WorkflowLoader.load_from_dict(wf3), enabled=True)
+
+    print("\n1. Running archive workflow:")
+    await engine.trigger_workflow("archive-files", {})
+
+    print("\n2. Verification:")
+    processed_files = nx.list("/processed")
+    archive_files = nx.list("/archive")
+    print(f"   Files in /processed/: {len(processed_files)}")
+    print(f"   Files in /archive/: {len(archive_files)}")
+    for f in archive_files:
+        print(f"     - {f}")
+
+    # ================================================================
+    # DEMO 4: LLM-powered document analysis
+    # ================================================================
+    print("\n" + "─" * 80)
+    print("DEMO 4: LLM document analysis and classification")
+    print("─" * 80)
+
+    wf4 = {
+        "name": "analyze-with-llm",
+        "version": "1.0",
+        "triggers": [{"type": "manual"}],
+        "actions": [
+            {
+                "name": "analyze_document",
+                "type": "llm",
+                "model": "claude-sonnet-4",
+                "file_path": "{file_path}",
+                "prompt": "Analyze this document and extract: 1) main topic, 2) document type (invoice/report/email/other), 3) suggested tags. Return as JSON with keys: topic, doc_type, tags (array)",
+                "output_format": "json",
+            },
+            {
+                "name": "save_analysis",
+                "type": "python",
+                "code": f"""
+import nexus
+nx = nexus.connect(config={{"data_dir": "{data_dir}"}})
+analysis = variables.get('analyze_document_output', {{}})
+print(f"  Analysis results:")
+print(f"    Topic: {{analysis.get('topic', 'N/A')}}")
+print(f"    Type: {{analysis.get('doc_type', 'N/A')}}")
+print(f"    Tags: {{', '.join(analysis.get('tags', []))}}")
+
+# Save as metadata
+nx.metadata.set_file_metadata(file_path, "llm_topic", analysis.get('topic', ''))
+nx.metadata.set_file_metadata(file_path, "llm_doc_type", analysis.get('doc_type', ''))
+nx.metadata.set_file_metadata(file_path, "llm_tags", ','.join(analysis.get('tags', [])))
+result = {{"analysis": analysis}}
+""",
+            },
+        ],
+    }
+
+    engine.load_workflow(WorkflowLoader.load_from_dict(wf4), enabled=True)
+
+    # Create a document to analyze
+    print("\n1. Creating sample document:")
+    invoice_content = """INVOICE #12345
+Date: 2024-01-15
+Customer: Acme Corp
+Items:
+- Software License: $500
+- Support Package: $200
+Total: $700
+Payment Terms: Net 30
+"""
+    nx.write("/archive/invoice_12345.txt", invoice_content.encode())
+    print("   Created: /archive/invoice_12345.txt")
+
+    print("\n2. Running LLM analysis workflow:")
+    print("   Note: Requires LLM provider configured (OPENROUTER_API_KEY)")
+    try:
+        await engine.trigger_workflow(
+            "analyze-with-llm", {"file_path": "/archive/invoice_12345.txt"}
         )
 
-        # ================================================================
-        # DEMO 4: METADATA_CHANGE Trigger
-        # ================================================================
-        print("\n" + "─" * 80)
-        print("TRIGGER 4: METADATA_CHANGE")
-        print("─" * 80)
+        # Show the metadata
+        print("\n3. Checking LLM-generated metadata:")
+        llm_topic = nx.metadata.get_file_metadata("/archive/invoice_12345.txt", "llm_topic")
+        llm_doc_type = nx.metadata.get_file_metadata("/archive/invoice_12345.txt", "llm_doc_type")
+        llm_tags = nx.metadata.get_file_metadata("/archive/invoice_12345.txt", "llm_tags")
+        print(f"   Topic: {llm_topic or 'N/A'}")
+        print(f"   Doc Type: {llm_doc_type or 'N/A'}")
+        print(f"   Tags: {llm_tags or 'N/A'}")
+    except Exception as e:
+        print(f"   ⚠️  LLM action failed (may need API key): {e}")
 
-        wf4 = {
-            "name": "on-metadata-change",
-            "version": "1.0",
-            "triggers": [{"type": "metadata_change", "pattern": "/inbox/*"}],
-            "actions": [
-                {
-                    "name": "log_metadata",
-                    "type": "python",
-                    "code": 'print(f"✅ METADATA_CHANGE: {file_path}")',
-                }
-            ],
-        }
+    # ================================================================
+    # Summary
+    # ================================================================
+    print("\n" + "=" * 80)
+    print("SUMMARY")
+    print("=" * 80)
 
-        engine.load_workflow(WorkflowLoader.load_from_dict(wf4), enabled=True)
+    # Final counts
+    inbox = nx.list("/inbox")
+    processed = nx.list("/processed")
+    archive = nx.list("/archive")
 
-        print("Real Nexus command: nx.metadata.set_metadata('/inbox/new.txt', ...)")
-        # Use metadata store directly
-        path_rec = nx.metadata.get_path("/inbox/new.txt")
-        if path_rec:
-            nx.metadata.set_file_metadata(path_rec.path_id, "status", "done")
+    print(f"""
+✅ Demonstrated real Nexus file operations:
+   - nx.write() - Created files
+   - nx.read() - Read file contents
+   - nx.rename() - Moved files between directories
+   - nx.metadata operations - Added metadata to files
 
-        print("Fire event:")
-        await engine.fire_event(
-            TriggerType.METADATA_CHANGE, {"file_path": "/inbox/new.txt", "metadata_key": "status"}
-        )
+✅ Demonstrated workflow action types:
+   - Python actions that call Nexus API
+   - LLM actions for document analysis and classification
+   - File processing (line counting)
+   - File movement/archiving
+   - Metadata management
 
-        # ================================================================
-        # DEMO 5: MANUAL Trigger
-        # ================================================================
-        print("\n" + "─" * 80)
-        print("TRIGGER 5: MANUAL")
-        print("─" * 80)
+✅ File pipeline results:
+   /inbox/: {len(inbox)} files
+   /processed/: {len(processed)} files
+   /archive/: {len(archive)} files
 
-        wf5 = {
-            "name": "manual-workflow",
-            "version": "1.0",
-            "triggers": [{"type": "manual"}],
-            "actions": [
-                {
-                    "name": "manual_action",
-                    "type": "python",
-                    "code": 'print("✅ MANUAL: Executed on demand")',
-                }
-            ],
-        }
+Note: In v0.4.0, events are fired manually.
+      In v0.5.0+, Nexus operations will auto-trigger workflows!
 
-        engine.load_workflow(WorkflowLoader.load_from_dict(wf5), enabled=True)
-
-        print("Trigger manually via API:")
-        await engine.trigger_workflow("manual-workflow", {})
-
-        # ================================================================
-        # DEMO 6: WEBHOOK Trigger
-        # ================================================================
-        print("\n" + "─" * 80)
-        print("TRIGGER 6: WEBHOOK")
-        print("─" * 80)
-
-        wf6 = {
-            "name": "on-webhook",
-            "version": "1.0",
-            "triggers": [{"type": "webhook", "webhook_id": "github-123"}],
-            "actions": [
-                {
-                    "name": "log_webhook",
-                    "type": "python",
-                    "code": 'print("✅ WEBHOOK: Received")',
-                }
-            ],
-        }
-
-        engine.load_workflow(WorkflowLoader.load_from_dict(wf6), enabled=True)
-
-        print("Fire webhook event:")
-        await engine.fire_event(TriggerType.WEBHOOK, {"webhook_id": "github-123", "payload": {}})
-
-        # ================================================================
-        # DEMO 7: SCHEDULE Trigger (defined but not activated)
-        # ================================================================
-        print("\n" + "─" * 80)
-        print("TRIGGER 7: SCHEDULE (defined, not activated)")
-        print("─" * 80)
-
-        wf7 = {
-            "name": "scheduled-workflow",
-            "version": "1.0",
-            "triggers": [{"type": "schedule", "cron": "0 2 * * *"}],
-            "actions": [
-                {
-                    "name": "scheduled_action",
-                    "type": "python",
-                    "code": 'print("✅ SCHEDULE: Would run daily at 2 AM")',
-                }
-            ],
-        }
-
-        engine.load_workflow(WorkflowLoader.load_from_dict(wf7), enabled=True)
-
-        print("⚠️  SCHEDULE triggers need scheduler service (v0.7.0+)")
-        print("   Workflow defined and stored, but won't fire automatically yet")
-
-        # ================================================================
-        # DEMO 8: All Action Types
-        # ================================================================
-        print("\n" + "─" * 80)
-        print("ALL 8 ACTION TYPES")
-        print("─" * 80)
-
-        wf8 = {
-            "name": "all-actions",
-            "version": "1.0",
-            "triggers": [{"type": "manual"}],
-            "actions": [
-                {"name": "python_action", "type": "python", "code": 'print("  1. ✅ PYTHON")'},
-                {"name": "bash_action", "type": "bash", "command": 'echo "  2. ✅ BASH"'},
-                {
-                    "name": "tag_log",
-                    "type": "python",
-                    "code": 'print("  3. ✅ TAG (needs Nexus file)")',
-                },
-                {
-                    "name": "metadata_log",
-                    "type": "python",
-                    "code": 'print("  4. ✅ METADATA (needs Nexus file)")',
-                },
-                {
-                    "name": "parse_log",
-                    "type": "python",
-                    "code": 'print("  5. ✅ PARSE (needs Nexus file)")',
-                },
-                {
-                    "name": "llm_log",
-                    "type": "python",
-                    "code": 'print("  6. ✅ LLM (needs LLM provider)")',
-                },
-                {
-                    "name": "webhook_log",
-                    "type": "python",
-                    "code": 'print("  7. ✅ WEBHOOK (needs HTTP endpoint)")',
-                },
-                {
-                    "name": "move_log",
-                    "type": "python",
-                    "code": 'print("  8. ✅ MOVE (needs Nexus file)")',
-                },
-            ],
-        }
-
-        engine.load_workflow(WorkflowLoader.load_from_dict(wf8), enabled=True)
-
-        print("\nExecuting workflow with all 8 action types:")
-        execution = await engine.trigger_workflow("all-actions", {})
-        print(f"\nStatus: {execution.status.value}")
-        print(f"Actions: {execution.actions_completed}/{execution.actions_total}")
-
-        # ================================================================
-        # Summary
-        # ================================================================
-        print("\n" + "=" * 80)
-        print("SUMMARY")
-        print("=" * 80)
-        print(f"""
-✅ Demonstrated all 7 trigger types
-✅ Demonstrated all 8 action types
-✅ Used real Nexus commands (write, delete, rename)
-✅ Workflows loaded: {len(engine.list_workflows())}
-✅ All workflows persisted to database
-
-Real Nexus commands used:
-  - nx.write()
-  - nx.delete()
-  - nx.rename()
-  - nx.metadata operations
-
-Note: Events fired manually (v0.4.0). In v0.5.0+, NexusFS will auto-fire!
+Data directory: {data_dir}
 """)
 
-        nx.close()
+    nx.close()
+
+    # Cleanup: Remove demo data directory
+    if os.path.exists(data_dir):
+        shutil.rmtree(data_dir)
+        print(f"\nCleaned up: {data_dir}")
 
 
 if __name__ == "__main__":

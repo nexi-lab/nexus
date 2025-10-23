@@ -19,11 +19,26 @@ echo "======================================================================"
 echo "Nexus Operation Log Demo - Undo & Audit Trail"
 echo "======================================================================"
 
-# Create temporary workspace
-DEMO_DIR=$(mktemp -d)
+# Create workspace directory
+# Use persistent directory if PostgreSQL is configured (metadata persists, need CAS to persist too)
+if [ -n "$NEXUS_DATABASE_URL" ] || [ -n "$POSTGRES_URL" ]; then
+    DEMO_DIR="${HOME}/.nexus-demo"
+    echo -e "\n${YELLOW}📊 PostgreSQL detected - using persistent data directory${NC}"
+    echo -e "${YELLOW}   (CAS content needs to persist with metadata)${NC}"
+else
+    DEMO_DIR=$(mktemp -d)
+    echo -e "\n${BLUE}📁 Using temporary data directory${NC}"
+fi
+
 export NEXUS_DATA_DIR="$DEMO_DIR/nexus-data"
+mkdir -p "$NEXUS_DATA_DIR"
+
+# Use unique agent_id per demo run to isolate operations
+DEMO_AGENT="demo-agent-$(date +%s)"
+export NEXUS_AGENT_ID="$DEMO_AGENT"
 
 echo -e "\n📁 Data directory: $NEXUS_DATA_DIR"
+echo -e "🤖 Agent ID: $DEMO_AGENT"
 
 # Initialize
 echo -e "\n${BLUE}1. Initializing Nexus workspace...${NC}"
@@ -54,7 +69,7 @@ echo "Version 1 UPDATED" | nexus write /workspace/version1.txt --input -
 echo -e "${GREEN}   ✓ Updated version1.txt (previous version logged)${NC}"
 
 # Rename file
-nexus mv /workspace/version2.txt /workspace/renamed.txt
+nexus move /workspace/version2.txt /workspace/renamed.txt --force
 echo -e "${GREEN}   ✓ Renamed version2.txt to renamed.txt${NC}"
 
 # Delete file
@@ -93,8 +108,8 @@ echo -e "\n${BLUE}5. Demonstrating undo capability...${NC}"
 echo -e "${YELLOW}   Current files:${NC}"
 nexus ls /workspace --long
 
-echo -e "\n${YELLOW}   Undoing last operation...${NC}"
-nexus undo --yes
+echo -e "\n${YELLOW}   Undoing last operation by $DEMO_AGENT...${NC}"
+nexus undo --agent "$DEMO_AGENT" --yes
 
 echo -e "\n${YELLOW}   Files after undo:${NC}"
 nexus ls /workspace --long
@@ -132,8 +147,8 @@ echo ""
 echo "   # Filter by type"
 echo "   nexus ops log --type write"
 echo ""
-echo "   # Filter by agent"
-echo "   nexus ops log --agent my-agent"
+echo "   # Filter by agent (use this demo's agent)"
+echo "   nexus ops log --agent $DEMO_AGENT"
 echo ""
 echo "   # Filter by path"
 echo "   nexus ops log --path /workspace/data.txt"
@@ -141,12 +156,18 @@ echo ""
 echo "   # Undo last operation"
 echo "   nexus undo"
 echo ""
-echo "   # Undo last operation by specific agent"
-echo "   nexus undo --agent my-agent --yes"
+echo "   # Undo last operation by this demo's agent"
+echo "   nexus undo --agent $DEMO_AGENT --yes"
 
 # Cleanup
-echo -e "\n${BLUE}Cleaning up...${NC}"
-rm -rf "$DEMO_DIR"
+if [ -n "$NEXUS_DATABASE_URL" ] || [ -n "$POSTGRES_URL" ]; then
+    echo -e "\n${YELLOW}💡 Note: Data directory preserved at $NEXUS_DATA_DIR${NC}"
+    echo -e "${YELLOW}   (Needed for PostgreSQL to undo operations after demo)${NC}"
+    echo -e "${YELLOW}   To clean up: rm -rf $DEMO_DIR${NC}"
+else
+    echo -e "\n${BLUE}Cleaning up...${NC}"
+    rm -rf "$DEMO_DIR"
+fi
 
 echo ""
 echo "======================================================================"

@@ -14,6 +14,7 @@ import json
 import os
 import uuid
 from collections.abc import Sequence
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,12 @@ from sqlalchemy.orm import sessionmaker
 from nexus.core.exceptions import MetadataError
 from nexus.core.metadata import FileMetadata, MetadataStore
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
-from nexus.storage.models import Base, FileMetadataModel, FilePathModel, VersionHistoryModel
+from nexus.storage.models import (
+    Base,
+    FileMetadataModel,
+    FilePathModel,
+    VersionHistoryModel,
+)
 from nexus.storage.query_builder import WorkQueryBuilder
 from nexus.storage.version_manager import VersionManager
 
@@ -1418,7 +1424,5 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
     def __del__(self) -> None:
         """Destructor to ensure database is closed."""
-        from contextlib import suppress
-
         with suppress(Exception):
             self.close()

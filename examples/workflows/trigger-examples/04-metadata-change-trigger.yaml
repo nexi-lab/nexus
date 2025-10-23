@@ -1,0 +1,33 @@
+name: status-change-handler
+description: React to status metadata changes
+version: 1.0
+
+triggers:
+  - type: metadata_change
+    pattern: /projects/**/*
+    metadata_key: status
+
+actions:
+  - name: check_status
+    type: python
+    code: |
+      status = file_metadata.get('status', 'unknown')
+      print(f"Status changed to: {status} for {file_path}")
+      result = {"new_status": status}
+
+  - name: tag_by_status
+    type: tag
+    tags:
+      - "status:{new_status}"
+
+  - name: move_if_completed
+    type: python
+    code: |
+      from nexus import connect
+      status = file_metadata.get('status')
+      if status == 'completed':
+          nx = connect()
+          # Move to completed folder
+          destination = f"/completed/{filename}"
+          print(f"Moving completed file to {destination}")
+      result = {"moved": status == 'completed'}

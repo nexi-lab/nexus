@@ -106,7 +106,7 @@ class TestSmallFileThroughput:
     def test_many_small_writes(
         self, benchmark: pytest.fixture, backend_adapter: BackendAdapter
     ) -> None:
-        """Benchmark writing 100 small (1KB) files."""
+        """Benchmark writing 100 small (1KB) files individually."""
         data = b"x" * 1024  # 1KB
 
         def write_many() -> None:
@@ -114,6 +114,18 @@ class TestSmallFileThroughput:
                 backend_adapter.write(f"/small_{i}.txt", data)
 
         benchmark(write_many)
+
+    def test_many_small_writes_batch(
+        self, benchmark: pytest.fixture, backend_adapter: BackendAdapter
+    ) -> None:
+        """Benchmark writing 100 small (1KB) files using batch API."""
+        data = b"x" * 1024  # 1KB
+
+        def write_batch() -> None:
+            files = [(f"/batch_{i}.txt", data) for i in range(100)]
+            backend_adapter.write_batch(files)
+
+        benchmark(write_batch)
 
     def test_many_small_reads(
         self, benchmark: pytest.fixture, backend_adapter: BackendAdapter

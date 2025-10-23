@@ -199,10 +199,14 @@ class VersionManager:
             ...     session.commit()
         """
         try:
-            # Get current file
-            file_stmt = select(FilePathModel).where(
-                FilePathModel.virtual_path == path,
-                FilePathModel.deleted_at.is_(None),
+            # Get current file with row-level locking to prevent concurrent version conflicts
+            file_stmt = (
+                select(FilePathModel)
+                .where(
+                    FilePathModel.virtual_path == path,
+                    FilePathModel.deleted_at.is_(None),
+                )
+                .with_for_update()
             )
             file_path = session.scalar(file_stmt)
 

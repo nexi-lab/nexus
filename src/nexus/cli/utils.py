@@ -164,7 +164,8 @@ def handle_error(e: Exception) -> None:
     if isinstance(e, PermissionError):
         console.print(f"[red]Permission Denied:[/red] {e}")
     elif isinstance(e, NexusFileNotFoundError):
-        console.print(f"[red]Error:[/red] File not found: {e}")
+        # Don't add "File not found:" prefix - the exception message already contains it
+        console.print(f"[red]Error:[/red] {e}")
     elif isinstance(e, ValidationError):
         console.print(f"[red]Validation Error:[/red] {e}")
     elif isinstance(e, NexusError):

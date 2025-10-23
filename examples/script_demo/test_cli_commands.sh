@@ -881,6 +881,67 @@ test_command "Sync command - disable checksum verification" \
 echo -e "${GREEN}✓ All rclone-style CLI tests passed!${NC}\n"
 
 # ============================================================
+# Batch Write Tests (Issue #212 - Performance Optimization)
+# ============================================================
+echo -e "\n${BLUE}Testing batch write operations...${NC}"
+
+# Create test directory with multiple files
+BATCH_TEST_DIR="$TEST_WORKSPACE/batch-upload-source"
+mkdir -p "$BATCH_TEST_DIR/logs"
+mkdir -p "$BATCH_TEST_DIR/checkpoints"
+
+# Create 30 small test files
+for i in {1..20}; do
+    echo "Log entry $i - $(date)" > "$BATCH_TEST_DIR/logs/app_$i.log"
+done
+
+for i in {1..10}; do
+    echo "Checkpoint $i data" > "$BATCH_TEST_DIR/checkpoints/model_epoch_$i.ckpt"
+done
+
+# Test 77a: Batch write - upload entire directory
+test_command "write-batch - upload directory to Nexus" \
+    nexus write-batch "$BATCH_TEST_DIR" --dest-prefix /batch-upload-test
+
+# Test 77b: Verify batch uploaded files exist
+test_command "write-batch - verify uploaded files" \
+    bash -c "nexus cat /batch-upload-test/logs/app_1.log && \
+             nexus cat /batch-upload-test/checkpoints/model_epoch_1.ckpt"
+
+# Test 77c: Count uploaded files
+test_command "write-batch - verify file count" \
+    bash -c "nexus ls /batch-upload-test --recursive | wc -l | grep -E '(30|31|32)'"
+
+# Test 77d: Batch write with pattern filter (only .log files)
+test_command "write-batch - upload with pattern filter" \
+    nexus write-batch "$BATCH_TEST_DIR" --dest-prefix /batch-logs-only --pattern "**/*.log"
+
+# Test 77e: Verify only .log files were uploaded
+test_command "write-batch - verify pattern filter worked" \
+    bash -c "nexus ls /batch-logs-only --recursive | grep -c '\.log' | grep 20"
+
+# Test 77f: Batch write with exclude pattern
+mkdir -p "$BATCH_TEST_DIR/temp"
+echo "temp file" > "$BATCH_TEST_DIR/temp/cache.tmp"
+
+test_command "write-batch - upload with exclude pattern" \
+    nexus write-batch "$BATCH_TEST_DIR" --dest-prefix /batch-no-temp --exclude "temp/*" --exclude "*.tmp"
+
+# Test 77g: Verify excluded files were not uploaded
+test_command "write-batch - verify exclude pattern worked" \
+    bash -c "! nexus cat /batch-no-temp/temp/cache.tmp 2>/dev/null"
+
+# Test 77h: Batch write with custom batch size
+test_command "write-batch - upload with custom batch size" \
+    nexus write-batch "$BATCH_TEST_DIR/logs" --dest-prefix /batch-custom-size --batch-size 5
+
+# Test 77i: Test batch write help
+test_command "write-batch --help shows usage" \
+    bash -c "nexus write-batch --help | grep 'batch write API'"
+
+echo -e "${GREEN}✓ All batch write tests passed!${NC}\n"
+
+# ============================================================
 # UNIX Permissions Tests (Issue #86 - v0.3.0)
 # ============================================================
 echo -e "\n${BLUE}Testing UNIX-style permissions...${NC}"
@@ -1549,16 +1610,31 @@ echo -e "${GREEN}✓ All ReBAC tests passed!${NC}\n"
 # ============================================================
 echo -e "\n${BLUE}Testing Skills System CLI...${NC}"
 
-# Create separate workspace for skills tests
+# Create FRESH separate workspace for skills tests
+# Remove any leftover data to ensure clean state
 SKILLS_DATA_DIR="$TEST_WORKSPACE/skills-test-data"
+rm -rf "$SKILLS_DATA_DIR"  # Clean up any previous state
+
 test_command "Create skills test workspace" \
     mkdir -p "$SKILLS_DATA_DIR"
 
-test_command "Initialize skills test workspace" \
+# IMPORTANT: Temporarily unset database URL to force SQLite for skills tests
+# PostgreSQL database is shared across test runs and contains leftover state
+OLD_NEXUS_DATA_DIR="$NEXUS_DATA_DIR"
+OLD_NEXUS_DATABASE_URL="$NEXUS_DATABASE_URL"
+unset NEXUS_DATA_DIR
+unset NEXUS_DATABASE_URL
+
+test_command "Initialize skills test workspace (with SQLite)" \
     nexus init "$SKILLS_DATA_DIR"
 
-# Switch to skills test data directory
+# Now switch to the fresh skills test data directory for all skills tests
 export NEXUS_DATA_DIR="$SKILLS_DATA_DIR/nexus-data"
+# Keep DATABASE_URL unset to ensure we use the local SQLite database
+
+# Verify we have a clean SQLite database with no leftover CAS references
+test_command "Verify clean skills database (SQLite)" \
+    bash -c "[ -f '$NEXUS_DATA_DIR/metadata.db' ] && echo 'Fresh SQLite database created'"
 
 # Test 116: List skills (empty initially)
 test_command "skills list - list all skills (empty initially)" \
@@ -1646,8 +1722,11 @@ test_command "skills create --help shows usage" \
 test_command "skills list --tier agent - filter by agent tier" \
     bash -c "nexus skills list --tier agent 2>&1 | grep -E '(forked-skill|my-test-skill)' || echo 'No agent skills found'"
 
-# Switch back to main data directory
+# Switch back to main data directory and restore database URL
 export NEXUS_DATA_DIR="$DATA_DIR"
+if [ -n "$OLD_NEXUS_DATABASE_URL" ]; then
+    export NEXUS_DATABASE_URL="$OLD_NEXUS_DATABASE_URL"
+fi
 
 echo -e "${GREEN}✓ All Skills System CLI tests passed!${NC}\n"
 

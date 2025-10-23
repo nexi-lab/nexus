@@ -41,6 +41,7 @@ Nexus is a complete AI agent infrastructure platform that combines distributed u
 - **Backend Auto-Mount**: Automatic recognition and mounting
 - **Resource Management**: CPU throttling and rate limiting
 - **Work Queue Detection**: SQL views for efficient task scheduling and dependency resolution
+- **Batch Write API**: 4x faster bulk uploads for AI checkpoints and logs
 
 ## Deployment Modes
 
@@ -66,6 +67,13 @@ async with nx:
     # Write and read files
     await nx.write("/workspace/data.txt", b"Hello World")
     content = await nx.read("/workspace/data.txt")
+
+    # Batch write for better performance (4x faster!)
+    checkpoint_files = [
+        (f"/checkpoints/epoch_{i}.ckpt", checkpoint_data)
+        for i in range(100)
+    ]
+    await nx.write_batch(checkpoint_files)
 
     # Semantic search across documents
     results = await nx.semantic_search(
@@ -339,6 +347,12 @@ nexus ls /workspace --long  # Detailed view with metadata
 # Write content to a file
 nexus write /path/to/file.txt "content"
 echo "content" | nexus write /path/to/file.txt --input -
+
+# Batch write multiple files (4x faster for many small files!)
+nexus write-batch ./my-data --dest-prefix /workspace/uploads
+nexus write-batch ./logs --dest-prefix /logs --pattern "**/*.log"
+nexus write-batch ./src --exclude "*.pyc" --exclude "__pycache__/*"
+nexus write-batch ./checkpoints --batch-size 200  # Larger batches = better performance
 
 # Display file contents (with syntax highlighting)
 nexus cat /workspace/code.py
@@ -1643,6 +1657,9 @@ git clone /mnt/nexus/repos/myproject
 # Use rclone-style commands for efficiency
 nexus sync /local/dataset/ /workspace/training-data/
 nexus tree /workspace/ > structure.txt
+
+# Batch upload for maximum performance
+nexus write-batch ./checkpoints/ /workspace/model-checkpoints/
 ```
 
 **Automated Workflows**:
@@ -2106,6 +2123,7 @@ This skill analyzes code for quality metrics...
 | Metric | Target | Impact |
 |--------|--------|--------|
 | Write Throughput | 500-1000 MB/s | 10-50× vs direct backend |
+| Batch Write (Small Files) | 4x faster | Single transaction vs N transactions |
 | Read Latency | <10ms | 10-50× vs remote storage |
 | Memory Search | <100ms | Vector search across memories |
 | Storage Savings | 30-50% | CAS deduplication |

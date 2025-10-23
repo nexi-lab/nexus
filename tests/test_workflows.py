@@ -475,5 +475,101 @@ async def test_workflow_event_firing():
     assert isinstance(triggered, int)
 
 
+@pytest.mark.asyncio
+async def test_workflow_storage_persistence():
+    """Test workflow storage and persistence."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from nexus.storage.models import Base
+    from nexus.workflows.storage import WorkflowStore
+
+    # Create in-memory database
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine)
+
+    store = WorkflowStore(SessionLocal, tenant_id="test")
+
+    # Create workflow
+    workflow = WorkflowDefinition(
+        name="test-persist",
+        version="1.0",
+        triggers=[WorkflowTrigger(type=TriggerType.MANUAL, config={})],
+        actions=[WorkflowAction(name="test", type="python", config={"code": "pass"})],
+    )
+
+    # Save workflow
+    workflow_id = store.save_workflow(workflow, enabled=True)
+    assert workflow_id is not None
+
+    # Load workflow
+    loaded = store.load_workflow(workflow_id)
+    assert loaded is not None
+    assert loaded.name == "test-persist"
+
+    # List workflows
+    workflows = store.list_workflows()
+    assert len(workflows) == 1
+    assert workflows[0]["name"] == "test-persist"
+
+    # Update workflow (save again)
+    workflow_id2 = store.save_workflow(workflow, enabled=False)
+    assert workflow_id2 == workflow_id  # Same ID when updating
+
+    # Delete workflow
+    success = store.delete_workflow(workflow_id)
+    assert success
+
+    workflows_after = store.list_workflows()
+    assert len(workflows_after) == 0
+
+
+@pytest.mark.asyncio
+async def test_workflow_loader_from_file(tmp_path):
+    """Test loading workflow from file."""
+    # Create temp YAML file
+    workflow_file = tmp_path / "test.yaml"
+    workflow_file.write_text("""
+name: test-from-file
+version: 1.0
+description: Test workflow
+triggers:
+  - type: manual
+actions:
+  - name: test_action
+    type: python
+    code: pass
+""")
+
+    # Load from file
+    workflow = WorkflowLoader.load_from_file(str(workflow_file))
+    assert workflow.name == "test-from-file"
+    assert len(workflow.triggers) == 1
+    assert len(workflow.actions) == 1
+
+
+@pytest.mark.asyncio
+async def test_workflow_loader_save_to_file(tmp_path):
+    """Test saving workflow to file."""
+    workflow = WorkflowDefinition(
+        name="test-save",
+        version="1.0",
+        description="Test save",
+        triggers=[WorkflowTrigger(type=TriggerType.MANUAL, config={})],
+        actions=[WorkflowAction(name="test", type="python", config={"code": "pass"})],
+    )
+
+    # Save to file
+    output_file = tmp_path / "output.yaml"
+    WorkflowLoader.save_to_file(workflow, str(output_file))
+
+    assert output_file.exists()
+
+    # Load it back
+    loaded = WorkflowLoader.load_from_file(str(output_file))
+    assert loaded.name == "test-save"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

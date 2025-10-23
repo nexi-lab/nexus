@@ -210,6 +210,19 @@ class NexusFSCoreMixin:
         now = datetime.now(UTC)
         meta = self.metadata.get(path)
 
+        # Capture snapshot before operation for undo capability (v0.3.9)
+        snapshot_hash = meta.etag if meta else None
+        metadata_snapshot = None
+        if meta:
+            metadata_snapshot = {
+                "size": meta.size,
+                "owner": meta.owner,
+                "group": meta.group,
+                "mode": meta.mode,
+                "version": meta.version,
+                "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
+            }
+
         # Check write permission (v0.3.0)
         # Only check permissions if the file is owned by the current user
         # This allows namespace routing to override Unix permissions when needed
@@ -317,6 +330,26 @@ class NexusFSCoreMixin:
         # Auto-parse file if enabled and format is supported
         if self.auto_parse:
             self._auto_parse_file(path)
+
+        # Log operation for audit trail and undo capability (v0.3.9)
+        try:
+            from nexus.storage.operation_logger import OperationLogger
+
+            with self.metadata.SessionLocal() as session:
+                op_logger = OperationLogger(session)
+                op_logger.log_operation(
+                    operation_type="write",
+                    path=path,
+                    tenant_id=self.tenant_id,
+                    agent_id=self.agent_id,
+                    snapshot_hash=snapshot_hash,
+                    metadata_snapshot=metadata_snapshot,
+                    status="success",
+                )
+                session.commit()
+        except Exception:
+            # Don't fail the write operation if logging fails
+            pass
 
         # Return metadata for optimistic concurrency control (v0.3.9)
         return {
@@ -562,6 +595,19 @@ class NexusFSCoreMixin:
         if meta is None:
             raise NexusFileNotFoundError(path)
 
+        # Capture snapshot before operation for undo capability (v0.3.9)
+        snapshot_hash = meta.etag
+        metadata_snapshot = {
+            "size": meta.size,
+            "owner": meta.owner,
+            "group": meta.group,
+            "mode": meta.mode,
+            "version": meta.version,
+            "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
+            "backend_name": meta.backend_name,
+            "physical_path": meta.physical_path,
+        }
+
         # Check write permission for delete (v0.3.0)
         # This comes AFTER tenant isolation check so AccessDeniedError takes precedence
         self._check_permission(path, Permission.WRITE, context)
@@ -572,6 +618,26 @@ class NexusFSCoreMixin:
 
         # Remove from metadata
         self.metadata.delete(path)
+
+        # Log operation for audit trail and undo capability (v0.3.9)
+        try:
+            from nexus.storage.operation_logger import OperationLogger
+
+            with self.metadata.SessionLocal() as session:
+                op_logger = OperationLogger(session)
+                op_logger.log_operation(
+                    operation_type="delete",
+                    path=path,
+                    tenant_id=self.tenant_id,
+                    agent_id=self.agent_id,
+                    snapshot_hash=snapshot_hash,
+                    metadata_snapshot=metadata_snapshot,
+                    status="success",
+                )
+                session.commit()
+        except Exception:
+            # Don't fail the delete operation if logging fails
+            pass
 
     def rename(self, old_path: str, new_path: str) -> None:
         """
@@ -627,12 +693,47 @@ class NexusFSCoreMixin:
         if not self.metadata.exists(old_path):
             raise NexusFileNotFoundError(old_path)
 
+        # Capture snapshot before operation for undo capability (v0.3.9)
+        meta = self.metadata.get(old_path)
+        snapshot_hash = meta.etag if meta else None
+        metadata_snapshot = None
+        if meta:
+            metadata_snapshot = {
+                "size": meta.size,
+                "owner": meta.owner,
+                "group": meta.group,
+                "mode": meta.mode,
+                "version": meta.version,
+                "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
+            }
+
         # Check if destination already exists
         if self.metadata.exists(new_path):
             raise FileExistsError(f"Destination path already exists: {new_path}")
 
         # Perform metadata-only rename (no CAS I/O!)
         self.metadata.rename_path(old_path, new_path)
+
+        # Log operation for audit trail and undo capability (v0.3.9)
+        try:
+            from nexus.storage.operation_logger import OperationLogger
+
+            with self.metadata.SessionLocal() as session:
+                op_logger = OperationLogger(session)
+                op_logger.log_operation(
+                    operation_type="rename",
+                    path=old_path,
+                    new_path=new_path,
+                    tenant_id=self.tenant_id,
+                    agent_id=self.agent_id,
+                    snapshot_hash=snapshot_hash,
+                    metadata_snapshot=metadata_snapshot,
+                    status="success",
+                )
+                session.commit()
+        except Exception:
+            # Don't fail the rename operation if logging fails
+            pass
 
     def exists(self, path: str) -> bool:
         """

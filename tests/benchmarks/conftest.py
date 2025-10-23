@@ -161,6 +161,17 @@ class BackendAdapter:
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_bytes(data)
 
+    def write_batch(self, files: list[tuple[str, bytes]]) -> None:
+        """Write multiple files at once."""
+        if self.is_nexus:
+            self.backend.write_batch(files)  # type: ignore
+        else:
+            # Local filesystem - write files individually
+            for path, data in files:
+                full_path = self.backend / path.lstrip("/")  # type: ignore
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                full_path.write_bytes(data)
+
     def read(self, path: str) -> bytes:
         """Read data from path."""
         if self.is_nexus:

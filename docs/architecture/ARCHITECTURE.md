@@ -153,6 +153,48 @@ requires: [dependency-skill]
 # Skill Content
 ```
 
+## Namespace System
+
+Nexus organizes files into five built-in namespaces with different access control and visibility rules.
+
+**Location:** `src/nexus/core/router.py`
+
+### Built-in Namespaces
+
+| Namespace | Purpose | Readonly | Admin-Only | Requires Tenant |
+|-----------|---------|----------|------------|-----------------|
+| `/workspace` | Agent-specific workspace | No | No | Yes |
+| `/shared` | Tenant-wide shared files | No | No | Yes |
+| `/archives` | Long-term storage | Yes | No | Yes |
+| `/external` | External integrations | No | No | No |
+| `/system` | System configuration | Yes | **Yes** | No |
+
+### Namespace Visibility Rules
+
+Namespaces are automatically filtered based on user context:
+
+```python
+# tenant_id=None (no tenant)
+visible = ["/external"]  # Only external accessible
+
+# tenant_id="default" (single tenant)
+visible = ["/workspace", "/shared", "/archives", "/external"]
+
+# is_admin=True
+visible = ["/workspace", "/shared", "/archives", "/external", "/system"]
+```
+
+### FUSE Mount Integration
+
+When mounting via FUSE, namespace directories appear at root level:
+
+```bash
+$ ls /mnt/nexus/
+archives/  external/  shared/  workspace/  .raw/
+```
+
+The filesystem dynamically shows only accessible namespaces based on the user's tenant and admin status.
+
 ## Data Flow
 
 ### Read Flow

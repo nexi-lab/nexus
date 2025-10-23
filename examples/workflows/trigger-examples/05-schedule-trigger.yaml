@@ -1,0 +1,32 @@
+name: daily-backup
+description: Daily backup of important files (requires scheduler service in v0.7.0+)
+version: 1.0
+
+triggers:
+  - type: schedule
+    cron: "0 2 * * *"  # Daily at 2 AM
+
+actions:
+  - name: find_important_files
+    type: python
+    code: |
+      from nexus import connect
+      nx = connect()
+      # Find all files tagged as 'important'
+      important_files = []
+      # In real implementation, use nx.search or nx.glob
+      print(f"Found {len(important_files)} important files to backup")
+      result = {"count": len(important_files)}
+
+  - name: create_backup
+    type: bash
+    command: |
+      tar -czf /backups/daily-backup-$(date +%Y%m%d).tar.gz /important
+
+  - name: notify_complete
+    type: webhook
+    url: https://monitoring.example.com/api/backup-complete
+    method: POST
+    body:
+      backup_date: "{timestamp}"
+      file_count: "{find_important_files_output.count}"

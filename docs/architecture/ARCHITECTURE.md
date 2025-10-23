@@ -10,28 +10,39 @@ Nexus is an AI-native distributed filesystem that provides a unified API across 
 ## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Nexus Filesystem                         │
-├─────────────────────────────────────────────────────────────┤
-│  CLI Layer          │  Python SDK        │  MCP Server      │
-├─────────────────────────────────────────────────────────────┤
-│                    Core Components Layer                     │
-│  ┌──────────┬──────────┬──────────┬──────────┬──────────┐  │
-│  │ Metadata │  Plugin  │ Workflow │   Job    │  Skills  │  │
-│  │  System  │  System  │  Engine  │  System  │  System  │  │
-│  └──────────┴──────────┴──────────┴──────────┴──────────┘  │
-├─────────────────────────────────────────────────────────────┤
-│                  Storage Abstraction Layer                   │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  CAS Layer  │  Ops Log  │  Version Control  │  Cache │  │
-│  └──────────────────────────────────────────────────────┘  │
-├─────────────────────────────────────────────────────────────┤
-│                      Backend Adapters                        │
-│  ┌────────┬─────────┬──────────┬──────────┬───────────┐   │
-│  │ Local  │   S3    │  GDrive  │   GCS    │ Workspace │   │
-│  │   FS   │         │          │          │  Backend  │   │
-│  └────────┴─────────┴──────────┴──────────┴───────────┘   │
-└─────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                        Nexus Filesystem                            │
+├───────────────────────────────────────────────────────────────────┤
+│           Interface Layer (User-Facing APIs)                       │
+│  ┌──────────────┬──────────────────┬─────────────────────┐       │
+│  │ CLI Commands │   Python SDK     │    MCP Server       │       │
+│  │ (nexus.cli)  │ (nexus.connect()) │ (Model Context)     │       │
+│  └──────────────┴──────────────────┴─────────────────────┘       │
+├───────────────────────────────────────────────────────────────────┤
+│                   Core Components Layer                            │
+│  ┌──────────┬──────────┬──────────┬──────────┬──────────────┐   │
+│  │ NexusFS  │  Plugin  │   Work   │ Workflow │   Skills     │   │
+│  │   Core   │  System  │  Queue   │  Engine  │   System     │   │
+│  ├──────────┼──────────┴──────────┴──────────┴──────────────┤   │
+│  │   LLM    │          ReBAC Permissions System              │   │
+│  │ Provider │        (Relationship-Based Access Control)     │   │
+│  └──────────┴────────────────────────────────────────────────┘   │
+├───────────────────────────────────────────────────────────────────┤
+│                      Storage Layer                                 │
+│  ┌────────────┬──────────────┬─────────────┬─────────────┐       │
+│  │  Metadata  │ Content-Addr │  Operation  │   Caching   │       │
+│  │   Store    │   Storage    │     Log     │   System    │       │
+│  │ (SQLite/   │    (CAS)     │ (Time-      │ (Content +  │       │
+│  │ Postgres)  │ (SHA-256)    │  Travel)    │  Metadata)  │       │
+│  └────────────┴──────────────┴─────────────┴─────────────┘       │
+├───────────────────────────────────────────────────────────────────┤
+│                      Backend Adapters                              │
+│  ┌──────────┬──────────┬──────────┬──────────┬──────────────┐   │
+│  │  Local   │   GCS    │   S3*    │ GDrive*  │  Workspace   │   │
+│  │   FS     │ (Google) │  (AWS)   │ (Google) │   Backend    │   │
+│  └──────────┴──────────┴──────────┴──────────┴──────────────┘   │
+│                      * = Partial/Planned                          │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 ## Core Components
@@ -43,48 +54,36 @@ The central filesystem abstraction providing unified file operations across all 
 
 **Key Features:**
 - Async-first API
-- Multi-backend routing
+- Multi-backend routing via PathRouter
 - Permission enforcement (ReBAC)
-- Operation logging
-- Content-addressable storage
+- Operation logging for time-travel
+- Content-addressable storage integration
+- Batch write operations (4x faster)
 
-### 2. Content-Addressable Storage (CAS)
-Automatic deduplication using SHA-256 hashing.
+### 2. LLM Provider Abstraction (v0.4.0)
+Unified interface for multiple LLM providers with KV cache management.
 
-**Location:** `src/nexus/storage/cas.py`
+**Location:** `src/nexus/llm/`
 
-**Benefits:**
-- 30-50% storage savings
-- Immutable content for caching
-- Lineage tracking
-- Efficient time-travel
+**Key Features:**
+- Multi-provider support (Anthropic, OpenAI, Google, Ollama, etc.)
+- Automatic KV cache management (50-90% cost savings)
+- Token counting and cost tracking
+- Streaming response support
+- Provider-agnostic API via LiteLLM
 
-### 3. Operation Log & Time-Travel
-Complete audit trail with undo capability.
+**Example:**
+```python
+from nexus.llm import get_provider
 
-**Location:** `src/nexus/storage/operations.py`
-
-**Features:**
-- All filesystem operations logged
-- Undo capability for reversible operations
-- Time-travel: read files at historical points
-- Content diffing between versions
-
-**Database Schema:**
-```sql
-CREATE TABLE operations (
-    id UUID PRIMARY KEY,
-    tenant_id UUID NOT NULL,
-    operation_type VARCHAR(50) NOT NULL,
-    file_path TEXT NOT NULL,
-    timestamp TIMESTAMPTZ NOT NULL,
-    details JSONB NOT NULL,
-    undo_state JSONB,
-    undone BOOLEAN DEFAULT FALSE
-);
+provider = get_provider("anthropic")
+response = await provider.complete(
+    prompt="Summarize this document",
+    model="claude-sonnet-4"
+)
 ```
 
-### 4. Plugin System
+### 3. Plugin System
 Extensible architecture for vendor integrations.
 
 **Location:** `src/nexus/plugins/`
@@ -116,21 +115,91 @@ class NexusPlugin(ABC):
 - `nexus-plugin-anthropic`: Claude Skills API integration
 - `nexus-plugin-skill-seekers`: Generate skills from documentation
 
-### 5. Workflow Engine (v0.4.0)
-Event-driven automation for document processing.
+### 5. Work Queue System
+File-based job queue with SQL views for efficient querying.
 
-**Location:** `src/nexus/workflows/` (planned)
+**Location:** `src/nexus/storage/views.py`
+
+**How It Works:**
+Jobs are regular files with metadata. No separate job system needed - follows "Everything as a File" principle.
+
+**Job Metadata Schema:**
+```python
+# Create a job (just a file)
+nx.write("/jobs/task1.json", b'{"action": "process"}')
+
+# Add work metadata
+nx.metadata.set_file_metadata("/jobs/task1.json", "status", "ready")
+nx.metadata.set_file_metadata("/jobs/task1.json", "priority", 1)
+nx.metadata.set_file_metadata("/jobs/task1.json", "tags", ["urgent"])
+```
+
+**Metadata Fields:**
+- `status`: `ready` | `pending` | `blocked` | `in_progress` | `completed` | `failed`
+- `priority`: Integer (lower = higher priority)
+- `depends_on`: Path ID of dependency (creates blocking relationship)
+- `worker_id`: ID of processing worker
+- `started_at`: ISO timestamp
+
+**SQL Views (O(n) performance):**
+- `ready_work_items`: Jobs ready to process (status='ready', no blockers)
+- `pending_work_items`: Jobs in backlog (status='pending')
+- `blocked_work_items`: Jobs waiting on dependencies
+- `in_progress_work`: Jobs currently running
+- `work_by_priority`: All jobs sorted by priority
+
+**CLI Commands:**
+```bash
+nexus work ready --limit 10    # Get ready jobs
+nexus work status              # Queue statistics
+nexus work blocked             # Find bottlenecks
+```
+
+**Python API:**
+```python
+ready_jobs = nx.metadata.get_ready_work(limit=10)
+pending = nx.metadata.get_pending_work()
+blocked = nx.metadata.get_blocked_work()
+```
+
+**Note:** This provides job state management infrastructure. Users implement their own execution logic.
+
+### 6. Workflow Engine (v0.4.0)
+Event-driven automation for document processing and multi-step operations.
+
+**Location:** `src/nexus/workflows/`
 
 **Components:**
-- Trigger System (file events, schedules, webhooks)
-- Action Registry (built-in + plugin actions)
-- YAML DSL parser
-- Execution engine
+- **Triggers** (`triggers.py`): File events, schedules, manual invocation
+- **Actions** (`actions.py`): Built-in + plugin actions
+- **Engine** (`engine.py`): Workflow execution with DAG resolution
+- **Storage** (`storage.py`): Persistent workflow state
+- **Loader** (`loader.py`): YAML DSL parser
 
 **Workflow Storage:** `.nexus/workflows/*.yaml`
 
-### 6. Skills System
-Vendor-neutral skill management with three-tier hierarchy.
+**Example Workflow:**
+```yaml
+name: process-invoices
+triggers:
+  - type: file
+    pattern: /invoices/*.pdf
+    event: create
+actions:
+  - name: parse-invoice
+    type: parse_document
+  - name: extract-data
+    type: llm_query
+    config:
+      prompt: "Extract invoice details"
+  - name: save-result
+    type: write_file
+    config:
+      path: /processed/{filename}.json
+```
+
+### 7. Skills System
+Vendor-neutral skill management with three-tier hierarchy and governance.
 
 **Location:** `src/nexus/skills/`
 
@@ -140,6 +209,13 @@ Vendor-neutral skill management with three-tier hierarchy.
 /shared/skills/          # Tenant-wide, shared
 /workspace/.nexus/skills/ # Agent-specific
 ```
+
+**Features:**
+- Dependency resolution with DAG and cycle detection
+- Skill versioning and lineage tracking
+- Export/import workflows
+- Approval governance for org-wide skills
+- Analytics for skill effectiveness
 
 **SKILL.md Format:**
 ```markdown
@@ -152,6 +228,96 @@ requires: [dependency-skill]
 ---
 # Skill Content
 ```
+
+### 8. ReBAC Permissions System
+Relationship-Based Access Control for fine-grained security.
+
+**Location:** `src/nexus/core/permissions.py`, `src/nexus/core/permission_policy.py`
+
+**Permission Types:**
+- `read`: View file content
+- `write`: Modify files
+- `delete`: Remove files
+- `admin`: Full control + permission grants
+
+**Features:**
+- Directory → file permission inheritance
+- Policy-based access control
+- Tenant isolation
+- Namespace-level readonly enforcement
+- Admin-only namespaces (`/system`)
+
+**Example:**
+```python
+# Grant read permission
+nx.permissions.grant("/shared/docs", user_id, Permission.READ)
+
+# Check permission
+has_access = nx.permissions.check("/shared/docs/file.txt", Permission.WRITE)
+```
+
+## Storage Layer
+
+### Content-Addressable Storage (CAS)
+Automatic deduplication using SHA-256 hashing.
+
+**Location:** `src/nexus/backends/local.py`, `src/nexus/storage/`
+
+**Benefits:**
+- 30-50% storage savings via deduplication
+- Immutable content enables efficient caching
+- Lineage tracking across file copies
+- Efficient time-travel without full copies
+
+**How It Works:**
+```python
+# Writing content
+content = b"Hello World"
+content_hash = hashlib.sha256(content).hexdigest()
+cas_path = f"cas/{content_hash[:2]}/{content_hash}"
+# Store once, reference many times
+```
+
+### Operation Log & Time-Travel
+Complete audit trail with undo capability.
+
+**Location:** `src/nexus/storage/operations.py`
+
+**Features:**
+- All filesystem operations logged
+- Undo capability for reversible operations
+- Time-travel: read files at historical points
+- Content diffing between versions
+- Multi-agent safe with per-agent tracking
+
+**Database Schema:**
+```sql
+CREATE TABLE operations (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    operation_type VARCHAR(50) NOT NULL,
+    file_path TEXT NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    details JSONB NOT NULL,
+    undo_state JSONB,
+    undone BOOLEAN DEFAULT FALSE
+);
+```
+
+### Caching System (v0.4.0)
+Multi-tier caching for performance optimization.
+
+**Location:** `src/nexus/storage/cache.py`, `src/nexus/storage/content_cache.py`
+
+**Cache Types:**
+- **Metadata Cache**: File metadata, path lookups, existence checks
+- **Content Cache**: LRU cache for file content (256MB default)
+- **Permission Cache**: Permission check results
+
+**Performance Impact:**
+- Cached reads: **10-50x faster**
+- Metadata operations: **5x faster**
+- Configurable cache sizes and TTLs
 
 ## Namespace System
 

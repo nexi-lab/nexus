@@ -45,12 +45,11 @@ Nexus is a complete AI agent infrastructure platform that combines distributed u
 - **Thumbnail Generation**: Multi-size visual previews for images, PDFs, and documents (v0.7.0)
 
 ### Operations
-- **Resumable Jobs**: Checkpointing system survives restarts
+- **Work Queue System**: File-based job queue with status tracking, priority scheduling, and dependency resolution via SQL views
+- **Batch Write API**: 4x faster bulk uploads for AI checkpoints and logs
 - **OAuth Token Management**: Auto-refreshing credentials
 - **Backend Auto-Mount**: Automatic recognition and mounting
 - **Resource Management**: CPU throttling and rate limiting
-- **Work Queue Detection**: SQL views for efficient task scheduling and dependency resolution
-- **Batch Write API**: 4x faster bulk uploads for AI checkpoints and logs
 - **Document Sharing**: Time-limited, password-protected access links for collaboration (v0.8.0)
 - **Storage Analytics**: Usage tracking, deduplication savings, growth trends, cleanup recommendations (v0.9.0)
 
@@ -1308,10 +1307,10 @@ Deploy to GCP with a single command using the automated deployment script:
 
 ```bash
 # Quick start
-./deploy-gcp.sh --project-id YOUR-PROJECT-ID --api-key mysecret
+./scripts/deploy-gcp.sh --project-id YOUR-PROJECT-ID --api-key mysecret
 
 # With GCS backend
-./deploy-gcp.sh \
+./scripts/deploy-gcp.sh \
   --project-id YOUR-PROJECT-ID \
   --gcs-bucket your-nexus-bucket \
   --api-key mysecret \
@@ -2818,7 +2817,8 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 ### v0.7.0 - Extended Features & Event System
 - [ ] S3 backend support
 - [ ] Google Drive backend
-- [ ] Job system with checkpointing
+- [x] Work queue system (file-based jobs with SQL views)
+- [ ] Job execution engine with automatic checkpointing/resume
 - [ ] OAuth token management
 - [ ] MCP server implementation
 - [ ] Webhook/event system (file changes, memory updates, job events)

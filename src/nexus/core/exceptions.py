@@ -120,3 +120,7 @@ class ConflictError(NexusError):
             f"Expected etag '{expected_etag[:16]}...', but current etag is '{current_etag[:16]}...'"
         )
         super().__init__(message, path)
+
+
+# Alias for convenience (used in time-travel debugging)
+NotFoundError = NexusFileNotFoundError

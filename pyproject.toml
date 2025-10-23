@@ -239,6 +239,12 @@ module = [
 disallow_untyped_defs = false
 warn_unused_ignores = false
 
+[[tool.mypy.overrides]]
+module = "nexus.llm.provider"
+# litellm's completion_cost has complex overloads that mypy can't resolve with **kwargs
+# Different mypy versions handle this differently, so we disable the check
+warn_unused_ignores = false
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100

@@ -11,7 +11,7 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Iterator
 from functools import partial, wraps
-from typing import Any
+from typing import Any, cast
 
 import litellm
 from litellm import PromptTokensDetails
@@ -611,7 +611,8 @@ class LiteLLMProvider(LLMProvider):
                 retry_multiplier=self.config.retry_multiplier,
             )
             async def make_completion() -> ModelResponse:
-                return await self._acompletion_partial(messages=formatted_messages, **call_kwargs)
+                result = await self._acompletion_partial(messages=formatted_messages, **call_kwargs)
+                return cast(ModelResponse, result)
 
             completion_task = asyncio.create_task(make_completion())
             self._active_tasks.add(completion_task)

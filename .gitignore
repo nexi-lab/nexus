@@ -85,11 +85,20 @@ cython_debug/
 # uv
 .uv/
 
-# Nexus specific
+# Nexus specific data directories
 nexus-data/
 .nexus-server-data/
 test-nexus-data/
 test-server-data/
+demo-data*/
+test-fix-data/
+*-examples-data/
+*-examples-workspace/
+my-data/
+# Standalone backend storage directories (should be under nexus-data/)
+/cas/
+/dirs/
+# Database files
 *.db
 *.db-shm
 *.db-wal

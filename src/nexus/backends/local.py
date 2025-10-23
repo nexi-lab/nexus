@@ -153,34 +153,66 @@ class LocalBackend(Backend):
         )
 
     def _write_metadata(self, content_hash: str, metadata: dict[str, Any]) -> None:
-        """Write metadata for content."""
+        """Write metadata for content with retry logic for Windows file locking."""
         meta_path = self._get_meta_path(content_hash)
         meta_path.parent.mkdir(parents=True, exist_ok=True)
 
-        tmp_path = None
-        try:
-            # Atomic write: write to temp file, then replace
-            # This avoids Windows file locking issues
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", dir=meta_path.parent, delete=False, suffix=".tmp"
-            ) as tmp_file:
-                tmp_path = Path(tmp_file.name)
-                tmp_file.write(json.dumps(metadata))
-                tmp_file.flush()
-                # Force write to disk on Windows
-                os.fsync(tmp_file.fileno())
+        # Retry logic for Windows PermissionError during concurrent writes
+        max_retries = 5
+        base_delay = 0.001  # 1ms base delay
 
-            # Atomic replace (works better than move on Windows)
-            os.replace(str(tmp_path), str(meta_path))
-            tmp_path = None  # Successfully moved
-        except OSError as e:
-            # Clean up temp file on error
-            if tmp_path is not None and tmp_path.exists():
-                with contextlib.suppress(OSError):
-                    tmp_path.unlink()
-            raise BackendError(
-                f"Failed to write metadata: {e}", backend="local", path=content_hash
-            ) from e
+        for attempt in range(max_retries):
+            tmp_path = None
+            try:
+                # Atomic write: write to temp file, then replace
+                # This avoids Windows file locking issues
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", dir=meta_path.parent, delete=False, suffix=".tmp"
+                ) as tmp_file:
+                    tmp_path = Path(tmp_file.name)
+                    tmp_file.write(json.dumps(metadata))
+                    tmp_file.flush()
+                    # Force write to disk on Windows
+                    os.fsync(tmp_file.fileno())
+
+                # Atomic replace (works better than move on Windows)
+                os.replace(str(tmp_path), str(meta_path))
+                tmp_path = None  # Successfully moved
+                return  # Success!
+
+            except PermissionError as e:
+                # Windows-specific: another thread may be accessing the file
+                # Clean up temp file
+                if tmp_path is not None and tmp_path.exists():
+                    with contextlib.suppress(OSError):
+                        tmp_path.unlink()
+
+                if attempt < max_retries - 1:
+                    # Exponential backoff with jitter
+                    import random
+                    import time
+
+                    delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
+                    time.sleep(delay)
+                    continue
+                else:
+                    # Last attempt failed - raise error
+                    raise BackendError(
+                        f"Failed to write metadata: {e}: {content_hash}",
+                        backend="local",
+                        path=content_hash,
+                    ) from e
+
+            except OSError as e:
+                # Clean up temp file on error
+                if tmp_path is not None and tmp_path.exists():
+                    with contextlib.suppress(OSError):
+                        tmp_path.unlink()
+                raise BackendError(
+                    f"Failed to write metadata: {e}: {content_hash}",
+                    backend="local",
+                    path=content_hash,
+                ) from e
 
     def _lock_file(self, path: Path) -> "FileLock":
         """Acquire lock on file."""

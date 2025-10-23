@@ -786,6 +786,279 @@ cd nexus-plugin-skill-seekers/examples
 python skill_seekers_sdk_demo.py
 ```
 
+## Unix Pipeline Integration
+
+Nexus supports Unix-style piping for plugin commands, enabling composable workflows where commands can chain together using the pipe operator (`|`).
+
+### Philosophy
+
+Nexus follows the Unix philosophy:
+- ✅ Small commands that do one thing well
+- ✅ Composable via pipes (`|`)
+- ✅ Work with standard tools (jq, grep, awk)
+- ✅ JSON format for structured data exchange
+
+### Pipe Utility Functions
+
+The `NexusPlugin` base class provides four utility methods for pipeline support:
+
+```python
+from nexus.plugins import NexusPlugin
+
+class MyPlugin(NexusPlugin):
+    async def my_command(self, url: str, json_output: bool = False):
+        """Command with pipeline support."""
+
+        # Detect if output is being piped
+        if self.is_piped_output():
+            # Output JSON for next command in pipeline
+            self.write_json_output({
+                "type": "my_data",
+                "url": url,
+                "content": "...",
+            })
+            return
+
+        # Normal human-readable output
+        console.print(f"Processed: {url}")
+```
+
+#### Available Methods
+
+| Method | Description | Return Type |
+|--------|-------------|-------------|
+| `is_piped_output()` | Check if stdout is being piped | `bool` |
+| `is_piped_input()` | Check if stdin is being piped | `bool` |
+| `read_json_input()` | Read JSON from stdin | `dict[str, Any]` |
+| `write_json_output(data)` | Write JSON to stdout for piping | `None` |
+
+### Implementing Pipeline Support
+
+#### 1. Output JSON for Piping
+
+```python
+async def scrape_command(
+    self,
+    url: str,
+    json_output: bool = False
+) -> None:
+    """Scrape web content (supports piping).
+
+    Args:
+        url: URL to scrape
+        json_output: Output JSON for piping
+    """
+    content = await self.fetch(url)
+
+    # Pipe mode: output JSON
+    if json_output or self.is_piped_output():
+        self.write_json_output({
+            "type": "scraped_content",
+            "url": url,
+            "content": content,
+            "metadata": {
+                "scraped_at": datetime.now().isoformat(),
+                "format": "markdown"
+            }
+        })
+        return
+
+    # Normal mode: human-readable
+    console.print(f"[green]✓[/green] Scraped {url}")
+    console.print(content)
+```
+
+#### 2. Accept JSON from stdin
+
+```python
+async def process_command(
+    self,
+    stdin_input: bool = False
+) -> None:
+    """Process data from pipeline (supports stdin).
+
+    Args:
+        stdin_input: Read from stdin
+    """
+    # Read from stdin if piped
+    if stdin_input or self.is_piped_input():
+        try:
+            data = self.read_json_input()
+            url = data.get("url", "")
+            content = data.get("content", "")
+
+            # Process the data
+            result = await self.process(content)
+
+            # Output for next command
+            self.write_json_output({
+                "type": "processed_data",
+                "original_url": url,
+                "result": result
+            })
+        except json.JSONDecodeError:
+            console.print("[red]Invalid JSON from stdin[/red]")
+            return
+    else:
+        console.print("[yellow]This command requires piped input[/yellow]")
+```
+
+### Standard Data Formats
+
+Use consistent JSON formats for inter-command communication:
+
+#### Web Scraping Output
+```json
+{
+  "type": "scraped_content",
+  "url": "https://docs.example.com/api",
+  "content": "markdown content here...",
+  "title": "Page Title",
+  "metadata": {
+    "scraped_at": "2025-10-23T12:00:00Z",
+    "scraper": "firecrawl",
+    "format": "markdown"
+  }
+}
+```
+
+#### Skill Creation Output
+```json
+{
+  "type": "skill",
+  "name": "example-api",
+  "path": "/workspace/.nexus/skills/example-api/SKILL.md",
+  "tier": "agent",
+  "source_url": "https://docs.example.com/api",
+  "metadata": {
+    "created_at": "2025-10-23T12:00:00Z"
+  }
+}
+```
+
+### CLI Integration
+
+Add `--json` and `--stdin` flags to your plugin commands:
+
+```python
+import click
+
+@click.command()
+@click.argument("url")
+@click.option("--json", "json_output", is_flag=True, help="Output JSON for piping")
+@click.option("--stdin", is_flag=True, help="Read from stdin")
+def my_command(url: str, json_output: bool, stdin: bool):
+    """CLI wrapper with pipeline support."""
+    # Your plugin command implementation
+    plugin = MyPlugin()
+    await plugin.my_command(url=url, json_output=json_output, stdin_input=stdin)
+```
+
+### Pipeline Examples
+
+#### Simple Pipeline
+```bash
+# Scrape → Create skill
+nexus firecrawl scrape https://docs.stripe.com/api --json | \
+  nexus skills create-from-web --stdin --name stripe-api
+```
+
+#### Multi-Stage Pipeline
+```bash
+# Scrape → Create skill → Upload to Claude
+nexus firecrawl scrape https://docs.example.com --json | \
+  nexus skills create-from-web --stdin --tier tenant | \
+  nexus anthropic upload-skill --stdin
+```
+
+#### Pipeline with Unix Tools
+```bash
+# Filter with jq
+nexus firecrawl scrape https://docs.example.com --json | \
+  jq 'select(.content | length > 1000)' | \
+  nexus skills create-from-web --stdin
+
+# Batch processing
+cat urls.txt | while read url; do
+  nexus firecrawl scrape "$url" --json | \
+    nexus skills create-from-web --stdin
+done
+
+# Parallel processing
+cat urls.txt | xargs -P 4 -I {} sh -c \
+  'nexus firecrawl scrape {} --json | nexus skills create-from-web --stdin'
+```
+
+### Testing Pipeline Support
+
+```python
+import pytest
+from io import StringIO
+import sys
+
+def test_plugin_json_output(capsys):
+    """Test JSON output for piping."""
+    plugin = MyPlugin()
+    plugin.write_json_output({
+        "type": "test_data",
+        "value": 123
+    })
+
+    captured = capsys.readouterr()
+    import json
+    output = json.loads(captured.out.strip())
+
+    assert output["type"] == "test_data"
+    assert output["value"] == 123
+
+def test_plugin_pipe_detection(monkeypatch):
+    """Test pipe detection."""
+    # Mock stdin as piped
+    mock_stdin = StringIO('{"test": "data"}')
+    mock_stdin.isatty = lambda: False
+    monkeypatch.setattr(sys, 'stdin', mock_stdin)
+
+    plugin = MyPlugin()
+    assert plugin.is_piped_input() is True
+```
+
+### Best Practices for Pipelines
+
+1. **Always provide both modes**: Human-readable output AND JSON output
+2. **Use the `type` field**: Include a "type" field in JSON for identification
+3. **Auto-detect pipes**: Check `is_piped_output()` to automatically enable JSON mode
+4. **Document formats**: Clearly document your JSON input/output formats
+5. **Handle errors**: Gracefully handle invalid JSON from stdin
+6. **Test thoroughly**: Test both piped and non-piped modes
+
+### Core Commands vs Plugin Commands
+
+**Core commands** (cat, write, grep):
+- Use Unix tools for processing (grep, jq, awk, sed)
+- Already perfect for text manipulation
+- No need to add stdin to `nexus grep` - use Unix `grep` instead
+
+**Plugin commands** (firecrawl, anthropic, skills):
+- Add `--json` flag for pipeline output
+- Add `--stdin` flag for pipeline input
+- Structured JSON for complex data exchange
+
+Example - Don't do this:
+```bash
+# Ambiguous - which grep? stdin or filesystem?
+nexus cat /file.txt | nexus grep "pattern"
+```
+
+Instead, do this:
+```bash
+# Clear - use Unix grep
+nexus cat /file.txt | grep "pattern"
+
+# Or use plugin pipelines for structured data
+nexus firecrawl scrape https://example.com --json | \
+  nexus skills create-from-web --stdin
+```
+
 ## Best Practices
 
 ### 1. Follow Naming Convention

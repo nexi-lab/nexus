@@ -11,7 +11,10 @@ The Skills System provides vendor-neutral skill management with:
 
 from __future__ import annotations
 
+import json
+import re
 import sys
+from urllib.parse import urlparse
 
 import click
 from rich.table import Table
@@ -187,6 +190,175 @@ def skills_create(
 
     except Exception as e:
         handle_error(e)
+
+
+@skills.command(name="create-from-web")
+@click.option("--name", help="Skill name (auto-generated from URL/title if not provided)")
+@click.option(
+    "--tier", type=click.Choice(["agent", "tenant", "system"]), default="agent", help="Target tier"
+)
+@click.option("--stdin", is_flag=True, help="Read JSON input from stdin (for piping)")
+@click.option("--json", "json_output", is_flag=True, help="Output JSON for piping to next command")
+@click.option("--author", help="Author name")
+@add_backend_options
+def skills_create_from_web(
+    name: str | None,
+    tier: str,
+    stdin: bool,
+    json_output: bool,
+    author: str | None,
+    backend_config: BackendConfig,
+) -> None:
+    """Create skill from web content (supports Unix piping).
+
+    This command accepts JSON input from stdin (typically from a web scraper)
+    and creates a SKILL.md file from the content.
+
+    Expected JSON format:
+        {
+            "type": "scraped_content",
+            "url": "https://example.com",
+            "content": "markdown content...",
+            "title": "Page Title",
+            "metadata": {...}
+        }
+
+    Examples:
+        # With pipe from firecrawl
+        nexus firecrawl scrape https://docs.stripe.com/api --json | \\
+            nexus skills create-from-web --stdin --name stripe-api
+
+        # Auto-generate name from URL
+        nexus firecrawl scrape https://docs.example.com --json | \\
+            nexus skills create-from-web --stdin
+
+        # Full pipeline with JSON output
+        nexus firecrawl scrape https://docs.example.com --json | \\
+            nexus skills create-from-web --stdin --json | \\
+            nexus anthropic upload-skill --stdin
+    """
+    try:
+        import asyncio
+
+        from nexus.skills import SkillManager, SkillRegistry
+
+        # Read from stdin if piped or --stdin flag
+        if stdin or not sys.stdin.isatty():
+            try:
+                input_data = json.load(sys.stdin)
+            except json.JSONDecodeError:
+                console.print("[red]Error: Invalid JSON from stdin[/red]")
+                console.print("[yellow]Expected format from web scraper:[/yellow]")
+                console.print('  {"type": "scraped_content", "url": "...", "content": "..."}')
+                sys.exit(1)
+
+            # Extract data from input
+            url = input_data.get("url", "")
+            content = input_data.get("content", "")
+            title = input_data.get("title", "")
+            input_metadata = input_data.get("metadata", {})
+
+            # Auto-generate skill name if not provided
+            if not name:
+                name = _generate_skill_name_from_url_or_title(url, title)
+
+            # Generate description from title or URL
+            description = title if title else f"Skill generated from {url}"
+
+            # Get filesystem
+            nx = get_filesystem(backend_config, enforce_permissions=False)
+            registry = SkillRegistry(nx)
+            manager = SkillManager(nx, registry)
+
+            async def create_skill_from_web_async() -> None:
+                # Create the skill with the scraped content
+                skill_path = await manager.create_skill_from_content(
+                    name=name,
+                    description=description,
+                    content=content,
+                    tier=tier,
+                    author=author,
+                    source_url=url,
+                    metadata=input_metadata,
+                )
+
+                # Output mode: JSON for piping or human-readable
+                if json_output or not sys.stdout.isatty():
+                    # JSON output for next command in pipeline
+                    output = {
+                        "type": "skill",
+                        "name": name,
+                        "path": skill_path,
+                        "tier": tier,
+                        "source_url": url,
+                    }
+                    print(json.dumps(output))
+                else:
+                    # Human-readable output
+                    console.print(
+                        f"[green]✓[/green] Created skill [cyan]{name}[/cyan] from web content"
+                    )
+                    console.print(f"  Path: [dim]{skill_path}[/dim]")
+                    console.print(f"  Tier: [yellow]{tier}[/yellow]")
+                    console.print(f"  Source: [cyan]{url}[/cyan]")
+
+            asyncio.run(create_skill_from_web_async())
+            nx.close()
+
+        else:
+            console.print("[red]Error: No input provided[/red]")
+            console.print("[yellow]This command requires piped JSON input from stdin.[/yellow]")
+            console.print("\nUsage:")
+            console.print(
+                "  nexus firecrawl scrape <url> --json | nexus skills create-from-web --stdin"
+            )
+            sys.exit(1)
+
+    except Exception as e:
+        handle_error(e)
+
+
+def _generate_skill_name_from_url_or_title(url: str, title: str) -> str:
+    """Generate a skill name from URL or title.
+
+    Args:
+        url: Source URL
+        title: Page title
+
+    Returns:
+        Generated skill name (lowercase, hyphenated)
+    """
+    if title:
+        # Use title: convert to lowercase, replace spaces/special chars with hyphens
+        name = re.sub(r"[^a-z0-9]+", "-", title.lower())
+        name = name.strip("-")
+    elif url:
+        # Use URL path: extract meaningful part
+        parsed = urlparse(url)
+        path = parsed.path.strip("/")
+
+        if path:
+            # Use last segment of path
+            segments = path.split("/")
+            last_segment = segments[-1]
+
+            # Remove file extensions
+            name = re.sub(r"\.(html|md|txt|php|asp)$", "", last_segment)
+            name = re.sub(r"[^a-z0-9]+", "-", name.lower())
+            name = name.strip("-")
+        else:
+            # Use domain name
+            domain = parsed.netloc.replace("www.", "")
+            name = re.sub(r"[^a-z0-9]+", "-", domain.lower())
+            name = name.strip("-")
+    else:
+        # Fallback: generate timestamp-based name
+        import datetime
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        name = f"skill-{timestamp}"
+
+    return name or "unnamed-skill"
 
 
 @skills.command(name="fork")

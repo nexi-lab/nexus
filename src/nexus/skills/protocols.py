@@ -40,6 +40,10 @@ class NexusFilesystem(Protocol):
     - Lifecycle management (close, context manager)
     """
 
+    # Instance attributes (set by implementations)
+    agent_id: str | None
+    tenant_id: str | None
+
     # ============================================================
     # Core File Operations
     # ============================================================
@@ -448,6 +452,93 @@ class NexusFilesystem(Protocol):
             NexusFileNotFoundError: If file or version doesn't exist
             InvalidPathError: If path is invalid
             ValueError: If mode is invalid
+        """
+        ...
+
+    # ============================================================
+    # Workspace Versioning (v0.3.9)
+    # ============================================================
+
+    def workspace_snapshot(
+        self,
+        agent_id: str | None = None,
+        description: str | None = None,
+        tags: builtins.list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Create a snapshot of the current agent's workspace.
+
+        Args:
+            agent_id: Agent identifier (uses default if not provided)
+            description: Human-readable description of snapshot
+            tags: List of tags for categorization
+
+        Returns:
+            Snapshot metadata dict
+
+        Raises:
+            ValueError: If agent_id not provided and no default set
+            BackendError: If snapshot cannot be created
+        """
+        ...
+
+    def workspace_restore(
+        self,
+        snapshot_number: int,
+        agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Restore workspace to a previous snapshot.
+
+        Args:
+            snapshot_number: Snapshot version number to restore
+            agent_id: Agent identifier (uses default if not provided)
+
+        Returns:
+            Restore operation result
+
+        Raises:
+            ValueError: If agent_id not provided and no default set
+            NexusFileNotFoundError: If snapshot not found
+        """
+        ...
+
+    def workspace_log(
+        self,
+        agent_id: str | None = None,
+        limit: int = 100,
+    ) -> builtins.list[dict[str, Any]]:
+        """List snapshot history for workspace.
+
+        Args:
+            agent_id: Agent identifier (uses default if not provided)
+            limit: Maximum number of snapshots to return
+
+        Returns:
+            List of snapshot metadata dicts (most recent first)
+
+        Raises:
+            ValueError: If agent_id not provided and no default set
+        """
+        ...
+
+    def workspace_diff(
+        self,
+        snapshot_1: int,
+        snapshot_2: int,
+        agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Compare two workspace snapshots.
+
+        Args:
+            snapshot_1: First snapshot number
+            snapshot_2: Second snapshot number
+            agent_id: Agent identifier (uses default if not provided)
+
+        Returns:
+            Diff dict with added, removed, modified files
+
+        Raises:
+            ValueError: If agent_id not provided and no default set
+            NexusFileNotFoundError: If either snapshot not found
         """
         ...
 

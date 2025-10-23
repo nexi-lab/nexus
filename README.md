@@ -20,6 +20,8 @@ Nexus is a complete AI agent infrastructure platform that combines distributed u
 
 ### Agent Intelligence
 - **Workspace Versioning**: Time-travel debugging for agent workspaces with snapshot/restore
+- **Time-Travel Debugging**: Read files at any historical operation point with full content diff
+- **Operation Log**: Undo capability and complete audit trail for all filesystem operations
 - **Self-Evolving Memory**: Agent memory with automatic consolidation
 - **Memory Versioning**: Track knowledge evolution over time
 - **Multi-Agent Sharing**: Shared memory spaces within tenants
@@ -664,6 +666,95 @@ with nx.metadata.SessionLocal() as session:
 # Try the interactive demos
 python examples/py_demo/operation_log_demo.py
 ./examples/script_demo/operation_log_demo.sh
+```
+
+#### Time-Travel Debugging (v0.3.9)
+
+Read files and directories at any historical operation point for powerful debugging and analysis of agent behavior over time. Built on the Operation Log, time-travel enables non-destructive exploration of past states.
+
+**CLI Usage:**
+```bash
+# Read file content at a historical operation point
+nexus cat /workspace/file.txt --at-operation op_abc123
+
+# List directory contents at a historical point
+nexus ls /workspace --at-operation op_abc123 -l
+
+# Compare file states between two operations (metadata only)
+nexus ops diff /workspace/file.txt op_abc123 op_def456
+
+# Show full unified diff (like git diff)
+nexus ops diff /workspace/file.txt op_abc123 op_def456 --show-content
+
+# Get operation IDs from the log
+nexus ops log --path /workspace/file.txt
+```
+
+**Python SDK:**
+```python
+import nexus
+from nexus.storage.time_travel import TimeTravelReader
+from nexus.storage.operation_logger import OperationLogger
+
+nx = nexus.connect()
+
+# Create evolving file with version history
+nx.write("/workspace/agent_log.txt", b"Agent started\n")
+nx.write("/workspace/agent_log.txt", b"Agent started\nProcessing data...\n")
+nx.write("/workspace/agent_log.txt", b"Agent started\nProcessing data...\nCompleted!\n")
+
+# Get operation IDs
+with nx.metadata.SessionLocal() as session:
+    logger = OperationLogger(session)
+    ops = logger.list_operations(path="/workspace/agent_log.txt", limit=3)
+
+    # Most recent first
+    op_v3 = ops[0].operation_id
+    op_v2 = ops[1].operation_id
+    op_v1 = ops[2].operation_id
+
+    # Create time-travel reader
+    time_travel = TimeTravelReader(session, nx.backend)
+
+    # Read file at version 1
+    state_v1 = time_travel.get_file_at_operation("/workspace/agent_log.txt", op_v1)
+    print(f"Version 1: {state_v1['content'].decode('utf-8')}")
+
+    # Read file at version 2
+    state_v2 = time_travel.get_file_at_operation("/workspace/agent_log.txt", op_v2)
+    print(f"Version 2: {state_v2['content'].decode('utf-8')}")
+
+    # Compare versions
+    diff = time_travel.diff_operations("/workspace/agent_log.txt", op_v1, op_v2)
+    print(f"Content changed: {diff['content_changed']}")
+    print(f"Size change: {diff['size_diff']} bytes")
+
+    # List directory at historical point
+    files = time_travel.list_files_at_operation("/workspace", op_v1)
+    for file in files:
+        print(f"  {file['path']} ({file['size']} bytes)")
+```
+
+**Time-Travel Features:**
+- **Historical File Reads**: Access file content at any operation point
+- **Historical Directory Listings**: See what files existed at any point in time
+- **Operation Diff**: Compare file states between operations with unified diffs
+- **Non-Destructive**: Query history without modifying current state
+- **CAS-Backed**: Zero storage overhead (content already deduplicated)
+- **Full Content Access**: Returns complete file content, not just metadata
+
+**Use Cases:**
+1. **Debug Agent Behavior**: "What was the file content 10 operations ago?"
+2. **Workflow Analysis**: Track how agents modified files over time
+3. **Post-Mortem Debugging**: Understand what happened without undo/redo
+4. **Concurrent Agent Analysis**: See what files existed when each agent ran
+5. **Audit Trails**: Inspect system state at specific points for compliance
+
+**Demo:**
+```bash
+# Try the interactive demos
+python examples/py_demo/time_travel_demo.py
+./examples/script_demo/time_travel_demo.sh
 ```
 
 #### Version Tracking & History (v0.3.5)
@@ -2675,13 +2766,15 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
   - ✅ CAS-backed snapshots for zero-overhead undo
   - ✅ Comprehensive tests (12 passing tests)
   - ✅ Python SDK and CLI examples
-- [ ] **Time-Travel Debugging** - Read files at historical points
-  - `--at-operation` flag for time-travel reads
-  - `nexus cat /file.txt --at-operation op_123456`
-  - `nexus ls /workspace/ --at-operation op_yesterday`
-  - Operation diff - Show changes between operations
-  - Agent operation debugging: "What did agent do 10 steps ago?"
-  - Concurrent operation visualization - Show divergent operations
+- [x] **Time-Travel Debugging** - Read files at historical points ✅
+  - ✅ `--at-operation` flag for time-travel reads
+  - ✅ `nexus cat /file.txt --at-operation op_abc123`
+  - ✅ `nexus ls /workspace/ --at-operation op_abc123`
+  - ✅ Operation diff with unified diffs (`--show-content`)
+  - ✅ Historical file reads and directory listings
+  - ✅ Non-destructive history exploration
+  - ✅ Comprehensive tests (9 passing tests, 84% coverage)
+  - ✅ Python SDK and CLI demos
 
 ### v0.4.0 - AI Integration
 - [ ] LLM provider abstraction

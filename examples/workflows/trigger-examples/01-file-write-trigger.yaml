@@ -1,0 +1,31 @@
+name: auto-process-uploads
+description: Automatically process files uploaded to /uploads
+version: 1.0
+
+triggers:
+  - type: file_write
+    pattern: /uploads/**/*.{pdf,docx,txt}
+
+actions:
+  - name: parse_document
+    type: parse
+    parser: auto
+
+  - name: tag_new_upload
+    type: tag
+    tags:
+      - uploaded
+      - "type:{file_type}"
+      - "date:{timestamp}"
+
+  - name: add_metadata
+    type: metadata
+    metadata:
+      uploaded_at: "{timestamp}"
+      processed: "true"
+      parser_used: "auto"
+
+  - name: move_to_inbox
+    type: move
+    destination: /inbox/{filename}
+    create_parents: true

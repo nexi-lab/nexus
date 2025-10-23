@@ -24,7 +24,12 @@ from sqlalchemy.orm import sessionmaker
 from nexus.core.exceptions import MetadataError
 from nexus.core.metadata import FileMetadata, MetadataStore
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
-from nexus.storage.models import Base, FileMetadataModel, FilePathModel, VersionHistoryModel
+from nexus.storage.models import (
+    Base,
+    FileMetadataModel,
+    FilePathModel,
+    VersionHistoryModel,
+)
 from nexus.storage.query_builder import WorkQueryBuilder
 from nexus.storage.version_manager import VersionManager
 

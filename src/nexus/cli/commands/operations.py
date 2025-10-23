@@ -44,6 +44,141 @@ def ops_group() -> None:
     pass
 
 
+@ops_group.command(name="diff")
+@click.argument("path", type=str)
+@click.argument("operation_1", type=str)
+@click.argument("operation_2", type=str)
+@click.option("--show-content", is_flag=True, help="Show content diff (for text files)")
+@add_backend_options
+def ops_diff(
+    path: str,
+    operation_1: str,
+    operation_2: str,
+    show_content: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """Compare file state between two operation points.
+
+    Time-travel debugging: Compare what a file looked like at two different
+    operation points to understand how it changed.
+
+    Examples:
+        nexus ops diff /workspace/data.txt op_abc123 op_def456
+        nexus ops diff /workspace/code.py op_abc123 op_def456 --show-content
+    """
+    try:
+        nx = get_filesystem(backend_config)
+
+        # Import at function level to avoid scoping issues
+        try:
+            from nexus.core.nexus_fs import NexusFS
+            from nexus.storage.time_travel import TimeTravelReader
+        except ImportError as e:
+            console.print(f"[red]Error:[/red] Failed to import time-travel modules: {e}")
+            nx.close()
+            return
+
+        if not isinstance(nx, NexusFS):
+            console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
+            nx.close()
+            return
+
+        # Create time-travel reader with a session
+        with nx.metadata.SessionLocal() as session:
+            time_travel = TimeTravelReader(session, nx.backend)
+
+            # Get diff between operations
+            diff_result = time_travel.diff_operations(
+                path, operation_1, operation_2, tenant_id=nx.tenant_id
+            )
+
+        nx.close()
+
+        # Display results
+        console.print(f"\n[bold cyan]Diff for {path}[/bold cyan]")
+        console.print(f"[dim]Operation 1:[/dim] {operation_1}")
+        console.print(f"[dim]Operation 2:[/dim] {operation_2}")
+        console.print()
+
+        state_1 = diff_result["operation_1"]
+        state_2 = diff_result["operation_2"]
+
+        if not state_1 and not state_2:
+            console.print("[yellow]File did not exist at either operation point[/yellow]")
+            return
+
+        if not state_1:
+            console.print("[green]File was created[/green]")
+            console.print(f"  Size: {state_2['metadata']['size']:,} bytes")
+            console.print(f"  Operation: {state_2['operation_id'][:8]}")
+            console.print(f"  Time: {state_2['operation_time']}")
+        elif not state_2:
+            console.print("[red]File was deleted[/red]")
+            console.print(f"  Previous size: {state_1['metadata']['size']:,} bytes")
+            console.print(f"  Operation: {state_1['operation_id'][:8]}")
+            console.print(f"  Time: {state_1['operation_time']}")
+        else:
+            # Both exist - show changes
+            if diff_result["content_changed"]:
+                console.print("[yellow]File content changed[/yellow]")
+                console.print(
+                    f"  Size: {state_1['metadata']['size']:,} → {state_2['metadata']['size']:,} bytes"
+                )
+                console.print(f"  Size diff: {diff_result['size_diff']:+,} bytes")
+            else:
+                console.print("[green]File content unchanged[/green]")
+
+            console.print()
+            console.print("[bold]Operation 1:[/bold]")
+            console.print(f"  Op ID: {state_1['operation_id'][:8]}")
+            console.print(f"  Time: {state_1['operation_time']}")
+            console.print(f"  Size: {state_1['metadata']['size']:,} bytes")
+
+            console.print()
+            console.print("[bold]Operation 2:[/bold]")
+            console.print(f"  Op ID: {state_2['operation_id'][:8]}")
+            console.print(f"  Time: {state_2['operation_time']}")
+            console.print(f"  Size: {state_2['metadata']['size']:,} bytes")
+
+            # Show content diff if requested
+            if show_content and diff_result["content_changed"]:
+                console.print()
+                console.print("[bold]Content Diff:[/bold]")
+
+                try:
+                    import difflib
+
+                    text_1 = state_1["content"].decode("utf-8").splitlines(keepends=True)
+                    text_2 = state_2["content"].decode("utf-8").splitlines(keepends=True)
+
+                    diff_lines = difflib.unified_diff(
+                        text_1,
+                        text_2,
+                        fromfile=f"Operation {operation_1[:8]}",
+                        tofile=f"Operation {operation_2[:8]}",
+                        lineterm="",
+                    )
+
+                    for line in diff_lines:
+                        line = line.rstrip()
+                        if line.startswith("+++") or line.startswith("---"):
+                            console.print(f"[bold]{line}[/bold]")
+                        elif line.startswith("+"):
+                            console.print(f"[green]{line}[/green]")
+                        elif line.startswith("-"):
+                            console.print(f"[red]{line}[/red]")
+                        elif line.startswith("@@"):
+                            console.print(f"[cyan]{line}[/cyan]")
+                        else:
+                            console.print(f"[dim]{line}[/dim]")
+
+                except UnicodeDecodeError:
+                    console.print("[yellow]Binary file - content diff not available[/yellow]")
+
+    except Exception as e:
+        handle_error(e)
+
+
 @ops_group.command(name="log")
 @click.option("--agent", "-a", help="Filter by agent ID")
 @click.option("--tenant", "-t", help="Filter by tenant ID")

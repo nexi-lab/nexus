@@ -15,7 +15,6 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.core.nexus_fs import NexusFS
 
 
 def register_commands(cli: click.Group) -> None:
@@ -30,11 +29,17 @@ def register_commands(cli: click.Group) -> None:
 @click.argument("path", default="/", type=str)
 @click.option("-r", "--recursive", is_flag=True, help="List files recursively")
 @click.option("-l", "--long", is_flag=True, help="Show detailed information")
+@click.option(
+    "--at-operation",
+    type=str,
+    help="List files at a historical operation point (time-travel debugging)",
+)
 @add_backend_options
 def list_files(
     path: str,
     recursive: bool,
     long: bool,
+    at_operation: str | None,
     backend_config: BackendConfig,
 ) -> None:
     """List files in a directory.
@@ -44,9 +49,81 @@ def list_files(
         nexus ls /workspace --recursive
         nexus ls /workspace -l
         nexus ls /workspace --backend=gcs --gcs-bucket=my-bucket
+
+        # Time-travel: List files at historical operation point
+        nexus ls /workspace --at-operation op_abc123
     """
+    # Import at function level - needed for both time-travel and regular long listing
+    from nexus.core.nexus_fs import NexusFS
+
     try:
         nx = get_filesystem(backend_config)
+
+        if at_operation:
+            # Time-travel: List files at historical operation point
+            try:
+                from nexus.storage.time_travel import TimeTravelReader
+            except ImportError as e:
+                console.print(f"[red]Error:[/red] Failed to import time-travel modules: {e}")
+                nx.close()
+                return
+
+            if not isinstance(nx, NexusFS):
+                console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
+                nx.close()
+                return
+
+            # Create time-travel reader with a session
+            with nx.metadata.SessionLocal() as session:
+                time_travel = TimeTravelReader(session, nx.backend)
+
+                # Get directory listing at operation
+                files = time_travel.list_files_at_operation(
+                    path, at_operation, tenant_id=nx.tenant_id, recursive=recursive
+                )
+
+            nx.close()
+
+            if not files:
+                console.print(
+                    f"[yellow]No files found in {path} at operation {at_operation}[/yellow]"
+                )
+                return
+
+            # Display time-travel info
+            console.print(
+                f"[bold cyan]Time-Travel Mode - Files at operation {at_operation}[/bold cyan]"
+            )
+            console.print()
+
+            if long:
+                # Detailed listing
+                table = Table(title=f"Files in {path}")
+                table.add_column("Path", style="cyan")
+                table.add_column("Size", justify="right", style="green")
+                table.add_column("Owner", style="blue")
+                table.add_column("Group", style="blue")
+                table.add_column("Mode", style="magenta")
+                table.add_column("Modified", style="yellow")
+
+                for file in files:
+                    size_str = f"{file['size']:,} bytes"
+                    owner_str = file.get("owner") or "-"
+                    group_str = file.get("group") or "-"
+                    mode_str = str(file.get("mode") or "-")
+                    modified_str = file.get("modified_at") or "-"
+
+                    table.add_row(
+                        file["path"], size_str, owner_str, group_str, mode_str, modified_str
+                    )
+
+                console.print(table)
+            else:
+                # Simple listing
+                for file in files:
+                    console.print(f"  {file['path']}")
+
+            return
 
         if long:
             # Detailed listing

@@ -634,12 +634,10 @@ class NexusFSCoreMixin:
             pass
 
         # Delete from routed backend CAS (decrements ref count)
-        # NOTE: We do NOT delete the CAS content to preserve it for undo
-        # The content remains in CAS even with ref_count=0 until garbage collected
-        # This allows undo to work by reading from snapshot_hash
-        # Uncomment below to enable CAS deletion (disables undo for deletes):
-        # if meta.etag:
-        #     route.backend.delete_content(meta.etag)
+        # Content is only physically deleted when ref_count reaches 0
+        # If other files reference the same content, it remains in CAS
+        if meta.etag:
+            route.backend.delete_content(meta.etag)
 
         # Remove from metadata
         self.metadata.delete(path)

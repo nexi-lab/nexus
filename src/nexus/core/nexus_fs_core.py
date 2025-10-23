@@ -612,14 +612,8 @@ class NexusFSCoreMixin:
         # This comes AFTER tenant isolation check so AccessDeniedError takes precedence
         self._check_permission(path, Permission.WRITE, context)
 
-        # Delete from routed backend CAS (decrements ref count)
-        if meta.etag:
-            route.backend.delete_content(meta.etag)
-
-        # Remove from metadata
-        self.metadata.delete(path)
-
-        # Log operation for audit trail and undo capability (v0.3.9)
+        # Log operation BEFORE deleting CAS content (v0.3.9)
+        # This ensures the snapshot is recorded while content still exists
         try:
             from nexus.storage.operation_logger import OperationLogger
 
@@ -638,6 +632,17 @@ class NexusFSCoreMixin:
         except Exception:
             # Don't fail the delete operation if logging fails
             pass
+
+        # Delete from routed backend CAS (decrements ref count)
+        # NOTE: We do NOT delete the CAS content to preserve it for undo
+        # The content remains in CAS even with ref_count=0 until garbage collected
+        # This allows undo to work by reading from snapshot_hash
+        # Uncomment below to enable CAS deletion (disables undo for deletes):
+        # if meta.etag:
+        #     route.backend.delete_content(meta.etag)
+
+        # Remove from metadata
+        self.metadata.delete(path)
 
     def rename(self, old_path: str, new_path: str) -> None:
         """

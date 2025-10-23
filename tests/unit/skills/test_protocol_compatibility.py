@@ -164,6 +164,9 @@ def test_protocol_runtime_checkable() -> None:
             def write(self, path: str, content: bytes) -> None:
                 pass
 
+            def write_batch(self, files, context=None):
+                return []
+
             def delete(self, path: str) -> None:
                 pass
 

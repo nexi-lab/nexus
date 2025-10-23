@@ -215,6 +215,11 @@ class NexusFS(
         # Set enforce_permissions=True in init to enable permission checks
         self._enforce_permissions = enforce_permissions
 
+        # Initialize workspace manager for snapshot/versioning
+        from nexus.core.workspace_manager import WorkspaceManager
+
+        self._workspace_manager = WorkspaceManager(metadata=self.metadata, backend=self.backend)
+
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
         """
         Dynamically load and register custom parsers from configuration.
@@ -1272,6 +1277,168 @@ class NexusFS(
             self.metadata.set_file_metadata(path, "parser_name", parser.name)
 
         return result
+
+    # === Workspace Snapshot Operations ===
+
+    def workspace_snapshot(
+        self,
+        agent_id: str | None = None,
+        description: str | None = None,
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Create a snapshot of the current agent's workspace.
+
+        Args:
+            agent_id: Agent identifier (uses self.agent_id if not provided)
+            description: Human-readable description of snapshot
+            tags: List of tags for categorization
+
+        Returns:
+            Snapshot metadata dict
+
+        Raises:
+            ValueError: If agent_id not provided and self.agent_id is None
+            BackendError: If snapshot cannot be created
+
+        Example:
+            >>> nx = NexusFS(backend, agent_id="agent1")
+            >>> snapshot = nx.workspace_snapshot(description="Before major refactor")
+            >>> print(f"Created snapshot #{snapshot['snapshot_number']}")
+        """
+        agent_id = agent_id or self.agent_id
+        if not agent_id:
+            raise ValueError("agent_id must be provided or set in NexusFS init")
+
+        return self._workspace_manager.create_snapshot(
+            agent_id=agent_id,
+            tenant_id=self.tenant_id,
+            description=description,
+            tags=tags,
+            created_by=agent_id,
+        )
+
+    def workspace_restore(
+        self,
+        snapshot_number: int,
+        agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Restore workspace to a previous snapshot.
+
+        Args:
+            snapshot_number: Snapshot version number to restore
+            agent_id: Agent identifier (uses self.agent_id if not provided)
+
+        Returns:
+            Restore operation result
+
+        Raises:
+            ValueError: If agent_id not provided and self.agent_id is None
+            NexusFileNotFoundError: If snapshot not found
+
+        Example:
+            >>> nx = NexusFS(backend, agent_id="agent1")
+            >>> result = nx.workspace_restore(snapshot_number=5)
+            >>> print(f"Restored {result['files_restored']} files")
+        """
+        agent_id = agent_id or self.agent_id
+        if not agent_id:
+            raise ValueError("agent_id must be provided or set in NexusFS init")
+
+        return self._workspace_manager.restore_snapshot(
+            snapshot_number=snapshot_number,
+            agent_id=agent_id,
+            tenant_id=self.tenant_id,
+        )
+
+    def workspace_log(
+        self,
+        agent_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List snapshot history for workspace.
+
+        Args:
+            agent_id: Agent identifier (uses self.agent_id if not provided)
+            limit: Maximum number of snapshots to return
+
+        Returns:
+            List of snapshot metadata dicts (most recent first)
+
+        Raises:
+            ValueError: If agent_id not provided and self.agent_id is None
+
+        Example:
+            >>> nx = NexusFS(backend, agent_id="agent1")
+            >>> snapshots = nx.workspace_log(limit=10)
+            >>> for snap in snapshots:
+            >>>     print(f"#{snap['snapshot_number']}: {snap['description']}")
+        """
+        agent_id = agent_id or self.agent_id
+        if not agent_id:
+            raise ValueError("agent_id must be provided or set in NexusFS init")
+
+        return self._workspace_manager.list_snapshots(
+            agent_id=agent_id,
+            tenant_id=self.tenant_id,
+            limit=limit,
+        )
+
+    def workspace_diff(
+        self,
+        snapshot_1: int,
+        snapshot_2: int,
+        agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Compare two workspace snapshots.
+
+        Args:
+            snapshot_1: First snapshot number
+            snapshot_2: Second snapshot number
+            agent_id: Agent identifier (uses self.agent_id if not provided)
+
+        Returns:
+            Diff dict with added, removed, modified files
+
+        Raises:
+            ValueError: If agent_id not provided and self.agent_id is None
+            NexusFileNotFoundError: If either snapshot not found
+
+        Example:
+            >>> nx = NexusFS(backend, agent_id="agent1")
+            >>> diff = nx.workspace_diff(snapshot_1=5, snapshot_2=10)
+            >>> print(f"Added: {len(diff['added'])}, Modified: {len(diff['modified'])}")
+        """
+        agent_id = agent_id or self.agent_id
+        if not agent_id:
+            raise ValueError("agent_id must be provided or set in NexusFS init")
+
+        # Get snapshot IDs from numbers
+        snapshots = self._workspace_manager.list_snapshots(
+            agent_id=agent_id,
+            tenant_id=self.tenant_id,
+            limit=1000,
+        )
+
+        snap_1_id = None
+        snap_2_id = None
+        for snap in snapshots:
+            if snap["snapshot_number"] == snapshot_1:
+                snap_1_id = snap["snapshot_id"]
+            if snap["snapshot_number"] == snapshot_2:
+                snap_2_id = snap["snapshot_id"]
+
+        if not snap_1_id:
+            raise NexusFileNotFoundError(
+                path=f"snapshot:{snapshot_1}",
+                message=f"Snapshot #{snapshot_1} not found",
+            )
+        if not snap_2_id:
+            raise NexusFileNotFoundError(
+                path=f"snapshot:{snapshot_2}",
+                message=f"Snapshot #{snapshot_2} not found",
+            )
+
+        return self._workspace_manager.diff_snapshots(snap_1_id, snap_2_id)
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

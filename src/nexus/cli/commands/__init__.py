@@ -31,6 +31,7 @@ from nexus.cli.commands import (
     skills,
     versions,
     work,
+    workspace,
 )
 
 
@@ -48,6 +49,7 @@ def register_all_commands(cli: click.Group) -> None:
     rebac.register_commands(cli)
     skills.register_commands(cli)
     versions.register_commands(cli)
+    workspace.register_commands(cli)
     metadata.register_commands(cli)
     work.register_commands(cli)
     server.register_commands(cli)
@@ -63,6 +65,7 @@ __all__ = [
     "rebac",
     "skills",
     "versions",
+    "workspace",
     "metadata",
     "work",
     "server",

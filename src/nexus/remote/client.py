@@ -143,6 +143,10 @@ class RemoteNexusFS(NexusFilesystem):
         self.connect_timeout = connect_timeout
         self.max_retries = max_retries
 
+        # Set agent_id and tenant_id (required by NexusFilesystem protocol)
+        self.agent_id: str | None = None
+        self.tenant_id: str | None = None
+
         # Create HTTP session with connection pooling
         self.session = requests.Session()
 
@@ -518,6 +522,109 @@ class RemoteNexusFS(NexusFilesystem):
     ) -> dict[str, Any] | str:
         """Compare two versions of a file."""
         result = self._call_rpc("diff_versions", {"path": path, "v1": v1, "v2": v2, "mode": mode})
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # Workspace Versioning (v0.3.9)
+    # ============================================================
+
+    def workspace_snapshot(
+        self,
+        agent_id: str | None = None,
+        description: str | None = None,
+        tags: builtins.list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Create a snapshot of the current agent's workspace.
+
+        Args:
+            agent_id: Agent identifier (uses default if not provided)
+            description: Human-readable description of snapshot
+            tags: List of tags for categorization
+
+        Returns:
+            Snapshot metadata dict
+
+        Raises:
+            ValueError: If agent_id not provided and no default set
+            BackendError: If snapshot cannot be created
+        """
+        result = self._call_rpc(
+            "workspace_snapshot",
+            {"agent_id": agent_id, "description": description, "tags": tags},
+        )
+        return result  # type: ignore[no-any-return]
+
+    def workspace_restore(
+        self,
+        snapshot_number: int,
+        agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Restore workspace to a previous snapshot.
+
+        Args:
+            snapshot_number: Snapshot version number to restore
+            agent_id: Agent identifier (uses default if not provided)
+
+        Returns:
+            Restore operation result
+
+        Raises:
+            ValueError: If agent_id not provided and no default set
+            NexusFileNotFoundError: If snapshot not found
+        """
+        result = self._call_rpc(
+            "workspace_restore",
+            {"snapshot_number": snapshot_number, "agent_id": agent_id},
+        )
+        return result  # type: ignore[no-any-return]
+
+    def workspace_log(
+        self,
+        agent_id: str | None = None,
+        limit: int = 100,
+    ) -> builtins.list[dict[str, Any]]:
+        """List snapshot history for workspace.
+
+        Args:
+            agent_id: Agent identifier (uses default if not provided)
+            limit: Maximum number of snapshots to return
+
+        Returns:
+            List of snapshot metadata dicts (most recent first)
+
+        Raises:
+            ValueError: If agent_id not provided and no default set
+        """
+        result = self._call_rpc(
+            "workspace_log",
+            {"agent_id": agent_id, "limit": limit},
+        )
+        return result  # type: ignore[no-any-return]
+
+    def workspace_diff(
+        self,
+        snapshot_1: int,
+        snapshot_2: int,
+        agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Compare two workspace snapshots.
+
+        Args:
+            snapshot_1: First snapshot number
+            snapshot_2: Second snapshot number
+            agent_id: Agent identifier (uses default if not provided)
+
+        Returns:
+            Diff dict with added, removed, modified files
+
+        Raises:
+            ValueError: If agent_id not provided and no default set
+            NexusFileNotFoundError: If either snapshot not found
+        """
+        result = self._call_rpc(
+            "workspace_diff",
+            {"snapshot_1": snapshot_1, "snapshot_2": snapshot_2, "agent_id": agent_id},
+        )
         return result  # type: ignore[no-any-return]
 
     # ============================================================

@@ -19,6 +19,7 @@ Nexus is a complete AI agent infrastructure platform that combines distributed u
 - **"Everything as a File" Paradigm**: Configuration, memory, jobs, and commands as files
 
 ### Agent Intelligence
+- **Workspace Versioning**: Time-travel debugging for agent workspaces with snapshot/restore
 - **Self-Evolving Memory**: Agent memory with automatic consolidation
 - **Memory Versioning**: Track knowledge evolution over time
 - **Multi-Agent Sharing**: Shared memory spaces within tenants
@@ -505,6 +506,78 @@ nexus work status --json
 ```
 
 **Note**: Work items are files with special metadata (status, priority, depends_on, worker_id). See `docs/SQL_VIEWS_FOR_WORK_DETECTION.md` for details on setting up work queues.
+
+#### Workspace Versioning (v0.3.9)
+
+Time-travel debugging for agent workspaces. Create snapshots, restore to previous states, and compare versions.
+
+```bash
+# Create a snapshot of agent's workspace
+nexus workspace snapshot \
+  --agent agent1 \
+  --description "Before major refactor" \
+  --tag "v1.0" \
+  --tag "stable"
+
+# View snapshot history
+nexus workspace log --agent agent1
+
+# Compare two snapshots
+nexus workspace diff \
+  --agent agent1 \
+  --snapshot1 5 \
+  --snapshot2 10
+
+# Restore workspace to previous snapshot
+nexus workspace restore \
+  --agent agent1 \
+  --snapshot 5
+```
+
+**Python API:**
+```python
+from nexus import NexusFS, LocalBackend
+
+nx = NexusFS(backend, agent_id="agent1")
+
+# Create snapshot
+snapshot = nx.workspace_snapshot(
+    description="Before changes",
+    tags=["experiment", "v1.0"]
+)
+
+# View history
+snapshots = nx.workspace_log(limit=20)
+for snap in snapshots:
+    print(f"#{snap['snapshot_number']}: {snap['description']}")
+
+# Compare snapshots
+diff = nx.workspace_diff(snapshot_1=5, snapshot_2=10)
+print(f"Added: {len(diff['added'])}")
+print(f"Modified: {len(diff['modified'])}")
+print(f"Removed: {len(diff['removed'])}")
+
+# Restore to previous state
+result = nx.workspace_restore(snapshot_number=5)
+print(f"Restored {result['files_restored']} files")
+```
+
+**Features:**
+- **Zero Storage Overhead**: Snapshots are CAS manifests (JSON lists of path→hash)
+- **Instant Snapshots**: Creating a snapshot is instant (just creates a manifest)
+- **Deduplication**: Same content stored once, referenced by multiple snapshots
+- **Time-Travel**: Restore workspace to any previous state
+- **Diff Visualization**: See exactly what changed between snapshots
+- **Metadata Support**: Add descriptions and tags for easy navigation
+
+**Demo:**
+```bash
+# Try the interactive demo
+./examples/script_demo/workspace_demo.sh
+
+# Or Python demo
+python examples/py_demo/workspace_demo.py
+```
 
 #### Version Tracking & History (v0.3.5)
 

@@ -55,6 +55,10 @@ dependencies = [
     "google-cloud-storage>=2.14.0",
     # Document Parsing (v0.2.0)
     "markitdown[all]>=0.0.1a2",  # Includes PDF, Excel, PowerPoint, etc.
+    # LLM Provider Abstraction (v0.4.0)
+    "litellm>=1.0",  # Multi-provider LLM support
+    "tiktoken>=0.5",  # Token counting for OpenAI models
+    "anthropic>=0.40",  # Native Anthropic SDK for better Claude support
     # Note: Dependencies will be added incrementally as features are implemented
     # v0.1.0: Will add SQLAlchemy, aiosqlite, cachetools
     # v0.2.0: Will add pypdf, openpyxl, pandas, qdrant-client

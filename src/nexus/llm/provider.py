@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import copy
 import hashlib
@@ -10,20 +11,20 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Iterator
 from functools import partial, wraps
-from typing import Any
+from typing import Any, cast
 
 import litellm
 from litellm import PromptTokensDetails
+from litellm import acompletion as litellm_acompletion
 from litellm import completion as litellm_completion
 from litellm import completion_cost as litellm_completion_cost
 from litellm.exceptions import RateLimitError
 from litellm.types.utils import CostPerToken, ModelInfo, ModelResponse, Usage
 from litellm.utils import create_pretrained_tokenizer
 
+from nexus.llm.cancellation import AsyncCancellationToken
 from nexus.llm.config import LLMConfig
-from nexus.llm.exceptions import (
-    LLMNoResponseError,
-)
+from nexus.llm.exceptions import LLMCancellationError, LLMNoResponseError
 from nexus.llm.message import Message
 from nexus.llm.metrics import LLMMetrics
 
@@ -111,6 +112,41 @@ def retry_decorator(
                     if attempt < num_retries:
                         print(f"Retry {attempt + 1}/{num_retries} after {wait_time}s due to: {e}")
                         time.sleep(wait_time)
+                        wait_time = min(wait_time * retry_multiplier, retry_max_wait)
+                    else:
+                        raise
+
+            if last_exception:
+                raise last_exception
+
+        return wrapper
+
+    return decorator
+
+
+def async_retry_decorator(
+    num_retries: int = 3,
+    retry_exceptions: tuple[type[Exception], ...] = LLM_RETRY_EXCEPTIONS,
+    retry_min_wait: float = 4.0,
+    retry_max_wait: float = 10.0,
+    retry_multiplier: float = 2.0,
+) -> Callable:
+    """Decorator for retrying async functions with exponential backoff."""
+
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            last_exception = None
+            wait_time = retry_min_wait
+
+            for attempt in range(num_retries + 1):
+                try:
+                    return await func(*args, **kwargs)
+                except retry_exceptions as e:
+                    last_exception = e
+                    if attempt < num_retries:
+                        print(f"Retry {attempt + 1}/{num_retries} after {wait_time}s due to: {e}")
+                        await asyncio.sleep(wait_time)
                         wait_time = min(wait_time * retry_multiplier, retry_max_wait)
                     else:
                         raise
@@ -377,6 +413,24 @@ class LiteLLMProvider(LLMProvider):
             **kwargs,
         )
 
+        # Set up async completion function
+        self._acompletion_partial = partial(
+            litellm_acompletion,
+            model=self.config.model,
+            api_key=self.config.api_key.get_secret_value() if self.config.api_key else None,
+            base_url=self.config.base_url,
+            api_version=self.config.api_version,
+            custom_llm_provider=self.config.custom_llm_provider,
+            timeout=self.config.timeout,
+            top_p=self.config.top_p,
+            drop_params=self.config.drop_params,
+            seed=self.config.seed,
+            **kwargs,
+        )
+
+        # Track active async tasks for cleanup
+        self._active_tasks: set[asyncio.Task] = set()
+
     def _init_model_info(self) -> None:
         """Initialize model information."""
         with contextlib.suppress(Exception):
@@ -486,13 +540,156 @@ class LiteLLMProvider(LLMProvider):
         return LiteLLMResponse(response, cost)
 
     async def complete_async(
-        self, messages: list[Message], tools: list[dict[str, Any]] | None = None, **kwargs: Any
+        self,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None = None,
+        cancellation_token: AsyncCancellationToken | None = None,
+        **kwargs: Any,
     ) -> LLMResponse:
-        """Send an async completion request."""
-        # For now, use sync version
-        # TODO: Implement proper async with acompletion
-        result: LLMResponse = self.complete(messages, tools, **kwargs)
-        return result
+        """Send an async completion request with cancellation support.
+
+        Args:
+            messages: List of messages
+            tools: Optional list of tools for function calling
+            cancellation_token: Optional cancellation token for request cancellation
+            **kwargs: Additional provider-specific parameters
+
+        Returns:
+            LLMResponse object
+
+        Raises:
+            LLMCancellationError: If request was cancelled
+        """
+        # Format messages
+        formatted_messages = self._format_messages(messages)
+
+        # Prepare kwargs
+        call_kwargs = kwargs.copy()
+        if tools:
+            call_kwargs["tools"] = tools
+            if "tool_choice" not in call_kwargs:
+                call_kwargs["tool_choice"] = "auto"
+
+        # Set litellm modify_params
+        litellm.modify_params = self.config.modify_params
+
+        # Create cancellation event
+        cancel_event = asyncio.Event()
+        completion_task: asyncio.Task | None = None
+
+        async def check_cancellation() -> None:
+            """Periodically check for cancellation requests."""
+            try:
+                while not cancel_event.is_set():
+                    # Check cancellation token if provided
+                    if cancellation_token and await cancellation_token.is_cancelled_async():
+                        if completion_task and not completion_task.done():
+                            completion_task.cancel()
+                        cancel_event.set()
+                        return
+
+                    await asyncio.sleep(self.config.cancellation_check_interval)
+            except asyncio.CancelledError:
+                # Clean cancellation
+                pass
+
+        # Start cancellation checker
+        check_task = asyncio.create_task(check_cancellation())
+        self._active_tasks.add(check_task)
+        check_task.add_done_callback(self._active_tasks.discard)
+
+        try:
+            # Record start time
+            start_time = time.time()
+
+            # Create completion task with retry
+            @async_retry_decorator(
+                num_retries=self.config.num_retries,
+                retry_exceptions=LLM_RETRY_EXCEPTIONS,
+                retry_min_wait=self.config.retry_min_wait,
+                retry_max_wait=self.config.retry_max_wait,
+                retry_multiplier=self.config.retry_multiplier,
+            )
+            async def make_completion() -> ModelResponse:
+                result = await self._acompletion_partial(messages=formatted_messages, **call_kwargs)
+                return cast(ModelResponse, result)
+
+            completion_task = asyncio.create_task(make_completion())
+            self._active_tasks.add(completion_task)
+            completion_task.add_done_callback(self._active_tasks.discard)
+
+            # Wait for either completion or cancellation
+            done, pending = await asyncio.wait(
+                [completion_task, check_task], return_when=asyncio.FIRST_COMPLETED
+            )
+
+            # Handle results
+            if completion_task in done:
+                # Normal completion
+                cancel_event.set()
+                response: ModelResponse = await completion_task
+
+                # Calculate latency
+                latency = time.time() - start_time
+                response_id = response.get("id", "unknown")
+                self.metrics.add_response_latency(latency, response_id)
+
+                # Calculate cost and update metrics
+                cost = self._calculate_cost(response)
+
+                # Update token usage
+                usage: Usage | None = response.get("usage")
+                if usage:
+                    prompt_tokens = usage.get("prompt_tokens", 0)
+                    completion_tokens = usage.get("completion_tokens", 0)
+
+                    # Handle cache tokens (Anthropic)
+                    prompt_tokens_details: PromptTokensDetails | None = usage.get(
+                        "prompt_tokens_details"
+                    )
+                    cache_hit_tokens = (
+                        prompt_tokens_details.cached_tokens
+                        if prompt_tokens_details and prompt_tokens_details.cached_tokens
+                        else 0
+                    )
+                    model_extra = usage.get("model_extra", {})
+                    cache_write_tokens = model_extra.get("cache_creation_input_tokens", 0)
+
+                    self.metrics.add_token_usage(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        cache_read_tokens=cache_hit_tokens,
+                        cache_write_tokens=cache_write_tokens,
+                        response_id=response_id,
+                    )
+
+                return LiteLLMResponse(response, cost)
+            else:
+                # Cancellation occurred
+                raise LLMCancellationError("LLM request was cancelled")
+
+        except asyncio.CancelledError:
+            raise LLMCancellationError("LLM request was cancelled") from None
+        except LLMCancellationError:
+            raise
+        except Exception:
+            raise
+        finally:
+            # Clean up tasks
+            cancel_event.set()
+
+            # Cancel any pending tasks
+            for task in [check_task, completion_task]:
+                if task and not task.done():
+                    task.cancel()
+
+            # Wait for cleanup with timeout
+            pending_tasks = [t for t in [check_task, completion_task] if t and not t.done()]
+            if pending_tasks:
+                with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                    await asyncio.wait_for(
+                        asyncio.gather(*pending_tasks, return_exceptions=True), timeout=0.1
+                    )
 
     def stream(
         self, messages: list[Message], tools: list[dict[str, Any]] | None = None, **kwargs: Any
@@ -516,18 +713,71 @@ class LiteLLMProvider(LLMProvider):
                 if delta and delta.content:
                     yield delta.content
 
-    def stream_async(
-        self, messages: list[Message], tools: list[dict[str, Any]] | None = None, **kwargs: Any
+    async def stream_async(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None = None,
+        cancellation_token: AsyncCancellationToken | None = None,
+        **kwargs: Any,
     ) -> AsyncIterator[str]:
-        """Stream an async completion response."""
+        """Stream an async completion response with cancellation support.
 
-        # For now, wrap sync version in async iterator
-        # TODO: Implement proper async streaming
-        async def _async_wrapper() -> AsyncIterator[str]:
-            for chunk in self.stream(messages, tools, **kwargs):
-                yield chunk
+        Args:
+            messages: List of messages
+            tools: Optional list of tools for function calling
+            cancellation_token: Optional cancellation token for request cancellation
+            **kwargs: Additional provider-specific parameters
 
-        return _async_wrapper()
+        Yields:
+            Response chunks as strings
+
+        Raises:
+            LLMCancellationError: If streaming was cancelled
+        """
+        # Format messages
+        formatted_messages = self._format_messages(messages)
+
+        # Prepare kwargs
+        call_kwargs = kwargs.copy()
+        call_kwargs["stream"] = True
+        if tools:
+            call_kwargs["tools"] = tools
+
+        # Check cancellation before starting
+        if cancellation_token and await cancellation_token.is_cancelled_async():
+            raise LLMCancellationError("LLM request was cancelled before streaming started")
+
+        try:
+            # Make streaming request
+            response_coro = self._acompletion_partial(messages=formatted_messages, **call_kwargs)
+
+            # Await the coroutine to get the async generator
+            response = await response_coro
+
+            # Stream chunks with periodic cancellation checks
+            last_check_time = time.time()
+            check_interval = self.config.cancellation_check_interval
+
+            async for chunk in response:
+                # Periodic cancellation check
+                current_time = time.time()
+                if current_time - last_check_time >= check_interval:
+                    if cancellation_token and await cancellation_token.is_cancelled_async():
+                        raise LLMCancellationError("LLM streaming was cancelled")
+                    last_check_time = current_time
+
+                # Yield content from chunk
+                if chunk.choices and len(chunk.choices) > 0:
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        yield delta.content
+
+        except asyncio.CancelledError:
+            raise LLMCancellationError("LLM streaming was cancelled") from None
+        except LLMCancellationError:
+            raise
+        except Exception:
+            raise
 
     def count_tokens(self, messages: list[Message]) -> int:
         """Count tokens in messages."""
@@ -615,3 +865,22 @@ class LiteLLMProvider(LLMProvider):
 
         self.cost_metric_supported = False
         return 0.0
+
+    async def cleanup(self) -> None:
+        """Clean up any active async tasks.
+
+        Should be called when done using the provider to ensure proper cleanup.
+        """
+        if self._active_tasks and len(self._active_tasks) > 0:
+            # Cancel all active tasks
+            for task in list(self._active_tasks):
+                if not task.done():
+                    task.cancel()
+
+            # Wait for cancellation with optimized timeout
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    asyncio.gather(*self._active_tasks, return_exceptions=True), timeout=0.5
+                )
+
+            self._active_tasks.clear()

@@ -44,6 +44,7 @@ Nexus is a complete AI agent infrastructure platform that combines distributed u
 - **Semantic Chunking**: Better search via intelligent document segmentation
 - **MCP Integration**: Native Model Context Protocol server
 - **Document Type Detection**: Automatic routing to appropriate parsers
+- **Unix Pipeline Integration**: Composable plugin commands with JSON I/O for building workflows (v0.4.0)
 - **Workflow Automation**: Event-driven pipelines with file triggers, scheduled tasks, and plugin actions (v0.4.0)
 - **ML Auto-Tagging**: Self-improving document classification with feedback loops (v0.8.0)
 - **Thumbnail Generation**: Multi-size visual previews for images, PDFs, and documents (v0.7.0)
@@ -1256,6 +1257,39 @@ nexus skill-seekers import /path/to/SKILL.md
 nexus skill-seekers list
 ```
 
+**Unix Pipeline Integration (v0.4.0):**
+
+Plugin commands support Unix-style piping for composable workflows:
+
+```bash
+# Simple pipeline: scrape → create skill
+nexus firecrawl scrape https://docs.stripe.com/api --json | \
+  nexus skills create-from-web --stdin --name stripe-api
+
+# Multi-stage pipeline: scrape → create skill → upload to Claude
+nexus firecrawl scrape https://docs.example.com --json | \
+  nexus skills create-from-web --stdin --tier tenant | \
+  nexus anthropic upload-skill --stdin
+
+# Combine with Unix tools (jq, grep, awk)
+nexus firecrawl scrape https://docs.example.com --json | \
+  jq 'select(.content | length > 1000)' | \
+  nexus skills create-from-web --stdin
+
+# Batch processing with parallel execution
+cat urls.txt | xargs -P 4 -I {} sh -c \
+  'nexus firecrawl scrape {} --json | nexus skills create-from-web --stdin'
+
+# Core commands work with Unix tools too
+nexus cat /workspace/data.txt | grep "ERROR" | wc -l
+nexus cat /workspace/config.json | jq '.items[] | select(.active)'
+```
+
+**Key principles:**
+- Core commands (`cat`, `write`) → Use Unix tools (`grep`, `jq`, `awk`)
+- Plugin commands → Use JSON pipelines (`--json`, `--stdin` flags)
+- All plugin JSON output includes a `type` field for identification
+
 See detailed documentation:
 - [Plugin Installation Guide](./PLUGIN_INSTALLATION.md) - **Start here for setup**
 - [nexus-plugin-anthropic](./nexus-plugin-anthropic/README.md) - Anthropic plugin docs
@@ -1264,7 +1298,10 @@ See detailed documentation:
 **Try plugin examples:**
 ```bash
 # CLI demo - plugin management commands
-./examples/plugin_cli_demo.sh
+./examples/script_demo/plugin_cli_demo.sh
+
+# Pipeline integration demo - Unix-style piping (NEW in v0.4.0!)
+./examples/script_demo/pipeline_demo.sh
 
 # SDK demo - programmatic plugin usage
 python examples/plugin_sdk_demo.py

@@ -1,5 +1,7 @@
 """Base plugin interface for Nexus plugins."""
 
+import json
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -128,3 +130,75 @@ class NexusPlugin(ABC):
             Configuration value or default
         """
         return self._config.get(key, default)
+
+    @staticmethod
+    def is_piped_output() -> bool:
+        """Check if stdout is being piped.
+
+        Returns:
+            True if stdout is being piped (not a TTY), False otherwise
+
+        Example:
+            if self.is_piped_output():
+                # Output JSON for piping
+                self.write_json_output({"result": data})
+        """
+        return not sys.stdout.isatty()
+
+    @staticmethod
+    def is_piped_input() -> bool:
+        """Check if stdin is being piped.
+
+        Returns:
+            True if stdin is being piped (not a TTY), False otherwise
+
+        Example:
+            if self.is_piped_input():
+                # Read data from previous command in pipeline
+                data = self.read_json_input()
+        """
+        return not sys.stdin.isatty()
+
+    @staticmethod
+    def read_json_input() -> dict[str, Any]:
+        """Read JSON from stdin.
+
+        Returns:
+            Dictionary parsed from stdin JSON, or empty dict if stdin is empty
+
+        Raises:
+            json.JSONDecodeError: If stdin contains invalid JSON
+
+        Example:
+            try:
+                data = self.read_json_input()
+                content = data.get("content", "")
+            except json.JSONDecodeError:
+                console.print("[red]Invalid JSON from stdin[/red]")
+        """
+        if not sys.stdin.isatty():
+            try:
+                result = json.load(sys.stdin)
+                if isinstance(result, dict):
+                    return result
+                return {}
+            except json.JSONDecodeError:
+                raise
+        return {}
+
+    @staticmethod
+    def write_json_output(data: dict[str, Any]) -> None:
+        """Write JSON to stdout for piping.
+
+        Args:
+            data: Dictionary to output as JSON
+
+        Example:
+            self.write_json_output({
+                "type": "scraped_content",
+                "url": url,
+                "content": content,
+                "metadata": {...}
+            })
+        """
+        print(json.dumps(data))

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="../logo.png" alt="Nexus Logo" width="180"/>
+  <img src="assets/logo.png" alt="Nexus Logo" width="180"/>
 
   # Nexus Documentation
 

@@ -10,9 +10,18 @@ Provides a unified interface for multiple LLM providers with:
 - Response caching with Nexus CAS
 """
 
+from nexus.llm.cancellation import (
+    AsyncCancellationToken,
+    CancellationToken,
+    install_signal_handlers,
+    request_shutdown,
+    reset_shutdown_flag,
+    should_continue,
+)
 from nexus.llm.config import LLMConfig
 from nexus.llm.exceptions import (
     LLMAuthenticationError,
+    LLMCancellationError,
     LLMConfigError,
     LLMCostCalculationError,
     LLMException,
@@ -57,6 +66,13 @@ __all__ = [
     "TokenUsage",
     "ResponseLatency",
     "MetricsStore",
+    # Cancellation
+    "CancellationToken",
+    "AsyncCancellationToken",
+    "should_continue",
+    "request_shutdown",
+    "reset_shutdown_flag",
+    "install_signal_handlers",
     # Exceptions
     "LLMException",
     "LLMProviderError",
@@ -68,4 +84,5 @@ __all__ = [
     "LLMConfigError",
     "LLMTokenCountError",
     "LLMCostCalculationError",
+    "LLMCancellationError",
 ]

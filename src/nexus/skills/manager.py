@@ -185,6 +185,115 @@ class SkillManager:
         logger.info(f"Created skill '{name}' from template '{template}' at {skill_file}")
         return skill_file
 
+    async def create_skill_from_content(
+        self,
+        name: str,
+        description: str,
+        content: str,
+        tier: str = "agent",
+        author: str | None = None,
+        version: str = "1.0.0",
+        source_url: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Create a new skill from content (e.g., from web scraping).
+
+        Args:
+            name: Skill name (alphanumeric with - or _)
+            description: Skill description
+            content: Skill content (markdown)
+            tier: Target tier (agent, tenant, system)
+            author: Optional author name
+            version: Initial version (default: 1.0.0)
+            source_url: Optional source URL (for tracking origin)
+            metadata: Optional additional metadata
+
+        Returns:
+            Path to created SKILL.md file
+
+        Raises:
+            SkillManagerError: If creation fails
+
+        Example:
+            >>> path = await manager.create_skill_from_content(
+            ...     "stripe-api",
+            ...     description="Stripe API Documentation",
+            ...     content="# Stripe API\\n\\n...",
+            ...     source_url="https://docs.stripe.com/api",
+            ...     author="Auto-generated"
+            ... )
+        """
+        # Validate skill name
+        if not name.replace("-", "").replace("_", "").isalnum():
+            raise SkillManagerError(f"Skill name must be alphanumeric (with - or _), got '{name}'")
+
+        # Validate tier
+        if tier not in SkillRegistry.TIER_PATHS:
+            raise SkillManagerError(
+                f"Invalid tier '{tier}'. Must be one of: {list(SkillRegistry.TIER_PATHS.keys())}"
+            )
+
+        # Get tier path
+        tier_path = SkillRegistry.TIER_PATHS[tier]
+
+        # Construct skill directory path
+        skill_dir = f"{tier_path}{name}/"
+        skill_file = f"{skill_dir}SKILL.md"
+
+        # Check if skill already exists
+        if self._filesystem:
+            if self._filesystem.exists(skill_file):
+                raise SkillManagerError(f"Skill '{name}' already exists at {skill_file}")
+        else:
+            local_path = Path(skill_file)
+            if local_path.exists():
+                raise SkillManagerError(f"Skill '{name}' already exists at {skill_file}")
+
+        # Create skill metadata
+        now = datetime.now(UTC)
+
+        # Generate SKILL.md content
+        import yaml
+
+        frontmatter: dict[str, Any] = {
+            "name": name,
+            "description": description,
+            "version": version,
+        }
+
+        if author:
+            frontmatter["author"] = author
+
+        if source_url:
+            frontmatter["source_url"] = source_url
+
+        frontmatter["created_at"] = now.isoformat()
+        frontmatter["modified_at"] = now.isoformat()
+
+        # Add additional metadata if provided
+        if metadata:
+            frontmatter.update(metadata)
+
+        frontmatter_yaml = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
+        skill_md = f"---\n{frontmatter_yaml}---\n\n{content}"
+
+        # Write skill file
+        if self._filesystem:
+            # Create directory
+            with contextlib.suppress(Exception):
+                self._filesystem.mkdir(skill_dir, parents=True)
+
+            # Write file
+            self._filesystem.write(skill_file, skill_md.encode("utf-8"))
+        else:
+            # Use local filesystem
+            local_dir = Path(skill_dir)
+            local_dir.mkdir(parents=True, exist_ok=True)
+            Path(skill_file).write_text(skill_md, encoding="utf-8")
+
+        logger.info(f"Created skill '{name}' from content at {skill_file}")
+        return skill_file
+
     async def fork_skill(
         self,
         source_name: str,

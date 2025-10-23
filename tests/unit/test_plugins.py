@@ -473,5 +473,160 @@ class TestPluginHooksWithInvalidHookType:
         assert registry.get_plugin("invalid-hook-plugin") is not None
 
 
+class TestPluginPipeUtilities:
+    """Test NexusPlugin pipe detection and JSON I/O utilities."""
+
+    def test_write_json_output(self, capsys):
+        """Test writing JSON output to stdout."""
+        data = {"type": "test", "content": "hello world", "metadata": {"key": "value"}}
+
+        NexusPlugin.write_json_output(data)
+
+        captured = capsys.readouterr()
+        import json
+
+        output = json.loads(captured.out.strip())
+
+        assert output == data
+        assert output["type"] == "test"
+        assert output["content"] == "hello world"
+        assert output["metadata"]["key"] == "value"
+
+    def test_write_json_output_complex(self, capsys):
+        """Test writing complex JSON output."""
+        data = {
+            "type": "scraped_content",
+            "url": "https://example.com",
+            "content": "markdown content here...",
+            "title": "Page Title",
+            "metadata": {
+                "scraped_at": "2025-10-23T12:00:00Z",
+                "scraper": "firecrawl",
+                "format": "markdown",
+            },
+        }
+
+        NexusPlugin.write_json_output(data)
+
+        captured = capsys.readouterr()
+        import json
+
+        output = json.loads(captured.out.strip())
+
+        assert output["type"] == "scraped_content"
+        assert output["url"] == "https://example.com"
+        assert output["metadata"]["scraper"] == "firecrawl"
+
+    def test_read_json_input_from_tty(self, monkeypatch):
+        """Test reading JSON from stdin when TTY (should return empty dict)."""
+        import sys
+        from io import StringIO
+
+        # Mock stdin as a TTY (isatty returns True)
+        mock_stdin = StringIO()
+        mock_stdin.isatty = lambda: True
+
+        monkeypatch.setattr(sys, "stdin", mock_stdin)
+
+        # When stdin is a TTY, should return empty dict
+        result = NexusPlugin.read_json_input()
+        assert result == {}
+
+    def test_is_piped_output(self):
+        """Test detecting if stdout is piped."""
+        # In test environment, stdout is usually redirected/piped
+        # so we can't reliably test the actual TTY detection
+        # Instead, we just verify the method exists and returns a boolean
+        result = NexusPlugin.is_piped_output()
+        assert isinstance(result, bool)
+
+    def test_is_piped_input(self):
+        """Test detecting if stdin is piped."""
+        # In test environment, stdin behavior varies
+        # Verify the method exists and returns a boolean
+        result = NexusPlugin.is_piped_input()
+        assert isinstance(result, bool)
+
+
+class TestPluginIntegrationWithPipes:
+    """Test plugin integration with pipeline features."""
+
+    def test_plugin_can_detect_pipe_output(self):
+        """Test that a plugin can detect when output is piped."""
+
+        class PipeAwarePlugin(NexusPlugin):
+            """Plugin that detects pipe output."""
+
+            def metadata(self) -> PluginMetadata:
+                return PluginMetadata(
+                    name="pipe-aware",
+                    version="0.1.0",
+                    description="Pipe-aware plugin",
+                    author="Test",
+                )
+
+            async def scrape_command(self, url: str, json_output: bool = False):
+                """Test command that supports JSON output."""
+                content = f"Content from {url}"
+
+                # Output JSON if requested or piped
+                if json_output or self.is_piped_output():
+                    self.write_json_output(
+                        {
+                            "type": "scraped_content",
+                            "url": url,
+                            "content": content,
+                        }
+                    )
+                    return None
+
+                # Normal output
+                return content
+
+        plugin = PipeAwarePlugin()
+
+        # Test that the plugin has access to pipe utilities
+        assert hasattr(plugin, "is_piped_output")
+        assert hasattr(plugin, "is_piped_input")
+        assert hasattr(plugin, "write_json_output")
+        assert hasattr(plugin, "read_json_input")
+
+    def test_plugin_json_output(self, capsys):
+        """Test that a plugin can output JSON for piping."""
+
+        class JSONOutputPlugin(NexusPlugin):
+            """Plugin that outputs JSON."""
+
+            def metadata(self) -> PluginMetadata:
+                return PluginMetadata(
+                    name="json-output",
+                    version="0.1.0",
+                    description="JSON output plugin",
+                    author="Test",
+                )
+
+            def output_data(self):
+                """Output test data as JSON."""
+                self.write_json_output(
+                    {
+                        "type": "test_data",
+                        "value": 123,
+                        "name": "test",
+                    }
+                )
+
+        plugin = JSONOutputPlugin()
+        plugin.output_data()
+
+        captured = capsys.readouterr()
+        import json
+
+        output = json.loads(captured.out.strip())
+
+        assert output["type"] == "test_data"
+        assert output["value"] == 123
+        assert output["name"] == "test"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

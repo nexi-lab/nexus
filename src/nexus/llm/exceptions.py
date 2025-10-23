@@ -59,3 +59,9 @@ class LLMCostCalculationError(LLMException):
     """Error when calculating cost."""
 
     pass
+
+
+class LLMCancellationError(LLMException):
+    """LLM request was cancelled by user or system."""
+
+    pass

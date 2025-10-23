@@ -1618,11 +1618,23 @@ rm -rf "$SKILLS_DATA_DIR"  # Clean up any previous state
 test_command "Create skills test workspace" \
     mkdir -p "$SKILLS_DATA_DIR"
 
-test_command "Initialize skills test workspace" \
+# IMPORTANT: Temporarily unset database URL to force SQLite for skills tests
+# PostgreSQL database is shared across test runs and contains leftover state
+OLD_NEXUS_DATA_DIR="$NEXUS_DATA_DIR"
+OLD_NEXUS_DATABASE_URL="$NEXUS_DATABASE_URL"
+unset NEXUS_DATA_DIR
+unset NEXUS_DATABASE_URL
+
+test_command "Initialize skills test workspace (with SQLite)" \
     nexus init "$SKILLS_DATA_DIR"
 
-# Switch to skills test data directory for all skills tests
+# Now switch to the fresh skills test data directory for all skills tests
 export NEXUS_DATA_DIR="$SKILLS_DATA_DIR/nexus-data"
+# Keep DATABASE_URL unset to ensure we use the local SQLite database
+
+# Verify we have a clean SQLite database with no leftover CAS references
+test_command "Verify clean skills database (SQLite)" \
+    bash -c "[ -f '$NEXUS_DATA_DIR/metadata.db' ] && echo 'Fresh SQLite database created'"
 
 # Test 116: List skills (empty initially)
 test_command "skills list - list all skills (empty initially)" \
@@ -1710,8 +1722,11 @@ test_command "skills create --help shows usage" \
 test_command "skills list --tier agent - filter by agent tier" \
     bash -c "nexus skills list --tier agent 2>&1 | grep -E '(forked-skill|my-test-skill)' || echo 'No agent skills found'"
 
-# Switch back to main data directory
+# Switch back to main data directory and restore database URL
 export NEXUS_DATA_DIR="$DATA_DIR"
+if [ -n "$OLD_NEXUS_DATABASE_URL" ]; then
+    export NEXUS_DATABASE_URL="$OLD_NEXUS_DATABASE_URL"
+fi
 
 echo -e "${GREEN}✓ All Skills System CLI tests passed!${NC}\n"
 

@@ -616,3 +616,98 @@ class VersionHistoryModel(Base):
         # Validate size_bytes
         if self.size_bytes < 0:
             raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")
+
+
+class OperationLogModel(Base):
+    """Operation log for tracking filesystem operations.
+
+    Provides audit trail, undo capability, and debugging support.
+    Stores snapshots of state before operations for rollback.
+    """
+
+    __tablename__ = "operation_log"
+
+    # Primary key
+    operation_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Operation identification
+    operation_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # write, delete, rename, mkdir, rmdir, chmod, chown, etc.
+
+    # Context
+    tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Affected paths
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    new_path: Mapped[str | None] = mapped_column(Text, nullable=True)  # For rename operations
+
+    # Snapshot data (CAS-backed)
+    snapshot_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )  # Previous content hash
+
+    # Metadata snapshot (JSON)
+    metadata_snapshot: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # Previous file metadata
+
+    # Operation result
+    status: Mapped[str] = mapped_column(String(20), nullable=False)  # success, failure
+
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_operation_log_type", "operation_type"),
+        Index("idx_operation_log_agent", "agent_id"),
+        Index("idx_operation_log_tenant", "tenant_id"),
+        Index("idx_operation_log_path", "path"),
+        Index("idx_operation_log_created_at", "created_at"),
+        Index("idx_operation_log_status", "status"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<OperationLogModel(operation_id={self.operation_id}, type={self.operation_type}, path={self.path})>"
+
+    def validate(self) -> None:
+        """Validate operation log model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate operation_type
+        valid_types = [
+            "write",
+            "delete",
+            "rename",
+            "mkdir",
+            "rmdir",
+            "chmod",
+            "chown",
+            "chgrp",
+            "setfacl",
+        ]
+        if self.operation_type not in valid_types:
+            raise ValidationError(
+                f"operation_type must be one of {valid_types}, got {self.operation_type}"
+            )
+
+        # Validate path
+        if not self.path:
+            raise ValidationError("path is required")
+
+        # Validate status
+        valid_statuses = ["success", "failure"]
+        if self.status not in valid_statuses:
+            raise ValidationError(f"status must be one of {valid_statuses}, got {self.status}")

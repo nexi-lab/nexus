@@ -1,10 +1,14 @@
-# Nexus: AI-Native Distributed Filesystem
+<div align="center">
+  <img src="logo.png" alt="Nexus Logo" width="200"/>
 
-[![Test](https://github.com/nexi-lab/nexus/actions/workflows/test.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/test.yml)
-[![Lint](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml)
-[![PyPI version](https://badge.fury.io/py/nexus-ai-fs.svg)](https://badge.fury.io/py/nexus-ai-fs)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+  # Nexus: AI-Native Distributed Filesystem
+
+  [![Test](https://github.com/nexi-lab/nexus/actions/workflows/test.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/test.yml)
+  [![Lint](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml)
+  [![PyPI version](https://badge.fury.io/py/nexus-ai-fs.svg)](https://badge.fury.io/py/nexus-ai-fs)
+  [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+  [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+</div>
 
 **Version 0.4.0** | AI Agent Infrastructure Platform
 
@@ -762,6 +766,120 @@ with nx.metadata.SessionLocal() as session:
 # Try the interactive demos
 python examples/py_demo/time_travel_demo.py
 ./examples/script_demo/time_travel_demo.sh
+```
+
+#### Workflow Automation (v0.4.0)
+
+Nexus Workflow System enables event-driven automation pipelines for document processing, data transformation, and multi-step operations. Define workflows in YAML with triggers, actions, and plugin extensibility.
+
+**CLI Commands:**
+```bash
+# Load workflow from YAML file
+nexus workflows load .nexus/workflows/process-invoices.yaml
+nexus workflows load my-workflow.yaml --enabled  # Load and enable
+nexus workflows load my-workflow.yaml --disabled  # Load but keep disabled
+
+# List all loaded workflows
+nexus workflows list
+# Shows: name, version, description, triggers, actions, status (enabled/disabled)
+
+# Test workflow execution
+nexus workflows test process-invoices --file /inbox/test.pdf
+nexus workflows test auto-tagger --file /docs/report.pdf --context '{"priority": "high"}'
+
+# View execution history (coming soon)
+nexus workflows runs process-invoices --limit 10
+
+# Enable/disable workflows
+nexus workflows enable process-invoices
+nexus workflows disable process-invoices
+
+# Unload workflow (remove from engine)
+nexus workflows unload process-invoices
+
+# Discover workflows in directory
+nexus workflows discover .nexus/workflows
+nexus workflows discover ./my-workflows --load  # Discover and load all
+```
+
+**Workflow Features:**
+- **Event Triggers**: file_write, file_delete, metadata_change, schedule, webhook
+- **Built-in Actions**: parse, tag, move, metadata, llm, webhook, python, bash
+- **Variable Interpolation**: `{file_path}`, `{filename}`, `{timestamp}`, `{action_output}`
+- **Plugin Actions**: Extend with custom actions via plugin system
+- **Persistent Storage**: Workflows stored in database, survive restarts
+- **Execution Tracking**: Monitor workflow runs and action results
+
+**Quick Example - Auto-process PDFs:**
+```yaml
+# .nexus/workflows/process-pdfs.yaml
+name: process-pdfs
+version: 1.0
+description: Auto-process and tag PDF documents
+
+triggers:
+  - type: file_write
+    pattern: /inbox/**/*.pdf
+
+actions:
+  - name: parse_content
+    type: parse
+    parser: pdf
+
+  - name: extract_metadata
+    type: llm
+    model: claude-sonnet-4
+    prompt: "Extract: title, author, date, key topics"
+    output_format: json
+
+  - name: tag_document
+    type: tag
+    tags:
+      - processed
+      - pdf
+      - "{extract_metadata_output.topic}"
+
+  - name: move_to_archive
+    type: move
+    destination: /archives/{year}/{month}/
+    create_parents: true
+```
+
+**Python API:**
+```python
+from nexus.workflows import WorkflowAPI
+
+workflows = WorkflowAPI()
+
+# Load workflow
+workflows.load("my-workflow.yaml")
+
+# Execute manually
+result = await workflows.execute(
+    "process-pdfs",
+    file_path="/inbox/document.pdf"
+)
+
+print(f"Status: {result.status}")
+print(f"Actions: {result.actions_completed}/{result.actions_total}")
+
+# Manage workflows
+workflows.enable("process-pdfs")
+workflows.disable("process-pdfs")
+workflows.unload("process-pdfs")
+```
+
+**Documentation:**
+- Full workflow documentation: [examples/workflows/README.md](examples/workflows/README.md)
+- Trigger types, action types, and advanced features
+- Plugin development for custom actions
+- Example workflows for common use cases
+
+**Demo:**
+```bash
+# Try the workflow demo
+./examples/workflows/workflow_demo.sh
+python examples/workflows/workflow_example.py
 ```
 
 #### Version Tracking & History (v0.3.5)

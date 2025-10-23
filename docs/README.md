@@ -1,6 +1,12 @@
-# Nexus Documentation
+<div align="center">
+  <img src="../logo.png" alt="Nexus Logo" width="180"/>
 
-Welcome to the Nexus documentation! This directory contains comprehensive guides for using and developing Nexus.
+  # Nexus Documentation
+
+  Welcome to the Nexus documentation! This directory contains comprehensive guides for using and developing Nexus.
+</div>
+
+---
 
 ## Documentation Index
 

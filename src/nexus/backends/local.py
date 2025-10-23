@@ -112,8 +112,9 @@ class LocalBackend(Backend):
             return {"ref_count": 0, "size": 0}
 
         # Retry logic for Windows file locking and race conditions
-        max_retries = 3
-        retry_delay = 0.01  # 10ms
+        # Increased retries for high-concurrency scenarios (50+ threads)
+        max_retries = 10
+        base_delay = 0.001  # 1ms base delay
 
         for attempt in range(max_retries):
             try:
@@ -124,9 +125,12 @@ class LocalBackend(Backend):
             except json.JSONDecodeError as e:
                 # Corrupted metadata - could be mid-write on Windows
                 if attempt < max_retries - 1:
+                    import random
                     import time
 
-                    time.sleep(retry_delay)
+                    # Exponential backoff with jitter for high concurrency
+                    delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
+                    time.sleep(delay)
                     continue
                 # Last attempt failed - raise error
                 raise BackendError(
@@ -135,11 +139,14 @@ class LocalBackend(Backend):
                     path=content_hash,
                 ) from e
             except OSError as e:
-                # File might be locked on Windows - retry
+                # File might be locked on Windows - retry with backoff
                 if attempt < max_retries - 1:
+                    import random
                     import time
 
-                    time.sleep(retry_delay)
+                    # Exponential backoff with jitter for high concurrency
+                    delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
+                    time.sleep(delay)
                     continue
                 raise BackendError(
                     f"Failed to read metadata: {e}", backend="local", path=content_hash
@@ -158,7 +165,8 @@ class LocalBackend(Backend):
         meta_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Retry logic for Windows PermissionError during concurrent writes
-        max_retries = 5
+        # Increased retries for high-concurrency scenarios (50+ threads)
+        max_retries = 10
         base_delay = 0.001  # 1ms base delay
 
         for attempt in range(max_retries):

@@ -79,10 +79,16 @@ def init(path: str) -> None:
     is_flag=True,
     help="Show file metadata (etag, version) for optimistic concurrency control",
 )
+@click.option(
+    "--at-operation",
+    type=str,
+    help="Read file content at a historical operation point (time-travel debugging)",
+)
 @add_backend_options
 def cat(
     path: str,
     metadata: bool,
+    at_operation: str | None,
     backend_config: BackendConfig,
 ) -> None:
     """Display file contents.
@@ -96,11 +102,59 @@ def cat(
 
         # Show metadata (etag, version) for OCC
         nexus cat /workspace/data.txt --metadata
+
+        # Time-travel: Read file at historical operation point
+        nexus cat /workspace/data.txt --at-operation op_abc123
     """
     try:
         nx = get_filesystem(backend_config)
 
-        if metadata:
+        if at_operation:
+            # Time-travel: Read file at historical operation point
+            # Import at function level to avoid scoping issues
+            try:
+                from nexus.core.nexus_fs import NexusFS
+                from nexus.storage.time_travel import TimeTravelReader
+            except ImportError as e:
+                console.print(f"[red]Error:[/red] Failed to import time-travel modules: {e}")
+                nx.close()
+                return
+
+            if not isinstance(nx, NexusFS):
+                console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
+                nx.close()
+                return
+
+            # Create time-travel reader with a session
+            with nx.metadata.SessionLocal() as session:
+                time_travel = TimeTravelReader(session, nx.backend)
+
+                # Get file state at operation
+                state = time_travel.get_file_at_operation(
+                    path, at_operation, tenant_id=nx.tenant_id
+                )
+
+            nx.close()
+
+            # Display time-travel info
+            console.print("[bold cyan]Time-Travel Mode[/bold cyan]")
+            console.print(f"[dim]Operation ID:[/dim]  {state['operation_id']}")
+            console.print(f"[dim]Operation Time:[/dim] {state['operation_time']}")
+            console.print()
+
+            if metadata:
+                console.print("[bold]Metadata:[/bold]")
+                console.print(f"[dim]Path:[/dim]     {path}")
+                console.print(f"[dim]Size:[/dim]     {state['metadata'].get('size', 0)} bytes")
+                console.print(f"[dim]Owner:[/dim]    {state['metadata'].get('owner', '-')}")
+                console.print(f"[dim]Group:[/dim]    {state['metadata'].get('group', '-')}")
+                console.print(f"[dim]Mode:[/dim]     {state['metadata'].get('mode', '-')}")
+                console.print(f"[dim]Modified:[/dim] {state['metadata'].get('modified_at', '-')}")
+                console.print()
+                console.print("[bold]Content:[/bold]")
+
+            content = state["content"]
+        elif metadata:
             # Read with metadata for OCC
             data = nx.read(path, return_metadata=True)
             nx.close()

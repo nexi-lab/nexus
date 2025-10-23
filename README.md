@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-**Version 0.1.0** | AI Agent Infrastructure Platform
+**Version 0.4.0** | AI Agent Infrastructure Platform
 
 Nexus is a complete AI agent infrastructure platform that combines distributed unified filesystem, self-evolving agent memory, intelligent document processing, and seamless deployment from local development to hosted production—all from a single codebase.
 
@@ -30,13 +30,19 @@ Nexus is a complete AI agent infrastructure platform that combines distributed u
 - **Training Data Management**: Version-controlled datasets with deduplication
 - **Prompt Optimization**: Multi-candidate testing, execution traces, tradeoff analysis
 - **Experiment Tracking**: Organize optimization runs, per-example results, regression detection
+- **Custom Field Schemas**: Type-enforced metadata with validation rules for data contracts (v0.7.0)
+- **Saved Searches**: Reusable query collections for quick access to frequently-needed file sets (v0.8.0)
 
 ### Content Processing
 - **Rich Format Parsing**: Extensible parsers (PDF, Excel, CSV, JSON, images)
+- **LLM Provider Abstraction**: Unified interface for Anthropic, OpenAI, Google, and more (v0.4.0)
 - **LLM KV Cache Management**: 50-90% cost savings on AI queries
 - **Semantic Chunking**: Better search via intelligent document segmentation
 - **MCP Integration**: Native Model Context Protocol server
 - **Document Type Detection**: Automatic routing to appropriate parsers
+- **Workflow Automation**: Event-driven pipelines with file triggers, scheduled tasks, and plugin actions (v0.4.0)
+- **ML Auto-Tagging**: Self-improving document classification with feedback loops (v0.8.0)
+- **Thumbnail Generation**: Multi-size visual previews for images, PDFs, and documents (v0.7.0)
 
 ### Operations
 - **Resumable Jobs**: Checkpointing system survives restarts
@@ -45,6 +51,8 @@ Nexus is a complete AI agent infrastructure platform that combines distributed u
 - **Resource Management**: CPU throttling and rate limiting
 - **Work Queue Detection**: SQL views for efficient task scheduling and dependency resolution
 - **Batch Write API**: 4x faster bulk uploads for AI checkpoints and logs
+- **Document Sharing**: Time-limited, password-protected access links for collaboration (v0.8.0)
+- **Storage Analytics**: Usage tracking, deduplication savings, growth trends, cleanup recommendations (v0.9.0)
 
 ## Deployment Modes
 
@@ -2777,9 +2785,12 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
   - ✅ Python SDK and CLI demos
 
 ### v0.4.0 - AI Integration
-- [ ] LLM provider abstraction
-- [ ] Anthropic Claude integration
-- [ ] OpenAI integration
+- [x] LLM provider abstraction - Unified interface for multiple AI providers (litellm-based)
+- [x] Anthropic Claude integration - Native support for Claude models with prompt caching
+- [x] OpenAI integration - GPT-4, GPT-4o, o1, o3 models
+- [x] Google Gemini integration - Gemini Pro models
+- [x] Token counting and cost tracking - Automatic metrics collection
+- [x] Function/tool calling support - Unified interface across providers
 - [ ] Basic KV cache for prompts
 - [ ] Semantic search (vector embeddings)
 - [ ] LLM-powered document reading

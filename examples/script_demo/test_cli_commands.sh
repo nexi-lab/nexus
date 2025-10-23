@@ -1610,15 +1610,18 @@ echo -e "${GREEN}✓ All ReBAC tests passed!${NC}\n"
 # ============================================================
 echo -e "\n${BLUE}Testing Skills System CLI...${NC}"
 
-# Create separate workspace for skills tests
+# Create FRESH separate workspace for skills tests
+# Remove any leftover data to ensure clean state
 SKILLS_DATA_DIR="$TEST_WORKSPACE/skills-test-data"
+rm -rf "$SKILLS_DATA_DIR"  # Clean up any previous state
+
 test_command "Create skills test workspace" \
     mkdir -p "$SKILLS_DATA_DIR"
 
 test_command "Initialize skills test workspace" \
     nexus init "$SKILLS_DATA_DIR"
 
-# Switch to skills test data directory
+# Switch to skills test data directory for all skills tests
 export NEXUS_DATA_DIR="$SKILLS_DATA_DIR/nexus-data"
 
 # Test 116: List skills (empty initially)

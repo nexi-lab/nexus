@@ -23,6 +23,7 @@ from nexus.cli.commands import (
     directory,
     file_ops,
     metadata,
+    operations,
     permissions,
     plugins,
     rebac,
@@ -54,6 +55,7 @@ def register_all_commands(cli: click.Group) -> None:
     work.register_commands(cli)
     server.register_commands(cli)
     plugins.register_commands(cli)
+    operations.register_commands(cli)
 
 
 __all__ = [
@@ -70,4 +72,5 @@ __all__ = [
     "work",
     "server",
     "plugins",
+    "operations",
 ]

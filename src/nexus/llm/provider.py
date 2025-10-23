@@ -591,7 +591,7 @@ class LiteLLMProvider(LLMProvider):
             extra_kwargs["custom_cost_per_token"] = cost_per_token
 
         try:
-            cost = litellm_completion_cost(completion_response=response, **extra_kwargs)
+            cost = litellm_completion_cost(completion_response=response, **extra_kwargs)  # type: ignore[arg-type]
             if cost is not None:
                 self.metrics.add_cost(float(cost))
                 return float(cost)
@@ -605,7 +605,7 @@ class LiteLLMProvider(LLMProvider):
                 cost = litellm_completion_cost(
                     completion_response=response,
                     model=model_name,
-                    **extra_kwargs,
+                    **extra_kwargs,  # type: ignore[arg-type]
                 )
                 if cost is not None:
                     self.metrics.add_cost(float(cost))

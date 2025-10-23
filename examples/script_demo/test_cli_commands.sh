@@ -881,6 +881,67 @@ test_command "Sync command - disable checksum verification" \
 echo -e "${GREEN}✓ All rclone-style CLI tests passed!${NC}\n"
 
 # ============================================================
+# Batch Write Tests (Issue #212 - Performance Optimization)
+# ============================================================
+echo -e "\n${BLUE}Testing batch write operations...${NC}"
+
+# Create test directory with multiple files
+BATCH_TEST_DIR="$TEST_WORKSPACE/batch-upload-source"
+mkdir -p "$BATCH_TEST_DIR/logs"
+mkdir -p "$BATCH_TEST_DIR/checkpoints"
+
+# Create 30 small test files
+for i in {1..20}; do
+    echo "Log entry $i - $(date)" > "$BATCH_TEST_DIR/logs/app_$i.log"
+done
+
+for i in {1..10}; do
+    echo "Checkpoint $i data" > "$BATCH_TEST_DIR/checkpoints/model_epoch_$i.ckpt"
+done
+
+# Test 77a: Batch write - upload entire directory
+test_command "write-batch - upload directory to Nexus" \
+    nexus write-batch "$BATCH_TEST_DIR" --dest-prefix /batch-upload-test
+
+# Test 77b: Verify batch uploaded files exist
+test_command "write-batch - verify uploaded files" \
+    bash -c "nexus cat /batch-upload-test/logs/app_1.log && \
+             nexus cat /batch-upload-test/checkpoints/model_epoch_1.ckpt"
+
+# Test 77c: Count uploaded files
+test_command "write-batch - verify file count" \
+    bash -c "nexus ls /batch-upload-test --recursive | wc -l | grep -E '(30|31|32)'"
+
+# Test 77d: Batch write with pattern filter (only .log files)
+test_command "write-batch - upload with pattern filter" \
+    nexus write-batch "$BATCH_TEST_DIR" --dest-prefix /batch-logs-only --pattern "**/*.log"
+
+# Test 77e: Verify only .log files were uploaded
+test_command "write-batch - verify pattern filter worked" \
+    bash -c "nexus ls /batch-logs-only --recursive | grep -c '\.log' | grep 20"
+
+# Test 77f: Batch write with exclude pattern
+mkdir -p "$BATCH_TEST_DIR/temp"
+echo "temp file" > "$BATCH_TEST_DIR/temp/cache.tmp"
+
+test_command "write-batch - upload with exclude pattern" \
+    nexus write-batch "$BATCH_TEST_DIR" --dest-prefix /batch-no-temp --exclude "temp/*" --exclude "*.tmp"
+
+# Test 77g: Verify excluded files were not uploaded
+test_command "write-batch - verify exclude pattern worked" \
+    bash -c "! nexus cat /batch-no-temp/temp/cache.tmp 2>/dev/null"
+
+# Test 77h: Batch write with custom batch size
+test_command "write-batch - upload with custom batch size" \
+    nexus write-batch "$BATCH_TEST_DIR/logs" --dest-prefix /batch-custom-size --batch-size 5
+
+# Test 77i: Test batch write help
+test_command "write-batch --help shows usage" \
+    bash -c "nexus write-batch --help | grep 'batch write API'"
+
+echo -e "${GREEN}✓ All batch write tests passed!${NC}\n"
+
+# ============================================================
 # UNIX Permissions Tests (Issue #86 - v0.3.0)
 # ============================================================
 echo -e "\n${BLUE}Testing UNIX-style permissions...${NC}"

@@ -381,6 +381,28 @@ class RemoteNexusFS(NexusFilesystem):
         )
         return result  # type: ignore[no-any-return]
 
+    def write_batch(
+        self,
+        files: list[tuple[str, bytes]],
+        context: Any = None,  # noqa: ARG002
+    ) -> list[dict[str, Any]]:
+        """Write multiple files in a single transaction.
+
+        Args:
+            files: List of (path, content) tuples to write
+            context: Unused in remote client (handled server-side)
+
+        Returns:
+            List of metadata dicts for each file
+        """
+        result = self._call_rpc(
+            "write_batch",
+            {
+                "files": files,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
     def delete(self, path: str) -> None:
         """Delete a file."""
         self._call_rpc("delete", {"path": path})

@@ -50,10 +50,10 @@ This document outlines the comprehensive cleanup plan for Nexus's first public r
 ### Files to Review/Consolidate
 
 - 📝 `NAMESPACE_VISIBILITY_CHANGES.md` - Move to docs/development/ or remove if outdated
-- 📝 `DEPLOYMENT_QUICK_START.md` - Consolidate with docs/deployment/
-- 📝 Deployment scripts: `deploy-gcp.sh`, `deploy-gcp-docker.sh`, `deploy-gcp.example.sh` - Move to scripts/ or docs/deployment/
-- 📝 `check_server.py` - Move to scripts/ or remove if unused
-- 📝 `test_gcs_backend.py` - Move to tests/ directory
+- ✅ `DEPLOYMENT_QUICK_START.md` - Moved to `docs/deployment/QUICK_START.md`
+- ✅ Deployment scripts: `deploy-gcp.sh`, `deploy-gcp-docker.sh`, `deploy-gcp.example.sh` - Moved to `scripts/`
+- ✅ `check_server.py` - Moved to `scripts/`
+- ✅ `test_gcs_backend.py` - Moved to `tests/integration/`
 
 ---
 
@@ -86,9 +86,9 @@ This document outlines the comprehensive cleanup plan for Nexus's first public r
 
 #### 4. Deployment Documentation
 
-- 📝 Consolidate: `DEPLOYMENT_QUICK_START.md` → `docs/deployment/`
-- 📝 Move deployment scripts to `scripts/deployment/`
-- 📝 Update `docs/deployment/` with GCP, Docker, local guides
+- ✅ Consolidate: `DEPLOYMENT_QUICK_START.md` → `docs/deployment/QUICK_START.md`
+- ✅ Move deployment scripts to `scripts/`
+- ✅ Update references in `docs/deployment/` with new script paths
 
 #### 5. Getting Started Guides
 
@@ -163,15 +163,17 @@ This document outlines the comprehensive cleanup plan for Nexus's first public r
 
 ### Build & Deploy Scripts
 
-**Move to `scripts/deployment/`:**
-- `deploy-gcp.sh`
-- `deploy-gcp-docker.sh`
-- `start-server.sh`
+**Moved to `scripts/`:**
+- ✅ `deploy-gcp.sh`
+- ✅ `deploy-gcp-docker.sh`
+- ✅ `deploy-gcp.example.sh`
+- ✅ `check_server.py`
+- 📝 `start-server.sh` (keep in root for convenience)
 
 **Keep in `scripts/`:**
-- `setup.sh`
-- `run_benchmarks.sh`
-- Other utility scripts
+- ✅ `setup.sh`
+- ✅ `run_benchmarks.sh`
+- ✅ Other utility scripts
 
 **Action Items:**
 - 📝 Add README in `scripts/` explaining each script
@@ -352,12 +354,11 @@ rm -f None metadata.db nexus.db nexus-metadata.db coverage.xml .coverage
 rm -rf htmlcov/ demo-data-no-parse/ test-fix-data/ nexus-examples-data/
 rm -rf nexus-examples-workspace/ nexus-sdk-examples-data/ my-data/ cas/ dirs/
 
-# Move files to proper locations
-mkdir -p scripts/deployment
-mv deploy-gcp*.sh scripts/deployment/ 2>/dev/null
-mv start-server.sh scripts/deployment/ 2>/dev/null
-mv check_server.py scripts/ 2>/dev/null
-mv test_gcs_backend.py tests/ 2>/dev/null
+# Move files to proper locations (COMPLETED in v0.4.0)
+# ✅ mv DEPLOYMENT_QUICK_START.md docs/deployment/QUICK_START.md
+# ✅ mv deploy-gcp*.sh scripts/
+# ✅ mv check_server.py scripts/
+# ✅ mv test_gcs_backend.py tests/integration/
 
 # Update git
 git add -A

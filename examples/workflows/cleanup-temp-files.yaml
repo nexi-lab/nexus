@@ -1,0 +1,45 @@
+name: cleanup-temp-files
+description: Clean up temporary files older than 7 days
+version: 1.0
+
+triggers:
+  - type: schedule
+    cron: "0 2 * * *"  # Run daily at 2 AM
+
+actions:
+  - name: find_old_files
+    type: python
+    code: |
+      import os
+      from datetime import datetime, timedelta
+      from pathlib import Path
+
+      temp_dir = "/workspace/temp"
+      cutoff_date = datetime.now() - timedelta(days=7)
+      old_files = []
+
+      for file_path in Path(temp_dir).rglob("*"):
+          if file_path.is_file():
+              mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+              if mtime < cutoff_date:
+                  old_files.append(str(file_path))
+
+      result = {"files": old_files, "count": len(old_files)}
+
+  - name: archive_old_files
+    type: bash
+    command: |
+      for file in {find_old_files_output.files}; do
+        echo "Archiving: $file"
+        # Move to archive directory
+        # In production, this would actually move the files
+      done
+
+  - name: report_cleanup
+    type: webhook
+    url: https://monitoring.example.com/api/cleanup-report
+    method: POST
+    body:
+      workflow: cleanup-temp-files
+      files_cleaned: "{find_old_files_output.count}"
+      timestamp: "{timestamp}"

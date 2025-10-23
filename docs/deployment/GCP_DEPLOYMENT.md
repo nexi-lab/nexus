@@ -4,7 +4,7 @@ This guide walks you through deploying a Nexus RPC server to Google Cloud Platfo
 
 ## Overview
 
-The deployment script (`deploy-gcp.sh`) automates:
+The deployment script (`../../scripts/deploy-gcp.sh`) automates:
 - Creating a GCP VM instance (Ubuntu 22.04)
 - Installing system dependencies (Python 3.11, git, etc.)
 - Cloning the Nexus repository
@@ -66,10 +66,10 @@ gcloud services enable storage.googleapis.com  # If using GCS backend
 
 ```bash
 # Deploy with default settings
-./deploy-gcp.sh --project-id YOUR-PROJECT-ID
+../../scripts/deploy-gcp.sh --project-id YOUR-PROJECT-ID
 
 # Deploy with custom settings
-./deploy-gcp.sh \
+../../scripts/deploy-gcp.sh \
   --project-id YOUR-PROJECT-ID \
   --instance-name my-nexus-server \
   --zone us-west1-a \
@@ -84,7 +84,7 @@ gcloud services enable storage.googleapis.com  # If using GCS backend
 gsutil mb -p YOUR-PROJECT-ID -l us-central1 gs://your-nexus-bucket
 
 # Deploy with GCS backend
-./deploy-gcp.sh \
+../../scripts/deploy-gcp.sh \
   --project-id YOUR-PROJECT-ID \
   --gcs-bucket your-nexus-bucket \
   --api-key mysecretkey123
@@ -151,7 +151,7 @@ gsutil mb -p $PROJECT_ID gs://$GCS_BUCKET
 ### 2. Run Deployment Script
 
 ```bash
-./deploy-gcp.sh \
+../../scripts/deploy-gcp.sh \
   --project-id "$PROJECT_ID" \
   --instance-name nexus-prod \
   --zone us-central1-a \
@@ -227,7 +227,7 @@ gcloud compute ssh nexus-server --zone=us-central1-a \
 
 ```bash
 # Redeploy with latest code (without recreating VM)
-./deploy-gcp.sh \
+../../scripts/deploy-gcp.sh \
   --project-id YOUR-PROJECT-ID \
   --deploy-only
 ```

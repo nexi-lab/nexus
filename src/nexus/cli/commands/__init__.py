@@ -12,6 +12,7 @@ This package contains all CLI commands organized by functionality:
 - work: Work queue management
 - server: Server operations (serve, mount, unmount)
 - plugins: Plugin management
+- workflows: Workflow automation system
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from nexus.cli.commands import (
     skills,
     versions,
     work,
+    workflows,
     workspace,
 )
 
@@ -56,6 +58,7 @@ def register_all_commands(cli: click.Group) -> None:
     server.register_commands(cli)
     plugins.register_commands(cli)
     operations.register_commands(cli)
+    workflows.register_commands(cli)
 
 
 __all__ = [
@@ -73,4 +76,5 @@ __all__ = [
     "server",
     "plugins",
     "operations",
+    "workflows",
 ]

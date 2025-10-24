@@ -1,0 +1,110 @@
+# GCP Cloud Build Configuration for Nexus AI Filesystem (PyPI Version)
+# Builds Docker image from PyPI package instead of local source
+#
+# Usage:
+#   gcloud builds submit --config=cloudbuild-pypi.yaml --substitutions=_VERSION=0.3.9
+#
+# Variables:
+#   _VERSION: PyPI package version to install (default: latest)
+#   _IMAGE_NAME: Docker image name (default: nexus-server)
+#   _REGION: Artifact Registry region (default: us-central1)
+#   PROJECT_ID: Automatically set by Cloud Build to the current project
+
+steps:
+  # Step 1: Build the Docker image from PyPI
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-image'
+    args:
+      - 'build'
+      - '-f'
+      - 'Dockerfile.pypi'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:${_VERSION}'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:latest'
+      - '--build-arg'
+      - 'BUILDKIT_INLINE_CACHE=1'
+      - '--build-arg'
+      - 'NEXUS_VERSION=${_VERSION}'
+      - '--build-arg'
+      - 'GIT_COMMIT=${COMMIT_SHA}'
+      - '--build-arg'
+      - 'BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")'
+      - '--cache-from'
+      - 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:latest'
+      - '.'
+    dir: '.'
+
+  # Step 2: Push the versioned image
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-versioned'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:${_VERSION}'
+    waitFor: ['build-image']
+
+  # Step 3: Push the latest tag
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-latest'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:latest'
+    waitFor: ['build-image']
+
+  # Step 4: Verify the image health
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'verify-image'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Start container in background
+        docker run -d --name test-container \
+          -e NEXUS_HOST=0.0.0.0 \
+          -e NEXUS_PORT=8080 \
+          -e NEXUS_DATA_DIR=/tmp/data \
+          gcr.io/$PROJECT_ID/${_IMAGE_NAME}:${_VERSION}
+
+        # Wait for server to start
+        sleep 10
+
+        # Check health endpoint
+        docker exec test-container curl -f http://localhost:8080/health || exit 1
+
+        # Verify installed version from PyPI
+        echo "Verifying PyPI version..."
+        docker exec test-container pip show nexus-ai-fs
+
+        # Cleanup
+        docker stop test-container
+        docker rm test-container
+
+        echo "Image verification successful! Running nexus-ai-fs version ${_VERSION} from PyPI"
+    waitFor: ['push-versioned']
+
+# Images to push to registry
+images:
+  - 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:${_VERSION}'
+  - 'gcr.io/$PROJECT_ID/${_IMAGE_NAME}:latest'
+
+# Substitutions (default values)
+substitutions:
+  _VERSION: 'latest'
+  _IMAGE_NAME: 'nexus-server'
+
+# Build options
+options:
+  machineType: 'N1_HIGHCPU_8'  # Use high-CPU machine for faster builds
+  diskSizeGb: 100
+  logging: LEGACY  # Use legacy logging (no special permissions needed)
+  logStreamingOption: STREAM_ON
+
+# Timeout for entire build
+timeout: '1800s'  # 30 minutes
+
+# Tags for organizing builds
+tags:
+  - 'nexus-ai-fs'
+  - 'nexus-server'
+  - 'pypi'
+  - '${_VERSION}'

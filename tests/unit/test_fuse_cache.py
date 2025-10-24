@@ -54,6 +54,7 @@ class TestAttributeCache:
         result = cache_mgr.get_attr("/nonexistent")
         assert result is None
 
+    @pytest.mark.slow
     def test_attr_cache_ttl_expiry(self, cache_mgr: FUSECacheManager) -> None:
         """Test that attribute cache entries expire after TTL."""
         attrs = {"st_mode": 0o100644, "st_size": 1024}

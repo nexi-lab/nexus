@@ -52,6 +52,7 @@ from langgraph.graph import END, StateGraph, add_messages
 from langgraph.prebuilt import ToolNode
 
 import nexus
+from nexus.remote import RemoteNexusFS
 from nexus_tools import get_nexus_tools
 
 
@@ -193,16 +194,12 @@ def connect_to_nexus():
 
     print(f"Connecting to Nexus server at {server_url}...")
 
-    # Connect to remote Nexus server
-    config = {
-        "mode": "remote",
-        "remote_url": server_url,
-    }
+    # Connect to remote Nexus server using RemoteNexusFS
+    nx = RemoteNexusFS(
+        server_url=server_url,
+        api_key=api_key,
+    )
 
-    if api_key:
-        config["api_key"] = api_key
-
-    nx = nexus.connect(config=config)
     print("✓ Connected to Nexus server")
 
     return nx

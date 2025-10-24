@@ -644,3 +644,40 @@ class VectorDatabase:
         ]
 
         return ranked_results
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get vector database statistics.
+
+        Note: This method exists for backward compatibility with tests.
+        New code should use SemanticSearch.get_index_stats() instead.
+        """
+        return {
+            "vec_enabled": self.vec_available,
+            "db_type": self.db_type,
+        }
+
+    def clear_index(self, session: Session) -> None:
+        """Clear all search indexes.
+
+        Note: This method exists for backward compatibility with tests.
+        New code should use SemanticSearch.clear_index() instead.
+        """
+        from nexus.storage.models import DocumentChunkModel
+
+        session.query(DocumentChunkModel).delete()
+        session.commit()
+
+    def delete_document(self, session: Session, path_id: str) -> None:
+        """Delete document from index.
+
+        Note: This method exists for backward compatibility with tests.
+        New code should use SemanticSearch.delete_document_index() instead.
+
+        Args:
+            session: Database session
+            path_id: Path ID of document to delete
+        """
+        from nexus.storage.models import DocumentChunkModel
+
+        session.query(DocumentChunkModel).filter(DocumentChunkModel.path_id == path_id).delete()
+        session.commit()

@@ -345,6 +345,24 @@ agent.invoke({
 })
 ```
 
+### 5. Multi-Tenant Collaboration
+
+Multiple agents working on different tenants, sharing infrastructure but isolated data.
+
+```python
+# Agent 1: Development team analyzer
+nx_dev = connect_to_nexus(tenant_id="team-dev", agent_id="code-analyzer")
+# Analyzes code in /team-dev namespace
+
+# Agent 2: QA team validator
+nx_qa = connect_to_nexus(tenant_id="team-qa", agent_id="test-validator")
+# Validates tests in /team-qa namespace
+
+# Agent 3: Shared documentation
+nx_docs = connect_to_nexus(tenant_id="shared-docs", agent_id="doc-generator")
+# Generates docs accessible to all teams
+```
+
 ## Configuration
 
 ### Remote Nexus Server
@@ -354,6 +372,34 @@ By default, connects to `http://136.117.224.98`. Override with:
 ```bash
 export NEXUS_SERVER_URL="http://your-server:8080"
 ```
+
+### Multi-Tenancy Support
+
+Nexus supports multi-tenancy for data isolation. Each tenant has its own namespace:
+
+```bash
+# Set tenant and agent identifiers
+export NEXUS_TENANT_ID="my-team"
+export NEXUS_AGENT_ID="code-analyzer"
+
+# Or pass programmatically
+python -c "from langgraph_react_demo import connect_to_nexus; nx = connect_to_nexus(tenant_id='my-team', agent_id='analyzer')"
+```
+
+**Common Tenant Patterns:**
+
+| Pattern | Example | Use Case |
+|---------|---------|----------|
+| Demo/Testing | `langgraph-demo` | Development and testing |
+| Per-User | `user-{user_id}` | SaaS applications |
+| Per-Team | `team-{team_name}` | Team collaboration |
+| Per-Environment | `prod-workflow` | Production isolation |
+
+**Benefits:**
+- ✅ **Data Isolation** - Each tenant's data is separate
+- ✅ **Shared Infrastructure** - Multiple tenants on one server
+- ✅ **Access Control** - Tenant-scoped permissions
+- ✅ **Cost Efficiency** - Shared resources, isolated data
 
 ### Local Testing
 

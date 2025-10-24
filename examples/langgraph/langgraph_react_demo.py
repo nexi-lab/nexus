@@ -178,26 +178,51 @@ def get_llm():
         )
 
 
-def connect_to_nexus():
+def connect_to_nexus(tenant_id: str = "langgraph-demo", agent_id: str = "react-agent"):
     """
-    Connect to remote Nexus server.
+    Connect to remote Nexus server with multi-tenancy support.
 
     Uses the server at http://136.117.224.98 (or localhost for testing).
     You can override with NEXUS_SERVER_URL environment variable.
 
+    Args:
+        tenant_id: Tenant identifier for data isolation (default: "langgraph-demo")
+        agent_id: Agent identifier for tracking (default: "react-agent")
+
     Returns:
-        NexusFilesystem instance
+        NexusFilesystem instance configured for the specified tenant
+
+    Multi-tenancy:
+        Nexus supports multi-tenancy, allowing multiple agents or users to share
+        the same server while keeping their data isolated. Each tenant has its own
+        namespace, and operations are scoped to the tenant_id.
+
+        Example tenant IDs:
+        - "langgraph-demo" - Demo/testing tenant
+        - "user-123" - Per-user tenant for SaaS apps
+        - "team-acme" - Team-based tenant for collaboration
+        - "prod-workflow" - Production workflow tenant
     """
     server_url = os.getenv("NEXUS_SERVER_URL", "http://136.117.224.98")
     api_key = os.getenv("NEXUS_API_KEY")
 
+    # Allow overriding via environment variables
+    tenant_id = os.getenv("NEXUS_TENANT_ID", tenant_id)
+    agent_id = os.getenv("NEXUS_AGENT_ID", agent_id)
+
     print(f"Connecting to Nexus server at {server_url}...")
+    print(f"  Tenant: {tenant_id}")
+    print(f"  Agent: {agent_id}")
 
     # Connect to remote Nexus server using RemoteNexusFS
     nx = RemoteNexusFS(
         server_url=server_url,
         api_key=api_key,
     )
+
+    # Set tenant and agent identifiers for multi-tenancy
+    nx.tenant_id = tenant_id
+    nx.agent_id = agent_id
 
     print("✓ Connected to Nexus server")
 

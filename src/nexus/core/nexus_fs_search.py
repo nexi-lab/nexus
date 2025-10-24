@@ -51,8 +51,10 @@ class NexusFSSearchMixin:
         """
         List files in a directory.
 
+        Supports memory virtual paths since v0.4.0.
+
         Args:
-            path: Directory path to list (default: "/")
+            path: Directory path to list (default: "/", supports memory paths)
             recursive: If True, list all files recursively; if False, list only direct children (default: True)
             details: If True, return detailed metadata; if False, return paths only (default: False)
             prefix: (Deprecated) Path prefix to filter by - for backward compatibility.
@@ -76,7 +78,17 @@ class NexusFSSearchMixin:
 
             # Old API (deprecated but supported)
             fs.list(prefix="/dir")  # Returns all files under /dir recursively
+
+            # List memories (v0.4.0)
+            fs.list("/memory/by-user/alice")  # Returns memory paths for user alice
+            fs.list("/workspace/alice/agent1/memory")  # Returns memories for agent1
         """
+        # Phase 2 Integration (v0.4.0): Intercept memory paths
+        from nexus.core.memory_router import MemoryViewRouter
+
+        if path and MemoryViewRouter.is_memory_path(path):
+            return self._list_memory_path(path, details)
+
         # Handle backward compatibility with old 'prefix' parameter
         if prefix is not None:
             # Old API: list(prefix="/path") - always recursive
@@ -647,3 +659,67 @@ class NexusFSSearchMixin:
 
         # Initialize vector extensions and FTS tables
         self._semantic_search.initialize()
+
+    def _list_memory_path(
+        self, path: str, details: bool = False
+    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
+        """List memories via virtual path (Phase 2 Integration v0.4.0).
+
+        Args:
+            path: Memory virtual path.
+            details: If True, return detailed metadata.
+
+        Returns:
+            List of memory paths or metadata dicts.
+        """
+        from nexus.core.entity_registry import EntityRegistry
+        from nexus.core.memory_router import MemoryViewRouter
+
+        # Parse path to extract filters
+        parts = [p for p in path.split("/") if p]
+
+        # Extract entity IDs from path
+        session = self.metadata.SessionLocal()
+        try:
+            registry = EntityRegistry(session)
+            router = MemoryViewRouter(session, registry)
+
+            # Extract IDs using entity registry
+            ids = registry.extract_ids_from_path_parts(parts)
+
+            # Query memories
+            memories = router.query_memories(
+                tenant_id=ids.get("tenant_id"),
+                user_id=ids.get("user_id"),
+                agent_id=ids.get("agent_id"),
+            )
+
+            if details:
+                # Return detailed metadata
+                detail_results: builtins.list[dict[str, Any]] = []
+                for mem in memories:
+                    # Use first virtual path as canonical
+                    paths = router.get_virtual_paths(mem)
+                    mem_path = paths[0] if paths else f"/objs/memory/{mem.memory_id}"
+
+                    detail_results.append(
+                        {
+                            "path": mem_path,
+                            "size": len(self.backend.read_content(mem.content_hash)),  # type: ignore[attr-defined]
+                            "modified_at": mem.created_at,
+                            "etag": mem.content_hash,
+                        }
+                    )
+                return detail_results
+            else:
+                # Return paths only
+                path_results: builtins.list[str] = []
+                for mem in memories:
+                    paths = router.get_virtual_paths(mem)
+                    # Return the most relevant path based on query
+                    if paths:
+                        path_results.append(paths[0])
+                return path_results
+
+        finally:
+            session.close()

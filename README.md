@@ -41,7 +41,8 @@ Nexus is a complete AI agent infrastructure platform that combines distributed u
 - **Rich Format Parsing**: Extensible parsers (PDF, Excel, CSV, JSON, images)
 - **LLM Provider Abstraction**: Unified interface for Anthropic, OpenAI, Google, and more (v0.4.0)
 - **LLM KV Cache Management**: 50-90% cost savings on AI queries
-- **Semantic Chunking**: Better search via intelligent document segmentation
+- **Semantic Search**: Keyword, vector, and hybrid search with auto-installed extensions (sqlite-vec, pgvector) (v0.4.0)
+- **Semantic Chunking**: Intelligent document segmentation with multiple strategies (v0.4.0)
 - **MCP Integration**: Native Model Context Protocol server
 - **Document Type Detection**: Automatic routing to appropriate parsers
 - **Unix Pipeline Integration**: Composable plugin commands with JSON I/O for building workflows (v0.4.0)
@@ -267,8 +268,14 @@ pip install nexus-ai-fs[fuse]
 # Install with PostgreSQL support
 pip install nexus-ai-fs[postgres]
 
+# Install with semantic search support (includes sqlite-vec and pgvector)
+pip install nexus-ai-fs[semantic-search]
+
+# Install with OpenAI embeddings for semantic search (recommended)
+pip install nexus-ai-fs[semantic-search-remote]
+
 # Install everything
-pip install nexus-ai-fs[all]  # All features (FUSE + PostgreSQL + future plugins)
+pip install nexus-ai-fs[all]  # All features (FUSE + PostgreSQL + semantic search + embeddings)
 
 # Verify installation
 nexus --version
@@ -2144,20 +2151,90 @@ async with nx:
     todos = await nx.grep(r"TODO:|FIXME:", file_pattern="*.py")
 ```
 
-### Semantic Search
+### Semantic Search (v0.4.0)
 
+Nexus provides powerful semantic search with three modes: keyword, semantic (vector-based), and hybrid.
+
+**Installation:**
+```bash
+# Install semantic search support
+pip install nexus-ai-fs[semantic-search]          # Vector extensions (sqlite-vec, pgvector)
+pip install nexus-ai-fs[semantic-search-remote]   # + OpenAI embeddings (recommended)
+```
+
+**Python API:**
 ```python
-# Search across documents with vector embeddings
-async with nexus.connect() as nx:
-    results = await nx.semantic_search(
-        path="/docs/",
-        query="How does authentication work?",
-        limit=10,
-        filters={"file_type": "markdown"}
+import nexus
+
+async def main():
+    nx = nexus.connect()
+
+    # Initialize semantic search (required once)
+    await nx.initialize_semantic_search(
+        embedding_provider="openai",  # or None for keyword-only
+        api_key="your-openai-key"     # or use OPENAI_API_KEY env var
     )
 
+    # Index documents for search
+    await nx.semantic_search_index(path="/docs", recursive=True)
+
+    # Keyword search (fast, exact matches)
+    results = await nx.semantic_search(
+        query="database SQL",
+        path="/docs",
+        search_mode="keyword"
+    )
+
+    # Semantic search (understands meaning, finds related concepts)
+    results = await nx.semantic_search(
+        query="How does authentication work?",
+        path="/docs",
+        search_mode="semantic"  # default
+    )
+
+    # Hybrid search (combines keyword + semantic for best results)
+    results = await nx.semantic_search(
+        query="API error handling",
+        path="/docs",
+        search_mode="hybrid"
+    )
+
+    # View results
     for result in results:
-        print(f"{result.path}:{result.line} - {result.text}")
+        print(f"{result['path']} (score: {result['score']:.3f})")
+        print(f"  {result['chunk_text'][:200]}...")
+```
+
+**CLI:**
+```bash
+# Initialize search engine (one-time setup)
+nexus search init --provider openai --api-key $OPENAI_API_KEY
+
+# Index documents
+nexus search index /docs
+
+# Search with different modes
+nexus search query "database performance" --mode keyword
+nexus search query "authentication flow" --mode semantic
+nexus search query "API design" --mode hybrid
+
+# View search statistics
+nexus search stats
+```
+
+**Features:**
+- ✅ Keyword search using FTS5 (SQLite) or tsvector (PostgreSQL) - works out of the box
+- ✅ Semantic search using vector embeddings - requires OpenAI or Voyage AI API key
+- ✅ Hybrid search combining both approaches - best accuracy
+- ✅ Automatic document chunking with multiple strategies (fixed, semantic, overlapping)
+- ✅ Works with both SQLite and PostgreSQL
+- ✅ Vector extensions (sqlite-vec, pgvector) auto-installed via pip
+- ✅ No manual database extension compilation needed!
+
+**Demo:**
+```bash
+# Run the semantic search demo
+python examples/py_demo/semantic_search_demo.py
 ```
 
 ### LLM-Powered Reading
@@ -2942,11 +3019,15 @@ Apache 2.0 License - see [LICENSE](./LICENSE) for details.
 - [x] LLM provider abstraction - Unified interface for multiple AI providers (litellm-based)
 - [x] Anthropic Claude integration - Native support for Claude models with prompt caching
 - [x] OpenAI integration - GPT-4, GPT-4o, o1, o3 models
+- [x] Semantic search - Keyword, vector, and hybrid search modes
+- [x] Vector database integration - sqlite-vec and pgvector auto-installed via pip
+- [x] Document chunking - Fixed, semantic, and overlapping strategies
+- [x] Embedding providers - OpenAI and Voyage AI support
+- [x] Search CLI - `nexus search` commands for init, index, query, and stats
 - [x] Google Gemini integration - Gemini Pro models
 - [x] Token counting and cost tracking - Automatic metrics collection
 - [x] Function/tool calling support - Unified interface across providers
 - [ ] Basic KV cache for prompts
-- [ ] Semantic search (vector embeddings)
 - [ ] LLM-powered document reading
 
 ### v0.5.0 - Agent Workspaces

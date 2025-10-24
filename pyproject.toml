@@ -57,12 +57,13 @@ dependencies = [
     "markitdown[all]>=0.0.1a2",  # Includes PDF, Excel, PowerPoint, etc.
     # LLM Provider Abstraction (v0.4.0)
     "litellm>=1.0",  # Multi-provider LLM support
-    "tiktoken>=0.5",  # Token counting for OpenAI models
+    "tiktoken>=0.5",  # Token counting for OpenAI models and chunking
     "anthropic>=0.40",  # Native Anthropic SDK for better Claude support
     # Note: Dependencies will be added incrementally as features are implemented
     # v0.1.0: Will add SQLAlchemy, aiosqlite, cachetools
-    # v0.2.0: Will add pypdf, openpyxl, pandas, qdrant-client
+    # v0.2.0: Will add pypdf, openpyxl, pandas
     # v0.3.0: Will add anthropic, openai, tiktoken
+    # v0.4.0: Will add sqlite-vec, pgvector, optional: openai, sentence-transformers
     # v0.5.0: Will add fastapi, uvicorn
     "dotenv>=0.9.9",
 ]
@@ -111,6 +112,19 @@ postgres = [
     "psycopg2-binary>=2.9.9",  # PostgreSQL adapter
 ]
 
+semantic-search = [
+    # Keyword search support (v0.4.0) - uses existing SQLite/PostgreSQL FTS
+    # Vector database extensions for semantic/hybrid search:
+    "sqlite-vec>=0.1.0",  # SQLite vector search (pip installable)
+    "pgvector>=0.3.0",    # PostgreSQL vector search (Python client - requires pgvector extension in database)
+]
+
+semantic-search-remote = [
+    # Remote embedding providers (lightweight, requires API keys)
+    # Recommended: OpenAI embeddings (default for semantic search)
+    "openai>=1.0.0",
+]
+
 # First-party plugins (install manually for now - not yet published to PyPI)
 # anthropic = [
 #     "nexus-plugin-anthropic>=0.1.0",
@@ -127,8 +141,13 @@ postgres = [
 
 all = [
     # All optional features (plugins must be installed manually)
+    # Default embedding provider: OpenAI (lightweight, requires API key)
+    # Excludes: sentence-transformers (too heavy ~2GB), voyageai (specialized use case)
     "fusepy>=3.0.1",
     "psycopg2-binary>=2.9.9",
+    "sqlite-vec>=0.1.0",
+    "pgvector>=0.3.0",
+    "openai>=1.0.0",
 ]
 
 [project.urls]

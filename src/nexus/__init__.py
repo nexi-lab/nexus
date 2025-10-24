@@ -180,10 +180,12 @@ def connect(
             ):
                 db_path = str(Path(data_dir) / "metadata.db")
 
-        return NexusFS(
+        # Create NexusFS instance
+        nx_fs = NexusFS(
             backend=backend,
             db_path=db_path,
             tenant_id=cfg.tenant_id,
+            user_id=cfg.user_id,  # v0.4.0: Identity-based memory
             agent_id=cfg.agent_id,
             is_admin=cfg.is_admin,
             custom_namespaces=custom_namespaces,
@@ -197,6 +199,39 @@ def connect(
             custom_parsers=cfg.parsers,
             enforce_permissions=cfg.enforce_permissions,
         )
+
+        # v0.4.0: Auto-register entities and migrate for identity-based memory
+        if cfg.tenant_id or cfg.user_id or cfg.agent_id:
+            from nexus.core.entity_registry import EntityRegistry
+            from nexus.migrations.migrate_identity_memory_v04 import IdentityMemoryMigration
+
+            try:
+                # Get database session from metadata store
+                if hasattr(nx_fs, "metadata") and hasattr(nx_fs.metadata, "SessionLocal"):
+                    session = nx_fs.metadata.SessionLocal()
+
+                    # Run migration if needed (Phase 5)
+                    migration = IdentityMemoryMigration(session)
+                    if migration.needs_migration():
+                        migration.create_tables()
+
+                    # Auto-register entities (Phase 1)
+                    entity_registry = EntityRegistry(session)
+                    entity_registry.auto_register_from_config(
+                        {
+                            "tenant_id": cfg.tenant_id,
+                            "user_id": cfg.user_id,
+                            "agent_id": cfg.agent_id,
+                        }
+                    )
+
+                    # Close the session
+                    session.close()
+            except Exception:
+                # Silently fail if entity registration/migration fails (backward compatibility)
+                pass
+
+        return nx_fs
     elif cfg.mode in ["monolithic", "distributed"]:
         # TODO: Implement in v0.2.0+
         raise NotImplementedError(

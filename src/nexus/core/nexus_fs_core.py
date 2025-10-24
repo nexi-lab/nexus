@@ -64,7 +64,7 @@ class NexusFSCoreMixin:
         Read file content as bytes.
 
         Args:
-            path: Virtual path to read
+            path: Virtual path to read (supports memory virtual paths since v0.4.0)
             context: Optional operation context for permission checks (uses default if not provided)
             return_metadata: If True, return dict with content and metadata (etag, version, modified_at).
                            If False, return only content bytes (default: False)
@@ -97,8 +97,18 @@ class NexusFSCoreMixin:
             >>> etag = result['etag']
             >>> # Later, write with version check
             >>> nx.write("/workspace/data.json", new_content, if_match=etag)
+
+            >>> # Read memory via virtual path (v0.4.0)
+            >>> content = nx.read("/workspace/alice/agent1/memory/facts")
+            >>> content = nx.read("/memory/by-user/alice/facts")  # Same memory!
         """
         path = self._validate_path(path)
+
+        # Phase 2 Integration (v0.4.0): Intercept memory paths
+        from nexus.core.memory_router import MemoryViewRouter
+
+        if MemoryViewRouter.is_memory_path(path):
+            return self._read_memory_path(path, return_metadata)
 
         # Check read permission (v0.3.0)
         self._check_permission(path, Permission.READ, context)
@@ -189,8 +199,18 @@ class NexusFSCoreMixin:
 
             >>> # Create-only mode
             >>> nx.write("/workspace/new.txt", b'content', if_none_match=True)
+
+            >>> # Write memory via virtual path (v0.4.0)
+            >>> nx.write("/workspace/alice/agent1/memory/facts", b'Python is great')
+            >>> nx.write("/memory/by-user/alice/facts", b'Update')  # Same memory!
         """
         path = self._validate_path(path)
+
+        # Phase 2 Integration (v0.4.0): Intercept memory paths
+        from nexus.core.memory_router import MemoryViewRouter
+
+        if MemoryViewRouter.is_memory_path(path):
+            return self._write_memory_path(path, content)
 
         # Route to backend with write access check FIRST (to check tenant/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
@@ -558,13 +578,15 @@ class NexusFSCoreMixin:
 
     def delete(self, path: str, context: OperationContext | None = None) -> None:
         """
-        Delete a file.
+        Delete a file or memory.
 
         Removes file from backend and metadata store.
         Decrements reference count in CAS (only deletes when ref_count=0).
 
+        Supports memory virtual paths since v0.4.0.
+
         Args:
-            path: Virtual path to delete
+            path: Virtual path to delete (supports memory paths)
             context: Optional operation context for permission checks (uses default if not provided)
 
         Raises:
@@ -575,6 +597,12 @@ class NexusFSCoreMixin:
             PermissionError: If path is read-only or user doesn't have write permission
         """
         path = self._validate_path(path)
+
+        # Phase 2 Integration (v0.4.0): Intercept memory paths
+        from nexus.core.memory_router import MemoryViewRouter
+
+        if MemoryViewRouter.is_memory_path(path):
+            return self._delete_memory_path(path)
 
         # Route to backend with write access check FIRST (to check tenant/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
@@ -769,3 +797,114 @@ class NexusFSCoreMixin:
             ETag (MD5 hash)
         """
         return hashlib.md5(content).hexdigest()
+
+    def _read_memory_path(self, path: str, return_metadata: bool = False) -> bytes | dict[str, Any]:
+        """Read memory via virtual path (Phase 2 Integration v0.4.0).
+
+        Args:
+            path: Memory virtual path.
+            return_metadata: If True, return dict with content and metadata.
+
+        Returns:
+            Memory content as bytes, or dict with metadata if return_metadata=True.
+
+        Raises:
+            NexusFileNotFoundError: If memory doesn't exist.
+        """
+        from nexus.core.entity_registry import EntityRegistry
+        from nexus.core.memory_router import MemoryViewRouter
+
+        # Get memory via router
+        session = self.metadata.SessionLocal()
+        try:
+            router = MemoryViewRouter(session, EntityRegistry(session))
+            memory = router.resolve(path)
+
+            if not memory:
+                raise NexusFileNotFoundError(f"Memory not found at path: {path}")
+
+            # Read content from CAS
+            content = self.backend.read_content(memory.content_hash)
+
+            if return_metadata:
+                return {
+                    "content": content,
+                    "etag": memory.content_hash,
+                    "version": 1,  # Memories don't version like files
+                    "modified_at": memory.created_at,
+                    "size": len(content),
+                }
+
+            return content
+        finally:
+            session.close()
+
+    def _write_memory_path(self, path: str, content: bytes) -> dict[str, Any]:
+        """Write memory via virtual path (Phase 2 Integration v0.4.0).
+
+        Args:
+            path: Memory virtual path.
+            content: Content to store.
+
+        Returns:
+            Dict with memory metadata.
+        """
+        # Delegate to Memory API
+        if not hasattr(self, "memory") or self.memory is None:
+            raise RuntimeError(
+                "Memory API not initialized. Use nx.memory for direct memory operations."
+            )
+
+        # Extract memory type from path if present
+        parts = [p for p in path.split("/") if p]
+        memory_type = None
+        if "memory" in parts:
+            idx = parts.index("memory")
+            if idx + 1 < len(parts):
+                memory_type = parts[idx + 1]
+
+        # Store memory with default scope='user'
+        memory_id = self.memory.store(
+            content=content.decode("utf-8") if isinstance(content, bytes) else content,
+            scope="user",
+            memory_type=memory_type,
+        )
+
+        # Get the created memory
+        mem = self.memory.get(memory_id)
+
+        return {
+            "etag": mem["content_hash"],
+            "version": 1,
+            "modified_at": mem["created_at"],
+            "size": len(content),
+        }
+
+    def _delete_memory_path(self, path: str) -> None:
+        """Delete memory via virtual path (Phase 2 Integration v0.4.0).
+
+        Args:
+            path: Memory virtual path.
+
+        Raises:
+            NexusFileNotFoundError: If memory doesn't exist.
+        """
+        from nexus.core.entity_registry import EntityRegistry
+        from nexus.core.memory_router import MemoryViewRouter
+
+        # Get memory via router
+        session = self.metadata.SessionLocal()
+        try:
+            router = MemoryViewRouter(session, EntityRegistry(session))
+            memory = router.resolve(path)
+
+            if not memory:
+                raise NexusFileNotFoundError(f"Memory not found at path: {path}")
+
+            # Delete the memory
+            router.delete_memory(memory.memory_id)
+
+            # Also delete content from CAS (decrement ref count)
+            self.backend.delete_content(memory.content_hash)
+        finally:
+            session.close()

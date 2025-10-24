@@ -159,6 +159,25 @@ def get_filesystem(
         sys.exit(1)
 
 
+def get_default_filesystem() -> NexusFilesystem:
+    """Get Nexus filesystem instance with default configuration.
+
+    Used by commands that don't accept backend options (e.g., memory commands).
+    Uses NEXUS_DATA_DIR env var or default data directory.
+
+    Returns:
+        NexusFilesystem instance
+    """
+    try:
+        import os
+
+        data_dir = os.environ.get("NEXUS_DATA_DIR", str(Path.home() / ".nexus"))
+        return nexus.connect(config={"data_dir": data_dir})
+    except Exception as e:
+        console.print(f"[red]Error connecting to Nexus:[/red] {e}")
+        sys.exit(1)
+
+
 def handle_error(e: Exception) -> None:
     """Handle errors with beautiful output."""
     if isinstance(e, PermissionError):

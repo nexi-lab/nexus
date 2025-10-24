@@ -167,7 +167,6 @@ class TestPhase4MemoryAPI:
             scope="user",
             memory_type="fact",
             importance=0.8,
-            metadata={"category": "personal", "verified": True},
         )
 
         result = memory_api.get(memory_id)

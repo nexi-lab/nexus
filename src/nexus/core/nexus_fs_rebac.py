@@ -12,6 +12,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from nexus.core.rpc_decorator import rpc_expose
+
 if TYPE_CHECKING:
     from nexus.core.rebac_manager import ReBACManager
 
@@ -25,6 +27,7 @@ class NexusFSReBACMixin:
 
         def _validate_path(self, path: str) -> str: ...
 
+    @rpc_expose(description="Create ReBAC relationship tuple")
     def rebac_create(
         self,
         subject: tuple[str, str],
@@ -90,6 +93,7 @@ class NexusFSReBACMixin:
             subject=subject, relation=relation, object=object, expires_at=expires_at
         )
 
+    @rpc_expose(description="Check ReBAC permission")
     def rebac_check(
         self,
         subject: tuple[str, str],
@@ -146,6 +150,7 @@ class NexusFSReBACMixin:
             subject=subject, permission=permission, object=object
         )
 
+    @rpc_expose(description="Expand ReBAC permissions to find all subjects")
     def rebac_expand(
         self,
         permission: str,
@@ -193,6 +198,7 @@ class NexusFSReBACMixin:
         # Expand permission
         return self._rebac_manager.rebac_expand(permission=permission, object=object)
 
+    @rpc_expose(description="Delete ReBAC relationship tuple")
     def rebac_delete(self, tuple_id: str) -> bool:
         """Delete a relationship tuple by ID.
 
@@ -222,6 +228,7 @@ class NexusFSReBACMixin:
         # Delete tuple
         return self._rebac_manager.rebac_delete(tuple_id=tuple_id)
 
+    @rpc_expose(description="List ReBAC relationship tuples")
     def rebac_list_tuples(
         self,
         subject: tuple[str, str] | None = None,

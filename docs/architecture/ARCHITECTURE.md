@@ -76,9 +76,11 @@ Nexus is an AI-native distributed filesystem providing a unified API across mult
 **Implementation:** Mixin-based architecture separating concerns:
 - `NexusFSCoreMixin`: Core read/write/delete operations
 - `NexusFSPermissionsMixin`: UNIX/ACL permission operations
-- `NexusFSReBACMixin`: Relationship-based access control
+- `NexusFSReBACMixin`: Relationship-based access control (fully remote-capable via RPC)
 - `NexusFSSearchMixin`: Semantic and keyword search
 - `NexusFSVersionsMixin`: Workspace snapshots and versioning
+
+**RPC Exposure:** All public methods use `@rpc_expose` decorator for automatic remote access via HTTP/RPC protocol. RPC parity is automatically enforced in CI to prevent local-only methods.
 
 ### 2. LLM Provider Abstraction (v0.4.0)
 
@@ -184,10 +186,12 @@ Nexus is an AI-native distributed filesystem providing a unified API across mult
 
 **Key Capabilities:**
 - Complete CLI + Python SDK for all layers
+- **Full Remote Support**: All permission operations work via RPC (local/remote parity) ✨NEW
 - Explicit deny rules (ACL takes precedence)
 - Automatic permission inheritance via relationships (ReBAC)
 - Time-limited access with expiration
 - Multi-level organization hierarchies
+- Centralized permission management in client-server deployments
 
 **Permission Check Order:** Admin bypass → ReBAC → ACL → UNIX → Deny (default)
 
@@ -227,6 +231,50 @@ Nexus is an AI-native distributed filesystem providing a unified API across mult
 Alice's two agents share user-scoped memories. Agent1 creates memory → Agent2 can access via user ownership relationship → no file duplication required.
 
 **Examples:** See `examples/py_demo/memory_file_api_demo.py`
+
+### 9. RPC Parity Enforcement System (v0.4.0+)
+
+**Purpose:** Automated verification that all NexusFS methods work identically in local and remote modes.
+
+**Location:** `src/nexus/core/rpc_decorator.py`, `tests/unit/test_rpc_parity.py`
+
+**Problem Solved:** Previously, adding methods to NexusFS without exposing them via RPC created inconsistencies between local and remote modes. This led to features that only worked locally.
+
+**Solution:** Automated enforcement at two levels:
+
+1. **@rpc_expose Decorator**: All public NexusFS methods must be decorated to auto-register with RPC server
+2. **CI Enforcement**: Automated test blocks PRs if new public methods lack `@rpc_expose` or explicit exclusion
+
+**Key Features:**
+- **Automatic Registration**: Decorated methods auto-register with RPC protocol
+- **Zero Manual Dispatch**: Server automatically routes RPC calls to decorated methods
+- **CI Blocking**: PRs fail if parity is broken
+- **Clear Error Messages**: Test output shows exactly which methods need attention
+
+**Method Exposure Options:**
+
+1. **Expose via RPC** (default): Add `@rpc_expose` decorator + implement in `RemoteNexusFS`
+2. **Mark Internal-Only** (rare): Add to `INTERNAL_ONLY_METHODS` exclusion list with justification
+
+**Example:**
+```python
+from nexus.core.rpc_decorator import rpc_expose
+
+@rpc_expose(description="Change file permissions")
+def chmod(self, path: str, mode: int) -> None:
+    """Change file permissions."""
+    # Implementation
+```
+
+**CI Integration:** Separate `rpc-parity` job runs before main tests, ensuring all methods are properly exposed.
+
+**Benefits:**
+- ✅ **Guaranteed Parity**: Local and remote modes always have same capabilities
+- ✅ **No Manual Tracking**: Automated detection of missing RPC exposure
+- ✅ **Early Detection**: Catches issues at PR time, not in production
+- ✅ **Documentation**: `@rpc_expose` serves as self-documenting API contract
+
+**Detailed Guide:** See `docs/RPC_PARITY_GUIDE.md`
 
 ## Storage Layer
 

@@ -47,12 +47,6 @@ def chmod_cmd(
     try:
         nx = get_filesystem(backend_config)
 
-        # Note: Only Embedded mode supports permissions
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] chmod is only available in embedded mode")
-            nx.close()
-            sys.exit(1)
-
         # Check if file exists
         if not nx.exists(path):
             console.print(f"[red]Error:[/red] File not found: {path}")
@@ -60,7 +54,7 @@ def chmod_cmd(
             sys.exit(1)
 
         # Use chmod method with permission checks
-        nx.chmod(path, mode)
+        nx.chmod(path, mode)  # type: ignore[attr-defined]
         nx.close()
 
         from nexus.core.permissions import FileMode, parse_mode
@@ -92,12 +86,6 @@ def chown_cmd(
     try:
         nx = get_filesystem(backend_config)
 
-        # Note: Only Embedded mode supports permissions
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] chown is only available in embedded mode")
-            nx.close()
-            sys.exit(1)
-
         # Check if file exists
         if not nx.exists(path):
             console.print(f"[red]Error:[/red] File not found: {path}")
@@ -105,7 +93,7 @@ def chown_cmd(
             sys.exit(1)
 
         # Use chown method with permission checks
-        nx.chown(path, owner)
+        nx.chown(path, owner)  # type: ignore[attr-defined]
         nx.close()
 
         console.print(
@@ -133,12 +121,6 @@ def chgrp_cmd(
     try:
         nx = get_filesystem(backend_config)
 
-        # Note: Only Embedded mode supports permissions
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] chgrp is only available in embedded mode")
-            nx.close()
-            sys.exit(1)
-
         # Check if file exists
         if not nx.exists(path):
             console.print(f"[red]Error:[/red] File not found: {path}")
@@ -146,7 +128,7 @@ def chgrp_cmd(
             sys.exit(1)
 
         # Use chgrp method with permission checks
-        nx.chgrp(path, group)
+        nx.chgrp(path, group)  # type: ignore[attr-defined]
         nx.close()
 
         console.print(

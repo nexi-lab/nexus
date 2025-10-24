@@ -6,10 +6,15 @@ It creates the main command group and registers all commands from the modular st
 
 from __future__ import annotations
 
+import warnings
+
 import click
 
 import nexus
 from nexus.cli.commands import register_all_commands
+
+# Suppress pydub warning about missing ffmpeg/avconv
+warnings.filterwarnings("ignore", message="Couldn't find ffmpeg or avconv", category=RuntimeWarning)
 
 
 @click.group()

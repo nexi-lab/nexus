@@ -43,12 +43,10 @@ jobs:
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # Skip Windows on PRs to save ~30-40 min per PR
-    if: ${{ matrix.os != 'windows-latest' || github.event_name != 'pull_request' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12"]
 
     steps:

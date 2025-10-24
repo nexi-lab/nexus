@@ -33,7 +33,7 @@ def is_local_path(path: str) -> bool:
     - Relative paths (./data, data, ../data) are local
     - Absolute paths that exist on the filesystem are local
     - Paths starting with / that don't exist are assumed to be Nexus paths
-    - Paths with parent directories that exist are local
+    - Paths with parent directories that exist are local (except root /)
     """
     # Relative paths are always local
     if not path.startswith("/"):
@@ -45,8 +45,9 @@ def is_local_path(path: str) -> bool:
 
     # Check if parent directory exists (for new files)
     parent = os.path.dirname(path)
-    # Return True if parent exists, otherwise assume it's a Nexus path
-    return bool(parent and os.path.exists(parent))
+    # Exclude root directory / from the check - paths under / are likely Nexus paths
+    # Return True if parent exists AND is not root, otherwise assume it's a Nexus path
+    return bool(parent and parent != "/" and os.path.exists(parent))
 
 
 def list_local_files(local_path: str, recursive: bool = True) -> list[str]:
@@ -106,6 +107,11 @@ def copy_file(
                 # Content is missing or corrupted - re-write it
                 pass
 
+        # Create parent directories in Nexus
+        parent = str(PurePosixPath(dest).parent)
+        if parent and parent != "/" and parent != ".":
+            nx.mkdir(parent, parents=True, exist_ok=True)
+
         nx.write(dest, content)
         return len(content)
 
@@ -148,6 +154,11 @@ def copy_file(
             except Exception:
                 # Content is missing or corrupted - re-write it
                 pass
+
+        # Create parent directories in Nexus
+        parent = str(PurePosixPath(dest).parent)
+        if parent and parent != "/" and parent != ".":
+            nx.mkdir(parent, parents=True, exist_ok=True)
 
         nx.write(dest, content)
         return len(content)

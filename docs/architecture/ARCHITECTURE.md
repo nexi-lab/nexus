@@ -1,260 +1,223 @@
 # Nexus Architecture
 
+**Version:** 0.4.0 | **Last Updated:** 2025-10-23
+
+> **Purpose:** High-level architecture overview of Nexus, an AI-native distributed filesystem with advanced features for AI agent workflows.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [System Architecture](#system-architecture)
+- [Core Components](#core-components)
+  - [NexusFS Core](#1-nexusfs-core)
+  - [LLM Provider](#2-llm-provider-abstraction-v040)
+  - [Plugin System](#3-plugin-system)
+  - [Work Queue](#4-work-queue-system)
+  - [Workflow Engine](#5-workflow-engine-v040)
+  - [Skills System](#6-skills-system)
+  - [Permission System](#7-3-tier-permission-system-v040)
+  - [Memory System](#8-identity-based-memory-system-v040)
+- [Storage Layer](#storage-layer)
+- [Namespace System](#namespace-system)
+- [Data Flow](#data-flow)
+- [Key Design Decisions](#key-design-decisions)
+- [Performance](#performance-characteristics)
+- [Security](#security)
+- [Deployment](#deployment-modes)
+
+---
+
 ## Overview
 
-Nexus is an AI-native distributed filesystem that provides a unified API across multiple storage backends with advanced features for AI agent workflows.
+Nexus is an AI-native distributed filesystem providing a unified API across multiple storage backends with advanced features for AI agent workflows:
 
-**Version:** 0.4.0
-**Last Updated:** 2025-10-23
+- **Unified Interface**: Single API for local, GCS, S3, and cloud storage
+- **Content-Addressable Storage**: Automatic deduplication (30-50% savings)
+- **3-Tier Permissions**: UNIX + ACL + ReBAC for flexible access control
+- **Identity-Based Memory**: Order-neutral paths for multi-agent collaboration
+- **Time-Travel**: Full operation history with undo capability
+- **AI-Native Features**: Semantic search, LLM integration, workflow automation
 
 ## System Architecture
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│                        Nexus Filesystem                            │
-├───────────────────────────────────────────────────────────────────┤
-│           Interface Layer (User-Facing APIs)                       │
-│  ┌──────────────┬──────────────────┬─────────────────────┐       │
-│  │ CLI Commands │   Python SDK     │    MCP Server       │       │
-│  │ (nexus.cli)  │ (nexus.connect()) │ (Model Context)     │       │
-│  └──────────────┴──────────────────┴─────────────────────┘       │
-├───────────────────────────────────────────────────────────────────┤
-│                   Core Components Layer                            │
-│  ┌──────────┬──────────┬──────────┬──────────┬──────────────┐   │
-│  │ NexusFS  │  Plugin  │   Work   │ Workflow │   Skills     │   │
-│  │   Core   │  System  │  Queue   │  Engine  │   System     │   │
-│  ├──────────┼──────────┴──────────┴──────────┴──────────────┤   │
-│  │   LLM    │          ReBAC Permissions System              │   │
-│  │ Provider │        (Relationship-Based Access Control)     │   │
-│  └──────────┴────────────────────────────────────────────────┘   │
-├───────────────────────────────────────────────────────────────────┤
-│                      Storage Layer                                 │
-│  ┌────────────┬──────────────┬─────────────┬─────────────┐       │
-│  │  Metadata  │ Content-Addr │  Operation  │   Caching   │       │
-│  │   Store    │   Storage    │     Log     │   System    │       │
-│  │ (SQLite/   │    (CAS)     │ (Time-      │ (Content +  │       │
-│  │ Postgres)  │ (SHA-256)    │  Travel)    │  Metadata)  │       │
-│  └────────────┴──────────────┴─────────────┴─────────────┘       │
-├───────────────────────────────────────────────────────────────────┤
-│                      Backend Adapters                              │
-│  ┌──────────┬──────────┬──────────┬──────────┬──────────────┐   │
-│  │  Local   │   GCS    │   S3*    │ GDrive*  │  Workspace   │   │
-│  │   FS     │ (Google) │  (AWS)   │ (Google) │   Backend    │   │
-│  └──────────┴──────────┴──────────┴──────────┴──────────────┘   │
-│                      * = Partial/Planned                          │
-└───────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│              User-Facing APIs                       │
+│   CLI  │  Python SDK  │  MCP Server  │  HTTP API   │
+├─────────────────────────────────────────────────────┤
+│              Core Components                        │
+│   NexusFS  │  Plugins  │  Workflows  │  LLM        │
+│   Permissions (UNIX/ACL/ReBAC)  │  Memory System   │
+├─────────────────────────────────────────────────────┤
+│              Storage Layer                          │
+│   Metadata Store  │  CAS  │  Cache  │  Op Log      │
+├─────────────────────────────────────────────────────┤
+│              Backend Adapters                       │
+│   Local  │  GCS  │  S3  │  GDrive  │  Workspace   │
+└─────────────────────────────────────────────────────┘
 ```
 
 ## Core Components
 
 ### 1. NexusFS Core
-The central filesystem abstraction providing unified file operations across all backends.
+
+**Purpose:** Central filesystem abstraction providing unified file operations across all backends.
 
 **Location:** `src/nexus/core/nexus_fs.py`
 
-**Key Features:**
-- Async-first API
-- Multi-backend routing via PathRouter
-- Permission enforcement (ReBAC)
-- Operation logging for time-travel
-- Content-addressable storage integration
-- Batch write operations (4x faster)
+**Key Capabilities:**
+- **Multi-Backend Routing**: Automatic path routing to appropriate storage backend
+- **Permission Enforcement**: Integrated 3-tier permission system (UNIX/ACL/ReBAC)
+- **Operation Logging**: Complete audit trail for time-travel and undo
+- **CAS Integration**: Automatic content deduplication via SHA-256 hashing
+- **Batch Operations**: 4x faster bulk writes via `write_batch()`
+- **Async-First Design**: Non-blocking I/O for scalability
+
+**Implementation:** Mixin-based architecture separating concerns:
+- `NexusFSCoreMixin`: Core read/write/delete operations
+- `NexusFSPermissionsMixin`: UNIX/ACL permission operations
+- `NexusFSReBACMixin`: Relationship-based access control
+- `NexusFSSearchMixin`: Semantic and keyword search
+- `NexusFSVersionsMixin`: Workspace snapshots and versioning
 
 ### 2. LLM Provider Abstraction (v0.4.0)
-Unified interface for multiple LLM providers with KV cache management.
+
+**Purpose:** Unified interface for multiple LLM providers with automatic KV cache management.
 
 **Location:** `src/nexus/llm/`
 
 **Key Features:**
-- Multi-provider support (Anthropic, OpenAI, Google, Ollama, etc.)
-- Automatic KV cache management (50-90% cost savings)
+- Multi-provider support via LiteLLM (Anthropic, OpenAI, Google, Ollama)
+- Automatic KV cache management (50-90% cost savings on repeated queries)
 - Token counting and cost tracking
 - Streaming response support
-- Provider-agnostic API via LiteLLM
 
-**Example:**
-```python
-from nexus.llm import get_provider
-
-provider = get_provider("anthropic")
-response = await provider.complete(
-    prompt="Summarize this document",
-    model="claude-sonnet-4"
-)
-```
+**Example:** See `examples/py_demo/llm_provider_demo.py`
 
 ### 3. Plugin System
-Extensible architecture for vendor integrations.
+
+**Purpose:** Extensible architecture for vendor integrations without forking core.
 
 **Location:** `src/nexus/plugins/`
 
-**Components:**
-- `base.py`: NexusPlugin base class
-- `registry.py`: Plugin discovery and management
-- `hooks.py`: Lifecycle hooks system
-- `cli.py`: CLI integration
+**Key Components:**
+- Plugin registry with auto-discovery
+- Lifecycle hooks (before/after read, write, delete, mkdir, copy)
+- CLI command integration
+- Configuration management
 
-**Plugin Interface:**
-```python
-class NexusPlugin(ABC):
-    def metadata(self) -> PluginMetadata: ...
-    def commands(self) -> dict[str, Callable]: ...
-    def hooks(self) -> dict[str, Callable]: ...
-    def initialize(self, config: dict): ...
-    def shutdown(self): ...
-```
+**Plugin Interface:** Base class `NexusPlugin` with metadata, commands, hooks, and lifecycle methods.
 
-**Lifecycle Hooks:**
-- `before_write`, `after_write`
-- `before_read`, `after_read`
-- `before_delete`, `after_delete`
-- `before_mkdir`, `after_mkdir`
-- `before_copy`, `after_copy`
-
-**Example Plugins:**
+**Available Plugins:**
 - `nexus-plugin-anthropic`: Claude Skills API integration
 - `nexus-plugin-skill-seekers`: Generate skills from documentation
+- `nexus-plugin-firecrawl`: Web scraping and content extraction
 
-### 5. Work Queue System
-File-based job queue with SQL views for efficient querying.
+**Development Guide:** See `docs/development/PLUGIN_DEVELOPMENT.md`
+
+### 4. Work Queue System
+
+**Purpose:** File-based job queue with SQL views for efficient querying.
 
 **Location:** `src/nexus/storage/views.py`
 
-**How It Works:**
-Jobs are regular files with metadata. No separate job system needed - follows "Everything as a File" principle.
+**Core Concept:** Jobs are regular files with metadata - no separate job system needed ("Everything as a File" principle).
 
-**Job Metadata Schema:**
-```python
-# Create a job (just a file)
-nx.write("/jobs/task1.json", b'{"action": "process"}')
+**Status States:** `ready`, `pending`, `blocked`, `in_progress`, `completed`, `failed`
 
-# Add work metadata
-nx.metadata.set_file_metadata("/jobs/task1.json", "status", "ready")
-nx.metadata.set_file_metadata("/jobs/task1.json", "priority", 1)
-nx.metadata.set_file_metadata("/jobs/task1.json", "tags", ["urgent"])
-```
+**Key Features:**
+- Priority-based scheduling
+- Dependency resolution (blocked jobs wait on dependencies)
+- Worker assignment tracking
+- SQL views for O(1) queue queries
 
-**Metadata Fields:**
-- `status`: `ready` | `pending` | `blocked` | `in_progress` | `completed` | `failed`
-- `priority`: Integer (lower = higher priority)
-- `depends_on`: Path ID of dependency (creates blocking relationship)
-- `worker_id`: ID of processing worker
-- `started_at`: ISO timestamp
+**CLI:** `nexus work ready`, `nexus work status`, `nexus work blocked`
 
-**SQL Views (O(n) performance):**
-- `ready_work_items`: Jobs ready to process (status='ready', no blockers)
-- `pending_work_items`: Jobs in backlog (status='pending')
-- `blocked_work_items`: Jobs waiting on dependencies
-- `in_progress_work`: Jobs currently running
-- `work_by_priority`: All jobs sorted by priority
+**Note:** Provides job state management. Users implement execution logic.
 
-**CLI Commands:**
-```bash
-nexus work ready --limit 10    # Get ready jobs
-nexus work status              # Queue statistics
-nexus work blocked             # Find bottlenecks
-```
+### 5. Workflow Engine (v0.4.0)
 
-**Python API:**
-```python
-ready_jobs = nx.metadata.get_ready_work(limit=10)
-pending = nx.metadata.get_pending_work()
-blocked = nx.metadata.get_blocked_work()
-```
-
-**Note:** This provides job state management infrastructure. Users implement their own execution logic.
-
-### 6. Workflow Engine (v0.4.0)
-Event-driven automation for document processing and multi-step operations.
+**Purpose:** Event-driven automation for document processing and multi-step operations.
 
 **Location:** `src/nexus/workflows/`
 
 **Components:**
-- **Triggers** (`triggers.py`): File events, schedules, manual invocation
-- **Actions** (`actions.py`): Built-in + plugin actions
-- **Engine** (`engine.py`): Workflow execution with DAG resolution
-- **Storage** (`storage.py`): Persistent workflow state
-- **Loader** (`loader.py`): YAML DSL parser
+- **Triggers**: File events, schedules, manual invocation
+- **Actions**: Built-in + plugin actions (parse, LLM query, file ops)
+- **Engine**: DAG execution with dependency resolution
+- **Storage**: Workflow definitions stored as YAML files in `.nexus/workflows/`
 
-**Workflow Storage:** `.nexus/workflows/*.yaml`
+**Workflow Format:** YAML with triggers, actions, and config
 
-**Example Workflow:**
-```yaml
-name: process-invoices
-triggers:
-  - type: file
-    pattern: /invoices/*.pdf
-    event: create
-actions:
-  - name: parse-invoice
-    type: parse_document
-  - name: extract-data
-    type: llm_query
-    config:
-      prompt: "Extract invoice details"
-  - name: save-result
-    type: write_file
-    config:
-      path: /processed/{filename}.json
-```
+**Example:** See `examples/workflows/invoice_processing.yaml`
 
-### 7. Skills System
-Vendor-neutral skill management with three-tier hierarchy and governance.
+### 6. Skills System
+
+**Purpose:** Vendor-neutral skill management with three-tier hierarchy and governance.
 
 **Location:** `src/nexus/skills/`
 
 **Hierarchy:**
-```
-/system/skills/          # System-wide, read-only
-/shared/skills/          # Tenant-wide, shared
-/workspace/.nexus/skills/ # Agent-specific
-```
+- `/system/skills/`: System-wide, read-only
+- `/shared/skills/`: Tenant-wide, shared
+- `/workspace/.nexus/skills/`: Agent-specific
 
-**Features:**
-- Dependency resolution with DAG and cycle detection
+**Key Features:**
+- Dependency resolution with cycle detection
 - Skill versioning and lineage tracking
+- Approval governance for shared skills
 - Export/import workflows
-- Approval governance for org-wide skills
-- Analytics for skill effectiveness
 
-**SKILL.md Format:**
-```markdown
----
-name: skill-name
-version: 1.0.0
-description: Skill description
-tier: agent|tenant|system
-requires: [dependency-skill]
----
-# Skill Content
-```
+**Format:** SKILL.md files with YAML frontmatter (name, version, dependencies, tier)
 
-### 8. ReBAC Permissions System
-Relationship-Based Access Control for fine-grained security.
+### 8. 3-Tier Permission System (v0.4.0+)
 
-**Location:** `src/nexus/core/permissions.py`, `src/nexus/core/permission_policy.py`
+**Location:**
+- `src/nexus/core/permissions.py` - Base permission enforcement
+- `src/nexus/core/nexus_fs_permissions.py` - ACL Python API
+- `src/nexus/core/nexus_fs_rebac.py` - ReBAC Python API
+- `src/nexus/core/rebac_manager.py` - ReBAC graph engine
+
+**Three Permission Layers:**
+1. **UNIX** - Owner/group/mode (chmod, chown, chgrp)
+2. **ACL** - Per-user/group granular control (setfacl, grant_user)
+3. **ReBAC** - Graph-based dynamic inheritance (rebac_create, rebac_check)
 
 **Permission Types:**
 - `read`: View file content
 - `write`: Modify files
-- `delete`: Remove files
-- `admin`: Full control + permission grants
+- `execute`: Execute files
+- `owner-of`: Full control
+- Custom relations: `member-of`, `viewer-of`, `editor-of`, `parent-of`
 
 **Features:**
-- Directory → file permission inheritance
-- Policy-based access control
-- Tenant isolation
-- Namespace-level readonly enforcement
-- Admin-only namespaces (`/system`)
+- Complete CLI + Python SDK for all layers
+- Zanzibar-style graph traversal (ReBAC)
+- Explicit deny rules (ACL)
+- Automatic permission inheritance (ReBAC)
+- Time-limited access with expiration
+- Multi-level organization hierarchies
 
-**Example:**
+**Quick Examples:**
 ```python
-# Grant read permission
-nx.permissions.grant("/shared/docs", user_id, Permission.READ)
+# ACL - Per-user granular control
+nx.grant_user("/file.txt", user="alice", permissions="rw-")
+nx.deny_user("/secret.txt", user="intern")
 
-# Check permission
-has_access = nx.permissions.check("/shared/docs/file.txt", Permission.WRITE)
+# ReBAC - Dynamic graph-based permissions
+nx.rebac_create(
+    subject=("agent", "alice"),
+    relation="member-of",
+    object=("group", "developers")
+)
+can_access = nx.rebac_check(
+    subject=("agent", "alice"),
+    permission="owner-of",
+    object=("file", "/project.txt")
+)
 ```
+
+See **Permission System Deep Dive** section below for comprehensive documentation.
 
 ### 9. Identity-Based Memory System (v0.4.0)
 Order-neutral virtual paths with identity-based storage for AI agent memory.
@@ -743,3 +706,237 @@ API Layer (FastAPI) → NexusFS Core → PostgreSQL (Managed)
 
 **Document Status:** Living document, updated with each major release
 **Next Review:** v0.5.0 release
+
+---
+
+## Permission System Deep Dive (v0.4.0+)
+
+### Overview
+
+Nexus implements a complete 3-tier permission system supporting both CLI and Python SDK:
+
+1. **UNIX Permissions**: Traditional owner/group/mode (0644, etc.)
+2. **ACL (Access Control Lists)**: Per-user and per-group granular permissions
+3. **ReBAC (Relationship-Based)**: Zanzibar-style graph-based dynamic permissions
+
+### Layer 1: UNIX Permissions
+
+**Basic file access control using owner/group/mode bits.**
+
+**CLI:**
+```bash
+nexus chmod 0o644 /workspace/file.txt
+nexus chown alice /workspace/file.txt
+nexus chgrp developers /workspace/file.txt
+```
+
+**Python SDK:**
+```python
+nx.chmod("/workspace/file.txt", 0o644)
+nx.chown("/workspace/file.txt", "alice")
+nx.chgrp("/workspace/file.txt", "developers")
+```
+
+### Layer 2: ACL (Access Control Lists)
+
+**Fine-grained per-user and per-group permissions.**
+
+**CLI:**
+```bash
+# Grant user permissions
+nexus setfacl user:alice:rw- /workspace/file.txt
+
+# Grant group permissions
+nexus setfacl group:developers:r-x /workspace/code/
+
+# Deny user access (explicit deny)
+nexus setfacl deny:user:intern:--- /workspace/secret.txt
+
+# View ACL
+nexus getfacl /workspace/file.txt
+
+# Remove ACL entry
+nexus setfacl user:alice:rw- /workspace/file.txt --remove
+```
+
+**Python SDK (NEW in v0.4.0):**
+```python
+# Grant user permissions
+nx.grant_user("/workspace/file.txt", user="alice", permissions="rw-")
+
+# Grant group permissions
+nx.grant_group("/workspace/file.txt", group="developers", permissions="r--")
+
+# Explicit deny (takes precedence)
+nx.deny_user("/workspace/secret.txt", user="intern")
+
+# Get ACL entries
+acl = nx.get_acl("/workspace/file.txt")
+# Returns: [{'entry_type': 'user', 'identifier': 'alice', 'permissions': 'rw-', 'deny': False}]
+
+# Revoke permissions
+nx.revoke_acl("/workspace/file.txt", entry_type="user", identifier="alice")
+```
+
+**Use Cases:**
+- Share file with specific users without changing ownership
+- Temporarily grant contractor access
+- Block specific user while allowing group
+- Mix different permissions for different users
+
+### Layer 3: ReBAC (Relationship-Based Access Control)
+
+**Dynamic graph-based permissions inspired by Google Zanzibar.**
+
+**CLI:**
+```bash
+# Create relationships
+nexus rebac create agent alice member-of group developers
+nexus rebac create group developers owner-of file /workspace/project.txt
+
+# Check permission (with graph traversal)
+nexus rebac check agent alice owner-of file /workspace/project.txt
+
+# Find all who can access
+nexus rebac expand owner-of file /workspace/project.txt
+
+# Delete relationship
+nexus rebac delete <tuple-id>
+```
+
+**Python SDK (NEW in v0.4.0):**
+```python
+# Create relationship tuple
+tuple_id = nx.rebac_create(
+    subject=("agent", "alice"),
+    relation="member-of",
+    object=("group", "developers")
+)
+
+# Create ownership relationship
+nx.rebac_create(
+    subject=("group", "developers"),
+    relation="owner-of",
+    object=("file", "/workspace/project.txt")
+)
+
+# Check permission (automatic graph traversal)
+can_access = nx.rebac_check(
+    subject=("agent", "alice"),
+    permission="owner-of",
+    object=("file", "/workspace/project.txt")
+)
+# Returns: True (alice → member-of → developers → owner-of → file)
+
+# Find all subjects with permission
+subjects = nx.rebac_expand(
+    permission="owner-of",
+    object=("file", "/workspace/project.txt")
+)
+# Returns: [("agent", "alice"), ("agent", "bob"), ("group", "developers")]
+
+# List relationships
+tuples = nx.rebac_list_tuples(subject=("agent", "alice"))
+
+# Delete relationship
+deleted = nx.rebac_delete(tuple_id)
+
+# Temporary access (expires automatically)
+from datetime import UTC, datetime, timedelta
+expires = datetime.now(UTC) + timedelta(hours=1)
+nx.rebac_create(
+    subject=("agent", "contractor"),
+    relation="viewer-of",
+    object=("file", "/workspace/doc.txt"),
+    expires_at=expires
+)
+```
+
+**Relationship Types:**
+- `member-of`: Group membership
+- `owner-of`: Resource ownership
+- `viewer-of`: Read access
+- `editor-of`: Write access
+- `parent-of`: Hierarchical relationship (folder → file)
+- `part-of`: Organization hierarchy (team → department)
+
+**Use Cases:**
+- Team-based access (add to group = auto access all group resources)
+- Hierarchical permissions (folder ownership → file ownership)
+- Organization structures (teams within departments)
+- Dynamic sharing (relationship changes = permission changes)
+- Temporary access with auto-expiration
+
+### Permission Check Order
+
+When checking access, Nexus evaluates permissions in this order:
+
+```
+1. Admin/System Bypass
+   ↓ (if not admin)
+2. ReBAC Check (relationship graph traversal)
+   ↓ (if no ReBAC match)
+3. ACL Check (explicit allow/deny entries)
+   ↓ (if no ACL match)
+4. UNIX Check (owner/group/mode bits)
+   ↓ (if no UNIX match)
+5. Deny (default)
+```
+
+**Key Principles:**
+- **ReBAC grants** allow access (dynamic inheritance)
+- **ACL deny** blocks access (explicit deny takes precedence)
+- **ACL allow** grants access (explicit permission)
+- **UNIX** provides baseline (traditional permissions)
+
+### Database Tables
+
+**ACL Tables:**
+```sql
+acl_entries (
+    path_id, entry_type, identifier,
+    permissions, deny, is_default, created_at
+)
+```
+
+**ReBAC Tables (NEW in v0.4.0):**
+```sql
+rebac_tuples (
+    tuple_id, subject_type, subject_id, relation,
+    object_type, object_id, created_at, expires_at, conditions
+)
+
+rebac_namespaces (
+    namespace_id, object_type, config,
+    created_at, updated_at
+)
+
+rebac_changelog (
+    change_id, change_type, tuple_id,
+    subject_type, subject_id, relation,
+    object_type, object_id, created_at
+)
+
+rebac_check_cache (
+    cache_id, subject_type, subject_id, permission,
+    object_type, object_id, result, created_at, expires_at
+)
+```
+
+### Performance Optimizations
+
+**ACL:**
+- Indexed by path_id for fast lookups
+- Cached at metadata store level
+
+**ReBAC:**
+- Check result caching with TTL (default 5 minutes)
+- Graph traversal depth limit (default 10 hops)
+- Cycle detection to prevent infinite loops
+- Automatic cleanup of expired relationships
+
+### Examples
+
+See comprehensive examples in:
+- **Python API**: `examples/py_demo/acl_demo.py`, `examples/py_demo/rebac_demo.py`
+- **CLI + Python**: `examples/script_demo/acl_demo.sh`, `examples/script_demo/rebac_demo.sh`

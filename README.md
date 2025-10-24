@@ -442,56 +442,104 @@ nexus grep "TODO" --search-mode=raw  # Only raw text (skip parsing)
 # Match: TODO (raw) ← from source code
 ```
 
-#### File Permissions (v0.3.0)
+#### 3-Tier Permission System (v0.4.0+ Complete)
 
+Nexus provides three layers of access control with both **CLI** and **Python SDK** support:
+
+**Layer 1: UNIX Permissions** (owner/group/mode)
 ```bash
-# Change file permissions
+# CLI
 nexus chmod 755 /workspace/script.sh
-nexus chmod rw-r--r-- /workspace/data.txt
-
-# Change file owner and group
 nexus chown alice /workspace/file.txt
 nexus chgrp developers /workspace/code/
-
-# View ACL entries
-nexus getfacl /workspace/file.txt
-
-# Manage ACL entries
-nexus setfacl user:alice:rw- /workspace/file.txt
-nexus setfacl group:developers:r-x /workspace/code/
-nexus setfacl deny:user:bob /workspace/secret.txt
-nexus setfacl user:alice:rwx /workspace/file.txt --remove
 ```
 
-**Supported Formats:**
-- **Octal**: `755`, `0o644`, `0755`
-- **Symbolic**: `rwxr-xr-x`, `rw-r--r--`
-- **ACL Entries**: `user:<name>:rwx`, `group:<name>:r-x`, `deny:user:<name>`
+```python
+# Python SDK
+nx.chmod("/workspace/file.txt", 0o644)
+nx.chown("/workspace/file.txt", "alice")
+nx.chgrp("/workspace/file.txt", "developers")
+```
 
-#### ReBAC - Relationship-Based Access Control (v0.3.0)
+**Layer 2: ACL (Access Control Lists)** - Per-user/group granular control
+```bash
+# CLI
+nexus setfacl user:alice:rw- /workspace/file.txt          # Grant user
+nexus setfacl group:developers:r-x /workspace/code/       # Grant group
+nexus setfacl deny:user:bob:--- /workspace/secret.txt     # Deny user
+nexus getfacl /workspace/file.txt                         # View ACL
+nexus setfacl user:alice:rwx /workspace/file.txt --remove # Remove entry
+```
+
+```python
+# Python SDK (NEW in v0.4.0)
+nx.grant_user("/workspace/file.txt", user="alice", permissions="rw-")
+nx.grant_group("/workspace/file.txt", group="developers", permissions="r--")
+nx.deny_user("/workspace/secret.txt", user="intern")
+acl = nx.get_acl("/workspace/file.txt")  # Returns list[dict]
+nx.revoke_acl("/workspace/file.txt", entry_type="user", identifier="alice")
+```
+
+**Layer 3: ReBAC (Relationship-Based)** - Zanzibar-style graph permissions
 
 Nexus implements Zanzibar-style relationship-based authorization for team-based permissions, hierarchical access, and dynamic permission inheritance.
 
 ```bash
-# Create relationship tuples
+# CLI
 nexus rebac create agent alice member-of group eng-team
 nexus rebac create group eng-team owner-of file project-docs
-nexus rebac create file folder-parent parent-of file folder-child
-
-# Check permissions (with graph traversal)
-nexus rebac check agent alice member-of group eng-team  # Direct check
-nexus rebac check agent alice owner-of file project-docs  # Inherited via group
-
-# Find all subjects with a permission
-nexus rebac expand owner-of file project-docs  # Returns: alice (via eng-team)
-nexus rebac expand member-of group eng-team    # Returns: alice, bob, ...
-
-# Delete relationships
+nexus rebac check agent alice owner-of file project-docs  # True (inherited)
+nexus rebac expand owner-of file project-docs  # Find all who can access
 nexus rebac delete <tuple-id>
 
-# Create temporary access (expires automatically)
+# Temporary access (expires automatically)
 nexus rebac create agent alice viewer-of file temp-report \
   --expires "2025-12-31T23:59:59"
+```
+
+```python
+# Python SDK (NEW in v0.4.0)
+# Create relationships
+tuple_id = nx.rebac_create(
+    subject=("agent", "alice"),
+    relation="member-of",
+    object=("group", "developers")
+)
+
+nx.rebac_create(
+    subject=("group", "developers"),
+    relation="owner-of",
+    object=("file", "/workspace/project.txt")
+)
+
+# Check permission (automatic graph traversal)
+can_access = nx.rebac_check(
+    subject=("agent", "alice"),
+    permission="owner-of",
+    object=("file", "/workspace/project.txt")
+)  # Returns: True (alice → member-of → developers → owner-of → file)
+
+# Find all subjects with permission
+subjects = nx.rebac_expand(
+    permission="owner-of",
+    object=("file", "/workspace/project.txt")
+)  # Returns: [("agent", "alice"), ("agent", "bob"), ("group", "developers")]
+
+# List relationships
+tuples = nx.rebac_list_tuples(subject=("agent", "alice"))
+
+# Delete relationship
+nx.rebac_delete(tuple_id)
+
+# Temporary access with expiration
+from datetime import UTC, datetime, timedelta
+expires = datetime.now(UTC) + timedelta(hours=1)
+nx.rebac_create(
+    subject=("agent", "contractor"),
+    relation="viewer-of",
+    object=("file", "/workspace/doc.txt"),
+    expires_at=expires
+)
 ```
 
 **ReBAC Features:**

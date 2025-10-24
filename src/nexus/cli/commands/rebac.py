@@ -72,8 +72,6 @@ def rebac_create(
         nexus rebac create agent bob viewer-of file secret --expires 2025-12-31T23:59:59
     """
     try:
-        from pathlib import Path
-
         from nexus.core.rebac_manager import ReBACManager
 
         nx = get_filesystem(backend_config)
@@ -84,9 +82,8 @@ def rebac_create(
             nx.close()
             sys.exit(1)
 
-        # Get database path
-        db_path = Path(backend_config.data_dir) / "metadata.db"
-        rebac_mgr = ReBACManager(db_path=str(db_path))
+        # Use SQLAlchemy engine from metadata store
+        rebac_mgr = ReBACManager(engine=nx.metadata.engine)
 
         # Parse expiration time if provided
         expires_at = None
@@ -137,8 +134,6 @@ def rebac_delete_cmd(
         nexus rebac delete 550e8400-e29b-41d4-a716-446655440000
     """
     try:
-        from pathlib import Path
-
         from nexus.core.rebac_manager import ReBACManager
 
         nx = get_filesystem(backend_config)
@@ -149,9 +144,8 @@ def rebac_delete_cmd(
             nx.close()
             sys.exit(1)
 
-        # Get database path
-        db_path = Path(backend_config.data_dir) / "metadata.db"
-        rebac_mgr = ReBACManager(db_path=str(db_path))
+        # Use SQLAlchemy engine from metadata store
+        rebac_mgr = ReBACManager(engine=nx.metadata.engine)
 
         # Delete tuple
         deleted = rebac_mgr.rebac_delete(tuple_id)
@@ -198,8 +192,6 @@ def rebac_check_cmd(
         nexus rebac check group eng-team owner file project-folder
     """
     try:
-        from pathlib import Path
-
         from nexus.core.rebac_manager import ReBACManager
 
         nx = get_filesystem(backend_config)
@@ -210,9 +202,8 @@ def rebac_check_cmd(
             nx.close()
             sys.exit(1)
 
-        # Get database path
-        db_path = Path(backend_config.data_dir) / "metadata.db"
-        rebac_mgr = ReBACManager(db_path=str(db_path))
+        # Use SQLAlchemy engine from metadata store
+        rebac_mgr = ReBACManager(engine=nx.metadata.engine)
 
         # Check permission
         granted = rebac_mgr.rebac_check(
@@ -266,8 +257,6 @@ def rebac_expand_cmd(
         nexus rebac expand owner file project-folder
     """
     try:
-        from pathlib import Path
-
         from nexus.core.rebac_manager import ReBACManager
 
         nx = get_filesystem(backend_config)
@@ -278,9 +267,8 @@ def rebac_expand_cmd(
             nx.close()
             sys.exit(1)
 
-        # Get database path
-        db_path = Path(backend_config.data_dir) / "metadata.db"
-        rebac_mgr = ReBACManager(db_path=str(db_path))
+        # Use SQLAlchemy engine from metadata store
+        rebac_mgr = ReBACManager(engine=nx.metadata.engine)
 
         # Expand permission
         subjects = rebac_mgr.rebac_expand(

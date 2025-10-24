@@ -12,10 +12,9 @@ Based on Google Zanzibar design with optimizations for embedded/local use.
 from __future__ import annotations
 
 import json
-import sqlite3
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.core.rebac import (
     DEFAULT_FILE_NAMESPACE,
@@ -23,6 +22,9 @@ from nexus.core.rebac import (
     Entity,
     NamespaceConfig,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
 
 
 class ReBACManager:
@@ -36,28 +38,28 @@ class ReBACManager:
     - Cycle detection
 
     Attributes:
-        db_path: Path to SQLite database
+        engine: SQLAlchemy database engine (supports SQLite and PostgreSQL)
         cache_ttl_seconds: Time-to-live for cache entries (default: 300 = 5 minutes)
         max_depth: Maximum graph traversal depth (default: 10)
     """
 
     def __init__(
         self,
-        db_path: str,
+        engine: Engine,
         cache_ttl_seconds: int = 300,
         max_depth: int = 10,
     ):
         """Initialize ReBAC manager.
 
         Args:
-            db_path: Path to SQLite database
+            engine: SQLAlchemy database engine
             cache_ttl_seconds: Cache TTL in seconds (default: 5 minutes)
             max_depth: Maximum graph traversal depth (default: 10 hops)
         """
-        self.db_path = db_path
+        self.engine = engine
         self.cache_ttl_seconds = cache_ttl_seconds
         self.max_depth = max_depth
-        self._conn: sqlite3.Connection | None = None
+        self._conn: Any = None  # DB-API connection
         self._last_cleanup_time: datetime | None = None
         self._ensure_connection()
         self._initialize_default_namespaces()
@@ -65,14 +67,27 @@ class ReBACManager:
     def _ensure_connection(self) -> None:
         """Ensure database connection is established."""
         if self._conn is None:
-            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
+            self._conn = self.engine.raw_connection()
 
-    def _get_connection(self) -> sqlite3.Connection:
-        """Get database connection."""
+    def _get_connection(self) -> Any:
+        """Get raw DB-API connection from SQLAlchemy engine."""
         self._ensure_connection()
         assert self._conn is not None
         return self._conn
+
+    def _fix_sql_placeholders(self, sql: str) -> str:
+        """Convert SQLite ? placeholders to PostgreSQL %s if needed.
+
+        Args:
+            sql: SQL query with ? placeholders
+
+        Returns:
+            SQL query with appropriate placeholders for the database dialect
+        """
+        dialect_name = self.engine.dialect.name
+        if dialect_name == "postgresql":
+            return sql.replace("?", "%s")
+        return sql
 
     def _initialize_default_namespaces(self) -> None:
         """Initialize default namespace configurations if not present."""
@@ -103,7 +118,9 @@ class ReBACManager:
 
         # Check if namespace exists
         cursor.execute(
-            "SELECT namespace_id FROM rebac_namespaces WHERE object_type = ?",
+            self._fix_sql_placeholders(
+                "SELECT namespace_id FROM rebac_namespaces WHERE object_type = ?"
+            ),
             (namespace.object_type,),
         )
         existing = cursor.fetchone()
@@ -111,11 +128,13 @@ class ReBACManager:
         if existing:
             # Update existing namespace
             cursor.execute(
-                """
-                UPDATE rebac_namespaces
-                SET config = ?, updated_at = ?
-                WHERE object_type = ?
-                """,
+                self._fix_sql_placeholders(
+                    """
+                    UPDATE rebac_namespaces
+                    SET config = ?, updated_at = ?
+                    WHERE object_type = ?
+                    """
+                ),
                 (
                     json.dumps(namespace.config),
                     datetime.now(UTC).isoformat(),
@@ -125,10 +144,12 @@ class ReBACManager:
         else:
             # Insert new namespace
             cursor.execute(
-                """
-                INSERT INTO rebac_namespaces (namespace_id, object_type, config, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
+                self._fix_sql_placeholders(
+                    """
+                    INSERT INTO rebac_namespaces (namespace_id, object_type, config, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """
+                ),
                 (
                     namespace.namespace_id,
                     namespace.object_type,
@@ -153,11 +174,13 @@ class ReBACManager:
         cursor = conn.cursor()
 
         cursor.execute(
-            """
-            SELECT namespace_id, object_type, config, created_at, updated_at
-            FROM rebac_namespaces
-            WHERE object_type = ?
-            """,
+            self._fix_sql_placeholders(
+                """
+                SELECT namespace_id, object_type, config, created_at, updated_at
+                FROM rebac_namespaces
+                WHERE object_type = ?
+                """
+            ),
             (object_type,),
         )
 
@@ -165,13 +188,41 @@ class ReBACManager:
         if not row:
             return None
 
-        return NamespaceConfig(
-            namespace_id=row["namespace_id"],
-            object_type=row["object_type"],
-            config=json.loads(row["config"]),
-            created_at=datetime.fromisoformat(row["created_at"]),
-            updated_at=datetime.fromisoformat(row["updated_at"]),
-        )
+        # Handle both dict-like (sqlite3.Row) and tuple access
+        if hasattr(row, "keys"):
+            created_at = row["created_at"]
+            updated_at = row["updated_at"]
+            # SQLite returns ISO strings, PostgreSQL returns datetime objects
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at)
+            if isinstance(updated_at, str):
+                updated_at = datetime.fromisoformat(updated_at)
+
+            return NamespaceConfig(
+                namespace_id=row["namespace_id"],
+                object_type=row["object_type"],
+                config=json.loads(row["config"])
+                if isinstance(row["config"], str)
+                else row["config"],
+                created_at=created_at,
+                updated_at=updated_at,
+            )
+        else:
+            # PostgreSQL returns tuples
+            created_at = row[3]
+            updated_at = row[4]
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at)
+            if isinstance(updated_at, str):
+                updated_at = datetime.fromisoformat(updated_at)
+
+            return NamespaceConfig(
+                namespace_id=row[0],
+                object_type=row[1],
+                config=json.loads(row[2]) if isinstance(row[2], str) else row[2],
+                created_at=created_at,
+                updated_at=updated_at,
+            )
 
     def rebac_write(
         self,
@@ -209,13 +260,15 @@ class ReBACManager:
 
         # Insert tuple
         cursor.execute(
-            """
-            INSERT INTO rebac_tuples (
-                tuple_id, subject_type, subject_id, relation,
-                object_type, object_id, created_at, expires_at, conditions
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            self._fix_sql_placeholders(
+                """
+                INSERT INTO rebac_tuples (
+                    tuple_id, subject_type, subject_id, relation,
+                    object_type, object_id, created_at, expires_at, conditions
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+            ),
             (
                 tuple_id,
                 subject_entity.entity_type,
@@ -231,13 +284,15 @@ class ReBACManager:
 
         # Log to changelog
         cursor.execute(
-            """
-            INSERT INTO rebac_changelog (
-                change_type, tuple_id, subject_type, subject_id,
-                relation, object_type, object_id, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            self._fix_sql_placeholders(
+                """
+                INSERT INTO rebac_changelog (
+                    change_type, tuple_id, subject_type, subject_id,
+                    relation, object_type, object_id, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """
+            ),
             (
                 "INSERT",
                 tuple_id,
@@ -271,11 +326,13 @@ class ReBACManager:
 
         # Get tuple details before deleting (for changelog)
         cursor.execute(
-            """
-            SELECT subject_type, subject_id, relation, object_type, object_id
-            FROM rebac_tuples
-            WHERE tuple_id = ?
-            """,
+            self._fix_sql_placeholders(
+                """
+                SELECT subject_type, subject_id, relation, object_type, object_id
+                FROM rebac_tuples
+                WHERE tuple_id = ?
+                """
+            ),
             (tuple_id,),
         )
         row = cursor.fetchone()
@@ -283,22 +340,33 @@ class ReBACManager:
         if not row:
             return False
 
-        subject = Entity(row["subject_type"], row["subject_id"])
-        relation = row["relation"]
-        obj = Entity(row["object_type"], row["object_id"])
+        # Handle both dict-like (SQLite) and tuple (PostgreSQL) access
+        if hasattr(row, "keys"):
+            subject = Entity(row["subject_type"], row["subject_id"])
+            relation = row["relation"]
+            obj = Entity(row["object_type"], row["object_id"])
+        else:
+            subject = Entity(row[0], row[1])
+            relation = row[2]
+            obj = Entity(row[3], row[4])
 
         # Delete tuple
-        cursor.execute("DELETE FROM rebac_tuples WHERE tuple_id = ?", (tuple_id,))
+        cursor.execute(
+            self._fix_sql_placeholders("DELETE FROM rebac_tuples WHERE tuple_id = ?"),
+            (tuple_id,),
+        )
 
         # Log to changelog
         cursor.execute(
-            """
-            INSERT INTO rebac_changelog (
-                change_type, tuple_id, subject_type, subject_id,
-                relation, object_type, object_id, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            self._fix_sql_placeholders(
+                """
+                INSERT INTO rebac_changelog (
+                    change_type, tuple_id, subject_type, subject_id,
+                    relation, object_type, object_id, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """
+            ),
             (
                 "DELETE",
                 tuple_id,
@@ -458,14 +526,16 @@ class ReBACManager:
         cursor = conn.cursor()
 
         cursor.execute(
-            """
-            SELECT COUNT(*) as count
-            FROM rebac_tuples
-            WHERE subject_type = ? AND subject_id = ?
-              AND relation = ?
-              AND object_type = ? AND object_id = ?
-              AND (expires_at IS NULL OR expires_at > ?)
-            """,
+            self._fix_sql_placeholders(
+                """
+                SELECT COUNT(*) as count
+                FROM rebac_tuples
+                WHERE subject_type = ? AND subject_id = ?
+                  AND relation = ?
+                  AND object_type = ? AND object_id = ?
+                  AND (expires_at IS NULL OR expires_at > ?)
+                """
+            ),
             (
                 subject.entity_type,
                 subject.entity_id,
@@ -477,7 +547,11 @@ class ReBACManager:
         )
 
         row = cursor.fetchone()
-        return bool(row["count"] > 0) if row else False
+        if not row:
+            return False
+        # Handle both dict-like and tuple access
+        count = row["count"] if hasattr(row, "keys") else row[0]
+        return bool(count > 0)
 
     def _find_related_objects(self, obj: Entity, relation: str) -> list[Entity]:
         """Find all objects related to obj via relation.
@@ -493,13 +567,15 @@ class ReBACManager:
         cursor = conn.cursor()
 
         cursor.execute(
-            """
-            SELECT subject_type, subject_id
-            FROM rebac_tuples
-            WHERE object_type = ? AND object_id = ?
-              AND relation = ?
-              AND (expires_at IS NULL OR expires_at > ?)
-            """,
+            self._fix_sql_placeholders(
+                """
+                SELECT subject_type, subject_id
+                FROM rebac_tuples
+                WHERE object_type = ? AND object_id = ?
+                  AND relation = ?
+                  AND (expires_at IS NULL OR expires_at > ?)
+                """
+            ),
             (
                 obj.entity_type,
                 obj.entity_id,
@@ -508,7 +584,13 @@ class ReBACManager:
             ),
         )
 
-        return [Entity(row["subject_type"], row["subject_id"]) for row in cursor.fetchall()]
+        results = []
+        for row in cursor.fetchall():
+            if hasattr(row, "keys"):
+                results.append(Entity(row["subject_type"], row["subject_id"]))
+            else:
+                results.append(Entity(row[0], row[1]))
+        return results
 
     def rebac_expand(
         self,
@@ -635,13 +717,15 @@ class ReBACManager:
         cursor = conn.cursor()
 
         cursor.execute(
-            """
-            SELECT subject_type, subject_id
-            FROM rebac_tuples
-            WHERE relation = ?
-              AND object_type = ? AND object_id = ?
-              AND (expires_at IS NULL OR expires_at > ?)
-            """,
+            self._fix_sql_placeholders(
+                """
+                SELECT subject_type, subject_id
+                FROM rebac_tuples
+                WHERE relation = ?
+                  AND object_type = ? AND object_id = ?
+                  AND (expires_at IS NULL OR expires_at > ?)
+                """
+            ),
             (
                 relation,
                 obj.entity_type,
@@ -650,7 +734,13 @@ class ReBACManager:
             ),
         )
 
-        return [(row["subject_type"], row["subject_id"]) for row in cursor.fetchall()]
+        results = []
+        for row in cursor.fetchall():
+            if hasattr(row, "keys"):
+                results.append((row["subject_type"], row["subject_id"]))
+            else:
+                results.append((row[0], row[1]))
+        return results
 
     def _get_cached_check(self, subject: Entity, permission: str, obj: Entity) -> bool | None:
         """Get cached permission check result.
@@ -667,14 +757,16 @@ class ReBACManager:
         cursor = conn.cursor()
 
         cursor.execute(
-            """
-            SELECT result, expires_at
-            FROM rebac_check_cache
-            WHERE subject_type = ? AND subject_id = ?
-              AND permission = ?
-              AND object_type = ? AND object_id = ?
-              AND expires_at > ?
-            """,
+            self._fix_sql_placeholders(
+                """
+                SELECT result, expires_at
+                FROM rebac_check_cache
+                WHERE subject_type = ? AND subject_id = ?
+                  AND permission = ?
+                  AND object_type = ? AND object_id = ?
+                  AND expires_at > ?
+                """
+            ),
             (
                 subject.entity_type,
                 subject.entity_id,
@@ -687,7 +779,8 @@ class ReBACManager:
 
         row = cursor.fetchone()
         if row:
-            return bool(row["result"])
+            result = row["result"] if hasattr(row, "keys") else row[0]
+            return bool(result)
         return None
 
     def _cache_check_result(
@@ -710,12 +803,14 @@ class ReBACManager:
 
         # Delete existing cache entry if present
         cursor.execute(
-            """
-            DELETE FROM rebac_check_cache
-            WHERE subject_type = ? AND subject_id = ?
-              AND permission = ?
-              AND object_type = ? AND object_id = ?
-            """,
+            self._fix_sql_placeholders(
+                """
+                DELETE FROM rebac_check_cache
+                WHERE subject_type = ? AND subject_id = ?
+                  AND permission = ?
+                  AND object_type = ? AND object_id = ?
+                """
+            ),
             (
                 subject.entity_type,
                 subject.entity_id,
@@ -727,13 +822,15 @@ class ReBACManager:
 
         # Insert new cache entry
         cursor.execute(
-            """
-            INSERT INTO rebac_check_cache (
-                cache_id, subject_type, subject_id, permission,
-                object_type, object_id, result, computed_at, expires_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            self._fix_sql_placeholders(
+                """
+                INSERT INTO rebac_check_cache (
+                    cache_id, subject_type, subject_id, permission,
+                    object_type, object_id, result, computed_at, expires_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+            ),
             (
                 cache_id,
                 subject.entity_type,
@@ -741,7 +838,7 @@ class ReBACManager:
                 permission,
                 obj.entity_type,
                 obj.entity_id,
-                result,
+                int(result),  # Convert boolean to int for PostgreSQL compatibility
                 computed_at.isoformat(),
                 expires_at.isoformat(),
             ),
@@ -766,19 +863,23 @@ class ReBACManager:
 
         # Invalidate cache entries for this subject
         cursor.execute(
-            """
-            DELETE FROM rebac_check_cache
-            WHERE subject_type = ? AND subject_id = ?
-            """,
+            self._fix_sql_placeholders(
+                """
+                DELETE FROM rebac_check_cache
+                WHERE subject_type = ? AND subject_id = ?
+                """
+            ),
             (subject.entity_type, subject.entity_id),
         )
 
         # Invalidate cache entries for this object
         cursor.execute(
-            """
-            DELETE FROM rebac_check_cache
-            WHERE object_type = ? AND object_id = ?
-            """,
+            self._fix_sql_placeholders(
+                """
+                DELETE FROM rebac_check_cache
+                WHERE object_type = ? AND object_id = ?
+                """
+            ),
             (obj.entity_type, obj.entity_id),
         )
 
@@ -814,12 +915,12 @@ class ReBACManager:
         cursor = conn.cursor()
 
         cursor.execute(
-            "DELETE FROM rebac_check_cache WHERE expires_at <= ?",
+            self._fix_sql_placeholders("DELETE FROM rebac_check_cache WHERE expires_at <= ?"),
             (datetime.now(UTC).isoformat(),),
         )
 
         conn.commit()
-        return cursor.rowcount
+        return int(cursor.rowcount) if cursor.rowcount else 0
 
     def cleanup_expired_tuples(self) -> int:
         """Remove expired relationship tuples.
@@ -832,11 +933,13 @@ class ReBACManager:
 
         # Get expired tuples for changelog
         cursor.execute(
-            """
-            SELECT tuple_id, subject_type, subject_id, relation, object_type, object_id
-            FROM rebac_tuples
-            WHERE expires_at IS NOT NULL AND expires_at <= ?
-            """,
+            self._fix_sql_placeholders(
+                """
+                SELECT tuple_id, subject_type, subject_id, relation, object_type, object_id
+                FROM rebac_tuples
+                WHERE expires_at IS NOT NULL AND expires_at <= ?
+                """
+            ),
             (datetime.now(UTC).isoformat(),),
         )
 
@@ -844,39 +947,59 @@ class ReBACManager:
 
         # Delete expired tuples
         cursor.execute(
-            """
-            DELETE FROM rebac_tuples
-            WHERE expires_at IS NOT NULL AND expires_at <= ?
-            """,
+            self._fix_sql_placeholders(
+                """
+                DELETE FROM rebac_tuples
+                WHERE expires_at IS NOT NULL AND expires_at <= ?
+                """
+            ),
             (datetime.now(UTC).isoformat(),),
         )
 
         # Log to changelog and invalidate caches for expired tuples
         for row in expired_tuples:
+            # Handle both dict-like and tuple access
+            if hasattr(row, "keys"):
+                tuple_id = row["tuple_id"]
+                subject_type = row["subject_type"]
+                subject_id = row["subject_id"]
+                relation = row["relation"]
+                object_type = row["object_type"]
+                object_id = row["object_id"]
+            else:
+                tuple_id = row[0]
+                subject_type = row[1]
+                subject_id = row[2]
+                relation = row[3]
+                object_type = row[4]
+                object_id = row[5]
+
             cursor.execute(
-                """
-                INSERT INTO rebac_changelog (
-                    change_type, tuple_id, subject_type, subject_id,
-                    relation, object_type, object_id, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                self._fix_sql_placeholders(
+                    """
+                    INSERT INTO rebac_changelog (
+                        change_type, tuple_id, subject_type, subject_id,
+                        relation, object_type, object_id, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+                ),
                 (
                     "DELETE",
-                    row["tuple_id"],
-                    row["subject_type"],
-                    row["subject_id"],
-                    row["relation"],
-                    row["object_type"],
-                    row["object_id"],
+                    tuple_id,
+                    subject_type,
+                    subject_id,
+                    relation,
+                    object_type,
+                    object_id,
                     datetime.now(UTC).isoformat(),
                 ),
             )
 
             # Invalidate cache for this tuple
-            subject = Entity(row["subject_type"], row["subject_id"])
-            obj = Entity(row["object_type"], row["object_id"])
-            self._invalidate_cache_for_tuple(subject, row["relation"], obj)
+            subject = Entity(subject_type, subject_id)
+            obj = Entity(object_type, object_id)
+            self._invalidate_cache_for_tuple(subject, relation, obj)
 
         conn.commit()
         return len(expired_tuples)

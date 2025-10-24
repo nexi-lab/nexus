@@ -43,14 +43,13 @@ jobs:
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # Skip Windows tests on non-main branches (they take too long)
-    if: matrix.os != 'windows-latest' || github.ref == 'refs/heads/main'
+    # Skip Windows jobs on non-main branches to save time
+    if: ${{ matrix.os != 'windows-latest' || github.ref == 'refs/heads/main' }}
     strategy:
       fail-fast: false
       matrix:
         # Using ARM64 runners for faster test execution (4 vCPUs vs 2 vCPUs, free for public repos)
         # ubuntu-24.04-arm: 4 vCPUs, 16 GB RAM (free for public repos)
-        # ubuntu-latest: 2 vCPUs, 7 GB RAM (standard, better compatibility)
         # See: https://github.blog/changelog/2025-08-07-arm64-hosted-runners-for-public-repositories-are-now-generally-available/
         os: [ubuntu-24.04-arm, macos-latest, windows-latest]
         python-version: ["3.11", "3.12"]
@@ -94,7 +93,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        if: matrix.os == 'ubuntu-24.04-arm' && matrix.python-version == '3.11'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml

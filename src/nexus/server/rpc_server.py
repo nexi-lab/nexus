@@ -285,6 +285,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             "search",
             "glob",
             "grep",
+            "is_directory",
+            "get_available_namespaces",
         }
         if (
             hasattr(self, "exposed_methods")

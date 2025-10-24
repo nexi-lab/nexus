@@ -22,6 +22,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(glob)
     cli.add_command(grep)
     cli.add_command(find_duplicates)
+    cli.add_command(semantic_search_group)
 
 
 @click.command()
@@ -255,5 +256,309 @@ def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig)
             )
             console.print("  (CAS automatically deduplicates - no action needed!)")
 
+    except Exception as e:
+        handle_error(e)
+
+
+# Semantic Search Commands (v0.4.0)
+
+
+@click.group(name="search")
+def semantic_search_group() -> None:
+    """Semantic search commands using natural language queries."""
+    pass
+
+
+@semantic_search_group.command(name="init")
+@click.option(
+    "--provider",
+    type=click.Choice(["openai", "voyage"]),
+    default=None,
+    help="Embedding provider (default: None = keyword-only; recommended: openai)",
+)
+@click.option("--model", help="Embedding model name (uses provider default if not specified)")
+@click.option("--api-key", help="API key for the embedding provider (if using remote)")
+@click.option("--chunk-size", type=int, default=1024, help="Chunk size in tokens")
+@click.option(
+    "--chunk-strategy",
+    type=click.Choice(["fixed", "semantic", "overlapping"]),
+    default="semantic",
+    help="Chunking strategy",
+)
+@add_backend_options
+def search_init(
+    provider: str | None,
+    model: str | None,
+    api_key: str | None,
+    chunk_size: int,
+    chunk_strategy: str,
+    backend_config: BackendConfig,
+) -> None:
+    """Initialize semantic search engine.
+
+    Uses existing database (SQLite/PostgreSQL) with FTS for keyword search.
+    Optionally add embeddings for semantic/hybrid search.
+
+    Search Modes:
+    - Keyword-only (default): Uses FTS5/tsvector, no embeddings needed
+    - Semantic: Requires --provider (recommended: openai)
+    - Hybrid: Best results, combines keyword + semantic
+
+    Examples:
+        # Keyword-only search (no embeddings, minimal deps)
+        nexus search init
+
+        # Semantic search with OpenAI (recommended, lightweight)
+        nexus search init --provider openai --api-key sk-xxx
+
+        # Semantic search with Voyage AI (specialized embeddings)
+        nexus search init --provider voyage --api-key pa-xxx
+
+        # Custom settings
+        nexus search init --provider openai --chunk-size 2048
+    """
+    import asyncio
+
+    try:
+        nx = get_filesystem(backend_config)
+
+        if not isinstance(nx, NexusFS):
+            console.print("[red]Error:[/red] Semantic search is only available in embedded mode")
+            nx.close()
+            sys.exit(1)
+
+        with console.status("[yellow]Initializing search engine...[/yellow]", spinner="dots"):
+
+            async def init_search() -> None:
+                await nx.initialize_semantic_search(
+                    embedding_provider=provider,
+                    embedding_model=model,
+                    api_key=api_key,
+                    chunk_size=chunk_size,
+                    chunk_strategy=chunk_strategy,
+                )
+
+            asyncio.run(init_search())
+
+        console.print("[green]✓ Search engine initialized successfully![/green]")
+        console.print(f"  Database: [cyan]{nx.metadata.engine.dialect.name}[/cyan]")
+        console.print(f"  Provider: [cyan]{provider or 'None (keyword-only)'}[/cyan]")
+        console.print(f"  Chunk size: [cyan]{chunk_size}[/cyan] tokens")
+        console.print(f"  Chunk strategy: [cyan]{chunk_strategy}[/cyan]")
+
+        if not provider:
+            console.print("\n[yellow]Note:[/yellow] Keyword-only mode enabled (FTS).")
+            console.print(
+                "For semantic/hybrid search, reinitialize with --provider openai (recommended) or voyage"
+            )
+
+        nx.close()
+    except Exception as e:
+        handle_error(e)
+
+
+@semantic_search_group.command(name="index")
+@click.argument("path", default="/")
+@click.option("--recursive/--no-recursive", default=True, help="Index directory recursively")
+@add_backend_options
+def search_index(
+    path: str,
+    recursive: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """Index documents for semantic search.
+
+    This command chunks documents and generates embeddings for semantic search.
+
+    Examples:
+        # Index all documents
+        nexus search index
+
+        # Index specific directory
+        nexus search index /docs
+
+        # Index single file
+        nexus search index /docs/README.md
+    """
+    import asyncio
+
+    try:
+        nx = get_filesystem(backend_config)
+
+        if not isinstance(nx, NexusFS):
+            console.print("[red]Error:[/red] Semantic search is only available in embedded mode")
+            nx.close()
+            sys.exit(1)
+
+        with console.status(f"[yellow]Indexing {path}...[/yellow]", spinner="dots"):
+
+            async def do_index() -> dict[str, int]:
+                # Auto-initialize semantic search if not already initialized
+                if not hasattr(nx, "_semantic_search") or nx._semantic_search is None:
+                    await nx.initialize_semantic_search()
+                return await nx.semantic_search_index(path, recursive=recursive)
+
+            results = asyncio.run(do_index())
+
+        # Display results
+        total_chunks = sum(v for v in results.values() if v > 0)
+        successful = sum(1 for v in results.values() if v > 0)
+        failed = sum(1 for v in results.values() if v < 0)
+
+        console.print("\n[green]✓ Indexing complete![/green]")
+        console.print(f"  Files indexed: [cyan]{successful}[/cyan]")
+        console.print(f"  Total chunks: [cyan]{total_chunks}[/cyan]")
+        if failed > 0:
+            console.print(f"  Failed: [yellow]{failed}[/yellow]")
+
+        # Show stats
+        async def get_stats() -> dict[str, Any]:
+            return await nx.semantic_search_stats()
+
+        stats = asyncio.run(get_stats())
+        console.print("\n[bold cyan]Index Statistics:[/bold cyan]")
+        console.print(f"  Total indexed files: [green]{stats['indexed_files']}[/green]")
+        console.print(f"  Total chunks: [green]{stats['total_chunks']}[/green]")
+
+        nx.close()
+    except Exception as e:
+        handle_error(e)
+
+
+@semantic_search_group.command(name="query")
+@click.argument("query", type=str)
+@click.option("-p", "--path", default="/", help="Root path to search")
+@click.option("-n", "--limit", default=10, help="Maximum number of results")
+@click.option(
+    "-m",
+    "--mode",
+    type=click.Choice(["keyword", "semantic", "hybrid"]),
+    default="semantic",
+    help="Search mode (default: semantic)",
+)
+@click.option(
+    "--provider",
+    type=click.Choice(["openai", "voyage"]),
+    default=None,
+    help="Embedding provider (for semantic/hybrid mode)",
+)
+@click.option("--api-key", default=None, help="API key for embedding provider")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+@add_backend_options
+def search_query(
+    query: str,
+    path: str,
+    limit: int,
+    mode: str,
+    provider: str | None,
+    api_key: str | None,
+    json_output: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """Search documents using natural language queries.
+
+    Examples:
+        # Search for authentication information
+        nexus search query "How does authentication work?"
+
+        # Search in specific directory
+        nexus search query "database migration" --path /docs
+
+        # Get more results
+        nexus search query "error handling" --limit 20
+
+        # JSON output
+        nexus search query "API endpoints" --json
+    """
+    import asyncio
+
+    try:
+        nx = get_filesystem(backend_config)
+
+        if not isinstance(nx, NexusFS):
+            console.print("[red]Error:[/red] Semantic search is only available in embedded mode")
+            nx.close()
+            sys.exit(1)
+
+        with console.status(f"[yellow]Searching for: {query}[/yellow]", spinner="dots"):
+
+            async def do_search() -> list[dict[str, Any]]:
+                # Auto-initialize semantic search if not already initialized
+                if not hasattr(nx, "_semantic_search") or nx._semantic_search is None:
+                    await nx.initialize_semantic_search(
+                        embedding_provider=provider, api_key=api_key
+                    )
+                return await nx.semantic_search(query, path=path, limit=limit, search_mode=mode)
+
+            results = asyncio.run(do_search())
+
+        if json_output:
+            import json
+
+            console.print(json.dumps(results, indent=2))
+        else:
+            if not results:
+                console.print(f"[yellow]No results found for:[/yellow] {query}")
+                nx.close()
+                return
+
+            console.print(
+                f"\n[green]Found {len(results)} results for:[/green] [cyan]{query}[/cyan]\n"
+            )
+
+            for i, result in enumerate(results, 1):
+                score = result["score"]
+                file_path = result["path"]
+                chunk_text = result["chunk_text"]
+
+                # Truncate long text
+                if len(chunk_text) > 200:
+                    chunk_text = chunk_text[:200] + "..."
+
+                console.print(f"[bold]{i}. {file_path}[/bold]")
+                console.print(f"   Score: [green]{score:.3f}[/green]")
+                console.print(f"   [dim]{chunk_text}[/dim]")
+                console.print()
+
+        nx.close()
+    except Exception as e:
+        handle_error(e)
+
+
+@semantic_search_group.command(name="stats")
+@add_backend_options
+def search_stats(backend_config: BackendConfig) -> None:
+    """Show semantic search statistics.
+
+    Examples:
+        nexus search stats
+    """
+    import asyncio
+
+    try:
+        nx = get_filesystem(backend_config)
+
+        if not isinstance(nx, NexusFS):
+            console.print("[red]Error:[/red] Semantic search is only available in embedded mode")
+            nx.close()
+            sys.exit(1)
+
+        async def get_stats() -> dict[str, Any]:
+            # Auto-initialize semantic search if not already initialized
+            if not hasattr(nx, "_semantic_search") or nx._semantic_search is None:
+                await nx.initialize_semantic_search()
+            return await nx.semantic_search_stats()
+
+        stats = asyncio.run(get_stats())
+
+        console.print("\n[bold cyan]Semantic Search Statistics[/bold cyan]")
+        console.print(f"  Database type: [green]{stats['database_type']}[/green]")
+        console.print(f"  Indexed files: [green]{stats['indexed_files']}[/green]")
+        console.print(f"  Total chunks: [green]{stats['total_chunks']}[/green]")
+        console.print(f"  Embedding model: [cyan]{stats.get('embedding_model', 'None')}[/cyan]")
+        console.print(f"  Chunk size: [cyan]{stats['chunk_size']}[/cyan] tokens")
+        console.print(f"  Chunk strategy: [cyan]{stats['chunk_strategy']}[/cyan]")
+
+        nx.close()
     except Exception as e:
         handle_error(e)

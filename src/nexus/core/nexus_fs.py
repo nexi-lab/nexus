@@ -17,7 +17,8 @@ from nexus.backends.backend import Backend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
-    pass
+    from nexus.core.entity_registry import EntityRegistry
+    from nexus.core.memory_api import Memory
 from nexus.core.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -64,6 +65,7 @@ class NexusFS(
         backend: Backend,
         db_path: str | Path | None = None,
         tenant_id: str | None = None,
+        user_id: str | None = None,
         agent_id: str | None = None,
         is_admin: bool = False,
         custom_namespaces: list[NamespaceConfig] | None = None,
@@ -86,6 +88,7 @@ class NexusFS(
             backend: Backend instance for storing file content (LocalBackend, GCSBackend, etc.)
             db_path: Path to SQLite metadata database (auto-generated if None)
             tenant_id: Tenant identifier for multi-tenant isolation (optional)
+            user_id: User identifier for identity-based memory system (v0.4.0, optional)
             agent_id: Agent identifier for agent-level isolation in /workspace (optional)
             is_admin: Whether this instance has admin privileges (default: False)
             custom_namespaces: Additional custom namespace configurations (optional)
@@ -114,8 +117,9 @@ class NexusFS(
         # Store backend
         self.backend = backend
 
-        # Store tenant and agent context
+        # Store tenant, user, and agent context
         self.tenant_id = tenant_id
+        self.user_id = user_id  # v0.4.0: Identity-based memory
         self.agent_id = agent_id
         self.is_admin = is_admin
         self.auto_parse = auto_parse
@@ -224,6 +228,17 @@ class NexusFS(
         # Call initialize_semantic_search() to enable semantic search features
         self._semantic_search = None
 
+        # Initialize Memory API (v0.4.0)
+
+        self._memory_api: Memory | None = None  # Lazy initialization
+        self._entity_registry: EntityRegistry | None = None
+        # Store config for lazy init
+        self._memory_config = {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "agent_id": agent_id,
+        }
+
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
         """
         Dynamically load and register custom parsers from configuration.
@@ -269,6 +284,42 @@ class NexusFS(
                 # This prevents config errors from breaking the entire system
                 # In production environments, enable logging to see errors
                 pass
+
+    @property
+    def memory(self) -> Any:
+        """Get Memory API instance for agent memory management (v0.4.0).
+
+        Lazy initialization on first access.
+
+        Returns:
+            Memory API instance.
+
+        Example:
+            >>> nx = nexus.connect()
+            >>> memory_id = nx.memory.store("User prefers Python", scope="user")
+            >>> results = nx.memory.query(memory_type="preference")
+        """
+        if self._memory_api is None:
+            from nexus.core.entity_registry import EntityRegistry
+            from nexus.core.memory_api import Memory
+
+            # Create a session from SessionLocal
+            session = self.metadata.SessionLocal()
+
+            # Get or create entity registry
+            if self._entity_registry is None:
+                self._entity_registry = EntityRegistry(session)
+
+            self._memory_api = Memory(
+                session=session,
+                backend=self.backend,
+                tenant_id=self._memory_config.get("tenant_id"),
+                user_id=self._memory_config.get("user_id"),
+                agent_id=self._memory_config.get("agent_id"),
+                entity_registry=self._entity_registry,
+            )
+
+        return self._memory_api
 
     def _validate_path(self, path: str) -> str:
         """

@@ -29,6 +29,8 @@ Nexus is a complete AI agent infrastructure platform that combines distributed u
 - **Self-Evolving Memory**: Agent memory with automatic consolidation
 - **Memory Versioning**: Track knowledge evolution over time
 - **Multi-Agent Sharing**: Shared memory spaces within tenants
+- **Order-Neutral Memory Paths**: Access memories via file API with flexible path ordering (v0.4.0 Phase 2)
+- **Dual-API Memory Access**: Use Memory API (`nx.memory.*`) or File API (`nx.read/write`) interchangeably (v0.4.0 Phase 2)
 - **Memory Analytics**: Effectiveness tracking and insights
 - **Prompt Version Control**: Track prompt evolution with lineage
 - **Training Data Management**: Version-controlled datasets with deduplication
@@ -103,6 +105,15 @@ async with nx:
         prompt="Summarize key findings",
         model="claude-sonnet-4"
     )
+
+    # Memory API: Store and query agent memories
+    mem_id = await nx.memory.store("Python best practices", scope="user")
+    memories = await nx.memory.query(user_id="alice", scope="user")
+
+    # Phase 2: Access same memories via File API (order-neutral paths!)
+    await nx.write("/workspace/alice/agent1/memory/facts", b"Python is great!")
+    content = await nx.read("/workspace/agent1/alice/memory/facts")  # Same memory!
+    content = await nx.read("/memory/by-user/alice/facts")  # Also same memory!
 ```
 
 **Config file (`nexus.yaml`):**

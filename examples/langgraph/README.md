@@ -24,6 +24,14 @@ This pattern enables agents to break down complex tasks, gather information syst
 - **Multi-LLM Support**: Works with Claude (Anthropic), GPT-4 (OpenAI), or via OpenRouter
 - **Educational**: Clear, commented code demonstrating agent patterns
 
+## Files
+
+- **`nexus_tools.py`** - LangGraph tool wrappers for Nexus file operations (grep, glob, read, write)
+- **`langgraph_react_demo.py`** - Main ReAct agent implementation with example tasks
+- **`setup_test_data.py`** - Utility to populate server with sample Python files for testing
+- **`requirements.txt`** - Python dependencies (LangGraph, LangChain, LLM providers)
+- **`README.md`** - This comprehensive tutorial and documentation
+
 ## Quick Start
 
 ### 1. Install Dependencies
@@ -54,7 +62,21 @@ Optional: Set Nexus API key if your server requires authentication:
 export NEXUS_API_KEY="your-nexus-key"
 ```
 
-### 3. Run the Demo
+### 3. Setup Test Data (Optional)
+
+To populate the remote server with sample Python files for the agent to analyze:
+
+```bash
+python setup_test_data.py
+```
+
+This creates test files in `/workspace` with async patterns that the agent can find and analyze:
+- `api_client.py` - HTTP client with aiohttp
+- `database.py` - Database operations with asyncpg
+- `worker.py` - Async task queue worker
+- `utils.py` - Regular synchronous functions
+
+### 4. Run the Demo
 
 ```bash
 python langgraph_react_demo.py

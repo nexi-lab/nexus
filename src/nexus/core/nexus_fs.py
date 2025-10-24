@@ -29,6 +29,7 @@ from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.nexus_fs_permissions import NexusFSPermissionsMixin
+from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.core.nexus_fs_search import NexusFSSearchMixin
 from nexus.core.nexus_fs_versions import NexusFSVersionsMixin
 from nexus.core.permissions import OperationContext, Permission
@@ -43,6 +44,7 @@ class NexusFS(
     NexusFSCoreMixin,
     NexusFSSearchMixin,
     NexusFSPermissionsMixin,
+    NexusFSReBACMixin,
     NexusFSVersionsMixin,
     NexusFilesystem,
 ):
@@ -203,7 +205,7 @@ class NexusFS(
 
         # Initialize ReBACManager with same database as metadata store
         self._rebac_manager = ReBACManager(
-            db_path=str(self.metadata.db_path),
+            engine=self.metadata.engine,  # Use SQLAlchemy engine (supports SQLite + PostgreSQL)
             cache_ttl_seconds=cache_ttl_seconds or 300,
             max_depth=10,
         )

@@ -1104,3 +1104,156 @@ class MemoryModel(Base):
         # Validate importance
         if self.importance is not None and not 0.0 <= self.importance <= 1.0:
             raise ValidationError(f"importance must be between 0.0 and 1.0, got {self.importance}")
+
+
+# ============================================================================
+# ReBAC (Relationship-Based Access Control) Tables
+# ============================================================================
+
+
+class ReBACTupleModel(Base):
+    """Relationship tuple for ReBAC system.
+
+    Stores (subject, relation, object) tuples representing relationships
+    between entities in the authorization graph.
+
+    Examples:
+        - (agent:alice, member-of, group:developers)
+        - (group:developers, owner-of, file:/workspace/project.txt)
+    """
+
+    __tablename__ = "rebac_tuples"
+
+    tuple_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    # Subject (who/what has the relationship)
+    subject_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    subject_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # Relation type
+    relation: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+
+    # Object (what is being accessed/owned)
+    object_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    object_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Optional conditions (JSON)
+    conditions: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Composite index for efficient lookups
+    __table_args__ = (
+        Index("idx_rebac_subject", "subject_type", "subject_id"),
+        Index("idx_rebac_object", "object_type", "object_id"),
+        Index("idx_rebac_relation", "relation"),
+        Index("idx_rebac_expires", "expires_at"),
+    )
+
+
+class ReBACNamespaceModel(Base):
+    """Namespace configuration for ReBAC permission expansion.
+
+    Defines how permissions are computed for different object types
+    using Zanzibar-style permission expansion rules.
+
+    Example config:
+        {
+            "relations": {
+                "owner": {},
+                "viewer": {"union": ["owner", "direct_viewer"]},
+                "editor": {"union": ["owner", "direct_editor"]}
+            }
+        }
+    """
+
+    __tablename__ = "rebac_namespaces"
+
+    namespace_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    object_type: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+
+    # JSON configuration
+    config: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+
+class ReBACChangelogModel(Base):
+    """Change log for ReBAC tuple modifications.
+
+    Tracks all create/delete operations on relationship tuples for
+    audit purposes and cache invalidation.
+    """
+
+    __tablename__ = "rebac_changelog"
+
+    change_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    change_type: Mapped[str] = mapped_column(String(10), nullable=False)  # INSERT, DELETE
+
+    # Tuple reference
+    tuple_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+    # Denormalized tuple data for historical record
+    subject_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    subject_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    relation: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    object_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    object_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Timestamp
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
+    )
+
+
+class ReBACCheckCacheModel(Base):
+    """Cache for ReBAC permission check results.
+
+    Caches the results of expensive graph traversal operations
+    to improve performance of repeated permission checks.
+    """
+
+    __tablename__ = "rebac_check_cache"
+
+    cache_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    # Cached check parameters
+    subject_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    subject_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    permission: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    object_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    object_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # Result and metadata
+    result: Mapped[bool] = mapped_column(Integer, nullable=False)  # 0=False, 1=True
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+
+    # Composite index for efficient lookups
+    __table_args__ = (
+        Index(
+            "idx_rebac_cache_check",
+            "subject_type",
+            "subject_id",
+            "permission",
+            "object_type",
+            "object_id",
+        ),
+    )

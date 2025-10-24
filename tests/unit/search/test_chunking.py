@@ -175,7 +175,7 @@ Paragraph three."""
 
     def test_chunk_indices(self):
         """Test that chunk indices are sequential."""
-        chunker = DocumentChunker(chunk_size=10, strategy=ChunkStrategy.OVERLAPPING)
+        chunker = DocumentChunker(chunk_size=10, overlap_size=2, strategy=ChunkStrategy.OVERLAPPING)
         content = "word " * 50
         chunks = chunker.chunk(content)
 

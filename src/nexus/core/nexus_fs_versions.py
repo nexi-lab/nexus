@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.core.permissions import Permission
+from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -38,6 +39,7 @@ class NexusFSVersionsMixin:
             self, path: str, permission: Permission, context: OperationContext | None
         ) -> None: ...
 
+    @rpc_expose(description="Get specific file version")
     def get_version(self, path: str, version: int) -> bytes:
         """Get a specific version of a file.
 
@@ -82,6 +84,7 @@ class NexusFSVersionsMixin:
         content = route.backend.read_content(version_meta.etag)
         return content
 
+    @rpc_expose(description="List file versions")
     def list_versions(self, path: str) -> builtins.list[dict[str, Any]]:
         """List all versions of a file.
 
@@ -104,6 +107,7 @@ class NexusFSVersionsMixin:
         path = self._validate_path(path)
         return self.metadata.list_versions(path)
 
+    @rpc_expose(description="Rollback file to previous version")
     def rollback(self, path: str, version: int, context: OperationContext | None = None) -> None:
         """Rollback file to a previous version.
 
@@ -149,6 +153,7 @@ class NexusFSVersionsMixin:
         if self.metadata._cache_enabled and self.metadata._cache:
             self.metadata._cache.invalidate_path(path)
 
+    @rpc_expose(description="Compare file versions")
     def diff_versions(
         self, path: str, v1: int, v2: int, mode: str = "metadata"
     ) -> dict[str, Any] | str:

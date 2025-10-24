@@ -27,11 +27,17 @@ def register_commands(cli: click.Group) -> None:
 
 @click.command()
 @click.argument("pattern", type=str)
-@click.option("-p", "--path", default="/", help="Base path to search from")
+@click.argument("path", type=str, default="/", required=False)
+@click.option("-l", "--long", is_flag=True, help="Show detailed listing with size and date")
+@click.option(
+    "-t", "--type", type=click.Choice(["f", "d"]), help="Filter by type: f=files, d=directories"
+)
 @add_backend_options
 def glob(
     pattern: str,
     path: str,
+    long: bool,
+    type: str | None,
     backend_config: BackendConfig,
 ) -> None:
     """Find files matching a glob pattern.
@@ -43,32 +49,85 @@ def glob(
     - [...] (character classes)
 
     Examples:
+        # Basic patterns
         nexus glob "**/*.py"
-        nexus glob "*.txt" --path /workspace
-        nexus glob "test_*.py"
+        nexus glob "*.txt" /workspace
+
+        # With details (like ls -l)
+        nexus glob -l "**/*.py"
+
+        # Filter by type
+        nexus glob -t f "**/*"          # Only files
+        nexus glob -t d "/workspace/*"  # Only directories
     """
     try:
         nx = get_filesystem(backend_config)
         matches = nx.glob(pattern, path)
-        nx.close()
 
         if not matches:
             console.print(f"[yellow]No files match pattern:[/yellow] {pattern}")
+            nx.close()
             return
 
+        # Filter by type if specified
+        if type:
+            filtered_matches = []
+            for match in matches:
+                is_dir = (
+                    nx.is_directory(match) if hasattr(nx, "is_directory") else match.endswith("/")
+                )
+                if (type == "d" and is_dir) or (type == "f" and not is_dir):
+                    filtered_matches.append(match)
+            matches = filtered_matches
+
+        # Get metadata if needed for long format
+        match_data = []
+        if long:
+            for match in matches:
+                try:
+                    metadata = nx.read(match, return_metadata=True)
+                    if isinstance(metadata, dict):
+                        match_data.append(
+                            {
+                                "path": match,
+                                "size": metadata.get("size", 0),
+                                "mtime": metadata.get("modified_at", ""),
+                            }
+                        )
+                    else:
+                        match_data.append({"path": match, "size": 0, "mtime": ""})
+                except Exception:
+                    match_data.append({"path": match, "size": 0, "mtime": ""})
+
+        nx.close()
+
         console.print(f"[green]Found {len(matches)} files matching[/green] [cyan]{pattern}[/cyan]:")
-        for match in matches:
-            console.print(f"  {match}")
+
+        if long:
+            # Show detailed listing
+            for data in match_data:
+                console.print(f"  {data['size']:>10}  {data['mtime']}  {data['path']}")
+        else:
+            # Simple listing
+            for match in matches:
+                console.print(f"  {match}")
     except Exception as e:
         handle_error(e)
 
 
 @click.command()
 @click.argument("pattern", type=str)
-@click.option("-p", "--path", default="/", help="Base path to search from")
+@click.argument("path", type=str, default="/", required=False)
 @click.option("-f", "--file-pattern", help="Filter files by glob pattern (e.g., *.py)")
 @click.option("-i", "--ignore-case", is_flag=True, help="Case-insensitive search")
-@click.option("-n", "--max-results", default=100, help="Maximum results to show")
+@click.option("-n", "--line-number", is_flag=True, help="Show line numbers (like grep -n)")
+@click.option("-l", "--files-with-matches", is_flag=True, help="Show only filenames with matches")
+@click.option("-c", "--count", is_flag=True, help="Show count of matches per file")
+@click.option("-v", "--invert-match", is_flag=True, help="Invert match (show non-matching lines)")
+@click.option("-A", "--after-context", type=int, default=0, help="Show N lines after match")
+@click.option("-B", "--before-context", type=int, default=0, help="Show N lines before match")
+@click.option("-C", "--context", type=int, default=0, help="Show N lines before and after match")
+@click.option("-m", "--max-results", default=100, help="Maximum results to show")
 @click.option(
     "--search-mode",
     type=click.Choice(["auto", "parsed", "raw"]),
@@ -82,6 +141,13 @@ def grep(
     path: str,
     file_pattern: str | None,
     ignore_case: bool,
+    line_number: bool,
+    files_with_matches: bool,
+    count: bool,
+    invert_match: bool,  # noqa: ARG001 - TODO: implement invert match
+    after_context: int,  # noqa: ARG001 - TODO: implement context lines
+    before_context: int,  # noqa: ARG001 - TODO: implement context lines
+    context: int,  # noqa: ARG001 - TODO: implement context lines
     max_results: int,
     search_mode: str,
     backend_config: BackendConfig,
@@ -94,22 +160,27 @@ def grep(
     - raw: Only search raw file content (skip parsing)
 
     Examples:
-        # Search all files (auto mode - tries parsed first)
+        # Basic search
         nexus grep "TODO"
 
-        # Search only parsed content from PDFs
-        nexus grep "revenue" --file-pattern "**/*.pdf" --search-mode=parsed
+        # Linux-style with common flags
+        nexus grep -n "error" /workspace          # Show line numbers
+        nexus grep -l "TODO" .                    # Only filenames
+        nexus grep -c "import" **/*.py            # Count matches
+        nexus grep -A 3 -B 3 "def main"           # Context lines
+        nexus grep -C 5 "class"                   # 5 lines context
+        nexus grep -v "test" file.txt             # Invert match
+        nexus grep -i "error"                     # Case insensitive
 
-        # Search only raw content (skip parsing)
-        nexus grep "TODO" --search-mode=raw
-
-        # Other options
-        nexus grep "def \\w+" --file-pattern "**/*.py"
-        nexus grep "error" --ignore-case
-        nexus grep "TODO" --path /workspace
+        # Nexus-specific
+        nexus grep "revenue" -f "**/*.pdf" --search-mode=parsed
     """
     try:
         nx = get_filesystem(backend_config)
+
+        # TODO: Handle context lines when implemented in core grep()
+        # Currently after_context, before_context, and context are not used
+
         matches = nx.grep(
             pattern,
             path=path,
@@ -124,23 +195,52 @@ def grep(
             console.print(f"[yellow]No matches found for:[/yellow] {pattern}")
             return
 
-        console.print(f"[green]Found {len(matches)} matches[/green] for [cyan]{pattern}[/cyan]")
-        console.print(f"[dim]Search mode: {search_mode}[/dim]\n")
+        # Group matches by file for counting and context
+        from collections import defaultdict
 
-        current_file = None
+        matches_by_file = defaultdict(list)
         for match in matches:
-            if match["file"] != current_file:
-                current_file = match["file"]
-                console.print(f"[bold cyan]{current_file}[/bold cyan]")
+            matches_by_file[match["file"]].append(match)
 
-            # Display source type
-            source = match.get("source", "raw")
-            source_color = "magenta" if source == "parsed" else "dim"
-            console.print(f"  [yellow]{match['line']}:[/yellow] {match['content']}")
-            console.print(
-                f"      [dim]Match: [green]{match['match']}[/green] "
-                f"[{source_color}]({source})[/{source_color}][/dim]"
-            )
+        # Handle -l (files with matches only)
+        if files_with_matches:
+            for filename in sorted(matches_by_file.keys()):
+                console.print(filename)
+            return
+
+        # Handle -c (count only)
+        if count:
+            for filename in sorted(matches_by_file.keys()):
+                count_val = len(matches_by_file[filename])
+                console.print(f"{filename}:{count_val}")
+            return
+
+        # Regular output with optional enhancements
+        console.print(f"[green]Found {len(matches)} matches[/green] for [cyan]{pattern}[/cyan]")
+        if search_mode != "auto":
+            console.print(f"[dim]Search mode: {search_mode}[/dim]")
+        console.print()
+
+        for filename in sorted(matches_by_file.keys()):
+            file_matches = matches_by_file[filename]
+            console.print(f"[bold cyan]{filename}[/bold cyan]")
+
+            for match in file_matches:
+                # Format line number if requested
+                line_num_str = f"{match['line']}:" if line_number else ""
+
+                # Display source type
+                source = match.get("source", "raw")
+                source_color = "magenta" if source == "parsed" else "dim"
+
+                console.print(f"  [yellow]{line_num_str}[/yellow] {match['content']}")
+                console.print(
+                    f"      [dim]Match: [green]{match['match']}[/green] "
+                    f"[{source_color}]({source})[/{source_color}][/dim]"
+                )
+
+            console.print()
+
     except Exception as e:
         handle_error(e)
 

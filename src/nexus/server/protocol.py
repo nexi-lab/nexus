@@ -178,6 +178,14 @@ def decode_rpc_message(data: bytes) -> dict[str, Any]:
 
 
 # ============================================================
+# RPC Exposure Decorator
+# ============================================================
+
+# Import decorator from core module to avoid circular imports
+# Re-export here for backward compatibility
+from nexus.core.rpc_decorator import rpc_expose  # noqa: F401, E402
+
+# ============================================================
 # Method-specific parameter schemas
 # ============================================================
 
@@ -283,6 +291,49 @@ class GetAvailableNamespacesParams:
     pass
 
 
+@dataclass
+class RebacCreateParams:
+    """Parameters for rebac_create() method."""
+
+    subject: tuple[str, str]
+    relation: str
+    object: tuple[str, str]
+    expires_at: str | None = None
+
+
+@dataclass
+class RebacCheckParams:
+    """Parameters for rebac_check() method."""
+
+    subject: tuple[str, str]
+    permission: str
+    object: tuple[str, str]
+
+
+@dataclass
+class RebacExpandParams:
+    """Parameters for rebac_expand() method."""
+
+    permission: str
+    object: tuple[str, str]
+
+
+@dataclass
+class RebacDeleteParams:
+    """Parameters for rebac_delete() method."""
+
+    tuple_id: str
+
+
+@dataclass
+class RebacListTuplesParams:
+    """Parameters for rebac_list_tuples() method."""
+
+    subject: tuple[str, str] | None = None
+    relation: str | None = None
+    object: tuple[str, str] | None = None
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -297,6 +348,11 @@ METHOD_PARAMS = {
     "rmdir": RmdirParams,
     "is_directory": IsDirectoryParams,
     "get_available_namespaces": GetAvailableNamespacesParams,
+    "rebac_create": RebacCreateParams,
+    "rebac_check": RebacCheckParams,
+    "rebac_expand": RebacExpandParams,
+    "rebac_delete": RebacDeleteParams,
+    "rebac_list_tuples": RebacListTuplesParams,
 }
 
 

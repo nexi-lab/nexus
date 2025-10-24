@@ -18,7 +18,6 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.core.nexus_fs import NexusFS
 
 
 @click.group(name="rebac")
@@ -72,18 +71,7 @@ def rebac_create(
         nexus rebac create agent bob viewer-of file secret --expires 2025-12-31T23:59:59
     """
     try:
-        from nexus.core.rebac_manager import ReBACManager
-
         nx = get_filesystem(backend_config)
-
-        # Only Embedded mode supports ReBAC
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] ReBAC is only available in embedded mode")
-            nx.close()
-            sys.exit(1)
-
-        # Use SQLAlchemy engine from metadata store
-        rebac_mgr = ReBACManager(engine=nx.metadata.engine)
 
         # Parse expiration time if provided
         expires_at = None
@@ -99,14 +87,13 @@ def rebac_create(
                 sys.exit(1)
 
         # Create tuple
-        tuple_id = rebac_mgr.rebac_write(
+        tuple_id = nx.rebac_create(  # type: ignore[attr-defined]
             subject=(subject_type, subject_id),
             relation=relation,
             object=(object_type, object_id),
             expires_at=expires_at,
         )
 
-        rebac_mgr.close()
         nx.close()
 
         console.print("[green]✓[/green] Created relationship tuple")
@@ -134,23 +121,11 @@ def rebac_delete_cmd(
         nexus rebac delete 550e8400-e29b-41d4-a716-446655440000
     """
     try:
-        from nexus.core.rebac_manager import ReBACManager
-
         nx = get_filesystem(backend_config)
 
-        # Only Embedded mode supports ReBAC
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] ReBAC is only available in embedded mode")
-            nx.close()
-            sys.exit(1)
-
-        # Use SQLAlchemy engine from metadata store
-        rebac_mgr = ReBACManager(engine=nx.metadata.engine)
-
         # Delete tuple
-        deleted = rebac_mgr.rebac_delete(tuple_id)
+        deleted = nx.rebac_delete(tuple_id)  # type: ignore[attr-defined]
 
-        rebac_mgr.close()
         nx.close()
 
         if deleted:
@@ -192,27 +167,15 @@ def rebac_check_cmd(
         nexus rebac check group eng-team owner file project-folder
     """
     try:
-        from nexus.core.rebac_manager import ReBACManager
-
         nx = get_filesystem(backend_config)
 
-        # Only Embedded mode supports ReBAC
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] ReBAC is only available in embedded mode")
-            nx.close()
-            sys.exit(1)
-
-        # Use SQLAlchemy engine from metadata store
-        rebac_mgr = ReBACManager(engine=nx.metadata.engine)
-
         # Check permission
-        granted = rebac_mgr.rebac_check(
+        granted = nx.rebac_check(  # type: ignore[attr-defined]
             subject=(subject_type, subject_id),
             permission=permission,
             object=(object_type, object_id),
         )
 
-        rebac_mgr.close()
         nx.close()
 
         # Display result
@@ -257,26 +220,14 @@ def rebac_expand_cmd(
         nexus rebac expand owner file project-folder
     """
     try:
-        from nexus.core.rebac_manager import ReBACManager
-
         nx = get_filesystem(backend_config)
 
-        # Only Embedded mode supports ReBAC
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] ReBAC is only available in embedded mode")
-            nx.close()
-            sys.exit(1)
-
-        # Use SQLAlchemy engine from metadata store
-        rebac_mgr = ReBACManager(engine=nx.metadata.engine)
-
         # Expand permission
-        subjects = rebac_mgr.rebac_expand(
+        subjects = nx.rebac_expand(  # type: ignore[attr-defined]
             permission=permission,
             object=(object_type, object_id),
         )
 
-        rebac_mgr.close()
         nx.close()
 
         # Display results

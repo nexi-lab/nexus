@@ -34,6 +34,7 @@ from nexus.core.nexus_fs_search import NexusFSSearchMixin
 from nexus.core.nexus_fs_versions import NexusFSVersionsMixin
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.router import NamespaceConfig, PathRouter
+from nexus.core.rpc_decorator import rpc_expose
 from nexus.parsers import MarkItDownParser, ParserRegistry
 from nexus.parsers.types import ParseResult
 from nexus.storage.content_cache import ContentCache
@@ -499,6 +500,7 @@ class NexusFS(
 
     # === Directory Operations ===
 
+    @rpc_expose(description="Create directory")
     def mkdir(
         self,
         path: str,
@@ -581,6 +583,7 @@ class NexusFS(
         # Create explicit metadata entry for the directory
         self._create_directory_metadata(path)
 
+    @rpc_expose(description="Remove directory")
     def rmdir(self, path: str, recursive: bool = False) -> None:
         """
         Remove a directory.
@@ -643,6 +646,7 @@ class NexusFS(
         with contextlib.suppress(NexusFileNotFoundError):
             route.backend.rmdir(route.backend_path, recursive=recursive)
 
+    @rpc_expose(description="Check if path is a directory")
     def is_directory(self, path: str) -> bool:
         """
         Check if path is a directory (explicit or implicit).
@@ -671,6 +675,7 @@ class NexusFS(
         except (InvalidPathError, Exception):
             return False
 
+    @rpc_expose(description="Get available namespaces")
     def get_available_namespaces(self) -> builtins.list[str]:
         """
         Get list of available namespace directories.
@@ -764,6 +769,7 @@ class NexusFS(
 
     # === Metadata Export/Import ===
 
+    @rpc_expose(description="Export metadata to JSONL file")
     def export_metadata(
         self,
         output_path: str | Path,
@@ -907,6 +913,7 @@ class NexusFS(
 
         return count
 
+    @rpc_expose(description="Import metadata from JSONL file")
     def import_metadata(
         self,
         input_path: str | Path,
@@ -1234,6 +1241,7 @@ class NexusFS(
                         # Ignore errors when setting custom metadata
                         self.metadata.set_file_metadata(path, key, value)
 
+    @rpc_expose(description="Batch get content IDs for multiple paths")
     def batch_get_content_ids(self, paths: builtins.list[str]) -> dict[str, str | None]:
         """
         Get content IDs (hashes) for multiple paths in a single query.
@@ -1337,6 +1345,7 @@ class NexusFS(
 
     # === Workspace Snapshot Operations ===
 
+    @rpc_expose(description="Create workspace snapshot")
     def workspace_snapshot(
         self,
         agent_id: str | None = None,
@@ -1374,6 +1383,7 @@ class NexusFS(
             created_by=agent_id,
         )
 
+    @rpc_expose(description="Restore workspace snapshot")
     def workspace_restore(
         self,
         snapshot_number: int,
@@ -1407,6 +1417,7 @@ class NexusFS(
             tenant_id=self.tenant_id,
         )
 
+    @rpc_expose(description="List workspace snapshots")
     def workspace_log(
         self,
         agent_id: str | None = None,
@@ -1440,6 +1451,7 @@ class NexusFS(
             limit=limit,
         )
 
+    @rpc_expose(description="Compare workspace snapshots")
     def workspace_diff(
         self,
         snapshot_1: int,

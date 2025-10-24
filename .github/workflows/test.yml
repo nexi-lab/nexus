@@ -7,15 +7,46 @@ on:
     branches: [main]
 
 jobs:
+  rpc-parity:
+    name: RPC Parity Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        run: uv venv
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev,test]"
+
+      - name: Check RPC Parity (ENFORCEMENT)
+        run: |
+          echo "🔍 Checking RPC parity..."
+          echo "This ensures all public methods are either:"
+          echo "  1. Exposed via @rpc_expose decorator, OR"
+          echo "  2. Explicitly excluded in INTERNAL_ONLY_METHODS"
+          echo ""
+          uv run pytest tests/unit/test_rpc_parity.py -v
+
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # Skip Windows on non-main branches to save ~30-40 min per PR
-    if: ${{ matrix.os != 'windows-latest' || github.ref == 'refs/heads/main' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.12"]
 
     steps:

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.core.permissions import parse_mode
+from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -32,6 +33,7 @@ class NexusFSPermissionsMixin:
 
         def _validate_path(self, path: str) -> str: ...
 
+    @rpc_expose(description="Change file permissions")
     def chmod(
         self,
         path: str,
@@ -97,6 +99,7 @@ class NexusFSPermissionsMixin:
         if self.metadata._cache_enabled and self.metadata._cache:
             self.metadata._cache.invalidate_path(path)
 
+    @rpc_expose(description="Change file owner")
     def chown(
         self,
         path: str,
@@ -151,6 +154,7 @@ class NexusFSPermissionsMixin:
         if self.metadata._cache_enabled and self.metadata._cache:
             self.metadata._cache.invalidate_path(path)
 
+    @rpc_expose(description="Change file group")
     def chgrp(
         self,
         path: str,
@@ -209,6 +213,7 @@ class NexusFSPermissionsMixin:
     # ACL (Access Control List) Methods
     # ========================================================================
 
+    @rpc_expose(description="Grant permissions to a user via ACL")
     def grant_user(
         self,
         path: str,
@@ -314,6 +319,7 @@ class NexusFSPermissionsMixin:
                 session.add(entry)
                 session.commit()
 
+    @rpc_expose(description="Grant permissions to a group via ACL")
     def grant_group(
         self,
         path: str,
@@ -419,6 +425,7 @@ class NexusFSPermissionsMixin:
                 session.add(entry)
                 session.commit()
 
+    @rpc_expose(description="Explicitly deny user access via ACL")
     def deny_user(
         self,
         path: str,
@@ -498,6 +505,7 @@ class NexusFSPermissionsMixin:
             session.add(entry)
             session.commit()
 
+    @rpc_expose(description="Remove ACL entry for user or group")
     def revoke_acl(
         self,
         path: str,
@@ -569,6 +577,7 @@ class NexusFSPermissionsMixin:
             session.execute(stmt)
             session.commit()
 
+    @rpc_expose(description="Get ACL entries for a file")
     def get_acl(self, path: str) -> list[dict[str, str | bool | None]]:
         """Get ACL entries for a file.
 

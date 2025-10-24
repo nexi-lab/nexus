@@ -25,3 +25,12 @@ repos:
         additional_dependencies: [pydantic, types-PyYAML, alembic, sqlalchemy, cachetools, types-cachetools, types-requests]
         args: [--ignore-missing-imports]
         exclude: ^(tests/|alembic/|examples/)
+
+  - repo: local
+    hooks:
+      - id: rpc-parity
+        name: RPC Parity Check
+        entry: bash -c 'uv run pytest tests/unit/test_rpc_parity.py::test_all_public_methods_are_exposed_or_excluded -v'
+        language: system
+        pass_filenames: false
+        files: ^src/nexus/core/nexus_fs.*\.py$

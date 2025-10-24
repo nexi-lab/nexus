@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.exceptions import ConflictError, NexusFileNotFoundError
 from nexus.core.metadata import FileMetadata
 from nexus.core.permissions import Permission
+from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
@@ -57,6 +58,7 @@ class NexusFSCoreMixin:
         ) -> tuple[str | None, str | None, int | None]: ...
         async def parse(self, path: str, store_result: bool = True) -> Any: ...
 
+    @rpc_expose(description="Read file content")
     def read(
         self, path: str, context: OperationContext | None = None, return_metadata: bool = False
     ) -> bytes | dict[str, Any]:
@@ -142,6 +144,7 @@ class NexusFSCoreMixin:
 
         return content
 
+    @rpc_expose(description="Write file content")
     def write(
         self,
         path: str,
@@ -576,6 +579,7 @@ class NexusFSCoreMixin:
             # Run async parse in a new event loop (thread-safe)
             asyncio.run(self.parse(path, store_result=True))
 
+    @rpc_expose(description="Delete file")
     def delete(self, path: str, context: OperationContext | None = None) -> None:
         """
         Delete a file or memory.
@@ -670,6 +674,7 @@ class NexusFSCoreMixin:
         # Remove from metadata
         self.metadata.delete(path)
 
+    @rpc_expose(description="Rename/move file")
     def rename(self, old_path: str, new_path: str) -> None:
         """
         Rename/move a file by updating its path in metadata.
@@ -766,6 +771,7 @@ class NexusFSCoreMixin:
             # Don't fail the rename operation if logging fails
             pass
 
+    @rpc_expose(description="Check if file exists")
     def exists(self, path: str) -> bool:
         """
         Check if a file or directory exists.

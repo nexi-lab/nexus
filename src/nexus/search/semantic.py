@@ -376,3 +376,41 @@ class SemanticSearch:
                 "hybrid": has_embeddings,
             },
         }
+
+    # Backward compatibility wrapper methods
+    async def keyword_search(
+        self, query: str, path: str = "/", limit: int = 10
+    ) -> list[SemanticSearchResult]:
+        """Keyword search (wrapper for search with mode='keyword')."""
+        return await self.search(query, path=path, limit=limit, search_mode="keyword")
+
+    async def semantic_search(
+        self, query: str, path: str = "/", limit: int = 10
+    ) -> list[SemanticSearchResult]:
+        """Semantic search (wrapper for search with mode='semantic')."""
+        return await self.search(query, path=path, limit=limit, search_mode="semantic")
+
+    async def hybrid_search(
+        self, query: str, path: str = "/", limit: int = 10
+    ) -> list[SemanticSearchResult]:
+        """Hybrid search (wrapper for search with mode='hybrid')."""
+        return await self.search(query, path=path, limit=limit, search_mode="hybrid")
+
+    async def get_stats(self) -> dict[str, Any]:
+        """Get stats (wrapper for get_index_stats)."""
+        return await self.get_index_stats()
+
+    async def delete_document(self, path: str) -> None:
+        """Delete document (wrapper for delete_document_index)."""
+        return await self.delete_document_index(path)
+
+    async def clear_index(self) -> None:
+        """Clear the entire search index."""
+        with self.nx.metadata.SessionLocal() as session:
+            # Delete all chunks
+            session.query(DocumentChunkModel).delete()
+            session.commit()
+
+    def close(self) -> None:
+        """Close the search engine (no-op for now)."""
+        pass

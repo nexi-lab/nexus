@@ -8,15 +8,20 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    pass
+    import tiktoken as tiktoken_module
 
-try:
-    import tiktoken
-except ImportError:
-    tiktoken = None
+    TIKTOKEN_AVAILABLE: bool
+else:
+    try:
+        import tiktoken as tiktoken_module
+
+        TIKTOKEN_AVAILABLE = True
+    except ImportError:
+        tiktoken_module = None  # type: ignore[assignment]
+        TIKTOKEN_AVAILABLE = False
 
 
 class ChunkStrategy(str, Enum):
@@ -41,6 +46,8 @@ class DocumentChunk:
 class DocumentChunker:
     """Document chunker for semantic search."""
 
+    encoding: Any  # tiktoken.Encoding or None
+
     def __init__(
         self,
         chunk_size: int = 1024,
@@ -62,9 +69,9 @@ class DocumentChunker:
         self.encoding_name = encoding_name
 
         # Initialize tokenizer
-        if tiktoken is not None:
+        if tiktoken_module is not None:
             try:
-                self.encoding = tiktoken.get_encoding(encoding_name)
+                self.encoding = tiktoken_module.get_encoding(encoding_name)
             except Exception:
                 # Fallback to approximate tokenization
                 self.encoding = None

@@ -10,6 +10,8 @@ jobs:
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    # Skip Windows on non-main branches to save ~30-40 min per PR
+    if: ${{ matrix.os != 'windows-latest' || github.ref == 'refs/heads/main' }}
     strategy:
       fail-fast: false
       matrix:
@@ -41,9 +43,9 @@ jobs:
       - name: Run tests with coverage
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            uv run pytest -m "not slow" --cov=nexus --cov-report=xml --cov-report=term-missing
+            uv run pytest -n auto -m "not slow" --cov=nexus --cov-report=xml --cov-report=term-missing
           else
-            uv run pytest --cov=nexus --cov-report=xml --cov-report=term-missing
+            uv run pytest -n auto --cov=nexus --cov-report=xml --cov-report=term-missing
           fi
         shell: bash
 

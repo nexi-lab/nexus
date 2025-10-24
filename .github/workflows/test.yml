@@ -48,21 +48,6 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11", "3.12"]
-        exclude:
-          # Exclude Windows on PRs to save time
-          - os: windows-latest
-            python-version: "3.11"
-          - os: windows-latest
-            python-version: "3.12"
-        include:
-          # Re-include Windows only for pushes (not PRs)
-          - os: windows-latest
-            python-version: "3.11"
-            is-windows: true
-          - os: windows-latest
-            python-version: "3.12"
-            is-windows: true
-    if: ${{ !matrix.is-windows || github.event_name == 'push' }}
 
     steps:
       - name: Checkout code

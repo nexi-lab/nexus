@@ -48,10 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Using ARM64 runners for faster test execution (4 vCPUs vs 2 vCPUs, free for public repos)
-        # ubuntu-24.04-arm: 4 vCPUs, 16 GB RAM (free for public repos)
-        # See: https://github.blog/changelog/2025-08-07-arm64-hosted-runners-for-public-repositories-are-now-generally-available/
-        os: [ubuntu-24.04-arm, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11", "3.12"]
 
     steps:
@@ -93,7 +90,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
-        if: matrix.os == 'ubuntu-24.04-arm' && matrix.python-version == '3.11'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml

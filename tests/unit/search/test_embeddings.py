@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import sys
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -42,32 +43,32 @@ class TestOpenAIEmbeddingProvider:
     """Test OpenAIEmbeddingProvider provider."""
 
     @patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"})
-    @patch("nexus.search.embeddings.OpenAI")
+    @patch("openai.AsyncOpenAI")
     def test_init_with_env_key(self, mock_openai):
         """Test initialization with API key from environment."""
         provider = OpenAIEmbeddingProvider()
         assert provider.model == EmbeddingModel.OPENAI_LARGE
         mock_openai.assert_called_once_with(api_key="test-key")
 
-    @patch("nexus.search.embeddings.OpenAI")
+    @patch("openai.AsyncOpenAI")
     def test_init_with_explicit_key(self, mock_openai):
         """Test initialization with explicit API key."""
+        OpenAIEmbeddingProvider(api_key="explicit-key")
         mock_openai.assert_called_once_with(api_key="explicit-key")
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("nexus.search.embeddings.OpenAI")
-    def test_init_without_key_raises_error(self, mock_openai):
+    def test_init_without_key_raises_error(self):
         """Test initialization without API key raises error."""
         with pytest.raises(ValueError, match="OPENAI_API_KEY"):
             OpenAIEmbeddingProvider()
 
-    @patch("nexus.search.embeddings.OpenAI")
+    @patch("openai.AsyncOpenAI")
     def test_init_custom_model(self, mock_openai):
         """Test initialization with custom model."""
         provider = OpenAIEmbeddingProvider(api_key="test-key", model=EmbeddingModel.OPENAI_SMALL)
         assert provider.model == EmbeddingModel.OPENAI_SMALL
 
-    @patch("nexus.search.embeddings.OpenAI")
+    @patch("openai.AsyncOpenAI")
     async def test_embed_texts(self, mock_openai):
         """Test embedding multiple texts."""
         # Mock the OpenAI client response
@@ -78,7 +79,7 @@ class TestOpenAIEmbeddingProvider:
         mock_embedding.embedding = [0.1, 0.2, 0.3]
         mock_response = MagicMock()
         mock_response.data = [mock_embedding, mock_embedding]
-        mock_client.embeddings.create.return_value = mock_response
+        mock_client.embeddings.create = AsyncMock(return_value=mock_response)
 
         provider = OpenAIEmbeddingProvider(api_key="test-key")
         texts = ["hello", "world"]
@@ -92,7 +93,7 @@ class TestOpenAIEmbeddingProvider:
             input=texts, model=EmbeddingModel.OPENAI_LARGE
         )
 
-    @patch("nexus.search.embeddings.OpenAI")
+    @patch("openai.AsyncOpenAI")
     async def test_embed_text(self, mock_openai):
         """Test embedding a single text."""
         # Mock the OpenAI client response
@@ -103,7 +104,7 @@ class TestOpenAIEmbeddingProvider:
         mock_embedding.embedding = [0.1, 0.2, 0.3]
         mock_response = MagicMock()
         mock_response.data = [mock_embedding]
-        mock_client.embeddings.create.return_value = mock_response
+        mock_client.embeddings.create = AsyncMock(return_value=mock_response)
 
         provider = OpenAIEmbeddingProvider(api_key="test-key")
         embedding = await provider.embed_text("hello")
@@ -113,123 +114,132 @@ class TestOpenAIEmbeddingProvider:
             input=["hello"], model=EmbeddingModel.OPENAI_LARGE
         )
 
-    @patch("nexus.search.embeddings.OpenAI")
+    @patch("openai.AsyncOpenAI")
     def test_get_dimension_openai_large(self, mock_openai):
         """Test getting dimension for OpenAI large model."""
         provider = OpenAIEmbeddingProvider(api_key="test-key", model=EmbeddingModel.OPENAI_LARGE)
-        assert provider.get_dimension() == 3072
+        assert provider.embedding_dimension() == 3072
 
-    @patch("nexus.search.embeddings.OpenAI")
+    @patch("openai.AsyncOpenAI")
     def test_get_dimension_openai_small(self, mock_openai):
         """Test getting dimension for OpenAI small model."""
         provider = OpenAIEmbeddingProvider(api_key="test-key", model=EmbeddingModel.OPENAI_SMALL)
-        assert provider.get_dimension() == 1536
+        assert provider.embedding_dimension() == 1536
 
-    @patch("nexus.search.embeddings.OpenAI")
+    @patch("openai.AsyncOpenAI")
     def test_get_dimension_openai_ada(self, mock_openai):
         """Test getting dimension for OpenAI ada model."""
         provider = OpenAIEmbeddingProvider(api_key="test-key", model=EmbeddingModel.OPENAI_ADA)
-        assert provider.get_dimension() == 1536
+        assert provider.embedding_dimension() == 1536
 
 
 class TestVoyageAIEmbeddingProvider:
     """Test VoyageAIEmbeddingProvider provider."""
 
     @patch.dict("os.environ", {"VOYAGE_API_KEY": "test-key"})
-    @patch("nexus.search.embeddings.voyageai")
-    def test_init_with_env_key(self, mock_voyageai):
+    def test_init_with_env_key(self):
         """Test initialization with API key from environment."""
+        # Create mock voyageai module
+        mock_voyageai = MagicMock()
         mock_client = MagicMock()
-        mock_voyageai.Client.return_value = mock_client
+        mock_voyageai.Client = MagicMock(return_value=mock_client)
 
-        provider = VoyageAIEmbeddingProvider()
-        assert provider.model == EmbeddingModel.VOYAGE_2
-        mock_voyageai.Client.assert_called_once_with(api_key="test-key")
+        with patch.dict(sys.modules, {"voyageai": mock_voyageai}):
+            provider = VoyageAIEmbeddingProvider()
+            assert provider.model == EmbeddingModel.VOYAGE_2
+            mock_voyageai.Client.assert_called_once_with(api_key="test-key")
 
-    @patch("nexus.search.embeddings.voyageai")
-    def test_init_with_explicit_key(self, mock_voyageai):
+    def test_init_with_explicit_key(self):
         """Test initialization with explicit API key."""
+        # Create mock voyageai module
+        mock_voyageai = MagicMock()
         mock_client = MagicMock()
-        mock_voyageai.Client.return_value = mock_client
+        mock_voyageai.Client = MagicMock(return_value=mock_client)
 
-        mock_voyageai.Client.assert_called_once_with(api_key="explicit-key")
+        with patch.dict(sys.modules, {"voyageai": mock_voyageai}):
+            VoyageAIEmbeddingProvider(api_key="explicit-key")
+            mock_voyageai.Client.assert_called_once_with(api_key="explicit-key")
 
     @patch.dict("os.environ", {}, clear=True)
-    @patch("nexus.search.embeddings.voyageai")
-    def test_init_without_key_raises_error(self, mock_voyageai):
+    def test_init_without_key_raises_error(self):
         """Test initialization without API key raises error."""
         with pytest.raises(ValueError, match="VOYAGE_API_KEY"):
             VoyageAIEmbeddingProvider()
 
-    @patch("nexus.search.embeddings.voyageai")
-    def test_init_custom_model(self, mock_voyageai):
+    def test_init_custom_model(self):
         """Test initialization with custom model."""
+        mock_voyageai = MagicMock()
         mock_client = MagicMock()
-        mock_voyageai.Client.return_value = mock_client
+        mock_voyageai.Client = MagicMock(return_value=mock_client)
 
-        provider = VoyageAIEmbeddingProvider(
-            api_key="test-key", model=EmbeddingModel.VOYAGE_LARGE_2
-        )
-        assert provider.model == EmbeddingModel.VOYAGE_LARGE_2
+        with patch.dict(sys.modules, {"voyageai": mock_voyageai}):
+            provider = VoyageAIEmbeddingProvider(
+                api_key="test-key", model=EmbeddingModel.VOYAGE_LARGE_2
+            )
+            assert provider.model == EmbeddingModel.VOYAGE_LARGE_2
 
-    @patch("nexus.search.embeddings.voyageai")
-    async def test_embed_texts(self, mock_voyageai):
+    async def test_embed_texts(self):
         """Test embedding multiple texts."""
+        mock_voyageai = MagicMock()
         mock_client = MagicMock()
-        mock_voyageai.Client.return_value = mock_client
+        mock_voyageai.Client = MagicMock(return_value=mock_client)
 
         mock_result = MagicMock()
         mock_result.embeddings = [[0.1, 0.2], [0.3, 0.4]]
         mock_client.embed.return_value = mock_result
 
-        provider = VoyageAIEmbeddingProvider(api_key="test-key")
-        texts = ["hello", "world"]
-        embeddings = await provider.embed_texts(texts)
+        with patch.dict(sys.modules, {"voyageai": mock_voyageai}):
+            provider = VoyageAIEmbeddingProvider(api_key="test-key")
+            texts = ["hello", "world"]
+            embeddings = await provider.embed_texts(texts)
 
-        assert len(embeddings) == 2
-        assert embeddings[0] == [0.1, 0.2]
-        assert embeddings[1] == [0.3, 0.4]
+            assert len(embeddings) == 2
+            assert embeddings[0] == [0.1, 0.2]
+            assert embeddings[1] == [0.3, 0.4]
 
-        mock_client.embed.assert_called_once_with(texts, model=EmbeddingModel.VOYAGE_2)
+            mock_client.embed.assert_called_once_with(texts, model=EmbeddingModel.VOYAGE_2)
 
-    @patch("nexus.search.embeddings.voyageai")
-    async def test_embed_text(self, mock_voyageai):
+    async def test_embed_text(self):
         """Test embedding a single text."""
+        mock_voyageai = MagicMock()
         mock_client = MagicMock()
-        mock_voyageai.Client.return_value = mock_client
+        mock_voyageai.Client = MagicMock(return_value=mock_client)
 
         mock_result = MagicMock()
         mock_result.embeddings = [[0.1, 0.2, 0.3]]
         mock_client.embed.return_value = mock_result
 
-        provider = VoyageAIEmbeddingProvider(api_key="test-key")
-        embedding = await provider.embed_text("hello")
+        with patch.dict(sys.modules, {"voyageai": mock_voyageai}):
+            provider = VoyageAIEmbeddingProvider(api_key="test-key")
+            embedding = await provider.embed_text("hello")
 
-        assert embedding == [0.1, 0.2, 0.3]
-        mock_client.embed.assert_called_once_with(["hello"], model=EmbeddingModel.VOYAGE_2)
+            assert embedding == [0.1, 0.2, 0.3]
+            mock_client.embed.assert_called_once_with(["hello"], model=EmbeddingModel.VOYAGE_2)
 
-    @patch("nexus.search.embeddings.voyageai")
-    def test_get_dimension_voyage_2(self, mock_voyageai):
+    def test_get_dimension_voyage_2(self):
         """Test getting dimension for Voyage 2 model."""
+        mock_voyageai = MagicMock()
         mock_client = MagicMock()
-        mock_voyageai.Client.return_value = mock_client
+        mock_voyageai.Client = MagicMock(return_value=mock_client)
 
-        provider = VoyageAIEmbeddingProvider(api_key="test-key", model=EmbeddingModel.VOYAGE_2)
-        assert provider.get_dimension() == 1024
+        with patch.dict(sys.modules, {"voyageai": mock_voyageai}):
+            provider = VoyageAIEmbeddingProvider(api_key="test-key", model=EmbeddingModel.VOYAGE_2)
+            assert provider.embedding_dimension() == 1024
 
-    @patch("nexus.search.embeddings.voyageai")
-    def test_get_dimension_voyage_large_2(self, mock_voyageai):
+    def test_get_dimension_voyage_large_2(self):
         """Test getting dimension for Voyage Large 2 model."""
+        mock_voyageai = MagicMock()
         mock_client = MagicMock()
-        mock_voyageai.Client.return_value = mock_client
+        mock_voyageai.Client = MagicMock(return_value=mock_client)
 
-        provider = VoyageAIEmbeddingProvider(
-            api_key="test-key", model=EmbeddingModel.VOYAGE_LARGE_2
-        )
-        assert provider.get_dimension() == 1536
+        with patch.dict(sys.modules, {"voyageai": mock_voyageai}):
+            provider = VoyageAIEmbeddingProvider(
+                api_key="test-key", model=EmbeddingModel.VOYAGE_LARGE_2
+            )
+            assert provider.embedding_dimension() == 1536
 
-    @patch("nexus.search.embeddings.voyageai", None)
-    def test_init_without_voyageai_installed(self):
+    @patch("builtins.__import__", side_effect=ImportError("No module named 'voyageai'"))
+    def test_init_without_voyageai_installed(self, mock_import):
         """Test initialization fails gracefully without voyageai package."""
         with pytest.raises(ImportError, match="Voyage AI package not installed"):
             VoyageAIEmbeddingProvider(api_key="test-key")

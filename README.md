@@ -337,8 +337,11 @@ pip install -e ".[dev]"
 # Install development dependencies
 uv pip install -e ".[dev,test]"
 
-# Run tests
-pytest
+# Run tests (parallel execution is 8-10x faster!)
+pytest -n auto
+
+# Run tests with coverage
+pytest -n auto --cov=nexus --cov-report=html
 
 # Run type checking
 mypy src/nexus
@@ -349,6 +352,8 @@ ruff format .
 # Lint
 ruff check .
 ```
+
+**Note:** Development dependencies include `pytest-xdist` for parallel test execution, which significantly speeds up testing on multi-core systems.
 
 ## CLI Usage
 
@@ -2871,8 +2876,11 @@ SELECT * FROM file_paths WHERE path = '/data';
 ## Testing
 
 ```bash
-# Run all tests
+# Run all tests (serial)
 pytest
+
+# Run all tests in parallel (8-10x faster on multi-core machines!)
+pytest -n auto
 
 # Run with coverage
 pytest --cov=nexus --cov-report=html
@@ -2885,18 +2893,34 @@ pytest tests/integration/ -v
 
 # Run performance tests
 pytest tests/performance/ --benchmark-only
+
+# Run RPC parity check (ensures local/remote feature parity)
+pytest tests/unit/test_rpc_parity.py -v
 ```
+
+**Performance Tips:**
+- Use `pytest -n auto` for parallel execution (requires `pytest-xdist`)
+- Nexus has 1400+ tests; parallel execution gives 8-10x speedup on multi-core systems
+- CI uses ARM64 runners with 4 vCPUs for faster builds
 
 ## Documentation
 
+### Architecture & Design
 - [Core Tenets](./docs/CORE_TENETS.md) - Design principles and philosophy
+- [Architecture Overview](./docs/architecture/ARCHITECTURE.md) - System architecture and components
+- [RPC Parity Guide](./docs/RPC_PARITY_GUIDE.md) - Ensuring local/remote feature parity
+- [ReBAC Remote Support](./docs/REBAC_REMOTE_SUPPORT.md) - Remote access control implementation
+
+### Development & Deployment
 - [Plugin Development Guide](./docs/PLUGIN_DEVELOPMENT.md) - Create your own Nexus plugins
 - [Plugin System Overview](./docs/PLUGIN_SYSTEM.md) - Plugin architecture and design
 - [PostgreSQL Setup Guide](./docs/POSTGRESQL_SETUP.md) - Configure PostgreSQL for production
 - [SQL Views for Work Detection](./docs/SQL_VIEWS_FOR_WORK_DETECTION.md) - Work queue patterns
+- [Deployment Guide](./docs/deployment/) - Production deployment
+
+### Reference
 - [API Reference](./docs/api/) - Detailed API documentation
 - [Getting Started](./docs/getting-started/) - Quick start guides
-- [Deployment Guide](./docs/deployment/) - Production deployment
 
 ## Contributing
 

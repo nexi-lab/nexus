@@ -56,6 +56,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
     # Class-level attributes set by server
     nexus_fs: NexusFilesystem
     api_key: str | None = None
+    exposed_methods: dict[str, Any] = {}
 
     def log_message(self, format: str, *args: Any) -> None:
         """Override to use Python logging instead of stderr."""
@@ -268,6 +269,34 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         Returns:
             Method result
         """
+        # Try auto-dispatch first (for methods decorated with @rpc_expose)
+        # Skip auto-dispatch for methods with special handling (virtual views, wrapping, etc.)
+        MANUAL_DISPATCH_METHODS = {
+            "read",
+            "write",
+            "exists",
+            "list",
+            "delete",
+            "rename",
+            "copy",
+            "mkdir",
+            "rmdir",
+            "get_metadata",
+            "search",
+            "glob",
+            "grep",
+            "is_directory",
+            "get_available_namespaces",
+        }
+        if (
+            hasattr(self, "exposed_methods")
+            and isinstance(self.exposed_methods, dict)
+            and method in self.exposed_methods
+            and method not in MANUAL_DISPATCH_METHODS
+        ):
+            return self._auto_dispatch(method, params)
+
+        # Fall back to manual dispatch for backward compatibility
         # Core file operations
         if method == "read":
             # Check if this is a virtual view request (.txt or .md)
@@ -403,6 +432,95 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         else:
             raise ValueError(f"Unknown method: {method}")
 
+    def _auto_dispatch(self, method: str, params: Any) -> Any:
+        """Auto-dispatch to decorated method.
+
+        Args:
+            method: Method name
+            params: Parsed parameters (dataclass instance)
+
+        Returns:
+            Serialized method result
+        """
+        fn = self.exposed_methods[method]
+
+        # Convert params dataclass to kwargs dict
+        if hasattr(params, "__dict__"):
+            kwargs = {k: v for k, v in params.__dict__.items() if not k.startswith("_")}
+        else:
+            kwargs = {}
+
+        # Call the method
+        result = fn(**kwargs)
+
+        # Serialize the result
+        return self._serialize_result(result)
+
+    def _serialize_result(self, result: Any) -> Any:
+        """Serialize method result for RPC response.
+
+        Handles common return types and converts them to JSON-serializable format.
+
+        Args:
+            result: Method return value
+
+        Returns:
+            JSON-serializable result
+        """
+        # Handle None
+        if result is None:
+            return {"success": True}
+
+        # Handle bytes (already serialized by RPCEncoder)
+        if isinstance(result, bytes):
+            return result
+
+        # Handle dict (already serializable, just validate nested objects)
+        if isinstance(result, dict):
+            return self._serialize_dict(result)
+
+        # Handle list
+        if isinstance(result, list):
+            return [self._serialize_result(item) for item in result]
+
+        # Handle dataclass or object with __dict__
+        if hasattr(result, "__dict__"):
+            return self._serialize_dict(
+                {
+                    k: v
+                    for k, v in result.__dict__.items()
+                    if not k.startswith("_") and not callable(v)
+                }
+            )
+
+        # Handle primitives (str, int, float, bool)
+        if isinstance(result, (str, int, float, bool)):
+            return result
+
+        # Default: convert to string
+        return str(result)
+
+    def _serialize_dict(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Recursively serialize dictionary values.
+
+        Args:
+            data: Dictionary to serialize
+
+        Returns:
+            Serialized dictionary
+        """
+        serialized = {}
+        for key, value in data.items():
+            if (
+                isinstance(value, (dict, list))
+                or hasattr(value, "__dict__")
+                and not callable(value)
+            ):
+                serialized[key] = self._serialize_result(value)
+            else:
+                serialized[key] = value
+        return serialized
+
     def _send_rpc_response(self, response: RPCResponse) -> None:
         """Send RPC response.
 
@@ -476,12 +594,47 @@ class NexusRPCServer:
         self.port = port
         self.api_key = api_key
 
+        # Auto-discover all @rpc_expose decorated methods
+        self._exposed_methods = self._discover_exposed_methods()
+
         # Create HTTP server
         self.server = HTTPServer((host, port), RPCRequestHandler)
 
         # Configure handler
         RPCRequestHandler.nexus_fs = nexus_fs
         RPCRequestHandler.api_key = api_key
+        RPCRequestHandler.exposed_methods = self._exposed_methods
+
+    def _discover_exposed_methods(self) -> dict[str, Any]:
+        """Discover all methods marked with @rpc_expose decorator.
+
+        Returns:
+            Dictionary mapping method names to callable methods
+        """
+        exposed = {}
+
+        # Iterate through all attributes of the NexusFS instance
+        for name in dir(self.nexus_fs):
+            # Skip private methods
+            if name.startswith("_"):
+                continue
+
+            try:
+                attr = getattr(self.nexus_fs, name)
+
+                # Check if it's callable and has the _rpc_exposed marker
+                if callable(attr) and hasattr(attr, "_rpc_exposed"):
+                    method_name = getattr(attr, "_rpc_name", name)
+                    exposed[method_name] = attr
+                    logger.debug(f"Discovered RPC method: {method_name}")
+
+            except Exception as e:
+                # Some attributes might raise exceptions when accessed
+                logger.debug(f"Skipping attribute {name}: {e}")
+                continue
+
+        logger.info(f"Auto-discovered {len(exposed)} RPC methods")
+        return exposed
 
     def serve_forever(self) -> None:
         """Start server and handle requests."""

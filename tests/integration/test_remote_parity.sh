@@ -651,7 +651,7 @@ main() {
     test_new_rpc_methods
     test_acl_methods
     test_rebac_remote
-    test_performance
+    # test_performance  # Disabled - measures CLI overhead, not actual Nexus performance
     print_summary
 }
 

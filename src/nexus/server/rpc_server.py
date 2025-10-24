@@ -270,11 +270,27 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             Method result
         """
         # Try auto-dispatch first (for methods decorated with @rpc_expose)
-        # Check if exposed_methods exists and is a dict (not a Mock)
+        # Skip auto-dispatch for methods with special handling (virtual views, wrapping, etc.)
+        MANUAL_DISPATCH_METHODS = {
+            "read",
+            "write",
+            "exists",
+            "list",
+            "delete",
+            "rename",
+            "copy",
+            "mkdir",
+            "rmdir",
+            "get_metadata",
+            "search",
+            "glob",
+            "grep",
+        }
         if (
             hasattr(self, "exposed_methods")
             and isinstance(self.exposed_methods, dict)
             and method in self.exposed_methods
+            and method not in MANUAL_DISPATCH_METHODS
         ):
             return self._auto_dispatch(method, params)
 

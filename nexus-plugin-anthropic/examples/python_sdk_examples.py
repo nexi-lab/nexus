@@ -267,7 +267,9 @@ async def example_4_advanced_workflow() -> None:
     # 3. Modify the skill (in real usage, you'd edit the SKILL.md content)
     print("\n3. Customizing skill content...")
     skill_path = f"/workspace/.nexus/skills/{custom_name}/SKILL.md"
-    content = nx.read(skill_path).decode("utf-8")
+    raw_content = nx.read(skill_path)
+    assert isinstance(raw_content, bytes)
+    content = raw_content.decode("utf-8")
 
     # Add a note about customization
     custom_note = "\n\n## Customization Note\n\nThis is a customized version of artifacts-builder with enhanced features.\n"

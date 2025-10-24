@@ -14,6 +14,8 @@ import fnmatch
 import re
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.rpc_decorator import rpc_expose
+
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext, PermissionEnforcer
     from nexus.search.semantic import SemanticSearch
@@ -40,6 +42,7 @@ class NexusFSSearchMixin:
             self, path: str = "/", recursive: bool = False
         ) -> builtins.list[str] | builtins.list[dict[str, Any]]: ...
 
+    @rpc_expose(description="List files in directory")
     def list(
         self,
         path: str = "/",
@@ -195,6 +198,7 @@ class NexusFSSearchMixin:
             all_paths.sort()
             return all_paths
 
+    @rpc_expose(description="Find files by glob pattern")
     def glob(self, pattern: str, path: str = "/") -> builtins.list[str]:
         """
         Find files matching a glob pattern.
@@ -233,6 +237,15 @@ class NexusFSSearchMixin:
             path = path + "/"
         if path == "/":
             full_pattern = pattern
+            # Auto-prepend **/ for patterns that look relative
+            # (don't start with known namespaces and don't already have **)
+            # and have path separators (e.g., "src/*.py" vs "*.py")
+            if (
+                "**" not in full_pattern
+                and not full_pattern.startswith(("workspace/", "shared/", "external/"))
+                and "/" in full_pattern
+            ):
+                full_pattern = "**/" + full_pattern
         else:
             # Remove leading / from path for pattern matching
             base_path = path[1:] if path.startswith("/") else path
@@ -282,6 +295,7 @@ class NexusFSSearchMixin:
 
         return sorted(matches)
 
+    @rpc_expose(description="Search file contents")
     def grep(
         self,
         pattern: str,

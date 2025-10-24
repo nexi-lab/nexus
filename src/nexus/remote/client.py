@@ -628,6 +628,415 @@ class RemoteNexusFS(NexusFilesystem):
         return result  # type: ignore[no-any-return]
 
     # ============================================================
+    # Permission Operations
+    # ============================================================
+
+    def chmod(self, path: str, mode: int | str, context: Any = None) -> None:  # noqa: ARG002
+        """Change file permissions.
+
+        Args:
+            path: Virtual file path
+            mode: Permission mode (int like 0o644 or string like '755')
+            context: Unused in remote client (handled server-side)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            PermissionError: If user doesn't have permission
+        """
+        self._call_rpc("chmod", {"path": path, "mode": mode})
+
+    def chown(self, path: str, owner: str, context: Any = None) -> None:  # noqa: ARG002
+        """Change file owner.
+
+        Args:
+            path: Virtual file path
+            owner: New owner identifier
+            context: Unused in remote client (handled server-side)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            PermissionError: If user doesn't have permission
+        """
+        self._call_rpc("chown", {"path": path, "owner": owner})
+
+    def chgrp(self, path: str, group: str, context: Any = None) -> None:  # noqa: ARG002
+        """Change file group.
+
+        Args:
+            path: Virtual file path
+            group: New group identifier
+            context: Unused in remote client (handled server-side)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            PermissionError: If user doesn't have permission
+        """
+        self._call_rpc("chgrp", {"path": path, "group": group})
+
+    # ============================================================
+    # ACL (Access Control List) Operations
+    # ============================================================
+
+    def grant_user(
+        self,
+        path: str,
+        user: str,
+        permissions: str,
+        context: Any = None,  # noqa: ARG002
+    ) -> None:
+        """Grant permissions to a user via ACL.
+
+        Requires the user to be the owner of the file or an admin.
+
+        Args:
+            path: Virtual file path
+            user: User identifier to grant permissions to
+            permissions: Permission string in rwx format (e.g., 'rw-', 'r-x')
+            context: Unused in remote client (handled server-side)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            PermissionError: If user is not owner and not admin
+            ValueError: If permissions string is invalid
+
+        Examples:
+            >>> nx.grant_user("/workspace/file.txt", user="alice", permissions="rw-")
+            >>> nx.grant_user("/workspace/file.txt", user="bob", permissions="r--")
+        """
+        self._call_rpc("grant_user", {"path": path, "user": user, "permissions": permissions})
+
+    def grant_group(
+        self,
+        path: str,
+        group: str,
+        permissions: str,
+        context: Any = None,  # noqa: ARG002
+    ) -> None:
+        """Grant permissions to a group via ACL.
+
+        Requires the user to be the owner of the file or an admin.
+
+        Args:
+            path: Virtual file path
+            group: Group identifier to grant permissions to
+            permissions: Permission string in rwx format (e.g., 'rw-', 'r-x')
+            context: Unused in remote client (handled server-side)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            PermissionError: If user is not owner and not admin
+            ValueError: If permissions string is invalid
+
+        Examples:
+            >>> nx.grant_group("/workspace/file.txt", group="developers", permissions="rw-")
+            >>> nx.grant_group("/workspace/file.txt", group="viewers", permissions="r--")
+        """
+        self._call_rpc("grant_group", {"path": path, "group": group, "permissions": permissions})
+
+    def deny_user(
+        self,
+        path: str,
+        user: str,
+        context: Any = None,  # noqa: ARG002
+    ) -> None:
+        """Explicitly deny user access to file via ACL.
+
+        Deny entries take precedence over all other permissions.
+        Requires the user to be the owner of the file or an admin.
+
+        Args:
+            path: Virtual file path
+            user: User identifier to deny access to
+            context: Unused in remote client (handled server-side)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            PermissionError: If user is not owner and not admin
+
+        Examples:
+            >>> nx.deny_user("/workspace/secret.txt", user="intern")
+        """
+        self._call_rpc("deny_user", {"path": path, "user": user})
+
+    def revoke_acl(
+        self,
+        path: str,
+        entry_type: str,
+        identifier: str,
+        context: Any = None,  # noqa: ARG002
+    ) -> None:
+        """Remove ACL entry for user or group.
+
+        Requires the user to be the owner of the file or an admin.
+
+        Args:
+            path: Virtual file path
+            entry_type: Type of entry ('user' or 'group')
+            identifier: User or group identifier
+            context: Unused in remote client (handled server-side)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            PermissionError: If user is not owner and not admin
+            ValueError: If entry_type is invalid
+
+        Examples:
+            >>> nx.revoke_acl("/workspace/file.txt", "user", "alice")
+            >>> nx.revoke_acl("/workspace/file.txt", "group", "developers")
+        """
+        self._call_rpc(
+            "revoke_acl", {"path": path, "entry_type": entry_type, "identifier": identifier}
+        )
+
+    def get_acl(self, path: str) -> builtins.list[dict[str, str | bool | None]]:
+        """Get ACL entries for a file.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            List of ACL entry dictionaries with keys:
+                - entry_type: 'user' or 'group'
+                - identifier: User or group identifier
+                - permissions: Permission string (e.g., 'rw-')
+                - deny: True if this is a deny entry
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+
+        Examples:
+            >>> nx.get_acl("/workspace/file.txt")
+            [
+                {'entry_type': 'user', 'identifier': 'alice', 'permissions': 'rw-', 'deny': False},
+                {'entry_type': 'user', 'identifier': 'bob', 'permissions': '---', 'deny': True}
+            ]
+        """
+        result = self._call_rpc("get_acl", {"path": path})
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # Batch Operations
+    # ============================================================
+
+    def batch_get_content_ids(self, paths: builtins.list[str]) -> dict[str, str | None]:
+        """Get content IDs (hashes) for multiple paths in a single query.
+
+        Args:
+            paths: List of virtual file paths
+
+        Returns:
+            Dictionary mapping path to content_hash (or None if file not found)
+        """
+        result = self._call_rpc("batch_get_content_ids", {"paths": paths})
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # Metadata Export/Import
+    # ============================================================
+
+    def export_metadata(
+        self,
+        output_path: str,
+        filter: Any = None,
+        prefix: str = "",
+    ) -> int:
+        """Export metadata to JSONL file.
+
+        NOTE: This method is not fully supported in remote mode as it requires
+        writing to the server's local filesystem. Consider using direct database
+        access for production metadata exports.
+
+        Args:
+            output_path: Path to output JSONL file (server-side path)
+            filter: Export filter options
+            prefix: Path prefix filter for backward compatibility
+
+        Returns:
+            Number of files exported
+        """
+        result = self._call_rpc(
+            "export_metadata",
+            {"output_path": output_path, "filter": filter, "prefix": prefix},
+        )
+        return result  # type: ignore[no-any-return]
+
+    def import_metadata(
+        self,
+        input_path: str,
+        options: Any = None,
+        overwrite: bool = False,
+        skip_existing: bool = True,
+    ) -> dict[str, Any]:
+        """Import metadata from JSONL file.
+
+        NOTE: This method is not fully supported in remote mode as it requires
+        reading from the server's local filesystem. Consider using direct database
+        access for production metadata imports.
+
+        Args:
+            input_path: Path to input JSONL file (server-side path)
+            options: Import options
+            overwrite: If True, overwrite existing
+            skip_existing: If True, skip existing
+
+        Returns:
+            ImportResult dict with counts and collision details
+        """
+        result = self._call_rpc(
+            "import_metadata",
+            {
+                "input_path": input_path,
+                "options": options,
+                "overwrite": overwrite,
+                "skip_existing": skip_existing,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # ReBAC (Relationship-Based Access Control)
+    # ============================================================
+
+    def rebac_create(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        expires_at: Any = None,
+    ) -> str:
+        """Create a ReBAC relationship tuple.
+
+        Args:
+            subject: (subject_type, subject_id) tuple (e.g., ('agent', 'alice'))
+            relation: Relation type (e.g., 'member-of', 'owner-of')
+            object: (object_type, object_id) tuple (e.g., ('group', 'developers'))
+            expires_at: Optional expiration datetime for temporary relationships
+
+        Returns:
+            Tuple ID of created relationship
+
+        Examples:
+            >>> nx.rebac_create(
+            ...     subject=("agent", "alice"),
+            ...     relation="member-of",
+            ...     object=("group", "developers")
+            ... )
+            'uuid-string'
+        """
+        result = self._call_rpc(
+            "rebac_create",
+            {
+                "subject": subject,
+                "relation": relation,
+                "object": object,
+                "expires_at": expires_at.isoformat() if expires_at else None,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def rebac_check(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+    ) -> bool:
+        """Check if subject has permission on object via ReBAC.
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permission: Permission to check (e.g., 'read', 'write', 'owner')
+            object: (object_type, object_id) tuple
+
+        Returns:
+            True if permission is granted, False otherwise
+
+        Examples:
+            >>> nx.rebac_check(
+            ...     subject=("agent", "alice"),
+            ...     permission="read",
+            ...     object=("file", "/workspace/doc.txt")
+            ... )
+            True
+        """
+        result = self._call_rpc(
+            "rebac_check",
+            {"subject": subject, "permission": permission, "object": object},
+        )
+        return result  # type: ignore[no-any-return]
+
+    def rebac_expand(
+        self,
+        permission: str,
+        object: tuple[str, str],
+    ) -> builtins.list[tuple[str, str]]:
+        """Find all subjects with a given permission on an object.
+
+        Args:
+            permission: Permission to check (e.g., 'read', 'write', 'owner')
+            object: (object_type, object_id) tuple
+
+        Returns:
+            List of (subject_type, subject_id) tuples
+
+        Examples:
+            >>> nx.rebac_expand(
+            ...     permission="read",
+            ...     object=("file", "/workspace/doc.txt")
+            ... )
+            [('agent', 'alice'), ('agent', 'bob')]
+        """
+        result = self._call_rpc("rebac_expand", {"permission": permission, "object": object})
+        # Convert list of lists back to list of tuples
+        return [tuple(item) for item in result]
+
+    def rebac_delete(self, tuple_id: str) -> bool:
+        """Delete a ReBAC relationship tuple.
+
+        Args:
+            tuple_id: ID of the tuple to delete
+
+        Returns:
+            True if tuple was deleted, False if not found
+
+        Examples:
+            >>> nx.rebac_delete('uuid-string')
+            True
+        """
+        result = self._call_rpc("rebac_delete", {"tuple_id": tuple_id})
+        return result  # type: ignore[no-any-return]
+
+    def rebac_list_tuples(
+        self,
+        subject: tuple[str, str] | None = None,
+        relation: str | None = None,
+        object: tuple[str, str] | None = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """List ReBAC relationship tuples matching filters.
+
+        Args:
+            subject: Optional (subject_type, subject_id) filter
+            relation: Optional relation type filter
+            object: Optional (object_type, object_id) filter
+
+        Returns:
+            List of tuple dictionaries
+
+        Examples:
+            >>> nx.rebac_list_tuples(subject=("agent", "alice"))
+            [{'tuple_id': '...', 'subject_type': 'agent', ...}]
+        """
+        result = self._call_rpc(
+            "rebac_list_tuples",
+            {"subject": subject, "relation": relation, "object": object},
+        )
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
     # Lifecycle Management
     # ============================================================
 

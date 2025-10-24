@@ -49,20 +49,20 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11", "3.12"]
         exclude:
-          # Exclude Windows from PRs to save ~30-40 min
+          # Exclude Windows on PRs to save time
           - os: windows-latest
             python-version: "3.11"
           - os: windows-latest
             python-version: "3.12"
         include:
-          # Include Windows only for pushes to main branch
+          # Re-include Windows only for pushes (not PRs)
           - os: windows-latest
             python-version: "3.11"
-            only-main: true
+            is-windows: true
           - os: windows-latest
             python-version: "3.12"
-            only-main: true
-    if: ${{ matrix.only-main != true || github.event_name == 'push' }}
+            is-windows: true
+    if: ${{ !matrix.is-windows || github.event_name == 'push' }}
 
     steps:
       - name: Checkout code

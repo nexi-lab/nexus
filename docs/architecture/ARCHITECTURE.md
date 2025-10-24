@@ -170,773 +170,237 @@ Nexus is an AI-native distributed filesystem providing a unified API across mult
 
 **Format:** SKILL.md files with YAML frontmatter (name, version, dependencies, tier)
 
-### 8. 3-Tier Permission System (v0.4.0+)
+### 7. 3-Tier Permission System (v0.4.0+)
 
-**Location:**
-- `src/nexus/core/permissions.py` - Base permission enforcement
-- `src/nexus/core/nexus_fs_permissions.py` - ACL Python API
-- `src/nexus/core/nexus_fs_rebac.py` - ReBAC Python API
-- `src/nexus/core/rebac_manager.py` - ReBAC graph engine
+**Purpose:** Flexible access control combining traditional UNIX permissions with modern access patterns.
 
-**Three Permission Layers:**
-1. **UNIX** - Owner/group/mode (chmod, chown, chgrp)
-2. **ACL** - Per-user/group granular control (setfacl, grant_user)
-3. **ReBAC** - Graph-based dynamic inheritance (rebac_create, rebac_check)
+**Location:** `src/nexus/core/permissions.py`, `nexus_fs_permissions.py`, `nexus_fs_rebac.py`, `rebac_manager.py`
 
-**Permission Types:**
-- `read`: View file content
-- `write`: Modify files
-- `execute`: Execute files
-- `owner-of`: Full control
-- Custom relations: `member-of`, `viewer-of`, `editor-of`, `parent-of`
+**Three Layers (evaluated in order):**
 
-**Features:**
+1. **UNIX Permissions**: Traditional owner/group/mode (chmod, chown, chgrp)
+2. **ACL (Access Control Lists)**: Per-user/group granular permissions with explicit deny
+3. **ReBAC (Relationship-Based)**: Zanzibar-style graph traversal for dynamic inheritance
+
+**Key Capabilities:**
 - Complete CLI + Python SDK for all layers
-- Zanzibar-style graph traversal (ReBAC)
-- Explicit deny rules (ACL)
-- Automatic permission inheritance (ReBAC)
+- Explicit deny rules (ACL takes precedence)
+- Automatic permission inheritance via relationships (ReBAC)
 - Time-limited access with expiration
 - Multi-level organization hierarchies
 
-**Quick Examples:**
-```python
-# ACL - Per-user granular control
-nx.grant_user("/file.txt", user="alice", permissions="rw-")
-nx.deny_user("/secret.txt", user="intern")
+**Permission Check Order:** Admin bypass → ReBAC → ACL → UNIX → Deny (default)
 
-# ReBAC - Dynamic graph-based permissions
-nx.rebac_create(
-    subject=("agent", "alice"),
-    relation="member-of",
-    object=("group", "developers")
-)
-can_access = nx.rebac_check(
-    subject=("agent", "alice"),
-    permission="owner-of",
-    object=("file", "/project.txt")
-)
-```
+**Examples:** See `examples/py_demo/acl_demo.py` and `examples/py_demo/rebac_demo.py`
 
-See **Permission System Deep Dive** section below for comprehensive documentation.
+**Detailed Documentation:** See [PERMISSIONS.md](./PERMISSIONS.md) for comprehensive guide
 
-### 9. Identity-Based Memory System (v0.4.0)
-Order-neutral virtual paths with identity-based storage for AI agent memory.
+### 8. Identity-Based Memory System (v0.4.0)
 
-**Location:** `src/nexus/core/entity_registry.py`, `src/nexus/core/memory_router.py`
+**Purpose:** Order-neutral virtual paths with identity-based storage for AI agent memory.
 
-**Core Concept:**
-Separates identity from location - canonical storage by ID with multiple virtual path views. Memory location ≠ identity; relationships determine access, paths determine browsing.
+**Location:** `src/nexus/core/entity_registry.py`, `src/nexus/core/memory_router.py`, `src/nexus/core/memory_api.py`
+
+**Core Concept:** Separates identity from location. Canonical storage by ID with multiple virtual path views. Memory location ≠ identity; relationships determine access, paths determine browsing.
 
 **Key Features:**
-- Order-neutral paths: `/workspace/alice/agent1` and `/workspace/agent1/alice` resolve to same memory
-- No data duplication for memory sharing across agents
-- Identity relationships enable advanced permission checks
-- Multi-view capability: browse by user, agent, or tenant
+- **Order-Neutral Paths**: `/workspace/alice/agent1` and `/workspace/agent1/alice` resolve to same memory
+- **Zero Duplication**: Memory sharing across agents without file copies
+- **Dual API Access**: Use Memory API (`nx.memory.*`) or File API (`nx.read/write`) interchangeably
+- **Multi-View Browsing**: Access by user, agent, or tenant perspective
+- **Permission Integration**: Full 3-tier permission system support
 
-**Entity Registry:**
-```sql
-CREATE TABLE entity_registry (
-    entity_type TEXT NOT NULL,  -- 'tenant', 'user', 'agent'
-    entity_id TEXT NOT NULL,
-    parent_type TEXT,
-    parent_id TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (entity_type, entity_id)
-);
+**Storage Structure:**
+- **Entity Registry**: Tracks tenant/user/agent relationships and hierarchies
+- **Memories Table**: Stores memory content with identity metadata (tenant_id, user_id, agent_id, scope, visibility)
+- **Virtual Router**: Maps flexible paths to canonical memory IDs
+
+**Memory Path Patterns (all equivalent):**
+```
+/objs/memory/{id}                     # Canonical storage
+/workspace/alice/agent1/memory/...    # Workspace view (order-neutral)
+/memory/by-user/alice/...             # User-centric view
+/memory/by-agent/agent1/...           # Agent-centric view
 ```
 
-**Memory Schema:**
-```sql
-CREATE TABLE memories (
-    memory_id TEXT PRIMARY KEY,
-    content_hash TEXT NOT NULL,
+**Example Use Case:**
+Alice's two agents share user-scoped memories. Agent1 creates memory → Agent2 can access via user ownership relationship → no file duplication required.
 
-    -- Identity relationships
-    tenant_id TEXT,
-    user_id TEXT,        -- Real user ownership
-    agent_id TEXT,       -- Created by agent
-
-    -- Scope and visibility
-    scope TEXT,          -- 'agent', 'user', 'tenant', 'global'
-    visibility TEXT,     -- 'private', 'shared', 'public'
-
-    -- UNIX permissions
-    group TEXT,
-    mode INTEGER DEFAULT 420,
-
-    -- Metadata
-    memory_type TEXT,
-    importance REAL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-**Virtual Path Router:**
-```python
-# Multiple paths resolve to same memory_id
-/workspace/acme/alice/agent1/memory/mem.json
-/workspace/alice/agent1/acme/memory/mem.json
-/workspace/agent1/alice/memory/mem.json
-/memory/by-user/alice/agent1/mem.json
-/objs/memory/mem_123  # Canonical storage
-
-# Router: path → extract IDs → query by relationships → memory_id
-```
-
-**3-Layer Permission Integration:**
-```python
-class MemoryPermissionEnforcer(PermissionEnforcer):
-    """
-    Layer 1: ReBAC - Identity relationships
-      - Direct creator access
-      - User ownership inheritance (agents → user)
-      - Tenant-scoped sharing
-
-    Layer 2: ACL - Canonical path access control
-      - Works on order-neutral paths
-
-    Layer 3: UNIX - Proper user ownership
-      - Uses user_id as owner (not agent_id)
-    """
-```
-
-**Example: Multi-Agent Memory Sharing**
-```python
-# Alice has 2 agents
-agent1 = Agent(agent_id='agent1', owner_user_id='alice')
-agent2 = Agent(agent_id='agent2', owner_user_id='alice')
-
-# agent1 creates user-scoped memory
-memory = Memory(
-    memory_id='mem_123',
-    user_id='alice',
-    agent_id='agent1',
-    scope='user'  # Shared across Alice's agents
-)
-
-# agent2 can access via user ownership relationship
-ctx = OperationContext(user='agent2')
-can_read = enforcer.check('mem_123', Permission.READ, ctx)
-# ✅ True - both agents owned by alice
-```
-
-**Benefits:**
-- No file duplication for memory sharing
-- Flexible hierarchy views without data movement
-- Complete ReBAC layer with meaningful identity relationships
-- Order-neutral paths enable reorganization without file moves
-- Foundation for advanced memory features (consolidation, search)
-
-#### Phase 2 Integration: File API Support (v0.4.0)
-
-Memory virtual paths are now fully integrated with the File API, allowing users to access memories via standard file operations.
-
-**Location:** `src/nexus/core/nexus_fs_core.py:110-213`, `src/nexus/core/nexus_fs_search.py:89-90`
-
-**Core Concept:**
-Users can choose between two equivalent interfaces for memory access:
-1. **Memory API**: `nx.memory.store()` / `get()` / `query()` (specialized interface)
-2. **File API**: `nx.read()` / `write()` / `delete()` / `list()` (familiar file operations)
-
-**Path Interception:**
-```python
-def read(self, path: str) -> bytes:
-    """Read file or memory content."""
-    # Intercept memory paths
-    if MemoryViewRouter.is_memory_path(path):
-        return self._read_memory_path(path)
-    # Normal file operations...
-```
-
-**Memory Path Patterns:**
-```python
-# All these patterns are detected and routed to memory system:
-/objs/memory/{id}                          # Canonical path
-/workspace/{...}/memory/{...}              # Workspace view (order-neutral)
-/memory/by-user/{user}/...                 # User-centric view
-/memory/by-agent/{agent}/...               # Agent-centric view
-/memory/by-tenant/{tenant}/...             # Tenant-centric view
-```
-
-**Example: Dual-API Access**
-```python
-# Method 1: Memory API (specialized)
-mem_id = nx.memory.store("Python best practices", scope="user")
-mem = nx.memory.get(mem_id)
-
-# Method 2: File API (familiar)
-nx.write("/workspace/alice/agent1/memory/facts", b"Python is great!")
-content = nx.read("/workspace/alice/agent1/memory/facts")
-
-# Order-neutral: All these paths access the SAME memory!
-content1 = nx.read("/workspace/alice/agent1/memory/facts")
-content2 = nx.read("/workspace/agent1/alice/memory/facts")  # Same!
-content3 = nx.read("/memory/by-user/alice/facts")           # Same!
-```
-
-**CLI Support:**
-```bash
-# Store memory via file operations
-nexus write /workspace/alice/agent1/memory/facts "Python is great!"
-
-# Read via any equivalent path
-nexus cat /workspace/agent1/alice/memory/facts
-nexus cat /memory/by-user/alice/facts
-
-# List memories
-nexus ls /workspace/alice/agent1/memory
-
-# Delete memory
-nexus rm /objs/memory/{id}
-```
-
-**Implementation Details:**
-- **Path Detection**: `MemoryViewRouter.is_memory_path()` checks for memory path patterns
-- **Resolution**: Extracts entity IDs from path → queries by relationships → returns most recent matching memory
-- **Multiple Results**: When multiple memories match (e.g., multiple memories for alice+agent1), returns most recent by `created_at DESC`
-- **Directory Listing**: `_list_memory_path()` queries memories and returns virtual paths based on filter
-- **Write Behavior**: Creates new memory each time (memories are immutable references)
-
-**Forward Compatibility:**
-This implementation is forward-compatible with Issue #121 (Agent Workspace Structure):
-- When #121 adds `.nexus/` subdirectory: just add path aliases
-- Core virtual path routing already supports flexible patterns
-- Minimal changes needed for full #121 integration
-
-**Benefits:**
-- **Familiar Interface**: Use standard file operations for memory access
-- **Tool Integration**: Memory works with all CLI commands (`cat`, `write`, `ls`, `rm`)
-- **Order Agnostic**: Path component order doesn't matter
-- **Two APIs, One System**: Memory API and File API access same underlying storage
-- **No Breaking Changes**: Existing Memory API code continues to work unchanged
-
-**Demo:**
-See `examples/py_demo/memory_file_api_demo.py` and `examples/script_demo/memory_file_api_demo.sh` for comprehensive examples.
+**Examples:** See `examples/py_demo/memory_file_api_demo.py`
 
 ## Storage Layer
 
 ### Content-Addressable Storage (CAS)
-Automatic deduplication using SHA-256 hashing.
+
+**Purpose:** Automatic deduplication using SHA-256 content hashing.
 
 **Location:** `src/nexus/backends/local.py`, `src/nexus/storage/`
+
+**How It Works:** Content is stored by hash (e.g., `cas/ab/abcd123...`). Identical content stored once, referenced many times.
 
 **Benefits:**
 - 30-50% storage savings via deduplication
 - Immutable content enables efficient caching
 - Lineage tracking across file copies
-- Efficient time-travel without full copies
-
-**How It Works:**
-```python
-# Writing content
-content = b"Hello World"
-content_hash = hashlib.sha256(content).hexdigest()
-cas_path = f"cas/{content_hash[:2]}/{content_hash}"
-# Store once, reference many times
-```
+- Efficient time-travel without storing full copies
 
 ### Operation Log & Time-Travel
-Complete audit trail with undo capability.
+
+**Purpose:** Complete audit trail with undo capability.
 
 **Location:** `src/nexus/storage/operations.py`
 
-**Features:**
-- All filesystem operations logged
-- Undo capability for reversible operations
-- Time-travel: read files at historical points
+**Key Features:**
+- All filesystem operations logged to database
+- Undo capability for reversible operations (write, delete, move, copy)
+- Time-travel: read files at any historical point
 - Content diffing between versions
 - Multi-agent safe with per-agent tracking
 
-**Database Schema:**
-```sql
-CREATE TABLE operations (
-    id UUID PRIMARY KEY,
-    tenant_id UUID NOT NULL,
-    operation_type VARCHAR(50) NOT NULL,
-    file_path TEXT NOT NULL,
-    timestamp TIMESTAMPTZ NOT NULL,
-    details JSONB NOT NULL,
-    undo_state JSONB,
-    undone BOOLEAN DEFAULT FALSE
-);
-```
+**CLI:** `nexus ops log`, `nexus ops undo`, `nexus time-travel`
 
 ### Caching System (v0.4.0)
-Multi-tier caching for performance optimization.
+
+**Purpose:** Multi-tier caching for performance optimization.
 
 **Location:** `src/nexus/storage/cache.py`, `src/nexus/storage/content_cache.py`
 
-**Cache Types:**
-- **Metadata Cache**: File metadata, path lookups, existence checks
-- **Content Cache**: LRU cache for file content (256MB default)
-- **Permission Cache**: Permission check results
+**Cache Tiers:**
+1. **Metadata Cache**: File metadata, path lookups, existence checks
+2. **Content Cache**: LRU cache for file content (256MB default)
+3. **Permission Cache**: Permission check results with TTL
 
 **Performance Impact:**
-- Cached reads: **10-50x faster**
-- Metadata operations: **5x faster**
-- Configurable cache sizes and TTLs
+- Cached reads: 10-50x faster
+- Metadata operations: 5x faster
+- Configurable sizes and TTLs
 
 ## Namespace System
 
-Nexus organizes files into five built-in namespaces with different access control and visibility rules.
+**Purpose:** Organize files into namespaces with different access control and visibility rules.
 
 **Location:** `src/nexus/core/router.py`
 
 ### Built-in Namespaces
 
-| Namespace | Purpose | Readonly | Admin-Only | Requires Tenant |
+| Namespace | Purpose | Readonly | Admin-Only | Tenant Required |
 |-----------|---------|----------|------------|-----------------|
 | `/workspace` | Agent-specific workspace | No | No | Yes |
 | `/shared` | Tenant-wide shared files | No | No | Yes |
 | `/archives` | Long-term storage | Yes | No | Yes |
 | `/external` | External integrations | No | No | No |
-| `/system` | System configuration | Yes | **Yes** | No |
+| `/system` | System configuration | Yes | Yes | No |
 
-### Namespace Visibility Rules
+**Visibility:** Namespaces are automatically filtered based on user context (tenant_id, is_admin).
 
-Namespaces are automatically filtered based on user context:
-
-```python
-# tenant_id=None (no tenant)
-visible = ["/external"]  # Only external accessible
-
-# tenant_id="default" (single tenant)
-visible = ["/workspace", "/shared", "/archives", "/external"]
-
-# is_admin=True
-visible = ["/workspace", "/shared", "/archives", "/external", "/system"]
-```
-
-### FUSE Mount Integration
-
-When mounting via FUSE, namespace directories appear at root level:
-
-```bash
-$ ls /mnt/nexus/
-archives/  external/  shared/  workspace/  .raw/
-```
-
-The filesystem dynamically shows only accessible namespaces based on the user's tenant and admin status.
+**FUSE Integration:** When mounting via FUSE, namespace directories appear at root level dynamically based on access rights.
 
 ## Data Flow
 
 ### Read Flow
 ```
-User API → NexusFS → Metadata Lookup → CAS Fetch → Return Content
-                ↓
-          Cache Check (if hit, return cached)
+User API → NexusFS → Cache Check → (if miss) → Metadata Lookup → CAS Fetch → Return Content
 ```
 
 ### Write Flow
 ```
 User API → Hooks (before_write) → Hash Content → CAS Store →
-Metadata Update → Operation Log → Hooks (after_write)
+Metadata Update → Operation Log → Hooks (after_write) → Cache Invalidation
 ```
 
 ### Undo Flow
 ```
-User Undo → Load Operation → Extract Undo State →
-Reverse Operation → Log Undo → Return Success
+User Undo → Load Operation → Extract Undo State → Reverse Operation → Log Undo
 ```
 
 ## Backend Adapters
 
-### Interface
-```python
-class BackendAdapter(ABC):
-    async def read(self, path: str) -> bytes: ...
-    async def write(self, path: str, data: bytes) -> None: ...
-    async def delete(self, path: str) -> None: ...
-    async def list(self, path: str) -> list[str]: ...
-    async def exists(self, path: str) -> bool: ...
-    async def stat(self, path: str) -> FileStat: ...
-```
+**Purpose:** Abstract storage backends behind unified interface.
 
-### Implementations
-- **LocalFSBackend**: Local filesystem (`src/nexus/backends/local.py`)
-- **S3Backend**: AWS S3 (`src/nexus/backends/s3.py`)
-- **GCSBackend**: Google Cloud Storage (`src/nexus/backends/gcs.py`)
-- **GDriveBackend**: Google Drive (partial)
-- **WorkspaceBackend**: Agent workspace abstraction
+**Interface:** `Backend` base class with read, write, delete, list, exists, stat methods.
 
-## Database Schema
+**Implementations:**
+- `LocalFSBackend`: Local filesystem with CAS support
+- `GCSBackend`: Google Cloud Storage
+- `S3Backend`: AWS S3 (partial)
+- `GDriveBackend`: Google Drive (partial)
+- `WorkspaceBackend`: Agent workspace abstraction
 
-### Core Tables
-
-**file_metadata:**
-```sql
-CREATE TABLE file_metadata (
-    tenant_id UUID,
-    file_path TEXT,
-    content_hash VARCHAR(64),  -- SHA-256
-    size_bytes BIGINT,
-    created_at TIMESTAMPTZ,
-    modified_at TIMESTAMPTZ,
-    PRIMARY KEY (tenant_id, file_path)
-);
-```
-
-**operations:**
-```sql
-CREATE TABLE operations (
-    id UUID PRIMARY KEY,
-    tenant_id UUID,
-    operation_type VARCHAR(50),
-    file_path TEXT,
-    timestamp TIMESTAMPTZ,
-    details JSONB,
-    undo_state JSONB,
-    undone BOOLEAN
-);
-```
-
-**tags:**
-```sql
-CREATE TABLE tags (
-    tenant_id UUID,
-    file_path TEXT,
-    tag_key VARCHAR(255),
-    tag_value TEXT,
-    PRIMARY KEY (tenant_id, file_path, tag_key)
-);
-```
+**Location:** `src/nexus/backends/`
 
 ## Key Design Decisions
 
 ### Why Content-Addressable Storage?
-- **Automatic deduplication** (30-50% savings)
-- **Immutable content** enables efficient caching
-- **Lineage tracking** across copies
-- **Time-travel** without storing full file copies
-
-**Tradeoff:** Additional hash computation, metadata overhead
+**Benefits:** 30-50% storage savings, immutable content enables caching, lineage tracking, time-travel without full copies
+**Tradeoff:** Hash computation overhead
 
 ### Why SQLite for Local Mode?
-- **Zero-deployment** (single file database)
-- **ACID guarantees** for undo operations
-- **Efficient queries** for time-travel
-- **Easy backup**
-
+**Benefits:** Zero-deployment, ACID guarantees, easy backup
 **Tradeoff:** Single-writer limitation (solved by PostgreSQL in hosted mode)
 
 ### Why Plugin System?
-- **Vendor neutrality** (core stays cloud-agnostic)
-- **Extensibility** without forking
-- **Community contributions**
-- **Unix philosophy** (composable tools)
+**Benefits:** Vendor neutrality, extensibility without forking, community contributions, composable tools
+**Philosophy:** Unix philosophy of composable tools
 
 ### Why YAML for Workflows?
-- **Human-readable** and editable
-- **Version control friendly** (Git-compatible)
-- **Standard format** (no custom DSL)
-- **Everything-as-a-file** principle
+**Benefits:** Human-readable, Git-friendly, standard format (no custom DSL), everything-as-a-file principle
 
 ## Performance Characteristics
 
 ### Latency Targets (Local Mode)
-- Read: < 5ms (cache hit), < 50ms (cache miss)
-- Write: < 100ms (including hash + CAS + metadata)
-- List: < 50ms for 1000 files
-- Undo: < 200ms
+- **Read**: < 5ms (cached), < 50ms (uncached)
+- **Write**: < 100ms (including hash + CAS + metadata)
+- **List**: < 50ms for 1000 files
+- **Undo**: < 200ms
 
 ### Throughput Targets
-- Sequential reads: 100+ MB/s
-- Sequential writes: 50+ MB/s
-- Batch writes: 4x faster (write_batch API)
-- Concurrent operations: 100+ ops/sec
+- **Sequential reads**: 100+ MB/s
+- **Sequential writes**: 50+ MB/s
+- **Batch writes**: 4x faster than individual writes
+- **Concurrent operations**: 100+ ops/sec
 
 ### Scaling Limits (Local Mode)
-- Files: 1M+ per tenant
-- Storage: 10GB - 1TB typical
-- Operations log: 10M+ operations
+- **Files**: 1M+ per tenant
+- **Storage**: 10GB - 1TB typical
+- **Operations log**: 10M+ operations
 
 ## Security
 
 ### Multi-Tenancy
 - Tenant isolation at database level
 - Path namespace isolation
-- Per-tenant operation logs
-- Per-tenant metadata
+- Per-tenant operation logs and metadata
 
-### Permission Model (ReBAC)
-- Relationship-Based Access Control
-- Permissions: read, write, delete, admin
-- Directory → file inheritance
+### Permission Model
+- **3-Tier System**: UNIX + ACL + ReBAC
+- **Permissions**: read, write, execute, owner-of
+- **Inheritance**: Directory → file inheritance via ReBAC
 
 ### Data Security
-- SHA-256 content hashing
+- SHA-256 content hashing for integrity
 - Optional encryption at rest (backend-dependent)
 - Append-only operation log
-- Audit trail for compliance
+- Complete audit trail for compliance
 
 ## Deployment Modes
 
 ### Local Mode
-```
-Python Process
-  ├── NexusFS Core
-  ├── SQLite Database
-  └── Local Filesystem (./nexus-data/)
-```
+Single Python process with SQLite and local filesystem. Ideal for development and CLI tools.
 
 ### Hosted Mode (Auto-Scaling)
-```
-API Layer (FastAPI) → NexusFS Core → PostgreSQL (Managed)
-                            ↓
-                    Cloud Storage (GCS/S3)
-```
+API layer (FastAPI) → NexusFS Core → PostgreSQL + Cloud Storage (GCS/S3). Auto-scales based on usage.
 
-## Future Enhancements
-
-### Planned (v0.5+)
-- Distributed CAS for multi-node deployments
-- Event streaming (Kafka/Pub/Sub)
-- Advanced query language (beyond glob/grep)
-- Built-in vector search
-- Multi-region replication
+**See:** [Deployment Guide](../deployment/DEPLOYMENT.md)
 
 ## References
 
-- [Core Tenets](../CORE_TENETS.md)
-- [Plugin Development](../development/PLUGIN_DEVELOPMENT.md)
-- [Database Compatibility](../DATABASE_COMPATIBILITY.md)
-- [Deployment Guide](../deployment/DEPLOYMENT.md)
+- [Core Tenets](../CORE_TENETS.md) - Design principles and philosophy
+- [Plugin Development](../development/PLUGIN_DEVELOPMENT.md) - Building extensions
+- [Permission System](./PERMISSIONS.md) - Comprehensive permission guide
+- [Database Compatibility](../DATABASE_COMPATIBILITY.md) - SQLite vs PostgreSQL
+- [Deployment Guide](../deployment/DEPLOYMENT.md) - Production deployment
 
 ---
 
 **Document Status:** Living document, updated with each major release
 **Next Review:** v0.5.0 release
-
----
-
-## Permission System Deep Dive (v0.4.0+)
-
-### Overview
-
-Nexus implements a complete 3-tier permission system supporting both CLI and Python SDK:
-
-1. **UNIX Permissions**: Traditional owner/group/mode (0644, etc.)
-2. **ACL (Access Control Lists)**: Per-user and per-group granular permissions
-3. **ReBAC (Relationship-Based)**: Zanzibar-style graph-based dynamic permissions
-
-### Layer 1: UNIX Permissions
-
-**Basic file access control using owner/group/mode bits.**
-
-**CLI:**
-```bash
-nexus chmod 0o644 /workspace/file.txt
-nexus chown alice /workspace/file.txt
-nexus chgrp developers /workspace/file.txt
-```
-
-**Python SDK:**
-```python
-nx.chmod("/workspace/file.txt", 0o644)
-nx.chown("/workspace/file.txt", "alice")
-nx.chgrp("/workspace/file.txt", "developers")
-```
-
-### Layer 2: ACL (Access Control Lists)
-
-**Fine-grained per-user and per-group permissions.**
-
-**CLI:**
-```bash
-# Grant user permissions
-nexus setfacl user:alice:rw- /workspace/file.txt
-
-# Grant group permissions
-nexus setfacl group:developers:r-x /workspace/code/
-
-# Deny user access (explicit deny)
-nexus setfacl deny:user:intern:--- /workspace/secret.txt
-
-# View ACL
-nexus getfacl /workspace/file.txt
-
-# Remove ACL entry
-nexus setfacl user:alice:rw- /workspace/file.txt --remove
-```
-
-**Python SDK (NEW in v0.4.0):**
-```python
-# Grant user permissions
-nx.grant_user("/workspace/file.txt", user="alice", permissions="rw-")
-
-# Grant group permissions
-nx.grant_group("/workspace/file.txt", group="developers", permissions="r--")
-
-# Explicit deny (takes precedence)
-nx.deny_user("/workspace/secret.txt", user="intern")
-
-# Get ACL entries
-acl = nx.get_acl("/workspace/file.txt")
-# Returns: [{'entry_type': 'user', 'identifier': 'alice', 'permissions': 'rw-', 'deny': False}]
-
-# Revoke permissions
-nx.revoke_acl("/workspace/file.txt", entry_type="user", identifier="alice")
-```
-
-**Use Cases:**
-- Share file with specific users without changing ownership
-- Temporarily grant contractor access
-- Block specific user while allowing group
-- Mix different permissions for different users
-
-### Layer 3: ReBAC (Relationship-Based Access Control)
-
-**Dynamic graph-based permissions inspired by Google Zanzibar.**
-
-**CLI:**
-```bash
-# Create relationships
-nexus rebac create agent alice member-of group developers
-nexus rebac create group developers owner-of file /workspace/project.txt
-
-# Check permission (with graph traversal)
-nexus rebac check agent alice owner-of file /workspace/project.txt
-
-# Find all who can access
-nexus rebac expand owner-of file /workspace/project.txt
-
-# Delete relationship
-nexus rebac delete <tuple-id>
-```
-
-**Python SDK (NEW in v0.4.0):**
-```python
-# Create relationship tuple
-tuple_id = nx.rebac_create(
-    subject=("agent", "alice"),
-    relation="member-of",
-    object=("group", "developers")
-)
-
-# Create ownership relationship
-nx.rebac_create(
-    subject=("group", "developers"),
-    relation="owner-of",
-    object=("file", "/workspace/project.txt")
-)
-
-# Check permission (automatic graph traversal)
-can_access = nx.rebac_check(
-    subject=("agent", "alice"),
-    permission="owner-of",
-    object=("file", "/workspace/project.txt")
-)
-# Returns: True (alice → member-of → developers → owner-of → file)
-
-# Find all subjects with permission
-subjects = nx.rebac_expand(
-    permission="owner-of",
-    object=("file", "/workspace/project.txt")
-)
-# Returns: [("agent", "alice"), ("agent", "bob"), ("group", "developers")]
-
-# List relationships
-tuples = nx.rebac_list_tuples(subject=("agent", "alice"))
-
-# Delete relationship
-deleted = nx.rebac_delete(tuple_id)
-
-# Temporary access (expires automatically)
-from datetime import UTC, datetime, timedelta
-expires = datetime.now(UTC) + timedelta(hours=1)
-nx.rebac_create(
-    subject=("agent", "contractor"),
-    relation="viewer-of",
-    object=("file", "/workspace/doc.txt"),
-    expires_at=expires
-)
-```
-
-**Relationship Types:**
-- `member-of`: Group membership
-- `owner-of`: Resource ownership
-- `viewer-of`: Read access
-- `editor-of`: Write access
-- `parent-of`: Hierarchical relationship (folder → file)
-- `part-of`: Organization hierarchy (team → department)
-
-**Use Cases:**
-- Team-based access (add to group = auto access all group resources)
-- Hierarchical permissions (folder ownership → file ownership)
-- Organization structures (teams within departments)
-- Dynamic sharing (relationship changes = permission changes)
-- Temporary access with auto-expiration
-
-### Permission Check Order
-
-When checking access, Nexus evaluates permissions in this order:
-
-```
-1. Admin/System Bypass
-   ↓ (if not admin)
-2. ReBAC Check (relationship graph traversal)
-   ↓ (if no ReBAC match)
-3. ACL Check (explicit allow/deny entries)
-   ↓ (if no ACL match)
-4. UNIX Check (owner/group/mode bits)
-   ↓ (if no UNIX match)
-5. Deny (default)
-```
-
-**Key Principles:**
-- **ReBAC grants** allow access (dynamic inheritance)
-- **ACL deny** blocks access (explicit deny takes precedence)
-- **ACL allow** grants access (explicit permission)
-- **UNIX** provides baseline (traditional permissions)
-
-### Database Tables
-
-**ACL Tables:**
-```sql
-acl_entries (
-    path_id, entry_type, identifier,
-    permissions, deny, is_default, created_at
-)
-```
-
-**ReBAC Tables (NEW in v0.4.0):**
-```sql
-rebac_tuples (
-    tuple_id, subject_type, subject_id, relation,
-    object_type, object_id, created_at, expires_at, conditions
-)
-
-rebac_namespaces (
-    namespace_id, object_type, config,
-    created_at, updated_at
-)
-
-rebac_changelog (
-    change_id, change_type, tuple_id,
-    subject_type, subject_id, relation,
-    object_type, object_id, created_at
-)
-
-rebac_check_cache (
-    cache_id, subject_type, subject_id, permission,
-    object_type, object_id, result, created_at, expires_at
-)
-```
-
-### Performance Optimizations
-
-**ACL:**
-- Indexed by path_id for fast lookups
-- Cached at metadata store level
-
-**ReBAC:**
-- Check result caching with TTL (default 5 minutes)
-- Graph traversal depth limit (default 10 hops)
-- Cycle detection to prevent infinite loops
-- Automatic cleanup of expired relationships
-
-### Examples
-
-See comprehensive examples in:
-- **Python API**: `examples/py_demo/acl_demo.py`, `examples/py_demo/rebac_demo.py`
-- **CLI + Python**: `examples/script_demo/acl_demo.sh`, `examples/script_demo/rebac_demo.sh`

@@ -11,106 +11,29 @@ Tests cover:
 - Expand API
 """
 
-import sqlite3
-import tempfile
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine
 
 from nexus.core.rebac import Entity, NamespaceConfig
 from nexus.core.rebac_manager import ReBACManager
+from nexus.storage.models import Base
 
 
 @pytest.fixture
-def temp_db():
-    """Create a temporary database for testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test_rebac.db"
-
-        # Create database and tables
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-
-        # Create ReBAC tables directly
-        cursor.execute("""
-            CREATE TABLE rebac_tuples (
-                tuple_id TEXT PRIMARY KEY,
-                subject_type TEXT NOT NULL,
-                subject_id TEXT NOT NULL,
-                subject_relation TEXT,
-                relation TEXT NOT NULL,
-                object_type TEXT NOT NULL,
-                object_id TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                expires_at TEXT,
-                conditions TEXT
-            )
-        """)
-
-        cursor.execute("""
-            CREATE INDEX idx_rebac_subject ON rebac_tuples(subject_type, subject_id, relation)
-        """)
-
-        cursor.execute("""
-            CREATE INDEX idx_rebac_object ON rebac_tuples(object_type, object_id, relation)
-        """)
-
-        cursor.execute("""
-            CREATE TABLE rebac_namespaces (
-                namespace_id TEXT PRIMARY KEY,
-                object_type TEXT NOT NULL UNIQUE,
-                config TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE rebac_check_cache (
-                cache_id TEXT PRIMARY KEY,
-                subject_type TEXT NOT NULL,
-                subject_id TEXT NOT NULL,
-                permission TEXT NOT NULL,
-                object_type TEXT NOT NULL,
-                object_id TEXT NOT NULL,
-                result INTEGER NOT NULL,
-                computed_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL
-            )
-        """)
-
-        cursor.execute("""
-            CREATE INDEX idx_rebac_cache_lookup ON rebac_check_cache(
-                subject_type, subject_id, permission, object_type, object_id
-            )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE rebac_changelog (
-                change_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                change_type TEXT NOT NULL,
-                tuple_id TEXT,
-                subject_type TEXT NOT NULL,
-                subject_id TEXT NOT NULL,
-                relation TEXT NOT NULL,
-                object_type TEXT NOT NULL,
-                object_id TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-        """)
-
-        conn.commit()
-        conn.close()
-
-        yield str(db_path)
+def engine():
+    """Create in-memory SQLite database for testing."""
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    return engine
 
 
 @pytest.fixture
-def rebac_manager(temp_db):
+def rebac_manager(engine):
     """Create a ReBAC manager for testing."""
-    manager = ReBACManager(db_path=temp_db, cache_ttl_seconds=5)
+    manager = ReBACManager(engine=engine, cache_ttl_seconds=5)
     yield manager
     manager.close()
 

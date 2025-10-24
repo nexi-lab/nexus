@@ -14,7 +14,6 @@ to search, read, analyze, and persist data across agent runs.
 """
 
 import shlex
-from typing import Any, Optional
 
 from langchain_core.tools import tool
 
@@ -91,9 +90,9 @@ def get_nexus_tools(nx):
             # Group by file for better readability
             current_file = None
             for match in results[:50]:  # Limit to first 50 matches
-                file_path = match.get('file', 'unknown')
-                line_num = match.get('line', 0)
-                content = match.get('content', '').strip()
+                file_path = match.get("file", "unknown")
+                line_num = match.get("line", 0)
+                content = match.get("content", "").strip()
 
                 if file_path != current_file:
                     output_lines.append(f"\n{file_path}:")
@@ -196,13 +195,13 @@ def get_nexus_tools(nx):
 
             # Handle bytes
             if isinstance(content, bytes):
-                content = content.decode('utf-8')
+                content = content.decode("utf-8")
 
             # For 'less', show preview
             if command == "less":
-                lines = content.split('\n')
+                lines = content.split("\n")
                 if len(lines) > 100:
-                    preview_content = '\n'.join(lines[:100])
+                    preview_content = "\n".join(lines[:100])
                     output = f"Preview of {path} (first 100 of {len(lines)} lines):\n\n"
                     output += preview_content
                     output += f"\n\n... ({len(lines) - 100} more lines)"
@@ -243,7 +242,7 @@ def get_nexus_tools(nx):
         """
         try:
             # Convert string to bytes for Nexus
-            content_bytes = content.encode('utf-8') if isinstance(content, str) else content
+            content_bytes = content.encode("utf-8") if isinstance(content, str) else content
 
             # Write file (Nexus creates parent directories automatically)
             nx.write(path, content_bytes)

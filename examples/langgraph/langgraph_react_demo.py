@@ -40,25 +40,25 @@ Example tasks:
 
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Annotated, Literal, Sequence, TypedDict
+from typing import Annotated, Literal, TypedDict
 
 # Add src to path for local development
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.graph import END, StateGraph, add_messages
 from langgraph.prebuilt import ToolNode
-
-import nexus
-from nexus.remote import RemoteNexusFS
 from nexus_tools import get_nexus_tools
+
+from nexus.remote import RemoteNexusFS
 
 
 # Define agent state
 class AgentState(TypedDict):
     """State of the ReAct agent."""
+
     messages: Annotated[Sequence[BaseMessage], add_messages]
 
 
@@ -134,7 +134,6 @@ def get_llm():
     Returns:
         LangChain LLM instance
     """
-    from pydantic import SecretStr
 
     # Try OpenRouter first (recommended)
     if os.getenv("OPENROUTER_API_KEY"):
@@ -295,25 +294,23 @@ def run_demo():
     print("Agent starting...\n")
 
     try:
-        result = agent.invoke({
-            "messages": [HumanMessage(content=selected_task["prompt"])]
-        })
+        result = agent.invoke({"messages": [HumanMessage(content=selected_task["prompt"])]})
 
         # Display the conversation
         print("\n" + "=" * 70)
         print("Agent Execution Trace")
         print("=" * 70)
 
-        for i, message in enumerate(result["messages"]):
+        for message in result["messages"]:
             if isinstance(message, HumanMessage):
-                print(f"\n[USER]")
+                print("\n[USER]")
                 print(message.content)
             elif isinstance(message, AIMessage):
                 if message.content:
-                    print(f"\n[AGENT - Reasoning]")
+                    print("\n[AGENT - Reasoning]")
                     print(message.content)
                 if hasattr(message, "tool_calls") and message.tool_calls:
-                    print(f"\n[AGENT - Tool Calls]")
+                    print("\n[AGENT - Tool Calls]")
                     for tool_call in message.tool_calls:
                         print(f"  → {tool_call['name']}({tool_call['args']})")
             elif isinstance(message, ToolMessage):
@@ -338,6 +335,7 @@ def run_demo():
     except Exception as e:
         print(f"\nError during agent execution: {e}")
         import traceback
+
         traceback.print_exc()
 
     print()

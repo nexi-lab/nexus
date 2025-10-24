@@ -789,6 +789,86 @@ class WorkflowModel(Base):
             raise ValidationError("definition_hash is required")
 
 
+class DocumentChunkModel(Base):
+    """Document chunks for semantic search.
+
+    Stores document chunks with embeddings for semantic search.
+    Supports both SQLite (with sqlite-vec) and PostgreSQL (with pgvector).
+
+    Vector column is stored as:
+    - SQLite: BLOB (for sqlite-vec)
+    - PostgreSQL: vector type (for pgvector)
+    """
+
+    __tablename__ = "document_chunks"
+
+    # Primary key
+    chunk_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Foreign key to file_paths
+    path_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("file_paths.path_id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Chunk information
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    chunk_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Offsets in original document (for highlighting)
+    start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Embedding metadata
+    embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # Vector embedding - stored differently per DB:
+    # SQLite: BLOB (sqlite-vec uses float32 arrays serialized to BLOB)
+    # PostgreSQL: vector type (pgvector native type)
+    # Note: This column is added dynamically based on DB type
+    # embedding: column added at runtime
+
+    # Timestamp
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    # Indexes and constraints
+    __table_args__ = (
+        Index("idx_chunks_path", "path_id"),
+        Index("idx_chunks_model", "embedding_model"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<DocumentChunkModel(chunk_id={self.chunk_id}, path_id={self.path_id}, chunk_index={self.chunk_index})>"
+
+    def validate(self) -> None:
+        """Validate document chunk model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate path_id
+        if not self.path_id:
+            raise ValidationError("path_id is required")
+
+        # Validate chunk_index
+        if self.chunk_index < 0:
+            raise ValidationError(f"chunk_index must be non-negative, got {self.chunk_index}")
+
+        # Validate chunk_text
+        if not self.chunk_text:
+            raise ValidationError("chunk_text is required")
+
+        # Validate chunk_tokens
+        if self.chunk_tokens < 0:
+            raise ValidationError(f"chunk_tokens must be non-negative, got {self.chunk_tokens}")
+
+
 class WorkflowExecutionModel(Base):
     """Workflow execution history.
 

@@ -220,6 +220,10 @@ class NexusFS(
 
         self._workspace_manager = WorkspaceManager(metadata=self.metadata, backend=self.backend)
 
+        # Initialize semantic search (v0.4.0) - lazy initialization
+        # Call initialize_semantic_search() to enable semantic search features
+        self._semantic_search = None
+
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
         """
         Dynamically load and register custom parsers from configuration.

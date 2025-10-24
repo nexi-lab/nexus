@@ -4,6 +4,7 @@ This module contains file search and listing operations:
 - list: List files in a directory
 - glob: Find files matching glob patterns
 - grep: Search file contents using regex
+- semantic_search: Search files using semantic similarity
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext, PermissionEnforcer
+    from nexus.search.semantic import SemanticSearch
     from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
 
@@ -27,12 +29,16 @@ class NexusFSSearchMixin:
         _enforce_permissions: bool
         _default_context: OperationContext
         _permission_enforcer: PermissionEnforcer
+        _semantic_search: SemanticSearch | None
 
         def _validate_path(self, path: str) -> str: ...
         def _get_backend_directory_entries(self, path: str) -> set[str]: ...
         def read(
             self, path: str, context: OperationContext | None = None, return_metadata: bool = False
         ) -> bytes | dict[str, Any]: ...
+        async def ls(
+            self, path: str = "/", recursive: bool = False
+        ) -> builtins.list[str] | builtins.list[dict[str, Any]]: ...
 
     def list(
         self,
@@ -400,3 +406,244 @@ class NexusFSSearchMixin:
                 continue
 
         return results
+
+    # Semantic Search Methods (v0.4.0)
+
+    async def semantic_search(
+        self,
+        query: str,
+        path: str = "/",
+        limit: int = 10,
+        filters: dict[str, Any] | None = None,
+        search_mode: str = "semantic",
+    ) -> builtins.list[dict[str, Any]]:
+        """
+        Search documents using natural language queries.
+
+        Supports three search modes:
+        - "keyword": Fast keyword search using FTS (no embeddings needed)
+        - "semantic": Semantic search using vector embeddings (requires embedding provider)
+        - "hybrid": Combines keyword + semantic for best results (requires embedding provider)
+
+        Args:
+            query: Natural language query (e.g., "How does authentication work?")
+            path: Root path to search (default: all files)
+            limit: Maximum number of results (default: 10)
+            filters: Optional filters (file_type, etc.)
+            search_mode: Search mode - "keyword", "semantic", or "hybrid" (default: "semantic")
+
+        Returns:
+            List of search result dicts, each containing:
+            - path: File path
+            - chunk_index: Index of the chunk in the document
+            - chunk_text: Text content of the chunk
+            - score: Relevance score (0.0 to 1.0)
+            - start_offset: Start offset in the document (optional)
+            - end_offset: End offset in the document (optional)
+
+        Examples:
+            # Search for information about authentication
+            results = await nx.semantic_search("How does authentication work?")
+
+            # Search only in documentation directory
+            results = await nx.semantic_search(
+                "database migration",
+                path="/docs",
+                limit=5
+            )
+
+            # Search with filters
+            results = await nx.semantic_search(
+                "error handling",
+                filters={"file_type": "python"}
+            )
+
+        Raises:
+            ValueError: If semantic search is not initialized
+        """
+        if not hasattr(self, "_semantic_search") or self._semantic_search is None:
+            raise ValueError(
+                "Semantic search is not initialized. "
+                "Initialize with: await nx.initialize_semantic_search()"
+            )
+
+        results = await self._semantic_search.search(
+            query=query, path=path, limit=limit, filters=filters, search_mode=search_mode
+        )
+
+        return [
+            {
+                "path": result.path,
+                "chunk_index": result.chunk_index,
+                "chunk_text": result.chunk_text,
+                "score": result.score,
+                "start_offset": result.start_offset,
+                "end_offset": result.end_offset,
+            }
+            for result in results
+        ]
+
+    async def semantic_search_index(
+        self, path: str = "/", recursive: bool = True
+    ) -> dict[str, int]:
+        """
+        Index documents for semantic search.
+
+        This method chunks documents and generates embeddings for semantic search.
+        You need to run this before using semantic_search().
+
+        Args:
+            path: Path to index (file or directory)
+            recursive: If True, index directory recursively (default: True)
+
+        Returns:
+            Dictionary mapping file paths to number of chunks indexed
+
+        Examples:
+            # Index all documents
+            await nx.semantic_search_index()
+
+            # Index specific directory
+            await nx.semantic_search_index("/docs")
+
+            # Index single file
+            await nx.semantic_search_index("/docs/README.md")
+
+        Raises:
+            ValueError: If semantic search is not initialized
+        """
+        if not hasattr(self, "_semantic_search") or self._semantic_search is None:
+            raise ValueError(
+                "Semantic search is not initialized. "
+                "Initialize with: await nx.initialize_semantic_search()"
+            )
+
+        # Check if path is a file or directory
+        try:
+            # Try to read as file
+            self.read(path)
+            # It's a file, index it
+            num_chunks = await self._semantic_search.index_document(path)
+            return {path: num_chunks}
+        except Exception:
+            # It's a directory or doesn't exist
+            pass
+
+        # Index directory
+        if recursive:
+            return await self._semantic_search.index_directory(path)
+        else:
+            # Index only direct files in directory
+            files = self.list(path, recursive=False)
+            results: dict[str, int] = {}
+            for item in files:
+                file_path = item["name"] if isinstance(item, dict) else item
+                if not file_path.endswith("/"):  # Skip directories
+                    try:
+                        num_chunks = await self._semantic_search.index_document(file_path)
+                        results[file_path] = num_chunks
+                    except Exception:
+                        results[file_path] = -1  # Indicate error
+            return results
+
+    async def semantic_search_stats(self) -> dict[str, Any]:
+        """
+        Get semantic search indexing statistics.
+
+        Returns:
+            Dictionary with statistics:
+            - total_chunks: Total number of indexed chunks
+            - indexed_files: Number of indexed files
+            - collection_name: Name of the vector collection
+            - embedding_model: Name of the embedding model
+            - chunk_size: Chunk size in tokens
+            - chunk_strategy: Chunking strategy
+
+        Examples:
+            stats = await nx.semantic_search_stats()
+            print(f"Indexed {stats['indexed_files']} files with {stats['total_chunks']} chunks")
+
+        Raises:
+            ValueError: If semantic search is not initialized
+        """
+        if not hasattr(self, "_semantic_search") or self._semantic_search is None:
+            raise ValueError(
+                "Semantic search is not initialized. "
+                "Initialize with: await nx.initialize_semantic_search()"
+            )
+
+        return await self._semantic_search.get_index_stats()
+
+    async def initialize_semantic_search(
+        self,
+        embedding_provider: str | None = None,
+        embedding_model: str | None = None,
+        api_key: str | None = None,
+        chunk_size: int = 1024,
+        chunk_strategy: str = "semantic",
+    ) -> None:
+        """
+        Initialize semantic search engine.
+
+        This method must be called before using semantic search features.
+        Uses existing database (SQLite/PostgreSQL) with native vector extensions.
+
+        Args:
+            embedding_provider: Provider name ("openai", "voyage") or None for keyword-only
+            embedding_model: Model name (uses provider default if None)
+            api_key: API key for the embedding provider (if using remote provider)
+            chunk_size: Chunk size in tokens (default: 1024)
+            chunk_strategy: Chunking strategy ("fixed", "semantic", "overlapping")
+
+        Examples:
+            # Keyword-only search (no embeddings, no extra dependencies)
+            await nx.initialize_semantic_search()
+
+            # Semantic search with OpenAI (recommended, lightweight, requires API key)
+            await nx.initialize_semantic_search(
+                embedding_provider="openai",
+                api_key="your-api-key"
+            )
+
+            # Semantic search with Voyage AI (specialized embeddings)
+            await nx.initialize_semantic_search(
+                embedding_provider="voyage",
+                api_key="your-api-key"
+            )
+
+            # Custom chunk size
+            await nx.initialize_semantic_search(
+                chunk_size=2048,
+                chunk_strategy="overlapping"
+            )
+        """
+        from nexus.search.chunking import ChunkStrategy
+        from nexus.search.semantic import SemanticSearch
+
+        # Create embedding provider (optional)
+        emb_provider = None
+        if embedding_provider:
+            from nexus.search.embeddings import create_embedding_provider
+
+            emb_provider = create_embedding_provider(
+                provider=embedding_provider, model=embedding_model, api_key=api_key
+            )
+
+        # Map string to enum
+        strategy_map = {
+            "fixed": ChunkStrategy.FIXED,
+            "semantic": ChunkStrategy.SEMANTIC,
+            "overlapping": ChunkStrategy.OVERLAPPING,
+        }
+        chunk_strat = strategy_map.get(chunk_strategy, ChunkStrategy.SEMANTIC)
+
+        # Create semantic search instance (uses existing database)
+        self._semantic_search = SemanticSearch(
+            nx=self,  # type: ignore[arg-type]
+            embedding_provider=emb_provider,
+            chunk_size=chunk_size,
+            chunk_strategy=chunk_strat,
+        )
+
+        # Initialize vector extensions and FTS tables
+        self._semantic_search.initialize()

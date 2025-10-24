@@ -6,6 +6,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import pytest
+
 from nexus import LocalBackend, NexusFS
 from nexus.core.metadata import FileMetadata
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
@@ -302,6 +304,7 @@ class TestMetadataCache:
 
         store.close()
 
+    @pytest.mark.slow
     def test_cache_ttl(self, tmp_path: Path):
         """Test that cache entries expire after TTL."""
         db_path = tmp_path / "test.db"

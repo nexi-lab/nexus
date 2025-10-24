@@ -75,6 +75,9 @@ class NexusConfig(BaseModel):
     tenant_id: str | None = Field(
         default=None, description="Tenant identifier for multi-tenant isolation"
     )
+    user_id: str | None = Field(
+        default=None, description="User identifier for identity-based memory system (v0.4.0)"
+    )
     agent_id: str | None = Field(
         default=None, description="Agent identifier for agent-level isolation in /workspace"
     )
@@ -239,6 +242,7 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_CACHE_TTL_SECONDS": "cache_ttl_seconds",
         "NEXUS_AUTO_PARSE": "auto_parse",
         "NEXUS_TENANT_ID": "tenant_id",
+        "NEXUS_USER_ID": "user_id",
         "NEXUS_AGENT_ID": "agent_id",
         "NEXUS_IS_ADMIN": "is_admin",
         "NEXUS_ENFORCE_PERMISSIONS": "enforce_permissions",

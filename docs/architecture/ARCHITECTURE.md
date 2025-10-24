@@ -256,6 +256,200 @@ nx.permissions.grant("/shared/docs", user_id, Permission.READ)
 has_access = nx.permissions.check("/shared/docs/file.txt", Permission.WRITE)
 ```
 
+### 9. Identity-Based Memory System (v0.4.0)
+Order-neutral virtual paths with identity-based storage for AI agent memory.
+
+**Location:** `src/nexus/core/entity_registry.py`, `src/nexus/core/memory_router.py`
+
+**Core Concept:**
+Separates identity from location - canonical storage by ID with multiple virtual path views. Memory location ≠ identity; relationships determine access, paths determine browsing.
+
+**Key Features:**
+- Order-neutral paths: `/workspace/alice/agent1` and `/workspace/agent1/alice` resolve to same memory
+- No data duplication for memory sharing across agents
+- Identity relationships enable advanced permission checks
+- Multi-view capability: browse by user, agent, or tenant
+
+**Entity Registry:**
+```sql
+CREATE TABLE entity_registry (
+    entity_type TEXT NOT NULL,  -- 'tenant', 'user', 'agent'
+    entity_id TEXT NOT NULL,
+    parent_type TEXT,
+    parent_id TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (entity_type, entity_id)
+);
+```
+
+**Memory Schema:**
+```sql
+CREATE TABLE memories (
+    memory_id TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL,
+
+    -- Identity relationships
+    tenant_id TEXT,
+    user_id TEXT,        -- Real user ownership
+    agent_id TEXT,       -- Created by agent
+
+    -- Scope and visibility
+    scope TEXT,          -- 'agent', 'user', 'tenant', 'global'
+    visibility TEXT,     -- 'private', 'shared', 'public'
+
+    -- UNIX permissions
+    group TEXT,
+    mode INTEGER DEFAULT 420,
+
+    -- Metadata
+    memory_type TEXT,
+    importance REAL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+**Virtual Path Router:**
+```python
+# Multiple paths resolve to same memory_id
+/workspace/acme/alice/agent1/memory/mem.json
+/workspace/alice/agent1/acme/memory/mem.json
+/workspace/agent1/alice/memory/mem.json
+/memory/by-user/alice/agent1/mem.json
+/objs/memory/mem_123  # Canonical storage
+
+# Router: path → extract IDs → query by relationships → memory_id
+```
+
+**3-Layer Permission Integration:**
+```python
+class MemoryPermissionEnforcer(PermissionEnforcer):
+    """
+    Layer 1: ReBAC - Identity relationships
+      - Direct creator access
+      - User ownership inheritance (agents → user)
+      - Tenant-scoped sharing
+
+    Layer 2: ACL - Canonical path access control
+      - Works on order-neutral paths
+
+    Layer 3: UNIX - Proper user ownership
+      - Uses user_id as owner (not agent_id)
+    """
+```
+
+**Example: Multi-Agent Memory Sharing**
+```python
+# Alice has 2 agents
+agent1 = Agent(agent_id='agent1', owner_user_id='alice')
+agent2 = Agent(agent_id='agent2', owner_user_id='alice')
+
+# agent1 creates user-scoped memory
+memory = Memory(
+    memory_id='mem_123',
+    user_id='alice',
+    agent_id='agent1',
+    scope='user'  # Shared across Alice's agents
+)
+
+# agent2 can access via user ownership relationship
+ctx = OperationContext(user='agent2')
+can_read = enforcer.check('mem_123', Permission.READ, ctx)
+# ✅ True - both agents owned by alice
+```
+
+**Benefits:**
+- No file duplication for memory sharing
+- Flexible hierarchy views without data movement
+- Complete ReBAC layer with meaningful identity relationships
+- Order-neutral paths enable reorganization without file moves
+- Foundation for advanced memory features (consolidation, search)
+
+#### Phase 2 Integration: File API Support (v0.4.0)
+
+Memory virtual paths are now fully integrated with the File API, allowing users to access memories via standard file operations.
+
+**Location:** `src/nexus/core/nexus_fs_core.py:110-213`, `src/nexus/core/nexus_fs_search.py:89-90`
+
+**Core Concept:**
+Users can choose between two equivalent interfaces for memory access:
+1. **Memory API**: `nx.memory.store()` / `get()` / `query()` (specialized interface)
+2. **File API**: `nx.read()` / `write()` / `delete()` / `list()` (familiar file operations)
+
+**Path Interception:**
+```python
+def read(self, path: str) -> bytes:
+    """Read file or memory content."""
+    # Intercept memory paths
+    if MemoryViewRouter.is_memory_path(path):
+        return self._read_memory_path(path)
+    # Normal file operations...
+```
+
+**Memory Path Patterns:**
+```python
+# All these patterns are detected and routed to memory system:
+/objs/memory/{id}                          # Canonical path
+/workspace/{...}/memory/{...}              # Workspace view (order-neutral)
+/memory/by-user/{user}/...                 # User-centric view
+/memory/by-agent/{agent}/...               # Agent-centric view
+/memory/by-tenant/{tenant}/...             # Tenant-centric view
+```
+
+**Example: Dual-API Access**
+```python
+# Method 1: Memory API (specialized)
+mem_id = nx.memory.store("Python best practices", scope="user")
+mem = nx.memory.get(mem_id)
+
+# Method 2: File API (familiar)
+nx.write("/workspace/alice/agent1/memory/facts", b"Python is great!")
+content = nx.read("/workspace/alice/agent1/memory/facts")
+
+# Order-neutral: All these paths access the SAME memory!
+content1 = nx.read("/workspace/alice/agent1/memory/facts")
+content2 = nx.read("/workspace/agent1/alice/memory/facts")  # Same!
+content3 = nx.read("/memory/by-user/alice/facts")           # Same!
+```
+
+**CLI Support:**
+```bash
+# Store memory via file operations
+nexus write /workspace/alice/agent1/memory/facts "Python is great!"
+
+# Read via any equivalent path
+nexus cat /workspace/agent1/alice/memory/facts
+nexus cat /memory/by-user/alice/facts
+
+# List memories
+nexus ls /workspace/alice/agent1/memory
+
+# Delete memory
+nexus rm /objs/memory/{id}
+```
+
+**Implementation Details:**
+- **Path Detection**: `MemoryViewRouter.is_memory_path()` checks for memory path patterns
+- **Resolution**: Extracts entity IDs from path → queries by relationships → returns most recent matching memory
+- **Multiple Results**: When multiple memories match (e.g., multiple memories for alice+agent1), returns most recent by `created_at DESC`
+- **Directory Listing**: `_list_memory_path()` queries memories and returns virtual paths based on filter
+- **Write Behavior**: Creates new memory each time (memories are immutable references)
+
+**Forward Compatibility:**
+This implementation is forward-compatible with Issue #121 (Agent Workspace Structure):
+- When #121 adds `.nexus/` subdirectory: just add path aliases
+- Core virtual path routing already supports flexible patterns
+- Minimal changes needed for full #121 integration
+
+**Benefits:**
+- **Familiar Interface**: Use standard file operations for memory access
+- **Tool Integration**: Memory works with all CLI commands (`cat`, `write`, `ls`, `rm`)
+- **Order Agnostic**: Path component order doesn't matter
+- **Two APIs, One System**: Memory API and File API access same underlying storage
+- **No Breaking Changes**: Existing Memory API code continues to work unchanged
+
+**Demo:**
+See `examples/py_demo/memory_file_api_demo.py` and `examples/script_demo/memory_file_api_demo.sh` for comprehensive examples.
+
 ## Storage Layer
 
 ### Content-Addressable Storage (CAS)

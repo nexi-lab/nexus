@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from sqlalchemy import (
     BigInteger,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -940,3 +941,166 @@ class WorkflowExecutionModel(Base):
         valid_statuses = ["pending", "running", "succeeded", "failed", "cancelled"]
         if self.status not in valid_statuses:
             raise ValidationError(f"status must be one of {valid_statuses}, got {self.status}")
+
+
+class EntityRegistryModel(Base):
+    """Entity registry for identity-based memory system (v0.4.0).
+
+    Lightweight registry for ID disambiguation and relationship tracking.
+    Enables order-neutral virtual paths for memories.
+    """
+
+    __tablename__ = "entity_registry"
+
+    # Composite primary key
+    entity_type: Mapped[str] = mapped_column(
+        String(50), primary_key=True, nullable=False
+    )  # 'tenant', 'user', 'agent'
+    entity_id: Mapped[str] = mapped_column(String(255), primary_key=True, nullable=False)
+
+    # Hierarchical relationships (optional)
+    parent_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    parent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_entity_registry_id_lookup", "entity_id"),
+        Index("idx_entity_registry_parent", "parent_type", "parent_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<EntityRegistryModel(entity_type={self.entity_type}, entity_id={self.entity_id})>"
+
+    def validate(self) -> None:
+        """Validate entity registry model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate entity_type
+        valid_types = ["tenant", "user", "agent"]
+        if self.entity_type not in valid_types:
+            raise ValidationError(
+                f"entity_type must be one of {valid_types}, got {self.entity_type}"
+            )
+
+        # Validate entity_id
+        if not self.entity_id:
+            raise ValidationError("entity_id is required")
+
+        # Validate parent consistency
+        if (self.parent_type is None) != (self.parent_id is None):
+            raise ValidationError("parent_type and parent_id must both be set or both be None")
+
+        if self.parent_type is not None and self.parent_type not in valid_types:
+            raise ValidationError(
+                f"parent_type must be one of {valid_types}, got {self.parent_type}"
+            )
+
+
+class MemoryModel(Base):
+    """Memory storage for AI agents (v0.4.0).
+
+    Identity-based memory with order-neutral paths and 3-layer permissions.
+    Canonical storage by memory_id, with virtual path views for browsing.
+    """
+
+    __tablename__ = "memories"
+
+    # Primary key
+    memory_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Content (CAS reference)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Identity relationships
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Real user ownership
+    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Created by agent
+
+    # Scope and visibility
+    scope: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="agent"
+    )  # 'agent', 'user', 'tenant', 'global'
+    visibility: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="private"
+    )  # 'private', 'shared', 'public'
+
+    # UNIX permissions
+    group: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mode: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=420
+    )  # 0o644 (owner rw, group r, other r)
+
+    # Memory metadata
+    memory_type: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )  # 'fact', 'preference', 'experience', etc.
+    importance: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )  # 0.0-1.0 importance score
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_memory_tenant", "tenant_id"),
+        Index("idx_memory_user", "user_id"),
+        Index("idx_memory_agent", "agent_id"),
+        Index("idx_memory_scope", "scope"),
+        Index("idx_memory_type", "memory_type"),
+        Index("idx_memory_created_at", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<MemoryModel(memory_id={self.memory_id}, user_id={self.user_id}, agent_id={self.agent_id})>"
+
+    def validate(self) -> None:
+        """Validate memory model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate content_hash
+        if not self.content_hash:
+            raise ValidationError("content_hash is required")
+
+        # Validate scope
+        valid_scopes = ["agent", "user", "tenant", "global"]
+        if self.scope not in valid_scopes:
+            raise ValidationError(f"scope must be one of {valid_scopes}, got {self.scope}")
+
+        # Validate visibility
+        valid_visibilities = ["private", "shared", "public"]
+        if self.visibility not in valid_visibilities:
+            raise ValidationError(
+                f"visibility must be one of {valid_visibilities}, got {self.visibility}"
+            )
+
+        # Validate mode
+        if not 0 <= self.mode <= 0o777:
+            raise ValidationError(f"mode must be between 0o000 and 0o777, got {oct(self.mode)}")
+
+        # Validate importance
+        if self.importance is not None and not 0.0 <= self.importance <= 1.0:
+            raise ValidationError(f"importance must be between 0.0 and 1.0, got {self.importance}")

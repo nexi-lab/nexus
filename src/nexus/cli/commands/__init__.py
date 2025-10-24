@@ -23,6 +23,7 @@ import click
 from nexus.cli.commands import (
     directory,
     file_ops,
+    memory,
     metadata,
     operations,
     permissions,
@@ -59,12 +60,14 @@ def register_all_commands(cli: click.Group) -> None:
     plugins.register_commands(cli)
     operations.register_commands(cli)
     workflows.register_commands(cli)
+    cli.add_command(memory.memory)  # v0.4.0: Memory API commands
 
 
 __all__ = [
     "register_all_commands",
     "file_ops",
     "directory",
+    "memory",
     "search",
     "permissions",
     "rebac",

@@ -46,8 +46,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11", "3.12"]
+        exclude:
+          # Exclude Windows from PRs to save ~30-40 min
+          - os: windows-latest
+            python-version: "3.11"
+          - os: windows-latest
+            python-version: "3.12"
+        include:
+          # Include Windows only for pushes to main branch
+          - os: windows-latest
+            python-version: "3.11"
+            only-main: true
+          - os: windows-latest
+            python-version: "3.12"
+            only-main: true
+    if: ${{ matrix.only-main != true || github.event_name == 'push' }}
 
     steps:
       - name: Checkout code

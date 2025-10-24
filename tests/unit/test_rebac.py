@@ -357,6 +357,7 @@ def test_cache_invalidation_on_delete(rebac_manager):
     assert result is False
 
 
+@pytest.mark.slow
 def test_expiring_tuples(rebac_manager):
     """Test that expired tuples are not considered."""
     # Create tuple that expires in 1 second
@@ -521,6 +522,7 @@ def test_expand_api_with_union(rebac_manager):
     assert ("agent", "bob") in subjects
 
 
+@pytest.mark.slow
 def test_cleanup_expired_cache(rebac_manager):
     """Test cleanup of expired cache entries."""
     # Create a relationship

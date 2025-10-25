@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from fuse import FuseOSError, Operations
 
 from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.core.filters import is_os_metadata_file
 from nexus.core.virtual_views import (
     get_parsed_content,
     parse_virtual_path,
@@ -249,6 +250,10 @@ class NexusFUSEOperations(Operations):
                 # Extract just the filename/dirname
                 name = file_path.rstrip("/").split("/")[-1]
                 if name and name not in entries:
+                    # Filter out OS metadata files (._*, .DS_Store, etc.)
+                    if is_os_metadata_file(name):
+                        continue
+
                     entries.append(name)
 
                     # In smart/text mode, add virtual views for non-text files
@@ -262,6 +267,9 @@ class NexusFUSEOperations(Operations):
                         # Add .txt and .md virtual views
                         entries.append(f"{name}.txt")
                         entries.append(f"{name}.md")
+
+            # Final filter to remove any OS metadata that might have slipped through
+            entries = [e for e in entries if not is_os_metadata_file(e)]
 
             return entries
         except NexusFileNotFoundError:
@@ -374,6 +382,12 @@ class NexusFUSEOperations(Operations):
 
             original_path = file_info["path"]
 
+            # Block writes to OS metadata files
+            basename = original_path.split("/")[-1]
+            if is_os_metadata_file(basename):
+                logger.debug(f"Blocked write to OS metadata file: {original_path}")
+                raise FuseOSError(errno.EPERM)  # Permission denied
+
             # Read existing content if file exists
             existing_content = b""
             if self.nexus_fs.exists(original_path):
@@ -434,6 +448,12 @@ class NexusFUSEOperations(Operations):
             FuseOSError: If creation fails
         """
         try:
+            # Block creation of OS metadata files
+            basename = path.split("/")[-1]
+            if is_os_metadata_file(basename):
+                logger.debug(f"Blocked creation of OS metadata file: {path}")
+                raise FuseOSError(errno.EPERM)  # Permission denied
+
             # Parse virtual path (reject virtual views)
             original_path, view_type = self._parse_virtual_path(path)
             if view_type:

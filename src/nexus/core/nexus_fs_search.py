@@ -139,6 +139,12 @@ class NexusFSSearchMixin:
         # This ensures empty directories show up in listings
         directories = set()
 
+        # Extract directories from directory marker files in results (v0.3.9+)
+        # These are files with mime_type="inode/directory" created by mkdir
+        for meta in results:
+            if meta.mime_type == "inode/directory":
+                directories.add(meta.path)
+
         if not recursive:
             # For non-recursive listings, infer immediate subdirectories from file paths
             base_path = path if path != "/" else ""

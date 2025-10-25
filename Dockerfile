@@ -70,8 +70,8 @@ CMD sh -c " \
             --host ${NEXUS_HOST} \
             --port ${NEXUS_PORT} \
             --backend gcs \
-            --gcs-bucket ${NEXUS_GCS_BUCKET_NAME} \
-            ${NEXUS_GCS_PROJECT_ID:+--gcs-project $NEXUS_GCS_PROJECT_ID} \
+            --gcs-bucket ${NEXUS_GCS_BUCKET} \
+            ${NEXUS_GCS_PROJECT:+--gcs-project $NEXUS_GCS_PROJECT} \
             --data-dir ${NEXUS_DATA_DIR} \
             ${NEXUS_API_KEY:+--api-key $NEXUS_API_KEY}; \
     else \

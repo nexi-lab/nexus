@@ -103,12 +103,12 @@ def get_parsed_content(content: bytes, path: str, view_type: str) -> bytes:  # n
     Raises:
         Exception: If parsing fails (falls back to raw content)
     """
-    # Try to decode as text first
-    try:
-        decoded_content = content.decode("utf-8")
-        return decoded_content.encode("utf-8")
-    except UnicodeDecodeError:
-        # Use parser for non-text files
+    # Check if this is a parseable binary file (Excel, PDF, etc.)
+    # For these files, we should use the parser directly, not try to decode as UTF-8
+    is_parseable = any(path.endswith(ext) for ext in PARSEABLE_EXTENSIONS)
+
+    if is_parseable:
+        # Use parser for parseable binary files (Excel, PDF, Word, etc.)
         from nexus.parsers import MarkItDownParser, ParserRegistry, prepare_content_for_parsing
 
         try:
@@ -141,6 +141,14 @@ def get_parsed_content(content: bytes, path: str, view_type: str) -> bytes:  # n
                 logger.debug(f"No parser available for {path}, using raw content")
             else:
                 logger.warning(f"Error parsing file {path}: {e}")
+    else:
+        # For non-parseable files, try to decode as text first
+        try:
+            decoded_content = content.decode("utf-8")
+            return decoded_content.encode("utf-8")
+        except UnicodeDecodeError:
+            # If decode fails, this is likely a binary file we don't know how to parse
+            pass
 
     # Fallback to raw content if parsing fails
     return content

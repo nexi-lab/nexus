@@ -161,6 +161,8 @@ class NexusFSSearchMixin:
             directories.update(backend_dirs)
 
         if details:
+            # Filter out directory metadata markers to avoid duplicates
+            # Directories are already included in dir_results below
             file_results = [
                 {
                     "path": meta.path,
@@ -172,6 +174,7 @@ class NexusFSSearchMixin:
                     "is_directory": False,
                 }
                 for meta in results
+                if meta.mime_type != "inode/directory"  # Exclude directory metadata markers
             ]
 
             # Add directory entries
@@ -193,8 +196,9 @@ class NexusFSSearchMixin:
             all_results.sort(key=lambda x: str(x["path"]))
             return all_results
         else:
-            # Return paths only
-            all_paths = [meta.path for meta in results] + sorted(directories)
+            # Return paths only (filter out directory metadata markers)
+            file_paths = [meta.path for meta in results if meta.mime_type != "inode/directory"]
+            all_paths = file_paths + sorted(directories)
             all_paths.sort()
             return all_paths
 

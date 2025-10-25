@@ -161,6 +161,7 @@ sudo docker run -d \
   -e NEXUS_GCS_PROJECT=$PROJECT_ID \
   -e NEXUS_DATA_DIR=/app/data \
   -e NEXUS_DATABASE_URL="postgresql://$DB_USER:$DB_PASSWORD@127.0.0.1:5432/$DB_NAME" \
+  -e CLOUD_SQL_INSTANCE="$CLOUD_SQL_INSTANCE" \
   -v $DATA_DIR:/app/data \
   $IMAGE
 

@@ -581,6 +581,148 @@ class TestCacheIntegration:
         assert mock_nexus_fs.read.call_count >= 1
 
 
+class TestRemoteFilesystem:
+    """Test FUSE operations with remote filesystem (no metadata attribute)."""
+
+    def test_getattr_directory_without_metadata(self) -> None:
+        """Test getattr on directory with filesystem that lacks metadata attribute."""
+        # Create a mock filesystem WITHOUT metadata attribute (like RemoteNexusFS)
+        fs = MagicMock(
+            spec=[
+                "read",
+                "write",
+                "delete",
+                "exists",
+                "list",
+                "is_directory",
+                "mkdir",
+                "rmdir",
+                "get_available_namespaces",
+            ]
+        )
+        fs.is_directory.return_value = True
+        fs.exists.return_value = True
+
+        # Create FUSE operations with this filesystem
+        ops = NexusFUSEOperations(fs, MountMode.SMART, cache_config={})
+
+        # Should not raise AttributeError
+        attrs = ops.getattr("/workspace")
+        assert attrs["st_mode"] & 0o040000  # Directory flag
+
+    def test_getattr_file_without_metadata(self) -> None:
+        """Test getattr on file with filesystem that lacks metadata attribute."""
+        # Create a mock filesystem WITHOUT metadata attribute (like RemoteNexusFS)
+        fs = MagicMock(
+            spec=[
+                "read",
+                "write",
+                "delete",
+                "exists",
+                "list",
+                "is_directory",
+                "mkdir",
+                "rmdir",
+                "get_available_namespaces",
+            ]
+        )
+        fs.is_directory.return_value = False
+        fs.exists.return_value = True
+        fs.read.return_value = b"test content"
+
+        # Create FUSE operations with this filesystem
+        ops = NexusFUSEOperations(fs, MountMode.SMART, cache_config={})
+
+        # Should not raise AttributeError
+        attrs = ops.getattr("/workspace/test.txt")
+        assert attrs["st_size"] == 12  # len(b"test content")
+        assert attrs["st_mode"] & 0o100000  # Regular file flag
+
+    def test_getattr_with_get_metadata_method(self) -> None:
+        """Test getattr with filesystem that has get_metadata method (RemoteNexusFS)."""
+        # Create a mock filesystem with get_metadata method
+        fs = MagicMock(
+            spec=[
+                "read",
+                "write",
+                "delete",
+                "exists",
+                "list",
+                "is_directory",
+                "mkdir",
+                "rmdir",
+                "get_available_namespaces",
+                "get_metadata",
+            ]
+        )
+        fs.is_directory.return_value = False
+
+        # Use a file path that won't be confused with virtual views
+        def exists_side_effect(path: str) -> bool:
+            # The file exists, but base path without extension doesn't
+            return path == "/workspace/document.dat"
+
+        fs.exists.side_effect = exists_side_effect
+        fs.read.return_value = b"test content"
+        fs.get_metadata.return_value = {
+            "path": "/workspace/document.dat",
+            "owner": "alice",
+            "group": "developers",
+            "mode": 0o640,
+            "is_directory": False,
+        }
+
+        # Create FUSE operations with this filesystem
+        ops = NexusFUSEOperations(fs, MountMode.SMART, cache_config={})
+
+        # Get attributes
+        attrs = ops.getattr("/workspace/document.dat")
+
+        # Verify get_metadata was called
+        fs.get_metadata.assert_called_once_with("/workspace/document.dat")
+
+        # Verify custom permissions are used
+        assert attrs["st_mode"] & 0o777 == 0o640  # Custom mode
+
+    def test_getattr_directory_with_get_metadata_method(self) -> None:
+        """Test getattr on directory with get_metadata method."""
+        fs = MagicMock(
+            spec=[
+                "read",
+                "write",
+                "delete",
+                "exists",
+                "list",
+                "is_directory",
+                "mkdir",
+                "rmdir",
+                "get_available_namespaces",
+                "get_metadata",
+            ]
+        )
+        fs.is_directory.return_value = True
+        fs.exists.return_value = True
+        fs.get_metadata.return_value = {
+            "path": "/workspace",
+            "owner": "alice",
+            "group": "developers",
+            "mode": 0o750,
+            "is_directory": True,
+        }
+
+        # Create FUSE operations with this filesystem
+        ops = NexusFUSEOperations(fs, MountMode.SMART, cache_config={})
+
+        # Get attributes
+        attrs = ops.getattr("/workspace")
+
+        # Verify get_metadata was called
+        fs.get_metadata.assert_called_once_with("/workspace")
+
+        # Verify custom permissions are used
+        assert attrs["st_mode"] & 0o777 == 0o750  # Custom directory mode
+
+
 class TestErrorHandling:
     """Test error handling in FUSE operations."""
 

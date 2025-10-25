@@ -121,7 +121,7 @@ class NexusFUSEOperations(Operations):
             # Check if it's a directory
             if self.nexus_fs.is_directory(original_path):
                 # Get directory metadata for permissions
-                metadata = self.nexus_fs.metadata.get(original_path)  # type: ignore[attr-defined]
+                metadata = self._get_metadata(original_path)
                 return self._dir_attrs(metadata)
 
             # Check if file exists
@@ -132,7 +132,7 @@ class NexusFUSEOperations(Operations):
             content = self._get_file_content(original_path, view_type)
 
             # Get file metadata for permissions
-            metadata = self.nexus_fs.metadata.get(original_path)  # type: ignore[attr-defined]
+            metadata = self._get_metadata(original_path)
 
             # Return file attributes
             now = time.time()
@@ -696,9 +696,8 @@ class NexusFUSEOperations(Operations):
                 import grp
                 import pwd
 
-                # Get current metadata to see if owner/group changed
-                metadata = self.nexus_fs.metadata.get(original_path)  # type: ignore[attr-defined]
-                if not metadata:
+                # Check file exists (remote filesystems may not have metadata access)
+                if not self.nexus_fs.exists(original_path):
                     raise FuseOSError(errno.ENOENT)
 
                 # Map uid to username (if uid != -1, which means "don't change")
@@ -895,6 +894,40 @@ class NexusFUSEOperations(Operations):
 
         # Fallback to raw content
         return content
+
+    def _get_metadata(self, path: str) -> Any:
+        """Get file/directory metadata from filesystem.
+
+        Works with both local filesystems (direct metadata access) and
+        remote filesystems (RPC get_metadata call).
+
+        Args:
+            path: File or directory path
+
+        Returns:
+            Metadata object/dict or None if not available
+        """
+        # Try get_metadata method first (for RemoteNexusFS)
+        if hasattr(self.nexus_fs, "get_metadata"):
+            metadata_dict = self.nexus_fs.get_metadata(path)
+            if metadata_dict:
+                # Convert dict to simple object with attributes
+                class MetadataObj:
+                    def __init__(self, d: dict[str, Any]):
+                        self.path = d.get("path")
+                        self.owner = d.get("owner")
+                        self.group = d.get("group")
+                        self.mode = d.get("mode")
+                        self.is_directory = d.get("is_directory")
+
+                return MetadataObj(metadata_dict)
+            return None
+
+        # Fall back to direct metadata access (for local NexusFS)
+        if hasattr(self.nexus_fs, "metadata"):
+            return self.nexus_fs.metadata.get(path)
+
+        return None
 
     def _dir_attrs(self, metadata: Any = None) -> dict[str, Any]:
         """Get standard directory attributes.

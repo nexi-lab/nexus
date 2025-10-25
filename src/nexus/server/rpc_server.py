@@ -429,6 +429,31 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         elif method == "get_available_namespaces":
             return {"namespaces": self.nexus_fs.get_available_namespaces()}
 
+        elif method == "get_metadata":
+            # Get file metadata (permissions, ownership, etc.)
+            # Only available for local filesystems with metadata store
+            if not hasattr(self.nexus_fs, "metadata"):
+                # Return None for remote filesystems or those without metadata
+                return {"metadata": None}
+
+            metadata = self.nexus_fs.metadata.get(params.path)
+            if metadata is None:
+                return {"metadata": None}
+
+            # Check if it's a directory
+            is_dir = self.nexus_fs.is_directory(params.path)
+
+            # Serialize metadata object to dict
+            return {
+                "metadata": {
+                    "path": metadata.path,
+                    "owner": metadata.owner,
+                    "group": metadata.group,
+                    "mode": metadata.mode,
+                    "is_directory": is_dir,
+                }
+            }
+
         else:
             raise ValueError(f"Unknown method: {method}")
 

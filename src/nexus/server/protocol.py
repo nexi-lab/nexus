@@ -292,6 +292,13 @@ class GetAvailableNamespacesParams:
 
 
 @dataclass
+class GetMetadataParams:
+    """Parameters for get_metadata() method."""
+
+    path: str
+
+
+@dataclass
 class RebacCreateParams:
     """Parameters for rebac_create() method."""
 
@@ -348,6 +355,7 @@ METHOD_PARAMS = {
     "rmdir": RmdirParams,
     "is_directory": IsDirectoryParams,
     "get_available_namespaces": GetAvailableNamespacesParams,
+    "get_metadata": GetMetadataParams,
     "rebac_create": RebacCreateParams,
     "rebac_check": RebacCheckParams,
     "rebac_expand": RebacExpandParams,

@@ -150,12 +150,20 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
             # Status endpoint
             if parsed.path == "/api/nfs/status":
+                # Get backend information
+                backend_info = self._get_backend_info()
+
+                # Get metadata store information
+                metadata_info = self._get_metadata_info()
+
                 self._send_json_response(
                     200,
                     {
                         "status": "running",
                         "service": "nexus-rpc",
                         "version": "1.0",
+                        "backend": backend_info,
+                        "metadata": metadata_info,
                         "methods": [
                             "read",
                             "write",
@@ -203,6 +211,86 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         token = auth_header[7:]  # Remove "Bearer " prefix
         return bool(token == self.api_key)
+
+    def _get_backend_info(self) -> dict[str, Any]:
+        """Get backend configuration information.
+
+        Returns:
+            Dictionary with backend type and location information
+        """
+        # Check if filesystem has backend attribute (concrete implementations like NexusFS)
+        if not hasattr(self.nexus_fs, "backend"):
+            return {"type": "unknown"}
+
+        backend = self.nexus_fs.backend
+        backend_type = backend.name
+
+        info: dict[str, Any] = {
+            "type": backend_type,
+        }
+
+        # Add backend-specific location information
+        if backend_type == "local":
+            info["location"] = str(backend.root_path)
+        elif backend_type == "gcs":
+            info["location"] = backend.bucket_name
+            info["bucket"] = backend.bucket_name
+
+        return info
+
+    def _get_metadata_info(self) -> dict[str, Any]:
+        """Get metadata store configuration information.
+
+        Returns:
+            Dictionary with metadata store type and location information
+        """
+        import os
+
+        # Check if filesystem has metadata attribute (concrete implementations like NexusFS)
+        if not hasattr(self.nexus_fs, "metadata"):
+            return {"type": "unknown"}
+
+        metadata_store = self.nexus_fs.metadata
+
+        info: dict[str, Any] = {
+            "type": metadata_store.db_type,
+        }
+
+        # Add database-specific location information
+        if metadata_store.db_type == "sqlite":
+            info["location"] = str(metadata_store.db_path) if metadata_store.db_path else None
+        elif metadata_store.db_type == "postgresql":
+            # Check if we're using Cloud SQL via proxy
+            cloud_sql_instance = os.getenv("CLOUD_SQL_INSTANCE")
+
+            if cloud_sql_instance:
+                # Show Cloud SQL instance info instead of localhost proxy
+                info["cloud_sql_instance"] = cloud_sql_instance
+                # Parse project, region, and instance name
+                parts = cloud_sql_instance.split(":")
+                if len(parts) == 3:
+                    info["project"] = parts[0]
+                    info["region"] = parts[1]
+                    info["instance"] = parts[2]
+
+            # Extract database name from URL
+            db_url = metadata_store.database_url
+            if "@" in db_url and "/" in db_url:
+                # Format: postgresql://user:pass@host:port/database
+                try:
+                    host_part = db_url.split("@")[1]
+                    database = host_part.split("/")[1] if "/" in host_part else None
+                    if database:
+                        info["database"] = database
+
+                    # If no Cloud SQL instance, show the connection host
+                    if not cloud_sql_instance:
+                        host = host_part.split("/")[0] if "/" in host_part else host_part
+                        info["host"] = host
+                except (IndexError, AttributeError):
+                    pass
+
+        return info
 
     def _handle_rpc_call(self, request: RPCRequest) -> None:
         """Handle RPC method call.

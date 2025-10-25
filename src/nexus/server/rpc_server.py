@@ -30,6 +30,7 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.core.filters import is_os_metadata_file
 from nexus.core.virtual_views import (
     add_virtual_views_to_listing,
     get_parsed_content,
@@ -374,6 +375,13 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         )
                     else:
                         serializable_files.append(str(file))
+
+            # Filter out OS metadata files (._*, .DS_Store, etc.)
+            serializable_files = [
+                f
+                for f in serializable_files
+                if not is_os_metadata_file(f.get("path", "") if isinstance(f, dict) else str(f))
+            ]
 
             # Add virtual views (.txt and .md) for parseable files
             # Only add if not recursive (to avoid clutter in full tree listings)

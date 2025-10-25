@@ -17,13 +17,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv for faster dependency installation
 RUN pip install --no-cache-dir uv
 
-# Install nexus-ai-fs from PyPI
+# Install nexus-ai-fs from PyPI with postgres support
 WORKDIR /build
 ARG NEXUS_VERSION
 RUN if [ "$NEXUS_VERSION" = "latest" ]; then \
-        uv pip install --system nexus-ai-fs; \
+        uv pip install --system "nexus-ai-fs[postgres]"; \
     else \
-        uv pip install --system nexus-ai-fs==${NEXUS_VERSION}; \
+        uv pip install --system "nexus-ai-fs[postgres]==${NEXUS_VERSION}"; \
     fi
 
 # Production image

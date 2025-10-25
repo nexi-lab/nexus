@@ -61,6 +61,13 @@ CONFIG_OPTION = click.option(
     help="Path to Nexus config file (nexus.yaml)",
 )
 
+DB_URL_OPTION = click.option(
+    "--db-url",
+    type=str,
+    default=None,
+    help="Database URL for metadata store (e.g., postgresql://user:pass@host/db). If not provided, uses NEXUS_DATABASE_URL env var or SQLite.",
+)
+
 
 class BackendConfig:
     """Configuration for backend connection."""
@@ -73,6 +80,7 @@ class BackendConfig:
         gcs_bucket: str | None = None,
         gcs_project: str | None = None,
         gcs_credentials: str | None = None,
+        db_url: str | None = None,
     ):
         self.backend = backend
         self.data_dir = data_dir
@@ -80,6 +88,7 @@ class BackendConfig:
         self.gcs_bucket = gcs_bucket
         self.gcs_project = gcs_project
         self.gcs_credentials = gcs_credentials
+        self.db_url = db_url
 
 
 def add_backend_options(func: Any) -> Any:
@@ -92,6 +101,7 @@ def add_backend_options(func: Any) -> Any:
     @GCS_BUCKET_OPTION
     @GCS_PROJECT_OPTION
     @GCS_CREDENTIALS_OPTION
+    @DB_URL_OPTION
     @functools.wraps(func)
     def wrapper(
         config: str | None,
@@ -100,6 +110,7 @@ def add_backend_options(func: Any) -> Any:
         gcs_bucket: str | None,
         gcs_project: str | None,
         gcs_credentials: str | None,
+        db_url: str | None,
         **kwargs: Any,
     ) -> Any:
         # Create backend config and pass to function
@@ -110,6 +121,7 @@ def add_backend_options(func: Any) -> Any:
             gcs_bucket=gcs_bucket,
             gcs_project=gcs_project,
             gcs_credentials=gcs_credentials,
+            db_url=db_url,
         )
         return func(backend_config=backend_config, **kwargs)
 
@@ -137,14 +149,34 @@ def get_filesystem(
             if not backend_config.gcs_bucket:
                 console.print("[red]Error:[/red] --gcs-bucket is required when using --backend=gcs")
                 sys.exit(1)
+
+            # Determine database configuration (priority order):
+            # 1. --db-url CLI option
+            # 2. NEXUS_DATABASE_URL environment variable
+            # 3. POSTGRES_URL environment variable
+            # 4. Default to SQLite file
+            db_url = (
+                backend_config.db_url
+                or os.getenv("NEXUS_DATABASE_URL")
+                or os.getenv("POSTGRES_URL")
+            )
+
             config = {
                 "backend": "gcs",
                 "gcs_bucket_name": backend_config.gcs_bucket,
                 "gcs_project_id": backend_config.gcs_project,
                 "gcs_credentials_path": backend_config.gcs_credentials,
-                "db_path": str(Path(backend_config.data_dir) / "nexus-gcs-metadata.db"),
                 "enforce_permissions": enforce_permissions,
             }
+
+            # Add database configuration
+            if db_url:
+                # Using PostgreSQL (or other database via URL)
+                config["db_url"] = db_url
+            else:
+                # Default to SQLite
+                config["db_path"] = str(Path(backend_config.data_dir) / "nexus-gcs-metadata.db")
+
             return nexus.connect(config=config)
         else:
             # Use local backend (default)

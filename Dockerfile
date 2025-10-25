@@ -18,8 +18,8 @@ COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 
-# Install dependencies to system
-RUN uv pip install --system -e .
+# Install dependencies to system with postgres support
+RUN uv pip install --system -e ".[postgres]"
 
 # Production image
 FROM python:3.11-slim

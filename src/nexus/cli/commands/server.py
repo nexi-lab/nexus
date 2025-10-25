@@ -375,6 +375,23 @@ def serve(
         else:
             console.print(f"  Data Dir: [cyan]{backend_config.data_dir}[/cyan]")
 
+        # Show metadata store info
+        import os
+
+        db_url = (
+            backend_config.db_url or os.getenv("NEXUS_DATABASE_URL") or os.getenv("POSTGRES_URL")
+        )
+        if db_url:
+            # Mask password in URL for display
+            import re
+
+            masked_url = re.sub(r"://([^:]+):([^@]+)@", r"://\1:****@", db_url)
+            db_type = "PostgreSQL" if db_url.startswith("postgresql://") else "Database"
+            console.print(f"  Metadata Store: [cyan]{db_type}[/cyan]")
+            console.print(f"  Database URL: [dim]{masked_url}[/dim]")
+        else:
+            console.print("  Metadata Store: [cyan]SQLite[/cyan] (local file)")
+
         if api_key:
             console.print("  Authentication: [yellow]API key required[/yellow]")
         else:

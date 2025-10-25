@@ -56,6 +56,12 @@ class NexusConfig(BaseModel):
     db_path: str | None = Field(
         default=None, description="SQLite database path (auto-generated if None)"
     )
+    db_url: str | None = Field(
+        default=None,
+        description=(
+            "Database URL (e.g., postgresql://user:pass@host/db). Takes precedence over db_path."
+        ),
+    )
 
     # In-memory metadata caching settings
     enable_metadata_cache: bool = Field(

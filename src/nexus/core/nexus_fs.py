@@ -67,6 +67,7 @@ class NexusFS(
         self,
         backend: Backend,
         db_path: str | Path | None = None,
+        db_url: str | None = None,
         tenant_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
@@ -90,6 +91,7 @@ class NexusFS(
         Args:
             backend: Backend instance for storing file content (LocalBackend, GCSBackend, etc.)
             db_path: Path to SQLite metadata database (auto-generated if None)
+            db_url: Database URL (e.g., postgresql://user:pass@host/db). Takes precedence over db_path.
             tenant_id: Tenant identifier for multi-tenant isolation (optional)
             user_id: User identifier for identity-based memory system (v0.4.0, optional)
             agent_id: Agent identifier for agent-level isolation in /workspace (optional)
@@ -128,11 +130,12 @@ class NexusFS(
         self.auto_parse = auto_parse
 
         # Initialize metadata store (using new SQLAlchemy-based store)
-        if db_path is None:
+        if db_path is None and db_url is None:
             # Default to current directory
             db_path = Path("./nexus-metadata.db")
         self.metadata = SQLAlchemyMetadataStore(
             db_path=db_path,
+            db_url=db_url,
             enable_cache=enable_metadata_cache,
             cache_path_size=cache_path_size,
             cache_list_size=cache_list_size,

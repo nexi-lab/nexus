@@ -184,6 +184,7 @@ def connect(
         nx_fs = NexusFS(
             backend=backend,
             db_path=db_path,
+            db_url=cfg.db_url,
             tenant_id=cfg.tenant_id,
             user_id=cfg.user_id,  # v0.4.0: Identity-based memory
             agent_id=cfg.agent_id,

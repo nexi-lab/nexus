@@ -74,21 +74,21 @@ class TestRPCRequestHandler:
         assert mock_handler._validate_auth() is False
 
     def test_dispatch_read(self, mock_handler, mock_filesystem):
-        """Test dispatching read method."""
+        """Test dispatching read method with virtual view."""
         from nexus.server.protocol import ReadParams
 
         # Configure mock to support virtual view path parsing
-        # When reading /test.txt, it will check if /test exists and read from /test
+        # When reading /test_parsed.pdf.md, it will check if /test.pdf exists and read it
         mock_filesystem.exists.return_value = True
         mock_filesystem.read.return_value = b"test content"
 
-        params = ReadParams(path="/test.txt")
+        params = ReadParams(path="/test_parsed.pdf.md")
         result = mock_handler._dispatch_method("read", params)
 
-        # Virtual view logic reads the base file (/test) and parses it
+        # Virtual view logic reads the base file (/test.pdf) and parses it
         assert result == b"test content"
-        mock_filesystem.exists.assert_called_with("/test")
-        mock_filesystem.read.assert_called_once_with("/test")
+        mock_filesystem.exists.assert_called_with("/test.pdf")
+        mock_filesystem.read.assert_called_once_with("/test.pdf")
 
     def test_dispatch_write(self, mock_handler, mock_filesystem):
         """Test dispatching write method."""
@@ -118,23 +118,22 @@ class TestRPCRequestHandler:
         assert result["files"] == ["/file1.txt", "/file2.txt"]
 
     def test_dispatch_exists(self, mock_handler, mock_filesystem):
-        """Test dispatching exists method."""
+        """Test dispatching exists method with virtual view."""
         from nexus.server.protocol import ExistsParams
 
         # Configure mock to support virtual view path parsing
-        # When checking /test.txt, it will first check if /test exists (virtual view logic)
-        mock_filesystem.exists.side_effect = lambda path: path in ["/test", "/test.txt"]
+        # When checking /test_parsed.pdf.md, it will check if /test.pdf exists
+        mock_filesystem.exists.return_value = True
 
-        params = ExistsParams(path="/test.txt")
+        params = ExistsParams(path="/test_parsed.pdf.md")
         result = mock_handler._dispatch_method("exists", params)
 
         assert result == {"exists": True}
-        # With virtual views, exists() is called twice:
-        # 1) Check if /test exists (base file for virtual view)
-        # 2) Return exists(/test) result
+        # Virtual view exists check calls exists() twice:
+        # 1) parse_virtual_path calls exists() to verify base file exists
+        # 2) The exists handler calls exists() again to return the result
         assert mock_filesystem.exists.call_count == 2
-        # Both calls check /test (the base file)
-        assert all(call.args[0] == "/test" for call in mock_filesystem.exists.call_args_list)
+        assert all(call.args[0] == "/test.pdf" for call in mock_filesystem.exists.call_args_list)
 
     def test_dispatch_unknown_method(self, mock_handler, mock_filesystem):
         """Test dispatching unknown method raises error."""

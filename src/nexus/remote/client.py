@@ -430,6 +430,7 @@ class RemoteNexusFS(NexusFilesystem):
         recursive: bool = True,
         details: bool = False,
         prefix: str | None = None,
+        show_parsed: bool = True,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """List files in a directory."""
         result = self._call_rpc(
@@ -439,6 +440,7 @@ class RemoteNexusFS(NexusFilesystem):
                 "recursive": recursive,
                 "details": details,
                 "prefix": prefix,
+                "show_parsed": show_parsed,
             },
         )
         return result["files"]  # type: ignore[no-any-return]

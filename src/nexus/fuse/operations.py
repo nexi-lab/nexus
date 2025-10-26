@@ -42,7 +42,6 @@ class NexusFUSEOperations(Operations):
         self,
         nexus_fs: NexusFilesystem,
         mode: MountMode,
-        auto_parse: bool = False,
         cache_config: dict[str, Any] | None = None,
     ) -> None:
         """Initialize FUSE operations.
@@ -50,8 +49,6 @@ class NexusFUSEOperations(Operations):
         Args:
             nexus_fs: Nexus filesystem instance
             mode: Mount mode (binary, text, smart)
-            auto_parse: If True, binary files return parsed text directly.
-                       If False (default), use .txt/.md suffixes for parsed views.
             cache_config: Optional cache configuration dict with keys:
                          - attr_cache_size: int (default: 1024)
                          - attr_cache_ttl: int (default: 60)
@@ -61,7 +58,6 @@ class NexusFUSEOperations(Operations):
         """
         self.nexus_fs = nexus_fs
         self.mode = mode
-        self.auto_parse = auto_parse
         self.fd_counter = 0
         self.open_files: dict[int, dict[str, Any]] = {}
 
@@ -257,16 +253,19 @@ class NexusFUSEOperations(Operations):
                     entries.append(name)
 
                     # In smart/text mode, add virtual views for non-text files
-                    # But skip if auto_parse is enabled (files are auto-parsed directly)
                     if (
-                        not self.auto_parse
-                        and self.mode.value != "binary"
+                        self.mode.value != "binary"
                         and should_add_virtual_views(name)
                         and not self.nexus_fs.is_directory(file_path)
                     ):
-                        # Add .txt and .md virtual views
-                        entries.append(f"{name}.txt")
-                        entries.append(f"{name}.md")
+                        # Add _parsed.{ext}.md virtual view
+                        # e.g., "file.xlsx" → "file_parsed.xlsx.md"
+                        last_dot = name.rfind(".")
+                        if last_dot != -1:
+                            base_name = name[:last_dot]
+                            extension = name[last_dot:]
+                            parsed_name = f"{base_name}_parsed{extension}.md"
+                            entries.append(parsed_name)
 
             # Final filter to remove any OS metadata that might have slipped through
             entries = [e for e in entries if not is_os_metadata_file(e)]
@@ -823,56 +822,20 @@ class NexusFUSEOperations(Operations):
         """Parse virtual path to extract original path and view type.
 
         Args:
-            path: Virtual path (e.g., "/file.pdf.txt" or "/.raw/file.pdf")
+            path: Virtual path (e.g., "/file_parsed.xlsx.md" or "/.raw/file.xlsx")
 
         Returns:
             Tuple of (original_path, view_type)
             - original_path: Original file path without virtual suffix
-            - view_type: "txt", "md", or None for raw/binary access
+            - view_type: "md" or None for raw/binary access
         """
         # Handle .raw directory access (always returns binary)
         if path.startswith("/.raw/"):
             original_path = path[5:]  # Remove "/.raw" prefix
             return (original_path, None)
 
-        # In auto_parse mode, check if file should be auto-parsed
-        if self.auto_parse and self.nexus_fs.exists(path) and self._should_auto_parse(path):
-            return (path, "txt")  # Return parsed text by default
-
         # Use shared virtual view logic
         return parse_virtual_path(path, self.nexus_fs.exists)
-
-    def _should_auto_parse(self, path: str) -> bool:
-        """Check if a file should be auto-parsed based on extension.
-
-        Args:
-            path: File path
-
-        Returns:
-            True if file should be auto-parsed
-        """
-        # List of binary extensions that should be auto-parsed
-        auto_parse_extensions = {
-            ".pdf",
-            ".docx",
-            ".doc",
-            ".xlsx",
-            ".xls",
-            ".pptx",
-            ".ppt",
-            ".odt",
-            ".ods",
-            ".odp",
-            ".rtf",
-            ".epub",
-            # Images (future OCR support)
-            # ".png",
-            # ".jpg",
-            # ".jpeg",
-        }
-
-        # Check if file has an auto-parse extension
-        return any(path.endswith(ext) for ext in auto_parse_extensions)
 
     def _get_file_content(self, path: str, view_type: str | None) -> bytes:
         """Get file content with appropriate view transformation.

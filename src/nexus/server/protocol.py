@@ -239,6 +239,7 @@ class ListParams:
     recursive: bool = True
     details: bool = False
     prefix: str | None = None
+    show_parsed: bool = True
 
 
 @dataclass

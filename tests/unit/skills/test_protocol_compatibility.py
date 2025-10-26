@@ -185,6 +185,7 @@ def test_protocol_runtime_checkable() -> None:
                 recursive: bool = True,
                 details: bool = False,
                 prefix: str | None = None,
+                show_parsed: bool = True,
             ):
                 return []
 

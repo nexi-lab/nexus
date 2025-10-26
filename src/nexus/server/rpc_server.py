@@ -471,12 +471,13 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 if not is_os_metadata_file(f.get("path", "") if isinstance(f, dict) else str(f))
             ]
 
-            # Add virtual views (.txt and .md) for parseable files
+            # Add virtual views (_parsed.{ext}.md) for parseable files
             # Only add if not recursive (to avoid clutter in full tree listings)
             if not params.recursive:
                 serializable_files = add_virtual_views_to_listing(  # type: ignore[assignment]
                     serializable_files,  # type: ignore[arg-type]
                     self.nexus_fs.is_directory,
+                    show_parsed=params.show_parsed,
                 )
 
             return {"files": serializable_files}

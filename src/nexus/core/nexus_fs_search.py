@@ -49,6 +49,7 @@ class NexusFSSearchMixin:
         recursive: bool = True,
         details: bool = False,
         prefix: str | None = None,
+        show_parsed: bool = True,  # noqa: ARG002
         context: OperationContext | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """
@@ -62,6 +63,8 @@ class NexusFSSearchMixin:
             details: If True, return detailed metadata; if False, return paths only (default: False)
             prefix: (Deprecated) Path prefix to filter by - for backward compatibility.
                     When used, lists all files recursively with this prefix.
+            show_parsed: If True, include parsed virtual views in listing (default: True).
+                        Note: Virtual views are added at the RPC layer, not in this method.
             context: Optional operation context for permission filtering (uses default if not provided)
 
         Returns:

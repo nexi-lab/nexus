@@ -57,7 +57,6 @@ class TestNexusFUSEInit:
         assert fuse.nexus_fs == mock_nexus_fs
         assert fuse.mount_point == temp_mount_point
         assert fuse.mode == MountMode.SMART
-        assert fuse.auto_parse is False
         assert fuse.cache_config is None
         assert fuse.fuse is None
         assert fuse._mount_thread is None
@@ -70,12 +69,10 @@ class TestNexusFUSEInit:
             mock_nexus_fs,
             str(temp_mount_point),
             mode=MountMode.BINARY,
-            auto_parse=True,
             cache_config=cache_config,
         )
 
         assert fuse.mode == MountMode.BINARY
-        assert fuse.auto_parse is True
         assert fuse.cache_config == cache_config
 
     def test_mount_point_converted_to_path(
@@ -447,7 +444,6 @@ class TestMountNexusFunction:
             mock_nexus_fs,
             str(temp_mount_point),
             mode=MountMode.SMART,
-            auto_parse=False,
             cache_config=None,
         )
 
@@ -470,7 +466,6 @@ class TestMountNexusFunction:
             mock_nexus_fs,
             str(temp_mount_point),
             mode="binary",
-            auto_parse=True,
             foreground=False,
             allow_other=True,
             debug=True,
@@ -482,7 +477,6 @@ class TestMountNexusFunction:
             mock_nexus_fs,
             str(temp_mount_point),
             mode=MountMode.BINARY,
-            auto_parse=True,
             cache_config=cache_config,
         )
 

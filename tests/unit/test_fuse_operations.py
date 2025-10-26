@@ -74,21 +74,21 @@ class TestVirtualPathParsing:
         assert view is None
 
     def test_parse_txt_view(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
-        """Test parsing .txt virtual view."""
+        """Test parsing _parsed.pdf.md virtual view."""
         # Mock base file exists
         mock_nexus_fs.exists.return_value = True
 
-        path, view = fuse_ops._parse_virtual_path("/workspace/file.pdf.txt")
+        path, view = fuse_ops._parse_virtual_path("/workspace/file_parsed.pdf.md")
         assert path == "/workspace/file.pdf"
-        assert view == "txt"
+        assert view == "md"
 
     def test_parse_md_view(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
-        """Test parsing .md virtual view."""
+        """Test parsing _parsed.xlsx.md virtual view."""
         # Mock base file exists
         mock_nexus_fs.exists.return_value = True
 
-        path, view = fuse_ops._parse_virtual_path("/workspace/file.pdf.md")
-        assert path == "/workspace/file.pdf"
+        path, view = fuse_ops._parse_virtual_path("/workspace/data_parsed.xlsx.md")
+        assert path == "/workspace/data.xlsx"
         assert view == "md"
 
 
@@ -177,9 +177,8 @@ class TestReaddir:
         assert ".." in entries
         assert "file1.txt" in entries
         assert "file2.pdf" in entries
-        # In smart mode, should also have virtual views
-        assert "file2.pdf.txt" in entries
-        assert "file2.pdf.md" in entries
+        # In smart mode, should also have virtual views for parseable files
+        assert "file2_parsed.pdf.md" in entries
 
     def test_readdir_binary_mode_no_virtual_views(self, mock_nexus_fs: MagicMock) -> None:
         """Test that binary mode doesn't add virtual views."""
@@ -190,8 +189,8 @@ class TestReaddir:
         entries = fuse_ops.readdir("/workspace")
 
         assert "file.pdf" in entries
-        assert "file.pdf.txt" not in entries
-        assert "file.pdf.md" not in entries
+        # Binary mode should not add _parsed virtual views
+        assert "file_parsed.pdf.md" not in entries
 
 
 class TestFileIO:
@@ -199,9 +198,8 @@ class TestFileIO:
 
     def test_open_file(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
         """Test opening a file."""
-        # First check is in _parse_virtual_path (base file check - returns False)
-        # Second check is for file existence (returns True)
-        mock_nexus_fs.exists.side_effect = [False, True]
+        # .txt files are not virtual views, so exists is only called once
+        mock_nexus_fs.exists.return_value = True
 
         fd = fuse_ops.open("/workspace/file.txt", os.O_RDONLY)
 
@@ -261,10 +259,10 @@ class TestFileIO:
         # First call for exists check in open, second for virtual path check
         mock_nexus_fs.exists.side_effect = [True, True]
 
-        fd = fuse_ops.open("/workspace/file.pdf.txt", os.O_RDONLY)
+        fd = fuse_ops.open("/workspace/file_parsed.pdf.md", os.O_RDONLY)
 
         with pytest.raises(FuseOSError) as exc_info:
-            fuse_ops.write("/workspace/file.pdf.txt", b"data", 0, fd)
+            fuse_ops.write("/workspace/file_parsed.pdf.md", b"data", 0, fd)
 
         assert exc_info.value.errno == errno.EROFS
 
@@ -299,7 +297,7 @@ class TestFileCreationDeletion:
         mock_nexus_fs.exists.return_value = True
 
         with pytest.raises(FuseOSError) as exc_info:
-            fuse_ops.create("/workspace/file.pdf.txt", 0o644)
+            fuse_ops.create("/workspace/file_parsed.pdf.md", 0o644)
 
         assert exc_info.value.errno == errno.EROFS
 
@@ -320,7 +318,7 @@ class TestFileCreationDeletion:
         mock_nexus_fs.exists.return_value = True
 
         with pytest.raises(FuseOSError) as exc_info:
-            fuse_ops.unlink("/workspace/file.pdf.txt")
+            fuse_ops.unlink("/workspace/file_parsed.pdf.md")
 
         assert exc_info.value.errno == errno.EROFS
 
@@ -382,7 +380,7 @@ class TestRename:
         mock_nexus_fs.exists.return_value = True
 
         with pytest.raises(FuseOSError) as exc_info:
-            fuse_ops.rename("/workspace/file.pdf.txt", "/workspace/other.txt")
+            fuse_ops.rename("/workspace/file_parsed.pdf.md", "/workspace/other.txt")
 
         assert exc_info.value.errno == errno.EROFS
 
@@ -459,8 +457,8 @@ class TestTruncate:
         self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
     ) -> None:
         """Test truncating an existing file."""
-        # First call for virtual path check (False), second for file exists (True)
-        mock_nexus_fs.exists.side_effect = [False, True]
+        # .txt files are not virtual views, so exists is only called once
+        mock_nexus_fs.exists.return_value = True
         mock_nexus_fs.read.return_value = b"Hello, World!"
 
         fuse_ops.truncate("/workspace/file.txt", 5)
@@ -472,8 +470,8 @@ class TestTruncate:
 
     def test_truncate_expand(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
         """Test truncating (expanding) a file."""
-        # First call for virtual path check (False), second for file exists (True)
-        mock_nexus_fs.exists.side_effect = [False, True]
+        # .txt files are not virtual views, so exists is only called once
+        mock_nexus_fs.exists.return_value = True
         mock_nexus_fs.read.return_value = b"Hi"
 
         fuse_ops.truncate("/workspace/file.txt", 5)
@@ -491,7 +489,7 @@ class TestTruncate:
         mock_nexus_fs.exists.return_value = True
 
         with pytest.raises(FuseOSError) as exc_info:
-            fuse_ops.truncate("/workspace/file.pdf.txt", 0)
+            fuse_ops.truncate("/workspace/file_parsed.pdf.md", 0)
 
         assert exc_info.value.errno == errno.EROFS
 
@@ -819,29 +817,6 @@ class TestWindowsCompatibility:
                 os.getgid = original_getgid
 
 
-class TestAutoParseMode:
-    """Test auto-parse mode functionality."""
-
-    def test_readdir_auto_parse_no_virtual_views(self, mock_nexus_fs: MagicMock) -> None:
-        """Test that auto_parse mode doesn't add virtual views."""
-        fuse_ops = NexusFUSEOperations(mock_nexus_fs, MountMode.SMART, auto_parse=True)
-        mock_nexus_fs.list.return_value = ["/workspace/file.pdf"]
-        mock_nexus_fs.is_directory.return_value = False
-
-        entries = fuse_ops.readdir("/workspace")
-
-        assert "file.pdf" in entries
-        # With auto_parse, should not add .txt/.md views
-        assert "file.pdf.txt" not in entries
-        assert "file.pdf.md" not in entries
-
-    def test_auto_parse_mode_init(self, mock_nexus_fs: MagicMock) -> None:
-        """Test initialization with auto_parse enabled."""
-        fuse_ops = NexusFUSEOperations(mock_nexus_fs, MountMode.SMART, auto_parse=True)
-
-        assert fuse_ops.auto_parse is True
-
-
 class TestCacheConfiguration:
     """Test cache configuration."""
 
@@ -915,7 +890,8 @@ class TestComplexPaths:
     ) -> None:
         """Test paths with special characters."""
         special_path = "/workspace/file-name_2024.txt"
-        mock_nexus_fs.exists.side_effect = [False, True]  # virtual check, then exists check
+        # .txt files are not virtual views, so exists is only called once
+        mock_nexus_fs.exists.return_value = True
 
         fd = fuse_ops.open(special_path, os.O_RDONLY)
 

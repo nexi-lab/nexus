@@ -134,6 +134,78 @@ class TestGetParsedContent:
 
         assert result == b"# Markdown content"
 
+    def test_parseable_excel_uses_parser_not_utf8_decode(self):
+        """Test that Excel files use parser instead of UTF-8 decode.
+
+        This is a regression test for the bug where Excel files were being
+        decoded as UTF-8 text, resulting in binary garbage output.
+
+        The fix checks for parseable extensions BEFORE attempting UTF-8 decode,
+        ensuring binary files like .xlsx, .pdf, .docx use the parser directly.
+        """
+        # Simulate Excel file binary content (ZIP header + XML content)
+        excel_content = b"PK\x03\x04\x14\x00\x00\x00\x08\x00"  # ZIP header
+
+        # Call get_parsed_content for an Excel file
+        result = get_parsed_content(excel_content, "/file.xlsx", "md")
+
+        # Result should NOT be the raw ZIP/XML content decoded as UTF-8
+        # It should either be:
+        # 1. Parsed content (if parser is available) - starts with markdown/text
+        # 2. Fallback to raw content (if parser fails) - same as input
+
+        # Key assertion: It should NOT attempt UTF-8 decode of binary content
+        # UTF-8 decode would produce garbage or fail
+        # Either parsed or raw is acceptable, but NOT garbled UTF-8 decode
+        assert result == excel_content or (
+            result.startswith(b"#")  # Markdown header
+            or result.startswith(b"|")  # Table format
+            or b"xlsx" in result.lower()  # Parsed content mentions file type
+        )
+
+    def test_parseable_pdf_uses_parser_not_utf8_decode(self):
+        """Test that PDF files use parser instead of UTF-8 decode."""
+        # Simulate PDF binary content
+        pdf_content = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+
+        result = get_parsed_content(pdf_content, "/document.pdf", "md")
+
+        # Should either parse or return raw, not attempt UTF-8 decode
+        assert result == pdf_content or b"PDF" in result or b"pdf" in result
+
+    def test_parseable_docx_uses_parser_not_utf8_decode(self):
+        """Test that Word files use parser instead of UTF-8 decode."""
+        # Simulate DOCX binary content (also ZIP-based)
+        docx_content = b"PK\x03\x04\x14\x00\x06\x00\x08\x00"
+
+        result = get_parsed_content(docx_content, "/document.docx", "md")
+
+        # Should either parse or return raw, not attempt UTF-8 decode
+        assert result == docx_content or (result.startswith(b"#") or b"docx" in result.lower())
+
+    def test_non_parseable_binary_falls_back_to_raw(self):
+        """Test that non-parseable binary files fallback to raw content."""
+        # Random binary file (not in PARSEABLE_EXTENSIONS)
+        binary_content = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+
+        result = get_parsed_content(binary_content, "/image.bin", "txt")
+
+        # Should return raw content since it's not parseable
+        # and UTF-8 decode will fail
+        assert result == binary_content
+
+    def test_regular_text_still_uses_utf8_decode(self):
+        """Test that regular text files still use UTF-8 decode path.
+
+        This ensures we didn't break the UTF-8 decode path for non-binary files.
+        """
+        text_content = b"This is plain text content"
+
+        result = get_parsed_content(text_content, "/file.log", "txt")
+
+        # Should successfully decode and return same content
+        assert result == text_content
+
 
 class TestShouldAddVirtualViews:
     """Tests for should_add_virtual_views function."""

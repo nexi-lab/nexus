@@ -11,24 +11,24 @@ from nexus.core.virtual_views import (
 class TestParseVirtualPath:
     """Tests for parse_virtual_path function."""
 
-    def test_parse_txt_virtual_view(self):
-        """Test parsing .txt virtual view."""
+    def test_parse_xlsx_virtual_view(self):
+        """Test parsing _parsed.xlsx.md virtual view."""
 
         def exists_fn(p):
             return p == "/file.xlsx"
 
-        original, view_type = parse_virtual_path("/file.xlsx.txt", exists_fn)
+        original, view_type = parse_virtual_path("/file_parsed.xlsx.md", exists_fn)
 
         assert original == "/file.xlsx"
-        assert view_type == "txt"
+        assert view_type == "md"
 
-    def test_parse_md_virtual_view(self):
-        """Test parsing .md virtual view."""
+    def test_parse_pdf_virtual_view(self):
+        """Test parsing _parsed.pdf.md virtual view."""
 
         def exists_fn(p):
             return p == "/file.pdf"
 
-        original, view_type = parse_virtual_path("/file.pdf.md", exists_fn)
+        original, view_type = parse_virtual_path("/file_parsed.pdf.md", exists_fn)
 
         assert original == "/file.pdf"
         assert view_type == "md"
@@ -55,26 +55,26 @@ class TestParseVirtualPath:
         assert original == "/file.md"
         assert view_type is None
 
-    def test_prevent_double_txt_suffix(self):
-        """Test that .txt.txt is not treated as virtual view."""
+    def test_parse_without_md_suffix(self):
+        """Test that _parsed without .md suffix is not treated as virtual view."""
 
         def exists_fn(p):
             return True
 
-        original, view_type = parse_virtual_path("/file.txt.txt", exists_fn)
+        original, view_type = parse_virtual_path("/file_parsed.xlsx", exists_fn)
 
-        assert original == "/file.txt.txt"
+        assert original == "/file_parsed.xlsx"
         assert view_type is None
 
-    def test_prevent_double_md_suffix(self):
-        """Test that .md.md is not treated as virtual view."""
+    def test_parse_actual_file_with_parsed_in_name(self):
+        """Test that files with _parsed in name but not matching pattern are handled."""
 
         def exists_fn(p):
-            return True
+            return p == "/file_parsed_results.txt"
 
-        original, view_type = parse_virtual_path("/file.md.md", exists_fn)
+        original, view_type = parse_virtual_path("/file_parsed_results.txt", exists_fn)
 
-        assert original == "/file.md.md"
+        assert original == "/file_parsed_results.txt"
         assert view_type is None
 
     def test_parse_non_virtual_file(self):
@@ -94,9 +94,9 @@ class TestParseVirtualPath:
         def exists_fn(p):
             return False
 
-        original, view_type = parse_virtual_path("/file.xlsx.txt", exists_fn)
+        original, view_type = parse_virtual_path("/file_parsed.xlsx.md", exists_fn)
 
-        assert original == "/file.xlsx.txt"
+        assert original == "/file_parsed.xlsx.md"
         assert view_type is None
 
 
@@ -147,7 +147,7 @@ class TestGetParsedContent:
         excel_content = b"PK\x03\x04\x14\x00\x00\x00\x08\x00"  # ZIP header
 
         # Call get_parsed_content for an Excel file
-        result = get_parsed_content(excel_content, "/file.xlsx", "txt")
+        result = get_parsed_content(excel_content, "/file.xlsx", "md")
 
         # Result should NOT be the raw ZIP/XML content decoded as UTF-8
         # It should either be:
@@ -168,7 +168,7 @@ class TestGetParsedContent:
         # Simulate PDF binary content
         pdf_content = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
 
-        result = get_parsed_content(pdf_content, "/document.pdf", "txt")
+        result = get_parsed_content(pdf_content, "/document.pdf", "md")
 
         # Should either parse or return raw, not attempt UTF-8 decode
         assert result == pdf_content or b"PDF" in result or b"pdf" in result
@@ -178,7 +178,7 @@ class TestGetParsedContent:
         # Simulate DOCX binary content (also ZIP-based)
         docx_content = b"PK\x03\x04\x14\x00\x06\x00\x08\x00"
 
-        result = get_parsed_content(docx_content, "/document.docx", "txt")
+        result = get_parsed_content(docx_content, "/document.docx", "md")
 
         # Should either parse or return raw, not attempt UTF-8 decode
         assert result == docx_content or (result.startswith(b"#") or b"docx" in result.lower())
@@ -260,12 +260,11 @@ class TestAddVirtualViewsToListing:
         result = add_virtual_views_to_listing(files, is_directory_fn)
 
         assert "/file.xlsx" in result
-        assert "/file.xlsx.txt" in result
-        assert "/file.xlsx.md" in result
+        assert "/file_parsed.xlsx.md" in result
         assert "/file.txt" in result
         # .txt and .py files should not get virtual views
-        assert "/file.txt.txt" not in result
-        assert "/file.py.txt" not in result
+        assert "/file_parsed.txt.md" not in result
+        assert "/file_parsed.py.md" not in result
 
     def test_add_views_to_dict_list(self):
         """Test adding virtual views to list of dicts."""
@@ -284,11 +283,10 @@ class TestAddVirtualViewsToListing:
         assert any(f["path"] == "/file.txt" for f in result)
 
         # Virtual views should be added for PDF
-        assert any(f["path"] == "/file.pdf.txt" for f in result)
-        assert any(f["path"] == "/file.pdf.md" for f in result)
+        assert any(f["path"] == "/file_parsed.pdf.md" for f in result)
 
         # Virtual views should not be added for TXT
-        assert not any(f["path"] == "/file.txt.txt" for f in result)
+        assert not any(f["path"] == "/file_parsed.txt.md" for f in result)
 
     def test_skip_directories(self):
         """Test that directories are skipped."""
@@ -300,12 +298,10 @@ class TestAddVirtualViewsToListing:
         result = add_virtual_views_to_listing(files, is_directory_fn)
 
         # File should get virtual views
-        assert "/file.xlsx.txt" in result
-        assert "/file.xlsx.md" in result
+        assert "/file_parsed.xlsx.md" in result
 
         # Directory should not get virtual views
-        assert "/dir/.txt" not in result
-        assert "/dir/.md" not in result
+        assert "/dir/_parsed/.md" not in result
 
     def test_handle_exception_in_is_directory(self):
         """Test that exceptions in is_directory_fn are handled gracefully."""
@@ -318,8 +314,7 @@ class TestAddVirtualViewsToListing:
         result = add_virtual_views_to_listing(files, failing_is_directory_fn)
 
         # Virtual views should still be added
-        assert "/file.pdf.txt" in result
-        assert "/file.pdf.md" in result
+        assert "/file_parsed.pdf.md" in result
 
     def test_empty_list(self):
         """Test with empty file list."""
@@ -342,14 +337,12 @@ class TestAddVirtualViewsToListing:
         result = add_virtual_views_to_listing(files, is_directory_fn)
 
         # Parseable files should get virtual views
-        assert "/file.xlsx.txt" in result
-        assert "/file.xlsx.md" in result
-        assert "/file.pdf.txt" in result
-        assert "/file.pdf.md" in result
+        assert "/file_parsed.xlsx.md" in result
+        assert "/file_parsed.pdf.md" in result
 
         # Non-parseable files should not
-        assert "/file.py.txt" not in result
-        assert "/README.md.txt" not in result
+        assert "/file_parsed.py.md" not in result
+        assert "/README_parsed.md.md" not in result
 
     def test_preserve_dict_metadata(self):
         """Test that dict metadata is preserved in virtual views."""
@@ -360,9 +353,39 @@ class TestAddVirtualViewsToListing:
 
         result = add_virtual_views_to_listing(files, is_directory_fn)
 
-        # Find the virtual .txt view
-        txt_view = next(f for f in result if f["path"] == "/file.pdf.txt")
+        # Find the virtual .md view
+        md_view = next(f for f in result if f["path"] == "/file_parsed.pdf.md")
 
         # Metadata should be preserved (except path)
-        assert txt_view["size"] == 1024
-        assert txt_view["modified"] == "2024-01-01"
+        assert md_view["size"] == 1024
+        assert md_view["modified"] == "2024-01-01"
+
+    def test_show_parsed_false(self):
+        """Test that show_parsed=False excludes virtual views."""
+        files = ["/file.xlsx", "/file.pdf"]
+
+        def is_directory_fn(p):
+            return False
+
+        result = add_virtual_views_to_listing(files, is_directory_fn, show_parsed=False)
+
+        # Original files should be present
+        assert "/file.xlsx" in result
+        assert "/file.pdf" in result
+
+        # Virtual views should not be present
+        assert "/file_parsed.xlsx.md" not in result
+        assert "/file_parsed.pdf.md" not in result
+
+    def test_show_parsed_true(self):
+        """Test that show_parsed=True includes virtual views (default)."""
+        files = ["/file.xlsx"]
+
+        def is_directory_fn(p):
+            return False
+
+        result = add_virtual_views_to_listing(files, is_directory_fn, show_parsed=True)
+
+        # Both original and virtual should be present
+        assert "/file.xlsx" in result
+        assert "/file_parsed.xlsx.md" in result

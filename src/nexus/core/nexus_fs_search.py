@@ -49,6 +49,7 @@ class NexusFSSearchMixin:
         recursive: bool = True,
         details: bool = False,
         prefix: str | None = None,
+        show_parsed: bool = True,  # noqa: ARG002
         context: OperationContext | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """
@@ -62,6 +63,8 @@ class NexusFSSearchMixin:
             details: If True, return detailed metadata; if False, return paths only (default: False)
             prefix: (Deprecated) Path prefix to filter by - for backward compatibility.
                     When used, lists all files recursively with this prefix.
+            show_parsed: If True, include parsed virtual views in listing (default: True).
+                        Note: Virtual views are added at the RPC layer, not in this method.
             context: Optional operation context for permission filtering (uses default if not provided)
 
         Returns:
@@ -139,6 +142,12 @@ class NexusFSSearchMixin:
         # This ensures empty directories show up in listings
         directories = set()
 
+        # Extract directories from directory marker files in results (v0.3.9+)
+        # These are files with mime_type="inode/directory" created by mkdir
+        for meta in results:
+            if meta.mime_type == "inode/directory":
+                directories.add(meta.path)
+
         if not recursive:
             # For non-recursive listings, infer immediate subdirectories from file paths
             base_path = path if path != "/" else ""
@@ -161,6 +170,8 @@ class NexusFSSearchMixin:
             directories.update(backend_dirs)
 
         if details:
+            # Filter out directory metadata markers to avoid duplicates
+            # Directories are already included in dir_results below
             file_results = [
                 {
                     "path": meta.path,
@@ -172,6 +183,7 @@ class NexusFSSearchMixin:
                     "is_directory": False,
                 }
                 for meta in results
+                if meta.mime_type != "inode/directory"  # Exclude directory metadata markers
             ]
 
             # Add directory entries
@@ -193,8 +205,9 @@ class NexusFSSearchMixin:
             all_results.sort(key=lambda x: str(x["path"]))
             return all_results
         else:
-            # Return paths only
-            all_paths = [meta.path for meta in results] + sorted(directories)
+            # Return paths only (filter out directory metadata markers)
+            file_paths = [meta.path for meta in results if meta.mime_type != "inode/directory"]
+            all_paths = file_paths + sorted(directories)
             all_paths.sort()
             return all_paths
 

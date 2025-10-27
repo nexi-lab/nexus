@@ -63,7 +63,7 @@ class RPCErrorCode(Enum):
     ACCESS_DENIED = -32003
     PERMISSION_ERROR = -32004
     VALIDATION_ERROR = -32005
-    CONFLICT = -32006  # Optimistic concurrency conflict (v0.3.9)
+    CONFLICT = -32006  # Optimistic concurrency conflict
 
 
 @dataclass
@@ -195,7 +195,7 @@ class ReadParams:
     """Parameters for read() method."""
 
     path: str
-    return_metadata: bool = False  # v0.3.9: Return dict with content + metadata
+    return_metadata: bool = False  # Return dict with content + metadata
 
 
 @dataclass
@@ -204,9 +204,9 @@ class WriteParams:
 
     path: str
     content: bytes
-    if_match: str | None = None  # v0.3.9: Optimistic concurrency control
-    if_none_match: bool = False  # v0.3.9: Create-only mode
-    force: bool = False  # v0.3.9: Skip version check
+    if_match: str | None = None  # Optimistic concurrency control
+    if_none_match: bool = False  # Create-only mode
+    force: bool = False  # Skip version check
 
 
 @dataclass
@@ -299,6 +299,7 @@ class RebacCreateParams:
     relation: str
     object: tuple[str, str]
     expires_at: str | None = None
+    tenant_id: str | None = None
 
 
 @dataclass
@@ -308,6 +309,7 @@ class RebacCheckParams:
     subject: tuple[str, str]
     permission: str
     object: tuple[str, str]
+    tenant_id: str | None = None
 
 
 @dataclass
@@ -316,6 +318,16 @@ class RebacExpandParams:
 
     permission: str
     object: tuple[str, str]
+
+
+@dataclass
+class RebacExplainParams:
+    """Parameters for rebac_explain() method."""
+
+    subject: tuple[str, str]
+    permission: str
+    object: tuple[str, str]
+    tenant_id: str | None = None
 
 
 @dataclass
@@ -332,6 +344,35 @@ class RebacListTuplesParams:
     subject: tuple[str, str] | None = None
     relation: str | None = None
     object: tuple[str, str] | None = None
+
+
+@dataclass
+class NamespaceCreateParams:
+    """Parameters for namespace_create() method."""
+
+    object_type: str
+    config: dict[str, Any]
+
+
+@dataclass
+class NamespaceGetParams:
+    """Parameters for namespace_get() method."""
+
+    object_type: str
+
+
+@dataclass
+class NamespaceListParams:
+    """Parameters for namespace_list() method."""
+
+    pass
+
+
+@dataclass
+class NamespaceDeleteParams:
+    """Parameters for namespace_delete() method."""
+
+    object_type: str
 
 
 # Mapping of method names to parameter dataclasses
@@ -351,8 +392,13 @@ METHOD_PARAMS = {
     "rebac_create": RebacCreateParams,
     "rebac_check": RebacCheckParams,
     "rebac_expand": RebacExpandParams,
+    "rebac_explain": RebacExplainParams,
     "rebac_delete": RebacDeleteParams,
     "rebac_list_tuples": RebacListTuplesParams,
+    "namespace_create": NamespaceCreateParams,
+    "namespace_get": NamespaceGetParams,
+    "namespace_list": NamespaceListParams,
+    "namespace_delete": NamespaceDeleteParams,
 }
 
 
@@ -375,6 +421,19 @@ def parse_method_params(method: str, params: dict[str, Any] | None) -> Any:
     param_class = METHOD_PARAMS[method]
     if params is None:
         params = {}
+
+    # Convert lists to tuples for ReBAC methods (JSON deserializes tuples as lists)
+    if method in [
+        "rebac_create",
+        "rebac_check",
+        "rebac_expand",
+        "rebac_list_tuples",
+        "rebac_explain",
+    ]:
+        if "subject" in params and isinstance(params["subject"], list):
+            params["subject"] = tuple(params["subject"])
+        if "object" in params and isinstance(params["object"], list):
+            params["object"] = tuple(params["object"])
 
     try:
         return param_class(**params)

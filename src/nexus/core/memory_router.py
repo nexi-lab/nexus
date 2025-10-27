@@ -205,8 +205,6 @@ class MemoryViewRouter:
         visibility: str = "private",
         memory_type: str | None = None,
         importance: float | None = None,
-        group: str | None = None,
-        mode: int = 420,  # 0o644
     ) -> MemoryModel:
         """Create a new memory.
 
@@ -219,8 +217,6 @@ class MemoryViewRouter:
             visibility: Visibility ('private', 'shared', 'public').
             memory_type: Type of memory ('fact', 'preference', 'experience').
             importance: Importance score (0.0-1.0).
-            group: Group ID for permissions.
-            mode: UNIX permission bits.
 
         Returns:
             MemoryModel: Created memory.
@@ -239,8 +235,6 @@ class MemoryViewRouter:
             visibility=visibility,
             memory_type=memory_type,
             importance=importance,
-            group=group,
-            mode=mode,
         )
 
         # Validate before adding
@@ -248,6 +242,26 @@ class MemoryViewRouter:
 
         self.session.add(memory)
         self.session.commit()
+
+        # Create ReBAC tuple for memory owner (v0.6.0 pure ReBAC)
+        # Grant owner full access to their memory
+        if user_id:
+            from sqlalchemy import Engine
+
+            from nexus.core.rebac_manager import ReBACManager
+
+            bind = self.session.get_bind()
+            assert isinstance(bind, Engine), "Expected Engine, got Connection"
+            rebac = ReBACManager(bind)
+
+            # Grant owner permission to the memory
+            rebac.rebac_write(
+                subject=("user", user_id),
+                relation="owner",
+                object=("memory", memory.memory_id),
+                tenant_id=tenant_id,
+            )
+
         return memory
 
     def update_memory(

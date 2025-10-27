@@ -7,7 +7,7 @@ from typing import Any, cast
 import click
 from rich.table import Table
 
-from nexus.cli.formatters import format_permissions, format_timestamp
+from nexus.cli.formatters import format_timestamp
 from nexus.cli.utils import (
     BackendConfig,
     add_backend_options,
@@ -146,12 +146,10 @@ def list_files(
             # Get metadata with permissions
             if isinstance(nx, NexusFS):
                 for file in files:
-                    meta = nx.metadata.get(file["path"])
-
-                    # Format permissions
-                    perms_str = format_permissions(meta.mode if meta else None)
-                    owner_str = meta.owner if meta and meta.owner else "-"
-                    group_str = meta.group if meta and meta.group else "-"
+                    # Format permissions (UNIX permissions removed - using ReBAC)
+                    perms_str = "---------"  # Placeholder since UNIX permissions are deprecated
+                    owner_str = "-"  # Owner managed through ReBAC
+                    group_str = "-"  # Group managed through ReBAC
                     size_str = f"{file['size']:,} bytes"
                     modified_str = format_timestamp(file.get("modified_at"))
 

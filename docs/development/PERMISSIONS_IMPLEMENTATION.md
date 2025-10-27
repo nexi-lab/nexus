@@ -137,7 +137,7 @@ class FileMetadata:
     size: int
     # ... existing fields ...
 
-    # UNIX-style permissions (v0.3.0)
+    # UNIX-style permissions
     owner: str | None = None
     group: str | None = None
     mode: int | None = None  # Permission bits (e.g., 0o644)
@@ -148,7 +148,7 @@ class FileMetadata:
 class FilePathModel(Base):
     # ... existing fields ...
 
-    # UNIX-style permissions (v0.3.0)
+    # UNIX-style permissions
     owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
     group: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mode: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -287,7 +287,7 @@ When checking file access, Nexus uses the following order:
 
 The current implementation provides the foundation for:
 
-1. **ReBAC (Relationship-Based Access Control)** - Zanzibar-style authorization (v0.3.0+)
+1. **ReBAC (Relationship-Based Access Control)** - Zanzibar-style authorization
 2. **Permission Inheritance** - Automatic permission assignment based on paths
 3. **Permission Policies** - Default policies per namespace
 4. **Permission Checking in Operations** - Integrate into filesystem operations

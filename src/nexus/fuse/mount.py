@@ -16,6 +16,7 @@ from fuse import FUSE
 
 if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
+    from nexus.core.permissions import OperationContext
 
 from nexus.fuse.operations import NexusFUSEOperations
 
@@ -59,6 +60,8 @@ class NexusFUSE:
         mode: MountMode = MountMode.SMART,
         auto_parse: bool = False,
         cache_config: dict[str, int | bool] | None = None,
+        default_context: OperationContext | None = None,
+        uid_mapping: dict[int, OperationContext] | None = None,
     ) -> None:
         """Initialize FUSE mount manager.
 
@@ -77,12 +80,20 @@ class NexusFUSE:
                          - content_cache_size: int (default: 100)
                          - parsed_cache_size: int (default: 50)
                          - enable_metrics: bool (default: False)
+            default_context: Default operation context for all FUSE operations.
+                           All file operations will be performed as this user/subject.
+                           If None, uses nexus_fs.default_context.
+            uid_mapping: Optional mapping from OS UID to OperationContext for
+                        multi-user FUSE mounts. If provided, FUSE will use
+                        the context for the calling UID instead of default_context.
         """
         self.nexus_fs = nexus_fs
         self.mount_point = Path(mount_point)
         self.mode = mode
         self.auto_parse = auto_parse
         self.cache_config = cache_config
+        self.default_context = default_context
+        self.uid_mapping = uid_mapping
         self.fuse: FUSE | None = None
         self._mount_thread: threading.Thread | None = None
         self._mounted = False
@@ -121,7 +132,10 @@ class NexusFUSE:
 
         # Create FUSE operations
         operations = NexusFUSEOperations(
-            self.nexus_fs, self.mode, self.auto_parse, self.cache_config
+            self.nexus_fs,
+            self.mode,
+            self.auto_parse,
+            self.cache_config,
         )
 
         # Build FUSE options
@@ -273,6 +287,8 @@ def mount_nexus(
     allow_other: bool = False,
     debug: bool = False,
     cache_config: dict[str, int | bool] | None = None,
+    default_context: OperationContext | None = None,
+    uid_mapping: dict[int, OperationContext] | None = None,
 ) -> NexusFUSE:
     """Convenience function to mount Nexus filesystem.
 
@@ -290,6 +306,11 @@ def mount_nexus(
                      - content_cache_size: int (default: 100)
                      - parsed_cache_size: int (default: 50)
                      - enable_metrics: bool (default: False)
+        default_context: Default operation context for all FUSE operations.
+                        All file operations will be performed as this user/subject.
+                        If None, uses nexus_fs.default_context.
+        uid_mapping: Optional mapping from OS UID to OperationContext for
+                    multi-user FUSE mounts. Format: {uid: OperationContext(...)}
 
     Returns:
         NexusFUSE instance
@@ -297,31 +318,37 @@ def mount_nexus(
     Example:
         >>> from nexus import connect
         >>> from nexus.fuse import mount_nexus
+        >>> from nexus.core.permissions import OperationContext
         >>>
         >>> nx = connect(config={"data_dir": "./nexus-data"})
         >>>
-        >>> # Explicit views (default)
-        >>> fuse = mount_nexus(nx, "/mnt/nexus", mode="smart", foreground=False)
-        >>> # grep "pattern" /mnt/nexus/**/*.pdf.txt
+        >>> # Single-user mount with explicit context
+        >>> ctx = OperationContext(
+        ...     subject_type="user",
+        ...     subject_id="alice",
+        ...     tenant_id="org_acme"
+        ... )
+        >>> fuse = mount_nexus(nx, "/mnt/nexus", default_context=ctx, foreground=False)
         >>>
-        >>> # Auto-parse mode
-        >>> fuse = mount_nexus(nx, "/mnt/nexus", mode="smart", auto_parse=True, foreground=False)
-        >>> # grep "pattern" /mnt/nexus/**/*.pdf  (works directly!)
-        >>>
-        >>> # Custom cache configuration
-        >>> cache_config = {
-        ...     "attr_cache_size": 2048,
-        ...     "attr_cache_ttl": 120,
-        ...     "enable_metrics": True
+        >>> # Multi-user mount with UID mapping
+        >>> uid_mapping = {
+        ...     1000: OperationContext(subject_type="user", subject_id="alice", tenant_id="org_acme"),
+        ...     1001: OperationContext(subject_type="user", subject_id="bob", tenant_id="org_acme"),
         ... }
-        >>> fuse = mount_nexus(nx, "/mnt/nexus", cache_config=cache_config, foreground=False)
+        >>> fuse = mount_nexus(nx, "/mnt/nexus", uid_mapping=uid_mapping, foreground=False)
     """
     # Parse mode
     mode_enum = MountMode(mode.lower())
 
     # Create and mount
     fuse = NexusFUSE(
-        nexus_fs, mount_point, mode=mode_enum, auto_parse=auto_parse, cache_config=cache_config
+        nexus_fs,
+        mount_point,
+        mode=mode_enum,
+        auto_parse=auto_parse,
+        cache_config=cache_config,
+        default_context=default_context,
+        uid_mapping=uid_mapping,
     )
     fuse.mount(foreground=foreground, allow_other=allow_other, debug=debug)
 

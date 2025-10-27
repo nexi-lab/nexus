@@ -16,6 +16,7 @@ Authentication is done via simple API key in the Authorization header.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
@@ -56,7 +57,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
     # Class-level attributes set by server
     nexus_fs: NexusFilesystem
     api_key: str | None = None
+    auth_provider: Any = None
     exposed_methods: dict[str, Any] = {}
+    event_loop: asyncio.AbstractEventLoop | None = None
 
     def log_message(self, format: str, *args: Any) -> None:
         """Override to use Python logging instead of stderr."""
@@ -182,12 +185,34 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def _validate_auth(self) -> bool:
-        """Validate API key authentication.
+        """Validate authentication.
 
         Returns:
             True if authentication is valid or not required
         """
-        # If no API key is configured, allow all requests
+        # If auth_provider is configured, use it
+        if self.auth_provider:
+            auth_header = self.headers.get("Authorization")
+            if not auth_header:
+                return False
+
+            # Expected format: "Bearer <token>"
+            if not auth_header.startswith("Bearer "):
+                return False
+
+            token = auth_header[7:]  # Remove "Bearer " prefix
+
+            # PERFORMANCE FIX: Use persistent event loop instead of creating new ones
+            # asyncio.run() creates a new event loop each time, which is expensive
+            if self.event_loop is None:
+                logger.error("Event loop not initialized on request handler")
+                return False
+
+            result = self.event_loop.run_until_complete(self.auth_provider.authenticate(token))
+            authenticated: bool = result.authenticated
+            return authenticated
+
+        # Fall back to simple API key validation
         if not self.api_key:
             return True
 
@@ -202,6 +227,54 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         token = auth_header[7:]  # Remove "Bearer " prefix
         return bool(token == self.api_key)
+
+    def _get_operation_context(self) -> Any:
+        """Get operation context from authentication.
+
+        Extracts authentication information and creates an OperationContext
+        for use in filesystem operations.
+
+        Returns:
+            OperationContext or None if no authentication
+        """
+        from nexus.core.permissions import OperationContext
+
+        # Extract from auth provider if available
+        if self.auth_provider:
+            auth_header = self.headers.get("Authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+
+                # PERFORMANCE FIX: Use persistent event loop instead of creating new ones
+                if self.event_loop is None:
+                    logger.error("Event loop not initialized on request handler")
+                    return None
+
+                result = self.event_loop.run_until_complete(self.auth_provider.authenticate(token))
+                if result.authenticated and result.subject_type and result.subject_id:
+                    return OperationContext(
+                        user=result.subject_id,  # Required for compatibility
+                        subject_type=result.subject_type,
+                        subject_id=result.subject_id,
+                        tenant_id=result.tenant_id,
+                        is_admin=result.is_admin,
+                        groups=[],  # TODO: Extract groups from auth result if available
+                    )
+
+        # Check for explicit subject header (for backward compatibility)
+        subject_header = self.headers.get("X-Nexus-Subject")
+        if subject_header:
+            parts = subject_header.split(":", 1)
+            if len(parts) == 2:
+                return OperationContext(
+                    user=parts[1],  # Required
+                    subject_type=parts[0],
+                    subject_id=parts[1],
+                    groups=[],
+                )
+
+        # No authentication - return None to use default context
+        return None
 
     def _handle_rpc_call(self, request: RPCRequest) -> None:
         """Handle RPC method call.
@@ -240,7 +313,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         except ValidationError as e:
             self._send_error_response(request.id, RPCErrorCode.VALIDATION_ERROR, str(e))
         except ConflictError as e:
-            # v0.3.9: Handle optimistic concurrency conflicts
+            # Handle optimistic concurrency conflicts
             self._send_error_response(
                 request.id,
                 RPCErrorCode.CONFLICT,
@@ -269,6 +342,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         Returns:
             Method result
         """
+        # Extract authentication context
+        context = self._get_operation_context()
+
         # Try auto-dispatch first (for methods decorated with @rpc_expose)
         # Skip auto-dispatch for methods with special handling (virtual views, wrapping, etc.)
         MANUAL_DISPATCH_METHODS = {
@@ -294,7 +370,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             and method in self.exposed_methods
             and method not in MANUAL_DISPATCH_METHODS
         ):
-            return self._auto_dispatch(method, params)
+            return self._auto_dispatch(method, params, context)
 
         # Fall back to manual dispatch for backward compatibility
         # Core file operations
@@ -304,20 +380,21 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
             if view_type:
                 # Read raw content and parse it (virtual views don't support metadata)
-                raw_content = self.nexus_fs.read(original_path)
+                raw_content = self.nexus_fs.read(original_path, context=context)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 return get_parsed_content(raw_content, original_path, view_type)
             else:
-                # v0.3.9: Support return_metadata parameter
-                result = self.nexus_fs.read(params.path, return_metadata=params.return_metadata)
+                result = self.nexus_fs.read(
+                    params.path, context=context, return_metadata=params.return_metadata
+                )
                 return result
 
         elif method == "write":
-            # v0.3.9: Support optimistic concurrency control parameters
             result = self.nexus_fs.write(
                 params.path,
                 params.content,
+                context=context,
                 if_match=params.if_match,
                 if_none_match=params.if_none_match,
                 force=params.force,
@@ -326,11 +403,11 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return result
 
         elif method == "delete":
-            self.nexus_fs.delete(params.path)
+            self.nexus_fs.delete(params.path, context=context)  # type: ignore[call-arg]
             return {"success": True}
 
         elif method == "rename":
-            self.nexus_fs.rename(params.old_path, params.new_path)
+            self.nexus_fs.rename(params.old_path, params.new_path, context=context)  # type: ignore[call-arg]
             return {"success": True}
 
         elif method == "exists":
@@ -345,11 +422,12 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         # Discovery operations
         elif method == "list":
-            files = self.nexus_fs.list(
+            files = self.nexus_fs.list(  # type: ignore[call-arg]
                 params.path,
                 recursive=params.recursive,
                 details=params.details,
                 prefix=params.prefix,
+                context=context,
             )
             # Debug: Check what we got
             logger.info(f"List returned {len(files)} items, type={type(files)}")
@@ -416,11 +494,13 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         # Directory operations
         elif method == "mkdir":
-            self.nexus_fs.mkdir(params.path, parents=params.parents, exist_ok=params.exist_ok)
+            self.nexus_fs.mkdir(  # type: ignore[call-arg]
+                params.path, parents=params.parents, exist_ok=params.exist_ok, context=context
+            )
             return {"success": True}
 
         elif method == "rmdir":
-            self.nexus_fs.rmdir(params.path, recursive=params.recursive)
+            self.nexus_fs.rmdir(params.path, recursive=params.recursive, context=context)  # type: ignore[call-arg]
             return {"success": True}
 
         elif method == "is_directory":
@@ -432,12 +512,13 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         else:
             raise ValueError(f"Unknown method: {method}")
 
-    def _auto_dispatch(self, method: str, params: Any) -> Any:
+    def _auto_dispatch(self, method: str, params: Any, context: Any = None) -> Any:
         """Auto-dispatch to decorated method.
 
         Args:
             method: Method name
             params: Parsed parameters (dataclass instance)
+            context: OperationContext for authenticated operations
 
         Returns:
             Serialized method result
@@ -449,6 +530,20 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             kwargs = {k: v for k, v in params.__dict__.items() if not k.startswith("_")}
         else:
             kwargs = {}
+
+        # Add context parameter if provided and method accepts it
+        if context is not None:
+            import inspect
+
+            sig = inspect.signature(fn)
+            if "context" in sig.parameters:
+                # Convert OperationContext to dict for methods that expect dict
+                if hasattr(context, "__dict__"):
+                    kwargs["context"] = {
+                        k: v for k, v in context.__dict__.items() if not k.startswith("_")
+                    }
+                else:
+                    kwargs["context"] = context
 
         # Call the method
         result = fn(**kwargs)
@@ -580,6 +675,7 @@ class NexusRPCServer:
         host: str = "0.0.0.0",
         port: int = 8080,
         api_key: str | None = None,
+        auth_provider: Any = None,
     ):
         """Initialize server.
 
@@ -588,11 +684,17 @@ class NexusRPCServer:
             host: Server host
             port: Server port
             api_key: Optional API key for authentication (if None, no auth required)
+            auth_provider: Optional AuthProvider instance for advanced authentication
         """
         self.nexus_fs = nexus_fs
         self.host = host
         self.port = port
         self.api_key = api_key
+        self.auth_provider = auth_provider
+
+        # Create persistent event loop for async auth providers
+        # PERFORMANCE FIX: Use a single event loop instead of creating new ones with asyncio.run()
+        self._event_loop = asyncio.new_event_loop()
 
         # Auto-discover all @rpc_expose decorated methods
         self._exposed_methods = self._discover_exposed_methods()
@@ -603,7 +705,9 @@ class NexusRPCServer:
         # Configure handler
         RPCRequestHandler.nexus_fs = nexus_fs
         RPCRequestHandler.api_key = api_key
+        RPCRequestHandler.auth_provider = auth_provider
         RPCRequestHandler.exposed_methods = self._exposed_methods
+        RPCRequestHandler.event_loop = self._event_loop
 
     def _discover_exposed_methods(self) -> dict[str, Any]:
         """Discover all methods marked with @rpc_expose decorator.
@@ -658,4 +762,10 @@ class NexusRPCServer:
         self.server.server_close()
         if hasattr(self.nexus_fs, "close"):
             self.nexus_fs.close()
+
+        # Clean up event loop
+        if self._event_loop and not self._event_loop.is_closed():
+            self._event_loop.close()
+            logger.debug("Event loop closed")
+
         logger.info("Server stopped")

@@ -157,9 +157,7 @@ class TimeTravelReader:
                 content = self.backend.read_content(current_path.content_hash)
                 metadata_dict = {
                     "size": current_path.size_bytes,
-                    "owner": current_path.owner,
-                    "group": current_path.group,
-                    "mode": current_path.mode,
+                    # v0.5.0: owner/group/mode removed - use ReBAC for permissions
                     "version": current_path.current_version,
                     "etag": current_path.content_hash,
                     "modified_at": current_path.updated_at.isoformat()
@@ -289,9 +287,7 @@ class TimeTravelReader:
                         "path": path,
                         "size": metadata.get("size", 0),
                         "modified_at": metadata.get("modified_at"),
-                        "owner": metadata.get("owner"),
-                        "group": metadata.get("group"),
-                        "mode": metadata.get("mode"),
+                        # v0.5.0: owner/group/mode removed - use ReBAC for permissions
                     }
                 )
 

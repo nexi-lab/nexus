@@ -110,7 +110,6 @@ def retry_decorator(
                 except retry_exceptions as e:
                     last_exception = e
                     if attempt < num_retries:
-                        print(f"Retry {attempt + 1}/{num_retries} after {wait_time}s due to: {e}")
                         time.sleep(wait_time)
                         wait_time = min(wait_time * retry_multiplier, retry_max_wait)
                     else:
@@ -145,7 +144,6 @@ def async_retry_decorator(
                 except retry_exceptions as e:
                     last_exception = e
                     if attempt < num_retries:
-                        print(f"Retry {attempt + 1}/{num_retries} after {wait_time}s due to: {e}")
                         await asyncio.sleep(wait_time)
                         wait_time = min(wait_time * retry_multiplier, retry_max_wait)
                     else:
@@ -791,7 +789,8 @@ class LiteLLMProvider(LLMProvider):
             ).hexdigest()
             if cache_key in self._token_count_cache:
                 return self._token_count_cache[cache_key]
-        except Exception:
+        except (TypeError, AttributeError, ValueError):
+            # Cache key creation failed (invalid input types)
             cache_key = None
 
         # Count tokens
@@ -812,8 +811,11 @@ class LiteLLMProvider(LLMProvider):
                 self._token_count_cache[cache_key] = token_count
 
             return token_count
-        except Exception as e:
-            print(f"Error counting tokens: {e}")
+        except (ValueError, TypeError, AttributeError) as e:
+            # Token counting failed - return 0 as fallback
+            import logging
+
+            logging.warning(f"Token counting failed for model {self.config.model}: {e}")
             return 0
 
     def _format_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
@@ -845,7 +847,8 @@ class LiteLLMProvider(LLMProvider):
             if cost is not None:
                 self.metrics.add_cost(float(cost))
                 return float(cost)
-        except Exception:
+        except (KeyError, ValueError, TypeError, AttributeError):
+            # Cost calculation failed for this model - try alternate method
             pass
 
         # Try with base model name
@@ -860,7 +863,8 @@ class LiteLLMProvider(LLMProvider):
                 if cost is not None:
                     self.metrics.add_cost(float(cost))
                     return float(cost)
-            except Exception:
+            except (KeyError, ValueError, TypeError, AttributeError):
+                # Cost calculation failed for base model name too
                 pass
 
         self.cost_metric_supported = False

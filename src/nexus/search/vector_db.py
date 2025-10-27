@@ -106,15 +106,17 @@ class VectorDatabase:
                 raw_conn.enable_load_extension(True)
                 sqlite_vec.load(raw_conn)
                 raw_conn.enable_load_extension(False)
-            except Exception:
-                pass  # Ignore errors on re-initialization
+            except (AttributeError, ImportError, RuntimeError):
+                # Ignore errors: extension might already be loaded or not available
+                pass
 
         # Add embedding column if not exists
         try:
             conn.execute(text("ALTER TABLE document_chunks ADD COLUMN embedding BLOB"))
             conn.commit()
         except Exception:
-            # Column might already exist
+            # Column might already exist (duplicate column error) or table doesn't exist yet
+            # If table doesn't exist, it will be created by the metadata store
             pass
 
         # Create FTS5 virtual table for keyword search
@@ -132,7 +134,7 @@ class VectorDatabase:
             )
             conn.commit()
         except Exception:
-            # Table might already exist
+            # Table might already exist or base table doesn't exist yet
             pass
 
         # Create triggers to keep FTS in sync
@@ -166,7 +168,7 @@ class VectorDatabase:
             )
             conn.commit()
         except Exception:
-            # Triggers might already exist
+            # Triggers might already exist or base table doesn't exist yet
             pass
 
     def _init_postgresql(self, conn: Any) -> None:
@@ -181,7 +183,7 @@ class VectorDatabase:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             conn.commit()
             vec_available = True
-        except Exception:
+        except (OSError, RuntimeError):
             # pgvector not available - will only support keyword search
             import warnings
 
@@ -201,8 +203,8 @@ class VectorDatabase:
             try:
                 conn.execute(text("ALTER TABLE document_chunks ADD COLUMN embedding vector(1536)"))
                 conn.commit()
-            except Exception:
-                # Column might already exist
+            except OSError:
+                # Column might already exist (duplicate column error)
                 pass
 
         # Create GIN index for text search
@@ -215,7 +217,7 @@ class VectorDatabase:
             """)
             )
             conn.commit()
-        except Exception:
+        except OSError:
             # Index might already exist
             pass
 
@@ -229,7 +231,7 @@ class VectorDatabase:
             """)
             )
             conn.commit()
-        except Exception:
+        except OSError:
             # Index might already exist
             pass
 

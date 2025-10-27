@@ -1,10 +1,12 @@
-"""Memory Permission Enforcer with Identity Relationships (v0.4.0).
+"""Memory Permission Enforcer with Pure ReBAC (v0.6.0).
 
 Extends the base PermissionEnforcer with identity-based relationships
-for AI agent memories. Implements the 3-layer permission model:
-  1. ReBAC - Identity relationships (user ownership, tenant sharing)
-  2. ACL - Canonical path access control
-  3. UNIX - Proper user ownership semantics
+for AI agent memories. Uses pure ReBAC (Relationship-Based Access Control)
+for all permission checks.
+
+Migration from v0.5.x:
+  - Removed ACL and UNIX permission layers
+  - All permissions managed through ReBAC relationships
 """
 
 from __future__ import annotations
@@ -14,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.entity_registry import EntityRegistry
 from nexus.core.memory_router import MemoryViewRouter
 from nexus.core.permissions import (
-    FileMode,
     OperationContext,
     Permission,
     PermissionEnforcer,
@@ -22,8 +23,7 @@ from nexus.core.permissions import (
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:
-    from nexus.core.acl import ACLStore
-    from nexus.core.rebac_manager import ReBACManager
+    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
 
 class MemoryPermissionEnforcer(PermissionEnforcer):
@@ -38,8 +38,8 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
     def __init__(
         self,
         metadata_store: Any = None,
-        acl_store: ACLStore | None = None,
-        rebac_manager: ReBACManager | None = None,
+        acl_store: Any | None = None,  # Deprecated, kept for backward compatibility
+        rebac_manager: EnhancedReBACManager | None = None,
         memory_router: MemoryViewRouter | None = None,
         entity_registry: EntityRegistry | None = None,
     ) -> None:
@@ -47,7 +47,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
 
         Args:
             metadata_store: Metadata store for file permissions.
-            acl_store: ACL store for access control lists.
+            acl_store: Deprecated, ignored (kept for backward compatibility).
             rebac_manager: ReBAC manager for relationship-based permissions.
             memory_router: Memory view router for resolving paths.
             entity_registry: Entity registry for identity lookups.
@@ -64,10 +64,9 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
     ) -> bool:
         """Check if user has permission to access memory.
 
-        Three-layer check:
-        1. ReBAC with identity relationships
-        2. ACL on canonical memory path
-        3. UNIX permissions with user ownership
+        Pure ReBAC check with identity relationships:
+        1. Admin/system bypass
+        2. ReBAC with identity relationships
 
         Args:
             memory: Memory instance.
@@ -82,18 +81,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
             return True
 
         # 2. ReBAC check with identity relationships
-        if self._check_memory_rebac(memory, permission, context):
-            return True
-
-        # 3. ACL check on canonical path
-        if self.acl_store:
-            canonical_path = f"/objs/memory/{memory.memory_id}"
-            acl_result = self._check_acl(canonical_path, permission, context)
-            if acl_result is not None:
-                return acl_result
-
-        # 4. UNIX permissions with user ownership
-        return self._check_memory_unix(memory, permission, context)
+        return self._check_memory_rebac(memory, permission, context)
 
     def _check_memory_rebac(
         self,
@@ -177,106 +165,14 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
             else:
                 return False
 
+            # P0-4: Pass tenant_id for multi-tenant isolation
+            tenant_id = context.tenant_id or "default"
             return self.rebac_manager.rebac_check(
-                subject=("agent", context.user),
+                subject=context.get_subject(),  # P0-2: Use typed subject
                 permission=permission_name,
                 object=("memory", memory.memory_id),
+                tenant_id=tenant_id,
             )
-
-        return False
-
-    def _check_memory_unix(
-        self,
-        memory: MemoryModel,
-        permission: Permission,
-        context: OperationContext,
-    ) -> bool:
-        """Check UNIX permissions with proper user ownership.
-
-        Uses memory.user_id as the owner (not agent_id).
-        For agent-scoped memories, checks against agent_id directly without resolving to user.
-
-        Args:
-            memory: Memory instance.
-            permission: Permission to check.
-            context: Operation context.
-
-        Returns:
-            True if UNIX permissions grant access.
-        """
-        # For agent-scoped memories, check against agent_id directly
-        if memory.scope == "agent":
-            # Don't resolve to user - check if context user is the agent creator
-            if context.user == memory.agent_id:
-                mode = FileMode(memory.mode)
-                if permission & Permission.READ:
-                    return mode.owner_can_read()
-                elif permission & Permission.WRITE:
-                    return mode.owner_can_write()
-                elif permission & Permission.EXECUTE:
-                    return mode.owner_can_execute()
-
-            # Check group/other permissions for agent-scoped
-            if memory.group and memory.group in context.groups:
-                mode = FileMode(memory.mode)
-                if permission & Permission.READ:
-                    return mode.group_can_read()
-                elif permission & Permission.WRITE:
-                    return mode.group_can_write()
-                elif permission & Permission.EXECUTE:
-                    return mode.group_can_execute()
-
-            mode = FileMode(memory.mode)
-            if permission & Permission.READ:
-                return mode.other_can_read()
-            elif permission & Permission.WRITE:
-                return mode.other_can_write()
-            elif permission & Permission.EXECUTE:
-                return mode.other_can_execute()
-
-            return False
-
-        # For user/tenant/global scoped memories, resolve agent to user
-        context_user = context.user
-        if self.entity_registry:
-            entities = self.entity_registry.lookup_entity_by_id(context.user)
-            for entity in entities:
-                if entity.entity_type == "agent" and entity.parent_id:
-                    # Requesting user is an agent, resolve to owner user
-                    context_user = entity.parent_id
-                    break
-                elif entity.entity_type == "user":
-                    context_user = entity.entity_id
-                    break
-
-        # Check owner permissions
-        if memory.user_id and context_user == memory.user_id:
-            mode = FileMode(memory.mode)
-            if permission & Permission.READ:
-                return mode.owner_can_read()
-            elif permission & Permission.WRITE:
-                return mode.owner_can_write()
-            elif permission & Permission.EXECUTE:
-                return mode.owner_can_execute()
-
-        # Check group permissions
-        if memory.group and memory.group in context.groups:
-            mode = FileMode(memory.mode)
-            if permission & Permission.READ:
-                return mode.group_can_read()
-            elif permission & Permission.WRITE:
-                return mode.group_can_write()
-            elif permission & Permission.EXECUTE:
-                return mode.group_can_execute()
-
-        # Check other permissions
-        mode = FileMode(memory.mode)
-        if permission & Permission.READ:
-            return mode.other_can_read()
-        elif permission & Permission.WRITE:
-            return mode.other_can_write()
-        elif permission & Permission.EXECUTE:
-            return mode.other_can_execute()
 
         return False
 

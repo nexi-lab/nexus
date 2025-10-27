@@ -353,7 +353,11 @@ class TestBatchOperations:
     def test_embedded_rmdir_uses_batch_delete(self, tmp_path: Path):
         """Test that Embedded.rmdir() uses batch delete for directories."""
         db_path = tmp_path / "metadata.db"
-        fs = NexusFS(backend=LocalBackend(tmp_path), db_path=db_path)
+        fs = NexusFS(
+            backend=LocalBackend(tmp_path),
+            db_path=db_path,
+            enforce_permissions=False,  # Disable permissions for test
+        )
 
         try:
             # Create directory with multiple files

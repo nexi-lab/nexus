@@ -34,8 +34,8 @@ class PathInfo:
 
     namespace: str  # e.g., "workspace", "shared", "external", "system", "archives"
     tenant_id: str | None  # Tenant identifier (if applicable)
-    agent_id: str | None  # Agent identifier (for workspace namespace)
-    relative_path: str  # Remaining path after namespace/tenant/agent
+    agent_id: str | None  # DEPRECATED: No longer used for workspace (kept for backward compat)
+    relative_path: str  # Remaining path after namespace/tenant
 
 
 @dataclass
@@ -133,22 +133,21 @@ class PathRouter:
 
         Algorithm:
         1. Normalize path (remove trailing slashes, collapse //)
-        2. Check access control (namespace permissions, tenant/agent isolation)
+        2. Check access control (namespace permissions, tenant isolation)
         3. Find longest matching prefix
         4. Strip mount_point prefix to get backend-relative path
         5. Return RouteResult
 
         Example:
-            Input: "/workspace/acme/agent1/data/file.txt"
-            Tenant: "acme", Agent: "agent1"
+            Input: "/workspace/my-project/file.txt"
             Mounts: [("/workspace", localfs)]
             Match: "/workspace"
-            Backend Path: "acme/agent1/data/file.txt"
+            Backend Path: "my-project/file.txt"
 
         Args:
             virtual_path: Virtual path to route
             tenant_id: Current tenant identifier (for access control)
-            agent_id: Current agent identifier (for workspace isolation)
+            agent_id: DEPRECATED - No longer used (kept for backward compatibility)
             is_admin: Whether requester has admin privileges
             check_write: Whether to check write permissions
 
@@ -195,7 +194,7 @@ class PathRouter:
         self,
         path_info: PathInfo,
         tenant_id: str | None,
-        agent_id: str | None,
+        _agent_id: str | None,
         is_admin: bool,
         check_write: bool,
     ) -> None:
@@ -205,6 +204,7 @@ class PathRouter:
         Args:
             path_info: Parsed path information
             tenant_id: Current tenant identifier
+            _agent_id: Agent identifier (unused)
             agent_id: Current agent identifier
             is_admin: Whether requester has admin privileges
             check_write: Whether to check write permissions
@@ -228,6 +228,8 @@ class PathRouter:
             raise AccessDeniedError(f"Namespace '{path_info.namespace}' is read-only")
 
         # Check tenant isolation (only if path contains tenant_id)
+        # NOTE: With API key authentication, tenant comes from the key, not the path.
+        # For simple paths like /workspace/file.txt, ReBAC handles permissions - don't double-check tenant.
         if (
             ns_config.requires_tenant
             and path_info.tenant_id
@@ -240,30 +242,8 @@ class PathRouter:
                 f"tenant '{path_info.tenant_id}' resources"
             )
 
-        # Check agent isolation for workspace namespace
-        # Skip isolation check if:
-        # - agent_id looks like a filename (contains dot: e.g., "file.txt", "dest.txt")
-        # - agent_id is in a special directory (tenant_id starts with dot: e.g., ".nexus")
-        # This allows:
-        #   - Sync operations to /workspace/tenant/file.txt
-        #   - Skills access to /workspace/.nexus/skills/...
-        #   - Agent workspace protection for /workspace/tenant/agent1/...
-        is_likely_file = path_info.agent_id and "." in path_info.agent_id
-        is_special_directory = path_info.tenant_id and path_info.tenant_id.startswith(".")
-
-        if (
-            path_info.namespace == "workspace"
-            and path_info.agent_id
-            and not is_likely_file
-            and not is_special_directory
-            and not is_admin
-            and agent_id
-            and path_info.agent_id != agent_id
-        ):
-            raise AccessDeniedError(
-                f"Access denied: agent '{agent_id}' cannot access "
-                f"agent '{path_info.agent_id}' workspace"
-            )
+        # Note: Workspace isolation is now handled by ReBAC, not path-based agent_id checks
+        # Permissions on workspace files are managed through explicit ReBAC tuples
 
     def _match_longest_prefix(self, virtual_path: str) -> MountConfig | None:
         """
@@ -323,10 +303,12 @@ class PathRouter:
 
     def _register_default_namespaces(self) -> None:
         """Register default namespace configurations."""
-        # Workspace - Agent scratch space (ephemeral, full access for agent)
+        # Workspace - Registered workspace directories (ReBAC-based permissions)
+        # Workspaces are explicitly registered via register_workspace() API
+        # Permissions are managed through ReBAC, not path-based tenant/agent parsing
         self.register_namespace(
             NamespaceConfig(
-                name="workspace", readonly=False, admin_only=False, requires_tenant=True
+                name="workspace", readonly=False, admin_only=False, requires_tenant=False
             )
         )
 
@@ -392,17 +374,33 @@ class PathRouter:
         if any(ord(c) < 32 for c in path if c not in ("\t", "\n")):
             raise InvalidPathError("Path contains control characters")
 
-        # Check for .. segments (path traversal attempts)
-        if ".." in path:
-            raise InvalidPathError(f"Path traversal detected: {path}")
-
-        # Normalize first
+        # Normalize first - this resolves . and .. segments
+        # SECURITY: Must normalize BEFORE checking for path traversal
+        # to handle cases like /foo/./bar or complex traversal attempts
         normalized = self._normalize_path(path)
 
         # After normalization, check for path traversal
         # If normalized path doesn't start with /, it escaped root
         if not normalized.startswith("/"):
             raise InvalidPathError(f"Path traversal detected: {path}")
+
+        # Additional security check: detect if path traversal changed the namespace
+        # Extract first path component (namespace) before and after normalization
+        # to detect attempts to escape namespace boundaries
+        if ".." in path:
+            # Path contained .. - verify normalization didn't change namespace
+            orig_parts = path.lstrip("/").split("/", 1)
+            norm_parts = normalized.lstrip("/").split("/", 1)
+
+            if len(orig_parts) > 0 and len(norm_parts) > 0:
+                orig_namespace = orig_parts[0]
+                norm_namespace = norm_parts[0]
+
+                # If namespace changed or normalized to empty, path traversal occurred
+                if orig_namespace != norm_namespace or norm_namespace == "":
+                    raise InvalidPathError(
+                        f"Path traversal detected: {path} (attempted to escape namespace)"
+                    )
 
         return normalized
 
@@ -411,8 +409,7 @@ class PathRouter:
         Parse virtual path to extract namespace, tenant, and agent information.
 
         Supported formats:
-        - /workspace/{tenant}/{agent}/{path}  → workspace namespace (multi-tenant mode)
-        - /workspace/{agent}/{path}           → workspace namespace (single-tenant mode, when tenant_id=None)
+        - /workspace/{path}                   → workspace namespace (ReBAC-based permissions)
         - /shared/{tenant}/{path}             → shared namespace
         - /external/{backend}/{path}          → external namespace
         - /system/{path}                      → system namespace
@@ -454,34 +451,7 @@ class PathRouter:
         ns_config = self._namespaces[namespace]
 
         # Parse based on namespace type
-        if namespace == "workspace":
-            # Workspace format: /workspace/{tenant}/{agent}/{path}
-            # Allow partial paths for directory creation (e.g., /workspace, /workspace/tenant)
-            if len(parts) >= 3:
-                return PathInfo(
-                    namespace=namespace,
-                    tenant_id=parts[1],
-                    agent_id=parts[2],
-                    relative_path="/".join(parts[3:]) if len(parts) > 3 else "",
-                )
-            elif len(parts) == 2:
-                # /workspace/{tenant} - has tenant but no agent
-                return PathInfo(
-                    namespace=namespace,
-                    tenant_id=parts[1],
-                    agent_id=None,
-                    relative_path="",
-                )
-            else:
-                # /workspace - just the namespace root
-                return PathInfo(
-                    namespace=namespace,
-                    tenant_id=None,
-                    agent_id=None,
-                    relative_path="",
-                )
-
-        elif namespace in ("shared", "archives"):
+        if namespace in ("shared", "archives"):
             # Format: /shared/{tenant}/{path} or /archives/{tenant}/{path}
             # Allow partial paths for directory creation
             if len(parts) >= 2:
@@ -500,8 +470,9 @@ class PathRouter:
                     relative_path="",
                 )
 
-        elif namespace in ("external", "system"):
-            # Format: /external/{path} or /system/{path}
+        elif namespace in ("external", "system", "workspace"):
+            # Format: /external/{path} or /system/{path} or /workspace/{path}
+            # No tenant/agent parsing - ReBAC handles permissions
             return PathInfo(
                 namespace=namespace,
                 tenant_id=None,
@@ -569,3 +540,82 @@ class PathRouter:
             raise ValueError(f"Path traversal detected: {path}")
 
         return normalized
+
+    def has_mount(self, mount_point: str) -> bool:
+        """
+        Check if a mount exists at the given mount point.
+
+        Args:
+            mount_point: Virtual path to check
+
+        Returns:
+            True if mount exists, False otherwise
+
+        Example:
+            >>> router.has_mount("/personal/alice")
+            True
+        """
+        try:
+            normalized = self._normalize_path(mount_point)
+            return any(m.mount_point == normalized for m in self._mounts)
+        except ValueError:
+            return False
+
+    def get_mount(self, mount_point: str) -> MountConfig | None:
+        """
+        Get mount configuration for a specific mount point.
+
+        Args:
+            mount_point: Virtual path to get mount config for
+
+        Returns:
+            MountConfig if found, None otherwise
+
+        Example:
+            >>> mount = router.get_mount("/personal/alice")
+            >>> if mount:
+            ...     print(f"Backend: {mount.backend}, Priority: {mount.priority}")
+        """
+        try:
+            normalized = self._normalize_path(mount_point)
+            for m in self._mounts:
+                if m.mount_point == normalized:
+                    return m
+            return None
+        except ValueError:
+            return None
+
+    def remove_mount(self, mount_point: str) -> bool:
+        """
+        Remove a mount by its mount point.
+
+        Args:
+            mount_point: Virtual path to unmount
+
+        Returns:
+            True if mount was removed, False if not found
+
+        Example:
+            >>> router.remove_mount("/personal/alice")
+            True
+        """
+        try:
+            normalized = self._normalize_path(mount_point)
+            original_len = len(self._mounts)
+            self._mounts = [m for m in self._mounts if m.mount_point != normalized]
+            return len(self._mounts) < original_len
+        except ValueError:
+            return False
+
+    def list_mounts(self) -> list[MountConfig]:
+        """
+        List all registered mounts.
+
+        Returns:
+            List of MountConfig objects (sorted by priority and prefix length)
+
+        Example:
+            >>> for mount in router.list_mounts():
+            ...     print(f"{mount.mount_point} -> {mount.backend}")
+        """
+        return self._mounts.copy()

@@ -186,8 +186,7 @@ class AnthropicPlugin(NexusPlugin):
 
                 zip_content = new_zip_buffer.getvalue()
 
-            # Use the real Skills API
-            # POST /beta/skills with zip file
+            # Upload to Skills API
             response = client.beta.skills.create(
                 display_title=display_title or skill_name,
                 files=[("skill.zip", zip_content)],
@@ -247,9 +246,7 @@ class AnthropicPlugin(NexusPlugin):
 
             console.print(f"Found: {skill_info.display_title}")
 
-            # Download the skill version
-            # Note: The actual download mechanism may vary based on API
-            # This is a placeholder for the actual download logic
+            # Display skill information
             console.print(
                 "[yellow]Note: Skill download implementation pending API documentation[/yellow]"
             )
@@ -356,7 +353,7 @@ class AnthropicPlugin(NexusPlugin):
 
             console.print(f"Deleting skill {skill_id}...")
 
-            # Note: Must delete all versions first
+            # Delete all versions before deleting the skill
             console.print("Deleting all versions first...")
 
             versions = client.beta.skills.versions.list(

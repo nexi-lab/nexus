@@ -75,16 +75,9 @@ def info(
         table.add_row("ETag", file_meta.etag or "N/A")
         table.add_row("MIME Type", file_meta.mime_type or "N/A")
 
-        # Show permissions if available
-        if file_meta.owner or file_meta.group or file_meta.mode is not None:
-            table.add_row("Owner", file_meta.owner or "N/A")
-            table.add_row("Group", file_meta.group or "N/A")
-
-            if file_meta.mode is not None:
-                from nexus.core.permissions import FileMode
-
-                mode_obj = FileMode(file_meta.mode)
-                table.add_row("Permissions", f"{oct(file_meta.mode)} ({mode_obj})")
+        # Note: As of v0.6.0, UNIX-style permissions have been removed.
+        # All permissions are now managed through ReBAC relationships.
+        # Use `nexus rebac expand read file <path>` to see who has access.
 
         console.print(table)
     except Exception as e:

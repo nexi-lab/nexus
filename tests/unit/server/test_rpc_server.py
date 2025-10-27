@@ -1,7 +1,8 @@
 """Unit tests for RPC server."""
 
+import contextlib
 from io import BytesIO
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 
@@ -41,9 +42,11 @@ class TestRPCRequestHandler:
         handler = Mock(spec=RPCRequestHandler)
         handler.nexus_fs = mock_filesystem
         handler.api_key = None
+        handler.auth_provider = None  # No auth provider by default
         handler.headers = {}
         # Bind the actual methods to the mock
         handler._validate_auth = lambda: RPCRequestHandler._validate_auth(handler)
+        handler._get_operation_context = lambda: RPCRequestHandler._get_operation_context(handler)
         handler._dispatch_method = lambda method, params: RPCRequestHandler._dispatch_method(
             handler, method, params
         )
@@ -88,7 +91,7 @@ class TestRPCRequestHandler:
         # Virtual view logic reads the base file (/test) and parses it
         assert result == b"test content"
         mock_filesystem.exists.assert_called_with("/test")
-        mock_filesystem.read.assert_called_once_with("/test")
+        mock_filesystem.read.assert_called_once_with("/test", context=ANY)
 
     def test_dispatch_write(self, mock_handler, mock_filesystem):
         """Test dispatching write method."""
@@ -102,9 +105,9 @@ class TestRPCRequestHandler:
         assert "version" in result
         assert "modified_at" in result
         assert "size" in result
-        # Verify write was called with correct params (v0.3.9 adds OCC params)
+        # Verify write was called with correct params (v0.3.9 adds OCC params, plus context)
         mock_filesystem.write.assert_called_once_with(
-            "/test.txt", b"data", if_match=None, if_none_match=False, force=False
+            "/test.txt", b"data", context=ANY, if_match=None, if_none_match=False, force=False
         )
 
     def test_dispatch_list(self, mock_handler, mock_filesystem):
@@ -268,6 +271,7 @@ class TestRPCValidation:
         """Test auth validation with malformed header."""
         handler = Mock(spec=RPCRequestHandler)
         handler.api_key = "secret123"
+        handler.auth_provider = None  # No auth provider
         handler.headers = {"Authorization": "InvalidFormat secret123"}
         handler._validate_auth = lambda: RPCRequestHandler._validate_auth(handler)
 
@@ -290,7 +294,10 @@ class TestRPCDispatchMethods:
         handler.nexus_fs.glob = Mock(return_value=["/test.py"])
         handler.nexus_fs.grep = Mock(return_value=[{"file": "/test.txt", "line": 1}])
         handler.nexus_fs.get_available_namespaces = Mock(return_value=["default"])
+        handler.auth_provider = None  # No auth provider by default
+        handler.headers = {}
 
+        handler._get_operation_context = lambda: RPCRequestHandler._get_operation_context(handler)
         handler._dispatch_method = lambda method, params: RPCRequestHandler._dispatch_method(
             handler, method, params
         )
@@ -305,7 +312,7 @@ class TestRPCDispatchMethods:
         result = mock_handler._dispatch_method("delete", params)
 
         assert result == {"success": True}
-        mock_handler.nexus_fs.delete.assert_called_once_with("/test.txt")
+        mock_handler.nexus_fs.delete.assert_called_once_with("/test.txt", context=ANY)
 
     def test_dispatch_rename(self, mock_handler):
         """Test dispatching rename method."""
@@ -315,7 +322,7 @@ class TestRPCDispatchMethods:
         result = mock_handler._dispatch_method("rename", params)
 
         assert result == {"success": True}
-        mock_handler.nexus_fs.rename.assert_called_once_with("/old.txt", "/new.txt")
+        mock_handler.nexus_fs.rename.assert_called_once_with("/old.txt", "/new.txt", context=ANY)
 
     def test_dispatch_mkdir(self, mock_handler):
         """Test dispatching mkdir method."""
@@ -325,7 +332,9 @@ class TestRPCDispatchMethods:
         result = mock_handler._dispatch_method("mkdir", params)
 
         assert result == {"success": True}
-        mock_handler.nexus_fs.mkdir.assert_called_once_with("/newdir", parents=True, exist_ok=False)
+        mock_handler.nexus_fs.mkdir.assert_called_once_with(
+            "/newdir", parents=True, exist_ok=False, context=ANY
+        )
 
     def test_dispatch_rmdir(self, mock_handler):
         """Test dispatching rmdir method."""
@@ -335,7 +344,7 @@ class TestRPCDispatchMethods:
         result = mock_handler._dispatch_method("rmdir", params)
 
         assert result == {"success": True}
-        mock_handler.nexus_fs.rmdir.assert_called_once_with("/olddir", recursive=True)
+        mock_handler.nexus_fs.rmdir.assert_called_once_with("/olddir", recursive=True, context=ANY)
 
     def test_dispatch_is_directory(self, mock_handler):
         """Test dispatching is_directory method."""
@@ -389,14 +398,37 @@ class TestRPCServerIntegration:
     @pytest.fixture
     def temp_nexus(self, tmp_path):
         """Create temporary Nexus instance."""
+        import shutil
+        import tempfile
+
         import nexus
 
-        data_dir = tmp_path / "nexus-data"
-        nx = nexus.connect(config={"data_dir": str(data_dir)})
-        nx.mkdir("/test", exist_ok=True)
-        nx.write("/test/file.txt", b"test content")
-        yield nx
-        nx.close()
+        # Use a temp directory that we control instead of pytest's tmp_path
+        # This avoids pytest's cleanup trying to access the database
+        temp_dir = tempfile.mkdtemp()
+        data_dir = f"{temp_dir}/nexus-data"
+
+        try:
+            nx = nexus.connect(config={"data_dir": data_dir})
+            nx.mkdir("/test", exist_ok=True)
+            nx.write("/test/file.txt", b"test content")
+            yield nx
+        finally:
+            # Shutdown parser threads before closing to avoid database locks
+            nx.shutdown_parser_threads(timeout=5.0)
+            nx.close()
+
+            # Dispose of all engines to release database connections
+            if hasattr(nx, "metadata") and hasattr(nx.metadata, "engine"):
+                nx.metadata.engine.dispose()
+            if hasattr(nx, "_rebac_manager") and hasattr(nx._rebac_manager, "engine"):
+                nx._rebac_manager.engine.dispose()
+            if hasattr(nx, "_audit_store") and hasattr(nx._audit_store, "engine"):
+                nx._audit_store.engine.dispose()
+
+            # Clean up temp directory
+            with contextlib.suppress(Exception):
+                shutil.rmtree(temp_dir)
 
     def test_server_with_real_filesystem(self, temp_nexus):
         """Test server with real filesystem."""

@@ -61,7 +61,12 @@ class TestSemanticSearch:
     def nx(self):
         """Create a temporary NexusFS instance."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            nx = connect(config={"data_dir": str(Path(tmpdir) / "data")})
+            nx = connect(
+                config={
+                    "data_dir": str(Path(tmpdir) / "data"),
+                    "enforce_permissions": False,  # Disable permissions for tests
+                }
+            )
             yield nx
             nx.close()
 

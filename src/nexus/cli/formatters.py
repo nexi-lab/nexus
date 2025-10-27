@@ -21,10 +21,14 @@ def format_permissions(mode: int | None) -> str:
     if mode is None:
         return "---------"
 
-    from nexus.core.permissions import FileMode
-
-    mode_obj = FileMode(mode)
-    return str(mode_obj)
+    # Convert mode to rwx format
+    perms = []
+    for shift in [6, 3, 0]:  # owner, group, other
+        perm = (mode >> shift) & 0o7
+        perms.append("r" if perm & 0o4 else "-")
+        perms.append("w" if perm & 0o2 else "-")
+        perms.append("x" if perm & 0o1 else "-")
+    return "".join(perms)
 
 
 def format_size(size: int) -> str:

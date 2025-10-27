@@ -54,59 +54,24 @@ class TestFilePathModel:
         session.commit()
 
         assert file_path.path_id is not None
-        assert file_path.tenant_id is not None
+        # v0.5.0: tenant_id removed - use ReBAC for multi-tenant access control
         assert file_path.virtual_path == "/test/file.txt"
         assert file_path.created_at is not None
         assert file_path.updated_at is not None
 
+    @pytest.mark.skip(
+        reason="v0.5.0: tenant_id removed - use ReBAC for multi-tenant access control"
+    )
     def test_unique_constraint_tenant_virtual_path(self, session):
-        """Test that tenant_id + virtual_path must be unique."""
-        tenant_id = "tenant-123"
+        """Test that tenant_id + virtual_path must be unique (deprecated)."""
+        pass
 
-        file1 = FilePathModel(
-            tenant_id=tenant_id,
-            virtual_path="/test/file.txt",
-            backend_id="backend-123",
-            physical_path="/data/file1.txt",
-            size_bytes=1024,
-        )
-        session.add(file1)
-        session.commit()
-
-        # Try to create duplicate
-        file2 = FilePathModel(
-            tenant_id=tenant_id,
-            virtual_path="/test/file.txt",
-            backend_id="backend-456",
-            physical_path="/data/file2.txt",
-            size_bytes=2048,
-        )
-        session.add(file2)
-
-        with pytest.raises(IntegrityError):
-            session.commit()
-
+    @pytest.mark.skip(
+        reason="v0.5.0: tenant_id removed - use ReBAC for multi-tenant access control"
+    )
     def test_different_tenants_can_have_same_path(self, session):
-        """Test that different tenants can have the same virtual path."""
-        file1 = FilePathModel(
-            tenant_id="tenant-1",
-            virtual_path="/test/file.txt",
-            backend_id="backend-123",
-            physical_path="/data/file1.txt",
-            size_bytes=1024,
-        )
-        file2 = FilePathModel(
-            tenant_id="tenant-2",
-            virtual_path="/test/file.txt",
-            backend_id="backend-456",
-            physical_path="/data/file2.txt",
-            size_bytes=2048,
-        )
-
-        session.add_all([file1, file2])
-        session.commit()
-
-        assert file1.path_id != file2.path_id
+        """Test that different tenants can have the same virtual path (deprecated)."""
+        pass
 
     def test_soft_delete(self, session):
         """Test soft delete functionality."""
@@ -318,7 +283,7 @@ class TestModelIndexes:
         # Check file_paths indexes
         file_paths_indexes = inspector.get_indexes("file_paths")
         index_names = [idx["name"] for idx in file_paths_indexes]
-        assert "idx_file_paths_tenant_id" in index_names
+        # v0.5.0: idx_file_paths_tenant_id removed - use ReBAC for multi-tenant access control
         assert "idx_file_paths_backend_id" in index_names
         assert "idx_file_paths_content_hash" in index_names
         assert "idx_file_paths_virtual_path" in index_names

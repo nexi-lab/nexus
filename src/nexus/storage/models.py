@@ -7,6 +7,7 @@ For SQLite compatibility:
 - TIMESTAMP -> DateTime
 """
 
+import json
 import uuid
 from datetime import UTC, datetime
 
@@ -43,10 +44,10 @@ class FilePathModel(Base):
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
 
-    # Multi-tenancy (simplified for embedded - single tenant)
-    tenant_id: Mapped[str] = mapped_column(
-        String(36), nullable=False, default=lambda: str(uuid.uuid4())
-    )
+    # P0 SECURITY: Defense-in-depth tenant isolation
+    # v0.7.0: tenant_id restored for database-level filtering (defense-in-depth)
+    # Previous v0.5.0 architecture relied solely on ReBAC, creating single point of failure
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     # Path information
     virtual_path: Mapped[str] = mapped_column(Text, nullable=False)
@@ -78,13 +79,6 @@ class FilePathModel(Base):
         String(255), nullable=True
     )  # Worker/process ID that locked this file
 
-    # UNIX-style permissions (v0.3.0)
-    owner: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Owner user ID
-    group: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Group ID
-    mode: Mapped[int | None] = mapped_column(
-        Integer, nullable=True
-    )  # Permission bits (0o644, etc.)
-
     # Version tracking (v0.3.5)
     current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
@@ -92,21 +86,19 @@ class FilePathModel(Base):
     metadata_entries: Mapped[list["FileMetadataModel"]] = relationship(
         "FileMetadataModel", back_populates="file_path", cascade="all, delete-orphan"
     )
-    acl_entries: Mapped[list["ACLEntryModel"]] = relationship(
-        "ACLEntryModel", back_populates="file_path", cascade="all, delete-orphan"
-    )
 
     # Indexes and constraints
     __table_args__ = (
-        UniqueConstraint("tenant_id", "virtual_path", name="uq_tenant_virtual_path"),
-        Index("idx_file_paths_tenant_id", "tenant_id"),
+        # v0.7.0 P0 SECURITY: Restore tenant-scoped unique constraint for defense-in-depth
+        # Old uq_virtual_path (global uniqueness) kept for backward compatibility with NULL tenant_id
+        # New uq_tenant_virtual_path enforces uniqueness within tenant
+        UniqueConstraint("virtual_path", name="uq_virtual_path"),  # Legacy, for NULL tenant_id
+        Index("idx_file_paths_tenant_path", "tenant_id", "virtual_path"),  # Tenant-scoped queries
         Index("idx_file_paths_backend_id", "backend_id"),
         Index("idx_file_paths_content_hash", "content_hash"),
         Index("idx_file_paths_virtual_path", "virtual_path"),
         Index("idx_file_paths_accessed_at", "accessed_at"),
         Index("idx_file_paths_locked_by", "locked_by"),
-        Index("idx_file_paths_owner", "owner"),
-        Index("idx_file_paths_group", "group"),
     )
 
     def __repr__(self) -> str:
@@ -143,9 +135,8 @@ class FilePathModel(Base):
         if self.size_bytes < 0:
             raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")
 
-        # Validate tenant_id
-        if not self.tenant_id:
-            raise ValidationError("tenant_id is required")
+        # v0.5.0: tenant_id is now optional (nullable)
+        # Validation removed for backward compatibility
 
 
 class FileMetadataModel(Base):
@@ -209,89 +200,6 @@ class FileMetadataModel(Base):
             raise ValidationError(
                 f"metadata key must be 255 characters or less, got {len(self.key)}"
             )
-
-
-class ACLEntryModel(Base):
-    """Access Control List entries for files.
-
-    Stores ACL entries for fine-grained permission control beyond
-    traditional UNIX permissions.
-    """
-
-    __tablename__ = "acl_entries"
-
-    # Primary key
-    acl_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-
-    # Foreign key to file_paths
-    path_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("file_paths.path_id", ondelete="CASCADE"), nullable=False
-    )
-
-    # ACL entry details
-    entry_type: Mapped[str] = mapped_column(String(20), nullable=False)  # user, group, mask, other
-    identifier: Mapped[str | None] = mapped_column(String(255), nullable=True)  # username/groupname
-    permissions: Mapped[str] = mapped_column(String(10), nullable=False)  # rwx format
-    deny: Mapped[bool] = mapped_column(default=False, nullable=False)  # Deny entry flag
-    is_default: Mapped[bool] = mapped_column(
-        default=False, nullable=False
-    )  # Default ACL entry (for inheritance)
-
-    # Timestamp
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-
-    # Relationships
-    file_path: Mapped["FilePathModel"] = relationship("FilePathModel", back_populates="acl_entries")
-
-    # Indexes
-    __table_args__ = (
-        Index("idx_acl_entries_path_id", "path_id"),
-        Index("idx_acl_entries_type_id", "entry_type", "identifier"),
-        Index("idx_acl_entries_is_default", "is_default"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<ACLEntryModel(acl_id={self.acl_id}, entry_type={self.entry_type}, identifier={self.identifier})>"
-
-    def validate(self) -> None:
-        """Validate ACL entry model before database operations.
-
-        Raises:
-            ValidationError: If validation fails with clear message.
-        """
-        from nexus.core.exceptions import ValidationError
-
-        # Validate path_id
-        if not self.path_id:
-            raise ValidationError("path_id is required")
-
-        # Validate entry_type
-        valid_types = ["user", "group", "mask", "other"]
-        if self.entry_type not in valid_types:
-            raise ValidationError(f"entry_type must be one of {valid_types}, got {self.entry_type}")
-
-        # Validate identifier for user/group entries
-        if self.entry_type in ("user", "group"):
-            if not self.identifier:
-                raise ValidationError(f"{self.entry_type} entry requires identifier")
-        elif self.entry_type in ("mask", "other") and self.identifier is not None:
-            raise ValidationError(f"{self.entry_type} entry cannot have identifier")
-
-        # Validate permissions format
-        if not self.permissions:
-            raise ValidationError("permissions is required")
-        if len(self.permissions) != 3:
-            raise ValidationError(
-                f"permissions must be 3 characters (rwx format), got {self.permissions}"
-            )
-        for i, c in enumerate(self.permissions):
-            expected = ["r", "w", "x"][i]
-            if c not in (expected, "-"):
-                raise ValidationError(f"invalid permission character at position {i}: {c}")
 
 
 class ContentChunkModel(Base):
@@ -372,92 +280,8 @@ class ContentChunkModel(Base):
             raise ValidationError(f"ref_count cannot be negative, got {self.ref_count}")
 
 
-class PermissionPolicyModel(Base):
-    """Permission policies for automatic permission assignment.
-
-    Stores default permission policies per namespace pattern.
-    """
-
-    __tablename__ = "permission_policies"
-
-    # Primary key
-    policy_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-
-    # Namespace pattern (glob-style, e.g., /workspace/*, /shared/*)
-    namespace_pattern: Mapped[str] = mapped_column(String(255), nullable=False)
-
-    # Tenant ID (NULL = system-wide policy)
-    tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-
-    # Default permissions
-    default_owner: Mapped[str] = mapped_column(String(255), nullable=False)  # Supports ${agent_id}
-    default_group: Mapped[str] = mapped_column(String(255), nullable=False)  # Supports ${tenant_id}
-    default_mode: Mapped[int] = mapped_column(
-        Integer, nullable=False
-    )  # Permission bits (0o644, etc.)
-
-    # Priority for pattern matching (higher = more specific)
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-    # Timestamp
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-
-    # Indexes
-    __table_args__ = (
-        Index("idx_permission_policies_namespace", "namespace_pattern"),
-        Index("idx_permission_policies_tenant", "tenant_id"),
-        Index("idx_permission_policies_priority", "priority"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<PermissionPolicyModel(policy_id={self.policy_id}, namespace_pattern={self.namespace_pattern})>"
-
-    def validate(self) -> None:
-        """Validate permission policy model before database operations.
-
-        Raises:
-            ValidationError: If validation fails with clear message.
-        """
-        from nexus.core.exceptions import ValidationError
-
-        # Validate policy_id
-        if not self.policy_id:
-            raise ValidationError("policy_id is required")
-
-        # Validate namespace_pattern
-        if not self.namespace_pattern:
-            raise ValidationError("namespace_pattern is required")
-
-        if len(self.namespace_pattern) > 255:
-            raise ValidationError(
-                f"namespace_pattern must be 255 characters or less, got {len(self.namespace_pattern)}"
-            )
-
-        # Validate default_owner
-        if not self.default_owner:
-            raise ValidationError("default_owner is required")
-
-        # Validate default_group
-        if not self.default_group:
-            raise ValidationError("default_group is required")
-
-        # Validate default_mode
-        if not 0 <= self.default_mode <= 0o777:
-            raise ValidationError(
-                f"default_mode must be between 0o000 and 0o777, got {oct(self.default_mode)}"
-            )
-
-        # Validate priority
-        if self.priority < 0:
-            raise ValidationError(f"priority must be non-negative, got {self.priority}")
-
-
 class WorkspaceSnapshotModel(Base):
-    """Workspace snapshot tracking for agent workspaces.
+    """Workspace snapshot tracking for registered workspaces.
 
     Enables time-travel debugging and workspace rollback by capturing
     complete workspace state at specific points in time.
@@ -465,7 +289,9 @@ class WorkspaceSnapshotModel(Base):
     CAS-backed: Snapshot manifest (list of files + hashes) stored in CAS.
     Zero storage overhead due to content deduplication.
 
-    Workspace path format: /workspace/{tenant_id}/{agent_id}/
+    Note: Workspaces must be registered via WorkspaceRegistry before creating snapshots.
+    Workspace identification uses explicit path (e.g., "/my-workspace") instead of
+    the old tenant_id+agent_id pattern.
     """
 
     __tablename__ = "workspace_snapshots"
@@ -475,9 +301,8 @@ class WorkspaceSnapshotModel(Base):
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
 
-    # Workspace identification
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
-    agent_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    # Workspace identification (changed from tenant_id+agent_id to workspace_path)
+    workspace_path: Mapped[str] = mapped_column(Text, nullable=False, index=True)
 
     # Snapshot metadata
     snapshot_number: Mapped[int] = mapped_column(Integer, nullable=False)  # Sequential version
@@ -501,14 +326,14 @@ class WorkspaceSnapshotModel(Base):
 
     # Indexes and constraints
     __table_args__ = (
-        UniqueConstraint("tenant_id", "agent_id", "snapshot_number", name="uq_workspace_snapshot"),
-        Index("idx_workspace_snapshots_workspace", "tenant_id", "agent_id"),
+        UniqueConstraint("workspace_path", "snapshot_number", name="uq_workspace_snapshot"),
+        Index("idx_workspace_snapshots_workspace_path", "workspace_path"),
         Index("idx_workspace_snapshots_manifest", "manifest_hash"),
         Index("idx_workspace_snapshots_created_at", "created_at"),
     )
 
     def __repr__(self) -> str:
-        return f"<WorkspaceSnapshotModel(snapshot_id={self.snapshot_id}, agent={self.agent_id}, version={self.snapshot_number})>"
+        return f"<WorkspaceSnapshotModel(snapshot_id={self.snapshot_id}, workspace={self.workspace_path}, version={self.snapshot_number})>"
 
 
 class VersionHistoryModel(Base):
@@ -1035,12 +860,6 @@ class MemoryModel(Base):
         String(50), nullable=False, default="private"
     )  # 'private', 'shared', 'public'
 
-    # UNIX permissions
-    group: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    mode: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=420
-    )  # 0o644 (owner rw, group r, other r)
-
     # Memory metadata
     memory_type: Mapped[str | None] = mapped_column(
         String(50), nullable=True
@@ -1097,10 +916,6 @@ class MemoryModel(Base):
                 f"visibility must be one of {valid_visibilities}, got {self.visibility}"
             )
 
-        # Validate mode
-        if not 0 <= self.mode <= 0o777:
-            raise ValidationError(f"mode must be between 0o000 and 0o777, got {oct(self.mode)}")
-
         # Validate importance
         if self.importance is not None and not 0.0 <= self.importance <= 1.0:
             raise ValidationError(f"importance must be between 0.0 and 1.0, got {self.importance}")
@@ -1117,6 +932,8 @@ class ReBACTupleModel(Base):
     Stores (subject, relation, object) tuples representing relationships
     between entities in the authorization graph.
 
+    v0.6.0: Added tenant_id for tenant isolation (P0-2 fix)
+
     Examples:
         - (agent:alice, member-of, group:developers)
         - (group:developers, owner-of, file:/workspace/project.txt)
@@ -1126,9 +943,17 @@ class ReBACTupleModel(Base):
 
     tuple_id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
+    # Tenant isolation (v0.6.0) - P0-2 Critical Security Fix
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    subject_tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    object_tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     # Subject (who/what has the relationship)
     subject_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     subject_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    subject_relation: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )  # For userset-as-subject
 
     # Relation type
     relation: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
@@ -1148,10 +973,16 @@ class ReBACTupleModel(Base):
 
     # Composite index for efficient lookups
     __table_args__ = (
+        # Tenant-scoped indexes (v0.6.0)
+        Index("idx_rebac_tenant_subject", "tenant_id", "subject_type", "subject_id"),
+        Index("idx_rebac_tenant_object", "tenant_id", "object_type", "object_id"),
+        # Original indexes (kept for backward compatibility)
         Index("idx_rebac_subject", "subject_type", "subject_id"),
         Index("idx_rebac_object", "object_type", "object_id"),
         Index("idx_rebac_relation", "relation"),
         Index("idx_rebac_expires", "expires_at"),
+        # Subject relation index for userset-as-subject (v0.7.0)
+        Index("idx_rebac_subject_relation", "subject_type", "subject_id", "subject_relation"),
     )
 
 
@@ -1213,10 +1044,33 @@ class ReBACChangelogModel(Base):
     object_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     object_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # Tenant scoping for multi-tenancy
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+
     # Timestamp
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
     )
+
+
+class ReBACVersionSequenceModel(Base):
+    """Per-tenant version sequence for ReBAC consistency tokens.
+
+    Stores monotonic version counters used to track ReBAC tuple changes
+    for each tenant. Used for bounded staleness caching (P0-1).
+
+    Added in v0.7.0 (migration 04a22b67d228).
+    """
+
+    __tablename__ = "rebac_version_sequences"
+
+    tenant_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    current_version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    __table_args__ = (Index("ix_rebac_version_sequences_tenant_id", "tenant_id"),)
 
 
 class ReBACCheckCacheModel(Base):
@@ -1224,11 +1078,16 @@ class ReBACCheckCacheModel(Base):
 
     Caches the results of expensive graph traversal operations
     to improve performance of repeated permission checks.
+
+    v0.6.0: Added tenant_id for tenant-scoped caching
     """
 
     __tablename__ = "rebac_check_cache"
 
     cache_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    # Tenant isolation (v0.6.0)
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     # Cached check parameters
     subject_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
@@ -1248,6 +1107,17 @@ class ReBACCheckCacheModel(Base):
 
     # Composite index for efficient lookups
     __table_args__ = (
+        # Tenant-aware cache lookup (v0.6.0)
+        Index(
+            "idx_rebac_cache_tenant_check",
+            "tenant_id",
+            "subject_type",
+            "subject_id",
+            "permission",
+            "object_type",
+            "object_id",
+        ),
+        # Original index (backward compatibility)
         Index(
             "idx_rebac_cache_check",
             "subject_type",
@@ -1257,3 +1127,218 @@ class ReBACCheckCacheModel(Base):
             "object_id",
         ),
     )
+
+
+class APIKeyModel(Base):
+    """Database-backed API key storage.
+
+    P0-5: Stores API keys securely with HMAC-SHA256 hashing.
+
+    Features:
+    - Secure key hashing (HMAC-SHA256 + salt)
+    - Optional expiry dates
+    - Revocation support
+    - Subject-based identity (user, agent, service)
+    - Tenant isolation
+    """
+
+    __tablename__ = "api_keys"
+
+    # Primary key
+    key_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Key security
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+
+    # Identity & access
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    subject_type: Mapped[str | None] = mapped_column(String(50), nullable=True, default="user")
+    subject_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    is_admin: Mapped[int] = mapped_column(Integer, default=0)  # SQLite: bool as Integer
+
+    # Metadata
+    name: Mapped[str] = mapped_column(String(255), nullable=False)  # Human-readable name
+
+    # Lifecycle
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked: Mapped[int] = mapped_column(Integer, default=0, index=True)  # SQLite: bool as Integer
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class MountConfigModel(Base):
+    """Persistent mount configuration storage.
+
+    Stores backend mount configurations to survive server restarts.
+    Supports dynamic user mounting (e.g., personal Google Drive mounts).
+
+    Example:
+        - Mount user's personal Google Drive at /personal/google:alice123
+        - Mount team shared GCS bucket at /team/shared-bucket
+        - Mount legacy S3 bucket at /archives/legacy-data
+    """
+
+    __tablename__ = "mount_configs"
+
+    # Primary key
+    mount_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Mount configuration
+    mount_point: Mapped[str] = mapped_column(
+        Text, nullable=False, unique=True
+    )  # e.g., "/personal/alice"
+    backend_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # e.g., "google_drive", "gcs", "local"
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    readonly: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)  # SQLite boolean
+
+    # Backend configuration (JSON)
+    # Stores backend-specific config like access tokens, bucket names, etc.
+    # Example: {"access_token": "...", "user_email": "alice@acme.com"}
+    backend_config: Mapped[str] = mapped_column(Text, nullable=False)  # JSON
+
+    # Ownership and metadata
+    owner_user_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )  # User who created mount
+    tenant_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )  # Tenant this mount belongs to
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_mount_configs_mount_point", "mount_point"),
+        Index("idx_mount_configs_owner", "owner_user_id"),
+        Index("idx_mount_configs_tenant", "tenant_id"),
+        Index("idx_mount_configs_backend_type", "backend_type"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<MountConfigModel(mount_id={self.mount_id}, mount_point={self.mount_point}, backend_type={self.backend_type})>"
+
+    def validate(self) -> None:
+        """Validate mount config model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate mount_point
+        if not self.mount_point:
+            raise ValidationError("mount_point is required")
+
+        if not self.mount_point.startswith("/"):
+            raise ValidationError(f"mount_point must start with '/', got {self.mount_point!r}")
+
+        # Validate backend_type
+        if not self.backend_type:
+            raise ValidationError("backend_type is required")
+
+        # Validate backend_config
+        if not self.backend_config:
+            raise ValidationError("backend_config is required")
+
+        # Try to parse backend_config as JSON
+        try:
+            json.loads(self.backend_config)
+        except json.JSONDecodeError as e:
+            raise ValidationError(f"backend_config must be valid JSON: {e}") from None
+
+        # Validate priority
+        if self.priority < 0:
+            raise ValidationError(f"priority must be non-negative, got {self.priority}")
+
+
+# === Workspace & Memory Registry Models (v2.0) ===
+
+
+class WorkspaceConfigModel(Base):
+    """Workspace configuration registry.
+
+    Tracks which directories are registered as workspaces.
+    Workspaces support snapshot/restore/versioning features.
+
+    Unlike the old system which extracted workspace from paths,
+    this is an explicit registry where users declare which
+    directories should have workspace capabilities.
+    """
+
+    __tablename__ = "workspace_configs"
+
+    # Primary key (the workspace path)
+    path: Mapped[str] = mapped_column(Text, primary_key=True)
+
+    # Optional metadata
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Audit info
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # User-defined metadata (JSON as text for SQLite compat)
+    # Note: Using 'extra_metadata' because 'metadata' is reserved by SQLAlchemy
+    extra_metadata: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)
+
+    # Indexes
+    __table_args__ = (Index("idx_workspace_configs_created_at", "created_at"),)
+
+    def __repr__(self) -> str:
+        return f"<WorkspaceConfigModel(path={self.path}, name={self.name})>"
+
+
+class MemoryConfigModel(Base):
+    """Memory configuration registry.
+
+    Tracks which directories are registered as memories.
+    Memories support consolidation/search/versioning features.
+
+    No owner or scope needed - permissions handled by ReBAC separately.
+    """
+
+    __tablename__ = "memory_configs"
+
+    # Primary key (the memory path)
+    path: Mapped[str] = mapped_column(Text, primary_key=True)
+
+    # Optional metadata
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Audit info
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # User-defined metadata (JSON as text for SQLite compat)
+    # Note: Using 'extra_metadata' because 'metadata' is reserved by SQLAlchemy
+    extra_metadata: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)
+
+    # Indexes
+    __table_args__ = (Index("idx_memory_configs_created_at", "created_at"),)
+
+    def __repr__(self) -> str:
+        return f"<MemoryConfigModel(path={self.path}, name={self.name})>"

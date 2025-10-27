@@ -323,7 +323,7 @@ class TestPhase3MemoryPermissions:
             user_id="alice",
             agent_id="agent1",
             scope="agent",  # Agent-scoped
-            mode=0o600,  # Owner read+write only, no access for others
+            # v0.5.0: mode removed - use ReBAC for permissions
         )
 
         # agent2 (same user) should NOT have access to agent-scoped memory
@@ -361,7 +361,7 @@ class TestPhase3MemoryPermissions:
             user_id="alice",
             agent_id="agent1",
             scope="user",  # User-scoped, not agent-scoped
-            mode=0o600,  # Owner read+write only
+            # v0.5.0: mode removed - use ReBAC for permissions
         )
 
         # Direct user access should work
@@ -387,7 +387,7 @@ class TestPhase3MemoryPermissions:
         memory = memory_router.create_memory(
             content_hash="abc123",
             user_id="alice",
-            mode=0o000,  # No permissions
+            # v0.5.0: mode removed - use ReBAC for permissions
         )
 
         ctx = OperationContext(user="admin", groups=[], is_admin=True)

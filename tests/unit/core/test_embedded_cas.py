@@ -18,11 +18,15 @@ def temp_dir() -> Generator[Path, None, None]:
 
 @pytest.fixture
 def embedded_cas(temp_dir: Path) -> Generator[NexusFS, None, None]:
-    """Create an Embedded instance (CAS always enabled)."""
+    """Create an Embedded instance (CAS always enabled) with isolated database.
+
+    (Environment variable isolation is handled by the global conftest fixture)
+    """
     emb = NexusFS(
         backend=LocalBackend(temp_dir),
         db_path=temp_dir / "metadata.db",
         auto_parse=False,  # Disable auto-parsing for unit tests
+        enforce_permissions=False,  # Disable permissions for basic functionality tests
     )
     yield emb
     emb.close()

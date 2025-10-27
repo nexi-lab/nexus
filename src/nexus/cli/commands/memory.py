@@ -1,15 +1,19 @@
-"""Memory management CLI commands (v0.4.0)."""
+"""Memory management CLI commands (v0.4.0+)."""
 
 import json
 
 import click
+from rich.console import Console
+from rich.table import Table
 
-from nexus.cli.utils import get_default_filesystem
+from nexus.cli.utils import BackendConfig, get_default_filesystem, get_filesystem, handle_error
+
+console = Console()
 
 
 @click.group()
 def memory() -> None:
-    """Agent memory management commands."""
+    """Agent memory management and registry commands."""
     pass
 
 
@@ -264,3 +268,202 @@ def delete(memory_id: str) -> None:
     except Exception as e:
         click.echo(f"Error deleting memory: {e}", err=True)
         raise click.Abort() from e
+
+
+# ===== Memory Registry Commands (v0.7.0) =====
+
+
+@memory.command(name="register")
+@click.argument("path", type=str)
+@click.option("--name", "-n", default=None, help="Friendly name for memory")
+@click.option("--description", "-d", default="", help="Description of memory")
+@click.option("--created-by", default=None, help="User/agent who created it")
+@click.option("--data-dir", default=None, help="Data directory for local backend")
+@click.option("--config", default=None, help="Path to configuration file")
+def register_memory_cmd(
+    path: str,
+    name: str | None,
+    description: str,
+    created_by: str | None,
+    data_dir: str | None,
+    config: str | None,
+) -> None:
+    """Register a directory as a memory.
+
+    Memories support consolidation, semantic search, and versioning.
+
+    Examples:
+        nexus memory register /my-memory --name kb
+        nexus memory register /team/knowledge --name team-kb --description "Team knowledge base"
+    """
+    try:
+        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
+        nx = get_filesystem(backend_config)
+
+        result = nx.register_memory(
+            path=path,
+            name=name,
+            description=description,
+            created_by=created_by,
+        )
+
+        console.print(f"[green]✓[/green] Registered memory: {result['path']}")
+        if result["name"]:
+            console.print(f"  Name: {result['name']}")
+        if result["description"]:
+            console.print(f"  Description: {result['description']}")
+        if result["created_by"]:
+            console.print(f"  Created by: {result['created_by']}")
+
+        nx.close()
+
+    except Exception as e:
+        handle_error(e)
+
+
+@memory.command(name="list-registered")
+@click.option("--data-dir", default=None, help="Data directory for local backend")
+@click.option("--config", default=None, help="Path to configuration file")
+def list_registered_cmd(
+    data_dir: str | None,
+    config: str | None,
+) -> None:
+    """List all registered memories.
+
+    Examples:
+        nexus memory list-registered
+    """
+    try:
+        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
+        nx = get_filesystem(backend_config)
+
+        memories = nx.list_memories()
+
+        if not memories:
+            console.print("[yellow]No memories registered[/yellow]")
+            nx.close()
+            return
+
+        # Create table
+        table = Table(title="Registered Memories")
+        table.add_column("Path", style="cyan")
+        table.add_column("Name", style="green")
+        table.add_column("Description")
+        table.add_column("Created By", style="dim")
+
+        for mem in memories:
+            table.add_row(
+                mem["path"],
+                mem["name"] or "",
+                mem["description"] or "",
+                mem["created_by"] or "",
+            )
+
+        console.print(table)
+        console.print(f"\n[dim]{len(memories)} memory/memories registered[/dim]")
+
+        nx.close()
+
+    except Exception as e:
+        handle_error(e)
+
+
+@memory.command(name="unregister")
+@click.argument("path", type=str)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.option("--data-dir", default=None, help="Data directory for local backend")
+@click.option("--config", default=None, help="Path to configuration file")
+def unregister_memory_cmd(
+    path: str,
+    yes: bool,
+    data_dir: str | None,
+    config: str | None,
+) -> None:
+    """Unregister a memory (does NOT delete files).
+
+    This removes the memory from the registry but keeps all files intact.
+
+    Examples:
+        nexus memory unregister /my-memory
+        nexus memory unregister /my-memory --yes
+    """
+    try:
+        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
+        nx = get_filesystem(backend_config)
+
+        # Get memory info first
+        info = nx.get_memory_info(path)
+        if not info:
+            console.print(f"[red]✗[/red] Memory not registered: {path}")
+            nx.close()
+            return
+
+        # Confirm
+        if not yes:
+            console.print(f"[yellow]⚠[/yellow]  About to unregister memory: {path}")
+            if info["name"]:
+                console.print(f"    Name: {info['name']}")
+            if info["description"]:
+                console.print(f"    Description: {info['description']}")
+            console.print(
+                "\n[dim]Note: Files will NOT be deleted, only registry entry removed[/dim]"
+            )
+
+            if not click.confirm("Continue?"):
+                console.print("[yellow]Cancelled[/yellow]")
+                nx.close()
+                return
+
+        # Unregister
+        result = nx.unregister_memory(path)
+
+        if result:
+            console.print(f"[green]✓[/green] Unregistered memory: {path}")
+        else:
+            console.print(f"[red]✗[/red] Failed to unregister memory: {path}")
+
+        nx.close()
+
+    except Exception as e:
+        handle_error(e)
+
+
+@memory.command(name="info")
+@click.argument("path", type=str)
+@click.option("--data-dir", default=None, help="Data directory for local backend")
+@click.option("--config", default=None, help="Path to configuration file")
+def memory_info_cmd(
+    path: str,
+    data_dir: str | None,
+    config: str | None,
+) -> None:
+    """Show information about a registered memory.
+
+    Examples:
+        nexus memory info /my-memory
+    """
+    try:
+        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
+        nx = get_filesystem(backend_config)
+
+        info = nx.get_memory_info(path)
+
+        if not info:
+            console.print(f"[red]✗[/red] Memory not registered: {path}")
+            nx.close()
+            return
+
+        console.print(f"[bold]Memory: {info['path']}[/bold]\n")
+        if info["name"]:
+            console.print(f"Name: {info['name']}")
+        if info["description"]:
+            console.print(f"Description: {info['description']}")
+        if info["created_at"]:
+            console.print(f"Created: {info['created_at']}")
+        if info["created_by"]:
+            console.print(f"Created by: {info['created_by']}")
+
+        nx.close()
+
+    except Exception as e:
+        handle_error(e)

@@ -474,6 +474,9 @@ ALL_VIEWS = [(name, func("sqlite")) for name, func in VIEW_GENERATORS]
 VIEW_NAMES = [name for name, _ in VIEW_GENERATORS]
 DROP_VIEWS = [text(f"DROP VIEW IF EXISTS {name};") for name in VIEW_NAMES]
 
+# Allowlist of valid view names for SQL injection prevention
+ALLOWED_VIEW_NAMES = frozenset(name for name, _ in VIEW_GENERATORS)
+
 
 def get_all_views(db_type: str = "sqlite") -> list[tuple[str, TextClause]]:
     """Get all view definitions for a specific database type.

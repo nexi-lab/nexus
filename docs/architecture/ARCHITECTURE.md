@@ -1,6 +1,6 @@
 # Nexus Architecture
 
-**Version:** 0.4.0 | **Last Updated:** 2025-10-23
+**Version:** 0.6.0 | **Last Updated:** 2025-10-26
 
 > **Purpose:** High-level architecture overview of Nexus, an AI-native distributed filesystem with advanced features for AI agent workflows.
 
@@ -15,7 +15,7 @@
   - [Work Queue](#4-work-queue-system)
   - [Workflow Engine](#5-workflow-engine-v040)
   - [Skills System](#6-skills-system)
-  - [Permission System](#7-3-tier-permission-system-v040)
+  - [Permission System](#7-rebac-permission-system-v060)
   - [Memory System](#8-identity-based-memory-system-v040)
 - [Storage Layer](#storage-layer)
 - [Namespace System](#namespace-system)
@@ -33,7 +33,7 @@ Nexus is an AI-native distributed filesystem providing a unified API across mult
 
 - **Unified Interface**: Single API for local, GCS, S3, and cloud storage
 - **Content-Addressable Storage**: Automatic deduplication (30-50% savings)
-- **3-Tier Permissions**: UNIX + ACL + ReBAC for flexible access control
+- **ReBAC Permissions**: Pure Zanzibar-style relationship-based access control
 - **Identity-Based Memory**: Order-neutral paths for multi-agent collaboration
 - **Time-Travel**: Full operation history with undo capability
 - **AI-Native Features**: Semantic search, LLM integration, workflow automation
@@ -47,7 +47,7 @@ Nexus is an AI-native distributed filesystem providing a unified API across mult
 ├─────────────────────────────────────────────────────┤
 │              Core Components                        │
 │   NexusFS  │  Plugins  │  Workflows  │  LLM        │
-│   Permissions (UNIX/ACL/ReBAC)  │  Memory System   │
+│   Permissions (ReBAC)  │  Memory System             │
 ├─────────────────────────────────────────────────────┤
 │              Storage Layer                          │
 │   Metadata Store  │  CAS  │  Cache  │  Op Log      │
@@ -67,7 +67,7 @@ Nexus is an AI-native distributed filesystem providing a unified API across mult
 
 **Key Capabilities:**
 - **Multi-Backend Routing**: Automatic path routing to appropriate storage backend
-- **Permission Enforcement**: Integrated 3-tier permission system (UNIX/ACL/ReBAC)
+- **Permission Enforcement**: Integrated ReBAC permission system
 - **Operation Logging**: Complete audit trail for time-travel and undo
 - **CAS Integration**: Automatic content deduplication via SHA-256 hashing
 - **Batch Operations**: 4x faster bulk writes via `write_batch()`
@@ -75,10 +75,10 @@ Nexus is an AI-native distributed filesystem providing a unified API across mult
 
 **Implementation:** Mixin-based architecture separating concerns:
 - `NexusFSCoreMixin`: Core read/write/delete operations
-- `NexusFSPermissionsMixin`: UNIX/ACL permission operations
 - `NexusFSReBACMixin`: Relationship-based access control (fully remote-capable via RPC)
 - `NexusFSSearchMixin`: Semantic and keyword search
 - `NexusFSVersionsMixin`: Workspace snapshots and versioning
+- `NexusFSMountsMixin`: Mount management for virtual filesystem views
 
 **RPC Exposure:** All public methods use `@rpc_expose` decorator for automatic remote access via HTTP/RPC protocol. RPC parity is automatically enforced in CI to prevent local-only methods.
 
@@ -172,32 +172,55 @@ Nexus is an AI-native distributed filesystem providing a unified API across mult
 
 **Format:** SKILL.md files with YAML frontmatter (name, version, dependencies, tier)
 
-### 7. 3-Tier Permission System (v0.4.0+)
+### 7. ReBAC Permission System (v0.6.0+)
 
-**Purpose:** Flexible access control combining traditional UNIX permissions with modern access patterns.
+**Purpose:** Pure relationship-based access control using Google Zanzibar principles for scalable, flexible authorization.
 
-**Location:** `src/nexus/core/permissions.py`, `nexus_fs_permissions.py`, `nexus_fs_rebac.py`, `rebac_manager.py`
+**Location:** `src/nexus/core/permissions.py`, `nexus_fs_rebac.py`, `rebac_manager.py`
 
-**Three Layers (evaluated in order):**
+**Architecture:** Pure ReBAC (Relationship-Based Access Control) - all UNIX-style permissions and ACLs removed in v0.6.0.
 
-1. **UNIX Permissions**: Traditional owner/group/mode (chmod, chown, chgrp)
-2. **ACL (Access Control Lists)**: Per-user/group granular permissions with explicit deny
-3. **ReBAC (Relationship-Based)**: Zanzibar-style graph traversal for dynamic inheritance
+**Permission Model:**
+
+- **Subject-Based Identity**: Identity specified per-operation, not per-instance
+  - Types: `user`, `agent`, `service`, `group`, custom entity types
+  - Examples: `("user", "alice")`, `("agent", "claude_001")`, `("service", "bootstrap")`
+
+- **Relationship Tuples**: All permissions expressed as `(subject, relation, object)` tuples
+  - Direct Relations: `direct_owner`, `direct_editor`, `direct_viewer`
+  - Computed Relations: `owner`, `editor`, `viewer` (unions of direct + inherited)
+  - Permissions: `read`, `write`, `execute` (map to relations via namespace config)
+
+- **Object Types**: `file`, `memory`, `workspace`, custom resource types
+  - Examples: `("file", "/workspace/doc.txt")`, `("memory", "mem_123")`
 
 **Key Capabilities:**
-- Complete CLI + Python SDK for all layers
-- **Full Remote Support**: All permission operations work via RPC (local/remote parity) ✨NEW
-- Explicit deny rules (ACL takes precedence)
-- Automatic permission inheritance via relationships (ReBAC)
-- Time-limited access with expiration
-- Multi-level organization hierarchies
+- Complete CLI + Python SDK for ReBAC operations (`nexus rebac create/check/list/delete`)
+- **Full Remote Support**: All permission operations work via RPC (local/remote parity)
+- Automatic permission inheritance via parent relationships
+- Time-limited access with expiration timestamps
+- Multi-level organization hierarchies (tenant → workspace → user → agent)
+- Multi-tenant isolation with tenant-aware permission checks
 - Centralized permission management in client-server deployments
+- Graph-based permission checking with caching for performance
 
-**Permission Check Order:** Admin bypass → ReBAC → ACL → UNIX → Deny (default)
+**Permission Check Order:** Admin bypass → ReBAC relation check → Deny (default)
 
-**Examples:** See `examples/py_demo/acl_demo.py` and `examples/py_demo/rebac_demo.py`
+**Permission Hierarchy:**
+```
+owner (full access)
+  └── write (includes read)
+       └── read (view only)
 
-**Detailed Documentation:** See [PERMISSIONS.md](./PERMISSIONS.md) for comprehensive guide
+Relations:
+- owner = direct_owner ∪ parent_owner
+- editor = direct_editor ∪ owner
+- viewer = direct_viewer ∪ editor
+```
+
+**Examples:** See `examples/py_demo/rebac_demo.py`, `rebac_comprehensive_demo.py`, `rebac_advanced_demo.py`
+
+**Detailed Documentation:** See [PERMISSIONS.md](../PERMISSIONS.md) for comprehensive guide
 
 ### 8. Identity-Based Memory System (v0.4.0)
 
@@ -212,7 +235,7 @@ Nexus is an AI-native distributed filesystem providing a unified API across mult
 - **Zero Duplication**: Memory sharing across agents without file copies
 - **Dual API Access**: Use Memory API (`nx.memory.*`) or File API (`nx.read/write`) interchangeably
 - **Multi-View Browsing**: Access by user, agent, or tenant perspective
-- **Permission Integration**: Full 3-tier permission system support
+- **Permission Integration**: Full ReBAC permission system support
 
 **Storage Structure:**
 - **Entity Registry**: Tracks tenant/user/agent relationships and hierarchies
@@ -260,9 +283,9 @@ Alice's two agents share user-scoped memories. Agent1 creates memory → Agent2 
 ```python
 from nexus.core.rpc_decorator import rpc_expose
 
-@rpc_expose(description="Change file permissions")
-def chmod(self, path: str, mode: int) -> None:
-    """Change file permissions."""
+@rpc_expose(description="Create ReBAC relationship")
+def rebac_create(self, subject, relation, object, tenant_id=None) -> bool:
+    """Create a ReBAC relationship tuple."""
     # Implementation
 ```
 
@@ -420,9 +443,11 @@ User Undo → Load Operation → Extract Undo State → Reverse Operation → Lo
 - Per-tenant operation logs and metadata
 
 ### Permission Model
-- **3-Tier System**: UNIX + ACL + ReBAC
-- **Permissions**: read, write, execute, owner-of
-- **Inheritance**: Directory → file inheritance via ReBAC
+- **Pure ReBAC**: Zanzibar-style relationship-based access control
+- **Permissions**: read, write, execute (mapped from relations)
+- **Relations**: owner, editor, viewer (with direct_ variants)
+- **Inheritance**: Directory → file inheritance via parent relationships
+- **Multi-tenant**: Complete tenant isolation in permission checks
 
 ### Data Security
 - SHA-256 content hashing for integrity

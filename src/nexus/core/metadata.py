@@ -10,7 +10,13 @@ from datetime import datetime
 
 @dataclass
 class FileMetadata:
-    """File metadata information."""
+    """File metadata information.
+
+    Note: UNIX-style permissions (owner/group/mode) have been
+    removed. All permissions are now managed through ReBAC relationships.
+
+    v0.7.0 P0 SECURITY: Added tenant_id for defense-in-depth isolation.
+    """
 
     path: str
     backend_name: str
@@ -21,10 +27,7 @@ class FileMetadata:
     created_at: datetime | None = None
     modified_at: datetime | None = None
     version: int = 1
-    # UNIX-style permissions (v0.3.0)
-    owner: str | None = None
-    group: str | None = None
-    mode: int | None = None  # Permission bits (e.g., 0o644)
+    tenant_id: str | None = None  # P0 SECURITY: Defense-in-depth tenant isolation
 
     def validate(self) -> None:
         """Validate file metadata before database operations.
@@ -116,12 +119,14 @@ class MetadataStore(ABC):
         pass
 
     @abstractmethod
-    def list(self, prefix: str = "") -> list[FileMetadata]:
+    def list(self, prefix: str = "", recursive: bool = True) -> list[FileMetadata]:
         """
         List all files with given path prefix.
 
         Args:
             prefix: Path prefix to filter by
+            recursive: If True, include all nested files. If False, only direct children.
+                      PERFORMANCE: Non-recursive uses database-level filtering (v0.7.0)
 
         Returns:
             List of file metadata

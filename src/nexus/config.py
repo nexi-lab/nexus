@@ -71,16 +71,7 @@ class NexusConfig(BaseModel):
         default=300, description="Cache TTL in seconds (None = no expiry)"
     )
 
-    # Multi-tenant isolation settings
-    tenant_id: str | None = Field(
-        default=None, description="Tenant identifier for multi-tenant isolation"
-    )
-    user_id: str | None = Field(
-        default=None, description="User identifier for identity-based memory system (v0.4.0)"
-    )
-    agent_id: str | None = Field(
-        default=None, description="Agent identifier for agent-level isolation in /workspace"
-    )
+    # v0.5.0: Admin flag for bypassing permission checks
     is_admin: bool = Field(default=False, description="Whether this instance has admin privileges")
 
     # Custom namespace configurations
@@ -100,15 +91,32 @@ class NexusConfig(BaseModel):
     )
 
     # Permission enforcement settings (v0.3.0)
+    # P0-6: CHANGED DEFAULT TO TRUE FOR SECURITY
+    # Production builds MUST enforce permissions
     enforce_permissions: bool = Field(
         default=True,
-        description="Enable permission enforcement on file operations (default: True)",
+        description="Enable permission enforcement on file operations (P0-6: default True for security)",
+    )
+
+    # Workspace and Memory registry (v0.7.0)
+    workspaces: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Workspace registry configurations (list of dicts with path, name, description, created_by, metadata)",
+    )
+    memories: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Memory registry configurations (list of dicts with path, name, description, created_by, metadata)",
     )
 
     # Remote mode settings (monolithic/distributed)
     url: str | None = Field(default=None, description="Nexus server URL for remote modes")
     api_key: str | None = Field(default=None, description="API key for authentication")
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
+
+    # Identity settings for memory API (v0.4.0)
+    tenant_id: str | None = Field(default=None, description="Tenant ID for memory operations")
+    user_id: str | None = Field(default=None, description="User ID for memory operations")
+    agent_id: str | None = Field(default=None, description="Agent ID for memory operations")
 
     @field_validator("mode")
     @classmethod
@@ -241,14 +249,14 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_CACHE_EXISTS_SIZE": "cache_exists_size",
         "NEXUS_CACHE_TTL_SECONDS": "cache_ttl_seconds",
         "NEXUS_AUTO_PARSE": "auto_parse",
-        "NEXUS_TENANT_ID": "tenant_id",
-        "NEXUS_USER_ID": "user_id",
-        "NEXUS_AGENT_ID": "agent_id",
         "NEXUS_IS_ADMIN": "is_admin",
         "NEXUS_ENFORCE_PERMISSIONS": "enforce_permissions",
         "NEXUS_URL": "url",
         "NEXUS_API_KEY": "api_key",
         "NEXUS_TIMEOUT": "timeout",
+        "NEXUS_TENANT_ID": "tenant_id",
+        "NEXUS_USER_ID": "user_id",
+        "NEXUS_AGENT_ID": "agent_id",
     }
 
     for env_var, config_key in env_mapping.items():
@@ -280,11 +288,6 @@ def _load_from_environment() -> NexusConfig:
             else:
                 converted_value = value
             env_config[config_key] = converted_value
-
-    # Do not auto-set agent_id - let it default to None
-    # When agent_id is None, NexusFS will use "system" user with system privileges
-    # This allows CLI operations to run without permission restrictions by default
-    # Users can explicitly set NEXUS_AGENT_ID environment variable if needed
 
     # Handle NEXUS_PARSERS environment variable
     # Format: "module:class:priority,module:class:priority,..."

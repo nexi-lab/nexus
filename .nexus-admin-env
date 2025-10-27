@@ -1,0 +1,5 @@
+# Nexus Admin Environment
+# Created: Sun Oct 26 20:51:58 PDT 2025
+# User: admin
+export NEXUS_API_KEY='sk-default_admin_39ca7d1d_9f41d92d8f6eabeea6a95edcd6762f4a'
+export NEXUS_URL='http://localhost:8080'

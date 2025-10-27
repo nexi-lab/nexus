@@ -20,7 +20,12 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
-    nx = NexusFS(backend=LocalBackend(temp_dir), db_path=temp_dir / "metadata.db", auto_parse=False)
+    nx = NexusFS(
+        backend=LocalBackend(temp_dir),
+        db_path=temp_dir / "metadata.db",
+        auto_parse=False,
+        enforce_permissions=False,  # Disable permissions for tests
+    )
     yield nx
     nx.close()
 

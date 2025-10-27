@@ -83,6 +83,11 @@ __all__ = [
     # ReBAC
     "ReBACManager",
     "ReBACTuple",
+    "Entity",
+    "WILDCARD_SUBJECT",
+    "ConsistencyLevel",
+    "CheckResult",
+    "GraphLimitExceeded",
     # Router
     "NamespaceConfig",
 ]
@@ -112,8 +117,15 @@ from nexus.core.exceptions import (
 from nexus.core.filesystem import NexusFilesystem as Filesystem
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext, PermissionEnforcer
-from nexus.core.rebac import ReBACTuple
-from nexus.core.rebac_manager import ReBACManager
+from nexus.core.rebac import WILDCARD_SUBJECT, Entity, ReBACTuple
+from nexus.core.rebac_manager_enhanced import (
+    CheckResult,
+    ConsistencyLevel,
+    GraphLimitExceeded,
+)
+from nexus.core.rebac_manager_enhanced import (
+    EnhancedReBACManager as ReBACManager,
+)
 from nexus.core.router import NamespaceConfig
 from nexus.remote import RemoteNexusFS
 from nexus.skills import (

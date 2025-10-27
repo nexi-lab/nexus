@@ -7,7 +7,6 @@ for the FUSE mount manager.
 from __future__ import annotations
 
 import threading
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -355,14 +354,19 @@ class TestNexusFUSEWait:
 
         fuse_manager.mount(foreground=False)
 
-        # Mock the thread to finish quickly
+        # Mock the thread to finish quickly using an Event instead of sleep
+        finish_event = threading.Event()
+
         def finish_thread() -> None:
-            time.sleep(0.1)
+            finish_event.set()
             fuse_manager._mounted = False
 
         thread = threading.Thread(target=finish_thread)
         fuse_manager._mount_thread = thread
         thread.start()
+
+        # Wait for thread to signal completion
+        finish_event.wait(timeout=1.0)
 
         # Wait should block until thread finishes
         fuse_manager.wait()
@@ -449,6 +453,8 @@ class TestMountNexusFunction:
             mode=MountMode.SMART,
             auto_parse=False,
             cache_config=None,
+            default_context=None,
+            uid_mapping=None,
         )
 
         # Should have called mount
@@ -484,6 +490,8 @@ class TestMountNexusFunction:
             mode=MountMode.BINARY,
             auto_parse=True,
             cache_config=cache_config,
+            default_context=None,
+            uid_mapping=None,
         )
 
         # Should have called mount with correct params

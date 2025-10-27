@@ -14,7 +14,7 @@ def test_mkdir_parents_true_succeeds_if_exists():
     with tempfile.TemporaryDirectory() as tmpdir:
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
-        nx = NexusFS(backend=backend, db_path=db_path)
+        nx = NexusFS(backend=backend, db_path=db_path, enforce_permissions=False)
 
         # Create directory
         nx.mkdir("/workspace/foo/bar", parents=True)
@@ -36,7 +36,7 @@ def test_mkdir_parents_false_fails_if_exists():
     with tempfile.TemporaryDirectory() as tmpdir:
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
-        nx = NexusFS(backend=backend, db_path=db_path)
+        nx = NexusFS(backend=backend, db_path=db_path, enforce_permissions=False)
 
         # Create directory
         nx.mkdir("/workspace/foo", parents=True)
@@ -54,7 +54,7 @@ def test_mkdir_exist_ok_succeeds_if_exists():
     with tempfile.TemporaryDirectory() as tmpdir:
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
-        nx = NexusFS(backend=backend, db_path=db_path)
+        nx = NexusFS(backend=backend, db_path=db_path, enforce_permissions=False)
 
         # Create directory
         nx.mkdir("/workspace/foo", parents=True)
@@ -72,7 +72,7 @@ def test_mkdir_parents_creates_intermediate_dirs():
     with tempfile.TemporaryDirectory() as tmpdir:
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
-        nx = NexusFS(backend=backend, db_path=db_path)
+        nx = NexusFS(backend=backend, db_path=db_path, enforce_permissions=False)
 
         # Create deep directory structure
         nx.mkdir("/workspace/a/b/c/d", parents=True)

@@ -1,4 +1,4 @@
-# Permission Enforcement in Nexus (v0.3.0+)
+# Permission Enforcement in Nexus
 
 ## Overview
 
@@ -310,7 +310,6 @@ nexus read /test/file.txt --as-user bob    # ❌ Should fail
 
 ## Migration Guide
 
-### From v0.2.x to v0.3.0
 
 Permission enforcement is **opt-in** for backward compatibility:
 
@@ -382,20 +381,20 @@ default_dir_mode = "0o755"
 
 ## Roadmap
 
-### Phase 1: UNIX Permissions ✅ (v0.3.0)
+### Phase 1: UNIX Permissions ✅
 - ✅ OperationContext dataclass
 - ✅ PermissionEnforcer class
 - ✅ UNIX permission checking
 - ✅ Permission inheritance
 - ✅ Comprehensive tests
 
-### Phase 2: ACL & ReBAC (v0.4.0)
+### Phase 2: ACL & ReBAC
 - ⏳ ACL entry checking
 - ⏳ ReBAC graph traversal
 - ⏳ Integration with operations
 - ⏳ Audit logging
 
-### Phase 3: Advanced Features (v0.5.0)
+### Phase 3: Advanced Features
 - ⏳ Permission policies
 - ⏳ Role-based access control (RBAC)
 - ⏳ Time-based permissions
@@ -448,8 +447,8 @@ If you see unexpected permission errors after upgrading:
 ## See Also
 
 - [UNIX Permissions Implementation](./PERMISSIONS_IMPLEMENTATION.md)
-- [ACL Guide](./ACL_GUIDE.md) (coming in v0.4.0)
-- [ReBAC Guide](./REBAC_GUIDE.md) (coming in v0.4.0)
+- [ACL Guide](./ACL_GUIDE.md) (coming soon)
+- [ReBAC Guide](./REBAC_GUIDE.md) (coming soon)
 - [Security Best Practices](./SECURITY.md)
 
 ## Contributing

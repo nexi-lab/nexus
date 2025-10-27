@@ -6,16 +6,20 @@ Provides workspace-level version control for time-travel debugging and rollback.
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import desc, select
 
-from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
 from nexus.storage.models import WorkspaceSnapshotModel
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
+    from nexus.core.rebac_manager import ReBACManager
     from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+
+logger = logging.getLogger(__name__)
 
 
 class WorkspaceManager:
@@ -33,32 +37,103 @@ class WorkspaceManager:
     - Deduplication (same workspace state = same manifest hash)
     """
 
-    def __init__(self, metadata: SQLAlchemyMetadataStore, backend: Backend):
+    def __init__(
+        self,
+        metadata: SQLAlchemyMetadataStore,
+        backend: Backend,
+        rebac_manager: ReBACManager | None = None,
+        tenant_id: str | None = None,
+        agent_id: str | None = None,
+    ):
         """Initialize workspace manager.
 
         Args:
             metadata: Metadata store for querying file information
             backend: Backend for storing manifest in CAS
+            rebac_manager: ReBAC manager for permission checks (optional)
+            tenant_id: Default tenant ID for operations (optional)
+            agent_id: Default agent ID for operations (optional)
         """
         self.metadata = metadata
         self.backend = backend
+        self.rebac_manager = rebac_manager
+        self.tenant_id = tenant_id
+        self.agent_id = agent_id
+
+    def _check_workspace_permission(
+        self,
+        workspace_path: str,
+        permission: str,
+        agent_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Check if agent has permission on workspace.
+
+        Args:
+            workspace_path: Path to workspace
+            permission: Permission to check (e.g., 'snapshot:create', 'snapshot:list')
+            agent_id: Agent ID to check (uses default if not provided)
+            tenant_id: Tenant ID for isolation (uses default if not provided)
+
+        Raises:
+            NexusPermissionError: If permission check fails
+        """
+        if not self.rebac_manager:
+            # No ReBAC manager configured - allow operation
+            # This maintains backward compatibility for deployments without ReBAC
+            logger.warning(
+                f"WorkspaceManager: No ReBAC manager configured, allowing {permission} on {workspace_path}"
+            )
+            return
+
+        # Use provided IDs or fall back to defaults
+        check_agent_id = agent_id or self.agent_id
+        check_tenant_id = tenant_id or self.tenant_id
+
+        if not check_agent_id:
+            # No agent ID available - deny by default for security
+            logger.error(
+                f"WorkspaceManager: No agent_id provided for permission check: {permission} on {workspace_path}"
+            )
+            raise NexusPermissionError(
+                f"Permission denied: {permission} on workspace {workspace_path} (no agent_id provided)"
+            )
+
+        # Check permission via ReBAC
+        has_permission = self.rebac_manager.rebac_check(
+            subject=("agent", check_agent_id),
+            permission=permission,
+            object=("workspace", workspace_path),
+            tenant_id=check_tenant_id,
+        )
+
+        if not has_permission:
+            logger.warning(
+                f"WorkspaceManager: Permission denied for agent={check_agent_id}, "
+                f"permission={permission}, workspace={workspace_path}, tenant={check_tenant_id}"
+            )
+            raise NexusPermissionError(
+                f"Permission denied: {permission} on workspace {workspace_path}"
+            )
 
     def create_snapshot(
         self,
-        agent_id: str,
-        tenant_id: str | None = None,
+        workspace_path: str,
         description: str | None = None,
         tags: list[str] | None = None,
         created_by: str | None = None,
+        agent_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
-        """Create a snapshot of the agent's workspace.
+        """Create a snapshot of a registered workspace.
 
         Args:
-            agent_id: Agent identifier
-            tenant_id: Tenant identifier (optional)
+            workspace_path: Path to registered workspace (e.g., "/my-workspace")
             description: Human-readable description of snapshot
             tags: List of tags for categorization
             created_by: User/agent who created the snapshot
+            agent_id: Agent ID for permission check (uses default if not provided)
+            tenant_id: Tenant ID for isolation (uses default if not provided)
 
         Returns:
             Snapshot metadata dict with keys:
@@ -70,18 +145,33 @@ class WorkspaceManager:
                 - created_at: Snapshot creation timestamp
 
         Raises:
+            NexusPermissionError: If agent lacks snapshot:create permission
             BackendError: If manifest cannot be stored
         """
-        # Build workspace prefix
-        workspace_prefix = self._build_workspace_prefix(tenant_id, agent_id)
+        # Check permission first
+        self._check_workspace_permission(
+            workspace_path=workspace_path,
+            permission="snapshot:create",
+            agent_id=agent_id,
+            tenant_id=tenant_id,
+        )
+
+        # Ensure workspace_path ends with / for prefix matching
+        workspace_prefix = workspace_path if workspace_path.endswith("/") else workspace_path + "/"
 
         # Get all files in workspace
         with self.metadata.SessionLocal() as session:
             files = self.metadata.list(prefix=workspace_prefix)
 
-            # Build manifest: {path: content_hash, ...}
-            manifest = {}
+            # PERFORMANCE OPTIMIZATION: Stream manifest to avoid building large dict in memory
+            # For large workspaces (10K+ files), building entire manifest in memory can use 100s of MB
+            # Instead, we incrementally build JSON and stream to backend
+
+            # First pass: collect metadata and count
+            file_entries = []
             total_size = 0
+            file_count = 0
+
             for file_meta in files:
                 # Skip directories (no content) and files without etag
                 if file_meta.mime_type == "directory" or not file_meta.etag:
@@ -89,26 +179,45 @@ class WorkspaceManager:
 
                 # Relative path within workspace
                 rel_path = file_meta.path[len(workspace_prefix) :]
-                manifest[rel_path] = {
-                    "hash": file_meta.etag,
-                    "size": file_meta.size,
-                    "mime_type": file_meta.mime_type,
-                }
+                file_entries.append((rel_path, file_meta.etag, file_meta.size, file_meta.mime_type))
                 total_size += file_meta.size
+                file_count += 1
 
-            # Serialize manifest to JSON
-            manifest_json = json.dumps(manifest, sort_keys=True, indent=2)
-            manifest_bytes = manifest_json.encode("utf-8")
+            # Sort entries by path for deterministic manifest hashing
+            file_entries.sort(key=lambda x: x[0])
+
+            # Stream manifest JSON construction
+            # Build JSON incrementally to avoid large string in memory
+            import io
+
+            manifest_buffer = io.BytesIO()
+            manifest_buffer.write(b"{\n")
+
+            for i, (rel_path, etag, size, mime_type) in enumerate(file_entries):
+                # Write each entry
+                if i > 0:
+                    manifest_buffer.write(b",\n")
+
+                # Use json.dumps for individual values to handle escaping correctly
+                # This is much lighter than json.dumps on entire dict
+                path_json = json.dumps(rel_path)
+                etag_json = json.dumps(etag)
+                mime_json = json.dumps(mime_type) if mime_type else "null"
+
+                entry = f'  {path_json}: {{"hash": {etag_json}, "size": {size}, "mime_type": {mime_json}}}'
+                manifest_buffer.write(entry.encode("utf-8"))
+
+            manifest_buffer.write(b"\n}")
+            manifest_bytes = manifest_buffer.getvalue()
 
             # Store manifest in CAS
             manifest_hash = self.backend.write_content(manifest_bytes)
 
-            # Get next snapshot number
+            # Get next snapshot number for this workspace
             stmt = (
                 select(WorkspaceSnapshotModel.snapshot_number)
                 .where(
-                    WorkspaceSnapshotModel.tenant_id == tenant_id,
-                    WorkspaceSnapshotModel.agent_id == agent_id,
+                    WorkspaceSnapshotModel.workspace_path == workspace_path,
                 )
                 .order_by(desc(WorkspaceSnapshotModel.snapshot_number))
                 .limit(1)
@@ -118,11 +227,10 @@ class WorkspaceManager:
 
             # Create snapshot record
             snapshot = WorkspaceSnapshotModel(
-                tenant_id=tenant_id,
-                agent_id=agent_id,
+                workspace_path=workspace_path,
                 snapshot_number=next_snapshot_number,
                 manifest_hash=manifest_hash,
-                file_count=len(manifest),
+                file_count=file_count,
                 total_size_bytes=total_size,
                 description=description,
                 created_by=created_by,
@@ -149,6 +257,7 @@ class WorkspaceManager:
         self,
         snapshot_id: str | None = None,
         snapshot_number: int | None = None,
+        workspace_path: str | None = None,
         agent_id: str | None = None,
         tenant_id: str | None = None,
     ) -> dict[str, Any]:
@@ -157,8 +266,9 @@ class WorkspaceManager:
         Args:
             snapshot_id: Snapshot ID to restore (takes precedence)
             snapshot_number: Snapshot version number to restore
-            agent_id: Agent identifier (required if using snapshot_number)
-            tenant_id: Tenant identifier (optional)
+            workspace_path: Workspace path (required if using snapshot_number)
+            agent_id: Agent ID for permission check (uses default if not provided)
+            tenant_id: Tenant ID for isolation (uses default if not provided)
 
         Returns:
             Restore operation result with keys:
@@ -167,23 +277,23 @@ class WorkspaceManager:
                 - snapshot_info: Restored snapshot metadata
 
         Raises:
-            ValueError: If neither snapshot_id nor (snapshot_number + agent_id) provided
+            ValueError: If neither snapshot_id nor (snapshot_number + workspace_path) provided
+            NexusPermissionError: If agent lacks snapshot:restore permission
             NexusFileNotFoundError: If snapshot not found
             BackendError: If manifest cannot be read
         """
         with self.metadata.SessionLocal() as session:
-            # Find snapshot
+            # Find snapshot first to get workspace_path
             if snapshot_id:
                 snapshot = session.get(WorkspaceSnapshotModel, snapshot_id)
-            elif snapshot_number and agent_id:
+            elif snapshot_number is not None and workspace_path:
                 stmt = select(WorkspaceSnapshotModel).where(
-                    WorkspaceSnapshotModel.tenant_id == tenant_id,
-                    WorkspaceSnapshotModel.agent_id == agent_id,
+                    WorkspaceSnapshotModel.workspace_path == workspace_path,
                     WorkspaceSnapshotModel.snapshot_number == snapshot_number,
                 )
                 snapshot = session.execute(stmt).scalar_one_or_none()
             else:
-                raise ValueError("Must provide snapshot_id or (snapshot_number + agent_id)")
+                raise ValueError("Must provide snapshot_id or (snapshot_number + workspace_path)")
 
             if not snapshot:
                 raise NexusFileNotFoundError(
@@ -191,12 +301,22 @@ class WorkspaceManager:
                     message="Snapshot not found",
                 )
 
+            # Check permission to restore this workspace
+            self._check_workspace_permission(
+                workspace_path=snapshot.workspace_path,
+                permission="snapshot:restore",
+                agent_id=agent_id,
+                tenant_id=tenant_id,
+            )
+
             # Read manifest from CAS
             manifest_bytes = self.backend.read_content(snapshot.manifest_hash)
             manifest = json.loads(manifest_bytes.decode("utf-8"))
 
-            # Build workspace prefix
-            workspace_prefix = self._build_workspace_prefix(snapshot.tenant_id, snapshot.agent_id)
+            # Get workspace path and ensure it ends with /
+            workspace_prefix = snapshot.workspace_path
+            if not workspace_prefix.endswith("/"):
+                workspace_prefix += "/"
 
             # Get current workspace files
             current_files = self.metadata.list(prefix=workspace_prefix)
@@ -262,26 +382,37 @@ class WorkspaceManager:
 
     def list_snapshots(
         self,
-        agent_id: str,
-        tenant_id: str | None = None,
+        workspace_path: str,
         limit: int = 100,
+        agent_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List all snapshots for an agent's workspace.
+        """List all snapshots for a workspace.
 
         Args:
-            agent_id: Agent identifier
-            tenant_id: Tenant identifier (optional)
+            workspace_path: Path to registered workspace
             limit: Maximum number of snapshots to return
+            agent_id: Agent ID for permission check (uses default if not provided)
+            tenant_id: Tenant ID for isolation (uses default if not provided)
 
         Returns:
             List of snapshot metadata dicts (most recent first)
+
+        Raises:
+            NexusPermissionError: If agent lacks snapshot:list permission
         """
+        # Check permission first
+        self._check_workspace_permission(
+            workspace_path=workspace_path,
+            permission="snapshot:list",
+            agent_id=agent_id,
+            tenant_id=tenant_id,
+        )
         with self.metadata.SessionLocal() as session:
             stmt = (
                 select(WorkspaceSnapshotModel)
                 .where(
-                    WorkspaceSnapshotModel.tenant_id == tenant_id,
-                    WorkspaceSnapshotModel.agent_id == agent_id,
+                    WorkspaceSnapshotModel.workspace_path == workspace_path,
                 )
                 .order_by(desc(WorkspaceSnapshotModel.created_at))
                 .limit(limit)
@@ -308,12 +439,16 @@ class WorkspaceManager:
         self,
         snapshot_id_1: str,
         snapshot_id_2: str,
+        agent_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
         """Compare two snapshots and return diff.
 
         Args:
             snapshot_id_1: First snapshot ID
             snapshot_id_2: Second snapshot ID
+            agent_id: Agent ID for permission check (uses default if not provided)
+            tenant_id: Tenant ID for isolation (uses default if not provided)
 
         Returns:
             Diff dict with keys:
@@ -323,6 +458,7 @@ class WorkspaceManager:
                 - unchanged: Number of unchanged files
 
         Raises:
+            NexusPermissionError: If agent lacks snapshot:diff permission
             NexusFileNotFoundError: If either snapshot not found
         """
         with self.metadata.SessionLocal() as session:
@@ -337,6 +473,22 @@ class WorkspaceManager:
             if not snap2:
                 raise NexusFileNotFoundError(
                     path=f"snapshot:{snapshot_id_2}", message="Snapshot 2 not found"
+                )
+
+            # Check permission for both workspaces (they might be different)
+            self._check_workspace_permission(
+                workspace_path=snap1.workspace_path,
+                permission="snapshot:diff",
+                agent_id=agent_id,
+                tenant_id=tenant_id,
+            )
+            # Only check snap2 if it's a different workspace
+            if snap1.workspace_path != snap2.workspace_path:
+                self._check_workspace_permission(
+                    workspace_path=snap2.workspace_path,
+                    permission="snapshot:diff",
+                    agent_id=agent_id,
+                    tenant_id=tenant_id,
                 )
 
             # Read manifests
@@ -386,18 +538,3 @@ class WorkspaceManager:
                 "modified": modified,
                 "unchanged": unchanged,
             }
-
-    def _build_workspace_prefix(self, tenant_id: str | None, agent_id: str) -> str:
-        """Build workspace path prefix.
-
-        Args:
-            tenant_id: Tenant identifier (optional)
-            agent_id: Agent identifier
-
-        Returns:
-            Workspace path prefix, e.g., "/workspace/tenant1/agent1/"
-        """
-        if tenant_id:
-            return f"/workspace/{tenant_id}/{agent_id}/"
-        else:
-            return f"/workspace/{agent_id}/"

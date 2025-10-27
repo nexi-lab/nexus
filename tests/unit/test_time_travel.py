@@ -26,7 +26,12 @@ class TestTimeTravelDebug:
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
 
-        nx = nexus.connect(config={"data_dir": str(data_dir)})
+        nx = nexus.connect(
+            config={
+                "data_dir": str(data_dir),
+                "enforce_permissions": False,  # Disable permissions for tests
+            }
+        )
         yield nx
         nx.close()
 
@@ -294,7 +299,6 @@ class TestTimeTravelDebug:
 
     def test_time_travel_metadata_preservation(self, nx):
         """Test that metadata is preserved in historical reads."""
-        from nexus.core.permissions import OperationContext
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.time_travel import TimeTravelReader
 
@@ -303,11 +307,10 @@ class TestTimeTravelDebug:
         # Write file
         nx.write(path, b"Content")
 
-        # Set permissions
-        context = OperationContext(user="testuser", groups=[], is_admin=True, is_system=True)
-        nx.chown(path, "testowner", context=context)
-        nx.chgrp(path, "testgroup", context=context)
-        nx.chmod(path, 0o644, context=context)
+        # Set permissions using ReBAC (v0.6.0+)
+        nx.rebac_create(
+            subject=("user", "testowner"), relation="direct_owner", object=("file", path)
+        )
 
         # Write again to create a new version
         nx.write(path, b"Updated content")

@@ -339,7 +339,7 @@ class RemoteNexusFS(NexusFilesystem):
         Args:
             path: Virtual path to read
             context: Unused in remote client (handled server-side)
-            return_metadata: If True, return dict with content and metadata (v0.3.9)
+            return_metadata: If True, return dict with content and metadata
 
         Returns:
             If return_metadata=False: File content as bytes
@@ -347,6 +347,28 @@ class RemoteNexusFS(NexusFilesystem):
         """
         result = self._call_rpc("read", {"path": path, "return_metadata": return_metadata})
         return result  # type: ignore[no-any-return]
+
+    def stream(self, path: str, chunk_size: int = 8192, context: Any = None) -> Any:  # noqa: ARG002
+        """Stream file content in chunks.
+
+        Note: Streaming over RPC is not efficient. This method reads the entire
+        file and yields it in chunks. For true streaming, use direct file access.
+
+        Args:
+            path: Virtual path to stream
+            chunk_size: Size of each chunk in bytes (default: 8KB)
+            context: Unused in remote client (handled server-side)
+
+        Yields:
+            bytes: Chunks of file content
+        """
+        # Read entire file (RPC doesn't support true streaming)
+        content = self.read(path)
+        assert isinstance(content, bytes), "Expected bytes from read()"
+
+        # Yield in chunks
+        for i in range(0, len(content), chunk_size):
+            yield content[i : i + chunk_size]
 
     def write(
         self,
@@ -363,15 +385,15 @@ class RemoteNexusFS(NexusFilesystem):
             path: Virtual path to write
             content: File content as bytes
             context: Unused in remote client (handled server-side)
-            if_match: Optional etag for OCC (v0.3.9)
-            if_none_match: If True, create-only mode (v0.3.9)
-            force: If True, skip version check (v0.3.9)
+            if_match: Optional etag for optimistic concurrency control
+            if_none_match: If True, create-only mode
+            force: If True, skip version check
 
         Returns:
             Dict with metadata (etag, version, modified_at, size)
 
         Raises:
-            ConflictError: If if_match doesn't match current etag (v0.3.9)
+            ConflictError: If if_match doesn't match current etag
         """
         result = self._call_rpc(
             "write",
@@ -499,7 +521,7 @@ class RemoteNexusFS(NexusFilesystem):
         return result["namespaces"]  # type: ignore[no-any-return]
 
     # ============================================================
-    # Version Tracking Operations (v0.3.5)
+    # Version Tracking Operations
     # ============================================================
 
     def get_version(self, path: str, version: int) -> bytes:
@@ -525,11 +547,12 @@ class RemoteNexusFS(NexusFilesystem):
         return result  # type: ignore[no-any-return]
 
     # ============================================================
-    # Workspace Versioning (v0.3.9)
+    # Workspace Versioning
     # ============================================================
 
     def workspace_snapshot(
         self,
+        workspace_path: str | None = None,
         agent_id: str | None = None,
         description: str | None = None,
         tags: builtins.list[str] | None = None,
@@ -537,6 +560,7 @@ class RemoteNexusFS(NexusFilesystem):
         """Create a snapshot of the current agent's workspace.
 
         Args:
+            workspace_path: Path to registered workspace
             agent_id: Agent identifier (uses default if not provided)
             description: Human-readable description of snapshot
             tags: List of tags for categorization
@@ -550,19 +574,26 @@ class RemoteNexusFS(NexusFilesystem):
         """
         result = self._call_rpc(
             "workspace_snapshot",
-            {"agent_id": agent_id, "description": description, "tags": tags},
+            {
+                "workspace_path": workspace_path,
+                "agent_id": agent_id,
+                "description": description,
+                "tags": tags,
+            },
         )
         return result  # type: ignore[no-any-return]
 
     def workspace_restore(
         self,
         snapshot_number: int,
+        workspace_path: str | None = None,
         agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Restore workspace to a previous snapshot.
 
         Args:
             snapshot_number: Snapshot version number to restore
+            workspace_path: Path to registered workspace
             agent_id: Agent identifier (uses default if not provided)
 
         Returns:
@@ -574,18 +605,24 @@ class RemoteNexusFS(NexusFilesystem):
         """
         result = self._call_rpc(
             "workspace_restore",
-            {"snapshot_number": snapshot_number, "agent_id": agent_id},
+            {
+                "snapshot_number": snapshot_number,
+                "workspace_path": workspace_path,
+                "agent_id": agent_id,
+            },
         )
         return result  # type: ignore[no-any-return]
 
     def workspace_log(
         self,
+        workspace_path: str | None = None,
         agent_id: str | None = None,
         limit: int = 100,
     ) -> builtins.list[dict[str, Any]]:
         """List snapshot history for workspace.
 
         Args:
+            workspace_path: Path to registered workspace
             agent_id: Agent identifier (uses default if not provided)
             limit: Maximum number of snapshots to return
 
@@ -597,7 +634,7 @@ class RemoteNexusFS(NexusFilesystem):
         """
         result = self._call_rpc(
             "workspace_log",
-            {"agent_id": agent_id, "limit": limit},
+            {"workspace_path": workspace_path, "agent_id": agent_id, "limit": limit},
         )
         return result  # type: ignore[no-any-return]
 
@@ -605,6 +642,7 @@ class RemoteNexusFS(NexusFilesystem):
         self,
         snapshot_1: int,
         snapshot_2: int,
+        workspace_path: str | None = None,
         agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Compare two workspace snapshots.
@@ -612,6 +650,7 @@ class RemoteNexusFS(NexusFilesystem):
         Args:
             snapshot_1: First snapshot number
             snapshot_2: Second snapshot number
+            workspace_path: Path to registered workspace
             agent_id: Agent identifier (uses default if not provided)
 
         Returns:
@@ -623,58 +662,99 @@ class RemoteNexusFS(NexusFilesystem):
         """
         result = self._call_rpc(
             "workspace_diff",
-            {"snapshot_1": snapshot_1, "snapshot_2": snapshot_2, "agent_id": agent_id},
+            {
+                "snapshot_1": snapshot_1,
+                "snapshot_2": snapshot_2,
+                "workspace_path": workspace_path,
+                "agent_id": agent_id,
+            },
         )
         return result  # type: ignore[no-any-return]
 
     # ============================================================
-    # Permission Operations
+    # DEPRECATED: Legacy Permission Operations
     # ============================================================
+    # These methods are no longer supported.
+    # Use rebac_create(), rebac_check(), and rebac_delete() instead.
 
     def chmod(self, path: str, mode: int | str, context: Any = None) -> None:  # noqa: ARG002
-        """Change file permissions.
+        """DEPRECATED: Change file permissions (no longer supported).
 
-        Args:
-            path: Virtual file path
-            mode: Permission mode (int like 0o644 or string like '755')
-            context: Unused in remote client (handled server-side)
+        This method has been removed. Use ReBAC permissions instead.
+
+        Migration:
+            Use rebac_create() to grant permissions:
+
+            >>> nx.rebac_create(
+            ...     subject=("user", "alice"),
+            ...     relation="owner",
+            ...     object=("file", path)
+            ... )
 
         Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            PermissionError: If user doesn't have permission
+            NotImplementedError: Always
+
+        See:
+            - rebac_create(): Create permission relationships
+            - rebac_check(): Check permissions
         """
-        self._call_rpc("chmod", {"path": path, "mode": mode})
+        raise NotImplementedError(
+            "chmod() is no longer supported. Use ReBAC instead:\n"
+            "  nx.rebac_create(subject=('user', 'alice'), relation='owner', object=('file', path))"
+        )
 
     def chown(self, path: str, owner: str, context: Any = None) -> None:  # noqa: ARG002
-        """Change file owner.
+        """DEPRECATED: Change file owner (no longer supported).
 
-        Args:
-            path: Virtual file path
-            owner: New owner identifier
-            context: Unused in remote client (handled server-side)
+        This method has been removed. Use ReBAC permissions instead.
+
+        Migration:
+            Use rebac_create() to set ownership:
+
+            >>> nx.rebac_create(
+            ...     subject=("user", "alice"),
+            ...     relation="owner",
+            ...     object=("file", path)
+            ... )
 
         Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            PermissionError: If user doesn't have permission
+            NotImplementedError: Always
+
+        See:
+            - rebac_create(): Create permission relationships
         """
-        self._call_rpc("chown", {"path": path, "owner": owner})
+        raise NotImplementedError(
+            "chown() is no longer supported. Use ReBAC instead:\n"
+            f"  nx.rebac_create(subject=('user', '{owner}'), relation='owner', object=('file', '{path}'))"
+        )
 
     def chgrp(self, path: str, group: str, context: Any = None) -> None:  # noqa: ARG002
-        """Change file group.
+        """DEPRECATED: Change file group (no longer supported).
 
-        Args:
-            path: Virtual file path
-            group: New group identifier
-            context: Unused in remote client (handled server-side)
+        This method has been removed. Use ReBAC permissions instead.
+
+        Migration:
+            Use rebac_create() to grant group permissions:
+
+            >>> nx.rebac_create(
+            ...     subject=("group", "developers"),
+            ...     relation="can-write",
+            ...     object=("file", path)
+            ... )
 
         Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            PermissionError: If user doesn't have permission
+            NotImplementedError: Always
+
+        See:
+            - rebac_create(): Create permission relationships
         """
-        self._call_rpc("chgrp", {"path": path, "group": group})
+        raise NotImplementedError(
+            "chgrp() is no longer supported. Use ReBAC instead:\n"
+            f"  nx.rebac_create(subject=('group', '{group}'), relation='can-write', object=('file', '{path}'))"
+        )
 
     # ============================================================
-    # ACL (Access Control List) Operations
+    # DEPRECATED: ACL Operations
     # ============================================================
 
     def grant_user(
@@ -684,27 +764,29 @@ class RemoteNexusFS(NexusFilesystem):
         permissions: str,
         context: Any = None,  # noqa: ARG002
     ) -> None:
-        """Grant permissions to a user via ACL.
+        """DEPRECATED: Grant ACL permissions (no longer supported).
 
-        Requires the user to be the owner of the file or an admin.
+        This method has been removed. Use ReBAC permissions instead.
 
-        Args:
-            path: Virtual file path
-            user: User identifier to grant permissions to
-            permissions: Permission string in rwx format (e.g., 'rw-', 'r-x')
-            context: Unused in remote client (handled server-side)
+        Migration:
+            Use rebac_create() to grant permissions:
+
+            >>> nx.rebac_create(
+            ...     subject=("user", "bob"),
+            ...     relation="can-write",  # or "can-read" for read-only
+            ...     object=("file", path)
+            ... )
 
         Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            InvalidPathError: If path is invalid
-            PermissionError: If user is not owner and not admin
-            ValueError: If permissions string is invalid
+            NotImplementedError: Always
 
-        Examples:
-            >>> nx.grant_user("/workspace/file.txt", user="alice", permissions="rw-")
-            >>> nx.grant_user("/workspace/file.txt", user="bob", permissions="r--")
+        See:
+            - rebac_create(): Create permission relationships
         """
-        self._call_rpc("grant_user", {"path": path, "user": user, "permissions": permissions})
+        raise NotImplementedError(
+            "grant_user() is no longer supported. Use ReBAC instead:\n"
+            f"  nx.rebac_create(subject=('user', '{user}'), relation='can-write', object=('file', '{path}'))"
+        )
 
     def grant_group(
         self,
@@ -713,27 +795,29 @@ class RemoteNexusFS(NexusFilesystem):
         permissions: str,
         context: Any = None,  # noqa: ARG002
     ) -> None:
-        """Grant permissions to a group via ACL.
+        """DEPRECATED: Grant ACL permissions to group (no longer supported).
 
-        Requires the user to be the owner of the file or an admin.
+        This method has been removed. Use ReBAC permissions instead.
 
-        Args:
-            path: Virtual file path
-            group: Group identifier to grant permissions to
-            permissions: Permission string in rwx format (e.g., 'rw-', 'r-x')
-            context: Unused in remote client (handled server-side)
+        Migration:
+            Use rebac_create() to grant group permissions:
+
+            >>> nx.rebac_create(
+            ...     subject=("group", "developers"),
+            ...     relation="can-write",
+            ...     object=("file", path)
+            ... )
 
         Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            InvalidPathError: If path is invalid
-            PermissionError: If user is not owner and not admin
-            ValueError: If permissions string is invalid
+            NotImplementedError: Always
 
-        Examples:
-            >>> nx.grant_group("/workspace/file.txt", group="developers", permissions="rw-")
-            >>> nx.grant_group("/workspace/file.txt", group="viewers", permissions="r--")
+        See:
+            - rebac_create(): Create permission relationships
         """
-        self._call_rpc("grant_group", {"path": path, "group": group, "permissions": permissions})
+        raise NotImplementedError(
+            "grant_group() is no longer supported. Use ReBAC instead:\n"
+            f"  nx.rebac_create(subject=('group', '{group}'), relation='can-write', object=('file', '{path}'))"
+        )
 
     def deny_user(
         self,
@@ -741,25 +825,31 @@ class RemoteNexusFS(NexusFilesystem):
         user: str,
         context: Any = None,  # noqa: ARG002
     ) -> None:
-        """Explicitly deny user access to file via ACL.
+        """DEPRECATED: Deny ACL access (no longer supported).
 
-        Deny entries take precedence over all other permissions.
-        Requires the user to be the owner of the file or an admin.
+        This method has been removed. ReBAC uses positive permissions only.
 
-        Args:
-            path: Virtual file path
-            user: User identifier to deny access to
-            context: Unused in remote client (handled server-side)
+        Migration:
+            Instead of denying access, don't grant it. Use rebac_delete() to remove existing permissions:
+
+            >>> tuples = nx.rebac_list_tuples(
+            ...     subject=("user", "intern"),
+            ...     object=("file", path)
+            ... )
+            >>> for t in tuples:
+            ...     nx.rebac_delete(t['tuple_id'])
 
         Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            InvalidPathError: If path is invalid
-            PermissionError: If user is not owner and not admin
+            NotImplementedError: Always
 
-        Examples:
-            >>> nx.deny_user("/workspace/secret.txt", user="intern")
+        See:
+            - rebac_delete(): Remove permission relationships
+            - rebac_list_tuples(): Find existing permissions
         """
-        self._call_rpc("deny_user", {"path": path, "user": user})
+        raise NotImplementedError(
+            "deny_user() is no longer supported. ReBAC uses positive permissions only.\n"
+            "Use rebac_list_tuples() and rebac_delete() to remove access."
+        )
 
     def revoke_acl(
         self,
@@ -768,56 +858,56 @@ class RemoteNexusFS(NexusFilesystem):
         identifier: str,
         context: Any = None,  # noqa: ARG002
     ) -> None:
-        """Remove ACL entry for user or group.
+        """DEPRECATED: Revoke ACL entry (no longer supported).
 
-        Requires the user to be the owner of the file or an admin.
+        This method has been removed. Use ReBAC permissions instead.
 
-        Args:
-            path: Virtual file path
-            entry_type: Type of entry ('user' or 'group')
-            identifier: User or group identifier
-            context: Unused in remote client (handled server-side)
+        Migration:
+            Use rebac_list_tuples() to find permissions, then rebac_delete() to remove them:
+
+            >>> tuples = nx.rebac_list_tuples(
+            ...     subject=("user", "alice"),
+            ...     object=("file", path)
+            ... )
+            >>> for t in tuples:
+            ...     nx.rebac_delete(t['tuple_id'])
 
         Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            InvalidPathError: If path is invalid
-            PermissionError: If user is not owner and not admin
-            ValueError: If entry_type is invalid
+            NotImplementedError: Always
 
-        Examples:
-            >>> nx.revoke_acl("/workspace/file.txt", "user", "alice")
-            >>> nx.revoke_acl("/workspace/file.txt", "group", "developers")
+        See:
+            - rebac_list_tuples(): Find permission relationships
+            - rebac_delete(): Remove relationships
         """
-        self._call_rpc(
-            "revoke_acl", {"path": path, "entry_type": entry_type, "identifier": identifier}
+        raise NotImplementedError(
+            "revoke_acl() is no longer supported. Use ReBAC instead:\n"
+            f"  tuples = nx.rebac_list_tuples(subject=('{entry_type}', '{identifier}'), object=('file', '{path}'))\n"
+            "  for t in tuples: nx.rebac_delete(t['tuple_id'])"
         )
 
     def get_acl(self, path: str) -> builtins.list[dict[str, str | bool | None]]:
-        """Get ACL entries for a file.
+        """DEPRECATED: Get ACL entries (no longer supported).
 
-        Args:
-            path: Virtual file path
+        This method has been removed. Use ReBAC permissions instead.
 
-        Returns:
-            List of ACL entry dictionaries with keys:
-                - entry_type: 'user' or 'group'
-                - identifier: User or group identifier
-                - permissions: Permission string (e.g., 'rw-')
-                - deny: True if this is a deny entry
+        Migration:
+            Use rebac_list_tuples() to list permissions:
+
+            >>> tuples = nx.rebac_list_tuples(
+            ...     object=("file", path)
+            ... )
 
         Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            InvalidPathError: If path is invalid
+            NotImplementedError: Always
 
-        Examples:
-            >>> nx.get_acl("/workspace/file.txt")
-            [
-                {'entry_type': 'user', 'identifier': 'alice', 'permissions': 'rw-', 'deny': False},
-                {'entry_type': 'user', 'identifier': 'bob', 'permissions': '---', 'deny': True}
-            ]
+        See:
+            - rebac_list_tuples(): List permission relationships
+            - rebac_expand(): Find all subjects with a permission
         """
-        result = self._call_rpc("get_acl", {"path": path})
-        return result  # type: ignore[no-any-return]
+        raise NotImplementedError(
+            "get_acl() is no longer supported. Use ReBAC instead:\n"
+            f"  nx.rebac_list_tuples(object=('file', '{path}'))"
+        )
 
     # ============================================================
     # Batch Operations
@@ -908,6 +998,7 @@ class RemoteNexusFS(NexusFilesystem):
         relation: str,
         object: tuple[str, str],
         expires_at: Any = None,
+        tenant_id: str | None = None,
     ) -> str:
         """Create a ReBAC relationship tuple.
 
@@ -916,6 +1007,7 @@ class RemoteNexusFS(NexusFilesystem):
             relation: Relation type (e.g., 'member-of', 'owner-of')
             object: (object_type, object_id) tuple (e.g., ('group', 'developers'))
             expires_at: Optional expiration datetime for temporary relationships
+            tenant_id: Optional tenant ID for multi-tenant isolation (default: "default")
 
         Returns:
             Tuple ID of created relationship
@@ -924,7 +1016,8 @@ class RemoteNexusFS(NexusFilesystem):
             >>> nx.rebac_create(
             ...     subject=("agent", "alice"),
             ...     relation="member-of",
-            ...     object=("group", "developers")
+            ...     object=("group", "developers"),
+            ...     tenant_id="default"
             ... )
             'uuid-string'
         """
@@ -935,6 +1028,7 @@ class RemoteNexusFS(NexusFilesystem):
                 "relation": relation,
                 "object": object,
                 "expires_at": expires_at.isoformat() if expires_at else None,
+                "tenant_id": tenant_id,
             },
         )
         return result  # type: ignore[no-any-return]
@@ -944,6 +1038,7 @@ class RemoteNexusFS(NexusFilesystem):
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
+        tenant_id: str | None = None,
     ) -> bool:
         """Check if subject has permission on object via ReBAC.
 
@@ -951,6 +1046,7 @@ class RemoteNexusFS(NexusFilesystem):
             subject: (subject_type, subject_id) tuple
             permission: Permission to check (e.g., 'read', 'write', 'owner')
             object: (object_type, object_id) tuple
+            tenant_id: Optional tenant ID for multi-tenant isolation (default: "default")
 
         Returns:
             True if permission is granted, False otherwise
@@ -959,13 +1055,19 @@ class RemoteNexusFS(NexusFilesystem):
             >>> nx.rebac_check(
             ...     subject=("agent", "alice"),
             ...     permission="read",
-            ...     object=("file", "/workspace/doc.txt")
+            ...     object=("file", "/workspace/doc.txt"),
+            ...     tenant_id="default"
             ... )
             True
         """
         result = self._call_rpc(
             "rebac_check",
-            {"subject": subject, "permission": permission, "object": object},
+            {
+                "subject": subject,
+                "permission": permission,
+                "object": object,
+                "tenant_id": tenant_id,
+            },
         )
         return result  # type: ignore[no-any-return]
 
@@ -1036,9 +1138,855 @@ class RemoteNexusFS(NexusFilesystem):
         )
         return result  # type: ignore[no-any-return]
 
+    def rebac_explain(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Explain why a subject has or doesn't have permission on an object.
+
+        This debugging API traces through the permission graph to show exactly
+        why a permission check succeeded or failed.
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permission: Permission to check (e.g., 'read', 'write', 'owner')
+            object: (object_type, object_id) tuple
+            tenant_id: Optional tenant ID for multi-tenant isolation
+
+        Returns:
+            Dictionary with:
+                - result: bool - whether permission is granted
+                - cached: bool - whether result came from cache
+                - reason: str - human-readable explanation
+                - paths: list[dict] - all checked paths through the graph
+                - successful_path: dict | None - the path that granted access (if any)
+
+        Examples:
+            >>> # Why does alice have read permission?
+            >>> explanation = nx.rebac_explain(
+            ...     subject=("agent", "alice"),
+            ...     permission="read",
+            ...     object=("file", "/workspace/doc.txt")
+            ... )
+            >>> print(explanation["reason"])
+        """
+        result = self._call_rpc(
+            "rebac_explain",
+            {
+                "subject": subject,
+                "permission": permission,
+                "object": object,
+                "tenant_id": tenant_id,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def rebac_check_batch(
+        self,
+        checks: builtins.list[tuple[tuple[str, str], str, tuple[str, str]]],
+    ) -> builtins.list[bool]:
+        """Batch permission checks for efficiency.
+
+        Performs multiple permission checks in a single call, using shared cache lookups
+        and optimized database queries. More efficient than individual checks when checking
+        multiple permissions.
+
+        Args:
+            checks: List of (subject, permission, object) tuples to check
+
+        Returns:
+            List of boolean results in the same order as input
+
+        Examples:
+            >>> # Check multiple permissions at once
+            >>> results = nx.rebac_check_batch([
+            ...     (("agent", "alice"), "read", ("file", "/workspace/doc1.txt")),
+            ...     (("agent", "alice"), "read", ("file", "/workspace/doc2.txt")),
+            ...     (("agent", "bob"), "write", ("file", "/workspace/doc3.txt")),
+            ... ])
+            >>> # Returns: [True, False, True]
+        """
+        result = self._call_rpc("rebac_check_batch", {"checks": checks})
+        return result  # type: ignore[no-any-return]
+
+    def rebac_expand_with_privacy(
+        self,
+        permission: str,
+        object: tuple[str, str],
+        respect_consent: bool = True,
+        requester: tuple[str, str] | None = None,
+    ) -> builtins.list[tuple[str, str]]:
+        """Find subjects with permission, optionally filtering by consent.
+
+        This enables privacy-aware queries where subjects who haven't granted
+        consent are filtered from results.
+
+        Args:
+            permission: Permission to check
+            object: Object to expand on
+            respect_consent: Filter results by consent/public_discoverable
+            requester: Who is requesting (for consent checks)
+
+        Returns:
+            List of subjects, potentially filtered by privacy
+
+        Examples:
+            >>> # Standard expand (no privacy filtering)
+            >>> viewers = nx.rebac_expand_with_privacy(
+            ...     "view",
+            ...     ("file", "/doc.txt"),
+            ...     respect_consent=False
+            ... )
+            >>>
+            >>> # Privacy-aware expand
+            >>> discoverable_viewers = nx.rebac_expand_with_privacy(
+            ...     "view",
+            ...     ("workspace", "/project"),
+            ...     respect_consent=True,
+            ...     requester=("user", "alice")
+            ... )
+        """
+        result = self._call_rpc(
+            "rebac_expand_with_privacy",
+            {
+                "permission": permission,
+                "object": object,
+                "respect_consent": respect_consent,
+                "requester": requester,
+            },
+        )
+        # Convert list of lists back to list of tuples
+        return [tuple(item) for item in result]
+
+    def get_rebac_option(self, key: str) -> Any:
+        """Get a ReBAC configuration option.
+
+        Args:
+            key: Configuration key (e.g., "max_depth", "cache_ttl")
+
+        Returns:
+            Current value of the configuration option
+
+        Raises:
+            ValueError: If key is invalid
+            RemoteFilesystemError: If ReBAC is not available
+
+        Examples:
+            >>> # Get current max depth
+            >>> depth = nx.get_rebac_option("max_depth")
+            >>> print(f"Max traversal depth: {depth}")
+        """
+        result = self._call_rpc("get_rebac_option", {"key": key})
+        return result
+
+    def set_rebac_option(self, key: str, value: Any) -> None:
+        """Set a ReBAC configuration option.
+
+        Provides public access to ReBAC configuration without using internal APIs.
+
+        Args:
+            key: Configuration key (e.g., "max_depth", "cache_ttl")
+            value: Configuration value
+
+        Raises:
+            ValueError: If key is invalid
+            RemoteFilesystemError: If ReBAC is not available
+
+        Examples:
+            >>> # Set maximum graph traversal depth
+            >>> nx.set_rebac_option("max_depth", 15)
+            >>>
+            >>> # Set cache TTL
+            >>> nx.set_rebac_option("cache_ttl", 600)
+        """
+        self._call_rpc("set_rebac_option", {"key": key, "value": value})
+
+    # ============================================================
+    # Namespace Management
+    # ============================================================
+
+    def register_namespace(self, namespace: dict[str, Any]) -> None:
+        """Register a namespace schema for ReBAC.
+
+        Provides public API to register namespace configurations without using internal APIs.
+
+        Args:
+            namespace: Namespace configuration dictionary with keys:
+                - object_type: Type of objects this namespace applies to
+                - config: Schema configuration (relations and permissions)
+
+        Raises:
+            RemoteFilesystemError: If ReBAC is not available
+            ValueError: If namespace configuration is invalid
+
+        Examples:
+            >>> # Register file namespace with group inheritance
+            >>> nx.register_namespace({
+            ...     "object_type": "file",
+            ...     "config": {
+            ...         "relations": {
+            ...             "viewer": {},
+            ...             "editor": {}
+            ...         },
+            ...         "permissions": {
+            ...             "read": ["viewer", "editor"],
+            ...             "write": ["editor"]
+            ...         }
+            ...     }
+            ... })
+        """
+        self._call_rpc("register_namespace", {"namespace": namespace})
+
+    def get_namespace(self, object_type: str) -> dict[str, Any] | None:
+        """Get namespace schema for an object type.
+
+        Args:
+            object_type: Type of objects (e.g., "file", "group")
+
+        Returns:
+            Namespace configuration dict or None if not found
+
+        Raises:
+            RemoteFilesystemError: If ReBAC is not available
+
+        Examples:
+            >>> # Get file namespace
+            >>> ns = nx.get_namespace("file")
+            >>> if ns:
+            ...     print(f"Relations: {ns['config']['relations'].keys()}")
+        """
+        result = self._call_rpc("get_namespace", {"object_type": object_type})
+        return result  # type: ignore[no-any-return]
+
+    def namespace_create(self, object_type: str, config: dict[str, Any]) -> None:
+        """Create or update a namespace configuration.
+
+        Args:
+            object_type: Type of objects this namespace applies to (e.g., "document", "project")
+            config: Namespace configuration with "relations" and "permissions" keys
+
+        Raises:
+            RemoteFilesystemError: If ReBAC is not available
+            ValueError: If configuration is invalid
+
+        Examples:
+            >>> # Create custom document namespace
+            >>> nx.namespace_create("document", {
+            ...     "relations": {
+            ...         "owner": {},
+            ...         "editor": {},
+            ...         "viewer": {"union": ["editor", "owner"]}
+            ...     },
+            ...     "permissions": {
+            ...         "read": ["viewer", "editor", "owner"],
+            ...         "write": ["editor", "owner"]
+            ...     }
+            ... })
+        """
+        self._call_rpc("namespace_create", {"object_type": object_type, "config": config})
+
+    def namespace_list(self) -> builtins.list[dict[str, Any]]:
+        """List all registered namespace configurations.
+
+        Returns:
+            List of namespace dictionaries with metadata and config
+
+        Raises:
+            RemoteFilesystemError: If ReBAC is not available
+
+        Examples:
+            >>> # List all namespaces
+            >>> namespaces = nx.namespace_list()
+            >>> for ns in namespaces:
+            ...     print(f"{ns['object_type']}: {list(ns['config']['relations'].keys())}")
+        """
+        result = self._call_rpc("namespace_list", {})
+        return result  # type: ignore[no-any-return]
+
+    def namespace_delete(self, object_type: str) -> bool:
+        """Delete a namespace configuration.
+
+        Args:
+            object_type: Type of objects to remove namespace for
+
+        Returns:
+            True if namespace was deleted, False if not found
+
+        Raises:
+            RemoteFilesystemError: If ReBAC is not available
+
+        Examples:
+            >>> # Delete custom namespace
+            >>> nx.namespace_delete("document")
+            True
+        """
+        result = self._call_rpc("namespace_delete", {"object_type": object_type})
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # Privacy and Consent
+    # ============================================================
+
+    def grant_consent(
+        self,
+        from_subject: tuple[str, str],
+        to_subject: tuple[str, str],
+        expires_at: Any = None,
+        tenant_id: str | None = None,
+    ) -> str:
+        """Grant consent for one subject to discover another (privacy/consent management).
+
+        Args:
+            from_subject: Who is granting consent (e.g., ("profile", "alice"))
+            to_subject: Who can now discover (e.g., ("user", "bob"))
+            expires_at: Optional expiration datetime for temporary consent
+            tenant_id: Optional tenant ID for multi-tenant isolation
+
+        Returns:
+            Tuple ID of the consent relationship
+
+        Examples:
+            >>> # Alice grants Bob permanent consent to discover her profile
+            >>> consent_id = nx.grant_consent(
+            ...     from_subject=("profile", "alice"),
+            ...     to_subject=("user", "bob")
+            ... )
+        """
+        result = self._call_rpc(
+            "grant_consent",
+            {
+                "from_subject": from_subject,
+                "to_subject": to_subject,
+                "expires_at": expires_at.isoformat() if expires_at else None,
+                "tenant_id": tenant_id,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def revoke_consent(self, from_subject: tuple[str, str], to_subject: tuple[str, str]) -> bool:
+        """Revoke previously granted consent.
+
+        Args:
+            from_subject: Who is revoking consent
+            to_subject: Who loses discovery access
+
+        Returns:
+            True if consent was revoked, False if no consent existed
+
+        Examples:
+            >>> # Revoke Bob's consent to see Alice's profile
+            >>> revoked = nx.revoke_consent(
+            ...     from_subject=("profile", "alice"),
+            ...     to_subject=("user", "bob")
+            ... )
+        """
+        result = self._call_rpc(
+            "revoke_consent", {"from_subject": from_subject, "to_subject": to_subject}
+        )
+        return result  # type: ignore[no-any-return]
+
+    def make_public(self, resource: tuple[str, str], tenant_id: str | None = None) -> str:
+        """Make a resource publicly discoverable (anyone can discover it without consent).
+
+        Args:
+            resource: Resource to make public (e.g., ("profile", "alice"))
+            tenant_id: Optional tenant ID for multi-tenant isolation
+
+        Returns:
+            Tuple ID of the public relationship
+
+        Examples:
+            >>> # Make Alice's profile publicly discoverable
+            >>> public_id = nx.make_public(("profile", "alice"))
+        """
+        result = self._call_rpc("make_public", {"resource": resource, "tenant_id": tenant_id})
+        return result  # type: ignore[no-any-return]
+
+    def make_private(self, resource: tuple[str, str]) -> bool:
+        """Remove public discoverability from a resource.
+
+        Args:
+            resource: Resource to make private
+
+        Returns:
+            True if public access was removed, False if resource wasn't public
+
+        Examples:
+            >>> # Make profile private again
+            >>> made_private = nx.make_private(("profile", "alice"))
+        """
+        result = self._call_rpc("make_private", {"resource": resource})
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # Mount Management
+    # ============================================================
+
+    def add_mount(
+        self,
+        mount_point: str,
+        backend_type: str,
+        backend_config: dict[str, Any],
+        priority: int = 0,
+        readonly: bool = False,
+    ) -> str:
+        """Add a dynamic backend mount to the filesystem.
+
+        This adds a backend mount at runtime without requiring server restart.
+        Useful for user-specific storage, temporary backends, or multi-tenant scenarios.
+
+        Args:
+            mount_point: Virtual path where backend is mounted (e.g., "/personal/alice")
+            backend_type: Backend type - "local", "gcs", "google_drive", etc.
+            backend_config: Backend-specific configuration dict
+            priority: Mount priority - higher values take precedence (default: 0)
+            readonly: Whether mount is read-only (default: False)
+
+        Returns:
+            Mount ID (unique identifier for this mount)
+
+        Raises:
+            ValueError: If mount_point already exists or configuration is invalid
+            RemoteFilesystemError: If backend type is not supported
+
+        Examples:
+            >>> # Add personal GCS mount
+            >>> mount_id = nx.add_mount(
+            ...     mount_point="/personal/alice",
+            ...     backend_type="gcs",
+            ...     backend_config={
+            ...         "bucket": "alice-personal-bucket",
+            ...         "project_id": "my-project"
+            ...     },
+            ...     priority=10
+            ... )
+        """
+        result = self._call_rpc(
+            "add_mount",
+            {
+                "mount_point": mount_point,
+                "backend_type": backend_type,
+                "backend_config": backend_config,
+                "priority": priority,
+                "readonly": readonly,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def remove_mount(self, mount_point: str) -> bool:
+        """Remove a backend mount from the filesystem.
+
+        Args:
+            mount_point: Virtual path of mount to remove (e.g., "/personal/alice")
+
+        Returns:
+            True if mount was removed, False if mount not found
+
+        Examples:
+            >>> # Remove user's personal mount
+            >>> if nx.remove_mount("/personal/alice"):
+            ...     print("Mount removed successfully")
+        """
+        result = self._call_rpc("remove_mount", {"mount_point": mount_point})
+        return result  # type: ignore[no-any-return]
+
+    def list_mounts(self) -> builtins.list[dict[str, Any]]:
+        """List all active backend mounts.
+
+        Returns:
+            List of mount info dictionaries, each containing:
+                - mount_point: Virtual path (str)
+                - priority: Mount priority (int)
+                - readonly: Read-only flag (bool)
+                - backend_type: Backend type name (str)
+
+        Examples:
+            >>> # List all mounts
+            >>> for mount in nx.list_mounts():
+            ...     print(f"{mount['mount_point']} (priority={mount['priority']})")
+        """
+        result = self._call_rpc("list_mounts", {})
+        return result  # type: ignore[no-any-return]
+
+    def get_mount(self, mount_point: str) -> dict[str, Any] | None:
+        """Get details about a specific mount.
+
+        Args:
+            mount_point: Virtual path of mount (e.g., "/personal/alice")
+
+        Returns:
+            Mount info dict if found, None otherwise. Dict contains:
+                - mount_point: Virtual path (str)
+                - priority: Mount priority (int)
+                - readonly: Read-only flag (bool)
+                - backend_type: Backend type name (str)
+
+        Examples:
+            >>> mount = nx.get_mount("/personal/alice")
+            >>> if mount:
+            ...     print(f"Priority: {mount['priority']}")
+        """
+        result = self._call_rpc("get_mount", {"mount_point": mount_point})
+        return result  # type: ignore[no-any-return]
+
+    def has_mount(self, mount_point: str) -> bool:
+        """Check if a mount exists at the given path.
+
+        Args:
+            mount_point: Virtual path to check (e.g., "/personal/alice")
+
+        Returns:
+            True if mount exists, False otherwise
+
+        Examples:
+            >>> if nx.has_mount("/personal/alice"):
+            ...     print("Alice's mount is active")
+        """
+        result = self._call_rpc("has_mount", {"mount_point": mount_point})
+        return result  # type: ignore[no-any-return]
+
+    def save_mount(
+        self,
+        mount_point: str,
+        backend_type: str,
+        backend_config: dict[str, Any],
+        priority: int = 0,
+        readonly: bool = False,
+        owner_user_id: str | None = None,
+        tenant_id: str | None = None,
+        description: str | None = None,
+    ) -> str:
+        """Save a mount configuration to the database for persistence.
+
+        This allows mounts to survive server restarts. The mount must still be
+        activated using add_mount() - this only stores the configuration.
+
+        Args:
+            mount_point: Virtual path where backend is mounted
+            backend_type: Backend type - "local", "gcs", etc.
+            backend_config: Backend-specific configuration dict
+            priority: Mount priority (default: 0)
+            readonly: Whether mount is read-only (default: False)
+            owner_user_id: User who owns this mount (optional)
+            tenant_id: Tenant ID for multi-tenant isolation (optional)
+            description: Human-readable description (optional)
+
+        Returns:
+            Mount ID (UUID string)
+
+        Raises:
+            ValueError: If mount already exists at mount_point
+            RemoteFilesystemError: If mount manager is not available
+
+        Examples:
+            >>> # Save personal Google Drive mount configuration
+            >>> mount_id = nx.save_mount(
+            ...     mount_point="/personal/alice",
+            ...     backend_type="google_drive",
+            ...     backend_config={"access_token": "ya29.xxx"},
+            ...     owner_user_id="google:alice123",
+            ...     tenant_id="acme",
+            ...     description="Alice's personal Google Drive"
+            ... )
+        """
+        result = self._call_rpc(
+            "save_mount",
+            {
+                "mount_point": mount_point,
+                "backend_type": backend_type,
+                "backend_config": backend_config,
+                "priority": priority,
+                "readonly": readonly,
+                "owner_user_id": owner_user_id,
+                "tenant_id": tenant_id,
+                "description": description,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def list_saved_mounts(
+        self, owner_user_id: str | None = None, tenant_id: str | None = None
+    ) -> builtins.list[dict[str, Any]]:
+        """List mount configurations saved in the database.
+
+        Args:
+            owner_user_id: Filter by owner user ID (optional)
+            tenant_id: Filter by tenant ID (optional)
+
+        Returns:
+            List of saved mount configurations
+
+        Raises:
+            RemoteFilesystemError: If mount manager is not available
+
+        Examples:
+            >>> # List all saved mounts
+            >>> mounts = nx.list_saved_mounts()
+
+            >>> # List mounts for specific user
+            >>> alice_mounts = nx.list_saved_mounts(owner_user_id="google:alice123")
+        """
+        result = self._call_rpc(
+            "list_saved_mounts", {"owner_user_id": owner_user_id, "tenant_id": tenant_id}
+        )
+        return result  # type: ignore[no-any-return]
+
+    def load_mount(self, mount_point: str) -> str:
+        """Load a saved mount configuration and activate it.
+
+        This retrieves the mount configuration from the database and activates it
+        by calling add_mount() internally.
+
+        Args:
+            mount_point: Virtual path of saved mount to load
+
+        Returns:
+            Mount ID if successfully loaded and activated
+
+        Raises:
+            ValueError: If mount not found in database
+            RemoteFilesystemError: If mount manager is not available
+
+        Examples:
+            >>> # Load Alice's saved mount
+            >>> nx.load_mount("/personal/alice")
+        """
+        result = self._call_rpc("load_mount", {"mount_point": mount_point})
+        return result  # type: ignore[no-any-return]
+
+    def delete_saved_mount(self, mount_point: str) -> bool:
+        """Delete a saved mount configuration from the database.
+
+        Note: This does NOT deactivate the mount if it's currently active.
+        Use remove_mount() to deactivate an active mount.
+
+        Args:
+            mount_point: Virtual path of mount to delete
+
+        Returns:
+            True if deleted, False if not found
+
+        Raises:
+            RemoteFilesystemError: If mount manager is not available
+
+        Examples:
+            >>> # Remove from database
+            >>> nx.delete_saved_mount("/personal/alice")
+            >>> # Also deactivate if currently mounted
+            >>> nx.remove_mount("/personal/alice")
+        """
+        result = self._call_rpc("delete_saved_mount", {"mount_point": mount_point})
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # Workspace and Memory Management
+    # ============================================================
+
+    def load_workspace_memory_config(
+        self,
+        workspaces: builtins.list[dict] | None = None,
+        memories: builtins.list[dict] | None = None,
+    ) -> dict[str, Any]:
+        """Load workspaces and memories from configuration.
+
+        Args:
+            workspaces: List of workspace config dicts
+            memories: List of memory config dicts
+
+        Returns:
+            Configuration result dict
+
+        Raises:
+            RemoteFilesystemError: If configuration cannot be loaded
+        """
+        result = self._call_rpc(
+            "load_workspace_memory_config",
+            {"workspaces": workspaces, "memories": memories},
+        )
+        return result  # type: ignore[no-any-return]
+
+    def register_workspace(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        created_by: str | None = None,
+        tags: builtins.list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Register a directory as a workspace.
+
+        Args:
+            path: Absolute path to workspace directory
+            name: Optional friendly name for the workspace
+            description: Human-readable description
+            created_by: User/agent who created it
+            tags: Tags for categorization (reserved for future use)
+            metadata: Additional user-defined metadata
+
+        Returns:
+            Workspace configuration dict
+
+        Raises:
+            RemoteFilesystemError: If registration fails
+        """
+        # tags parameter reserved for future use
+        _ = tags
+
+        result = self._call_rpc(
+            "register_workspace",
+            {
+                "path": path,
+                "name": name,
+                "description": description,
+                "created_by": created_by,
+                "metadata": metadata,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def unregister_workspace(self, path: str) -> bool:
+        """Unregister a workspace (does NOT delete files).
+
+        Args:
+            path: Workspace path to unregister
+
+        Returns:
+            True if unregistered, False if not found
+
+        Raises:
+            RemoteFilesystemError: If unregistration fails
+        """
+        result = self._call_rpc("unregister_workspace", {"path": path})
+        return result  # type: ignore[no-any-return]
+
+    def list_workspaces(self) -> builtins.list[dict]:
+        """List all registered workspaces.
+
+        Returns:
+            List of workspace configuration dicts
+
+        Raises:
+            RemoteFilesystemError: If listing fails
+        """
+        result = self._call_rpc("list_workspaces", {})
+        return result  # type: ignore[no-any-return]
+
+    def get_workspace_info(self, path: str) -> dict | None:
+        """Get information about a registered workspace.
+
+        Args:
+            path: Workspace path
+
+        Returns:
+            Workspace configuration dict or None if not found
+
+        Raises:
+            RemoteFilesystemError: If retrieval fails
+        """
+        result = self._call_rpc("get_workspace_info", {"path": path})
+        return result  # type: ignore[no-any-return]
+
+    def register_memory(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        created_by: str | None = None,
+        tags: builtins.list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Register a directory as a memory.
+
+        Args:
+            path: Absolute path to memory directory
+            name: Optional friendly name for the memory
+            description: Human-readable description
+            created_by: User/agent who created it
+            tags: Tags for categorization (reserved for future use)
+            metadata: Additional user-defined metadata
+
+        Returns:
+            Memory configuration dict
+
+        Raises:
+            RemoteFilesystemError: If registration fails
+        """
+        # tags parameter reserved for future use
+        _ = tags
+
+        result = self._call_rpc(
+            "register_memory",
+            {
+                "path": path,
+                "name": name,
+                "description": description,
+                "created_by": created_by,
+                "metadata": metadata,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def unregister_memory(self, path: str) -> bool:
+        """Unregister a memory (does NOT delete files).
+
+        Args:
+            path: Memory path to unregister
+
+        Returns:
+            True if unregistered, False if not found
+
+        Raises:
+            RemoteFilesystemError: If unregistration fails
+        """
+        result = self._call_rpc("unregister_memory", {"path": path})
+        return result  # type: ignore[no-any-return]
+
+    def list_memories(self) -> builtins.list[dict]:
+        """List all registered memories.
+
+        Returns:
+            List of memory configuration dicts
+
+        Raises:
+            RemoteFilesystemError: If listing fails
+        """
+        result = self._call_rpc("list_memories", {})
+        return result  # type: ignore[no-any-return]
+
+    def get_memory_info(self, path: str) -> dict | None:
+        """Get information about a registered memory.
+
+        Args:
+            path: Memory path
+
+        Returns:
+            Memory configuration dict or None if not found
+
+        Raises:
+            RemoteFilesystemError: If retrieval fails
+        """
+        result = self._call_rpc("get_memory_info", {"path": path})
+        return result  # type: ignore[no-any-return]
+
     # ============================================================
     # Lifecycle Management
     # ============================================================
+
+    def shutdown_parser_threads(self, timeout: float = 10.0) -> dict[str, Any]:
+        """Shutdown background parser threads on remote server.
+
+        Args:
+            timeout: Maximum seconds to wait for each thread (default: 10s)
+
+        Returns:
+            Dict with shutdown statistics from server
+        """
+        result = self._call_rpc("shutdown_parser_threads", {"timeout": timeout})
+        return result  # type: ignore[no-any-return]
 
     def close(self) -> None:
         """Close the client and release resources."""

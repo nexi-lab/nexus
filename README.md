@@ -1,3212 +1,369 @@
 <div align="center">
   <img src="logo.png" alt="Nexus Logo" width="200"/>
 
-  # Nexus: AI-Native Distributed Filesystem
+  # Nexus
 
   [![Test](https://github.com/nexi-lab/nexus/actions/workflows/test.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/test.yml)
   [![Lint](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml)
+
   [![PyPI version](https://badge.fury.io/py/nexus-ai-fs.svg)](https://badge.fury.io/py/nexus-ai-fs)
   [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
   [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+
+  [Documentation](docs/api/README.md) • [Quickstart](docs/getting-started/quickstart.md) • [PyPI](https://pypi.org/project/nexus-ai-fs/) • [Examples](examples/)
 </div>
 
-**Version 0.4.0** | AI Agent Infrastructure Platform
+**AI-native filesystem for building intelligent agents**
 
-Nexus is a complete AI agent infrastructure platform that combines distributed unified filesystem, self-evolving agent memory, intelligent document processing, and seamless deployment from local development to hosted production—all from a single codebase.
+Nexus is an AI-native filesystem that unifies files, memory, and permissions into one programmable layer. Build agents that remember, collaborate securely, and scale effortlessly from prototype to production—without changing code.
 
-## Features
+**Made to build AI agents, fast.**
 
-### Foundation
-- **Distributed Unified Filesystem**: Multi-backend abstraction (S3, GDrive, SharePoint, LocalFS)
-- **Tiered Storage**: Hot/Warm/Cold tiers with automatic lineage tracking
-- **Content-Addressable Storage**: 30-50% storage savings via deduplication
-- **"Everything as a File" Paradigm**: Configuration, memory, jobs, and commands as files
+## TL;DR
 
-### Agent Intelligence
-- **Workspace Versioning**: Time-travel debugging for agent workspaces with snapshot/restore
-- **Time-Travel Debugging**: Read files at any historical operation point with full content diff
-- **Operation Log**: Undo capability and complete audit trail for all filesystem operations
-- **Self-Evolving Memory**: Agent memory with automatic consolidation
-- **Memory Versioning**: Track knowledge evolution over time
-- **Multi-Agent Sharing**: Shared memory spaces within tenants
-- **Order-Neutral Memory Paths**: Access memories via file API with flexible path ordering (v0.4.0 Phase 2)
-- **Dual-API Memory Access**: Use Memory API (`nx.memory.*`) or File API (`nx.read/write`) interchangeably (v0.4.0 Phase 2)
-- **Memory Analytics**: Effectiveness tracking and insights
-- **Prompt Version Control**: Track prompt evolution with lineage
-- **Training Data Management**: Version-controlled datasets with deduplication
-- **Prompt Optimization**: Multi-candidate testing, execution traces, tradeoff analysis
-- **Experiment Tracking**: Organize optimization runs, per-example results, regression detection
-- **Custom Field Schemas**: Type-enforced metadata with validation rules for data contracts (v0.7.0)
-- **Saved Searches**: Reusable query collections for quick access to frequently-needed file sets (v0.8.0)
+Nexus is a programmable filesystem for AI agents. It combines storage, memory, and permissions into one layer so agents can securely remember, collaborate, and evolve over time.
 
-### Content Processing
-- **Rich Format Parsing**: Extensible parsers (PDF, Excel, CSV, JSON, images)
-- **LLM Provider Abstraction**: Unified interface for Anthropic, OpenAI, Google, and more (v0.4.0)
-- **LLM KV Cache Management**: 50-90% cost savings on AI queries
-- **Semantic Search**: Keyword, vector, and hybrid search with auto-installed extensions (sqlite-vec, pgvector) (v0.4.0)
-- **Semantic Chunking**: Intelligent document segmentation with multiple strategies (v0.4.0)
-- **MCP Integration**: Native Model Context Protocol server
-- **Document Type Detection**: Automatic routing to appropriate parsers
-- **Unix Pipeline Integration**: Composable plugin commands with JSON I/O for building workflows (v0.4.0)
-- **Workflow Automation**: Event-driven pipelines with file triggers, scheduled tasks, and plugin actions (v0.4.0)
-- **ML Auto-Tagging**: Self-improving document classification with feedback loops (v0.8.0)
-- **Thumbnail Generation**: Multi-size visual previews for images, PDFs, and documents (v0.7.0)
+**Jump to:** [Hello World](#hello-world-10-seconds) • [Server Setup](#server-mode-production) • [Permissions](#permission-system-example) • [Core Concepts](#core-concepts) • [Documentation](#documentation)
 
-### Operations
-- **Work Queue System**: File-based job queue with status tracking, priority scheduling, and dependency resolution via SQL views
-- **Batch Write API**: 4x faster bulk uploads for AI checkpoints and logs
-- **OAuth Token Management**: Auto-refreshing credentials
-- **Backend Auto-Mount**: Automatic recognition and mounting
-- **Resource Management**: CPU throttling and rate limiting
-- **Document Sharing**: Time-limited, password-protected access links for collaboration (v0.8.0)
-- **Storage Analytics**: Usage tracking, deduplication savings, growth trends, cleanup recommendations (v0.9.0)
-
-## Deployment Modes
-
-Nexus supports two deployment modes from a single codebase:
-
-| Mode | Use Case | Setup Time | Scaling |
-|------|----------|------------|---------|
-| **Local** | Individual developers, CLI tools, prototyping | 60 seconds | Single machine (~10GB) |
-| **Hosted** | Teams and production (auto-scales) | Sign up | Automatic (GB to Petabytes) |
-
-**Note**: Hosted mode automatically scales infrastructure under the hood—you don't choose between "monolithic" or "distributed". Nexus handles that for you based on your usage.
-
-### Quick Start: Local Mode
-
-```python
-import nexus
-
-# Zero-deployment filesystem with AI features
-# Config auto-discovered from nexus.yaml or environment
-nx = nexus.connect()
-
-async with nx:
-    # Write and read files
-    await nx.write("/workspace/data.txt", b"Hello World")
-    content = await nx.read("/workspace/data.txt")
-
-    # Batch write for better performance (4x faster!)
-    checkpoint_files = [
-        (f"/checkpoints/epoch_{i}.ckpt", checkpoint_data)
-        for i in range(100)
-    ]
-    await nx.write_batch(checkpoint_files)
-
-    # Semantic search across documents
-    results = await nx.semantic_search(
-        "/docs/**/*.pdf",
-        query="authentication implementation"
-    )
-
-    # LLM-powered document reading with KV cache
-    answer = await nx.llm_read(
-        "/reports/q4.pdf",
-        prompt="Summarize key findings",
-        model="claude-sonnet-4"
-    )
-
-    # Memory API: Store and query agent memories
-    mem_id = await nx.memory.store("Python best practices", scope="user")
-    memories = await nx.memory.query(user_id="alice", scope="user")
-
-    # Phase 2: Access same memories via File API (order-neutral paths!)
-    await nx.write("/workspace/alice/agent1/memory/facts", b"Python is great!")
-    content = await nx.read("/workspace/agent1/alice/memory/facts")  # Same memory!
-    content = await nx.read("/memory/by-user/alice/facts")  # Also same memory!
-```
-
-**Config file (`nexus.yaml`):**
-```yaml
-mode: local
-data_dir: ./nexus-data
-cache_size_mb: 100
-enable_vector_search: true
-```
-
-### Quick Start: Hosted Mode
-
-**Coming Soon!** Sign up for early access at [nexus.ai](https://nexus.ai)
-
-```python
-import nexus
-
-# Connect to Nexus hosted instance
-# Infrastructure scales automatically based on your usage
-nx = nexus.connect(
-    api_key="your-api-key",
-    endpoint="https://api.nexus.ai"
-)
-
-async with nx:
-    # Same API as local mode!
-    await nx.write("/workspace/data.txt", b"Hello World")
-    content = await nx.read("/workspace/data.txt")
-```
-
-**For self-hosted deployments**, see the [S3-Compatible HTTP Server](#s3-compatible-http-server) section below for deployment instructions.
-
-## Storage Backends
-
-Nexus supports multiple storage backends through a unified API. All backends use **Content-Addressable Storage (CAS)** for automatic deduplication.
-
-### Local Backend (Default)
-
-Store files on local filesystem:
-
-```python
-import nexus
-
-# Auto-detected from config or uses default
-nx = nexus.connect()
-
-# Or explicitly configure
-nx = nexus.connect(config={
-    "backend": "local",
-    "data_dir": "./nexus-data"
-})
-```
-
-### Google Cloud Storage (GCS) Backend
-
-Store files in Google Cloud Storage with local metadata:
-
-```python
-import nexus
-
-# Connect with GCS backend
-nx = nexus.connect(config={
-    "backend": "gcs",
-    "gcs_bucket_name": "my-nexus-bucket",
-    "gcs_project_id": "my-gcp-project",  # Optional
-    "gcs_credentials_path": "/path/to/credentials.json",  # Optional
-})
-```
-
-**Authentication Methods:**
-1. **Service Account Key**: Provide `gcs_credentials_path`
-2. **Application Default Credentials** (if not provided):
-   - `GOOGLE_APPLICATION_CREDENTIALS` environment variable
-   - `gcloud auth application-default login` credentials
-   - GCE/Cloud Run service account (when running on GCP)
-
-**Using Config File (`nexus.yaml`):**
-```yaml
-backend: gcs
-gcs_bucket_name: my-nexus-bucket
-gcs_project_id: my-gcp-project  # Optional
-# gcs_credentials_path: /path/to/credentials.json  # Optional
-```
-
-**Using Environment Variables:**
-```bash
-export NEXUS_BACKEND=gcs
-export NEXUS_GCS_BUCKET_NAME=my-nexus-bucket
-export NEXUS_GCS_PROJECT_ID=my-gcp-project  # Optional
-export GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json  # Optional
-```
-
-**CLI Usage with GCS:**
-```bash
-# Write file to GCS
-nexus write /workspace/data.txt "Hello GCS!" \
-  --backend=gcs \
-  --gcs-bucket=my-nexus-bucket
-
-# Or use config file (simpler!)
-nexus write /workspace/data.txt "Hello GCS!" --config=nexus.yaml
-```
-
-### Advanced: Direct Backend API
-
-For advanced use cases, instantiate backends directly:
-
-```python
-from nexus import NexusFS, LocalBackend, GCSBackend
-
-# Local backend
-nx_local = NexusFS(
-    backend=LocalBackend("/path/to/data"),
-    db_path="./metadata.db"
-)
-
-# GCS backend
-nx_gcs = NexusFS(
-    backend=GCSBackend(
-        bucket_name="my-bucket",
-        project_id="my-project",
-        credentials_path="/path/to/creds.json"
-    ),
-    db_path="./gcs-metadata.db"
-)
-
-# Same API for both!
-nx_local.write("/file.txt", b"data")
-nx_gcs.write("/file.txt", b"data")
-```
-
-### Backend Comparison
-
-| Feature | Local Backend | GCS Backend |
-|---------|--------------|-------------|
-| **Content Storage** | Local filesystem | Google Cloud Storage |
-| **Metadata Storage** | Local SQLite | Local SQLite |
-| **Deduplication** | ✅ CAS (30-50% savings) | ✅ CAS (30-50% savings) |
-| **Multi-machine Access** | ❌ Single machine | ✅ Shared across machines |
-| **Durability** | Single disk | 99.999999999% (11 nines) |
-| **Latency** | <1ms (local) | 10-50ms (network) |
-| **Cost** | Free (local disk) | GCS storage pricing |
-| **Use Case** | Development, single machine | Teams, production, backup |
-
-### Coming Soon
-
-- **Amazon S3 Backend** (v0.7.0)
-- **Azure Blob Storage** (v0.7.0)
-- **Google Drive** (v0.7.0)
-- **SharePoint** (v0.7.0)
-
-## Installation
-
-### Using pip (Recommended)
-
-```bash
-# Install core Nexus
-pip install nexus-ai-fs
-
-# Install with FUSE support
-pip install nexus-ai-fs[fuse]
-
-# Install with PostgreSQL support
-pip install nexus-ai-fs[postgres]
-
-# Install with semantic search support (includes sqlite-vec and pgvector)
-pip install nexus-ai-fs[semantic-search]
-
-# Install with OpenAI embeddings for semantic search (recommended)
-pip install nexus-ai-fs[semantic-search-remote]
-
-# Install everything
-pip install nexus-ai-fs[all]  # All features (FUSE + PostgreSQL + semantic search + embeddings)
-
-# Verify installation
-nexus --version
-```
-
-### Installing First-Party Plugins (Local Development)
-
-First-party plugins are in development and not yet published to PyPI. Install from source:
-
-```bash
-# Clone repository
-git clone https://github.com/nexi-lab/nexus.git
-cd nexus
-
-# Install Nexus
-pip install -e .
-
-# Install plugins from local source
-pip install -e ./nexus-plugin-anthropic      # Claude Skills API
-pip install -e ./nexus-plugin-skill-seekers  # Doc scraper
-
-# Verify plugins
-nexus plugins list
-```
-
-See [PLUGIN_INSTALLATION.md](./PLUGIN_INSTALLATION.md) for detailed instructions.
-
-### From Source (Development)
-
-```bash
-# Clone the repository
-git clone https://github.com/nexi-lab/nexus.git
-cd nexus
-
-# Install using uv (recommended for faster installs)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-uv pip install -e ".[dev]"
-
-# Or using pip
-pip install -e ".[dev]"
-```
-
-### Development Setup
-
-```bash
-# Install development dependencies
-uv pip install -e ".[dev,test]"
-
-# Run tests (parallel execution is 8-10x faster!)
-pytest -n auto
-
-# Run tests with coverage
-pytest -n auto --cov=nexus --cov-report=html
-
-# Run type checking
-mypy src/nexus
-
-# Format code
-ruff format .
-
-# Lint
-ruff check .
-```
-
-**Note:** Development dependencies include `pytest-xdist` for parallel test execution, which significantly speeds up testing on multi-core systems.
-
-## CLI Usage
-
-Nexus provides a beautiful command-line interface for all file operations. After installation, the `nexus` command will be available.
-
-### Quick Start
-
-```bash
-# Initialize a new workspace
-nexus init ./my-workspace
-
-# Write a file
-nexus write /workspace/hello.txt "Hello, Nexus!"
-
-# Read a file
-nexus cat /workspace/hello.txt
-
-# List files
-nexus ls /workspace
-nexus ls /workspace --recursive
-nexus ls /workspace --long  # Detailed view with metadata
-```
-
-### Available Commands
-
-#### File Operations
-
-```bash
-# Write content to a file
-nexus write /path/to/file.txt "content"
-echo "content" | nexus write /path/to/file.txt --input -
-
-# Batch write multiple files (4x faster for many small files!)
-nexus write-batch ./my-data --dest-prefix /workspace/uploads
-nexus write-batch ./logs --dest-prefix /logs --pattern "**/*.log"
-nexus write-batch ./src --exclude "*.pyc" --exclude "__pycache__/*"
-nexus write-batch ./checkpoints --batch-size 200  # Larger batches = better performance
-
-# Display file contents (with syntax highlighting)
-nexus cat /workspace/code.py
-
-# Copy files
-nexus cp /source.txt /dest.txt
-
-# Delete files
-nexus rm /workspace/old-file.txt
-nexus rm /workspace/old-file.txt --force  # Skip confirmation
-
-# Show file information
-nexus info /workspace/data.txt
-```
-
-#### Directory Operations
-
-```bash
-# Create directory
-nexus mkdir /workspace/data
-nexus mkdir /workspace/deep/nested/dir --parents
-
-# Remove directory
-nexus rmdir /workspace/data
-nexus rmdir /workspace/data --recursive --force
-```
-
-#### File Discovery
-
-```bash
-# List files
-nexus ls /workspace
-nexus ls /workspace --recursive
-nexus ls /workspace --long  # Show size, modified time, etag
-
-# Find files by pattern (glob)
-nexus glob "**/*.py"  # All Python files recursively
-nexus glob "*.txt" --path /workspace  # Text files in workspace
-nexus glob "test_*.py"  # Test files
-
-# Search file contents (grep)
-nexus grep "TODO"  # Find all TODO comments
-nexus grep "def \w+" --file-pattern "**/*.py"  # Find function definitions
-nexus grep "error" --ignore-case  # Case-insensitive search
-nexus grep "TODO" --max-results 50  # Limit results
-
-# Search modes (v0.2.0+)
-nexus grep "revenue" --file-pattern "**/*.pdf"  # Auto mode: tries parsed first
-nexus grep "revenue" --file-pattern "**/*.pdf" --search-mode=parsed  # Only parsed content
-nexus grep "TODO" --search-mode=raw  # Only raw text (skip parsing)
-
-# Result shows source type
-# Match: TODO (parsed) ← from parsed PDF
-# Match: TODO (raw) ← from source code
-```
-
-#### 3-Tier Permission System (v0.4.0+ Complete)
-
-Nexus provides three layers of access control with both **CLI** and **Python SDK** support:
-
-**Layer 1: UNIX Permissions** (owner/group/mode)
-```bash
-# CLI
-nexus chmod 755 /workspace/script.sh
-nexus chown alice /workspace/file.txt
-nexus chgrp developers /workspace/code/
-```
-
-```python
-# Python SDK
-nx.chmod("/workspace/file.txt", 0o644)
-nx.chown("/workspace/file.txt", "alice")
-nx.chgrp("/workspace/file.txt", "developers")
-```
-
-**Layer 2: ACL (Access Control Lists)** - Per-user/group granular control
-```bash
-# CLI
-nexus setfacl user:alice:rw- /workspace/file.txt          # Grant user
-nexus setfacl group:developers:r-x /workspace/code/       # Grant group
-nexus setfacl deny:user:bob:--- /workspace/secret.txt     # Deny user
-nexus getfacl /workspace/file.txt                         # View ACL
-nexus setfacl user:alice:rwx /workspace/file.txt --remove # Remove entry
-```
-
-```python
-# Python SDK (NEW in v0.4.0)
-nx.grant_user("/workspace/file.txt", user="alice", permissions="rw-")
-nx.grant_group("/workspace/file.txt", group="developers", permissions="r--")
-nx.deny_user("/workspace/secret.txt", user="intern")
-acl = nx.get_acl("/workspace/file.txt")  # Returns list[dict]
-nx.revoke_acl("/workspace/file.txt", entry_type="user", identifier="alice")
-```
-
-**Layer 3: ReBAC (Relationship-Based)** - Zanzibar-style graph permissions
-
-Nexus implements Zanzibar-style relationship-based authorization for team-based permissions, hierarchical access, and dynamic permission inheritance.
-
-```bash
-# CLI
-nexus rebac create agent alice member-of group eng-team
-nexus rebac create group eng-team owner-of file project-docs
-nexus rebac check agent alice owner-of file project-docs  # True (inherited)
-nexus rebac expand owner-of file project-docs  # Find all who can access
-nexus rebac delete <tuple-id>
-
-# Temporary access (expires automatically)
-nexus rebac create agent alice viewer-of file temp-report \
-  --expires "2025-12-31T23:59:59"
-```
-
-```python
-# Python SDK (NEW in v0.4.0)
-# Create relationships
-tuple_id = nx.rebac_create(
-    subject=("agent", "alice"),
-    relation="member-of",
-    object=("group", "developers")
-)
-
-nx.rebac_create(
-    subject=("group", "developers"),
-    relation="owner-of",
-    object=("file", "/workspace/project.txt")
-)
-
-# Check permission (automatic graph traversal)
-can_access = nx.rebac_check(
-    subject=("agent", "alice"),
-    permission="owner-of",
-    object=("file", "/workspace/project.txt")
-)  # Returns: True (alice → member-of → developers → owner-of → file)
-
-# Find all subjects with permission
-subjects = nx.rebac_expand(
-    permission="owner-of",
-    object=("file", "/workspace/project.txt")
-)  # Returns: [("agent", "alice"), ("agent", "bob"), ("group", "developers")]
-
-# List relationships
-tuples = nx.rebac_list_tuples(subject=("agent", "alice"))
-
-# Delete relationship
-nx.rebac_delete(tuple_id)
-
-# Temporary access with expiration
-from datetime import UTC, datetime, timedelta
-expires = datetime.now(UTC) + timedelta(hours=1)
-nx.rebac_create(
-    subject=("agent", "contractor"),
-    relation="viewer-of",
-    object=("file", "/workspace/doc.txt"),
-    expires_at=expires
-)
-```
-
-**ReBAC Features:**
-- **Relationship Types**: `member-of`, `owner-of`, `viewer-of`, `editor-of`, `parent-of`
-- **Graph Traversal**: Recursive permission checking through relationship chains
-- **Permission Inheritance**: Team ownership, hierarchical folders, group membership
-- **Caching**: 5-minute TTL with automatic invalidation on changes
-- **Expiring Access**: Temporary permissions with automatic cleanup
-- **Cycle Detection**: Prevents infinite loops in relationship graphs
-
-**Example Use Cases:**
-```bash
-# Team-based file access
-nexus rebac create agent alice member-of group engineering
-nexus rebac create group engineering owner-of file /projects/backend
-# alice now has owner permission on /projects/backend
-
-# Hierarchical folder permissions
-nexus rebac create agent bob owner-of file /workspace/parent-folder
-nexus rebac create file /workspace/parent-folder parent-of file /workspace/parent-folder/child
-# bob automatically has owner permission on child folder
-
-# Temporary collaborator access
-nexus rebac create agent charlie viewer-of file /reports/q4.pdf \
-  --expires "2025-01-31T23:59:59"
-# charlie's access expires automatically on Jan 31, 2025
-```
-
-#### Work Queue Operations
-
-```bash
-# Query work items by status
-nexus work ready --limit 10  # Get ready work items (high priority first)
-nexus work pending  # Get pending work items
-nexus work blocked  # Get blocked work items (with dependency info)
-nexus work in-progress  # Get currently processing items
-
-# View aggregate statistics
-nexus work status  # Show counts for all work queues
-
-# Output as JSON (for scripting)
-nexus work ready --json
-nexus work status --json
-```
-
-**Note**: Work items are files with special metadata (status, priority, depends_on, worker_id). See `docs/SQL_VIEWS_FOR_WORK_DETECTION.md` for details on setting up work queues.
-
-#### Workspace Versioning (v0.3.9)
-
-Time-travel debugging for agent workspaces. Create snapshots, restore to previous states, and compare versions.
-
-```bash
-# Create a snapshot of agent's workspace
-nexus workspace snapshot \
-  --agent agent1 \
-  --description "Before major refactor" \
-  --tag "v1.0" \
-  --tag "stable"
-
-# View snapshot history
-nexus workspace log --agent agent1
-
-# Compare two snapshots
-nexus workspace diff \
-  --agent agent1 \
-  --snapshot1 5 \
-  --snapshot2 10
-
-# Restore workspace to previous snapshot
-nexus workspace restore \
-  --agent agent1 \
-  --snapshot 5
-```
-
-**Python API:**
-```python
-from nexus import NexusFS, LocalBackend
-
-nx = NexusFS(backend, agent_id="agent1")
-
-# Create snapshot
-snapshot = nx.workspace_snapshot(
-    description="Before changes",
-    tags=["experiment", "v1.0"]
-)
-
-# View history
-snapshots = nx.workspace_log(limit=20)
-for snap in snapshots:
-    print(f"#{snap['snapshot_number']}: {snap['description']}")
-
-# Compare snapshots
-diff = nx.workspace_diff(snapshot_1=5, snapshot_2=10)
-print(f"Added: {len(diff['added'])}")
-print(f"Modified: {len(diff['modified'])}")
-print(f"Removed: {len(diff['removed'])}")
-
-# Restore to previous state
-result = nx.workspace_restore(snapshot_number=5)
-print(f"Restored {result['files_restored']} files")
-```
-
-**Features:**
-- **Zero Storage Overhead**: Snapshots are CAS manifests (JSON lists of path→hash)
-- **Instant Snapshots**: Creating a snapshot is instant (just creates a manifest)
-- **Deduplication**: Same content stored once, referenced by multiple snapshots
-- **Time-Travel**: Restore workspace to any previous state
-- **Diff Visualization**: See exactly what changed between snapshots
-- **Metadata Support**: Add descriptions and tags for easy navigation
-
-**Demo:**
-```bash
-# Try the interactive demo
-./examples/script_demo/workspace_demo.sh
-
-# Or Python demo
-python examples/py_demo/workspace_demo.py
-```
-
-#### Operation Log - Undo & Audit Trail (v0.3.9)
-
-Nexus automatically logs all filesystem operations with CAS-backed snapshots, enabling undo capability and complete audit trails.
-
-```bash
-# View operation history
-nexus ops log --limit 20
-
-# Filter by operation type
-nexus ops log --type write
-nexus ops log --type delete
-nexus ops log --type rename
-
-# Filter by agent
-nexus ops log --agent my-agent
-
-# Filter by path
-nexus ops log --path /workspace/data.txt
-
-# Filter by status
-nexus ops log --status failure
-
-# Undo last operation
-nexus undo
-
-# Undo last operation by specific agent (skip confirmation)
-nexus undo --agent my-agent --yes
-```
-
-**Operation Log Features:**
-- **Automatic Logging**: All write, delete, and rename operations logged automatically
-- **CAS-Backed Snapshots**: Previous content stored via content hash (zero storage overhead)
-- **Undo Capability**: Reverse any operation (write, delete, rename)
-- **Audit Trail**: Complete history for compliance and debugging
-- **Filtered Queries**: Search by agent, type, path, time, status
-- **Multi-Agent Safe**: Track operations per agent for team workflows
-
-**Undo Behavior:**
-- **Write (new file)**: Deletes the newly created file
-- **Write (update)**: Restores previous version from CAS snapshot
-- **Delete**: Restores file content and metadata from CAS snapshot
-- **Rename**: Renames file back to original path
-
-**Python SDK:**
-```python
-import nexus
-from nexus.storage.operation_logger import OperationLogger
-
-nx = nexus.connect(config={"agent_id": "my-agent"})
-
-# Operations are logged automatically
-nx.write("/workspace/file.txt", b"Content v1")
-nx.write("/workspace/file.txt", b"Content v2")  # Previous version logged
-nx.delete("/workspace/file.txt")  # Content snapshot saved
-
-# Query operation log
-with nx.metadata.SessionLocal() as session:
-    logger = OperationLogger(session)
-
-    # List recent operations
-    operations = logger.list_operations(limit=10)
-    for op in operations:
-        print(f"{op.operation_type}: {op.path} at {op.created_at}")
-
-    # Filter by agent
-    agent_ops = logger.list_operations(agent_id="my-agent", limit=20)
-
-    # Filter by type
-    write_ops = logger.list_operations(operation_type="write", limit=10)
-
-    # Get path history
-    history = logger.get_path_history("/workspace/file.txt")
-
-    # Undo by restoring from snapshot
-    last_op = logger.get_last_operation()
-    if last_op.snapshot_hash:
-        old_content = nx.backend.read_content(last_op.snapshot_hash)
-        nx.write(last_op.path, old_content)  # Restore previous version
-```
-
-**Demo:**
-```bash
-# Try the interactive demos
-python examples/py_demo/operation_log_demo.py
-./examples/script_demo/operation_log_demo.sh
-```
-
-#### Time-Travel Debugging (v0.3.9)
-
-Read files and directories at any historical operation point for powerful debugging and analysis of agent behavior over time. Built on the Operation Log, time-travel enables non-destructive exploration of past states.
-
-**CLI Usage:**
-```bash
-# Read file content at a historical operation point
-nexus cat /workspace/file.txt --at-operation op_abc123
-
-# List directory contents at a historical point
-nexus ls /workspace --at-operation op_abc123 -l
-
-# Compare file states between two operations (metadata only)
-nexus ops diff /workspace/file.txt op_abc123 op_def456
-
-# Show full unified diff (like git diff)
-nexus ops diff /workspace/file.txt op_abc123 op_def456 --show-content
-
-# Get operation IDs from the log
-nexus ops log --path /workspace/file.txt
-```
-
-**Python SDK:**
-```python
-import nexus
-from nexus.storage.time_travel import TimeTravelReader
-from nexus.storage.operation_logger import OperationLogger
-
-nx = nexus.connect()
-
-# Create evolving file with version history
-nx.write("/workspace/agent_log.txt", b"Agent started\n")
-nx.write("/workspace/agent_log.txt", b"Agent started\nProcessing data...\n")
-nx.write("/workspace/agent_log.txt", b"Agent started\nProcessing data...\nCompleted!\n")
-
-# Get operation IDs
-with nx.metadata.SessionLocal() as session:
-    logger = OperationLogger(session)
-    ops = logger.list_operations(path="/workspace/agent_log.txt", limit=3)
-
-    # Most recent first
-    op_v3 = ops[0].operation_id
-    op_v2 = ops[1].operation_id
-    op_v1 = ops[2].operation_id
-
-    # Create time-travel reader
-    time_travel = TimeTravelReader(session, nx.backend)
-
-    # Read file at version 1
-    state_v1 = time_travel.get_file_at_operation("/workspace/agent_log.txt", op_v1)
-    print(f"Version 1: {state_v1['content'].decode('utf-8')}")
-
-    # Read file at version 2
-    state_v2 = time_travel.get_file_at_operation("/workspace/agent_log.txt", op_v2)
-    print(f"Version 2: {state_v2['content'].decode('utf-8')}")
-
-    # Compare versions
-    diff = time_travel.diff_operations("/workspace/agent_log.txt", op_v1, op_v2)
-    print(f"Content changed: {diff['content_changed']}")
-    print(f"Size change: {diff['size_diff']} bytes")
-
-    # List directory at historical point
-    files = time_travel.list_files_at_operation("/workspace", op_v1)
-    for file in files:
-        print(f"  {file['path']} ({file['size']} bytes)")
-```
-
-**Time-Travel Features:**
-- **Historical File Reads**: Access file content at any operation point
-- **Historical Directory Listings**: See what files existed at any point in time
-- **Operation Diff**: Compare file states between operations with unified diffs
-- **Non-Destructive**: Query history without modifying current state
-- **CAS-Backed**: Zero storage overhead (content already deduplicated)
-- **Full Content Access**: Returns complete file content, not just metadata
-
-**Use Cases:**
-1. **Debug Agent Behavior**: "What was the file content 10 operations ago?"
-2. **Workflow Analysis**: Track how agents modified files over time
-3. **Post-Mortem Debugging**: Understand what happened without undo/redo
-4. **Concurrent Agent Analysis**: See what files existed when each agent ran
-5. **Audit Trails**: Inspect system state at specific points for compliance
-
-**Demo:**
-```bash
-# Try the interactive demos
-python examples/py_demo/time_travel_demo.py
-./examples/script_demo/time_travel_demo.sh
-```
-
-#### Workflow Automation (v0.4.0)
-
-Nexus Workflow System enables event-driven automation pipelines for document processing, data transformation, and multi-step operations. Define workflows in YAML with triggers, actions, and plugin extensibility.
-
-**CLI Commands:**
-```bash
-# Load workflow from YAML file
-nexus workflows load .nexus/workflows/process-invoices.yaml
-nexus workflows load my-workflow.yaml --enabled  # Load and enable
-nexus workflows load my-workflow.yaml --disabled  # Load but keep disabled
-
-# List all loaded workflows
-nexus workflows list
-# Shows: name, version, description, triggers, actions, status (enabled/disabled)
-
-# Test workflow execution
-nexus workflows test process-invoices --file /inbox/test.pdf
-nexus workflows test auto-tagger --file /docs/report.pdf --context '{"priority": "high"}'
-
-# View execution history (coming soon)
-nexus workflows runs process-invoices --limit 10
-
-# Enable/disable workflows
-nexus workflows enable process-invoices
-nexus workflows disable process-invoices
-
-# Unload workflow (remove from engine)
-nexus workflows unload process-invoices
-
-# Discover workflows in directory
-nexus workflows discover .nexus/workflows
-nexus workflows discover ./my-workflows --load  # Discover and load all
-```
-
-**Workflow Features:**
-- **Event Triggers**: file_write, file_delete, metadata_change, schedule, webhook
-- **Built-in Actions**: parse, tag, move, metadata, llm, webhook, python, bash
-- **Variable Interpolation**: `{file_path}`, `{filename}`, `{timestamp}`, `{action_output}`
-- **Plugin Actions**: Extend with custom actions via plugin system
-- **Persistent Storage**: Workflows stored in database, survive restarts
-- **Execution Tracking**: Monitor workflow runs and action results
-
-**Quick Example - Auto-process PDFs:**
-```yaml
-# .nexus/workflows/process-pdfs.yaml
-name: process-pdfs
-version: 1.0
-description: Auto-process and tag PDF documents
-
-triggers:
-  - type: file_write
-    pattern: /inbox/**/*.pdf
-
-actions:
-  - name: parse_content
-    type: parse
-    parser: pdf
-
-  - name: extract_metadata
-    type: llm
-    model: claude-sonnet-4
-    prompt: "Extract: title, author, date, key topics"
-    output_format: json
-
-  - name: tag_document
-    type: tag
-    tags:
-      - processed
-      - pdf
-      - "{extract_metadata_output.topic}"
-
-  - name: move_to_archive
-    type: move
-    destination: /archives/{year}/{month}/
-    create_parents: true
-```
-
-**Python API:**
-```python
-from nexus.workflows import WorkflowAPI
-
-workflows = WorkflowAPI()
-
-# Load workflow
-workflows.load("my-workflow.yaml")
-
-# Execute manually
-result = await workflows.execute(
-    "process-pdfs",
-    file_path="/inbox/document.pdf"
-)
-
-print(f"Status: {result.status}")
-print(f"Actions: {result.actions_completed}/{result.actions_total}")
-
-# Manage workflows
-workflows.enable("process-pdfs")
-workflows.disable("process-pdfs")
-workflows.unload("process-pdfs")
-```
-
-**Documentation:**
-- Full workflow documentation: [examples/workflows/README.md](examples/workflows/README.md)
-- Trigger types, action types, and advanced features
-- Plugin development for custom actions
-- Example workflows for common use cases
-
-**Demo:**
-```bash
-# Try the workflow demo
-./examples/workflows/workflow_demo.sh
-python examples/workflows/workflow_example.py
-```
-
-#### Version Tracking & History (v0.3.5)
-
-Nexus provides CAS-backed version tracking for all files and skills. Every write operation automatically preserves the previous version with zero storage overhead through content deduplication.
-
-```bash
-# View version history for a file
-nexus versions history /workspace/document.txt
-# Output:
-# ┌─────────┬────────┬─────────────────────┬────────────┬──────────┬───────────────┐
-# │ Version │ Size   │ Created At          │ Created By │ Source   │ Change Reason │
-# ├─────────┼────────┼─────────────────────┼────────────┼──────────┼───────────────┤
-# │ 3       │ 1.2 KB │ 2025-01-20 14:30:00 │ alice      │ original │ -             │
-# │ 2       │ 1.0 KB │ 2025-01-20 10:15:00 │ alice      │ original │ -             │
-# │ 1       │ 0.8 KB │ 2025-01-19 09:00:00 │ alice      │ original │ -             │
-# └─────────┴────────┴─────────────────────┴────────────┴──────────┴───────────────┘
-
-# Retrieve specific version content
-nexus versions get /workspace/document.txt --version 1
-# Output: <content of version 1>
-
-# Save to file
-nexus versions get /workspace/document.txt --version 2 -o old_version.txt
-# ✓ Wrote version 2 to: old_version.txt
-
-# Compare two versions (metadata)
-nexus versions diff /workspace/document.txt --v1 1 --v2 3 --mode metadata
-# Output:
-# Size: 819 bytes → 1,234 bytes
-# Content changed: True
-# Hash v1: abc123...
-# Hash v3: def456...
-
-# Compare two versions (content)
-nexus versions diff /workspace/document.txt --v1 1 --v2 3
-# Output (unified diff format):
-# --- /workspace/document.txt (v1)
-# +++ /workspace/document.txt (v3)
-# @@ -1,3 +1,5 @@
-#  First line
-# -Second line
-# +Second line modified
-# +Third line added
-#  Last line
-
-# Rollback to previous version
-nexus versions rollback /workspace/document.txt --version 2
-# ✓ Rolled back /workspace/document.txt to version 2
-# New version: 4 (rollback creates new version, no data loss!)
-
-# Skip confirmation
-nexus versions rollback /workspace/document.txt --version 1 --yes
-```
-
-**Version Tracking Features:**
-- **Automatic Version Creation**: Every write operation preserves the previous version
-- **Zero Storage Overhead**: CAS deduplication means identical content is stored only once
-- **Complete History**: Never lose data - every version is preserved forever
-- **Rollback Support**: Revert to any previous version (creates new version, no destructive changes)
-- **Content Diff**: Compare versions with unified diff output
-- **Skills Versioning**: Track changes to SKILL.md files over time
-- **Time Travel**: Retrieve exact state from any point in time
-
-**Python SDK:**
-```python
-import nexus
-
-nx = nexus.connect()
-
-# Version history is automatic on every write
-nx.write("/workspace/doc.txt", b"Version 1")
-nx.write("/workspace/doc.txt", b"Version 2")
-nx.write("/workspace/doc.txt", b"Version 3")
-
-# List all versions
-versions = nx.list_versions("/workspace/doc.txt")
-print(f"Total versions: {len(versions)}")  # 3
-
-# Get specific version
-v1_content = nx.get_version("/workspace/doc.txt", version=1)
-print(f"V1: {v1_content}")  # b"Version 1"
-
-# Compare versions
-diff = nx.diff_versions("/workspace/doc.txt", v1=1, v2=3, mode="content")
-print(diff)  # Unified diff output
-
-# Rollback to v2
-nx.rollback("/workspace/doc.txt", version=2)
-# Current version is now 4, pointing to v2's content
-```
-
-#### Optimistic Concurrency Control (v0.3.9)
-
-Nexus provides lock-free concurrency control for multi-agent safe operations. No file locks - conflicts are detected and agents decide how to resolve them.
-
-**Why OCC?**
-- **Multi-Agent Safe**: Multiple agents can write concurrently without lock contention
-- **Conflict Detection**: Automatic detection when files change unexpectedly
-- **Agent-Controlled Resolution**: Agents choose resolution strategy (retry, merge, abort, force)
-- **No Silent Data Loss**: Prevents last-write-wins race conditions
-
-**Basic Usage - Python API:**
-
-```python
-import nexus
-from nexus.core.exceptions import ConflictError
-
-nx = nexus.connect()
-
-# Read file with metadata (includes etag and version)
-data = nx.read("/workspace/doc.txt", return_metadata=True)
-print(f"Content: {data['content'].decode()}")
-print(f"ETag: {data['etag']}")  # SHA-256 content hash
-print(f"Version: {data['version']}")
-
-# Conditional write - only succeeds if etag matches
-try:
-    result = nx.write(
-        "/workspace/doc.txt",
-        b"Updated content",
-        if_match=data["etag"]  # Check version before writing
-    )
-    print(f"Success! New version: {result['version']}")
-except ConflictError as e:
-    print(f"Conflict: {e.message}")
-    print(f"Expected: {e.expected_etag[:16]}...")
-    print(f"Current:  {e.current_etag[:16]}...")
-    # Handle conflict - see strategies below
-```
-
-**CLI Usage:**
-
-```bash
-# Write file and show metadata
-nexus write /doc.txt "Initial content" --show-metadata
-# Output:
-# ✓ Wrote 15 bytes to /doc.txt
-# ETag:     a591a6d40bf420404a011733cfb7b190d6edc0b79a1160c4fe2607efd9ec049b
-# Version:  1
-# ...
-
-# Read file with metadata
-nexus cat /doc.txt --metadata
-# Output:
-# Metadata:
-# Path:     /doc.txt
-# ETag:     a591a6d40bf420404a011733cfb7b190d6edc0b79a1160c4fe2607efd9ec049b
-# Version:  1
-# ...
-# Content:
-# Initial content
-
-# Conditional write (safe update)
-nexus write /doc.txt "Updated" \
-  --if-match a591a6d40bf420404a011733cfb7b190d6edc0b79a1160c4fe2607efd9ec049b
-# ✓ Wrote 7 bytes to /doc.txt
-
-# Create-only mode (fail if file exists)
-nexus write /new.txt "Content" --if-none-match
-# ✓ Wrote 7 bytes to /new.txt
-
-nexus write /new.txt "Duplicate" --if-none-match
-# Error: File already exists: /new.txt
-```
-
-**Conflict Resolution Strategies:**
-
-```python
-from nexus.core.exceptions import ConflictError
-
-nx = nexus.connect()
-
-# Strategy 1: Retry with Fresh Read (Most Common)
-def safe_update(path, new_content):
-    """Update with automatic retry on conflict."""
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            data = nx.read(path, return_metadata=True)
-            result = nx.write(path, new_content, if_match=data["etag"])
-            return result
-        except ConflictError:
-            if attempt == max_retries - 1:
-                raise  # Give up after max retries
-            continue  # Retry with fresh read
-
-# Strategy 2: Three-Way Merge (For Structured Data)
-try:
-    data = nx.read("/config.json", return_metadata=True)
-    my_changes = {"setting_a": 99}  # My update
-    nx.write("/config.json", json.dumps(my_changes).encode(), if_match=data["etag"])
-except ConflictError:
-    # Conflict - someone else modified the file
-    current = nx.read("/config.json", return_metadata=True)
-    current_config = json.loads(current["content"])
-
-    # Merge: Apply my changes on top of current state
-    merged_config = {**current_config, **my_changes}
-    nx.write("/config.json", json.dumps(merged_config).encode(), if_match=current["etag"])
-
-# Strategy 3: Abort on Conflict (For Critical Data)
-try:
-    data = nx.read("/critical.txt", return_metadata=True)
-    nx.write("/critical.txt", b"My changes", if_match=data["etag"])
-except ConflictError as e:
-    print(f"Conflict detected: {e.message}")
-    print("Aborting - manual review required")
-    # Notify user, log error, or escalate
-
-# Strategy 4: Force Overwrite (Dangerous!)
-# Skip version check - last write wins (can cause data loss)
-result = nx.write("/doc.txt", b"Force written", force=True)
-# ⚠️  Any concurrent changes are silently lost!
-```
-
-**Remote/Distributed Usage:**
-
-OCC works transparently across remote servers and multi-agent environments:
-
-```python
-from nexus.remote.client import RemoteNexusFS
-from nexus.core.exceptions import ConflictError
-
-# Connect to remote Nexus server
-nx = RemoteNexusFS("http://nexus.example.com:8080", api_key="your-key")
-
-# Read with metadata (works exactly like local)
-data = nx.read("/shared/document.txt", return_metadata=True)
-print(f"ETag: {data['etag']}")
-print(f"Version: {data['version']}")
-
-# Conditional write (prevents race conditions)
-try:
-    result = nx.write(
-        "/shared/document.txt",
-        b"Updated by Agent A",
-        if_match=data["etag"]
-    )
-    print(f"Success! New version: {result['version']}")
-except ConflictError as e:
-    # Another agent modified the file concurrently
-    print(f"Conflict: {e.message}")
-    # Retry with fresh read
-```
-
-**Features:**
-- **Lock-Free**: No file locking - better performance in distributed environments
-- **Automatic Versioning**: Every write increments version number automatically
-- **ETags**: SHA-256 content hashes for version identification
-- **Atomic Check**: Version check happens atomically at database level
-- **Backward Compatible**: All parameters optional - existing code works unchanged
-- **FUSE Compatible**: Works through FUSE mounts (operations don't use if_match by default)
-
-**Use Cases:**
-- **Multi-Agent Collaboration**: Prevent agents from overwriting each other's changes
-- **Distributed Teams**: Safe concurrent edits across remote servers
-- **Dropbox/rsync Safe**: Prevent race conditions during sync operations
-- **Critical Data**: Ensure updates don't silently overwrite concurrent modifications
-
-**See Examples:**
-- `examples/concurrency_demo.py` - Comprehensive Python examples
-- `examples/test_cli_occ.sh` - CLI usage examples and testing
-
-### Examples
-
-**Initialize and populate a workspace:**
-
-```bash
-# Create workspace
-nexus init ./my-project
-
-# Create structure
-nexus mkdir /workspace/src --data-dir ./my-project/nexus-data
-nexus mkdir /workspace/tests --data-dir ./my-project/nexus-data
-
-# Add files
-echo "print('Hello World')" | nexus write /workspace/src/main.py --input - \
-  --data-dir ./my-project/nexus-data
-
-# List everything
-nexus ls / --recursive --long --data-dir ./my-project/nexus-data
-```
-
-**Find and analyze code:**
-
-```bash
-# Find all Python files
-nexus glob "**/*.py"
-
-# Search for TODO comments
-nexus grep "TODO|FIXME" --file-pattern "**/*.py"
-
-# Find all test files
-nexus glob "**/test_*.py"
-
-# Search for function definitions
-nexus grep "^def \w+\(" --file-pattern "**/*.py"
-```
-
-**Work with data:**
-
-```bash
-# Write JSON data
-echo '{"name": "test", "value": 42}' | nexus write /data/config.json --input -
-
-# Display with syntax highlighting
-nexus cat /data/config.json
-
-# Get file information
-nexus info /data/config.json
-```
-
-### Global Options
-
-All commands support these global options:
-
-```bash
-# Use custom config file
-nexus ls /workspace --config /path/to/config.yaml
-
-# Override data directory
-nexus ls /workspace --data-dir /path/to/nexus-data
-
-# Combine both (config takes precedence)
-nexus ls /workspace --config ./my-config.yaml --data-dir ./data
-```
-
-### Plugin Management
-
-Nexus has a modular plugin system for external integrations:
-
-```bash
-# List installed plugins
-nexus plugins list
-
-# Get detailed plugin information
-nexus plugins info anthropic
-nexus plugins info skill-seekers
-
-# Install a plugin
-nexus plugins install anthropic
-nexus plugins install skill-seekers
-
-# Enable/disable plugins
-nexus plugins enable anthropic
-nexus plugins disable anthropic
-
-# Uninstall a plugin
-nexus plugins uninstall skill-seekers
-```
-
-**First-party plugins (local development only - not yet on PyPI):**
-- **anthropic** - Claude Skills API integration (upload/download/manage skills)
-- **skill-seekers** - Generate skills from documentation websites
-
-**Installation:**
-```bash
-# Install from local source
-pip install -e ./nexus-plugin-anthropic
-pip install -e ./nexus-plugin-skill-seekers
-```
-
-**Using plugin commands:**
-```bash
-# Anthropic plugin commands
-nexus anthropic upload-skill my-skill
-nexus anthropic list-skills
-nexus anthropic import-github canvas-design
-
-# Skill Seekers plugin commands
-nexus skill-seekers generate https://react.dev/ --name react-basics
-nexus skill-seekers import /path/to/SKILL.md
-nexus skill-seekers list
-```
-
-**Unix Pipeline Integration (v0.4.0):**
-
-Plugin commands support Unix-style piping for composable workflows:
-
-```bash
-# Simple pipeline: scrape → create skill
-nexus firecrawl scrape https://docs.stripe.com/api --json | \
-  nexus skills create-from-web --stdin --name stripe-api
-
-# Multi-stage pipeline: scrape → create skill → upload to Claude
-nexus firecrawl scrape https://docs.example.com --json | \
-  nexus skills create-from-web --stdin --tier tenant | \
-  nexus anthropic upload-skill --stdin
-
-# Combine with Unix tools (jq, grep, awk)
-nexus firecrawl scrape https://docs.example.com --json | \
-  jq 'select(.content | length > 1000)' | \
-  nexus skills create-from-web --stdin
-
-# Batch processing with parallel execution
-cat urls.txt | xargs -P 4 -I {} sh -c \
-  'nexus firecrawl scrape {} --json | nexus skills create-from-web --stdin'
-
-# Core commands work with Unix tools too
-nexus cat /workspace/data.txt | grep "ERROR" | wc -l
-nexus cat /workspace/config.json | jq '.items[] | select(.active)'
-```
-
-**Key principles:**
-- Core commands (`cat`, `write`) → Use Unix tools (`grep`, `jq`, `awk`)
-- Plugin commands → Use JSON pipelines (`--json`, `--stdin` flags)
-- All plugin JSON output includes a `type` field for identification
-
-See detailed documentation:
-- [Plugin Installation Guide](./PLUGIN_INSTALLATION.md) - **Start here for setup**
-- [nexus-plugin-anthropic](./nexus-plugin-anthropic/README.md) - Anthropic plugin docs
-- [nexus-plugin-skill-seekers](./nexus-plugin-skill-seekers/README.md) - Skill Seekers docs
-
-**Try plugin examples:**
-```bash
-# CLI demo - plugin management commands
-./examples/script_demo/plugin_cli_demo.sh
-
-# Pipeline integration demo - Unix-style piping (NEW in v0.4.0!)
-./examples/script_demo/pipeline_demo.sh
-
-# SDK demo - programmatic plugin usage
-python examples/plugin_sdk_demo.py
-```
-
-### Help
-
-Get help for any command:
-
-```bash
-nexus --help  # Show all commands
-nexus ls --help  # Show help for ls command
-nexus grep --help  # Show help for grep command
-nexus plugins --help  # Show plugin management commands
-```
-
-## Remote Nexus Server
-
-Nexus includes a JSON-RPC server that exposes the full NexusFileSystem interface over HTTP, enabling remote filesystem access and FUSE mounts to remote servers.
-
-### Quick Start
-
-#### Method 1: Using the Startup Script (Recommended)
-
-```bash
-# Navigate to nexus directory
-cd /path/to/nexus
-
-# Start with defaults (host: 0.0.0.0, port: 8080, no auth)
-./start-server.sh
-
-# Or with custom options
-./start-server.sh --host localhost --port 8080 --api-key mysecret
-```
-
-#### Method 2: Direct Command
-
-```bash
-# Start the server (optional API key authentication)
-nexus serve --host 0.0.0.0 --port 8080 --api-key mysecret
-
-# Use remote filesystem from Python
-from nexus import RemoteNexusFS
-
-nx = RemoteNexusFS(
-    server_url="http://localhost:8080",
-    api_key="mysecret"  # Optional
-)
-
-# Same API as local NexusFS!
-nx.write("/workspace/hello.txt", b"Hello Remote!")
-content = nx.read("/workspace/hello.txt")
-files = nx.list("/workspace", recursive=True)
-```
-
-### Features
-
-- **Full NFS Interface**: All filesystem operations exposed over RPC (read, write, list, glob, grep, mkdir, etc.)
-- **JSON-RPC 2.0 Protocol**: Standard RPC protocol with proper error handling
-- **API Key Authentication**: Optional Bearer token authentication for security
-- **Backend Agnostic**: Works with local and GCS backends
-- **FUSE Compatible**: Mount remote Nexus servers as local filesystems
-
-### Remote Client Usage
-
-```python
-from nexus import RemoteNexusFS
-
-# Connect to remote server
-nx = RemoteNexusFS(
-    server_url="http://your-server:8080",
-    api_key="your-api-key"  # Optional
-)
-
-# All standard operations work
-nx.write("/workspace/data.txt", b"content")
-content = nx.read("/workspace/data.txt")
-files = nx.list("/workspace", recursive=True)
-results = nx.glob("**/*.py")
-matches = nx.grep("TODO", file_pattern="*.py")
-```
-
-### Server Options
-
-```bash
-# Start with custom host/port
-nexus serve --host 0.0.0.0 --port 8080
-
-# Start with API key authentication
-nexus serve --api-key mysecret
-
-# Start with GCS backend
-nexus serve --backend=gcs --gcs-bucket=my-bucket --api-key mysecret
-
-# Custom data directory
-nexus serve --data-dir /path/to/data
-```
-
-### Testing the Server
-
-Once the server is running, verify it's working:
-
-```bash
-# Health check
-curl http://localhost:8080/health
-# Expected: {"status": "healthy", "service": "nexus-rpc"}
-
-# Check available methods
-curl http://localhost:8080/api/nfs/status
-# Expected: {"status": "running", "service": "nexus-rpc", "version": "1.0", "methods": [...]}
-
-# List files (JSON-RPC)
-curl -X POST http://localhost:8080/api/nfs/list \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "list",
-    "params": {"path": "/", "recursive": false, "details": true},
-    "id": 1
-  }'
-
-# With API key
-curl -X POST http://localhost:8080/api/nfs/list \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer mysecretkey" \
-  -d '{"jsonrpc": "2.0", "method": "list", "params": {"path": "/"}, "id": 1}'
-```
-
-### Troubleshooting
-
-**Port Already in Use:**
-```bash
-# Find and kill process using port 8080
-lsof -ti:8080 | xargs kill -9
-
-# Or use a different port
-nexus serve --port 8081
-```
-
-**Module Not Found:**
-```bash
-# Activate virtual environment and install
-source .venv/bin/activate
-pip install -e .
-```
-
-**Permission Denied:**
-```bash
-# Use a directory you have write access to
-nexus serve --data-dir ~/nexus-data
-```
-
-### Deploying Nexus Server
-
-#### Google Cloud Platform (Recommended)
-
-Deploy to GCP with a single command using the automated deployment script:
-
-```bash
-# Quick start
-./scripts/deploy-gcp.sh --project-id YOUR-PROJECT-ID --api-key mysecret
-
-# With GCS backend
-./scripts/deploy-gcp.sh \
-  --project-id YOUR-PROJECT-ID \
-  --gcs-bucket your-nexus-bucket \
-  --api-key mysecret \
-  --machine-type e2-standard-2
-```
-
-**Features:**
-- ✅ Automated VM provisioning (Ubuntu 22.04)
-- ✅ Systemd service with auto-restart
-- ✅ Firewall configuration
-- ✅ GCS backend support
-- ✅ Production-ready setup
-
-**See [GCP Deployment Guide](docs/deployment/GCP_DEPLOYMENT.md) for complete instructions.**
-
-#### Docker Deployment
-
-Deploy using Docker for consistent environments and easy management:
-
-```bash
-# Quick start with Docker Compose
-cp .env.docker.example .env
-# Edit .env with your configuration
-docker-compose up -d
-
-# Or run directly
-docker build -t nexus-server:latest .
-docker run -d \
-  --name nexus-server \
-  --restart unless-stopped \
-  -p 8080:8080 \
-  -v nexus-data:/app/data \
-  -e NEXUS_API_KEY="your-api-key" \
-  nexus-server:latest
-
-# Deploy to GCP with Docker (automated)
-./deploy-gcp-docker.sh \
-  --project-id your-project-id \
-  --api-key mysecret \
-  --build-local
-```
-
-**Features:**
-- ✅ Multi-stage build for optimized image size (~300MB)
-- ✅ Non-root user for security
-- ✅ Health checks and auto-restart
-- ✅ GCS backend support
-- ✅ Docker Compose for easy orchestration
-
-**See [Docker Deployment Guide](docs/deployment/DOCKER_DEPLOYMENT.md) for complete instructions.**
-
-**Deployment Features:**
-- **Persistent Metadata**: SQLite database stored on VM disk at `/var/lib/nexus/`
-- **Content Storage**: All file content stored in configured backend (GCS, local, etc.)
-- **Content Deduplication**: CAS-based storage with 30-50% savings
-- **Full NFS API**: All operations available remotely
-
-## FUSE Mount: Use Standard Unix Tools (v0.2.0)
-
-Mount Nexus to a local path and use **any standard Unix tool** seamlessly - `ls`, `cat`, `grep`, `vim`, and more!
+## Quick Start
 
 ### Installation
 
-First, install FUSE support:
-
 ```bash
-# Install Nexus with FUSE support
-pip install nexus-ai-fs[fuse]
-
-# Platform-specific FUSE library:
-# macOS: Install macFUSE from https://osxfuse.github.io/
-# Linux: sudo apt-get install fuse3  # or equivalent for your distro
+pip install nexus-ai-fs
 ```
 
-### Quick Start
-
-```bash
-# Mount Nexus to local path (smart mode by default)
-nexus mount /mnt/nexus
-
-# Now use ANY standard Unix tools!
-ls -la /mnt/nexus/workspace/
-cat /mnt/nexus/workspace/notes.txt
-grep -r "TODO" /mnt/nexus/workspace/
-find /mnt/nexus -name "*.py"
-vim /mnt/nexus/workspace/code.py
-git clone /some/repo /mnt/nexus/repos/myproject
-
-# Unmount when done
-nexus unmount /mnt/nexus
-```
-
-### Quick Start Examples
-
-**Example 1: Default (Explicit Views) - Best for Mixed Workflows**
-
-```bash
-# Mount normally
-nexus mount /mnt/nexus
-
-# Binary tools work directly
-evince /mnt/nexus/docs/report.pdf     # PDF viewer works ✓
-
-# Add .txt for text operations
-cat /mnt/nexus/docs/report.pdf.txt    # Read as text
-grep "results" /mnt/nexus/docs/*.pdf.txt
-
-# Virtual views auto-generated
-ls /mnt/nexus/docs/
-# → report.pdf
-# → report.pdf.txt  (virtual)
-# → report.pdf.md   (virtual)
-```
-
-**Example 2: Auto-Parse - Best for Search-Heavy Workflows**
-
-```bash
-# Mount with auto-parse
-nexus mount /mnt/nexus --auto-parse
-
-# grep works directly on PDFs!
-grep "results" /mnt/nexus/docs/*.pdf      # No .txt needed! ✓
-cat /mnt/nexus/docs/report.pdf            # Returns text ✓
-
-# Search across everything
-grep -r "TODO" /mnt/nexus/workspace/      # Searches PDFs, Excel, etc.
-
-# Binary via .raw/ when needed
-evince /mnt/nexus/.raw/docs/report.pdf   # For PDF viewer
-```
-
-**Example 3: Real-World Script**
-
-```bash
-#!/bin/bash
-# Find all PDFs mentioning "invoice"
-
-# Mount in background - command returns immediately!
-nexus mount /mnt/nexus --auto-parse --daemon
-# (No blocking - script continues immediately)
-
-# Mount is ready - grep works on PDFs!
-grep -l "invoice" /mnt/nexus/documents/*.pdf
-
-# Process results
-for pdf in $(grep -l "invoice" /mnt/nexus/documents/*.pdf); do
-    echo "Found in: $pdf"
-    grep -n "invoice" "$pdf" | head -5
-done
-
-# Clean up
-nexus unmount /mnt/nexus
-```
-
-**Remote server example:**
-
-```bash
-#!/bin/bash
-# Search PDFs on remote Nexus server
-
-# Mount remote server in background
-nexus mount /mnt/nexus \
-  --remote-url http://nexus-server:8080 \
-  --auto-parse \
-  --daemon
-
-# Command returns immediately - daemon process runs in background
-# You can now use standard Unix tools on remote filesystem!
-
-# Search across remote PDFs
-grep -r "TODO" /mnt/nexus/workspace/ | head -20
-
-# Find large files
-find /mnt/nexus -type f -size +10M
-
-# Clean up when done
-nexus unmount /mnt/nexus
-```
-
-### File Access: Two Modes
-
-Nexus supports **two ways** to access files - choose what fits your workflow:
-
-#### 1. Explicit Views (Default) - Best for Compatibility
-
-Binary files return binary, use `.txt`/`.md` suffixes for parsed content:
-
-```bash
-nexus mount /mnt/nexus
-
-# Binary files work with native tools
-evince /mnt/nexus/docs/report.pdf      # PDF viewer gets binary ✓
-libreoffice /mnt/nexus/data/sheet.xlsx # Excel app gets binary ✓
-
-# Add .txt to search/read as text
-cat /mnt/nexus/docs/report.pdf.txt     # Returns parsed text
-grep "pattern" /mnt/nexus/docs/*.pdf.txt
-
-# Virtual views appear automatically
-ls /mnt/nexus/docs/
-# → report.pdf
-# → report.pdf.txt  (virtual view)
-# → report.pdf.md   (virtual view)
-```
-
-**When to use:** You want both binary tools AND text search to work
-
-#### 2. Auto-Parse Mode - Best for Search/Grep
-
-Binary files return parsed text directly, use `.raw/` for binary:
-
-```bash
-nexus mount /mnt/nexus --auto-parse
-
-# Binary files return text directly - perfect for grep!
-cat /mnt/nexus/docs/report.pdf         # Returns parsed text ✓
-grep "pattern" /mnt/nexus/docs/*.pdf   # Works directly! ✓
-less /mnt/nexus/docs/report.pdf        # Page through text ✓
-
-# Access binary via .raw/ when needed
-evince /mnt/nexus/.raw/docs/report.pdf # PDF viewer gets binary
-
-# No .txt/.md suffixes - files return text by default
-ls /mnt/nexus/docs/
-# → report.pdf  (returns text when read)
-```
-
-**When to use:** Text search is your primary use case, binary tools are secondary
-
-### Mount Modes (Content Parsing)
-
-Control **what** gets parsed:
-
-```bash
-# Smart mode (default) - Auto-detect file types
-nexus mount /mnt/nexus --mode=smart
-# ✅ PDFs, Excel, Word → parsed
-# ✅ .py, .txt, .md → pass-through
-# ✅ Best for mixed content
-
-# Text mode - Parse everything aggressively
-nexus mount /mnt/nexus --mode=text
-# ✅ All files parsed to text
-# ⚠️  Slower (always parses)
-
-# Binary mode - No parsing at all
-nexus mount /mnt/nexus --mode=binary
-# ✅ All files return binary
-# ❌ grep won't work on PDFs
-```
-
-### Comparison Table
-
-| Feature | Explicit Views (default) | Auto-Parse Mode (`--auto-parse`) |
-|---------|-------------------------|-----------------------------------|
-| **PDF viewers work** | ✅ `evince file.pdf` | ⚠️  `evince .raw/file.pdf` |
-| **grep on PDFs** | ⚠️  `grep *.pdf.txt` | ✅ `grep *.pdf` |
-| **Excel apps work** | ✅ `libreoffice file.xlsx` | ⚠️  `libreoffice .raw/file.xlsx` |
-| **Best for** | Binary tools + search | Text search primary use case |
-| **Virtual views** | `.txt`, `.md` suffixes | No suffixes needed |
-| **Binary access** | Direct (`file.pdf`) | Via `.raw/` directory |
-
-### Background (Daemon) Mode
-
-Run the mount in the background and return to your shell immediately:
-
-```bash
-# Mount in background - command returns immediately
-nexus mount /mnt/nexus --daemon
-# ✓ Mounted Nexus to /mnt/nexus
-#
-# To unmount:
-#   nexus unmount /mnt/nexus
-#
-# (Shell prompt returns immediately, mount runs in background)
-
-# Mount is active - you can use it immediately
-ls /mnt/nexus
-cat /mnt/nexus/workspace/file.txt
-
-# Check daemon status
-ps aux | grep "nexus mount" | grep -v grep
-# jinjingzhou  43097  ... nexus mount /mnt/nexus --daemon
-
-# Later, unmount when done
-nexus unmount /mnt/nexus
-```
-
-**How it works:**
-- Command returns to shell immediately (using double-fork technique)
-- Background daemon process keeps mount active
-- Daemon survives terminal close and persists until unmount
-- Safe to close your terminal - mount stays active
-
-**Local Mount:**
-```bash
-# Mount local Nexus data in background
-nexus mount /mnt/nexus --daemon
-```
-
-**Remote Mount:**
-```bash
-# Mount remote Nexus server in background
-nexus mount /mnt/nexus --remote-url http://your-server:8080 --daemon
-
-# With API key authentication
-nexus mount /mnt/nexus \
-  --remote-url http://your-server:8080 \
-  --api-key your-secret-key \
-  --daemon
-```
-
-### Performance & Caching (v0.2.0)
-
-FUSE mounts include automatic caching for improved performance. Caching is **enabled by default** with sensible defaults - no configuration needed for most users.
-
-**Default Performance:**
-- ✅ Attribute caching (1024 entries, 60s TTL) - Makes `ls` and `stat` operations faster
-- ✅ Content caching (100 files) - Speeds up repeated file reads
-- ✅ Parsed content caching (50 files) - Accelerates PDF/Excel text extraction
-- ✅ Automatic cache invalidation on writes/deletes - Always consistent
-
-**Advanced: Custom Cache Configuration**
-
-For power users with specific performance requirements:
+### Hello World (10 Seconds)
 
 ```python
-from nexus import connect
-from nexus.fuse import mount_nexus
+import nexus
 
-nx = connect(config={"data_dir": "./nexus-data"})
+# Zero-config start - data stored in ./nexus-data by default
+nx = nexus.connect()
 
-# Custom cache configuration
-cache_config = {
-    "attr_cache_size": 2048,      # Double the attribute cache (default: 1024)
-    "attr_cache_ttl": 120,         # Cache attributes for 2 minutes (default: 60s)
-    "content_cache_size": 200,     # Cache 200 files (default: 100)
-    "parsed_cache_size": 100,      # Cache 100 parsed files (default: 50)
-    "enable_metrics": True         # Track cache hit/miss rates (default: False)
-}
+# Write and read a file
+nx.write("/workspace/hello.txt", b"Hello, Nexus!")
+content = nx.read("/workspace/hello.txt")
+print(content.decode())  # → Hello, Nexus!
 
-fuse = mount_nexus(
-    nx,
-    "/mnt/nexus",
-    mode="smart",
-    cache_config=cache_config,
-    foreground=False
-)
-
-# View cache performance (if metrics enabled)
-# Note: Access via fuse.fuse.operations.cache
+nx.close()
 ```
 
-**Cache Configuration Options:**
+**✅ No configuration needed!** Data is stored locally in `./nexus-data/`. Mount S3, GCS, or other backends later via [configuration](docs/api/configuration.md).
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `attr_cache_size` | 1024 | Max number of cached file attribute entries |
-| `attr_cache_ttl` | 60 | Time-to-live for attributes in seconds |
-| `content_cache_size` | 100 | Max number of cached file contents |
-| `parsed_cache_size` | 50 | Max number of cached parsed contents (PDFs, etc.) |
-| `enable_metrics` | False | Enable cache hit/miss tracking |
+### Embedded Mode (Full Features)
 
-**When to Tune Cache Settings:**
+```python
+import nexus
 
-- **Large directory listings**: Increase `attr_cache_size` to 2048+ and `attr_cache_ttl` to 120+
-- **Many small files**: Increase `content_cache_size` to 500+
-- **Heavy PDF/Excel use**: Increase `parsed_cache_size` to 200+
-- **Performance analysis**: Enable `enable_metrics` to measure cache effectiveness
-- **Memory-constrained**: Decrease all cache sizes (e.g., 512 / 50 / 25)
+# Zero-config local filesystem with AI features
+nx = nexus.connect(config={"data_dir": "./nexus-data"})
 
-**Notes:**
-- Caches are **thread-safe** - safe for concurrent access
-- Caches are **automatically invalidated** on file writes, deletes, and renames
-- Default settings work well for most use cases - tune only if needed
+# File operations
+nx.write("/workspace/doc.txt", b"Hello Nexus")
+content = nx.read("/workspace/doc.txt")
 
-### Troubleshooting FUSE Mounts
+# Agent memory
+nx.memory.store("Python best practices learned from code review")
+memories = nx.memory.query(user_id="alice", scope="project")
+# Returns: [Memory(content="Python best practices...", timestamp=...)]
 
-#### Check Mount Status
+# Semantic search
+results = nx.semantic_search("/docs/**/*.md", query="authentication setup")
+# Returns: [
+#   SearchResult(path="/docs/auth.md", score=0.89, snippet="...OAuth setup..."),
+#   SearchResult(path="/docs/security.md", score=0.82, snippet="...API keys...")
+# ]
+
+nx.close()
+```
+
+### Server Mode (Production)
+
+**Start the server:**
+```bash
+# Configure PostgreSQL backend
+export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
+
+# Initialize with authentication
+./scripts/init-nexus-with-auth.sh
+
+# Server runs at http://localhost:8080
+```
+
+**Use the CLI remotely:**
+```bash
+# Load admin credentials
+source .nexus-admin-env
+
+# Create workspace
+nexus mkdir /workspace/project1 --remote-url $NEXUS_URL
+
+# Create users and grant permissions
+python3 scripts/create-api-key.py alice "Alice's API key" --days 90
+# Output: sk-alice_abc123_...
+
+nexus rebac create user alice direct_owner file /workspace/project1 \
+  --tenant-id default --remote-url $NEXUS_URL
+
+# Alice can now access with her API key
+export NEXUS_API_KEY='sk-alice_abc123_...'
+nexus write /workspace/project1/data.txt "Alice's data" --remote-url $NEXUS_URL
+```
+
+**Use the SDK remotely:**
+```python
+import nexus
+
+# Same API, remote execution
+nx = nexus.connect(config={
+    "remote_url": "http://localhost:8080",
+    "api_key": "sk-alice_abc123_..."
+})
+
+nx.write("/workspace/project1/data.txt", b"Remote write")
+content = nx.read("/workspace/project1/data.txt")
+```
+
+### Permission System Example
 
 ```bash
-# Check if daemon process is running
-ps aux | grep "nexus mount" | grep -v grep
+# Grant different permission levels
+nexus rebac create user bob direct_editor file /workspace/project1 \
+  --tenant-id default --remote-url $NEXUS_URL
+# Bob can read/write
 
-# Check mount points
-mount | grep nexus
+nexus rebac create user charlie direct_viewer file /workspace/project1 \
+  --tenant-id default --remote-url $NEXUS_URL
+# Charlie can only read
 
-# List files in mount point (should show files, not empty)
-ls -la /mnt/nexus/
+# Check permissions
+nexus rebac check user charlie write file /workspace/project1 --remote-url $NEXUS_URL
+# Output: ✗ DENIED
+
+nexus rebac check user charlie read file /workspace/project1 --remote-url $NEXUS_URL
+# Output: ✓ GRANTED
+
+# Explain permission paths
+nexus rebac explain user bob write file /workspace/project1 --remote-url $NEXUS_URL
+# Shows: direct_editor → editor → write
 ```
 
-#### Common Issues
+## Core Concepts
 
-**Mount appears empty or shows "Transport endpoint is not connected":**
-```bash
-# Unmount the stale mount point
-nexus unmount /mnt/nexus
+**Workspace** - A versioned directory for agent state. Create snapshots, rollback changes, and reproduce any historical state for debugging.
 
-# Or force unmount (macOS)
-umount -f /mnt/nexus
+**Memory** - Persistent agent knowledge stored as files. Query memories semantically, consolidate learnings automatically, and share across agents within tenants.
 
-# Or force unmount (Linux)
-fusermount -u /mnt/nexus
+**Semantic Search** - Vector-based search across files and memories using natural language queries. Powered by [pgvector](https://github.com/pgvector/pgvector) or [sqlite-vec](https://github.com/asg017/sqlite-vec).
 
-# Then remount
-nexus mount /mnt/nexus --daemon
-```
+**ReBAC** - [Relationship-Based Access Control](https://research.google/pubs/pub48190/) inspired by Google Zanzibar. Fine-grained permissions with inheritance, multi-tenancy, and delegation.
 
-**Process won't die (stuck in 'D' or 'U' state):**
-```bash
-# Find stuck processes
-ps aux | grep nexus | grep -E "D|U"
+## Why Nexus?
 
-# Force kill
-kill -9 <PID>
+Nexus extends traditional storage into the AI era—combining files, memory, and access control into a single programmable layer. Build agents that persist knowledge, collaborate securely, and scale from local experiments to distributed systems.
 
-# If process is still stuck (uninterruptible I/O), try:
-# macOS: umount -f /mnt/nexus
-# Linux: fusermount -uz /mnt/nexus
+**Key Capabilities:**
+- **AI Memory** - Store contextual embeddings alongside data, not just bytes
+- **Unified Fabric** - Files, vectors, and permissions in one system
+- **Agent-Native Design** - Built for LLM agents and automation frameworks
 
-# Note: Stuck processes in 'D' state typically resolve after unmount
-# If they persist, they'll be cleaned up on system reboot
-```
+**For AI Agent Developers:**
+- **Self-Evolving Memory**: Agents store and retrieve context across sessions with automatic consolidation
+- **Time-Travel Debugging**: Reproduce any agent state with workspace snapshots and version history
+- **Semantic Search**: Find relevant files and memories using natural language queries
 
-**"Directory not empty" error when mounting:**
-```bash
-# Unmount first
-nexus unmount /mnt/nexus
+**For Enterprise Teams:**
+- **Fine-Grained Permissions**: [ReBAC](https://research.google/pubs/pub48190/) (Relationship-Based Access Control, inspired by Google Zanzibar) with inheritance and multi-tenancy
+- **Multi-Backend Storage**: Unified API for S3, GCS, SharePoint, Google Drive, and local filesystem
+- **Content Deduplication**: Save 30-50% storage costs with content-addressable architecture
 
-# Or remove and recreate the mount point
-rm -rf /mnt/nexus && mkdir /mnt/nexus
+**For Platform Engineers:**
+- **Embedded or Remote**: Start local (`pip install`), scale to distributed without code changes
+- **Complete Audit Trail**: Track every operation with built-in versioning and operation logs
+- **Production-Ready**: PostgreSQL backend, API key authentication, and comprehensive observability
 
-# Then mount
-nexus mount /mnt/nexus --daemon
-```
+## Features at a Glance
 
-**Permission denied errors:**
-```bash
-# Ensure FUSE is installed
-# macOS: Install macFUSE from https://osxfuse.github.io/
-# Linux: sudo apt-get install fuse3
+| Category | Highlights |
+|----------|-----------|
+| **Storage** | Multi-backend (S3, GCS, local), versioning, 30-50% deduplication savings |
+| **Access Control** | ReBAC (Zanzibar-style), multi-tenancy, permission inheritance |
+| **AI Intelligence** | Memory API, semantic search, workspace snapshots, time-travel debugging |
+| **Developer UX** | Embedded/remote parity, full-featured CLI + SDK, 100% feature compatibility |
+| **Extensibility** | Plugin system with lifecycle hooks, custom CLI commands, auto-discovery |
 
-# Check mount point permissions
-ls -ld /mnt/nexus
-# Should be owned by your user
+## Performance Highlights
 
-# Create mount point with correct permissions
-mkdir -p /mnt/nexus
-chmod 755 /mnt/nexus
-```
+- **4x Faster Uploads** - Batch write API for checkpoint and log files
+- **30-50% Storage Savings** - Content-addressable deduplication
+- **Instant Queries** - Semantic search with vector indexes (pgvector/sqlite-vec)
+- **Zero Downtime** - Optimistic concurrency control for multi-agent access
 
-**Connection refused (remote mounts):**
-```bash
-# Check server is running
-curl http://your-server:8080/health
+## Key Features
 
-# Test connectivity
-ping your-server
+### Storage & Operations
+- **Multi-Backend**: S3, GCS, SharePoint, Google Drive, local filesystem with unified API
+- **Content Deduplication**: 30-50% storage savings via content-addressable architecture
+- **Versioning**: Complete history tracking with rollback and diff capabilities
+- **Batch Operations**: 4x faster bulk uploads for checkpoints and large datasets
 
-# Verify API key (if required)
-nexus mount /mnt/nexus \
-  --remote-url http://your-server:8080 \
-  --api-key your-key \
-  --daemon
-```
+### Access Control
+- **ReBAC**: Relationship-based permissions with Google Zanzibar-style authorization
+- **Permission Inheritance**: Directory-based access control with automatic propagation
+- **Multi-Tenancy**: Complete isolation between tenants with namespace support
+- **API Key Authentication**: Database-backed keys with expiration and rotation
 
-**Multiple mounts to same mount point:**
-```bash
-# Check for existing mounts
-mount | grep /mnt/nexus
+### Agent Intelligence
+- **Memory API**: Store, query, and consolidate agent memories automatically
+- **Semantic Search**: Vector-based search across files and memories
+- **Workspace Snapshots**: Save and restore entire agent workspaces for debugging
+- **Time-Travel**: Access any file at any historical point with content diffs
 
-# Unmount all instances
-nexus unmount /mnt/nexus
+### Developer Experience
+- **Embedded Mode**: `pip install` and start coding—no infrastructure required
+- **Remote Mode**: Same API, distributed execution with automatic scaling
+- **CLI**: Full-featured command-line interface with remote support
+- **SDK Parity**: 100% feature parity between embedded and remote modes
 
-# Kill any lingering processes
-pkill -f "nexus mount /mnt/nexus"
+### Extensibility
+- **Plugin System**: Extend Nexus with custom functionality via Python entry points
+- **Lifecycle Hooks**: React to file operations (before_write, after_read, etc.)
+- **Custom CLI Commands**: Add plugin-specific commands to the `nexus` CLI
+- **Auto-Discovery**: Install plugins with `pip`, no manual registration needed
+- **Official Plugins**: Anthropic integration, Firecrawl web scraping, and more
 
-# Clean mount and remount
-rm -rf /mnt/nexus && mkdir /mnt/nexus
-nexus mount /mnt/nexus --daemon
-```
+## Use Cases
 
-#### Debug Mode
+**AI Agents** - Memory API for context retention, semantic search for knowledge retrieval
 
-For detailed debugging output:
+**Multi-Tenant SaaS** - ReBAC for tenant isolation, workspace snapshots for backup/restore
 
-```bash
-# Run in foreground with debug output
-nexus mount /mnt/nexus --debug
+**Document Processing** - Batch uploads with deduplication, semantic search across files
 
-# This will show all FUSE operations in real-time
-# Press Ctrl+C to stop
-```
+**ML Workflows** - Checkpoint versioning, time-travel debugging for reproducibility
 
-### rclone-style CLI Commands (v0.2.0)
+**Extensible Pipelines** - Plugin system (Anthropic, Firecrawl) for custom integrations
 
-Nexus provides efficient file operations inspired by rclone, with automatic deduplication and progress tracking:
-
-#### Sync Command
-One-way synchronization with hash-based change detection:
-
-```bash
-# Sync local directory to Nexus (only copies changed files)
-nexus sync ./local/dataset/ /workspace/training/
-
-# Preview changes before syncing (dry-run)
-nexus sync ./data/ /workspace/backup/ --dry-run
-
-# Mirror sync - delete extra files in destination
-nexus sync /workspace/source/ /workspace/dest/ --delete
-
-# Disable hash comparison (force copy all files)
-nexus sync ./data/ /workspace/ --no-checksum
-```
-
-#### Copy Command
-Smart copy with automatic deduplication:
-
-```bash
-# Copy directory recursively (skips identical files)
-nexus copy ./local/data/ /workspace/project/ --recursive
-
-# Copy within Nexus (leverages CAS deduplication)
-nexus copy /workspace/source/ /workspace/dest/ --recursive
-
-# Copy Nexus to local
-nexus copy /workspace/data/ ./backup/ --recursive
-
-# Copy single file
-nexus copy /workspace/file.txt /workspace/copy.txt
-
-# Disable checksum verification
-nexus copy ./data/ /workspace/ --recursive --no-checksum
-```
-
-#### Move Command
-Efficient file/directory moves with confirmation prompts:
-
-```bash
-# Move file (rename if possible, copy+delete otherwise)
-nexus move /workspace/old.txt /workspace/new.txt
-
-# Move directory without confirmation
-nexus move /workspace/old_dir/ /archives/2024/ --force
-```
-
-#### Tree Command
-Visualize directory structure as ASCII tree:
-
-```bash
-# Show full directory tree
-nexus tree /workspace/
-
-# Limit depth to 2 levels
-nexus tree /workspace/ -L 2
-
-# Show file sizes
-nexus tree /workspace/ --show-size
-```
-
-#### Size Command
-Calculate directory sizes with human-readable output:
-
-```bash
-# Calculate total size
-nexus size /workspace/project/
-
-# Human-readable output (KB, MB, GB)
-nexus size /workspace/ --human
-
-# Show top 10 largest files
-nexus size /workspace/ --human --details
-```
-
-**Features:**
-- **Hash-based deduplication** - Only copies changed files
-- **Progress bars** - Visual feedback for long operations
-- **Dry-run mode** - Preview changes before execution
-- **Cross-platform paths** - Works with local filesystem and Nexus paths
-- **Automatic deduplication** - Leverages Content-Addressable Storage (CAS)
-
-### Performance Comparison
-
-| Method | Speed | Content-Aware | Use Case |
-|--------|-------|---------------|----------|
-| `grep -r /mnt/nexus/` | Medium | ✅ Yes (via mount) | Interactive use |
-| `nexus grep "pattern"` | **Fast** (DB-backed) | ✅ Yes | Large-scale search |
-| Standard tools | Familiar | ✅ Yes (via mount) | Day-to-day work |
-
-### Use Cases
-
-**Interactive Development**:
-```bash
-# Mount for interactive work
-nexus mount /mnt/nexus
-vim /mnt/nexus/workspace/code.py
-git clone /mnt/nexus/repos/myproject
-```
-
-**Bulk Operations**:
-```bash
-# Use rclone-style commands for efficiency
-nexus sync /local/dataset/ /workspace/training-data/
-nexus tree /workspace/ > structure.txt
-
-# Batch upload for maximum performance
-nexus write-batch ./checkpoints/ /workspace/model-checkpoints/
-```
-
-**Automated Workflows**:
-```bash
-# Standard Unix tools in scripts
-find /mnt/nexus -name "*.pdf" -exec grep -l "invoice" {} \;
-rsync -av /mnt/nexus/workspace/ /backup/
-```
+📚 **See [examples/](examples/)** for complete AI agent, SaaS, ML, and plugin demos with runnable code.
 
 ## Architecture
 
-### Agent Workspace Structure
+```mermaid
+flowchart TD
+    A[👤 Application<br/>SDK/CLI] --> B{nexus.connect}
 
-Every agent gets a structured workspace at `/workspace/{tenant}/{agent}/`:
+    B -->|Embedded Mode| C[NexusFS Core]
+    B -.->|Remote Mode| D[RPC Client]
+    D -.HTTP/RPC.-> E[RPC Server]
+    E --> C
 
-```
-/workspace/acme-corp/research-agent/
-├── .nexus/                          # Nexus metadata (Git-trackable)
-│   ├── agent.yaml                   # Agent configuration
-│   ├── commands/                    # Custom commands (markdown files)
-│   │   ├── analyze-codebase.md
-│   │   └── summarize-docs.md
-│   ├── jobs/                        # Background job definitions
-│   │   └── daily-summary.yaml
-│   ├── memory/                      # File-based memory
-│   │   ├── project-knowledge.md
-│   │   └── recent-tasks.jsonl
-│   └── secrets.encrypted            # KMS-encrypted credentials
-├── data/                            # Agent's working data
-│   ├── inputs/
-│   └── outputs/
-└── INSTRUCTIONS.md                  # Agent instructions (auto-loaded)
-```
+    C --> F[File Ops + ReBAC<br/>+ Search + Memory]
+    F --> G[Router]
+    G --> H[Backend<br/>Local/S3/GCS]
+    H --> I[(Metadata DB)]
+    H --> J[CAS Storage]
 
-### Path Namespace
-
-```
-/
-├── workspace/        # Agent scratch space (hot tier, ephemeral)
-├── shared/           # Shared tenant data (warm tier, persistent)
-├── external/         # Pass-through backends (no content storage)
-├── system/           # System metadata (admin-only)
-└── archives/         # Cold storage (read-only)
+    style A fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style C fill:#f3e5f5,stroke:#7b1fa2,stroke-width:3px
+    style D fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style E fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style I fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style J fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
 ```
 
-## Core Components
+### Deployment Modes
 
-### File System Operations
+Nexus supports two deployment modes with the same codebase:
 
-```python
-import nexus
+| Mode | Use Case | Setup |
+|------|----------|-------|
+| **Embedded** | Development, CLI tools, prototyping | `pip install nexus-ai-fs` |
+| **Server** | Teams, production, multi-tenant | See [Server Setup Guide](docs/api/rpc-api.md) |
 
-# Works in both local and hosted modes
-# Mode determined by config file or environment
-nx = nexus.connect()
+**Technology:** Python 3.11+, SQLAlchemy, PostgreSQL/SQLite, [ReBAC](https://research.google/pubs/pub48190/) (Zanzibar-style), [pgvector](https://github.com/pgvector/pgvector)/[sqlite-vec](https://github.com/asg017/sqlite-vec)
 
-async with nx:
-    # Basic operations
-    await nx.write("/workspace/data.txt", b"content")
-    content = await nx.read("/workspace/data.txt")
-    await nx.delete("/workspace/data.txt")
-
-    # Batch operations
-    files = await nx.list("/workspace/", recursive=True)
-    results = await nx.copy_batch(sources, destinations)
-
-    # File discovery
-    python_files = await nx.glob("**/*.py")
-    todos = await nx.grep(r"TODO:|FIXME:", file_pattern="*.py")
-```
-
-### Semantic Search (v0.4.0)
-
-Nexus provides powerful semantic search with three modes: keyword, semantic (vector-based), and hybrid.
-
-**Installation:**
-```bash
-# Install semantic search support
-pip install nexus-ai-fs[semantic-search]          # Vector extensions (sqlite-vec, pgvector)
-pip install nexus-ai-fs[semantic-search-remote]   # + OpenAI embeddings (recommended)
-```
-
-**Python API:**
-```python
-import nexus
-
-async def main():
-    nx = nexus.connect()
-
-    # Initialize semantic search (required once)
-    await nx.initialize_semantic_search(
-        embedding_provider="openai",  # or None for keyword-only
-        api_key="your-openai-key"     # or use OPENAI_API_KEY env var
-    )
-
-    # Index documents for search
-    await nx.semantic_search_index(path="/docs", recursive=True)
-
-    # Keyword search (fast, exact matches)
-    results = await nx.semantic_search(
-        query="database SQL",
-        path="/docs",
-        search_mode="keyword"
-    )
-
-    # Semantic search (understands meaning, finds related concepts)
-    results = await nx.semantic_search(
-        query="How does authentication work?",
-        path="/docs",
-        search_mode="semantic"  # default
-    )
-
-    # Hybrid search (combines keyword + semantic for best results)
-    results = await nx.semantic_search(
-        query="API error handling",
-        path="/docs",
-        search_mode="hybrid"
-    )
-
-    # View results
-    for result in results:
-        print(f"{result['path']} (score: {result['score']:.3f})")
-        print(f"  {result['chunk_text'][:200]}...")
-```
-
-**CLI:**
-```bash
-# Initialize search engine (one-time setup)
-nexus search init --provider openai --api-key $OPENAI_API_KEY
-
-# Index documents
-nexus search index /docs
-
-# Search with different modes
-nexus search query "database performance" --mode keyword
-nexus search query "authentication flow" --mode semantic
-nexus search query "API design" --mode hybrid
-
-# View search statistics
-nexus search stats
-```
-
-**Features:**
-- ✅ Keyword search using FTS5 (SQLite) or tsvector (PostgreSQL) - works out of the box
-- ✅ Semantic search using vector embeddings - requires OpenAI or Voyage AI API key
-- ✅ Hybrid search combining both approaches - best accuracy
-- ✅ Automatic document chunking with multiple strategies (fixed, semantic, overlapping)
-- ✅ Works with both SQLite and PostgreSQL
-- ✅ Vector extensions (sqlite-vec, pgvector) auto-installed via pip
-- ✅ No manual database extension compilation needed!
-
-**Demo:**
-```bash
-# Run the semantic search demo
-python examples/py_demo/semantic_search_demo.py
-```
-
-### LLM-Powered Reading
-
-```python
-# Read documents with AI, with automatic KV cache
-async with nexus.connect() as nx:
-    answer = await nx.llm_read(
-        path="/reports/q4-2024.pdf",
-        prompt="What were the top 3 challenges?",
-        model="claude-sonnet-4",
-        max_tokens=1000
-    )
-```
-
-### Agent Memory
-
-```python
-# Store and retrieve agent memories
-async with nexus.connect() as nx:
-    await nx.store_memory(
-        content="User prefers TypeScript over JavaScript",
-        memory_type="preference",
-        tags=["coding", "languages"]
-    )
-
-    memories = await nx.search_memories(
-        query="programming language preferences",
-        limit=5
-    )
-```
-
-### Prompt Optimization (Coming in v0.9.5)
-
-```python
-# Track multiple prompt candidates during optimization
-async with nexus.connect() as nx:
-    # Start optimization run
-    run_id = await nx.start_optimization_run(
-        module_name="SearchModule",
-        objectives=["accuracy", "latency", "cost"]
-    )
-
-    # Store prompt candidates with detailed traces
-    for candidate in prompt_variants:
-        version_id = await nx.store_prompt_version(
-            module_name="SearchModule",
-            prompt_template=candidate.template,
-            metrics={"accuracy": 0.85, "latency_ms": 450},
-            run_id=run_id
-        )
-
-        # Store execution traces for debugging
-        await nx.store_execution_trace(
-            prompt_version_id=version_id,
-            inputs=test_inputs,
-            outputs=predictions,
-            intermediate_steps=reasoning_chain
-        )
-
-    # Analyze tradeoffs across candidates
-    analysis = await nx.analyze_prompt_tradeoffs(
-        run_id=run_id,
-        objectives=["accuracy", "latency_ms", "cost_per_query"]
-    )
-
-    # Get per-example results to find failure patterns
-    failures = await nx.get_failing_examples(
-        prompt_version_id=version_id,
-        limit=20
-    )
-```
-
-### Custom Commands
-
-Create `/workspace/{tenant}/{agent}/.nexus/commands/semantic-search.md`:
-
-```markdown
----
-name: semantic-search
-description: Search codebase semantically
-allowed-tools: [semantic_read, glob, grep]
-required-scopes: [read]
-model: sonnet
----
-
-## Your task
-
-Given query: {{query}}
-
-1. Use `glob` to find relevant files by pattern
-2. Use `semantic_read` to extract relevant sections
-3. Summarize findings with file:line citations
-```
-
-Execute via API:
-
-```python
-async with nexus.connect() as nx:
-    result = await nx.execute_command(
-        "semantic-search",
-        context={"query": "authentication implementation"}
-    )
-```
-
-### Skills System (v0.3.0)
-
-Manage reusable AI agent skills with SKILL.md format, progressive disclosure, lifecycle management, and dependency resolution:
-
-```python
-from nexus.skills import SkillRegistry, SkillManager, SkillExporter
-
-# Initialize filesystem
-nx = nexus.connect()
-
-# Create skill registry
-registry = SkillRegistry(nx)
-
-# Discover skills from three tiers (agent > tenant > system)
-# Loads metadata only - lightweight and fast
-await registry.discover()
-
-# List available skills
-skills = registry.list_skills()
-# ['analyze-code', 'data-processing', 'report-generation']
-
-# Get skill metadata (no content loading)
-metadata = registry.get_metadata("analyze-code")
-print(f"{metadata.name}: {metadata.description}")
-# analyze-code: Analyzes code quality and structure
-
-# Load full skill content (lazy loading + caching)
-skill = await registry.get_skill("analyze-code")
-print(skill.content)  # Full markdown content
-
-# Resolve dependencies automatically (DAG with cycle detection)
-deps = await registry.resolve_dependencies("complex-skill")
-# ['base-skill', 'helper-skill', 'complex-skill']
-
-# Create skill manager for lifecycle operations
-manager = SkillManager(nx, registry)
-
-# Create new skill from template
-await manager.create_skill(
-    "my-analyzer",
-    description="Analyzes code quality and structure",
-    template="code-generation",  # basic, data-analysis, code-generation, document-processing, api-integration
-    author="Alice",
-    tier="agent"
-)
-
-# Fork existing skill with lineage tracking
-await manager.fork_skill(
-    "analyze-code",
-    "my-custom-analyzer",
-    tier="agent",
-    author="Bob"
-)
-
-# Publish skill to tenant library
-await manager.publish_skill(
-    "my-analyzer",
-    source_tier="agent",
-    target_tier="tenant"
-)
-
-# Export skills to .zip (vendor-neutral)
-exporter = SkillExporter(registry)
-
-# Export with dependencies
-await exporter.export_skill(
-    "analyze-code",
-    output_path="analyze-code.zip",
-    format="claude",  # Enforces 8MB limit
-    include_dependencies=True
-)
-
-# Validate before export
-valid, msg, size = await exporter.validate_export("large-skill", format="claude")
-if not valid:
-    print(f"Cannot export: {msg}")
-
-# Enterprise Features (NEW in v0.3.0)
-from nexus.skills import (
-    SkillAnalyticsTracker,
-    SkillGovernance,
-    SkillAuditLogger,
-    AuditAction
-)
-
-# Track skill usage and analytics
-tracker = SkillAnalyticsTracker(db_connection)
-await tracker.track_usage(
-    "analyze-code",
-    agent_id="alice",
-    execution_time=1.5,
-    success=True
-)
-
-# Get analytics for a skill
-analytics = await tracker.get_skill_analytics("analyze-code")
-print(f"Success rate: {analytics.success_rate:.1%}")
-print(f"Avg execution time: {analytics.avg_execution_time:.2f}s")
-
-# Get dashboard metrics
-dashboard = await tracker.get_dashboard_metrics()
-print(f"Total skills: {dashboard.total_skills}")
-print(f"Most used: {dashboard.most_used_skills[:5]}")
-
-# Governance - approval workflow for org-wide skills
-gov = SkillGovernance(db_connection)
-
-# Submit for approval
-approval_id = await gov.submit_for_approval(
-    "my-analyzer",
-    submitted_by="alice",
-    reviewers=["bob", "charlie"],
-    comments="Ready for team-wide use"
-)
-
-# Approve skill
-await gov.approve_skill(approval_id, reviewed_by="bob", comments="Excellent work!")
-is_approved = await gov.is_approved("my-analyzer")
-
-# Audit logging for compliance
-audit = SkillAuditLogger(db_connection)
-
-# Log skill operations
-await audit.log(
-    "analyze-code",
-    AuditAction.EXECUTED,
-    agent_id="alice",
-    details={"execution_time": 1.5, "success": True}
-)
-
-# Query audit logs
-logs = await audit.query_logs(skill_name="analyze-code", action=AuditAction.EXECUTED)
-
-# Generate compliance report
-report = await audit.generate_compliance_report(tenant_id="tenant1")
-print(f"Total operations: {report['total_operations']}")
-print(f"Top skills: {report['top_skills'][:5]}")
-
-# Search skills by description
-results = await manager.search_skills("code analysis", limit=5)
-for skill_name, score in results:
-    print(f"{skill_name}: {score:.1f}")
-```
-
-#### Skills CLI Commands (v0.3.0)
-
-Nexus provides comprehensive CLI commands for skill management:
-
-```bash
-# List all skills
-nexus skills list
-nexus skills list --tenant  # Show tenant skills
-nexus skills list --system  # Show system skills
-nexus skills list --tier agent  # Filter by tier
-
-# Create new skill from template
-nexus skills create my-skill --description "My custom skill"
-nexus skills create data-viz --description "Data visualization" --template data-analysis
-nexus skills create analyzer --description "Code analyzer" --author Alice
-
-# Fork existing skill
-nexus skills fork analyze-code my-analyzer
-nexus skills fork data-analysis custom-analysis --author Bob
-
-# Publish skill to tenant library
-nexus skills publish my-skill
-nexus skills publish shared-skill --from-tier tenant --to-tier system
-
-# Search skills by description
-nexus skills search "data analysis"
-nexus skills search "code" --tier tenant --limit 5
-
-# Show detailed skill information
-nexus skills info analyze-code
-nexus skills info data-analysis
-
-# Export skill to .zip package (vendor-neutral)
-nexus skills export my-skill --output ./my-skill.zip
-nexus skills export analyze-code --output ./export.zip --format claude
-nexus skills export my-skill --output ./export.zip --no-deps  # Exclude dependencies
-
-# Validate skill format and size limits
-nexus skills validate my-skill
-nexus skills validate analyze-code --format claude
-
-# Calculate skill size
-nexus skills size my-skill
-nexus skills size analyze-code --human
-```
-
-**Available Templates:**
-- `basic` - Simple skill template
-- `data-analysis` - Data processing and analysis
-- `code-generation` - Code generation and modification
-- `document-processing` - Document parsing and analysis
-- `api-integration` - API integration and data fetching
-
-**Export Formats:**
-- `generic` - Vendor-neutral .zip format (no size limit)
-- `claude` - Anthropic Claude format (8MB limit enforced)
-- `openai` - OpenAI format (validation only, ready for future plugins)
-
-**Note**: External API integrations (uploading to Claude API, OpenAI, etc.) will be implemented as plugins in v0.3.5+ to maintain vendor neutrality. The core CLI provides generic export functionality.
-
-**SKILL.md Format:**
-
-```markdown
----
-name: analyze-code
-description: Analyzes code quality and structure
-version: 1.0.0
-author: Your Name
-requires:
-  - base-parser
-  - ast-analyzer
----
-
-# Code Analysis Skill
-
-This skill analyzes code for quality metrics...
-
-## Usage
-
-1. Parse the code files
-2. Run static analysis
-3. Generate report
-```
-
-**Features:**
-- **Progressive Disclosure**: Load metadata during discovery, full content on-demand
-- **Lazy Loading**: Skills cached only when accessed
-- **Three-Tier Hierarchy**: Agent skills override tenant/system skills
-- **Dependency Resolution**: Automatic DAG resolution with cycle detection
-- **Skill Lifecycle**: Create, fork, and publish skills with lineage tracking
-- **Template System**: 5 pre-built templates (basic, data-analysis, code-generation, document-processing, api-integration)
-- **Vendor-Neutral Export**: Generic .zip format with Claude/OpenAI validation
-- **Usage Analytics**: Track performance, success rates, dashboard metrics (NEW in v0.3.0)
-- **Governance**: Approval workflows for team-wide skill publication (NEW in v0.3.0)
-- **Audit Logging**: Complete compliance tracking and reporting (NEW in v0.3.0)
-- **Skill Search**: Find skills by description with relevance scoring (NEW in v0.3.0)
-- **Comprehensive Tests**: 156 passing tests (31%+ overall coverage, 65-91% skills module)
-
-**Skill Tiers:**
-- **Agent** (`/workspace/.nexus/skills/`) - Personal skills (highest priority)
-- **Tenant** (`/shared/skills/`) - Team-shared skills
-- **System** (`/system/skills/`) - Built-in skills (lowest priority)
-
-## Technology Stack
-
-### Core
-- **Language**: Python 3.11+
-- **API Framework**: FastAPI
-- **Database**: PostgreSQL / SQLite (configurable via environment variable)
-- **Cache**: Redis (prod) / In-memory (dev)
-- **Vector DB**: Qdrant
-- **Object Storage**: S3-compatible, GCS, Azure Blob
-
-### AI/ML
-- **LLM Providers**: Anthropic Claude, OpenAI, Google Gemini
-- **Embeddings**: text-embedding-3-large, voyage-ai
-- **Parsing**: PyPDF2, pandas, openpyxl, Pillow
-
-### Infrastructure
-- **Orchestration**: Kubernetes (distributed mode)
-- **Monitoring**: Prometheus + Grafana
-- **Logging**: Structlog + Loki
-- **Admin UI**: Simple HTML/JS (jobs, memories, files, operations)
-
-## Performance Targets
-
-| Metric | Target | Impact |
-|--------|--------|--------|
-| Write Throughput | 500-1000 MB/s | 10-50× vs direct backend |
-| Batch Write (Small Files) | 4x faster | Single transaction vs N transactions |
-| Read Latency | <10ms | 10-50× vs remote storage |
-| Memory Search | <100ms | Vector search across memories |
-| Storage Savings | 30-50% | CAS deduplication |
-| Job Resumability | 100% | Survives all restarts |
-| LLM Cache Hit Rate | 50-90% | Major cost savings |
-| Prompt Versioning | Full lineage | Track optimization history |
-| Training Data Dedup | 30-50% | CAS-based deduplication |
-| Prompt Optimization | Multi-candidate | Test multiple strategies in parallel |
-| Trace Storage | Full execution logs | Debug failures, analyze patterns |
-
-## Configuration
-
-### Local Mode
-
-```python
-import nexus
-
-# Config via Python (useful for programmatic configuration)
-nx = nexus.connect(config={
-    "mode": "local",
-    "data_dir": "./nexus-data",
-    "cache_size_mb": 100,
-    "enable_vector_search": True
-})
-
-# Or let it auto-discover from nexus.yaml
-nx = nexus.connect()
-```
-
-### Self-Hosted Deployment
-
-For organizations that want to run their own Nexus instance, create `config.yaml`:
-
-```yaml
-mode: server  # local or server
-
-database:
-  url: postgresql://user:pass@localhost/nexus
-  # or for SQLite: sqlite:///./nexus.db
-  # Can also use NEXUS_DATABASE_URL or POSTGRES_URL environment variable
-
-cache:
-  type: redis  # memory, redis
-  url: redis://localhost:6379
-
-vector_db:
-  type: qdrant
-  url: http://localhost:6333
-
-backends:
-  - type: s3
-    bucket: my-company-files
-    region: us-east-1
-
-  - type: gdrive
-    credentials_path: ./gdrive-creds.json
-
-auth:
-  jwt_secret: your-secret-key
-  token_expiry_hours: 24
-
-rate_limits:
-  default: "100/minute"
-  semantic_search: "10/minute"
-  llm_read: "50/hour"
-```
-
-Run server:
-
-```bash
-nexus server --config config.yaml
-```
-
-## Security
-
-### Multi-Layer Security Model
-
-1. **API Key Authentication**: Tenant and agent identification
-2. **Row-Level Security (RLS)**: Database-level tenant isolation
-3. **Type-Level Validation**: Fail-fast validation before database operations
-4. **UNIX-Style Permissions**: Owner, group, and mode bits (v0.3.0)
-5. **ACL Permissions**: Fine-grained access control lists (v0.3.0)
-6. **ReBAC (Relationship-Based Access Control)**: Zanzibar-style authorization (v0.3.0)
-
-### Type-Level Validation (NEW in v0.1.0)
-
-All domain types have validation methods that are called automatically before database operations. This provides:
-
-- **Fail Fast**: Catch invalid data before expensive database operations
-- **Clear Error Messages**: Actionable feedback for developers and API consumers
-- **Data Integrity**: Prevent invalid data from entering the database
-- **Consistent Validation**: Same rules across all code paths
-
-```python
-from nexus.core.metadata import FileMetadata
-from nexus.core.exceptions import ValidationError
-
-# Validation happens automatically on put()
-try:
-    metadata = FileMetadata(
-        path="/data/file.txt",  # Must start with /
-        backend_name="local",
-        physical_path="/storage/file.txt",
-        size=1024,  # Must be >= 0
-    )
-    store.put(metadata)  # Validates before DB operation
-except ValidationError as e:
-    print(f"Validation failed: {e}")
-    # Example: "size cannot be negative, got -1"
-```
-
-**Validation Rules:**
-- Paths must start with `/` and not contain null bytes
-- File sizes and ref counts must be non-negative
-- Required fields (path, backend_name, physical_path, etc.) must not be empty
-- Content hashes must be valid 64-character SHA-256 hex strings
-- Metadata keys must be ≤ 255 characters
-
-### Permission Enforcement (v0.3.0 - NEW)
-
-**Permission enforcement is enabled by default** to provide secure-by-default behavior with multi-layer access control:
-
-```python
-import nexus
-from nexus.core.permissions import OperationContext
-
-# Enable permission enforcement
-nx = nexus.connect(config={
-    "data_dir": "./nexus-data",
-    "agent_id": "alice",
-    "tenant_id": "acme-corp",
-    "enforce_permissions": True  # Enable permission checks
-})
-
-# Operations now check permissions using multi-layer security
-nx.write("/workspace/file.txt", b"data")  # Uses default context (alice)
-nx.read("/workspace/file.txt")  # Permission check: alice can read?
-
-# Or provide explicit context for each operation
-ctx = OperationContext(user="bob", groups=["developers"])
-nx.read("/workspace/file.txt", context=ctx)  # Permission check: bob can read?
-```
-
-**Permission Evaluation Order:**
-1. **Admin/System Bypass** - Admin users and system operations bypass all checks
-2. **ReBAC** - Check relationship graph (team membership, hierarchical permissions)
-3. **ACL** - Check explicit allow/deny entries (highest priority)
-4. **UNIX Permissions** - Check owner/group/other mode bits (fallback)
-5. **Default Deny** - Deny if no permissions are set (when enforcement is enabled)
-
-**Enabling Permission Enforcement:**
-
-```bash
-# Enable via environment variable (CLI)
-export NEXUS_ENFORCE_PERMISSIONS=true
-export USER=alice  # User context for operations
-nexus write /workspace/file.txt "data"  # Permission checked!
-
-# Or via config file
-cat > nexus.yaml <<EOF
-enforce_permissions: true
-agent_id: alice
-tenant_id: acme-corp
-EOF
-nexus write /workspace/file.txt "data"
-```
-
-**CLI Operations:** The CLI automatically uses the current system user (`$USER` environment variable) as the operation context:
-
-```bash
-# CLI operations use $USER for context
-export USER=alice
-export NEXUS_ENFORCE_PERMISSIONS=true  # Enable enforcement
-nexus write /workspace/file.txt "data"  # Context: user=alice
-nexus ls /workspace/  # Results filtered by alice's permissions
-```
-
-**Configuration:**
-- Permission enforcement is **enabled by default** (`enforce_permissions=True`)
-- Provides secure-by-default behavior with multi-layer security
-- Disable if needed via `NEXUS_ENFORCE_PERMISSIONS=false` or config
-- CLI operations automatically use `$USER` as the operation context
-- When disabled, all operations succeed (no permission checks)
-
-### Example: Multi-Tenancy Isolation
-
-```sql
--- RLS automatically filters queries by tenant
-SET LOCAL app.current_tenant_id = '<tenant_uuid>';
-
--- All queries auto-filtered, even with bugs
-SELECT * FROM file_paths WHERE path = '/data';
--- Returns only rows for current tenant
-```
-
-## Testing
-
-```bash
-# Run all tests (serial)
-pytest
-
-# Run all tests in parallel (8-10x faster on multi-core machines!)
-pytest -n auto
-
-# Run with coverage
-pytest --cov=nexus --cov-report=html
-
-# Run specific test file
-pytest tests/test_filesystem.py
-
-# Run integration tests
-pytest tests/integration/ -v
-
-# Run performance tests
-pytest tests/performance/ --benchmark-only
-
-# Run RPC parity check (ensures local/remote feature parity)
-pytest tests/unit/test_rpc_parity.py -v
-```
-
-**Performance Tips:**
-- Use `pytest -n auto` for parallel execution (requires `pytest-xdist`)
-- Nexus has 1400+ tests; parallel execution gives 8-10x speedup on multi-core systems
-- CI uses ARM64 runners with 4 vCPUs for faster builds
+See [Configuration Guide](docs/api/configuration.md) for storage backends (S3, GCS, local) and advanced setup.
 
 ## Documentation
 
-### Architecture & Design
-- [Core Tenets](./docs/CORE_TENETS.md) - Design principles and philosophy
-- [Architecture Overview](./docs/architecture/ARCHITECTURE.md) - System architecture and components
-- [RPC Parity Guide](./docs/RPC_PARITY_GUIDE.md) - Ensuring local/remote feature parity
-- [ReBAC Remote Support](./docs/REBAC_REMOTE_SUPPORT.md) - Remote access control implementation
+### Getting Started
+- **[Quickstart Guide](docs/getting-started/quickstart.md)** - Step-by-step setup with authentication
+- **[API Documentation](docs/api/README.md)** - Complete API reference
+- **[CLI Reference](docs/api/cli-reference.md)** - Command-line interface guide
 
-### Development & Deployment
-- [Plugin Development Guide](./docs/PLUGIN_DEVELOPMENT.md) - Create your own Nexus plugins
-- [Plugin System Overview](./docs/PLUGIN_SYSTEM.md) - Plugin architecture and design
-- [PostgreSQL Setup Guide](./docs/POSTGRESQL_SETUP.md) - Configure PostgreSQL for production
-- [SQL Views for Work Detection](./docs/SQL_VIEWS_FOR_WORK_DETECTION.md) - Work queue patterns
-- [Deployment Guide](./docs/deployment/) - Production deployment
+### Core Features
+- **[File Operations](docs/api/file-operations.md)** - Read, write, delete, batch operations
+- **[Permissions](docs/api/permissions.md)** - ReBAC, multi-tenancy, access control
+- **[Memory Management](docs/api/memory-management.md)** - Agent memory API
+- **[Semantic Search](docs/api/semantic-search.md)** - Vector search and embeddings
+- **[Versioning](docs/api/versioning.md)** - History tracking and time-travel
 
-### Reference
-- [API Reference](./docs/api/) - Detailed API documentation
-- [Getting Started](./docs/getting-started/) - Quick start guides
+### Advanced Topics
+- **[Configuration](docs/api/configuration.md)** - Backends, environment variables, YAML config
+- **[Remote Server Setup](docs/api/rpc-api.md)** - Deploying Nexus server
+- **[Multi-Backend Usage](docs/api/advanced-usage.md)** - Mounting multiple storage backends
+- **[Plugin Development](docs/development/PLUGIN_DEVELOPMENT.md)** - Extend Nexus with custom plugins
+- **[Development Guide](docs/development/PERMISSIONS_IMPLEMENTATION.md)** - Contributing to Nexus
+
+### Examples
+- **[Python Demos](examples/py_demo/)** - SDK usage examples
+- **[CLI Demos](examples/script_demo/)** - Shell script examples
+- **[Multi-Tenant Demo](examples/multi_tenant/)** - SaaS platform patterns
+- **[Authentication Examples](examples/auth_demo/)** - API key setup and usage
+
+## Security & Configuration
+
+**Security Features:**
+- **ReBAC**: Relationship-based access control (Google Zanzibar-style)
+- **Multi-Tenancy**: Complete tenant isolation
+- **API Keys**: Database-backed authentication with expiration
+- **Audit Trail**: Full operation logging with versioning
+
+**Quick Configuration:**
+```bash
+# Environment variables
+export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
+export NEXUS_URL="http://localhost:8080"
+export NEXUS_API_KEY="sk-alice_abc123_..."
+```
+
+See [Configuration Guide](docs/api/configuration.md) for YAML config, multi-backend setup, and advanced options.
+See [Permissions Guide](docs/api/permissions.md) for detailed security documentation.
 
 ## Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+### Development Setup
 ```bash
-# Fork the repo and clone
-git clone https://github.com/yourusername/nexus.git
+git clone https://github.com/nexi-lab/nexus.git
 cd nexus
-
-# Create a feature branch
-git checkout -b feature/your-feature
-
-# Make changes and test
-uv pip install -e ".[dev,test]"
-pytest
-
-# Format and lint
-ruff format .
-ruff check .
-
-# Commit and push
-git commit -am "Add your feature"
-git push origin feature/your-feature
+pip install -e ".[dev]"
+pytest tests/
 ```
-
-## License
-
-Apache 2.0 License - see [LICENSE](./LICENSE) for details.
-
-
-## Roadmap
-
-### v0.1.0 - Local Mode Foundation (Current)
-- [x] Core embedded filesystem (read/write/delete)
-- [x] SQLite metadata store
-- [x] Local filesystem backend
-- [x] Basic file operations (list, glob, grep)
-- [x] Virtual path routing
-- [x] Directory operations (mkdir, rmdir, is_directory)
-- [x] Basic CLI interface with Click and Rich
-- [x] Metadata export/import (JSONL format)
-- [x] SQL views for ready work detection
-- [x] In-memory caching
-- [x] Batch operations (avoid N+1 queries)
-- [x] Type-level validation
-
-### v0.2.0 - FUSE Mount & Content-Aware Operations (Current)
-- [x] **FUSE filesystem mount** - Mount Nexus to local path (e.g., `/mnt/nexus`)
-- [x] **Smart read mode** - Return parsed text for binary files (PDFs, Excel, etc.)
-- [x] **Virtual file views** - Auto-generate `.txt` and `.md` views for binary files
-- [x] **Content parser framework** - Extensible parser system for document types (MarkItDown)
-- [x] **PDF parser** - Extract text and markdown from PDFs
-- [x] **Excel/CSV parser** - Parse spreadsheets to structured data
-- [x] **Content-aware file access** - Access parsed content via virtual views
-- [x] **Document type detection** - Auto-detect MIME types and route to parsers
-- [x] **Mount CLI commands** - `nexus mount`, `nexus unmount`
-- [x] **Mount modes** - Binary, text, and smart modes
-- [x] **.raw directory** - Access original binary files
-- [x] **Background daemon mode** - Run mount in background with `--daemon`
-- [x] **All FUSE operations** - read, write, create, delete, mkdir, rmdir, rename, truncate
-- [x] **Unit tests** - Comprehensive test coverage for FUSE operations
-- [x] **rclone-style CLI commands** - `sync`, `copy`, `move`, `tree`, `size` with progress bars
-- [ ] **Background parsing** - Async content parsing on write
-- [x] **FUSE performance optimizations** - Caching (TTL/LRU), cache invalidation, metrics
-- [ ] **Image OCR parser** - Extract text from images (PNG, JPEG)
-
-### v0.3.0 - File Permissions & Skills System
-
-**Permissions (Complete):**
-- [x] **UNIX-style file permissions** (owner, group, mode)
-- [x] **Permission operations** (chmod, chown, chgrp)
-- [x] **ACL (Access Control List)** support
-- [x] **CLI commands** (getfacl, setfacl)
-- [x] **Database schema** for permissions and ACL entries
-- [x] **Comprehensive tests** (91 passing tests)
-- [x] **ReBAC (Relationship-Based Access Control)** - Zanzibar-style authorization
-- [x] **Relationship types** - member-of, owner-of, viewer-of, editor-of, parent-of
-- [x] **Permission inheritance via relationships** - Team ownership, group membership
-- [x] **Relationship graph queries** - Graph traversal with cycle detection
-- [x] **Namespaced tuples** - (subject, relation, object) authorization model
-- [x] **Check API** - Fast permission checks with 5-minute TTL caching
-- [x] **Expand API** - Discover all subjects with specific permissions
-- [x] **Relationship management** - Create, delete, query relationships via CLI
-- [x] **Expiring tuples** - Temporary permissions with automatic cleanup
-- [x] **Comprehensive ReBAC tests** (14 passing tests, 100% pass rate)
-
-**Permissions (Phase 2 - Permission Enforcement):**
-- [x] **OperationContext dataclass** - Carry user/agent auth context through operations
-- [x] **PermissionEnforcer class** - Multi-layer security (ReBAC → ACL → UNIX)
-- [x] **Permission check helper** - `_check_permission()` method in NexusFS
-- [x] **Default context creation** - Auto-create from agent_id/tenant_id
-- [x] **Comprehensive tests** - 22 new tests for enforcement
-- [x] **Usage guide** - Complete documentation with examples
-- [x] **Example demos** - permission_enforcement_demo.py
-
-**Permissions (Phase 3 - Full Integration - Complete):**
-- [x] **Integrate permission checks** into all file operations (read, write, delete, list, mkdir)
-- [x] **CLI context creation** - Create OperationContext from system user
-- [x] **Optional context parameter** - All operations accept optional `context` parameter with sensible defaults
-- [x] **Permission enforcement enabled by default** - Secure-by-default with `enforce_permissions=True`
-- [x] **Automatic user detection** - CLI operations use `$USER` environment variable for context
-- [x] **Default permission policies** per namespace
-- [x] **Permission migration** for existing files
-- [x] **Full ACL and ReBAC integration** - Multi-layer security fully functional
-
-**Skills System (Core - Vendor Neutral):**
-- [x] **SKILL.md parser** - Parse Anthropic-compatible SKILL.md with frontmatter
-- [x] **Skill registry** - Progressive disclosure, lazy loading, three-tier hierarchy
-- [x] **Skill discovery** - Scan `/workspace/.nexus/skills/`, `/shared/skills/`, `/system/skills/`
-- [x] **Dependency resolution** - Automatic DAG resolution with cycle detection
-- [x] **Skill export** - Export to generic formats (validate, pack, size check)
-- [x] **Skill templates** - 5 pre-built templates (basic, data-analysis, code-generation, document-processing, api-integration)
-- [x] **Skill lifecycle** - Create, fork, publish workflows with lineage tracking
-- [x] **Comprehensive tests** - 156 passing tests (31%+ overall coverage, 65-91% skills module)
-- [x] **Skill analytics** - Usage tracking, success rates, execution time, dashboard metrics
-- [x] **Skill search** - Text-based search across skill descriptions with relevance scoring
-- [x] **Skill governance** - Approval workflow for org-wide skills (submit, approve, reject)
-- [x] **Audit trails** - Log all skill operations, compliance reporting, query by filters
-- [x] **Skill versioning** - CAS-backed version control with history tracking
-- [x] **CLI commands** - `list`, `create`, `fork`, `publish`, `search`, `info`, `export`, `validate`, `size` (see issue #88)
-
-**Note**: External integrations (Claude API upload/download, OpenAI, etc.) will be implemented as **plugins** in v0.3.5+ to maintain vendor neutrality. Core Nexus provides generic skill export (`nexus skills export --format claude`), while `nexus-plugin-anthropic` handles API-specific operations.
-
-### v0.3.5 - Plugin System & External Integrations
-- [x] **Plugin discovery** - Entry point-based plugin discovery
-- [x] **Plugin registry** - Register and manage installed plugins
-- [x] **Plugin CLI namespace** - `nexus <plugin-name> <command>` pattern
-- [x] **Plugin hooks** - Lifecycle hooks (before_write, after_read, etc.)
-- [x] **Plugin configuration** - Per-plugin config in `~/.nexus/plugins/<name>/`
-- [x] **Plugin manager** - `nexus plugins list/install/uninstall/info`
-- [x] **First-party plugins:**
-  - [x] `nexus-plugin-anthropic` - Claude API integration (upload/download skills)
-  - [x] `nexus-plugin-skill-seekers` - Integration with Skill_Seekers scraper
-
-### v0.3.9 - Architecture & Versioning Improvements
-- [x] **Library/CLI Separation** - Clean SDK interface
-  - Pure business logic in nexus/core/
-  - CLI-only concerns in nexus/cli/
-  - Standalone SDK in nexus/sdk/
-  - Enable third-party GUIs, TUIs, web interfaces
-- [x] **Workspace Versioning** - Time-travel for agent workspaces
-  - ✅ Workspace as versioned entity (CAS-backed snapshots)
-  - ✅ `nexus workspace log <agent>` - Show version history
-  - ✅ `nexus workspace restore <agent> <version>` - Rollback workspace
-  - ✅ `nexus workspace diff <agent> <v1> <v2>` - Compare versions
-  - ✅ Workspace snapshot creation and restoration
-  - ✅ Agent debugging support
-- [x] **Lock-Free Concurrency** - Optimistic concurrency control
-  - ✅ ConflictError exception with etag details
-  - ✅ read() with return_metadata parameter
-  - ✅ write() with if_match, if_none_match, force parameters
-  - ✅ Atomic version checking at database level
-  - ✅ CLI support (--metadata, --if-match, --if-none-match, --force, --show-metadata)
-  - ✅ Remote client and RPC server support
-  - ✅ Comprehensive examples and tests
-  - ✅ Multi-agent safe operations without lock contention
-  - ✅ Concurrent filesystem modifications (Dropbox/rsync safe)
-- [x] **Operation Log** - Undo & audit trail
-  - ✅ operation_log table with CAS-backed snapshots
-  - ✅ Automatic logging of all operations (write, delete, rename)
-  - ✅ `nexus ops log` - Show operation history with filtering
-  - ✅ `nexus undo` - Undo last operation
-  - ✅ Operation query API: filter by agent, time, type, path, status
-  - ✅ CAS-backed snapshots for zero-overhead undo
-  - ✅ Comprehensive tests (12 passing tests)
-  - ✅ Python SDK and CLI examples
-- [x] **Time-Travel Debugging** - Read files at historical points ✅
-  - ✅ `--at-operation` flag for time-travel reads
-  - ✅ `nexus cat /file.txt --at-operation op_abc123`
-  - ✅ `nexus ls /workspace/ --at-operation op_abc123`
-  - ✅ Operation diff with unified diffs (`--show-content`)
-  - ✅ Historical file reads and directory listings
-  - ✅ Non-destructive history exploration
-  - ✅ Comprehensive tests (9 passing tests, 84% coverage)
-  - ✅ Python SDK and CLI demos
-
-### v0.4.0 - AI Integration
-- [x] LLM provider abstraction - Unified interface for multiple AI providers (litellm-based)
-- [x] Anthropic Claude integration - Native support for Claude models with prompt caching
-- [x] OpenAI integration - GPT-4, GPT-4o, o1, o3 models
-- [x] Semantic search - Keyword, vector, and hybrid search modes
-- [x] Vector database integration - sqlite-vec and pgvector auto-installed via pip
-- [x] Document chunking - Fixed, semantic, and overlapping strategies
-- [x] Embedding providers - OpenAI and Voyage AI support
-- [x] Search CLI - `nexus search` commands for init, index, query, and stats
-- [x] Google Gemini integration - Gemini Pro models
-- [x] Token counting and cost tracking - Automatic metrics collection
-- [x] Function/tool calling support - Unified interface across providers
-- [ ] Basic KV cache for prompts
-- [ ] LLM-powered document reading
-
-### v0.5.0 - Agent Workspaces
-- [ ] Agent workspace structure
-- [ ] File-based configuration (.nexus/)
-- [ ] Custom command system (markdown)
-- [ ] Basic agent memory storage
-- [ ] Memory consolidation
-- [ ] Memory reflection phase - Extract insights from execution trajectories
-- [ ] Strategy/playbook organization - Organize memories as reusable strategies
-- [ ] Semantic skill search - Vector-based search across skill descriptions
-
-### v0.6.0 - Server Mode (Self-Hosted & Managed)
-- [ ] FastAPI REST API
-- [ ] API key authentication
-- [ ] Multi-tenancy support
-- [ ] PostgreSQL support
-- [ ] Redis caching
-- [ ] Docker deployment
-- [ ] Batch/transaction APIs (atomic multi-operation updates)
-- [ ] Auto-scaling configuration (for hosted deployments)
-
-### v0.7.0 - Extended Features & Event System
-- [ ] S3 backend support
-- [ ] Google Drive backend
-- [x] Work queue system (file-based jobs with SQL views)
-- [ ] Job execution engine with automatic checkpointing/resume
-- [ ] OAuth token management
-- [ ] MCP server implementation
-- [ ] Webhook/event system (file changes, memory updates, job events)
-- [ ] Watch API for real-time updates (streaming changes to clients)
-- [ ] Server-Sent Events (SSE) support for live monitoring
-- [ ] Simple admin UI (jobs, memories, files, operations)
-
-### v0.8.0 - Advanced AI Features & Rich Query
-- [ ] Advanced KV cache with context tracking
-- [ ] Memory versioning and lineage
-- [ ] Multi-agent memory sharing
-- [ ] Enhanced semantic search
-- [ ] Importance-based memory preservation - Prevent brevity bias in consolidation
-- [ ] Context-aware memory retrieval - Include execution context in search
-- [ ] Automated strategy extraction - LLM-powered extraction from successful trajectories
-- [ ] **Rich File Query Language** - Advanced querying beyond glob/grep
-  - `nexus query "files where size > 1MB and created_after='2025-10-01'"`
-  - `nexus query "files modified_by='agent1' in last_7_days"`
-  - `nexus query "ancestors(file='/workspace/final.md')"` - File lineage
-  - Query operations log with filters
-  - Query file dependencies and relationships
-- [ ] Rich memory query language - Filter by metadata, importance, task type, date ranges
-- [ ] Memory query builder API - Fluent interface for complex queries
-- [ ] Combined vector + metadata search - Hybrid search
-
-### v0.9.0 - Production Readiness
-- [ ] Monitoring and observability
-- [ ] Performance optimization
-- [ ] Comprehensive testing
-- [ ] Security hardening
-- [ ] Documentation completion
-- [ ] Optional OpenTelemetry export (for framework integration)
-
-### v0.9.5 - Prompt Engineering & Optimization
-- [ ] Prompt version control with lineage tracking
-- [ ] Training dataset storage with CAS deduplication
-- [ ] Evaluation metrics time series (performance tracking)
-- [ ] Frozen inference snapshots (immutable program state)
-- [ ] Experiment tracking export (MLflow, W&B integration)
-- [ ] Prompt diff viewer (compare versions)
-- [ ] Regression detection alerts (performance drops)
-- [ ] Multi-candidate pool management (concurrent prompt testing)
-- [ ] Execution trace storage (detailed run logs for debugging)
-- [ ] Per-example evaluation results (granular performance tracking)
-- [ ] Optimization run grouping (experiment management)
-- [ ] Multi-objective tradeoff analysis (accuracy vs latency vs cost)
-
-### v0.10.0 - Production Infrastructure & Auto-Scaling
-- [ ] Automatic infrastructure scaling
-- [ ] Redis distributed locks (for large deployments)
-- [ ] PostgreSQL replication (for high availability)
-- [ ] Kubernetes deployment templates
-- [ ] Multi-region load balancing
-- [ ] Automatic migration from single-node to distributed
-
-### v1.0.0 - Production Release
-- [ ] Complete feature set
-- [ ] Production-tested
-- [ ] Comprehensive documentation
-- [ ] Migration tools
-- [ ] Enterprise support
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/nexus/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/nexus/discussions)
-- **Email**: support@nexus.example.com
-- **Slack**: [Join our community](https://nexus-community.slack.com)
+- **Issues**: [GitHub Issues](https://github.com/nexi-lab/nexus/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/nexi-lab/nexus/discussions)
+- **Roadmap**: [GitHub Projects](https://github.com/nexi-lab/nexus/projects)
+
+⭐ **If you find Nexus useful, please star the repo to support development!**
+
+## Philosophy
+
+Nexus treats data as a first-class citizen in AI systems. Instead of building around files, agents build around knowledge—unified, permissioned, and queryable.
+
+We believe AI infrastructure should be:
+- **Intelligent by default** - Storage that understands semantics, not just bytes
+- **Composable** - Mix and match backends, plugins, and deployment modes
+- **Production-ready** - Security, multi-tenancy, and observability from day one
+
+## License
+
+© 2025 Nexi Labs, Inc. Licensed under Apache License 2.0 - See [LICENSE](LICENSE) for details.
 
 ---
 
-Built with ❤️ by the Nexus team
+**Built for the AI-native era.** [Docs](docs/api/README.md) • [PyPI](https://pypi.org/project/nexus-ai-fs/) • [GitHub](https://github.com/nexi-lab/nexus)

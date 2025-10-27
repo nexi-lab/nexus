@@ -2,9 +2,11 @@
 
 import tempfile
 from collections.abc import Generator
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from freezegun import freeze_time
 
 from nexus import LocalBackend, NexusFS
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
@@ -20,7 +22,12 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def embedded(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create an Embedded filesystem instance."""
-    nx = NexusFS(backend=LocalBackend(temp_dir), db_path=temp_dir / "metadata.db", auto_parse=False)
+    nx = NexusFS(
+        backend=LocalBackend(temp_dir),
+        db_path=temp_dir / "metadata.db",
+        auto_parse=False,
+        enforce_permissions=False,  # Disable permissions for basic functionality tests
+    )
     yield nx
     nx.close()
     # Note: Windows cleanup delay is handled by windows_cleanup_delay fixture in conftest.py
@@ -31,7 +38,12 @@ def test_init_creates_directories(temp_dir: Path) -> None:
     data_dir = temp_dir / "nexus-data"
     assert not data_dir.exists()
 
-    nx = NexusFS(backend=LocalBackend(data_dir), db_path=data_dir / "metadata.db", auto_parse=False)
+    nx = NexusFS(
+        backend=LocalBackend(data_dir),
+        db_path=data_dir / "metadata.db",
+        auto_parse=False,
+        enforce_permissions=False,  # Disable permissions for basic functionality tests
+    )
 
     assert data_dir.exists()
     assert (data_dir / "cas").exists()  # CAS content storage
@@ -338,7 +350,10 @@ def test_context_manager(temp_dir: Path) -> None:
     content = b"Test content"
 
     with NexusFS(
-        backend=LocalBackend(temp_dir), db_path=temp_dir / "metadata.db", auto_parse=False
+        backend=LocalBackend(temp_dir),
+        db_path=temp_dir / "metadata.db",
+        auto_parse=False,
+        enforce_permissions=False,  # Disable permissions for basic functionality test
     ) as nx:
         nx.write("/test.txt", content)
         result = nx.read("/test.txt")
@@ -347,29 +362,28 @@ def test_context_manager(temp_dir: Path) -> None:
 
 def test_modified_at_updates(embedded: NexusFS) -> None:
     """Test that modified_at timestamp updates on write."""
-    import time
+    with freeze_time("2025-01-01 12:00:00") as frozen_time:
+        path = "/test.txt"
 
-    path = "/test.txt"
+        # Write initial content
+        embedded.write(path, b"Content 1")
+        meta1 = embedded.metadata.get(path)
+        assert meta1 is not None
+        modified1 = meta1.modified_at
 
-    # Write initial content
-    embedded.write(path, b"Content 1")
-    meta1 = embedded.metadata.get(path)
-    assert meta1 is not None
-    modified1 = meta1.modified_at
+        # Advance time
+        frozen_time.tick(delta=timedelta(seconds=1))
 
-    # Wait a bit
-    time.sleep(0.1)
+        # Update content
+        embedded.write(path, b"Content 2")
+        meta2 = embedded.metadata.get(path)
+        assert meta2 is not None
+        modified2 = meta2.modified_at
 
-    # Update content
-    embedded.write(path, b"Content 2")
-    meta2 = embedded.metadata.get(path)
-    assert meta2 is not None
-    modified2 = meta2.modified_at
-
-    # Modified timestamp should be later
-    assert modified1 is not None
-    assert modified2 is not None
-    assert modified2 > modified1
+        # Modified timestamp should be later
+        assert modified1 is not None
+        assert modified2 is not None
+        assert modified2 > modified1
 
 
 def test_created_at_persists(embedded: NexusFS) -> None:

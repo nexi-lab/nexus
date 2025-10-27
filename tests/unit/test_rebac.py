@@ -11,10 +11,10 @@ Tests cover:
 - Expand API
 """
 
-import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from freezegun import freeze_time
 from sqlalchemy import create_engine
 
 from nexus.core.rebac import Entity, NamespaceConfig
@@ -32,8 +32,24 @@ def engine():
 
 @pytest.fixture
 def rebac_manager(engine):
-    """Create a ReBAC manager for testing."""
-    manager = ReBACManager(engine=engine, cache_ttl_seconds=5)
+    """Create a ReBAC manager for testing with 5-minute cache TTL."""
+    manager = ReBACManager(
+        engine=engine,
+        cache_ttl_seconds=300,  # 5 minutes for normal tests
+        max_depth=10,
+    )
+    yield manager
+    manager.close()
+
+
+@pytest.fixture
+def rebac_manager_fast_cache(engine):
+    """Create a ReBAC manager with fast cache expiration for cache testing."""
+    manager = ReBACManager(
+        engine=engine,
+        cache_ttl_seconds=1,  # 1 second for cache expiration tests
+        max_depth=10,
+    )
     yield manager
     manager.close()
 
@@ -209,34 +225,34 @@ def test_caching(rebac_manager):
 
 
 def test_cache_invalidation_on_write(rebac_manager):
-    """Test that cache is invalidated when tuples are added."""
+    """Test that cache is invalidated when tuples for the same subject-object pair are added."""
     # Create initial relationship
     rebac_manager.rebac_write(
         subject=("agent", "alice"),
-        relation="member-of",
-        object=("group", "eng-team"),
+        relation="viewer-of",
+        object=("file", "file123"),
     )
 
     # Check and cache result
     result = rebac_manager.rebac_check(
         subject=("agent", "alice"),
-        permission="member-of",
-        object=("group", "eng-team"),
+        permission="viewer-of",
+        object=("file", "file123"),
     )
     assert result is True
 
-    # Add another relationship (should invalidate cache for alice)
+    # Add another relationship for same subject-object pair (should invalidate cache)
     rebac_manager.rebac_write(
         subject=("agent", "alice"),
-        relation="owner-of",
+        relation="editor-of",
         object=("file", "file123"),
     )
 
-    # Cache should be invalidated
+    # Cache should be invalidated for this specific subject-object pair
     cached = rebac_manager._get_cached_check(
         Entity("agent", "alice"),
-        "member-of",
-        Entity("group", "eng-team"),
+        "viewer-of",
+        Entity("file", "file123"),
     )
     # After invalidation, cache should be empty (None)
     assert cached is None
@@ -280,36 +296,36 @@ def test_cache_invalidation_on_delete(rebac_manager):
     assert result is False
 
 
-@pytest.mark.slow
 def test_expiring_tuples(rebac_manager):
     """Test that expired tuples are not considered."""
-    # Create tuple that expires in 1 second
-    expires_at = datetime.utcnow() + timedelta(seconds=1)
-    rebac_manager.rebac_write(
-        subject=("agent", "alice"),
-        relation="viewer-of",
-        object=("file", "temp-file"),
-        expires_at=expires_at,
-    )
+    with freeze_time("2025-01-01 12:00:00") as frozen_time:
+        # Create tuple that expires in 1 second
+        expires_at = datetime.now(UTC) + timedelta(seconds=1)
+        rebac_manager.rebac_write(
+            subject=("agent", "alice"),
+            relation="viewer-of",
+            object=("file", "temp-file"),
+            expires_at=expires_at,
+        )
 
-    # Check immediately - should be True
-    result = rebac_manager.rebac_check(
-        subject=("agent", "alice"),
-        permission="viewer-of",
-        object=("file", "temp-file"),
-    )
-    assert result is True
+        # Check immediately - should be True
+        result = rebac_manager.rebac_check(
+            subject=("agent", "alice"),
+            permission="viewer-of",
+            object=("file", "temp-file"),
+        )
+        assert result is True
 
-    # Wait for expiration
-    time.sleep(1.5)
+        # Advance time by 1.5 seconds to expire the tuple
+        frozen_time.tick(delta=timedelta(seconds=1.5))
 
-    # Check after expiration - should be False
-    result = rebac_manager.rebac_check(
-        subject=("agent", "alice"),
-        permission="viewer-of",
-        object=("file", "temp-file"),
-    )
-    assert result is False
+        # Check after expiration - should be False
+        result = rebac_manager.rebac_check(
+            subject=("agent", "alice"),
+            permission="viewer-of",
+            object=("file", "temp-file"),
+        )
+        assert result is False
 
 
 def test_cycle_detection(rebac_manager):
@@ -445,29 +461,29 @@ def test_expand_api_with_union(rebac_manager):
     assert ("agent", "bob") in subjects
 
 
-@pytest.mark.slow
-def test_cleanup_expired_cache(rebac_manager):
+def test_cleanup_expired_cache(rebac_manager_fast_cache):
     """Test cleanup of expired cache entries."""
-    # Create a relationship
-    rebac_manager.rebac_write(
-        subject=("agent", "alice"),
-        relation="member-of",
-        object=("group", "eng-team"),
-    )
+    with freeze_time("2025-01-01 12:00:00") as frozen_time:
+        # Create a relationship
+        rebac_manager_fast_cache.rebac_write(
+            subject=("agent", "alice"),
+            relation="member-of",
+            object=("group", "eng-team"),
+        )
 
-    # Check to create cache entry
-    rebac_manager.rebac_check(
-        subject=("agent", "alice"),
-        permission="member-of",
-        object=("group", "eng-team"),
-    )
+        # Check to create cache entry
+        rebac_manager_fast_cache.rebac_check(
+            subject=("agent", "alice"),
+            permission="member-of",
+            object=("group", "eng-team"),
+        )
 
-    # Wait for cache to expire (cache TTL is 5 seconds)
-    time.sleep(6)
+        # Advance time by 2 seconds to expire the cache (TTL is 1 second)
+        frozen_time.tick(delta=timedelta(seconds=2))
 
-    # Cleanup expired cache
-    removed = rebac_manager.cleanup_expired_cache()
-    assert removed > 0
+        # Cleanup expired cache
+        removed = rebac_manager_fast_cache.cleanup_expired_cache()
+        assert removed > 0
 
 
 def test_delete_nonexistent_tuple(rebac_manager):
@@ -531,3 +547,85 @@ def test_max_depth_limit(rebac_manager):
         object=("group", "g15"),
     )
     assert result is False
+
+
+def test_cross_tenant_relationship_blocked(rebac_manager):
+    """Test that cross-tenant relationships are blocked (tenant isolation security).
+
+    SECURITY: This test verifies the fix for the tenant isolation bypass vulnerability
+    where validation could be bypassed by passing None for tenant IDs.
+    """
+    # Try to create cross-tenant relationship with mismatched subject_tenant_id
+    with pytest.raises(ValueError, match="Cross-tenant relationship not allowed.*subject tenant"):
+        rebac_manager.rebac_write(
+            subject=("user", "alice"),
+            relation="viewer",
+            object=("file", "doc1"),
+            tenant_id="tenant_a",
+            subject_tenant_id="tenant_b",  # Mismatch!
+            object_tenant_id="tenant_a",
+        )
+
+    # Try to create cross-tenant relationship with mismatched object_tenant_id
+    with pytest.raises(ValueError, match="Cross-tenant relationship not allowed.*object tenant"):
+        rebac_manager.rebac_write(
+            subject=("user", "alice"),
+            relation="viewer",
+            object=("file", "doc1"),
+            tenant_id="tenant_a",
+            subject_tenant_id="tenant_a",
+            object_tenant_id="tenant_b",  # Mismatch!
+        )
+
+
+def test_cross_tenant_validation_with_none_tenant_ids(rebac_manager):
+    """Test that providing None for tenant IDs doesn't bypass validation.
+
+    SECURITY: This tests the fix for CVE-like vulnerability where None could bypass
+    the "if A and B and C" validation logic.
+    """
+    # Create a tuple with tenant_id but None for subject_tenant_id
+    # This should be ALLOWED (no validation when subject_tenant_id is None)
+    tuple_id = rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="viewer",
+        object=("file", "doc1"),
+        tenant_id="tenant_a",
+        subject_tenant_id=None,  # No subject tenant validation
+        object_tenant_id="tenant_a",
+    )
+    assert tuple_id is not None
+
+    # If we later provide a mismatched tenant, it should be blocked
+    with pytest.raises(ValueError, match="Cross-tenant relationship"):
+        rebac_manager.rebac_write(
+            subject=("user", "bob"),
+            relation="viewer",
+            object=("file", "doc2"),
+            tenant_id="tenant_a",
+            subject_tenant_id="tenant_b",  # This MUST be validated and blocked
+            object_tenant_id="tenant_a",
+        )
+
+
+def test_same_tenant_relationships_allowed(rebac_manager):
+    """Test that same-tenant relationships are allowed."""
+    # Create relationship with matching tenant IDs - should succeed
+    tuple_id = rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="editor",
+        object=("file", "doc1"),
+        tenant_id="tenant_a",
+        subject_tenant_id="tenant_a",
+        object_tenant_id="tenant_a",
+    )
+    assert tuple_id is not None
+
+    # Verify the relationship was created
+    result = rebac_manager.rebac_check(
+        subject=("user", "alice"),
+        permission="editor",
+        object=("file", "doc1"),
+        tenant_id="tenant_a",
+    )
+    assert result is True

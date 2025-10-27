@@ -77,7 +77,9 @@ class TestCopyOperations:
     def test_copy_file_nexus_to_local(self, tmp_path: Path) -> None:
         """Test copying from Nexus to local."""
         # Create Nexus instance and file
-        nx = connect(config={"data_dir": str(tmp_path / "nexus-data")})
+        nx = connect(
+            config={"data_dir": str(tmp_path / "nexus-data"), "enforce_permissions": False}
+        )
 
         try:
             nx.write("/workspace/source.txt", b"test content")
@@ -97,7 +99,9 @@ class TestCopyOperations:
 
     def test_copy_file_with_checksum_skip(self, tmp_path: Path) -> None:
         """Test that identical files are skipped with checksum enabled."""
-        nx = connect(config={"data_dir": str(tmp_path / "nexus-data")})
+        nx = connect(
+            config={"data_dir": str(tmp_path / "nexus-data"), "enforce_permissions": False}
+        )
 
         try:
             # Create source and destination with same content
@@ -254,7 +258,9 @@ class TestMoveOperations:
 
     def test_move_file_within_nexus(self, tmp_path: Path) -> None:
         """Test moving file within Nexus."""
-        nx = connect(config={"data_dir": str(tmp_path / "nexus-data")})
+        nx = connect(
+            config={"data_dir": str(tmp_path / "nexus-data"), "enforce_permissions": False}
+        )
 
         try:
             # Create source file

@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from freezegun import freeze_time
 
 from nexus.backends.local import LocalBackend
 from nexus.core.export_import import CollisionDetail, ExportFilter, ImportOptions, ImportResult
@@ -28,6 +29,7 @@ def nx(temp_dir):
         backend=LocalBackend(temp_dir / "data"),
         db_path=temp_dir / "data" / "metadata.db",
         auto_parse=False,
+        enforce_permissions=False,
     )
     yield fs
     fs.close()
@@ -180,32 +182,28 @@ def test_export_with_prefix(nx, temp_dir):
 
 def test_export_with_time_filter(nx, temp_dir):
     """Test export with after_time filter."""
-    from datetime import UTC, datetime
+    with freeze_time("2025-01-01 12:00:00") as frozen_time:
+        # Create old file
+        nx.write("/old_file.txt", b"old content")
 
-    # Create files at different times
-    nx.write("/old_file.txt", b"old content")
+        # Advance time by 1 minute
+        frozen_time.tick(delta=timedelta(minutes=1))
+        cutoff_time = datetime.now(UTC)
 
-    # Wait a moment to ensure different timestamp
-    import time
+        # Advance time by another minute
+        frozen_time.tick(delta=timedelta(minutes=1))
+        nx.write("/new_file.txt", b"new content")
 
-    time.sleep(0.1)
+        # Export only files after cutoff
+        output_path = temp_dir / "export.jsonl"
+        filter = ExportFilter(after_time=cutoff_time)
+        count = nx.export_metadata(output_path, filter=filter)
 
-    cutoff_time = datetime.now(UTC)
+        # Should only export new file
+        assert count == 1
 
-    time.sleep(0.1)
-
-    nx.write("/new_file.txt", b"new content")
-
-    # Export only files after cutoff
-    output_path = temp_dir / "export.jsonl"
-    filter = ExportFilter(after_time=cutoff_time)
-    count = nx.export_metadata(output_path, filter=filter)
-
-    # Should only export new file
-    assert count == 1
-
-    lines = output_path.read_text().strip().split("\n")
-    data = json.loads(lines[0])
+        lines = output_path.read_text().strip().split("\n")
+        data = json.loads(lines[0])
     assert data["path"] == "/new_file.txt"
 
 
@@ -349,70 +347,68 @@ def test_import_conflict_mode_remap(nx, temp_dir):
 
 def test_import_conflict_mode_auto_newer_imported(nx, temp_dir):
     """Test import with auto mode - imported is newer."""
-    import time
+    with freeze_time("2025-01-01 12:00:00") as frozen_time:
+        # Create old file
+        nx.write("/file.txt", b"old content")
 
-    # Create old file
-    nx.write("/file.txt", b"old content")
+        # Advance time to ensure different timestamp
+        frozen_time.tick(delta=timedelta(minutes=1))
 
-    # Wait to ensure different timestamp
-    time.sleep(0.1)
+        # Export (will have newer timestamp)
+        export_path = temp_dir / "export.jsonl"
 
-    # Export (will have newer timestamp)
-    export_path = temp_dir / "export.jsonl"
+        # Manually create export with future timestamp
+        export_data = {
+            "path": "/file.txt",
+            "backend_name": "local",
+            "physical_path": "abc123",
+            "size": 11,
+            "etag": "abc123",
+            "created_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            "modified_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            "version": 1,
+        }
 
-    # Manually create export with future timestamp
-    export_data = {
-        "path": "/file.txt",
-        "backend_name": "local",
-        "physical_path": "abc123",
-        "size": 11,
-        "etag": "abc123",
-        "created_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
-        "modified_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
-        "version": 1,
-    }
+        with open(export_path, "w") as f:
+            f.write(json.dumps(export_data) + "\n")
 
-    with open(export_path, "w") as f:
-        f.write(json.dumps(export_data) + "\n")
+        # Import with auto mode
+        options = ImportOptions(conflict_mode="auto")
+        result = nx.import_metadata(export_path, options=options)
 
-    # Import with auto mode
-    options = ImportOptions(conflict_mode="auto")
-    result = nx.import_metadata(export_path, options=options)
+        # Should overwrite because imported is newer
+        assert result.created == 0
+        assert result.updated == 1
+        assert result.skipped == 0
+        assert len(result.collisions) == 1
 
-    # Should overwrite because imported is newer
-    assert result.created == 0
-    assert result.updated == 1
-    assert result.skipped == 0
-    assert len(result.collisions) == 1
-
-    collision = result.collisions[0]
-    assert "auto_overwrite" in collision.resolution
+        collision = result.collisions[0]
+        assert "auto_overwrite" in collision.resolution
 
 
 def test_import_conflict_mode_auto_existing_newer(nx, temp_dir):
     """Test import with auto mode - existing is newer."""
-    # Create file
-    nx.write("/file.txt", b"content")
+    with freeze_time("2025-01-01 12:00:00") as frozen_time:
+        # Create file
+        nx.write("/file.txt", b"content")
 
-    # Export
-    export_path = temp_dir / "export.jsonl"
-    nx.export_metadata(export_path)
+        # Export
+        export_path = temp_dir / "export.jsonl"
+        nx.export_metadata(export_path)
 
-    # Wait and update file (make it newer)
-    import time
+        # Advance time and update file (make it newer)
+        frozen_time.tick(delta=timedelta(minutes=1))
+        nx.write("/file.txt", b"newer content")
 
-    time.sleep(0.1)
-    nx.write("/file.txt", b"newer content")
+        # Import with auto mode
+        options = ImportOptions(conflict_mode="auto")
+        result = nx.import_metadata(export_path, options=options)
 
-    # Import with auto mode
-    options = ImportOptions(conflict_mode="auto")
-    result = nx.import_metadata(export_path, options=options)
-
-    # Should skip because existing is newer
-    assert result.created == 0
-    assert result.updated == 0
-    assert result.skipped == 1
-    assert len(result.collisions) == 1
+        # Should skip because existing is newer
+        assert result.created == 0
+        assert result.updated == 0
+        assert result.skipped == 1
+        assert len(result.collisions) == 1
 
     collision = result.collisions[0]
     assert "auto_skip" in collision.resolution

@@ -119,7 +119,6 @@ class TestFilePathModelValidation:
             backend_id="local",
             physical_path="/storage/file.txt",
             size_bytes=1024,
-            tenant_id="test-tenant",
         )
         # Should not raise
         file_path.validate()
@@ -127,11 +126,7 @@ class TestFilePathModelValidation:
     def test_virtual_path_required(self):
         """Test that virtual_path is required."""
         file_path = FilePathModel(
-            virtual_path="",
-            backend_id="local",
-            physical_path="/storage/file.txt",
-            size_bytes=1024,
-            tenant_id="test-tenant",
+            virtual_path="", backend_id="local", physical_path="/storage/file.txt", size_bytes=1024
         )
         with pytest.raises(ValidationError, match="virtual_path is required"):
             file_path.validate()
@@ -143,7 +138,6 @@ class TestFilePathModelValidation:
             backend_id="local",
             physical_path="/storage/file.txt",
             size_bytes=1024,
-            tenant_id="test-tenant",
         )
         with pytest.raises(ValidationError, match="virtual_path must start with '/'"):
             file_path.validate()
@@ -155,7 +149,6 @@ class TestFilePathModelValidation:
             backend_id="local",
             physical_path="/storage/file.txt",
             size_bytes=1024,
-            tenant_id="test-tenant",
         )
         with pytest.raises(ValidationError, match="virtual_path contains null bytes"):
             file_path.validate()
@@ -167,7 +160,6 @@ class TestFilePathModelValidation:
             backend_id="",
             physical_path="/storage/file.txt",
             size_bytes=1024,
-            tenant_id="test-tenant",
         )
         with pytest.raises(ValidationError, match="backend_id is required"):
             file_path.validate()
@@ -175,11 +167,7 @@ class TestFilePathModelValidation:
     def test_physical_path_required(self):
         """Test that physical_path is required."""
         file_path = FilePathModel(
-            virtual_path="/data/file.txt",
-            backend_id="local",
-            physical_path="",
-            size_bytes=1024,
-            tenant_id="test-tenant",
+            virtual_path="/data/file.txt", backend_id="local", physical_path="", size_bytes=1024
         )
         with pytest.raises(ValidationError, match="physical_path is required"):
             file_path.validate()
@@ -191,21 +179,8 @@ class TestFilePathModelValidation:
             backend_id="local",
             physical_path="/storage/file.txt",
             size_bytes=-100,
-            tenant_id="test-tenant",
         )
         with pytest.raises(ValidationError, match="size_bytes cannot be negative"):
-            file_path.validate()
-
-    def test_tenant_id_required(self):
-        """Test that tenant_id is required."""
-        file_path = FilePathModel(
-            virtual_path="/data/file.txt",
-            backend_id="local",
-            physical_path="/storage/file.txt",
-            size_bytes=1024,
-            tenant_id="",
-        )
-        with pytest.raises(ValidationError, match="tenant_id is required"):
             file_path.validate()
 
 

@@ -229,10 +229,10 @@ This document defines the foundational principles that guide all design decision
 
 ## 9. Security by Default
 
-**Principle:** Security features (encryption, ACLs, tenant isolation) are built-in, not bolted-on.
+**Principle:** Security features (encryption, ReBAC permissions, tenant isolation) are built-in, not bolted-on.
 
 **Why:** AI agents handle sensitive data. Security must be:
-- Multi-layered (API keys, RLS, type validation, UNIX permissions, ACLs, ReBAC)
+- Multi-layered (API keys, RLS, type validation, ReBAC permissions)
 - Enabled by default (secure by default)
 - Hard to bypass accidentally
 - Transparent to developers
@@ -241,7 +241,7 @@ This document defines the foundational principles that guide all design decision
 - ✅ Row-level security (RLS) for tenant isolation
 - ✅ Permission enforcement enabled by default
 - ✅ Type-level validation before database operations
-- ✅ Multi-layer security (ReBAC → ACL → UNIX permissions)
+- ✅ Pure ReBAC permission system (Zanzibar-style)
 - ✅ Encrypted secrets storage
 - ❌ Security as optional configuration
 - ❌ Trusting client-side validation alone
@@ -351,9 +351,9 @@ These tenets are **stable but not immutable**. They evolve based on:
 ## Related Documents
 
 - [README.md](../README.md) - High-level overview and features
-- [NEXUS_COMPREHENSIVE_ARCHITECTURE.md](../NEXUS_COMPREHENSIVE_ARCHITECTURE.md) - Detailed architecture
-- [PLUGIN_DEVELOPMENT.md](./development/PLUGIN_DEVELOPMENT.md) - Plugin development guide
-- [CONTRIBUTING.md](../CONTRIBUTING.md) - Contribution guidelines
+- [Architecture](architecture/ARCHITECTURE.md) - System architecture
+- [Plugin Development](development/PLUGIN_DEVELOPMENT.md) - Plugin development guide
+- [Contributing](../CONTRIBUTING.md) - Contribution guidelines
 
 ---
 

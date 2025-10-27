@@ -25,8 +25,8 @@ from nexus.cli.commands import (
     file_ops,
     memory,
     metadata,
+    mounts,
     operations,
-    permissions,
     plugins,
     rebac,
     search,
@@ -49,7 +49,6 @@ def register_all_commands(cli: click.Group) -> None:
     file_ops.register_commands(cli)
     directory.register_commands(cli)
     search.register_commands(cli)
-    permissions.register_commands(cli)
     rebac.register_commands(cli)
     skills.register_commands(cli)
     versions.register_commands(cli)
@@ -60,6 +59,7 @@ def register_all_commands(cli: click.Group) -> None:
     plugins.register_commands(cli)
     operations.register_commands(cli)
     workflows.register_commands(cli)
+    mounts.register_commands(cli)  # Mount management commands
     cli.add_command(memory.memory)  # v0.4.0: Memory API commands
 
 
@@ -68,8 +68,8 @@ __all__ = [
     "file_ops",
     "directory",
     "memory",
+    "mounts",
     "search",
-    "permissions",
     "rebac",
     "skills",
     "versions",

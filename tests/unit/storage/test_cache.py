@@ -1,12 +1,12 @@
 """Unit tests for metadata caching."""
 
 import gc
-import platform
 import tempfile
-import time
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from freezegun import freeze_time
 
 from nexus import LocalBackend, NexusFS
 from nexus.core.metadata import FileMetadata
@@ -16,8 +16,7 @@ from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 def cleanup_windows_db():
     """Force cleanup of database connections on Windows."""
     gc.collect()  # Force garbage collection to release connections
-    if platform.system() == "Windows":
-        time.sleep(0.05)  # 50ms delay for Windows file handle release
+    # Note: Windows file handle delays removed - using proper cleanup instead
 
 
 class TestMetadataCache:
@@ -312,24 +311,25 @@ class TestMetadataCache:
         store = SQLAlchemyMetadataStore(db_path, enable_cache=True, cache_ttl_seconds=1)
 
         # Store and cache metadata
-        metadata = FileMetadata(
-            path="/test.txt",
-            backend_name="local",
-            physical_path="hash123",
-            size=100,
-            etag="hash123",
-        )
-        store.put(metadata)
-        result1 = store.get("/test.txt")
-        assert result1 is not None
+        with freeze_time("2025-01-01 12:00:00") as frozen_time:
+            metadata = FileMetadata(
+                path="/test.txt",
+                backend_name="local",
+                physical_path="hash123",
+                size=100,
+                etag="hash123",
+            )
+            store.put(metadata)
+            result1 = store.get("/test.txt")
+            assert result1 is not None
 
-        # Wait for TTL to expire
-        time.sleep(1.5)
+            # Advance time to expire the cache (TTL is 1 second)
+            frozen_time.tick(delta=timedelta(seconds=1.5))
 
-        # Entry should be expired (still returns correct data from DB)
-        result2 = store.get("/test.txt")
-        assert result2 is not None
-        assert result2.path == "/test.txt"
+            # Entry should be expired (still returns correct data from DB)
+            result2 = store.get("/test.txt")
+            assert result2 is not None
+            assert result2.path == "/test.txt"
 
         store.close()
 
@@ -374,6 +374,7 @@ class TestMetadataCache:
                 enable_metadata_cache=True,
                 cache_path_size=256,
                 cache_ttl_seconds=300,
+                enforce_permissions=False,  # Disable permissions for test
             )
 
             # Write some files
@@ -401,6 +402,7 @@ class TestMetadataCache:
                 backend=LocalBackend(tmp_dir),
                 db_path=Path(tmp_dir) / "metadata.db",
                 enable_metadata_cache=False,
+                enforce_permissions=False,  # Disable permissions for test
             )
 
             # Write and read files

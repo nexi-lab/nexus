@@ -57,7 +57,7 @@ class NexusFilesystem(Protocol):
         Args:
             path: Virtual path to read
             context: Optional operation context for permission checks
-            return_metadata: If True, return dict with content and metadata (v0.3.9)
+            return_metadata: If True, return dict with content and metadata
 
         Returns:
             If return_metadata=False: File content as bytes
@@ -88,9 +88,9 @@ class NexusFilesystem(Protocol):
             path: Virtual path to write
             content: File content as bytes
             context: Optional operation context for permission checks
-            if_match: Optional etag for OCC (v0.3.9)
-            if_none_match: If True, create-only mode (v0.3.9)
-            force: If True, skip version check (v0.3.9)
+            if_match: Optional etag for optimistic concurrency control
+            if_none_match: If True, create-only mode
+            force: If True, skip version check
 
         Returns:
             Dict with metadata (etag, version, modified_at, size)
@@ -99,7 +99,7 @@ class NexusFilesystem(Protocol):
             InvalidPathError: If path is invalid
             AccessDeniedError: If access is denied
             PermissionError: If path is read-only
-            ConflictError: If if_match doesn't match current etag (v0.3.9)
+            ConflictError: If if_match doesn't match current etag
         """
         ...
 
@@ -211,7 +211,7 @@ class NexusFilesystem(Protocol):
             path: Directory path to list (default: "/")
             recursive: If True, list all files recursively; if False, list only direct children
             details: If True, return detailed metadata; if False, return paths only
-            prefix: (Deprecated) Path prefix to filter by - for backward compatibility
+            prefix: Path prefix to filter by (deprecated parameter)
 
         Returns:
             List of file paths (if details=False) or list of file metadata dicts (if details=True)
@@ -377,7 +377,7 @@ class NexusFilesystem(Protocol):
         ...
 
     # ============================================================
-    # Version Tracking Operations (v0.3.5)
+    # Version Tracking Operations
     # ============================================================
 
     def get_version(self, path: str, version: int) -> bytes:
@@ -456,11 +456,12 @@ class NexusFilesystem(Protocol):
         ...
 
     # ============================================================
-    # Workspace Versioning (v0.3.9)
+    # Workspace Versioning
     # ============================================================
 
     def workspace_snapshot(
         self,
+        workspace_path: str | None = None,
         agent_id: str | None = None,
         description: str | None = None,
         tags: builtins.list[str] | None = None,
@@ -468,6 +469,7 @@ class NexusFilesystem(Protocol):
         """Create a snapshot of the current agent's workspace.
 
         Args:
+            workspace_path: Path to registered workspace
             agent_id: Agent identifier (uses default if not provided)
             description: Human-readable description of snapshot
             tags: List of tags for categorization
@@ -484,12 +486,14 @@ class NexusFilesystem(Protocol):
     def workspace_restore(
         self,
         snapshot_number: int,
+        workspace_path: str | None = None,
         agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Restore workspace to a previous snapshot.
 
         Args:
             snapshot_number: Snapshot version number to restore
+            workspace_path: Path to registered workspace
             agent_id: Agent identifier (uses default if not provided)
 
         Returns:
@@ -503,12 +507,14 @@ class NexusFilesystem(Protocol):
 
     def workspace_log(
         self,
+        workspace_path: str | None = None,
         agent_id: str | None = None,
         limit: int = 100,
     ) -> builtins.list[dict[str, Any]]:
         """List snapshot history for workspace.
 
         Args:
+            workspace_path: Path to registered workspace
             agent_id: Agent identifier (uses default if not provided)
             limit: Maximum number of snapshots to return
 
@@ -524,6 +530,7 @@ class NexusFilesystem(Protocol):
         self,
         snapshot_1: int,
         snapshot_2: int,
+        workspace_path: str | None = None,
         agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Compare two workspace snapshots.
@@ -531,6 +538,7 @@ class NexusFilesystem(Protocol):
         Args:
             snapshot_1: First snapshot number
             snapshot_2: Second snapshot number
+            workspace_path: Path to registered workspace
             agent_id: Agent identifier (uses default if not provided)
 
         Returns:

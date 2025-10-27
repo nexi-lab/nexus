@@ -10,6 +10,7 @@ import errno
 import logging
 import os
 import stat
+import threading
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -63,6 +64,7 @@ class NexusFUSEOperations(Operations):
         self.auto_parse = auto_parse
         self.fd_counter = 0
         self.open_files: dict[int, dict[str, Any]] = {}
+        self._fd_lock = threading.Lock()  # Thread-safe file descriptor management
 
         # Initialize cache manager
         cache_config = cache_config or {}
@@ -124,15 +126,19 @@ class NexusFUSEOperations(Operations):
                 metadata = self.nexus_fs.metadata.get(original_path)  # type: ignore[attr-defined]
                 return self._dir_attrs(metadata)
 
-            # Check if file exists
-            if not self.nexus_fs.exists(original_path):
+            # PERFORMANCE: Get metadata once and use for existence + permissions
+            # This avoids redundant metadata.get() call
+            metadata = self.nexus_fs.metadata.get(original_path)  # type: ignore[attr-defined]
+
+            # Check if file exists (metadata will be None if not found)
+            # Also check exists() for files that might exist without metadata
+            if metadata is None and not self.nexus_fs.exists(original_path):
                 raise FuseOSError(errno.ENOENT)
 
             # Get file content to determine size
             content = self._get_file_content(original_path, view_type)
 
-            # Get file metadata for permissions
-            metadata = self.nexus_fs.metadata.get(original_path)  # type: ignore[attr-defined]
+            # metadata already fetched above - no redundant DB call!
 
             # Return file attributes
             now = time.time()
@@ -295,16 +301,18 @@ class NexusFUSEOperations(Operations):
             if not self.nexus_fs.exists(original_path):
                 raise FuseOSError(errno.ENOENT)
 
-            # Generate file descriptor
-            self.fd_counter += 1
-            fd = self.fd_counter
+            # Generate file descriptor (thread-safe)
+            with self._fd_lock:
+                self.fd_counter += 1
+                fd = self.fd_counter
 
-            # Store file info
-            self.open_files[fd] = {
-                "path": original_path,
-                "view_type": view_type,
-                "flags": flags,
-            }
+                # Store file info
+                self.open_files[fd] = {
+                    "path": original_path,
+                    "view_type": view_type,
+                    "flags": flags,
+                    "opened_at": time.time(),  # Track for leak detection
+                }
 
             return fd
         except NexusFileNotFoundError:
@@ -408,12 +416,21 @@ class NexusFUSEOperations(Operations):
     def release(self, path: str, fh: int) -> None:  # noqa: ARG002
         """Release (close) a file.
 
+        MEMORY LEAK FIX: Always clean up file descriptor, even if errors occurred.
+        Uses pop() with None default to safely handle double-close scenarios.
+
         Args:
             path: File path
             fh: File descriptor
         """
-        # Remove from open files
-        self.open_files.pop(fh, None)
+        # Remove from open files (thread-safe)
+        with self._fd_lock:
+            removed = self.open_files.pop(fh, None)
+            if removed:
+                logger.debug(f"Released fd={fh} for {removed['path']}")
+            else:
+                # Already released or invalid FD - log but don't fail
+                logger.warning(f"Attempted to release unknown fd={fh} for path={path}")
 
     # ============================================================
     # File/Directory Creation and Deletion
@@ -447,16 +464,18 @@ class NexusFUSEOperations(Operations):
             if path != original_path:
                 self.cache.invalidate_path(path)
 
-            # Generate file descriptor
-            self.fd_counter += 1
-            fd = self.fd_counter
+            # Generate file descriptor (thread-safe)
+            with self._fd_lock:
+                self.fd_counter += 1
+                fd = self.fd_counter
 
-            # Store file info
-            self.open_files[fd] = {
-                "path": original_path,
-                "view_type": None,
-                "flags": os.O_RDWR,
-            }
+                # Store file info
+                self.open_files[fd] = {
+                    "path": original_path,
+                    "view_type": None,
+                    "flags": os.O_RDWR,
+                    "opened_at": time.time(),  # Track for leak detection
+                }
 
             return fd
         except FuseOSError:
@@ -960,4 +979,100 @@ class NexusFUSEOperations(Operations):
             "st_atime": now,
             "st_uid": uid,
             "st_gid": gid,
+        }
+
+    # ============================================================
+    # Memory Leak Prevention
+    # ============================================================
+
+    def check_fd_leaks(self, max_age_seconds: float = 3600.0) -> dict[str, Any]:
+        """Check for and clean up leaked file descriptors.
+
+        MEMORY LEAK PREVENTION: Detects file descriptors that have been open
+        for an unusually long time, which may indicate a leak (e.g., release()
+        was never called due to an exception).
+
+        This method should be called periodically (e.g., every hour) by a
+        background thread or monitoring system.
+
+        Args:
+            max_age_seconds: File descriptors open longer than this are considered leaked
+                           Default: 3600 seconds (1 hour)
+
+        Returns:
+            Dict with leak statistics:
+                - total_open: Current number of open file descriptors
+                - leaked_fds: List of leaked FD info dicts
+                - cleaned_up: Number of leaked FDs cleaned up
+
+        Example:
+            >>> # In monitoring thread
+            >>> while True:
+            ...     stats = fuse_ops.check_fd_leaks()
+            ...     if stats['cleaned_up'] > 0:
+            ...         logger.warning(f"Cleaned up {stats['cleaned_up']} leaked FDs")
+            ...     time.sleep(3600)  # Check hourly
+        """
+        now = time.time()
+        leaked_fds = []
+        cleaned_count = 0
+
+        with self._fd_lock:
+            # Find leaked file descriptors
+            for fd, info in list(self.open_files.items()):
+                age = now - info.get("opened_at", now)
+                if age > max_age_seconds:
+                    leaked_fds.append(
+                        {
+                            "fd": fd,
+                            "path": info.get("path"),
+                            "age_seconds": age,
+                            "opened_at": info.get("opened_at"),
+                        }
+                    )
+
+                    # Clean up leaked FD
+                    logger.error(
+                        f"MEMORY LEAK: File descriptor {fd} for '{info.get('path')}' "
+                        f"has been open for {age:.0f}s (max: {max_age_seconds}s). "
+                        f"Cleaning up to prevent memory leak."
+                    )
+                    del self.open_files[fd]
+                    cleaned_count += 1
+
+            total_open = len(self.open_files)
+
+        return {
+            "total_open": total_open,
+            "leaked_fds": leaked_fds,
+            "cleaned_up": cleaned_count,
+        }
+
+    def get_fd_stats(self) -> dict[str, Any]:
+        """Get file descriptor statistics for monitoring.
+
+        Returns:
+            Dict with FD statistics:
+                - total_open: Current number of open file descriptors
+                - fd_counter: Total FDs allocated (including closed ones)
+                - oldest_fd_age: Age of oldest open FD in seconds
+
+        Example:
+            >>> stats = fuse_ops.get_fd_stats()
+            >>> print(f"Open FDs: {stats['total_open']}, Oldest: {stats['oldest_fd_age']:.1f}s")
+        """
+        now = time.time()
+        oldest_age = 0.0
+
+        with self._fd_lock:
+            total_open = len(self.open_files)
+
+            for info in self.open_files.values():
+                age = now - info.get("opened_at", now)
+                oldest_age = max(oldest_age, age)
+
+        return {
+            "total_open": total_open,
+            "fd_counter": self.fd_counter,
+            "oldest_fd_age": oldest_age,
         }

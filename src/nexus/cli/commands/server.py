@@ -55,18 +55,6 @@ from nexus.cli.utils import (
     is_flag=True,
     help="Enable FUSE debug output",
 )
-@click.option(
-    "--remote-url",
-    type=str,
-    default=None,
-    help="Remote Nexus RPC server URL (e.g., http://localhost:8080)",
-)
-@click.option(
-    "--remote-api-key",
-    type=str,
-    default=None,
-    help="API key for remote server authentication (optional)",
-)
 @add_backend_options
 def mount(
     mount_point: str,
@@ -75,8 +63,6 @@ def mount(
     daemon: bool,
     allow_other: bool,
     debug: bool,
-    remote_url: str | None,
-    remote_api_key: str | None,
     backend_config: BackendConfig,
 ) -> None:
     """Mount Nexus filesystem to a local path.
@@ -116,19 +102,8 @@ def mount(
     try:
         from nexus.fuse import mount_nexus
 
-        # Get filesystem instance
-        nx: NexusFilesystem
-        if remote_url:
-            # Use remote NexusFS
-            from nexus.remote import RemoteNexusFS
-
-            nx = RemoteNexusFS(
-                server_url=remote_url,
-                api_key=remote_api_key,
-            )
-        else:
-            # Use local or GCS backend
-            nx = get_filesystem(backend_config)
+        # Get filesystem instance (handles both remote and local backends)
+        nx: NexusFilesystem = get_filesystem(backend_config)
 
         # Create mount point if it doesn't exist
         mount_path = Path(mount_point)
@@ -138,8 +113,8 @@ def mount(
         console.print("[green]Mounting Nexus filesystem...[/green]")
         console.print(f"  Mount point: [cyan]{mount_point}[/cyan]")
         console.print(f"  Mode: [cyan]{mode}[/cyan]")
-        if remote_url:
-            console.print(f"  Remote URL: [cyan]{remote_url}[/cyan]")
+        if backend_config.remote_url:
+            console.print(f"  Remote URL: [cyan]{backend_config.remote_url}[/cyan]")
         else:
             console.print(f"  Backend: [cyan]{backend_config.backend}[/cyan]")
         if daemon:
@@ -211,8 +186,8 @@ def mount(
             logging.info(f"Nexus FUSE daemon starting (PID: {os.getpid()})")
             logging.info(f"Mount point: {mount_point}")
             logging.info(f"Mode: {mode}")
-            if remote_url:
-                logging.info(f"Remote URL: {remote_url}")
+            if backend_config.remote_url:
+                logging.info(f"Remote URL: {backend_config.remote_url}")
             else:
                 logging.info(f"Backend: {backend_config.backend}")
 
@@ -313,12 +288,23 @@ def unmount(mount_point: str) -> None:
 @click.command(name="serve")
 @click.option("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
 @click.option("--port", default=8080, type=int, help="Server port (default: 8080)")
-@click.option("--api-key", default=None, help="API key for authentication (optional)")
+@click.option(
+    "--api-key",
+    default=None,
+    help="API key for authentication (optional, for simple static key auth)",
+)
+@click.option(
+    "--auth-type",
+    type=click.Choice(["static", "database", "local", "oidc", "multi-oidc"]),
+    default=None,
+    help="Authentication type (static, database, local, oidc, multi-oidc)",
+)
 @add_backend_options
 def serve(
     host: str,
     port: int,
     api_key: str | None,
+    auth_type: str | None,
     backend_config: BackendConfig,
 ) -> None:
     """Start Nexus RPC server.
@@ -365,6 +351,33 @@ def serve(
         # Get filesystem instance
         nx = get_filesystem(backend_config)
 
+        # Create authentication provider
+        auth_provider = None
+        if auth_type == "database":
+            # Database authentication - requires database connection
+            import os
+
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+
+            from nexus.server.auth.factory import create_auth_provider
+
+            db_url = os.getenv("NEXUS_DATABASE_URL")
+            if not db_url:
+                console.print(
+                    "[red]Error:[/red] Database authentication requires NEXUS_DATABASE_URL"
+                )
+                sys.exit(1)
+
+            engine = create_engine(db_url)
+            session_factory = sessionmaker(bind=engine)
+            auth_provider = create_auth_provider("database", session_factory=session_factory)
+        elif api_key:
+            # Simple static API key authentication (backward compatibility)
+            # This is the old behavior - just pass api_key to server
+            pass
+        # Future: add support for other auth types (local, oidc, etc.)
+
         # Create and start server
         console.print("[green]Starting Nexus RPC server...[/green]")
         console.print(f"  Host: [cyan]{host}[/cyan]")
@@ -375,8 +388,10 @@ def serve(
         else:
             console.print(f"  Data Dir: [cyan]{backend_config.data_dir}[/cyan]")
 
-        if api_key:
-            console.print("  Authentication: [yellow]API key required[/yellow]")
+        if auth_provider:
+            console.print(f"  Authentication: [yellow]{auth_type}[/yellow]")
+        elif api_key:
+            console.print("  Authentication: [yellow]Static API key[/yellow]")
         else:
             console.print("  Authentication: [yellow]None (open access)[/yellow]")
 
@@ -388,8 +403,8 @@ def serve(
         console.print("[yellow]Connect from Python:[/yellow]")
         console.print("  from nexus.remote import RemoteNexusFS")
         console.print(f'  nx = RemoteNexusFS("http://{host}:{port}"', end="")
-        if api_key:
-            console.print(f', api_key="{api_key}")')
+        if api_key or auth_provider:
+            console.print(', api_key="<your-key>")')
         else:
             console.print(")")
         console.print("  nx.write('/workspace/file.txt', b'Hello!')")
@@ -401,6 +416,7 @@ def serve(
             host=host,
             port=port,
             api_key=api_key,
+            auth_provider=auth_provider,
         )
 
         server.serve_forever()

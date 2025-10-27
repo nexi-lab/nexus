@@ -27,10 +27,8 @@ class NexusFilesystem(ABC):
     - Lifecycle management (close, context manager)
 
     Version History:
-    - v0.1.0: Initial interface with file ops, discovery ops, directory ops
-    - v0.2.0: Will add permission operations (chmod, chown, chgrp)
-    - v0.3.0: Monolith mode implementation
-    - v0.4.0: Distributed mode implementation
+    Initial interface includes file operations, discovery operations, and directory operations.
+    Permission operations use ReBAC (Relationship-Based Access Control).
     """
 
     # Instance attributes (set by implementations)
@@ -51,7 +49,7 @@ class NexusFilesystem(ABC):
         Args:
             path: Virtual path to read
             context: Optional operation context for permission checks
-            return_metadata: If True, return dict with content and metadata (v0.3.9)
+            return_metadata: If True, return dict with content and metadata
 
         Returns:
             If return_metadata=False: File content as bytes
@@ -83,9 +81,9 @@ class NexusFilesystem(ABC):
             path: Virtual path to write
             content: File content as bytes
             context: Optional operation context for permission checks
-            if_match: Optional etag for OCC (v0.3.9)
-            if_none_match: If True, create-only mode (v0.3.9)
-            force: If True, skip version check (v0.3.9)
+            if_match: Optional etag for optimistic concurrency control
+            if_none_match: If True, create-only mode
+            force: If True, skip version check
 
         Returns:
             Dict with metadata (etag, version, modified_at, size)
@@ -94,7 +92,7 @@ class NexusFilesystem(ABC):
             InvalidPathError: If path is invalid
             AccessDeniedError: If access is denied
             PermissionError: If path is read-only
-            ConflictError: If if_match doesn't match current etag (v0.3.9)
+            ConflictError: If if_match doesn't match current etag
         """
         ...
 
@@ -193,7 +191,7 @@ class NexusFilesystem(ABC):
         ...
 
     # ============================================================
-    # File Discovery Operations (v0.1.0)
+    # File Discovery Operations
     # ============================================================
 
     @abstractmethod
@@ -211,7 +209,7 @@ class NexusFilesystem(ABC):
             path: Directory path to list (default: "/")
             recursive: If True, list all files recursively; if False, list only direct children
             details: If True, return detailed metadata; if False, return paths only
-            prefix: (Deprecated) Path prefix to filter by - for backward compatibility
+            prefix: Path prefix to filter by (deprecated parameter)
 
         Returns:
             List of file paths (if details=False) or list of file metadata dicts (if details=True)
@@ -383,7 +381,7 @@ class NexusFilesystem(ABC):
         ...
 
     # ============================================================
-    # Version Tracking Operations (v0.3.5)
+    # Version Tracking Operations
     # ============================================================
 
     @abstractmethod
@@ -469,19 +467,21 @@ class NexusFilesystem(ABC):
     # Lifecycle Management
     # ============================================================
 
-    # === Workspace Versioning (v0.3.9) ===
+    # === Workspace Versioning ===
 
     @abstractmethod
     def workspace_snapshot(
         self,
+        workspace_path: str | None = None,
         agent_id: str | None = None,
         description: str | None = None,
         tags: builtins.list[str] | None = None,
     ) -> dict[str, Any]:
-        """Create a snapshot of the current agent's workspace.
+        """Create a snapshot of a registered workspace.
 
         Args:
-            agent_id: Agent identifier (uses default if not provided)
+            workspace_path: Path to registered workspace
+            agent_id: DEPRECATED - Use workspace_path instead
             description: Human-readable description of snapshot
             tags: List of tags for categorization
 
@@ -489,7 +489,7 @@ class NexusFilesystem(ABC):
             Snapshot metadata dict
 
         Raises:
-            ValueError: If agent_id not provided and no default set
+            ValueError: If workspace_path not provided
             BackendError: If snapshot cannot be created
         """
         ...
@@ -498,19 +498,21 @@ class NexusFilesystem(ABC):
     def workspace_restore(
         self,
         snapshot_number: int,
+        workspace_path: str | None = None,
         agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Restore workspace to a previous snapshot.
 
         Args:
             snapshot_number: Snapshot version number to restore
-            agent_id: Agent identifier (uses default if not provided)
+            workspace_path: Path to registered workspace
+            agent_id: DEPRECATED - Use workspace_path instead
 
         Returns:
             Restore operation result
 
         Raises:
-            ValueError: If agent_id not provided and no default set
+            ValueError: If workspace_path not provided
             NexusFileNotFoundError: If snapshot not found
         """
         ...
@@ -518,20 +520,22 @@ class NexusFilesystem(ABC):
     @abstractmethod
     def workspace_log(
         self,
+        workspace_path: str | None = None,
         agent_id: str | None = None,
         limit: int = 100,
     ) -> builtins.list[dict[str, Any]]:
         """List snapshot history for workspace.
 
         Args:
-            agent_id: Agent identifier (uses default if not provided)
+            workspace_path: Path to registered workspace
+            agent_id: DEPRECATED - Use workspace_path instead
             limit: Maximum number of snapshots to return
 
         Returns:
             List of snapshot metadata dicts (most recent first)
 
         Raises:
-            ValueError: If agent_id not provided and no default set
+            ValueError: If workspace_path not provided
         """
         ...
 
@@ -540,6 +544,7 @@ class NexusFilesystem(ABC):
         self,
         snapshot_1: int,
         snapshot_2: int,
+        workspace_path: str | None = None,
         agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Compare two workspace snapshots.
@@ -547,14 +552,135 @@ class NexusFilesystem(ABC):
         Args:
             snapshot_1: First snapshot number
             snapshot_2: Second snapshot number
-            agent_id: Agent identifier (uses default if not provided)
+            workspace_path: Path to registered workspace
+            agent_id: DEPRECATED - Use workspace_path instead
 
         Returns:
             Diff dict with added, removed, modified files
 
         Raises:
-            ValueError: If agent_id not provided and no default set
+            ValueError: If workspace_path not provided
             NexusFileNotFoundError: If either snapshot not found
+        """
+        ...
+
+    # === Workspace Registry ===
+
+    @abstractmethod
+    def register_workspace(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        created_by: str | None = None,
+        tags: builtins.list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Register a workspace path.
+
+        Args:
+            path: Path to register as workspace
+            name: Optional workspace name
+            description: Optional description
+            created_by: User/agent who created the workspace
+            tags: Optional tags
+            metadata: Optional metadata
+
+        Returns:
+            Workspace registration info
+        """
+        ...
+
+    @abstractmethod
+    def unregister_workspace(self, path: str) -> bool:
+        """Unregister a workspace path.
+
+        Args:
+            path: Workspace path to unregister
+
+        Returns:
+            True if unregistered, False if not found
+        """
+        ...
+
+    @abstractmethod
+    def list_workspaces(self) -> builtins.list[dict]:
+        """List all registered workspaces.
+
+        Returns:
+            List of workspace info dicts
+        """
+        ...
+
+    @abstractmethod
+    def get_workspace_info(self, path: str) -> dict | None:
+        """Get workspace information.
+
+        Args:
+            path: Workspace path
+
+        Returns:
+            Workspace info dict or None if not found
+        """
+        ...
+
+    # === Memory Registry ===
+
+    @abstractmethod
+    def register_memory(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        created_by: str | None = None,
+        tags: builtins.list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Register a memory path.
+
+        Args:
+            path: Path to register as memory
+            name: Optional memory name
+            description: Optional description
+            created_by: User/agent who created the memory
+            tags: Optional tags
+            metadata: Optional metadata
+
+        Returns:
+            Memory registration info
+        """
+        ...
+
+    @abstractmethod
+    def unregister_memory(self, path: str) -> bool:
+        """Unregister a memory path.
+
+        Args:
+            path: Memory path to unregister
+
+        Returns:
+            True if unregistered, False if not found
+        """
+        ...
+
+    @abstractmethod
+    def list_memories(self) -> builtins.list[dict]:
+        """List all registered memories.
+
+        Returns:
+            List of memory info dicts
+        """
+        ...
+
+    @abstractmethod
+    def get_memory_info(self, path: str) -> dict | None:
+        """Get memory information.
+
+        Args:
+            path: Memory path
+
+        Returns:
+            Memory info dict or None if not found
         """
         ...
 

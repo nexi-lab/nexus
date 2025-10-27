@@ -42,24 +42,35 @@ class TestVectorDatabase:
 
     def test_initialize_sqlite_without_vec(self, sqlite_engine):
         """Test SQLite initialization without sqlite-vec."""
+        from unittest.mock import patch
+
         db = VectorDatabase(sqlite_engine)
 
+        # Mock sqlite_vec import to raise ImportError
         # This will initialize with warnings about sqlite-vec not being available
-        with pytest.warns(UserWarning):
+        with (
+            patch.dict("sys.modules", {"sqlite_vec": None}),
+            pytest.warns(UserWarning, match="sqlite-vec not installed"),
+        ):
             db.initialize()
 
         assert db._initialized is True
 
     def test_initialize_idempotent(self, sqlite_engine):
         """Test that initialize is idempotent."""
+        from unittest.mock import patch
+
         db = VectorDatabase(sqlite_engine)
 
-        # First initialization
-        with pytest.warns(UserWarning):
+        # First initialization - mock sqlite_vec to raise ImportError
+        with (
+            patch.dict("sys.modules", {"sqlite_vec": None}),
+            pytest.warns(UserWarning, match="sqlite-vec not installed"),
+        ):
             db.initialize()
         assert db._initialized is True
 
-        # Second initialization should not re-initialize
+        # Second initialization should not re-initialize (and should not warn)
         db.initialize()
         assert db._initialized is True
 

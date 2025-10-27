@@ -35,7 +35,8 @@ def remote_fs(temp_dir: Path, mock_gcs_backend: Mock) -> Generator[NexusFS, None
     fs = NexusFS(
         backend=mock_gcs_backend,
         db_path=db_path,
-        auto_parse=False,  # Disable auto-parsing for unit tests
+        auto_parse=False,
+        enforce_permissions=False,  # Disable auto-parsing for unit tests
     )
     yield fs
     fs.close()

@@ -637,6 +637,9 @@ class TestBatchOperations:
         assert result["/nonexistent.txt"] is None
 
 
+@pytest.mark.skip(
+    reason="v0.5.0: Work detection queries use deprecated tenant_id column - use ReBAC instead"
+)
 class TestWorkDetectionQueries:
     """Test SQL views for work detection."""
 

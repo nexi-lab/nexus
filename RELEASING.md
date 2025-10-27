@@ -47,18 +47,33 @@ Example CHANGELOG update:
 ...
 ```
 
-### 2. Commit and Push Changes
+### 2. Create PR for Version Bump
 
 ```bash
+# Create feature branch for release
+git checkout -b release/v0.2.0
+
 # Commit version bump
 git add pyproject.toml CHANGELOG.md
 git commit -m "Bump version to 0.2.0"
-git push origin main
+
+# Push branch and create PR
+git push origin release/v0.2.0
+gh pr create --title "Release v0.2.0" --body "Version bump for v0.2.0 release"
+
+# Wait for CI checks to pass and merge the PR
+gh pr checks
+# After approval and CI passes, merge via GitHub UI or:
+gh pr merge --merge
 ```
 
 ### 3. Create and Push Tag
 
 ```bash
+# Switch back to main and pull the merged changes
+git checkout main
+git pull origin main
+
 # Create annotated tag
 git tag -a v0.2.0 -m "Release v0.2.0"
 
@@ -109,13 +124,13 @@ If automated release fails, you can release manually:
 ```bash
 # Build package
 pip install build twine
-python -m build
+/opt/homebrew/bin/python3.11 -m build
 
 # Check package
 twine check dist/*
 
 # Upload to PyPI (requires API token)
-twine upload dist/*
+/opt/homebrew/bin/python3.11 -m twine upload -u __token__ -p "pypi-xxxxx" dist/*
 
 # Create GitHub release manually
 gh release create v0.2.0 \
@@ -133,7 +148,7 @@ Use this checklist for each release:
 - [ ] CHANGELOG.md updated with changes and release date
 - [ ] Documentation updated (if needed)
 - [ ] README.md examples still work
-- [ ] Changes committed and pushed to main
+- [ ] Release PR created, reviewed, and merged to main
 - [ ] Git tag created and pushed
 - [ ] GitHub Actions workflow completed successfully
 - [ ] PyPI package published
@@ -175,8 +190,8 @@ For pre-releases, use these suffixes:
 # 3. Package name conflict - check PyPI for existing package
 
 # Fix and retry manually:
-python -m build
-twine upload dist/*
+/opt/homebrew/bin/python3.11 -m build
+/opt/homebrew/bin/python3.11 -m twine upload -u __token__ -p "pypi-xxxxx" dist/*
 ```
 
 ### Tag Already Exists

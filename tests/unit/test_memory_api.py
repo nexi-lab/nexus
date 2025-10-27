@@ -250,7 +250,7 @@ class TestPhase5BackwardCompatibility:
             user_id="alice",
             agent_id="agent1",
             scope="agent",
-            mode=0o600,  # Owner read+write only
+            # v0.5.0: mode removed - use ReBAC for permissions
         )
 
         # agent2 should not see agent1's agent-scoped memory with restrictive permissions

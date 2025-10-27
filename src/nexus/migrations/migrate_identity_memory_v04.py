@@ -1,4 +1,4 @@
-"""Migration script for Identity-Based Memory System (v0.4.0).
+"""Migration script for Identity-Based Memory System.
 
 Migrates existing Nexus installations to support:
 - Entity Registry table
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class IdentityMemoryMigration:
-    """Migration handler for v0.4.0 identity-based memory system."""
+    """Migration handler for identity-based memory system."""
 
     def __init__(self, session: Session):
         """Initialize migration.

@@ -87,6 +87,9 @@ cython_debug/
 
 # Nexus specific data directories
 nexus-data/
+nexus-workspace/
+nexus-test-*/
+nexus-consent-*/
 .nexus-server-data/
 test-nexus-data/
 test-server-data/
@@ -95,15 +98,21 @@ test-fix-data/
 *-examples-data/
 *-examples-workspace/
 my-data/
+
+# Nexus plugins (development)
+nexus-plugin-*/
+
 # Standalone backend storage directories (should be under nexus-data/)
 /cas/
 /dirs/
+
 # Database files
 *.db
 *.db-shm
 *.db-wal
 *.sqlite
 *.sqlite3
+nexus-*.db
 
 # Logs
 logs/
@@ -156,7 +165,8 @@ site/
 *~
 \#*\#
 .\#*
-NEXUS_COMPREHENSIVE_ARCHITECTURE.md
-/site/
-None
-RELEASE_CLEANUP_PLAN.md
+# Archived/temporary documentation
+archive/
+*_SUMMARY.md
+*_STATUS.md
+*_COMPLETE.md

@@ -1,5 +1,5 @@
-site_name: Nexus Documentation
-site_description: AI-Native Distributed Filesystem - Complete AI Agent Infrastructure Platform
+site_name: Nexus
+site_description: The AI-Native Distributed Filesystem - Build production AI agents with enterprise-grade context, permissions, and multi-tenancy
 site_author: Nexus Team
 site_url: https://nexi-lab.github.io/nexus/
 
@@ -8,7 +8,7 @@ repo_url: https://github.com/nexi-lab/nexus
 edit_uri: edit/main/docs/
 
 # Copyright
-copyright: Copyright &copy; 2024 Nexus Team
+copyright: Copyright &copy; 2024 Nexus Team • Built with ❤️ for AI Agents
 
 # Theme configuration
 theme:
@@ -36,8 +36,10 @@ theme:
 
   # Features
   features:
+    - announce.dismiss
     - navigation.instant
     - navigation.instant.progress
+    - navigation.instant.prefetch
     - navigation.tracking
     - navigation.tabs
     - navigation.tabs.sticky
@@ -54,9 +56,11 @@ theme:
     - toc.integrate
     - content.code.copy
     - content.code.annotate
+    - content.code.select
     - content.tabs.link
     - content.action.edit
     - content.action.view
+    - content.tooltips
 
   # Icon
   icon:
@@ -135,13 +139,24 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/nexi-lab/nexus
-      name: Nexus on GitHub
+      name: Star us on GitHub
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/nexus-ai-fs/
-      name: Nexus on PyPI
+      name: Install from PyPI
     - icon: fontawesome/brands/slack
       link: https://nexus-community.slack.com
-      name: Join our Slack
+      name: Join our Community
+
+  # Status badges
+  tags:
+    Production Ready: production
+    Beta: beta
+    Experimental: experimental
+
+  # Announcement bar
+  # announcement:
+  #   text: "🚀 Nexus v0.4 is here! Multi-tenancy, PostgreSQL support, and more!"
+  #   link: https://github.com/nexi-lab/nexus/releases
 
   # analytics:
   #   provider: google
@@ -174,14 +189,56 @@ nav:
   - Home: index.md
 
   - Getting Started:
+    - getting-started/index.md
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
     - Configuration: getting-started/configuration.md
     - Deployment Modes: getting-started/deployment-modes.md
 
+  - Core Concepts:
+    - Permissions & ReBAC: PERMISSIONS.md
+    - Multi-Tenancy: MULTI_TENANT.md
+    - Architecture: architecture/ARCHITECTURE.md
+    - Core Tenets: CORE_TENETS.md
+
   - API Reference:
-    - Overview: api/api.md
+    - api/index.md
+    - Overview: api/README.md
+    - Core API: api/core-api.md
+    - File Operations: api/file-operations.md
+    - Directory Operations: api/directory-operations.md
+    - Memory Management: api/memory-management.md
+    - Metadata: api/metadata.md
+    - Permissions: api/permissions.md
+    - Versioning: api/versioning.md
+    - Semantic Search: api/semantic-search.md
+    - CLI Reference:
+      - cli/index.md
+      - File Operations: cli/file-operations.md
+      - Directory Operations: cli/directory-operations.md
+      - Search: cli/search.md
+      - Versioning: cli/versioning.md
+      - Workspace: cli/workspace.md
+      - Memory: cli/memory.md
+      - Semantic Search: cli/semantic-search.md
+      - Permissions: cli/permissions.md
+      - Mounts: cli/mounts.md
+      - Server: cli/server.md
+      - Advanced: cli/advanced.md
+
+  - Deployment:
+    - deployment/index.md
+    - Server Setup: deployment/server-setup.md
+    - PostgreSQL: deployment/postgresql.md
+    - Authentication: authentication.md
+
+  - Advanced:
+    - FUSE Mounts: advanced/fuse.md
+    - SQL Patterns: advanced/sql-patterns.md
 
   - Development:
+    - development/index.md
     - Contributing: development/development.md
     - Database Schema: development/DATABASE_COMPATIBILITY.md
+    - Permissions Implementation: development/PERMISSIONS_IMPLEMENTATION.md
+    - Plugin Development: development/PLUGIN_DEVELOPMENT.md

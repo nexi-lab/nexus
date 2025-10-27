@@ -14,7 +14,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from nexus.core.exceptions import MetadataError
@@ -107,9 +107,7 @@ class VersionManager:
                 created_at=version_entry.created_at,
                 modified_at=version_entry.created_at,
                 version=version_entry.version_number,
-                owner=file_path.owner,
-                group=file_path.group,
-                mode=file_path.mode,
+                # v0.5.0: owner/group/mode removed - use ReBAC for permissions
             )
         except Exception as e:
             raise MetadataError(f"Failed to get version: {e}", path=path) from e
@@ -237,7 +235,15 @@ class VersionManager:
             file_path.size_bytes = target_version.size_bytes
             file_path.file_type = target_version.mime_type
             file_path.updated_at = datetime.now(UTC)
-            file_path.current_version += 1  # Increment to new version
+
+            # Atomically increment version at database level to prevent race conditions
+            session.execute(
+                update(FilePathModel)
+                .where(FilePathModel.path_id == file_path.path_id)
+                .values(current_version=FilePathModel.current_version + 1)
+            )
+            # Refresh to get the new version number
+            session.refresh(file_path)
 
             # Create version history entry for the NEW version (rollback)
             rollback_version_entry = VersionHistoryModel(

@@ -268,14 +268,87 @@ def test_validate_path_rejects_path_traversal(router: PathRouter) -> None:
     assert "traversal" in str(exc_info.value).lower()
 
 
+def test_validate_path_rejects_path_traversal_variations(router: PathRouter) -> None:
+    """Test that validate_path rejects various path traversal attempts.
+
+    This is a security-critical test that ensures the normalization
+    happens BEFORE path traversal checks to prevent bypass attempts.
+    """
+    from nexus.core.router import InvalidPathError
+
+    # Test various path traversal patterns
+    test_cases = [
+        "/workspace/../../etc/passwd",  # Basic traversal
+        "/workspace/../../../etc/passwd",  # Multiple traversal
+        "/workspace/foo/../../etc/passwd",  # Traversal with intermediate dir
+        "/workspace/./../../etc/passwd",  # Mixed with current dir refs
+        "/../etc/passwd",  # Traversal from root
+        "/workspace/../..",  # Traverse to root parent (should fail)
+    ]
+
+    for test_path in test_cases:
+        with pytest.raises(InvalidPathError) as exc_info:
+            router.validate_path(test_path)
+        assert "traversal" in str(exc_info.value).lower(), f"Failed for: {test_path}"
+
+
+def test_validate_path_accepts_safe_dotdot_in_filename(router: PathRouter) -> None:
+    """Test that files with .. in the name (but not as path component) are allowed."""
+    # These should be ALLOWED because .. is part of filename, not path traversal
+    safe_paths = [
+        "/workspace/file..txt",  # .. in filename
+        "/workspace/my..file.txt",  # .. in middle of filename
+        "/workspace/backup-2024..tar.gz",  # .. in filename
+    ]
+
+    for safe_path in safe_paths:
+        # Should not raise - these are safe
+        result = router.validate_path(safe_path)
+        assert result == safe_path, f"Should allow: {safe_path}"
+
+
+def test_validate_path_normalization_security(router: PathRouter) -> None:
+    """Test that normalization properly handles security-sensitive cases.
+
+    SECURITY: This test verifies the fix for the vulnerability where
+    path traversal checks happened BEFORE normalization, allowing
+    bypass via encoded sequences or complex paths.
+    """
+    from nexus.core.router import InvalidPathError
+
+    # Paths that normalize to traversal - should be rejected
+    dangerous_paths = [
+        "/workspace/foo/../..",  # Normalizes to / (escapes root)
+        "/workspace/a/b/../../..",  # Normalizes to / (escapes root)
+    ]
+
+    for dangerous_path in dangerous_paths:
+        with pytest.raises(InvalidPathError) as exc_info:
+            router.validate_path(dangerous_path)
+        assert "traversal" in str(exc_info.value).lower(), f"Should reject: {dangerous_path}"
+
+    # Paths with .. that don't escape - should be allowed after normalization
+    safe_paths = [
+        "/workspace/foo/../bar",  # Normalizes to /workspace/bar
+        "/workspace/a/../b/../c",  # Normalizes to /workspace/c
+        "/workspace/./foo/../bar",  # Normalizes to /workspace/bar
+    ]
+
+    for safe_path in safe_paths:
+        # Should normalize and return safe path
+        result = router.validate_path(safe_path)
+        assert result.startswith("/"), f"Result should start with /: {result}"
+        assert ".." not in result, f"Result should not contain ..: {result}"
+
+
 def test_parse_path_workspace(router: PathRouter) -> None:
-    """Test parsing workspace namespace path."""
-    path_info = router.parse_path("/workspace/acme/agent1/data/file.txt")
+    """Test parsing workspace namespace path - new ReBAC-based format."""
+    path_info = router.parse_path("/workspace/my-project/data/file.txt")
 
     assert path_info.namespace == "workspace"
-    assert path_info.tenant_id == "acme"
-    assert path_info.agent_id == "agent1"
-    assert path_info.relative_path == "data/file.txt"
+    assert path_info.tenant_id is None  # No tenant in path for workspace
+    assert path_info.agent_id is None  # No agent in path for workspace
+    assert path_info.relative_path == "my-project/data/file.txt"
 
 
 def test_parse_path_shared(router: PathRouter) -> None:
@@ -319,18 +392,20 @@ def test_parse_path_system(router: PathRouter) -> None:
 
 
 def test_parse_path_workspace_partial_paths(router: PathRouter) -> None:
-    """Test that workspace allows partial paths for directory creation."""
+    """Test that workspace allows partial paths for directory creation - new ReBAC-based format."""
     # /workspace - just namespace
     path_info = router.parse_path("/workspace")
     assert path_info.namespace == "workspace"
     assert path_info.tenant_id is None
     assert path_info.agent_id is None
+    assert path_info.relative_path == ""
 
-    # /workspace/tenant1 - namespace + tenant
-    path_info = router.parse_path("/workspace/tenant1")
+    # /workspace/project-dir - simple path, no tenant/agent parsing
+    path_info = router.parse_path("/workspace/project-dir")
     assert path_info.namespace == "workspace"
-    assert path_info.tenant_id == "tenant1"
-    assert path_info.agent_id is None
+    assert path_info.tenant_id is None  # No tenant parsing for workspace
+    assert path_info.agent_id is None  # No agent parsing for workspace
+    assert path_info.relative_path == "project-dir"
 
 
 def test_parse_path_shared_partial_paths(router: PathRouter) -> None:
@@ -383,13 +458,18 @@ def test_route_with_tenant_isolation(router: PathRouter, temp_backend: LocalBack
 def test_route_with_tenant_mismatch_raises_error(
     router: PathRouter, temp_backend: LocalBackend
 ) -> None:
-    """Test that tenant mismatch raises AccessDeniedError."""
+    """Test that tenant mismatch raises AccessDeniedError for shared namespace (not workspace).
+
+    Workspace no longer has path-based tenant isolation - uses ReBAC instead.
+    Tenant isolation still applies to /shared namespace.
+    """
     from nexus.core.router import AccessDeniedError
 
-    router.add_mount("/workspace", temp_backend)
+    router.add_mount("/shared", temp_backend)
 
+    # Shared namespace still enforces tenant isolation via path
     with pytest.raises(AccessDeniedError) as exc_info:
-        router.route("/workspace/acme/agent1/data.txt", tenant_id="other_tenant")
+        router.route("/shared/acme/data.txt", tenant_id="other_tenant")
 
     assert "cannot access" in str(exc_info.value)
 

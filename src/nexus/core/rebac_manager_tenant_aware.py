@@ -29,12 +29,15 @@ Migration Path:
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.rebac import Entity, NamespaceConfig
 from nexus.core.rebac_manager import ReBACManager
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -188,6 +191,17 @@ class TenantAwareReBACManager(ReBACManager):
         object_entity = Entity(object[0], object[1])
 
         with self._connection() as conn:
+            # CYCLE DETECTION: Prevent cycles in parent relations
+            # Must check BEFORE creating tuple to avoid infinite loops
+            if relation == "parent" and self._would_create_cycle_with_conn(
+                conn, subject_entity, object_entity, tenant_id
+            ):
+                raise ValueError(
+                    f"Cycle detected: Creating parent relation from "
+                    f"{subject_entity.entity_type}:{subject_entity.entity_id} to "
+                    f"{object_entity.entity_type}:{object_entity.entity_id} would create a cycle"
+                )
+
             cursor = conn.cursor()
 
             # Check if tuple already exists (idempotency fix)
@@ -431,11 +445,19 @@ class TenantAwareReBACManager(ReBACManager):
         if namespace.has_permission(permission):
             # Permission defined explicitly - check all usersets that grant it
             usersets = namespace.get_permission_usersets(permission)
+            logger.info(
+                f"  [depth={depth}] Permission '{permission}' expands to usersets: {usersets}"
+            )
             for userset in usersets:
+                logger.info(f"  [depth={depth}] Checking userset '{userset}' for {obj}")
                 if self._compute_permission_tenant_aware(
                     subject, userset, obj, tenant_id, visited.copy(), depth + 1
                 ):
+                    logger.info(f"  [depth={depth}] ✅ GRANTED via userset '{userset}'")
                     return True
+                else:
+                    logger.info(f"  [depth={depth}] ❌ DENIED via userset '{userset}'")
+            logger.info(f"  [depth={depth}] ❌ No usersets granted permission '{permission}'")
             return False
 
         # Fallback: Check if permission is defined as a relation (legacy)
@@ -465,13 +487,24 @@ class TenantAwareReBACManager(ReBACManager):
                 related_objects = self._find_related_objects_tenant_aware(
                     obj, tupleset_relation, tenant_id
                 )
+                logger.info(
+                    f"  [depth={depth}] tupleToUserset: {permission} - found {len(related_objects)} related objects via '{tupleset_relation}': {[str(o) for o in related_objects]}"
+                )
 
                 # Check if subject has computed_userset on any related object
                 for related_obj in related_objects:
+                    logger.info(
+                        f"  [depth={depth}] Checking if {subject} has '{computed_userset}' on {related_obj}"
+                    )
                     if self._compute_permission_tenant_aware(
                         subject, computed_userset, related_obj, tenant_id, visited.copy(), depth + 1
                     ):
+                        logger.info(f"  [depth={depth}] ✅ GRANTED via tupleToUserset")
                         return True
+                    else:
+                        logger.info(f"  [depth={depth}] ❌ DENIED for this related object")
+
+                logger.info(f"  [depth={depth}] ❌ No related objects granted access")
 
             return False
 
@@ -636,13 +669,16 @@ class TenantAwareReBACManager(ReBACManager):
         with self._connection() as conn:
             cursor = conn.cursor()
 
+            # FIX: For tupleToUserset, we need to find tuples where obj is the SUBJECT
+            # Example: To find parent of file X, look for (X, parent, Y) and return Y
+            # NOT (?, ?, X) - that would be finding children!
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
-                    SELECT subject_type, subject_id
+                    SELECT object_type, object_id
                     FROM rebac_tuples
                     WHERE tenant_id = ?
-                      AND object_type = ? AND object_id = ?
+                      AND subject_type = ? AND subject_id = ?
                       AND relation = ?
                       AND (expires_at IS NULL OR expires_at > ?)
                     """
@@ -659,7 +695,7 @@ class TenantAwareReBACManager(ReBACManager):
             results = []
             for row in cursor.fetchall():
                 if hasattr(row, "keys"):
-                    results.append(Entity(row["subject_type"], row["subject_id"]))
+                    results.append(Entity(row["object_type"], row["object_id"]))
                 else:
                     results.append(Entity(row[0], row[1]))
             return results

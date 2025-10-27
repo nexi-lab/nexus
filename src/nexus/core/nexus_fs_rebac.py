@@ -35,6 +35,7 @@ class NexusFSReBACMixin:
         object: tuple[str, str],
         expires_at: datetime | None = None,
         tenant_id: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> str:
         """Create a relationship tuple in ReBAC system.
 
@@ -43,7 +44,9 @@ class NexusFSReBACMixin:
             relation: Relation type (e.g., 'member-of', 'owner-of', 'viewer-of')
             object: (object_type, object_id) tuple (e.g., ('group', 'developers'))
             expires_at: Optional expiration datetime for temporary relationships
-            tenant_id: Optional tenant ID for multi-tenant isolation
+            tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
+                       tenant_id from operation context.
+            context: Operation context (automatically provided by RPC server)
 
         Returns:
             Tuple ID of created relationship
@@ -92,13 +95,18 @@ class NexusFSReBACMixin:
         if not isinstance(object, tuple) or len(object) != 2:
             raise ValueError(f"object must be (type, id) tuple, got {object}")
 
+        # Use tenant_id from context if not explicitly provided
+        effective_tenant_id = tenant_id
+        if effective_tenant_id is None and context:
+            effective_tenant_id = context.get("tenant")
+
         # Create relationship
         return self._rebac_manager.rebac_write(
             subject=subject,
             relation=relation,
             object=object,
             expires_at=expires_at,
-            tenant_id=tenant_id,
+            tenant_id=effective_tenant_id,
         )
 
     @rpc_expose(description="Check ReBAC permission")
@@ -177,11 +185,20 @@ class NexusFSReBACMixin:
             raise ValueError(f"context must be dict, got {type(context)}")
 
         # P0-4: Pass tenant_id for multi-tenant isolation
-        tid = tenant_id or "default"
+        # Use tenant_id from operation context if not explicitly provided
+        effective_tenant_id = tenant_id
+        if effective_tenant_id is None and context:
+            effective_tenant_id = context.get("tenant")
+        # BUGFIX: Don't default to "default" - let ReBAC manager handle None
+        # This allows proper tenant isolation testing
 
         # Check permission with optional context
         return self._rebac_manager.rebac_check(
-            subject=subject, permission=permission, object=object, context=context, tenant_id=tid
+            subject=subject,
+            permission=permission,
+            object=object,
+            context=context,
+            tenant_id=effective_tenant_id,
         )
 
     @rpc_expose(description="Expand ReBAC permissions to find all subjects")
@@ -239,6 +256,7 @@ class NexusFSReBACMixin:
         permission: str,
         object: tuple[str, str],
         tenant_id: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> dict:
         """Explain why a subject has or doesn't have permission on an object.
 
@@ -249,7 +267,9 @@ class NexusFSReBACMixin:
             subject: (subject_type, subject_id) tuple
             permission: Permission to check (e.g., 'read', 'write', 'owner')
             object: (object_type, object_id) tuple
-            tenant_id: Optional tenant ID for multi-tenant isolation
+            tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
+                       tenant_id from operation context.
+            context: Operation context (automatically provided by RPC server)
 
         Returns:
             Dictionary with:
@@ -294,9 +314,14 @@ class NexusFSReBACMixin:
         if not isinstance(object, tuple) or len(object) != 2:
             raise ValueError(f"object must be (type, id) tuple, got {object}")
 
+        # Use tenant_id from context if not explicitly provided
+        effective_tenant_id = tenant_id
+        if effective_tenant_id is None and context:
+            effective_tenant_id = context.get("tenant")
+
         # Get explanation
         return self._rebac_manager.rebac_explain(
-            subject=subject, permission=permission, object=object, tenant_id=tenant_id
+            subject=subject, permission=permission, object=object, tenant_id=effective_tenant_id
         )
 
     @rpc_expose(description="Batch ReBAC permission checks")
@@ -468,10 +493,23 @@ class NexusFSReBACMixin:
                         "object_id": row["object_id"],
                         "created_at": row["created_at"],
                         "expires_at": row["expires_at"],
+                        "tenant_id": row.get("tenant_id"),  # BUGFIX: Include tenant_id
                     }
                 )
             else:
                 # PostgreSQL returns tuples
+                # Schema order: tuple_id(0), subject_type(1), subject_id(2), relation(3),
+                #               object_type(4), object_id(5), created_at(6), expires_at(7),
+                #               conditions(8), tenant_id(9), subject_tenant_id(10),
+                #               object_tenant_id(11), subject_relation(12)
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.debug(f"rebac_list_tuples: row has {len(row)} columns")
+                logger.debug(
+                    f"rebac_list_tuples: row[9] (tenant_id) = {row[9] if len(row) > 9 else 'N/A'}"
+                )
+
                 results.append(
                     {
                         "tuple_id": row[0],
@@ -482,6 +520,7 @@ class NexusFSReBACMixin:
                         "object_id": row[5],
                         "created_at": row[6],
                         "expires_at": row[7],
+                        "tenant_id": row[9] if len(row) > 9 else None,  # BUGFIX: Include tenant_id
                     }
                 )
 

@@ -250,26 +250,48 @@ Nexus extends traditional storage into the AI era—combining files, memory, and
 ## Architecture
 
 ```mermaid
-flowchart TD
-    A[👤 Application<br/>SDK/CLI] --> B{nexus.connect}
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#e3f2fd','primaryTextColor':'#1a237e','primaryBorderColor':'#5C6BC0','lineColor':'#AB47BC','secondaryColor':'#fce4ec','tertiaryColor':'#fff3e0','fontSize':'14px'}}}%%
+graph TB
+    subgraph agents[" 🤖 AI Agents "]
+        agent1["Agent A<br/>(GPT-4)"]
+        agent2["Agent B<br/>(Claude)"]
+        agent3["Agent C<br/>(Custom)"]
+    end
 
-    B -->|Embedded Mode| C[NexusFS Core]
-    B -.->|Remote Mode| D[RPC Client]
-    D -.HTTP/RPC.-> E[RPC Server]
-    E --> C
+    subgraph vfs[" 📁 Nexus Virtual File System "]
+        api["Unified VFS API<br/>read() write() list() search()"]
+        memory["💾 Memory API<br/>Persistent learning & context"]
+        rebac["🔒 ReBAC Permissions<br/>Automatic access control"]
+        version["📦 Versioning<br/>Snapshots & time-travel"]
+        router["Smart Router<br/>Backend abstraction"]
+    end
 
-    C --> F[File Ops + ReBAC<br/>+ Search + Memory]
-    F --> G[Router]
-    G --> H[Backend<br/>Local/S3/GCS]
-    H --> I[(Metadata DB)]
-    H --> J[CAS Storage]
+    subgraph backends[" 💾 Storage Backends "]
+        local["Local Filesystem"]
+        gcs["Google Cloud Storage"]
+        s3["AWS S3"]
+    end
 
-    style A fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
-    style C fill:#f3e5f5,stroke:#7b1fa2,stroke-width:3px
-    style D fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-    style E fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-    style I fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    style J fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    agent1 -.->|"write('/workspace/data.json')"| api
+    agent2 -.->|"read('/shared/model.pkl')"| api
+    agent3 -.->|"memory.store('learned_fact')"| memory
+
+    api --> rebac
+    memory --> rebac
+    rebac -->|"✓ Allowed"| version
+    version --> router
+    router -->|"Transparent"| local
+    router -->|"Same API"| gcs
+    router -->|"Same API"| s3
+
+    style agents fill:#e3f2fd,stroke:#5C6BC0,stroke-width:2px,color:#1a237e
+    style vfs fill:#f3e5f5,stroke:#AB47BC,stroke-width:2px,color:#4a148c
+    style backends fill:#fff3e0,stroke:#FF7043,stroke-width:2px,color:#e65100
+    style api fill:#5C6BC0,stroke:#3949AB,stroke-width:2px,color:#fff
+    style memory fill:#AB47BC,stroke:#7B1FA2,stroke-width:2px,color:#fff
+    style rebac fill:#EC407A,stroke:#C2185B,stroke-width:2px,color:#fff
+    style version fill:#66BB6A,stroke:#388E3C,stroke-width:2px,color:#fff
+    style router fill:#42A5F5,stroke:#1976D2,stroke-width:2px,color:#fff
 ```
 
 ### Deployment Modes

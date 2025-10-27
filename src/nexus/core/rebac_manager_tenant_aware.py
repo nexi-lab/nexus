@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.rebac import Entity, NamespaceConfig
 from nexus.core.rebac_manager import ReBACManager
@@ -189,6 +189,37 @@ class TenantAwareReBACManager(ReBACManager):
 
         with self._connection() as conn:
             cursor = conn.cursor()
+
+            # Check if tuple already exists (idempotency fix)
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    SELECT tuple_id FROM rebac_tuples
+                    WHERE subject_type = ? AND subject_id = ?
+                    AND (subject_relation = ? OR (subject_relation IS NULL AND ? IS NULL))
+                    AND relation = ?
+                    AND object_type = ? AND object_id = ?
+                    AND (tenant_id = ? OR (tenant_id IS NULL AND ? IS NULL))
+                    """
+                ),
+                (
+                    subject_entity.entity_type,
+                    subject_entity.entity_id,
+                    subject_relation,
+                    subject_relation,
+                    relation,
+                    object_entity.entity_type,
+                    object_entity.entity_id,
+                    tenant_id,
+                    tenant_id,
+                ),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                # Tuple already exists, return existing ID (idempotent)
+                return cast(
+                    str, existing[0] if isinstance(existing, tuple) else existing["tuple_id"]
+                )
 
             # Insert tuple with tenant_id columns (includes subject_relation for userset support)
             cursor.execute(

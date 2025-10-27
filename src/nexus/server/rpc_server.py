@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 from nexus import NexusFilesystem
@@ -199,21 +199,36 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         Returns:
             True if authentication is valid or not required
         """
-        # If no API key is configured, allow all requests
-        if not self.api_key:
+        # If no authentication is configured, allow all requests
+        if not self.api_key and not self.auth_provider:
             return True
 
         # Check Authorization header
         auth_header = self.headers.get("Authorization")
         if not auth_header:
-            return False
+            # If auth is configured but no header provided, deny
+            return not (self.api_key or self.auth_provider)
 
         # Expected format: "Bearer <api_key>"
         if not auth_header.startswith("Bearer "):
             return False
 
         token = auth_header[7:]  # Remove "Bearer " prefix
-        return bool(token == self.api_key)
+
+        # Try auth_provider first (new auth system)
+        if self.auth_provider:
+            # Use event loop to run async authenticate method
+            if self.event_loop is None:
+                logger.error("Event loop not initialized for auth provider")
+                return False
+            result = self.event_loop.run_until_complete(self.auth_provider.authenticate(token))
+            return cast(bool, result.authenticated)
+
+        # Fall back to static API key (backward compatibility)
+        if self.api_key:
+            return bool(token == self.api_key)
+
+        return False
 
     def _get_operation_context(self) -> Any:
         """Get operation context from authentication.
@@ -631,6 +646,35 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             kwargs = {k: v for k, v in params.__dict__.items() if not k.startswith("_")}
         else:
             kwargs = {}
+
+        # BUGFIX: Extract authentication context for auto-dispatched methods
+        # Only add context if the method signature accepts it
+        import inspect
+
+        sig = inspect.signature(fn)
+        accepts_context = "context" in sig.parameters
+
+        if accepts_context:
+            context = self._get_operation_context()
+            if context is not None:
+                # Convert OperationContext to dict for methods that expect dict
+                from nexus.core.permissions import OperationContext
+
+                if isinstance(context, OperationContext):
+                    # Convert to dict format expected by filesystem methods
+                    context_dict = {
+                        "user": context.user,
+                        "subject": (context.subject_type, context.subject_id)
+                        if context.subject_type and context.subject_id
+                        else None,
+                        "tenant": context.tenant_id,
+                        "is_admin": context.is_admin,
+                        "is_system": context.is_system,
+                    }
+                    kwargs["context"] = context_dict
+                else:
+                    # Already a dict
+                    kwargs["context"] = context
 
         # Call the method
         result = fn(**kwargs)

@@ -41,7 +41,7 @@ def info(
         if not nx.exists(path):
             console.print(f"[yellow]File not found:[/yellow] {path}")
             nx.close()
-            return
+            sys.exit(1)
 
         # Get file metadata from metadata store
         # Note: Only NexusFS mode has direct metadata access
@@ -55,7 +55,7 @@ def info(
 
         if not file_meta:
             console.print(f"[yellow]File not found:[/yellow] {path}")
-            return
+            sys.exit(1)
 
         table = Table(title=f"File Information: {path}")
         table.add_column("Property", style="cyan")

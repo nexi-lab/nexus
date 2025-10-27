@@ -520,6 +520,10 @@ class NexusFS(
         Raises:
             PermissionError: If access is denied
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         # Skip if permission enforcement is disabled
         if not self._enforce_permissions:
             return
@@ -527,8 +531,15 @@ class NexusFS(
         # Use default context if none provided
         ctx = context or self._default_context
 
+        logger.info(
+            f"_check_permission: path={path}, permission={permission.name}, user={ctx.user}, tenant={getattr(ctx, 'tenant_id', None)}"
+        )
+
         # Check permission using enforcer
-        if not self._permission_enforcer.check(path, permission, ctx):
+        result = self._permission_enforcer.check(path, permission, ctx)
+        logger.info(f"  -> permission_enforcer.check returned: {result}")
+
+        if not result:
             raise PermissionError(
                 f"Access denied: User '{ctx.user}' does not have {permission.name} "
                 f"permission for '{path}'"
@@ -648,6 +659,10 @@ class NexusFS(
                 parent_path = self._get_parent_path(parent_path)
 
             # Create parents from top to bottom (reverse order)
+            import logging
+
+            logger = logging.getLogger(__name__)
+
             for parent_dir in reversed(parents_to_create):
                 self._create_directory_metadata(parent_dir)
                 # P0-3: Create parent tuples for each intermediate directory
@@ -655,11 +670,17 @@ class NexusFS(
                 if hasattr(self, "_hierarchy_manager"):
                     try:
                         ctx_inner = context or self._default_context
+                        logger.info(
+                            f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
+                        )
                         self._hierarchy_manager.ensure_parent_tuples(
                             parent_dir, tenant_id=ctx_inner.tenant_id
                         )
-                    except Exception:
+                    except Exception as e:
                         # Don't fail mkdir if parent tuple creation fails
+                        logger.warning(
+                            f"mkdir: Failed to create parent tuples for {parent_dir}: {e}"
+                        )
                         pass
 
         # Create explicit metadata entry for the directory
@@ -667,23 +688,29 @@ class NexusFS(
 
         # P0-3: Create parent relationship tuples for directory inheritance
         # This enables granting access to /workspace to automatically grant access to subdirectories
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        logger.info(
+            f"mkdir: Checking for hierarchy_manager: hasattr={hasattr(self, '_hierarchy_manager')}"
+        )
+
         if hasattr(self, "_hierarchy_manager"):
             try:
                 ctx = context or self._default_context
+                logger.info(
+                    f"mkdir: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id}"
+                )
                 created_count = self._hierarchy_manager.ensure_parent_tuples(
                     path, tenant_id=ctx.tenant_id
                 )
+                logger.info(f"mkdir: Created {created_count} parent tuples for {path}")
                 if created_count > 0:
-                    import logging
-
-                    logger = logging.getLogger(__name__)
                     logger.debug(f"Created {created_count} parent tuples for {path}")
             except Exception as e:
                 # Log the error but don't fail the mkdir operation
                 # This helps diagnose issues with parent tuple creation
-                import logging
-
-                logger = logging.getLogger(__name__)
                 logger.warning(
                     f"Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
                 )
@@ -812,6 +839,11 @@ class NexusFS(
         # In CAS systems, the directory may no longer exist after deleting its contents
         with contextlib.suppress(NexusFileNotFoundError):
             route.backend.rmdir(route.backend_path, recursive=recursive)
+
+        # Also delete the directory's own metadata entry if it exists
+        # Directories can have metadata entries (created by mkdir)
+        with contextlib.suppress(Exception):
+            self.metadata.delete(path)
 
     @rpc_expose(description="Check if path is a directory")
     def is_directory(
@@ -1500,12 +1532,12 @@ class NexusFS(
         # Validate path
         path = self._validate_path(path)
 
-        # Read file content with admin bypass for background parsing
+        # Read file content with system bypass for background parsing
         # Auto-parse is a system operation that should not be subject to user permissions
         from nexus.core.permissions_enhanced import EnhancedOperationContext
 
         parse_ctx = EnhancedOperationContext(
-            user="system_parser", groups=[], tenant_id=None, is_admin=True
+            user="system_parser", groups=[], tenant_id=None, is_system=True
         )
         content = self.read(path, context=parse_ctx)  # type: ignore[arg-type]
 

@@ -220,14 +220,26 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         Raises:
             GraphLimitExceeded: If graph traversal exceeds limits (P0-5)
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(
+            f"EnhancedReBACManager.rebac_check called: enforce_tenant_isolation={self.enforce_tenant_isolation}, MAX_DEPTH={GraphLimits.MAX_DEPTH}"
+        )
+
         # If tenant isolation is disabled, use base ReBACManager implementation
         if not self.enforce_tenant_isolation:
             from nexus.core.rebac_manager import ReBACManager
 
+            logger.info(f"  -> Falling back to base ReBACManager, base max_depth={self.max_depth}")
             return ReBACManager.rebac_check(self, subject, permission, object, context, tenant_id)
 
+        logger.info("  -> Using rebac_check_detailed")
         result = self.rebac_check_detailed(
             subject, permission, object, context, tenant_id, consistency
+        )
+        logger.info(
+            f"  -> rebac_check_detailed result: allowed={result.allowed}, indeterminate={result.indeterminate}"
         )
         return result.allowed
 

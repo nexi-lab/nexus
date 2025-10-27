@@ -116,7 +116,7 @@ class HierarchyManager:
         self,
         child_path: str,
         parent_path: str,
-        _tenant_id: str | None,
+        tenant_id: str | None,
     ) -> bool:
         """Check if parent tuple already exists.
 
@@ -125,7 +125,7 @@ class HierarchyManager:
         Args:
             child_path: Child file path
             parent_path: Parent directory path
-            _tenant_id: Tenant ID (unused)
+            tenant_id: Tenant ID for tuple scoping
 
         Returns:
             True if parent tuple exists
@@ -140,10 +140,12 @@ class HierarchyManager:
         parent_entity = Entity("file", parent_path)
 
         # IMPORTANT: Check parent -> child direction (parent is subject, child is object)
+        # BUGFIX: Pass tenant_id to ensure proper scoping and prevent duplicate tuples
         return self.rebac_manager._has_direct_relation(
             subject=parent_entity,
             relation="parent",
             obj=child_entity,
+            tenant_id=tenant_id,
         )
 
     def _create_parent_tuple(

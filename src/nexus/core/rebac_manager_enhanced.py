@@ -110,7 +110,7 @@ class GraphLimits:
     and memory, even with pathological graphs.
     """
 
-    MAX_DEPTH = 10  # Max recursion depth
+    MAX_DEPTH = 50  # Max recursion depth (increased for deep directory hierarchies)
     MAX_FAN_OUT = 1000  # Max edges per union/expand
     MAX_EXECUTION_TIME_MS = 100  # Hard timeout (100ms)
     MAX_VISITED_NODES = 10000  # Memory bound

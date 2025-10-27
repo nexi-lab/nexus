@@ -1,6 +1,6 @@
 # Nexus Admin Environment
-# Created: Sun Oct 26 22:41:08 PDT 2025
+# Created: Sun Oct 26 23:08:02 PDT 2025
 # User: admin
-export NEXUS_API_KEY='sk-default_admin_249ed4cb_a06a873691ab769250ef3dc1c64d2021'
+export NEXUS_API_KEY='sk-default_admin_107d0fb6_7e1e9b1b744dde538d4f1e89c6ee64b3'
 export NEXUS_URL='http://localhost:8080'
 export NEXUS_DATABASE_URL='postgresql://postgres:nexus@localhost/nexus'

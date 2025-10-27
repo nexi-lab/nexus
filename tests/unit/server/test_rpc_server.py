@@ -41,6 +41,8 @@ class TestRPCRequestHandler:
         handler = Mock(spec=RPCRequestHandler)
         handler.nexus_fs = mock_filesystem
         handler.api_key = None
+        handler.auth_provider = None
+        handler.event_loop = None
         handler.headers = {}
         # Bind the actual methods to the mock
         handler._validate_auth = lambda: RPCRequestHandler._validate_auth(handler)
@@ -187,6 +189,8 @@ class TestRPCRequestHandlerHTTP:
         handler = Mock(spec=RPCRequestHandler)
         handler.nexus_fs = Mock()
         handler.api_key = None
+        handler.auth_provider = None
+        handler.event_loop = None
         handler.headers = {}
         handler.path = ""
         handler.rfile = BytesIO()
@@ -271,6 +275,8 @@ class TestRPCValidation:
         """Test auth validation with malformed header."""
         handler = Mock(spec=RPCRequestHandler)
         handler.api_key = "secret123"
+        handler.auth_provider = None
+        handler.event_loop = None
         handler.headers = {"Authorization": "InvalidFormat secret123"}
         handler._validate_auth = lambda: RPCRequestHandler._validate_auth(handler)
 

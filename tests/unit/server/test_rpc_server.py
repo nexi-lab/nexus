@@ -409,19 +409,23 @@ class TestRPCServerIntegration:
 
         # Grant permissions to anonymous user for test setup
         if hasattr(nx, "_rebac_manager"):
-            # Grant write permission on root and test directory to anonymous user
+            # Grant write permission on root to anonymous user
             nx._rebac_manager.rebac_write(
                 subject=("user", "anonymous"),
                 relation="direct_owner",
                 object=("file", "/"),
             )
+
+        nx.mkdir("/test", exist_ok=True)
+
+        # Grant permission on the created directory
+        if hasattr(nx, "_rebac_manager"):
             nx._rebac_manager.rebac_write(
                 subject=("user", "anonymous"),
                 relation="direct_owner",
                 object=("file", "/test"),
             )
 
-        nx.mkdir("/test", exist_ok=True)
         nx.write("/test/file.txt", b"test content")
         yield nx
         nx.close()

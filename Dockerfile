@@ -18,8 +18,8 @@ COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 
-# Install dependencies to system
-RUN uv pip install --system -e .
+# Install dependencies to system (not editable for multi-stage build)
+RUN uv pip install --system .
 
 # Production image
 FROM python:3.11-slim
@@ -63,8 +63,22 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:${NEXUS_PORT}/health || exit 1
 
 # Run the server
-CMD nexus serve \
-    --host ${NEXUS_HOST} \
-    --port ${NEXUS_PORT} \
-    --data-dir ${NEXUS_DATA_DIR} \
-    ${NEXUS_API_KEY:+--api-key $NEXUS_API_KEY}
+# Use shell form to support conditional backend flags based on environment
+CMD sh -c " \
+    if [ \"${NEXUS_BACKEND}\" = \"gcs\" ]; then \
+        nexus serve \
+            --host ${NEXUS_HOST} \
+            --port ${NEXUS_PORT} \
+            --backend gcs \
+            --gcs-bucket ${NEXUS_GCS_BUCKET} \
+            ${NEXUS_GCS_PROJECT:+--gcs-project $NEXUS_GCS_PROJECT} \
+            --data-dir ${NEXUS_DATA_DIR} \
+            ${NEXUS_API_KEY:+--api-key $NEXUS_API_KEY}; \
+    else \
+        nexus serve \
+            --host ${NEXUS_HOST} \
+            --port ${NEXUS_PORT} \
+            --data-dir ${NEXUS_DATA_DIR} \
+            ${NEXUS_API_KEY:+--api-key $NEXUS_API_KEY}; \
+    fi \
+    "

@@ -1,7 +1,7 @@
-"""Virtual view support for file parsing (.txt and .md suffixes).
+"""Virtual view support for file parsing (_parsed suffix pattern).
 
 This module provides shared logic for creating virtual views of binary files
-as text. When a user requests `file.xlsx.txt`, the system:
+as text. When a user requests `file_parsed.xlsx.md`, the system:
 1. Recognizes it as a virtual view request
 2. Reads the original `file.xlsx`
 3. Parses it using the appropriate parser (MarkItDown)
@@ -9,17 +9,20 @@ as text. When a user requests `file.xlsx.txt`, the system:
 
 Virtual views are read-only and don't create actual files.
 
+Naming convention:
+- Original file: `file.xlsx` → always returns binary
+- Parsed view: `file_parsed.xlsx.md` → returns parsed markdown
+
 Safety features:
-- Prevents double suffixes (no .txt.txt or .md.md)
 - Only creates views for files that exist
 - Only applies to parseable file types
 - Works consistently across FUSE and RPC layers
+- Binary files always return binary (no auto-parsing)
 """
 
 import asyncio
 import logging
 from collections.abc import Callable
-from functools import lru_cache
 from typing import Any, overload
 
 logger = logging.getLogger(__name__)
@@ -48,53 +51,57 @@ def parse_virtual_path(path: str, exists_fn: Callable[[str], bool]) -> tuple[str
     """Parse virtual path to extract original path and view type.
 
     Args:
-        path: Virtual path (e.g., "/file.pdf.txt" or "/file.xlsx.md")
+        path: Virtual path (e.g., "/file_parsed.xlsx.md" or "/document_parsed.pdf.md")
         exists_fn: Function to check if a path exists
 
     Returns:
         Tuple of (original_path, view_type)
         - original_path: Original file path without virtual suffix
-        - view_type: "txt", "md", or None for raw/binary access
+        - view_type: "md" or None for raw/binary access
 
     Examples:
-        >>> parse_virtual_path("/file.xlsx.txt", exists_fn)
-        ("/file.xlsx", "txt")
+        >>> parse_virtual_path("/file_parsed.xlsx.md", exists_fn)
+        ("/file.xlsx", "md")
         >>> parse_virtual_path("/file.txt", exists_fn)
         ("/file.txt", None)  # Actual .txt file, not a virtual view
-        >>> parse_virtual_path("/file.xlsx.txt.txt", exists_fn)
-        ("/file.xlsx.txt.txt", None)  # Prevents double suffixes
+        >>> parse_virtual_path("/file_parsed.xlsx", exists_fn)
+        ("/file_parsed.xlsx", None)  # Missing .md extension
     """
-    # Handle .txt virtual views
-    # Only treat as virtual view if:
-    # 1. File ends with .txt
-    # 2. Doesn't end with .txt.txt (prevent double suffixes)
-    # 3. The file without .txt extension actually exists
-    if path.endswith(".txt") and not path.endswith(".txt.txt"):
-        base_path = path[:-4]  # Remove .txt suffix
-        # Check if base file exists (this creates a virtual view)
-        if exists_fn(base_path):
-            return (base_path, "txt")
-
-    # Handle .md virtual views
+    # Handle _parsed.{ext}.md virtual views
+    # Pattern: file_parsed.{ext}.md → file.{ext}
     # Only treat as virtual view if:
     # 1. File ends with .md
-    # 2. Doesn't end with .md.md (prevent double suffixes)
-    # 3. The file without .md extension actually exists
-    elif path.endswith(".md") and not path.endswith(".md.md"):
-        base_path = path[:-3]  # Remove .md suffix
-        # Check if base file exists (this creates a virtual view)
-        if exists_fn(base_path):
-            return (base_path, "md")
+    # 2. Contains _parsed before the original extension
+    # 3. The file without _parsed.md suffix actually exists
+    if path.endswith(".md"):
+        # Find the last occurrence of _parsed in the path
+        # e.g., "/dir/file_parsed.xlsx.md" → find "_parsed" before ".xlsx.md"
+        parsed_idx = path.rfind("_parsed.")
+
+        if parsed_idx != -1:
+            # Extract the base name and extension
+            # e.g., "/dir/file_parsed.xlsx.md" → "/dir/file" + ".xlsx"
+            base_path = path[:parsed_idx]  # Everything before "_parsed"
+            ext_with_md = path[
+                parsed_idx + 7 :
+            ]  # Everything after "_parsed" (skip 7 chars to keep the dot)
+
+            # Remove the .md suffix to get the original extension
+            # e.g., ".xlsx.md" → ".xlsx"
+            if ext_with_md.endswith(".md"):
+                original_ext = ext_with_md[:-3]  # Remove .md
+                original_path = base_path + original_ext
+
+                # Check if the original file exists
+                if exists_fn(original_path):
+                    return (original_path, "md")
 
     # Not a virtual view, return as-is
     return (path, None)
 
 
 def get_parsed_content(content: bytes, path: str, view_type: str) -> bytes:  # noqa: ARG001
-    """Get parsed content for a file with caching.
-
-    PERFORMANCE OPTIMIZATION: Caches parsed content by hash to avoid re-parsing
-    the same file multiple times. Parsing can be expensive for PDFs, Excel, etc.
+    """Get parsed content for a file.
 
     Args:
         content: Raw file content as bytes
@@ -107,36 +114,12 @@ def get_parsed_content(content: bytes, path: str, view_type: str) -> bytes:  # n
     Raises:
         Exception: If parsing fails (falls back to raw content)
     """
-    # Compute content hash for caching
-    import hashlib
+    # Check if this is a parseable binary file (Excel, PDF, etc.)
+    # For these files, we should use the parser directly, not try to decode as UTF-8
+    is_parseable = any(path.endswith(ext) for ext in PARSEABLE_EXTENSIONS)
 
-    content_hash = hashlib.sha256(content).hexdigest()
-
-    # Check cache first
-    return _get_parsed_content_cached(content_hash, content, path, view_type)
-
-
-@lru_cache(maxsize=128)  # Cache last 128 parsed files
-def _get_parsed_content_cached(
-    _content_hash: str, content: bytes, path: str, _view_type: str
-) -> bytes:
-    """Internal cached parsing function.
-
-    Args:
-        content_hash: SHA256 hash of content (for cache key)
-        content: Raw file content as bytes
-        path: Original file path (for parser detection)
-        view_type: View type ("txt" or "md") - reserved for future use
-
-    Returns:
-        Parsed content as bytes (UTF-8 encoded text)
-    """
-    # Try to decode as text first
-    try:
-        decoded_content = content.decode("utf-8")
-        return decoded_content.encode("utf-8")
-    except UnicodeDecodeError:
-        # Use parser for non-text files
+    if is_parseable:
+        # Use parser for parseable binary files (Excel, PDF, Word, etc.)
         from nexus.parsers import MarkItDownParser, ParserRegistry, prepare_content_for_parsing
 
         try:
@@ -169,13 +152,21 @@ def _get_parsed_content_cached(
                 logger.debug(f"No parser available for {path}, using raw content")
             else:
                 logger.warning(f"Error parsing file {path}: {e}")
+    else:
+        # For non-parseable files, try to decode as text first
+        try:
+            decoded_content = content.decode("utf-8")
+            return decoded_content.encode("utf-8")
+        except UnicodeDecodeError:
+            # If decode fails, this is likely a binary file we don't know how to parse
+            pass
 
     # Fallback to raw content if parsing fails
     return content
 
 
 def should_add_virtual_views(file_path: str) -> bool:
-    """Check if a file should have virtual .txt and .md views added.
+    """Check if a file should have a virtual _parsed.{ext}.md view added.
 
     Args:
         file_path: File path to check
@@ -188,11 +179,17 @@ def should_add_virtual_views(file_path: str) -> bool:
         True
         >>> should_add_virtual_views("/file.txt")
         False  # Already a text file
+        >>> should_add_virtual_views("/file_parsed.xlsx.md")
+        False  # Already a virtual view
         >>> should_add_virtual_views("/file.unknown")
         False  # Not a parseable type
     """
-    # Don't add virtual views to files that already end with .txt or .md
-    if file_path.endswith((".txt", ".md")):
+    # Don't add virtual views to files that already end with .md
+    if file_path.endswith(".md"):
+        return False
+
+    # Don't add virtual views to files that already have _parsed in the name
+    if "_parsed." in file_path:
         return False
 
     # Only add virtual views for parseable file types
@@ -203,6 +200,7 @@ def should_add_virtual_views(file_path: str) -> bool:
 def add_virtual_views_to_listing(
     files: list[str],
     is_directory_fn: Callable[[str], bool],
+    show_parsed: bool = True,
 ) -> list[str]: ...
 
 
@@ -210,27 +208,36 @@ def add_virtual_views_to_listing(
 def add_virtual_views_to_listing(
     files: list[dict[str, Any]],
     is_directory_fn: Callable[[str], bool],
+    show_parsed: bool = True,
 ) -> list[dict[str, Any]]: ...
 
 
 def add_virtual_views_to_listing(
     files: list[str] | list[dict[str, Any]],
     is_directory_fn: Callable[[str], bool],
+    show_parsed: bool = True,
 ) -> list[str] | list[dict[str, Any]]:
-    """Add virtual .txt and .md views to a file listing.
+    """Add virtual _parsed.{ext}.md views to a file listing.
 
     Args:
         files: List of file paths (strings) or file dicts with "path" key
         is_directory_fn: Function to check if a path is a directory
+        show_parsed: If True, include parsed virtual views in the listing (default: True)
 
     Returns:
-        Updated list with virtual views added
+        Updated list with virtual views added (if show_parsed=True)
 
     Examples:
         >>> files = ["/file.xlsx", "/file.txt", "/dir/"]
-        >>> add_virtual_views_to_listing(files, is_dir_fn)
-        ["/file.xlsx", "/file.xlsx.txt", "/file.xlsx.md", "/file.txt", "/dir/"]
+        >>> add_virtual_views_to_listing(files, is_dir_fn, show_parsed=True)
+        ["/file.xlsx", "/file_parsed.xlsx.md", "/file.txt", "/dir/"]
+        >>> add_virtual_views_to_listing(files, is_dir_fn, show_parsed=False)
+        ["/file.xlsx", "/file.txt", "/dir/"]
     """
+    # If show_parsed is False, don't add virtual views
+    if not show_parsed:
+        return files
+
     virtual_files: list[str] | list[dict[str, Any]] = []
 
     for file in files:
@@ -251,18 +258,21 @@ def add_virtual_views_to_listing(
 
         # Check if we should add virtual views
         if should_add_virtual_views(file_path):
-            # Add .txt and .md virtual views
-            if isinstance(file, str):
-                virtual_files.append(f"{file_path}.txt")  # type: ignore[arg-type]
-                virtual_files.append(f"{file_path}.md")  # type: ignore[arg-type]
-            else:
-                # For dict format, create copies with modified path
-                txt_file = file.copy()
-                txt_file["path"] = f"{file_path}.txt"
-                virtual_files.append(txt_file)  # type: ignore[arg-type]
+            # Extract the file extension and create the _parsed.{ext}.md name
+            # e.g., "/file.xlsx" → "/file_parsed.xlsx.md"
+            # Find the last dot to get the extension
+            last_dot = file_path.rfind(".")
+            if last_dot != -1:
+                base_name = file_path[:last_dot]
+                extension = file_path[last_dot:]
+                parsed_path = f"{base_name}_parsed{extension}.md"
 
-                md_file = file.copy()
-                md_file["path"] = f"{file_path}.md"
-                virtual_files.append(md_file)  # type: ignore[arg-type]
+                if isinstance(file, str):
+                    virtual_files.append(parsed_path)  # type: ignore[arg-type]
+                else:
+                    # For dict format, create a copy with modified path
+                    parsed_file = file.copy()
+                    parsed_file["path"] = parsed_path
+                    virtual_files.append(parsed_file)  # type: ignore[arg-type]
 
     return files + virtual_files  # type: ignore[operator]

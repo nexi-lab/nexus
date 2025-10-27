@@ -10,13 +10,13 @@ import errno
 import logging
 import os
 import stat
-import threading
 import time
 from typing import TYPE_CHECKING, Any
 
 from fuse import FuseOSError, Operations
 
 from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.core.filters import is_os_metadata_file
 from nexus.core.virtual_views import (
     get_parsed_content,
     parse_virtual_path,
@@ -42,7 +42,6 @@ class NexusFUSEOperations(Operations):
         self,
         nexus_fs: NexusFilesystem,
         mode: MountMode,
-        auto_parse: bool = False,
         cache_config: dict[str, Any] | None = None,
     ) -> None:
         """Initialize FUSE operations.
@@ -50,8 +49,6 @@ class NexusFUSEOperations(Operations):
         Args:
             nexus_fs: Nexus filesystem instance
             mode: Mount mode (binary, text, smart)
-            auto_parse: If True, binary files return parsed text directly.
-                       If False (default), use .txt/.md suffixes for parsed views.
             cache_config: Optional cache configuration dict with keys:
                          - attr_cache_size: int (default: 1024)
                          - attr_cache_ttl: int (default: 60)
@@ -61,10 +58,8 @@ class NexusFUSEOperations(Operations):
         """
         self.nexus_fs = nexus_fs
         self.mode = mode
-        self.auto_parse = auto_parse
         self.fd_counter = 0
         self.open_files: dict[int, dict[str, Any]] = {}
-        self._fd_lock = threading.Lock()  # Thread-safe file descriptor management
 
         # Initialize cache manager
         cache_config = cache_config or {}
@@ -123,22 +118,18 @@ class NexusFUSEOperations(Operations):
             # Check if it's a directory
             if self.nexus_fs.is_directory(original_path):
                 # Get directory metadata for permissions
-                metadata = self.nexus_fs.metadata.get(original_path)  # type: ignore[attr-defined]
+                metadata = self._get_metadata(original_path)
                 return self._dir_attrs(metadata)
 
-            # PERFORMANCE: Get metadata once and use for existence + permissions
-            # This avoids redundant metadata.get() call
-            metadata = self.nexus_fs.metadata.get(original_path)  # type: ignore[attr-defined]
-
-            # Check if file exists (metadata will be None if not found)
-            # Also check exists() for files that might exist without metadata
-            if metadata is None and not self.nexus_fs.exists(original_path):
+            # Check if file exists
+            if not self.nexus_fs.exists(original_path):
                 raise FuseOSError(errno.ENOENT)
 
             # Get file content to determine size
             content = self._get_file_content(original_path, view_type)
 
-            # metadata already fetched above - no redundant DB call!
+            # Get file metadata for permissions
+            metadata = self._get_metadata(original_path)
 
             # Return file attributes
             now = time.time()
@@ -255,19 +246,29 @@ class NexusFUSEOperations(Operations):
                 # Extract just the filename/dirname
                 name = file_path.rstrip("/").split("/")[-1]
                 if name and name not in entries:
+                    # Filter out OS metadata files (._*, .DS_Store, etc.)
+                    if is_os_metadata_file(name):
+                        continue
+
                     entries.append(name)
 
                     # In smart/text mode, add virtual views for non-text files
-                    # But skip if auto_parse is enabled (files are auto-parsed directly)
                     if (
-                        not self.auto_parse
-                        and self.mode.value != "binary"
+                        self.mode.value != "binary"
                         and should_add_virtual_views(name)
                         and not self.nexus_fs.is_directory(file_path)
                     ):
-                        # Add .txt and .md virtual views
-                        entries.append(f"{name}.txt")
-                        entries.append(f"{name}.md")
+                        # Add _parsed.{ext}.md virtual view
+                        # e.g., "file.xlsx" → "file_parsed.xlsx.md"
+                        last_dot = name.rfind(".")
+                        if last_dot != -1:
+                            base_name = name[:last_dot]
+                            extension = name[last_dot:]
+                            parsed_name = f"{base_name}_parsed{extension}.md"
+                            entries.append(parsed_name)
+
+            # Final filter to remove any OS metadata that might have slipped through
+            entries = [e for e in entries if not is_os_metadata_file(e)]
 
             return entries
         except NexusFileNotFoundError:
@@ -301,18 +302,16 @@ class NexusFUSEOperations(Operations):
             if not self.nexus_fs.exists(original_path):
                 raise FuseOSError(errno.ENOENT)
 
-            # Generate file descriptor (thread-safe)
-            with self._fd_lock:
-                self.fd_counter += 1
-                fd = self.fd_counter
+            # Generate file descriptor
+            self.fd_counter += 1
+            fd = self.fd_counter
 
-                # Store file info
-                self.open_files[fd] = {
-                    "path": original_path,
-                    "view_type": view_type,
-                    "flags": flags,
-                    "opened_at": time.time(),  # Track for leak detection
-                }
+            # Store file info
+            self.open_files[fd] = {
+                "path": original_path,
+                "view_type": view_type,
+                "flags": flags,
+            }
 
             return fd
         except NexusFileNotFoundError:
@@ -382,6 +381,12 @@ class NexusFUSEOperations(Operations):
 
             original_path = file_info["path"]
 
+            # Block writes to OS metadata files
+            basename = original_path.split("/")[-1]
+            if is_os_metadata_file(basename):
+                logger.debug(f"Blocked write to OS metadata file: {original_path}")
+                raise FuseOSError(errno.EPERM)  # Permission denied
+
             # Read existing content if file exists
             existing_content = b""
             if self.nexus_fs.exists(original_path):
@@ -416,21 +421,12 @@ class NexusFUSEOperations(Operations):
     def release(self, path: str, fh: int) -> None:  # noqa: ARG002
         """Release (close) a file.
 
-        MEMORY LEAK FIX: Always clean up file descriptor, even if errors occurred.
-        Uses pop() with None default to safely handle double-close scenarios.
-
         Args:
             path: File path
             fh: File descriptor
         """
-        # Remove from open files (thread-safe)
-        with self._fd_lock:
-            removed = self.open_files.pop(fh, None)
-            if removed:
-                logger.debug(f"Released fd={fh} for {removed['path']}")
-            else:
-                # Already released or invalid FD - log but don't fail
-                logger.warning(f"Attempted to release unknown fd={fh} for path={path}")
+        # Remove from open files
+        self.open_files.pop(fh, None)
 
     # ============================================================
     # File/Directory Creation and Deletion
@@ -451,6 +447,12 @@ class NexusFUSEOperations(Operations):
             FuseOSError: If creation fails
         """
         try:
+            # Block creation of OS metadata files
+            basename = path.split("/")[-1]
+            if is_os_metadata_file(basename):
+                logger.debug(f"Blocked creation of OS metadata file: {path}")
+                raise FuseOSError(errno.EPERM)  # Permission denied
+
             # Parse virtual path (reject virtual views)
             original_path, view_type = self._parse_virtual_path(path)
             if view_type:
@@ -464,18 +466,16 @@ class NexusFUSEOperations(Operations):
             if path != original_path:
                 self.cache.invalidate_path(path)
 
-            # Generate file descriptor (thread-safe)
-            with self._fd_lock:
-                self.fd_counter += 1
-                fd = self.fd_counter
+            # Generate file descriptor
+            self.fd_counter += 1
+            fd = self.fd_counter
 
-                # Store file info
-                self.open_files[fd] = {
-                    "path": original_path,
-                    "view_type": None,
-                    "flags": os.O_RDWR,
-                    "opened_at": time.time(),  # Track for leak detection
-                }
+            # Store file info
+            self.open_files[fd] = {
+                "path": original_path,
+                "view_type": None,
+                "flags": os.O_RDWR,
+            }
 
             return fd
         except FuseOSError:
@@ -715,9 +715,8 @@ class NexusFUSEOperations(Operations):
                 import grp
                 import pwd
 
-                # Get current metadata to see if owner/group changed
-                metadata = self.nexus_fs.metadata.get(original_path)  # type: ignore[attr-defined]
-                if not metadata:
+                # Check file exists (remote filesystems may not have metadata access)
+                if not self.nexus_fs.exists(original_path):
                     raise FuseOSError(errno.ENOENT)
 
                 # Map uid to username (if uid != -1, which means "don't change")
@@ -823,56 +822,20 @@ class NexusFUSEOperations(Operations):
         """Parse virtual path to extract original path and view type.
 
         Args:
-            path: Virtual path (e.g., "/file.pdf.txt" or "/.raw/file.pdf")
+            path: Virtual path (e.g., "/file_parsed.xlsx.md" or "/.raw/file.xlsx")
 
         Returns:
             Tuple of (original_path, view_type)
             - original_path: Original file path without virtual suffix
-            - view_type: "txt", "md", or None for raw/binary access
+            - view_type: "md" or None for raw/binary access
         """
         # Handle .raw directory access (always returns binary)
         if path.startswith("/.raw/"):
             original_path = path[5:]  # Remove "/.raw" prefix
             return (original_path, None)
 
-        # In auto_parse mode, check if file should be auto-parsed
-        if self.auto_parse and self.nexus_fs.exists(path) and self._should_auto_parse(path):
-            return (path, "txt")  # Return parsed text by default
-
         # Use shared virtual view logic
         return parse_virtual_path(path, self.nexus_fs.exists)
-
-    def _should_auto_parse(self, path: str) -> bool:
-        """Check if a file should be auto-parsed based on extension.
-
-        Args:
-            path: File path
-
-        Returns:
-            True if file should be auto-parsed
-        """
-        # List of binary extensions that should be auto-parsed
-        auto_parse_extensions = {
-            ".pdf",
-            ".docx",
-            ".doc",
-            ".xlsx",
-            ".xls",
-            ".pptx",
-            ".ppt",
-            ".odt",
-            ".ods",
-            ".odp",
-            ".rtf",
-            ".epub",
-            # Images (future OCR support)
-            # ".png",
-            # ".jpg",
-            # ".jpeg",
-        }
-
-        # Check if file has an auto-parse extension
-        return any(path.endswith(ext) for ext in auto_parse_extensions)
 
     def _get_file_content(self, path: str, view_type: str | None) -> bytes:
         """Get file content with appropriate view transformation.
@@ -914,6 +877,40 @@ class NexusFUSEOperations(Operations):
 
         # Fallback to raw content
         return content
+
+    def _get_metadata(self, path: str) -> Any:
+        """Get file/directory metadata from filesystem.
+
+        Works with both local filesystems (direct metadata access) and
+        remote filesystems (RPC get_metadata call).
+
+        Args:
+            path: File or directory path
+
+        Returns:
+            Metadata object/dict or None if not available
+        """
+        # Try get_metadata method first (for RemoteNexusFS)
+        if hasattr(self.nexus_fs, "get_metadata"):
+            metadata_dict = self.nexus_fs.get_metadata(path)
+            if metadata_dict:
+                # Convert dict to simple object with attributes
+                class MetadataObj:
+                    def __init__(self, d: dict[str, Any]):
+                        self.path = d.get("path")
+                        self.owner = d.get("owner")
+                        self.group = d.get("group")
+                        self.mode = d.get("mode")
+                        self.is_directory = d.get("is_directory")
+
+                return MetadataObj(metadata_dict)
+            return None
+
+        # Fall back to direct metadata access (for local NexusFS)
+        if hasattr(self.nexus_fs, "metadata"):
+            return self.nexus_fs.metadata.get(path)
+
+        return None
 
     def _dir_attrs(self, metadata: Any = None) -> dict[str, Any]:
         """Get standard directory attributes.
@@ -979,100 +976,4 @@ class NexusFUSEOperations(Operations):
             "st_atime": now,
             "st_uid": uid,
             "st_gid": gid,
-        }
-
-    # ============================================================
-    # Memory Leak Prevention
-    # ============================================================
-
-    def check_fd_leaks(self, max_age_seconds: float = 3600.0) -> dict[str, Any]:
-        """Check for and clean up leaked file descriptors.
-
-        MEMORY LEAK PREVENTION: Detects file descriptors that have been open
-        for an unusually long time, which may indicate a leak (e.g., release()
-        was never called due to an exception).
-
-        This method should be called periodically (e.g., every hour) by a
-        background thread or monitoring system.
-
-        Args:
-            max_age_seconds: File descriptors open longer than this are considered leaked
-                           Default: 3600 seconds (1 hour)
-
-        Returns:
-            Dict with leak statistics:
-                - total_open: Current number of open file descriptors
-                - leaked_fds: List of leaked FD info dicts
-                - cleaned_up: Number of leaked FDs cleaned up
-
-        Example:
-            >>> # In monitoring thread
-            >>> while True:
-            ...     stats = fuse_ops.check_fd_leaks()
-            ...     if stats['cleaned_up'] > 0:
-            ...         logger.warning(f"Cleaned up {stats['cleaned_up']} leaked FDs")
-            ...     time.sleep(3600)  # Check hourly
-        """
-        now = time.time()
-        leaked_fds = []
-        cleaned_count = 0
-
-        with self._fd_lock:
-            # Find leaked file descriptors
-            for fd, info in list(self.open_files.items()):
-                age = now - info.get("opened_at", now)
-                if age > max_age_seconds:
-                    leaked_fds.append(
-                        {
-                            "fd": fd,
-                            "path": info.get("path"),
-                            "age_seconds": age,
-                            "opened_at": info.get("opened_at"),
-                        }
-                    )
-
-                    # Clean up leaked FD
-                    logger.error(
-                        f"MEMORY LEAK: File descriptor {fd} for '{info.get('path')}' "
-                        f"has been open for {age:.0f}s (max: {max_age_seconds}s). "
-                        f"Cleaning up to prevent memory leak."
-                    )
-                    del self.open_files[fd]
-                    cleaned_count += 1
-
-            total_open = len(self.open_files)
-
-        return {
-            "total_open": total_open,
-            "leaked_fds": leaked_fds,
-            "cleaned_up": cleaned_count,
-        }
-
-    def get_fd_stats(self) -> dict[str, Any]:
-        """Get file descriptor statistics for monitoring.
-
-        Returns:
-            Dict with FD statistics:
-                - total_open: Current number of open file descriptors
-                - fd_counter: Total FDs allocated (including closed ones)
-                - oldest_fd_age: Age of oldest open FD in seconds
-
-        Example:
-            >>> stats = fuse_ops.get_fd_stats()
-            >>> print(f"Open FDs: {stats['total_open']}, Oldest: {stats['oldest_fd_age']:.1f}s")
-        """
-        now = time.time()
-        oldest_age = 0.0
-
-        with self._fd_lock:
-            total_open = len(self.open_files)
-
-            for info in self.open_files.values():
-                age = now - info.get("opened_at", now)
-                oldest_age = max(oldest_age, age)
-
-        return {
-            "total_open": total_open,
-            "fd_counter": self.fd_counter,
-            "oldest_fd_age": oldest_age,
         }

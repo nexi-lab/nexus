@@ -201,6 +201,7 @@ class NexusFilesystem(ABC):
         recursive: bool = True,
         details: bool = False,
         prefix: str | None = None,
+        show_parsed: bool = True,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """
         List files in a directory.
@@ -209,7 +210,8 @@ class NexusFilesystem(ABC):
             path: Directory path to list (default: "/")
             recursive: If True, list all files recursively; if False, list only direct children
             details: If True, return detailed metadata; if False, return paths only
-            prefix: Path prefix to filter by (deprecated parameter)
+            prefix: (Deprecated) Path prefix to filter by - for backward compatibility
+            show_parsed: If True, include virtual _parsed.{ext}.md views; if False, exclude them (default: True)
 
         Returns:
             List of file paths (if details=False) or list of file metadata dicts (if details=True)
@@ -223,6 +225,9 @@ class NexusFilesystem(ABC):
 
             # List files with metadata
             fs.list(details=True)
+
+            # List files without virtual parsed views
+            fs.list(show_parsed=False)
         """
         ...
 

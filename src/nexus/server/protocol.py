@@ -239,6 +239,7 @@ class ListParams:
     recursive: bool = True
     details: bool = False
     prefix: str | None = None
+    show_parsed: bool = True
 
 
 @dataclass
@@ -289,6 +290,13 @@ class GetAvailableNamespacesParams:
     """Parameters for get_available_namespaces() method."""
 
     pass
+
+
+@dataclass
+class GetMetadataParams:
+    """Parameters for get_metadata() method."""
+
+    path: str
 
 
 @dataclass
@@ -389,6 +397,7 @@ METHOD_PARAMS = {
     "rmdir": RmdirParams,
     "is_directory": IsDirectoryParams,
     "get_available_namespaces": GetAvailableNamespacesParams,
+    "get_metadata": GetMetadataParams,
     "rebac_create": RebacCreateParams,
     "rebac_check": RebacCheckParams,
     "rebac_expand": RebacExpandParams,

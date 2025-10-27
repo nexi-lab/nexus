@@ -31,6 +31,7 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.core.filters import is_os_metadata_file
 from nexus.core.virtual_views import (
     add_virtual_views_to_listing,
     get_parsed_content,
@@ -59,7 +60,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
     api_key: str | None = None
     auth_provider: Any = None
     exposed_methods: dict[str, Any] = {}
-    event_loop: asyncio.AbstractEventLoop | None = None
+    event_loop: Any = None
 
     def log_message(self, format: str, *args: Any) -> None:
         """Override to use Python logging instead of stderr."""
@@ -152,12 +153,20 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
             # Status endpoint
             if parsed.path == "/api/nfs/status":
+                # Get backend information
+                backend_info = self._get_backend_info()
+
+                # Get metadata store information
+                metadata_info = self._get_metadata_info()
+
                 self._send_json_response(
                     200,
                     {
                         "status": "running",
                         "service": "nexus-rpc",
                         "version": "1.0",
+                        "backend": backend_info,
+                        "metadata": metadata_info,
                         "methods": [
                             "read",
                             "write",
@@ -185,34 +194,12 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def _validate_auth(self) -> bool:
-        """Validate authentication.
+        """Validate API key authentication.
 
         Returns:
             True if authentication is valid or not required
         """
-        # If auth_provider is configured, use it
-        if self.auth_provider:
-            auth_header = self.headers.get("Authorization")
-            if not auth_header:
-                return False
-
-            # Expected format: "Bearer <token>"
-            if not auth_header.startswith("Bearer "):
-                return False
-
-            token = auth_header[7:]  # Remove "Bearer " prefix
-
-            # PERFORMANCE FIX: Use persistent event loop instead of creating new ones
-            # asyncio.run() creates a new event loop each time, which is expensive
-            if self.event_loop is None:
-                logger.error("Event loop not initialized on request handler")
-                return False
-
-            result = self.event_loop.run_until_complete(self.auth_provider.authenticate(token))
-            authenticated: bool = result.authenticated
-            return authenticated
-
-        # Fall back to simple API key validation
+        # If no API key is configured, allow all requests
         if not self.api_key:
             return True
 
@@ -228,53 +215,85 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         token = auth_header[7:]  # Remove "Bearer " prefix
         return bool(token == self.api_key)
 
-    def _get_operation_context(self) -> Any:
-        """Get operation context from authentication.
-
-        Extracts authentication information and creates an OperationContext
-        for use in filesystem operations.
+    def _get_backend_info(self) -> dict[str, Any]:
+        """Get backend configuration information.
 
         Returns:
-            OperationContext or None if no authentication
+            Dictionary with backend type and location information
         """
-        from nexus.core.permissions import OperationContext
+        # Check if filesystem has backend attribute (concrete implementations like NexusFS)
+        if not hasattr(self.nexus_fs, "backend"):
+            return {"type": "unknown"}
 
-        # Extract from auth provider if available
-        if self.auth_provider:
-            auth_header = self.headers.get("Authorization")
-            if auth_header and auth_header.startswith("Bearer "):
-                token = auth_header[7:]
+        backend = self.nexus_fs.backend
+        backend_type = backend.name
 
-                # PERFORMANCE FIX: Use persistent event loop instead of creating new ones
-                if self.event_loop is None:
-                    logger.error("Event loop not initialized on request handler")
-                    return None
+        info: dict[str, Any] = {
+            "type": backend_type,
+        }
 
-                result = self.event_loop.run_until_complete(self.auth_provider.authenticate(token))
-                if result.authenticated and result.subject_type and result.subject_id:
-                    return OperationContext(
-                        user=result.subject_id,  # Required for compatibility
-                        subject_type=result.subject_type,
-                        subject_id=result.subject_id,
-                        tenant_id=result.tenant_id,
-                        is_admin=result.is_admin,
-                        groups=[],  # TODO: Extract groups from auth result if available
-                    )
+        # Add backend-specific location information
+        if backend_type == "local":
+            info["location"] = str(backend.root_path)
+        elif backend_type == "gcs":
+            info["location"] = backend.bucket_name
+            info["bucket"] = backend.bucket_name
 
-        # Check for explicit subject header (for backward compatibility)
-        subject_header = self.headers.get("X-Nexus-Subject")
-        if subject_header:
-            parts = subject_header.split(":", 1)
-            if len(parts) == 2:
-                return OperationContext(
-                    user=parts[1],  # Required
-                    subject_type=parts[0],
-                    subject_id=parts[1],
-                    groups=[],
-                )
+        return info
 
-        # No authentication - return None to use default context
-        return None
+    def _get_metadata_info(self) -> dict[str, Any]:
+        """Get metadata store configuration information.
+
+        Returns:
+            Dictionary with metadata store type and location information
+        """
+        import os
+
+        # Check if filesystem has metadata attribute (concrete implementations like NexusFS)
+        if not hasattr(self.nexus_fs, "metadata"):
+            return {"type": "unknown"}
+
+        metadata_store = self.nexus_fs.metadata
+
+        info: dict[str, Any] = {
+            "type": metadata_store.db_type,
+        }
+
+        # Add database-specific location information
+        if metadata_store.db_type == "sqlite":
+            info["location"] = str(metadata_store.db_path) if metadata_store.db_path else None
+        elif metadata_store.db_type == "postgresql":
+            # Check if we're using Cloud SQL via proxy
+            cloud_sql_instance = os.getenv("CLOUD_SQL_INSTANCE")
+
+            if cloud_sql_instance:
+                # Show Cloud SQL instance info instead of localhost proxy
+                info["cloud_sql_instance"] = cloud_sql_instance
+                # Parse project, region, and instance name
+                parts = cloud_sql_instance.split(":")
+                if len(parts) == 3:
+                    info["project"] = parts[0]
+                    info["region"] = parts[1]
+                    info["instance"] = parts[2]
+
+            # Extract database name from URL
+            db_url = metadata_store.database_url
+            if "@" in db_url and "/" in db_url:
+                # Format: postgresql://user:pass@host:port/database
+                try:
+                    host_part = db_url.split("@")[1]
+                    database = host_part.split("/")[1] if "/" in host_part else None
+                    if database:
+                        info["database"] = database
+
+                    # If no Cloud SQL instance, show the connection host
+                    if not cloud_sql_instance:
+                        host = host_part.split("/")[0] if "/" in host_part else host_part
+                        info["host"] = host
+                except (IndexError, AttributeError):
+                    pass
+
+        return info
 
     def _handle_rpc_call(self, request: RPCRequest) -> None:
         """Handle RPC method call.
@@ -313,7 +332,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         except ValidationError as e:
             self._send_error_response(request.id, RPCErrorCode.VALIDATION_ERROR, str(e))
         except ConflictError as e:
-            # Handle optimistic concurrency conflicts
+            # v0.3.9: Handle optimistic concurrency conflicts
             self._send_error_response(
                 request.id,
                 RPCErrorCode.CONFLICT,
@@ -342,9 +361,6 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         Returns:
             Method result
         """
-        # Extract authentication context
-        context = self._get_operation_context()
-
         # Try auto-dispatch first (for methods decorated with @rpc_expose)
         # Skip auto-dispatch for methods with special handling (virtual views, wrapping, etc.)
         MANUAL_DISPATCH_METHODS = {
@@ -370,7 +386,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             and method in self.exposed_methods
             and method not in MANUAL_DISPATCH_METHODS
         ):
-            return self._auto_dispatch(method, params, context)
+            return self._auto_dispatch(method, params)
 
         # Fall back to manual dispatch for backward compatibility
         # Core file operations
@@ -380,21 +396,20 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
             if view_type:
                 # Read raw content and parse it (virtual views don't support metadata)
-                raw_content = self.nexus_fs.read(original_path, context=context)
+                raw_content = self.nexus_fs.read(original_path)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 return get_parsed_content(raw_content, original_path, view_type)
             else:
-                result = self.nexus_fs.read(
-                    params.path, context=context, return_metadata=params.return_metadata
-                )
+                # v0.3.9: Support return_metadata parameter
+                result = self.nexus_fs.read(params.path, return_metadata=params.return_metadata)
                 return result
 
         elif method == "write":
+            # v0.3.9: Support optimistic concurrency control parameters
             result = self.nexus_fs.write(
                 params.path,
                 params.content,
-                context=context,
                 if_match=params.if_match,
                 if_none_match=params.if_none_match,
                 force=params.force,
@@ -403,11 +418,11 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return result
 
         elif method == "delete":
-            self.nexus_fs.delete(params.path, context=context)  # type: ignore[call-arg]
+            self.nexus_fs.delete(params.path)
             return {"success": True}
 
         elif method == "rename":
-            self.nexus_fs.rename(params.old_path, params.new_path, context=context)  # type: ignore[call-arg]
+            self.nexus_fs.rename(params.old_path, params.new_path)
             return {"success": True}
 
         elif method == "exists":
@@ -422,12 +437,11 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         # Discovery operations
         elif method == "list":
-            files = self.nexus_fs.list(  # type: ignore[call-arg]
+            files = self.nexus_fs.list(
                 params.path,
                 recursive=params.recursive,
                 details=params.details,
                 prefix=params.prefix,
-                context=context,
             )
             # Debug: Check what we got
             logger.info(f"List returned {len(files)} items, type={type(files)}")
@@ -453,12 +467,20 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     else:
                         serializable_files.append(str(file))
 
-            # Add virtual views (.txt and .md) for parseable files
+            # Filter out OS metadata files (._*, .DS_Store, etc.)
+            serializable_files = [
+                f
+                for f in serializable_files
+                if not is_os_metadata_file(f.get("path", "") if isinstance(f, dict) else str(f))
+            ]
+
+            # Add virtual views (_parsed.{ext}.md) for parseable files
             # Only add if not recursive (to avoid clutter in full tree listings)
             if not params.recursive:
                 serializable_files = add_virtual_views_to_listing(  # type: ignore[assignment]
                     serializable_files,  # type: ignore[arg-type]
                     self.nexus_fs.is_directory,
+                    show_parsed=params.show_parsed,
                 )
 
             return {"files": serializable_files}
@@ -494,13 +516,11 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         # Directory operations
         elif method == "mkdir":
-            self.nexus_fs.mkdir(  # type: ignore[call-arg]
-                params.path, parents=params.parents, exist_ok=params.exist_ok, context=context
-            )
+            self.nexus_fs.mkdir(params.path, parents=params.parents, exist_ok=params.exist_ok)
             return {"success": True}
 
         elif method == "rmdir":
-            self.nexus_fs.rmdir(params.path, recursive=params.recursive, context=context)  # type: ignore[call-arg]
+            self.nexus_fs.rmdir(params.path, recursive=params.recursive)
             return {"success": True}
 
         elif method == "is_directory":
@@ -509,16 +529,40 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         elif method == "get_available_namespaces":
             return {"namespaces": self.nexus_fs.get_available_namespaces()}
 
+        elif method == "get_metadata":
+            # Get file metadata (permissions, ownership, etc.)
+            # Only available for local filesystems with metadata store
+            if not hasattr(self.nexus_fs, "metadata"):
+                # Return None for remote filesystems or those without metadata
+                return {"metadata": None}
+
+            metadata = self.nexus_fs.metadata.get(params.path)
+            if metadata is None:
+                return {"metadata": None}
+
+            # Check if it's a directory
+            is_dir = self.nexus_fs.is_directory(params.path)
+
+            # Serialize metadata object to dict
+            return {
+                "metadata": {
+                    "path": metadata.path,
+                    "owner": metadata.owner,
+                    "group": metadata.group,
+                    "mode": metadata.mode,
+                    "is_directory": is_dir,
+                }
+            }
+
         else:
             raise ValueError(f"Unknown method: {method}")
 
-    def _auto_dispatch(self, method: str, params: Any, context: Any = None) -> Any:
+    def _auto_dispatch(self, method: str, params: Any) -> Any:
         """Auto-dispatch to decorated method.
 
         Args:
             method: Method name
             params: Parsed parameters (dataclass instance)
-            context: OperationContext for authenticated operations
 
         Returns:
             Serialized method result
@@ -530,20 +574,6 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             kwargs = {k: v for k, v in params.__dict__.items() if not k.startswith("_")}
         else:
             kwargs = {}
-
-        # Add context parameter if provided and method accepts it
-        if context is not None:
-            import inspect
-
-            sig = inspect.signature(fn)
-            if "context" in sig.parameters:
-                # Convert OperationContext to dict for methods that expect dict
-                if hasattr(context, "__dict__"):
-                    kwargs["context"] = {
-                        k: v for k, v in context.__dict__.items() if not k.startswith("_")
-                    }
-                else:
-                    kwargs["context"] = context
 
         # Call the method
         result = fn(**kwargs)
@@ -684,16 +714,12 @@ class NexusRPCServer:
             host: Server host
             port: Server port
             api_key: Optional API key for authentication (if None, no auth required)
-            auth_provider: Optional AuthProvider instance for advanced authentication
+            auth_provider: Optional authentication provider
         """
         self.nexus_fs = nexus_fs
         self.host = host
         self.port = port
         self.api_key = api_key
-        self.auth_provider = auth_provider
-
-        # Create persistent event loop for async auth providers
-        # PERFORMANCE FIX: Use a single event loop instead of creating new ones with asyncio.run()
         self._event_loop = asyncio.new_event_loop()
 
         # Auto-discover all @rpc_expose decorated methods
@@ -730,7 +756,7 @@ class NexusRPCServer:
                 if callable(attr) and hasattr(attr, "_rpc_exposed"):
                     method_name = getattr(attr, "_rpc_name", name)
                     exposed[method_name] = attr
-                    logger.debug(f"Discovered RPC method: {method_name}")
+                    logger.info(f"Discovered RPC method: {method_name}")
 
             except Exception as e:
                 # Some attributes might raise exceptions when accessed
@@ -762,10 +788,4 @@ class NexusRPCServer:
         self.server.server_close()
         if hasattr(self.nexus_fs, "close"):
             self.nexus_fs.close()
-
-        # Clean up event loop
-        if self._event_loop and not self._event_loop.is_closed():
-            self._event_loop.close()
-            logger.debug("Event loop closed")
-
         logger.info("Server stopped")

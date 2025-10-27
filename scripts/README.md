@@ -1,8 +1,20 @@
-# Nexus Setup Scripts
+# Nexus Scripts
 
-## Quick Start
+This directory contains scripts for setting up, deploying, and managing Nexus.
 
-### Development (No Auth)
+## Table of Contents
+
+- [Setup Scripts](#setup-scripts) - Local development and testing
+- [Deployment Scripts](#deployment-scripts) - Production deployment
+- [Utility Scripts](#utility-scripts) - Maintenance and management
+
+---
+
+## Setup Scripts
+
+### Quick Start
+
+#### Development (No Auth)
 ```bash
 export NEXUS_DATABASE_URL="postgresql://nexus:password@localhost/nexus"
 ./scripts/init-nexus.sh
@@ -11,7 +23,7 @@ export NEXUS_DATABASE_URL="postgresql://nexus:password@localhost/nexus"
 - Uses `NEXUS_SUBJECT` header (insecure!)
 - Good for: Local development, learning, demos
 
-### Production (With Auth)
+#### Production (With Auth)
 ```bash
 export NEXUS_DATABASE_URL="postgresql://nexus:password@localhost/nexus"
 ./scripts/init-nexus-with-auth.sh
@@ -19,8 +31,6 @@ export NEXUS_DATABASE_URL="postgresql://nexus:password@localhost/nexus"
 - Database-backed API keys
 - Secure authentication
 - Good for: Production, multi-user, public servers
-
-## Scripts
 
 ### `init-nexus.sh`
 Starts Nexus server **without authentication**.
@@ -84,23 +94,7 @@ python3 scripts/create-api-key.py bob "Bob's key" --tenant-id org-acme --days 36
 - `--days N` - Expiry in N days (optional)
 - `--tenant-id` - Tenant ID (default: "default")
 
-**Output:**
-```
-✓ Created API key for user 'alice'
-  Name: Alice's laptop
-  Admin: False
-  Expires: 2025-01-15
-
-IMPORTANT: Save this key - it will not be shown again!
-
-  API Key: sk-alice_12ab34cd_56ef7890...
-
-Use with:
-  export NEXUS_API_KEY='sk-alice_12ab34cd_56ef7890...'
-  nexus ls /workspace --remote-url http://localhost:8080
-```
-
-## Comparison
+### Comparison: Setup Scripts
 
 | Feature | `init-nexus.sh` | `init-nexus-with-auth.sh` |
 |---------|----------------|--------------------------|
@@ -112,9 +106,118 @@ Use with:
 | **Production ready** | ❌ No | ✅ Yes |
 | **Setup time** | Fast | +1 minute |
 
-## Environment Variables
+---
+
+## Deployment Scripts
+
+### `deploy-docker-image.sh` - PyPI Production Deployment
+
+Deploys the **released version** from PyPI to production.
+
+**Use this for:**
+- ✅ Production deployments after PyPI release
+- ✅ Deploying stable, tested versions
+- ✅ Official releases
+
+**Example:**
+```bash
+./scripts/deploy-docker-image.sh \
+  --cloud-sql-instance nexi-lab-888:us-west1:nexus-hub \
+  --db-name nexus \
+  --db-user postgres \
+  --db-password "Nexus-Hub2025"
+```
+
+### `deploy-docker-local.sh` - Local Development Deployment
+
+Builds from **local source code** and deploys for testing.
+
+**Use this for:**
+- ✅ Testing bug fixes before releasing
+- ✅ Testing new features in production-like environment
+- ✅ Rapid iteration during development
+- ❌ NOT for production releases
+
+**Example:**
+```bash
+# Build from current branch and deploy
+./scripts/deploy-docker-local.sh \
+  --cloud-sql-instance nexi-lab-888:us-west1:nexus-hub \
+  --db-name nexus \
+  --db-user postgres \
+  --db-password "Nexus-Hub2025"
+
+# Custom tag for this test
+./scripts/deploy-docker-local.sh --tag fix/fuse-remote-metadata
+```
+
+### Deployment Options
 
 Both scripts support:
+
+- `--project-id` - GCP project (default: nexi-lab-888)
+- `--instance-name` - VM name (default: nexus-server)
+- `--zone` - GCP zone (default: us-west1-a)
+- `--port` - Server port (default: 8080)
+- `--cloud-sql-instance` - PostgreSQL Cloud SQL instance
+- `--db-name` - Database name (default: nexus)
+- `--db-user` - Database user (default: postgres)
+- `--db-password` - Database password
+
+Additional options for `deploy-docker-local.sh`:
+
+- `--tag` - Custom Docker image tag
+- `--skip-build` - Use existing image without rebuilding
+
+### Deployment Workflow
+
+#### Testing a Bug Fix
+
+1. Create a feature branch with your fix
+2. Test locally
+3. Deploy to staging using local build:
+   ```bash
+   ./scripts/deploy-docker-local.sh --tag my-bugfix
+   ```
+4. Verify the fix works in production environment
+5. Merge to main
+6. Release to PyPI
+7. Deploy to production:
+   ```bash
+   ./scripts/deploy-docker-image.sh
+   ```
+
+#### Production Release
+
+1. Ensure all tests pass
+2. Update version in `pyproject.toml`
+3. Release to PyPI (see CLAUDE.md)
+4. Deploy using PyPI script:
+   ```bash
+   ./scripts/deploy-docker-image.sh
+   ```
+
+---
+
+## Utility Scripts
+
+### `nexus-mount.sh` / `nexus-unmount.sh`
+Mount and unmount Nexus filesystem via FUSE.
+
+### `check_server.py`
+Check server health and status.
+
+### `cleanup_os_metadata.py`
+Clean up metadata from older OS-based permission system.
+
+### `run_benchmarks.sh`
+Run performance benchmarks.
+
+---
+
+## Environment Variables
+
+Setup scripts support:
 
 ```bash
 # Required
@@ -127,6 +230,8 @@ export NEXUS_PORT="9000"              # Default: 8080
 export NEXUS_HOST="127.0.0.1"         # Default: 0.0.0.0
 ```
 
+---
+
 ## Full Example: Production Setup
 
 ```bash
@@ -135,14 +240,6 @@ export NEXUS_DATABASE_URL="postgresql://nexus:password@localhost/nexus"
 
 # 2. Run authenticated setup
 ./scripts/init-nexus-with-auth.sh
-
-# Output:
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# IMPORTANT: Save this API key securely!
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#
-# Admin API Key: sk-admin_a1b2c3d4_e5f6g7h8...
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 # 3. Use the admin key
 source .nexus-admin-env
@@ -155,6 +252,8 @@ python3 scripts/create-api-key.py bob "Bob's server" --admin --days 365
 # 5. Give users their API keys (securely!)
 # Users set: export NEXUS_API_KEY='sk-alice_...'
 ```
+
+---
 
 ## Troubleshooting
 
@@ -187,6 +286,24 @@ pkill -f "nexus serve"
 # Verify stopped
 ps aux | grep "nexus serve"
 ```
+
+---
+
+## Architecture
+
+Deployment scripts deploy with:
+
+- **Storage Backend:** GCS (`nexi-hub` bucket)
+- **Metadata Store:** PostgreSQL (Cloud SQL, optional)
+- **Networking:** Host network mode
+- **Ports:** 80 (public) → 8080 (container)
+- **Authentication:** Via GCP metadata service
+
+Docker images are stored in GCR:
+- PyPI builds: `gcr.io/nexi-lab-888/nexus-server:latest`
+- Local builds: `gcr.io/nexi-lab-888/nexus-server:local-TIMESTAMP`
+
+---
 
 ## See Also
 

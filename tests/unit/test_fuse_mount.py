@@ -449,8 +449,6 @@ class TestMountNexusFunction:
             str(temp_mount_point),
             mode=MountMode.SMART,
             cache_config=None,
-            default_context=None,
-            uid_mapping=None,
         )
 
         # Should have called mount
@@ -484,8 +482,6 @@ class TestMountNexusFunction:
             str(temp_mount_point),
             mode=MountMode.BINARY,
             cache_config=cache_config,
-            default_context=None,
-            uid_mapping=None,
         )
 
         # Should have called mount with correct params

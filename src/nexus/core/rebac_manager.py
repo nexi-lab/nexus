@@ -362,11 +362,7 @@ class ReBACManager:
             ... )
         """
         # Ensure default namespaces are initialized
-        print("DEBUG: rebac_write called, calling _ensure_namespaces_initialized...")  # DEBUG
         self._ensure_namespaces_initialized()
-        print(
-            f"DEBUG: rebac_write after _ensure_namespaces_initialized, flag={self._namespaces_initialized}"
-        )  # DEBUG
 
         tuple_id = str(uuid.uuid4())
 
@@ -684,6 +680,7 @@ class ReBACManager:
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
         """Explain why a subject has or doesn't have permission on an object.
 
@@ -694,6 +691,7 @@ class ReBACManager:
             subject: (subject_type, subject_id) tuple
             permission: Permission to check (e.g., 'read', 'write')
             object: (object_type, object_id) tuple
+            tenant_id: Optional tenant ID for multi-tenant isolation
 
         Returns:
             Dictionary with:
@@ -757,7 +755,13 @@ class ReBACManager:
 
         # Compute permission with path tracking
         result = self._compute_permission_with_explanation(
-            subject_entity, permission, object_entity, visited=set(), depth=0, paths=paths
+            subject_entity,
+            permission,
+            object_entity,
+            visited=set(),
+            depth=0,
+            paths=paths,
+            tenant_id=tenant_id,
         )
 
         # Find successful path (if any)
@@ -842,6 +846,7 @@ class ReBACManager:
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         paths: list[dict[str, Any]],
+        tenant_id: str | None = None,
     ) -> bool:
         """Compute permission with detailed path tracking for explanation.
 
@@ -854,6 +859,7 @@ class ReBACManager:
             visited: Set of visited nodes to detect cycles
             depth: Current traversal depth
             paths: List to accumulate path information
+            tenant_id: Optional tenant ID for multi-tenant isolation
 
         Returns:
             True if permission is granted
@@ -891,7 +897,9 @@ class ReBACManager:
         namespace = self.get_namespace(obj.entity_type)
         if not namespace:
             # No namespace - check direct relation only
-            tuple_info = self._find_direct_relation_tuple(subject, permission, obj)
+            tuple_info = self._find_direct_relation_tuple(
+                subject, permission, obj, tenant_id=tenant_id
+            )
             direct = tuple_info is not None
             path_entry["direct_relation"] = direct
             if tuple_info:
@@ -908,7 +916,7 @@ class ReBACManager:
             for userset in usersets:
                 userset_sub_paths: list[dict[str, Any]] = []
                 if self._compute_permission_with_explanation(
-                    subject, userset, obj, visited.copy(), depth + 1, userset_sub_paths
+                    subject, userset, obj, visited.copy(), depth + 1, userset_sub_paths, tenant_id
                 ):
                     path_entry["granted"] = True
                     path_entry["via_userset"] = userset
@@ -923,7 +931,9 @@ class ReBACManager:
         rel_config = namespace.get_relation_config(permission)
         if not rel_config:
             # Not defined in namespace - check direct relation
-            tuple_info = self._find_direct_relation_tuple(subject, permission, obj)
+            tuple_info = self._find_direct_relation_tuple(
+                subject, permission, obj, tenant_id=tenant_id
+            )
             direct = tuple_info is not None
             path_entry["direct_relation"] = direct
             if tuple_info:
@@ -940,7 +950,7 @@ class ReBACManager:
             for rel in union_relations:
                 union_sub_paths: list[dict[str, Any]] = []
                 if self._compute_permission_with_explanation(
-                    subject, rel, obj, visited.copy(), depth + 1, union_sub_paths
+                    subject, rel, obj, visited.copy(), depth + 1, union_sub_paths, tenant_id
                 ):
                     path_entry["granted"] = True
                     path_entry["via_union_member"] = rel
@@ -960,7 +970,7 @@ class ReBACManager:
             for rel in intersection_relations:
                 intersection_sub_paths: list[dict[str, Any]] = []
                 if not self._compute_permission_with_explanation(
-                    subject, rel, obj, visited.copy(), depth + 1, intersection_sub_paths
+                    subject, rel, obj, visited.copy(), depth + 1, intersection_sub_paths, tenant_id
                 ):
                     all_granted = False
                     break
@@ -975,7 +985,13 @@ class ReBACManager:
             if excluded_rel:
                 exclusion_sub_paths: list[dict[str, Any]] = []
                 has_excluded = self._compute_permission_with_explanation(
-                    subject, excluded_rel, obj, visited.copy(), depth + 1, exclusion_sub_paths
+                    subject,
+                    excluded_rel,
+                    obj,
+                    visited.copy(),
+                    depth + 1,
+                    exclusion_sub_paths,
+                    tenant_id,
                 )
                 path_entry["exclusion"] = excluded_rel
                 path_entry["granted"] = not has_excluded
@@ -1008,6 +1024,7 @@ class ReBACManager:
                         visited.copy(),
                         depth + 1,
                         ttu_sub_paths,
+                        tenant_id,
                     ):
                         path_entry["granted"] = True
                         path_entry["sub_paths"] = ttu_sub_paths
@@ -1018,7 +1035,7 @@ class ReBACManager:
             return False
 
         # Direct relation check
-        tuple_info = self._find_direct_relation_tuple(subject, permission, obj)
+        tuple_info = self._find_direct_relation_tuple(subject, permission, obj, tenant_id=tenant_id)
         direct = tuple_info is not None
         path_entry["direct_relation"] = direct
         if tuple_info:
@@ -1259,29 +1276,58 @@ class ReBACManager:
             # BUGFIX: Use >= instead of > for exact expiration boundary
             # Check 1: Direct concrete subject (subject_relation IS NULL)
             # ABAC: Fetch conditions column to evaluate context
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation,
-                           relation, object_type, object_id, conditions, expires_at
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND subject_relation IS NULL
-                      AND relation = ?
-                      AND object_type = ? AND object_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    LIMIT 1
-                    """
-                ),
-                (
-                    subject.entity_type,
-                    subject.entity_id,
-                    relation,
-                    obj.entity_type,
-                    obj.entity_id,
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
+            # P0-4: Filter by tenant_id for multi-tenant isolation
+            if tenant_id is None:
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        SELECT tuple_id, subject_type, subject_id, subject_relation,
+                               relation, object_type, object_id, conditions, expires_at
+                        FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND subject_relation IS NULL
+                          AND relation = ?
+                          AND object_type = ? AND object_id = ?
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                          AND tenant_id IS NULL
+                        LIMIT 1
+                        """
+                    ),
+                    (
+                        subject.entity_type,
+                        subject.entity_id,
+                        relation,
+                        obj.entity_type,
+                        obj.entity_id,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+            else:
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        SELECT tuple_id, subject_type, subject_id, subject_relation,
+                               relation, object_type, object_id, conditions, expires_at
+                        FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND subject_relation IS NULL
+                          AND relation = ?
+                          AND object_type = ? AND object_id = ?
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                          AND tenant_id = ?
+                        LIMIT 1
+                        """
+                    ),
+                    (
+                        subject.entity_type,
+                        subject.entity_id,
+                        relation,
+                        obj.entity_type,
+                        obj.entity_id,
+                        datetime.now(UTC).isoformat(),
+                        tenant_id,
+                    ),
+                )
 
             row = cursor.fetchone()
             if row:
@@ -1324,31 +1370,60 @@ class ReBACManager:
             # Check 2: Wildcard/public access
             # Check if wildcard subject (*:*) has the relation (public access)
             # Avoid infinite recursion by only checking wildcard if subject is not already wildcard
+            # P0-4: Filter by tenant_id for multi-tenant isolation
             if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
                 wildcard_entity = Entity(WILDCARD_SUBJECT[0], WILDCARD_SUBJECT[1])
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        SELECT tuple_id, subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id, conditions, expires_at
-                        FROM rebac_tuples
-                        WHERE subject_type = ? AND subject_id = ?
-                          AND subject_relation IS NULL
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        LIMIT 1
-                        """
-                    ),
-                    (
-                        wildcard_entity.entity_type,
-                        wildcard_entity.entity_id,
-                        relation,
-                        obj.entity_type,
-                        obj.entity_id,
-                        datetime.now(UTC).isoformat(),
-                    ),
-                )
+                if tenant_id is None:
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            SELECT tuple_id, subject_type, subject_id, subject_relation,
+                                   relation, object_type, object_id, conditions, expires_at
+                            FROM rebac_tuples
+                            WHERE subject_type = ? AND subject_id = ?
+                              AND subject_relation IS NULL
+                              AND relation = ?
+                              AND object_type = ? AND object_id = ?
+                              AND (expires_at IS NULL OR expires_at >= ?)
+                              AND tenant_id IS NULL
+                            LIMIT 1
+                            """
+                        ),
+                        (
+                            wildcard_entity.entity_type,
+                            wildcard_entity.entity_id,
+                            relation,
+                            obj.entity_type,
+                            obj.entity_id,
+                            datetime.now(UTC).isoformat(),
+                        ),
+                    )
+                else:
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            SELECT tuple_id, subject_type, subject_id, subject_relation,
+                                   relation, object_type, object_id, conditions, expires_at
+                            FROM rebac_tuples
+                            WHERE subject_type = ? AND subject_id = ?
+                              AND subject_relation IS NULL
+                              AND relation = ?
+                              AND object_type = ? AND object_id = ?
+                              AND (expires_at IS NULL OR expires_at >= ?)
+                              AND tenant_id = ?
+                            LIMIT 1
+                            """
+                        ),
+                        (
+                            wildcard_entity.entity_type,
+                            wildcard_entity.entity_id,
+                            relation,
+                            obj.entity_type,
+                            obj.entity_id,
+                            datetime.now(UTC).isoformat(),
+                            tenant_id,
+                        ),
+                    )
                 row = cursor.fetchone()
                 if row:
                     if hasattr(row, "keys"):

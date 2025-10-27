@@ -83,7 +83,9 @@ nexus rebac create user admin direct_owner file $WORKSPACE_ROOT 2>/dev/null || t
 nexus rebac create user admin direct_viewer file $WORKSPACE_ROOT 2>/dev/null || true
 
 # Clean up any existing demo directory
+print_info "Cleaning up previous demo data..."
 nexus rm -r $BASE_PATH 2>/dev/null || true
+sleep 2  # Give server time to process deletion and clear caches
 
 # Create with --parents flag
 nexus mkdir $BASE_PATH --parents 2>/dev/null || true

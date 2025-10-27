@@ -75,6 +75,8 @@ class TestRPCRequestHandler:
 
     def test_dispatch_read(self, mock_handler, mock_filesystem):
         """Test dispatching read method with virtual view."""
+        from unittest.mock import ANY
+
         from nexus.server.protocol import ReadParams
 
         # Configure mock to support virtual view path parsing
@@ -88,7 +90,7 @@ class TestRPCRequestHandler:
         # Virtual view logic reads the base file (/test.pdf) and parses it
         assert result == b"test content"
         mock_filesystem.exists.assert_called_with("/test.pdf")
-        mock_filesystem.read.assert_called_once_with("/test.pdf")
+        mock_filesystem.read.assert_called_once_with("/test.pdf", context=ANY)
 
     def test_dispatch_write(self, mock_handler, mock_filesystem):
         """Test dispatching write method."""
@@ -103,8 +105,10 @@ class TestRPCRequestHandler:
         assert "modified_at" in result
         assert "size" in result
         # Verify write was called with correct params (v0.3.9 adds OCC params)
+        from unittest.mock import ANY
+
         mock_filesystem.write.assert_called_once_with(
-            "/test.txt", b"data", if_match=None, if_none_match=False, force=False
+            "/test.txt", b"data", context=ANY, if_match=None, if_none_match=False, force=False
         )
 
     def test_dispatch_list(self, mock_handler, mock_filesystem):
@@ -298,43 +302,53 @@ class TestRPCDispatchMethods:
 
     def test_dispatch_delete(self, mock_handler):
         """Test dispatching delete method."""
+        from unittest.mock import ANY
+
         from nexus.server.protocol import DeleteParams
 
         params = DeleteParams(path="/test.txt")
         result = mock_handler._dispatch_method("delete", params)
 
         assert result == {"success": True}
-        mock_handler.nexus_fs.delete.assert_called_once_with("/test.txt")
+        mock_handler.nexus_fs.delete.assert_called_once_with("/test.txt", context=ANY)
 
     def test_dispatch_rename(self, mock_handler):
         """Test dispatching rename method."""
+        from unittest.mock import ANY
+
         from nexus.server.protocol import RenameParams
 
         params = RenameParams(old_path="/old.txt", new_path="/new.txt")
         result = mock_handler._dispatch_method("rename", params)
 
         assert result == {"success": True}
-        mock_handler.nexus_fs.rename.assert_called_once_with("/old.txt", "/new.txt")
+        mock_handler.nexus_fs.rename.assert_called_once_with("/old.txt", "/new.txt", context=ANY)
 
     def test_dispatch_mkdir(self, mock_handler):
         """Test dispatching mkdir method."""
+        from unittest.mock import ANY
+
         from nexus.server.protocol import MkdirParams
 
         params = MkdirParams(path="/newdir", parents=True, exist_ok=False)
         result = mock_handler._dispatch_method("mkdir", params)
 
         assert result == {"success": True}
-        mock_handler.nexus_fs.mkdir.assert_called_once_with("/newdir", parents=True, exist_ok=False)
+        mock_handler.nexus_fs.mkdir.assert_called_once_with(
+            "/newdir", parents=True, exist_ok=False, context=ANY
+        )
 
     def test_dispatch_rmdir(self, mock_handler):
         """Test dispatching rmdir method."""
+        from unittest.mock import ANY
+
         from nexus.server.protocol import RmdirParams
 
         params = RmdirParams(path="/olddir", recursive=True)
         result = mock_handler._dispatch_method("rmdir", params)
 
         assert result == {"success": True}
-        mock_handler.nexus_fs.rmdir.assert_called_once_with("/olddir", recursive=True)
+        mock_handler.nexus_fs.rmdir.assert_called_once_with("/olddir", recursive=True, context=ANY)
 
     def test_dispatch_is_directory(self, mock_handler):
         """Test dispatching is_directory method."""

@@ -303,9 +303,16 @@ class NexusFSCoreMixin:
             }
 
         # Check write permission (use ReBAC, not UNIX permissions)
-        if meta is not None and self._enforce_permissions:  # type: ignore[attr-defined]
+        if self._enforce_permissions:  # type: ignore[attr-defined]
             ctx = context or self._default_context
-            self._check_permission(path, Permission.WRITE, ctx)
+            if meta is not None:
+                # For existing files, check permission on the file itself
+                self._check_permission(path, Permission.WRITE, ctx)
+            else:
+                # For new files, check permission on parent directory
+                parent_path = self._get_parent_path(path)  # type: ignore[attr-defined]
+                if parent_path:
+                    self._check_permission(parent_path, Permission.WRITE, ctx)
 
         # Optimistic concurrency control (v0.3.9)
         if not force:

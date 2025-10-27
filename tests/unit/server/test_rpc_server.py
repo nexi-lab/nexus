@@ -415,6 +415,10 @@ class TestRPCServerIntegration:
                 relation="direct_owner",
                 object=("file", "/"),
             )
+            # Ensure write is committed
+            if hasattr(nx._rebac_manager, "session_factory"):
+                with nx._rebac_manager.session_factory() as session:
+                    session.commit()
 
         nx.mkdir("/test", exist_ok=True)
 
@@ -425,6 +429,10 @@ class TestRPCServerIntegration:
                 relation="direct_owner",
                 object=("file", "/test"),
             )
+            # Ensure write is committed
+            if hasattr(nx._rebac_manager, "session_factory"):
+                with nx._rebac_manager.session_factory() as session:
+                    session.commit()
 
         nx.write("/test/file.txt", b"test content")
         yield nx

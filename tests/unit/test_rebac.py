@@ -613,7 +613,7 @@ def test_same_tenant_relationships_allowed(rebac_manager):
     # Create relationship with matching tenant IDs - should succeed
     tuple_id = rebac_manager.rebac_write(
         subject=("user", "alice"),
-        relation="editor",
+        relation="direct_editor",
         object=("file", "doc1"),
         tenant_id="tenant_a",
         subject_tenant_id="tenant_a",
@@ -622,6 +622,7 @@ def test_same_tenant_relationships_allowed(rebac_manager):
     assert tuple_id is not None
 
     # Verify the relationship was created
+    # Check the 'editor' permission which is a union that includes 'direct_editor'
     result = rebac_manager.rebac_check(
         subject=("user", "alice"),
         permission="editor",

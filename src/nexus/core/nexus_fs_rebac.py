@@ -238,7 +238,7 @@ class NexusFSReBACMixin:
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        _tenant_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> dict:
         """Explain why a subject has or doesn't have permission on an object.
 
@@ -296,7 +296,7 @@ class NexusFSReBACMixin:
 
         # Get explanation
         return self._rebac_manager.rebac_explain(
-            subject=subject, permission=permission, object=object
+            subject=subject, permission=permission, object=object, tenant_id=tenant_id
         )
 
     @rpc_expose(description="Batch ReBAC permission checks")

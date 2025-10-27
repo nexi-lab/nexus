@@ -241,6 +241,34 @@ def test_protocol_runtime_checkable() -> None:
             def workspace_diff(self, snapshot_1: int, snapshot_2: int, agent_id: str | None = None):
                 return {}
 
+            def register_workspace(
+                self, path, name=None, description=None, created_by=None, tags=None, metadata=None
+            ):
+                return {}
+
+            def unregister_workspace(self, path):
+                return True
+
+            def list_workspaces(self):
+                return []
+
+            def get_workspace_info(self, path):
+                return None
+
+            def register_memory(
+                self, path, name=None, description=None, created_by=None, tags=None, metadata=None
+            ):
+                return {}
+
+            def unregister_memory(self, path):
+                return True
+
+            def list_memories(self):
+                return []
+
+            def get_memory_info(self, path):
+                return None
+
             def close(self) -> None:
                 pass
 

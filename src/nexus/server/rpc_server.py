@@ -447,13 +447,15 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
             if view_type:
                 # Read raw content and parse it (virtual views don't support metadata)
-                raw_content = self.nexus_fs.read(original_path)
+                raw_content = self.nexus_fs.read(original_path, context=context)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 return get_parsed_content(raw_content, original_path, view_type)
             else:
                 # v0.3.9: Support return_metadata parameter
-                result = self.nexus_fs.read(params.path, return_metadata=params.return_metadata)
+                result = self.nexus_fs.read(
+                    params.path, context=context, return_metadata=params.return_metadata
+                )
                 return result
 
         elif method == "write":
@@ -461,6 +463,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             result = self.nexus_fs.write(
                 params.path,
                 params.content,
+                context=context,
                 if_match=params.if_match,
                 if_none_match=params.if_none_match,
                 force=params.force,
@@ -469,11 +472,11 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return result
 
         elif method == "delete":
-            self.nexus_fs.delete(params.path)
+            self.nexus_fs.delete(params.path, context=context)  # type: ignore[call-arg]
             return {"success": True}
 
         elif method == "rename":
-            self.nexus_fs.rename(params.old_path, params.new_path)
+            self.nexus_fs.rename(params.old_path, params.new_path, context=context)  # type: ignore[call-arg]
             return {"success": True}
 
         elif method == "exists":
@@ -488,11 +491,12 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         # Discovery operations
         elif method == "list":
-            files = self.nexus_fs.list(
+            files = self.nexus_fs.list(  # type: ignore[call-arg]
                 params.path,
                 recursive=params.recursive,
                 details=params.details,
                 prefix=params.prefix,
+                context=context,
             )
             # Debug: Check what we got
             logger.info(f"List returned {len(files)} items, type={type(files)}")

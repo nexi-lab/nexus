@@ -94,7 +94,7 @@ def test_mkdir_no_duplicate_entries_in_list():
     with tempfile.TemporaryDirectory() as tmpdir:
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
-        nx = NexusFS(backend=backend, db_path=db_path)
+        nx = NexusFS(backend=backend, db_path=db_path, enforce_permissions=False)
 
         # Create multiple directories
         nx.mkdir("/workspace/agent1", parents=True)

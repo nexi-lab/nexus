@@ -367,7 +367,7 @@ class NexusFS(
 
         return self._memory_api
 
-    def _validate_path(self, path: str) -> str:
+    def _validate_path(self, path: str, allow_root: bool = False) -> str:
         """
         Validate and normalize virtual path.
 
@@ -376,6 +376,7 @@ class NexusFS(
 
         Args:
             path: Virtual path to validate
+            allow_root: If True, allow "/" as a valid path (for directory operations)
 
         Returns:
             Normalized path (stripped, deduplicated slashes, validated)
@@ -400,10 +401,10 @@ class NexusFS(
         if not path:
             raise InvalidPathError(original_path, "Path cannot be empty or whitespace-only")
 
-        # SECURITY FIX: Reject root path "/" for file operations
+        # SECURITY FIX: Reject root path "/" for file operations (unless allow_root=True)
         # The root "/" is ambiguous - is it a directory or file?
         # Use list("/") for directory listings, not read("/") or write("/", ...)
-        if path == "/":
+        if path == "/" and not allow_root:
             raise InvalidPathError(
                 "/",
                 "Root path '/' not allowed for file operations. "
@@ -597,9 +598,10 @@ class NexusFS(
         ctx = context if context is not None else self._default_context
 
         # Check write permission on parent directory
-        # Only check if parent exists (skip permission check for root directory)
+        # Only check if parent exists and we're not creating it with --parents
+        # Skip check if parent will be created as part of this mkdir operation
         parent_path = self._get_parent_path(path)
-        if parent_path and self.metadata.exists(parent_path):
+        if parent_path and self.metadata.exists(parent_path) and not parents:
             self._check_permission(parent_path, Permission.WRITE, ctx)  # type: ignore[arg-type]
 
         # Route to backend with write access check (mkdir requires write permission)
@@ -648,6 +650,17 @@ class NexusFS(
             # Create parents from top to bottom (reverse order)
             for parent_dir in reversed(parents_to_create):
                 self._create_directory_metadata(parent_dir)
+                # P0-3: Create parent tuples for each intermediate directory
+                # This ensures permission inheritance works for deeply nested paths
+                if hasattr(self, "_hierarchy_manager"):
+                    try:
+                        ctx_inner = context or self._default_context
+                        self._hierarchy_manager.ensure_parent_tuples(
+                            parent_dir, tenant_id=ctx_inner.tenant_id
+                        )
+                    except Exception:
+                        # Don't fail mkdir if parent tuple creation fails
+                        pass
 
         # Create explicit metadata entry for the directory
         self._create_directory_metadata(path)

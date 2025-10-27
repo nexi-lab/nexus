@@ -14,14 +14,24 @@ class TestNexusFSVersions:
     @pytest.fixture
     def mock_fs(self):
         """Create a mock filesystem with version support."""
+        from nexus.core.permissions_enhanced import EnhancedOperationContext
+
         fs = Mock(spec=NexusFSVersionsMixin)
         fs.metadata = Mock()
         fs.router = Mock()
         fs.tenant_id = None
         fs.agent_id = None
         fs.is_admin = False
-        fs._validate_path = Mock(side_effect=lambda p: p)
+        fs._validate_path = Mock(side_effect=lambda p, allow_root=False: p)
         fs._check_permission = Mock()
+        fs._default_context = EnhancedOperationContext(
+            user="test",
+            groups=[],
+            tenant_id=None,
+            agent_id=None,
+            is_admin=False,
+            is_system=False,
+        )
 
         # Bind the actual methods
         fs.get_version = lambda path, version: NexusFSVersionsMixin.get_version(fs, path, version)

@@ -104,11 +104,11 @@ class NexusFSSearchMixin:
             results = all_files
         else:
             # New API: list(path="/", recursive=False)
-            if path:
+            if path and path != "/":
                 path = self._validate_path(path)
 
             # Ensure path ends with / for directory listing
-            if not path.endswith("/"):
+            if path and not path.endswith("/"):
                 path = path + "/"
 
             # Get all files with this prefix
@@ -239,7 +239,7 @@ class NexusFSSearchMixin:
             # Find all test files
             fs.glob("test_*.py")  # Returns: ["/test_foo.py", "/test_bar.py"]
         """
-        if path:
+        if path and path != "/":
             path = self._validate_path(path)
 
         # Get all files
@@ -357,7 +357,7 @@ class NexusFSSearchMixin:
             # Case-insensitive search
             fs.grep("error", ignore_case=True)
         """
-        if path:
+        if path and path != "/":
             path = self._validate_path(path)
 
         # Validate search_mode

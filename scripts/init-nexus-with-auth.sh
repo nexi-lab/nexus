@@ -74,14 +74,14 @@ echo "🔌 Testing database connection..."
 unset NEXUS_URL
 unset NEXUS_API_KEY
 
-if ! nexus ls / 2>/tmp/nexus-init-error.log >/dev/null; then
+if ! python3 -c "from sqlalchemy import create_engine; engine = create_engine('$NEXUS_DATABASE_URL'); engine.connect().close()" 2>/tmp/nexus-init-error.log; then
     echo ""
     echo "❌ Cannot connect to database!"
     echo ""
     echo "Error details:"
     cat /tmp/nexus-init-error.log
     echo ""
-    echo "Please check docs/QUICKSTART_GUIDE.md for database setup instructions."
+    echo "Please check docs/deployment/postgresql.md for database setup instructions."
     exit 1
 fi
 
@@ -143,6 +143,7 @@ cat > .nexus-admin-env << EOF
 # User: $ADMIN_USER
 export NEXUS_API_KEY='$ADMIN_API_KEY'
 export NEXUS_URL='http://localhost:$PORT'
+export NEXUS_DATABASE_URL='$NEXUS_DATABASE_URL'
 EOF
 
 echo "✓ Saved to .nexus-admin-env (source this file to use the API key)"
@@ -176,7 +177,7 @@ echo "🔍 Checking port $PORT..."
 
 # Find and kill any process using the port
 if command -v lsof &> /dev/null; then
-    PID=$(lsof -ti:$PORT 2>/dev/null)
+    PID=$(lsof -ti:$PORT 2>/dev/null || true)
     if [ -n "$PID" ]; then
         echo "⚠️  Port $PORT is in use by process $PID"
         echo "   Killing process..."

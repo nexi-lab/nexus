@@ -556,6 +556,118 @@ class NexusFilesystem(Protocol):
         ...
 
     # ============================================================
+    # Workspace & Memory Registry
+    # ============================================================
+
+    def register_workspace(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        created_by: str | None = None,
+        tags: builtins.list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Register a workspace path.
+
+        Args:
+            path: Path to register as workspace
+            name: Optional workspace name
+            description: Optional description
+            created_by: User/agent who created the workspace
+            tags: Optional list of tags
+            metadata: Optional custom metadata
+
+        Returns:
+            Workspace info dict
+        """
+        ...
+
+    def unregister_workspace(self, path: str) -> bool:
+        """Unregister a workspace path.
+
+        Args:
+            path: Workspace path to unregister
+
+        Returns:
+            True if unregistered, False if not found
+        """
+        ...
+
+    def list_workspaces(self) -> builtins.list[dict]:
+        """List all registered workspaces.
+
+        Returns:
+            List of workspace info dicts
+        """
+        ...
+
+    def get_workspace_info(self, path: str) -> dict | None:
+        """Get workspace information.
+
+        Args:
+            path: Workspace path
+
+        Returns:
+            Workspace info dict or None if not found
+        """
+        ...
+
+    def register_memory(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        created_by: str | None = None,
+        tags: builtins.list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Register a memory path.
+
+        Args:
+            path: Path to register as memory
+            name: Optional memory name
+            description: Optional description
+            created_by: User/agent who created the memory
+            tags: Optional list of tags
+            metadata: Optional custom metadata
+
+        Returns:
+            Memory info dict
+        """
+        ...
+
+    def unregister_memory(self, path: str) -> bool:
+        """Unregister a memory path.
+
+        Args:
+            path: Memory path to unregister
+
+        Returns:
+            True if unregistered, False if not found
+        """
+        ...
+
+    def list_memories(self) -> builtins.list[dict]:
+        """List all registered memories.
+
+        Returns:
+            List of memory info dicts
+        """
+        ...
+
+    def get_memory_info(self, path: str) -> dict | None:
+        """Get memory information.
+
+        Args:
+            path: Memory path
+
+        Returns:
+            Memory info dict or None if not found
+        """
+        ...
+
+    # ============================================================
     # Lifecycle Management
     # ============================================================
 

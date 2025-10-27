@@ -156,7 +156,8 @@ class HierarchyManager:
     ) -> None:
         """Create parent relationship tuple.
 
-        Creates: (parent) --[parent]--> (child)
+        Creates: (child) --[parent]--> (parent)
+        Semantic: "child's parent is parent_path"
         This enables parent permissions to flow down to children via tupleToUserset.
 
         Args:
@@ -169,26 +170,27 @@ class HierarchyManager:
         if hasattr(self.rebac_manager, "rebac_write") and tenant_id:
             try:
                 # Try tenant-aware write
-                # IMPORTANT: parent is SUBJECT, child is OBJECT (parent -> child direction)
+                # IMPORTANT: child is SUBJECT, parent is OBJECT (child -> parent direction)
+                # Semantic: "child_path's parent is parent_path"
                 self.rebac_manager.rebac_write(
-                    subject=("file", parent_path),
+                    subject=("file", child_path),
                     relation="parent",
-                    object=("file", child_path),
+                    object=("file", parent_path),
                     tenant_id=tenant_id,
                 )
             except TypeError:
                 # Fallback for basic ReBACManager (no tenant_id support)
                 self.rebac_manager.rebac_write(
-                    subject=("file", parent_path),
+                    subject=("file", child_path),
                     relation="parent",
-                    object=("file", child_path),
+                    object=("file", parent_path),
                 )
         else:
             # Basic ReBACManager
             self.rebac_manager.rebac_write(
-                subject=("file", parent_path),
+                subject=("file", child_path),
                 relation="parent",
-                object=("file", child_path),
+                object=("file", parent_path),
             )
 
     def _invalidate_cache_for_path_hierarchy(self, path: str) -> None:

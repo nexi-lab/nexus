@@ -16,12 +16,15 @@ Use rebac_create() to grant permissions instead of chmod/chown.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import IntFlag
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+
+logger = logging.getLogger(__name__)
 
 
 class Permission(IntFlag):
@@ -201,12 +204,19 @@ class PermissionEnforcer:
             >>> enforcer.check("/workspace/file.txt", Permission.READ, ctx)
             True
         """
+        logger.info(
+            f"[PermissionEnforcer.check] path={path}, perm={permission.name}, user={context.user}, is_admin={context.is_admin}, is_system={context.is_system}"
+        )
+
         # 1. Admin/system bypass
         if context.is_admin or context.is_system:
+            logger.info("  -> ALLOW (admin/system bypass)")
             return True
 
         # 2. ReBAC check (pure relationship-based permissions)
-        return self._check_rebac(path, permission, context)
+        result = self._check_rebac(path, permission, context)
+        logger.info(f"  -> _check_rebac returned: {result}")
+        return result
 
     def _check_rebac(
         self,
@@ -224,9 +234,14 @@ class PermissionEnforcer:
         Returns:
             True if ReBAC grants permission, False otherwise
         """
+        logger.info(
+            f"[_check_rebac] path={path}, permission={permission}, context.user={context.user}"
+        )
+
         if not self.rebac_manager:
             # No ReBAC manager - deny by default
             # This ensures security: must explicitly configure ReBAC
+            logger.info("  -> DENY (no rebac_manager)")
             return False
 
         # Map Permission flags to string permission names
@@ -239,18 +254,26 @@ class PermissionEnforcer:
             permission_name = "execute"
         else:
             # Unknown permission
+            logger.info(f"  -> DENY (unknown permission: {permission})")
             return False
 
         # Check ReBAC permission using path directly
         # Object: ("file", path) - use path as the file identifier
         # P0-4: Pass tenant_id for multi-tenant isolation
         tenant_id = context.tenant_id or "default"
-        return self.rebac_manager.rebac_check(
-            subject=context.get_subject(),  # P0-2: Use typed subject
+        subject = context.get_subject()
+        logger.info(
+            f"[_check_rebac] Calling rebac_check: subject={subject}, permission={permission_name}, object=('file', '{path}'), tenant_id={tenant_id}"
+        )
+
+        result = self.rebac_manager.rebac_check(
+            subject=subject,  # P0-2: Use typed subject
             permission=permission_name,
             object=("file", path),
             tenant_id=tenant_id,
         )
+        logger.info(f"[_check_rebac] rebac_manager.rebac_check returned: {result}")
+        return result
 
     def filter_list(
         self,

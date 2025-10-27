@@ -4,62 +4,21 @@ hide:
   - toc
 ---
 
-<div class="hero-section" markdown>
-
-<div class="hero-content" markdown>
-
-# Nexus
-
-## The AI-Native Distributed Filesystem
-
-**Build production AI agents with enterprise-grade context, permissions, and multi-tenancy out of the box.**
-
-<div class="hero-buttons">
-  [Get Started :octicons-rocket-24:](getting-started/quickstart.md){ .md-button .md-button--primary .hero-cta }
-  [View on GitHub :fontawesome-brands-github:](https://github.com/nexi-lab/nexus){ .md-button }
+<div class="hero-section">
+  <div class="hero-content">
+    <h1 class="hero-title">Nexus</h1>
+    <p class="hero-subtitle">The AI-Native Distributed Filesystem</p>
+    <p class="hero-description">Build production AI agents with enterprise-grade context, permissions, and multi-tenancy out of the box.</p>
+    <div class="hero-buttons">
+      <a href="getting-started/quickstart/" class="md-button md-button--primary hero-cta">
+        Get Started 🚀
+      </a>
+      <a href="https://github.com/nexi-lab/nexus" class="md-button hero-secondary">
+        View on GitHub
+      </a>
+    </div>
+  </div>
 </div>
-
-</div>
-
-</div>
-
----
-
-<div class="features-grid" markdown>
-
-<div class="feature-card" markdown>
-### :material-robot-outline: AI-Native Architecture
-Built from the ground up for AI agents. Native support for semantic search, context management, and agent memory.
-</div>
-
-<div class="feature-card" markdown>
-### :material-shield-lock: Enterprise Security
-Advanced ReBAC permissions with Google Zanzibar-style authorization. Fine-grained access control at every level.
-</div>
-
-<div class="feature-card" markdown>
-### :material-cloud-sync: Distributed First
-Deploy locally, on-premise, or in the cloud. Seamless sync between embedded and remote modes.
-</div>
-
-<div class="feature-card" markdown>
-### :material-database-sync: Time Travel
-Built-in versioning and point-in-time recovery. Never lose context or data.
-</div>
-
-<div class="feature-card" markdown>
-### :material-office-building: Multi-Tenant
-Native multi-tenancy with complete data isolation. Perfect for SaaS applications.
-</div>
-
-<div class="feature-card" markdown>
-### :material-rocket-launch: Production Ready
-PostgreSQL and SQLite support. FUSE mounts. Authentication. It just works.
-</div>
-
-</div>
-
----
 
 ## Quick Start in 30 Seconds
 
@@ -72,7 +31,12 @@ PostgreSQL and SQLite support. FUSE mounts. Authentication. It just works.
     # Use it
     import nexus
 
-    nx = nexus.connect(config={"data_dir": "./nexus-data"})
+    nx = nexus.connect(config={
+        "data_dir": "./nexus-data",
+        "enforce_permissions": False  # Simple mode for getting started
+    })
+
+    # Write and read files
     nx.write("/hello.txt", b"Hello, Nexus!")
     content = nx.read("/hello.txt")
     print(content.decode())  # "Hello, Nexus!"
@@ -84,143 +48,139 @@ PostgreSQL and SQLite support. FUSE mounts. Authentication. It just works.
     # Install
     pip install nexus-ai-fs
 
-    # Write a file
-    nexus write /hello.txt "Hello from CLI!"
+    # Initialize workspace
+    nexus init ./my-project
 
-    # Read it back
-    nexus read /hello.txt
-
-    # List files
-    nexus list /
+    # Use with server (see Server Mode tab)
+    export NEXUS_URL=http://localhost:8080
+    export NEXUS_API_KEY=your-key
+    nexus write /workspace/hello.txt "Hello from CLI!"
+    nexus cat /workspace/hello.txt
     ```
 
 === "Server Mode"
 
     ```bash
-    # Start server
+    # Start server with authentication
     nexus serve --host 0.0.0.0 --port 8080
 
-    # Connect remotely
+    # Connect from Python
     import nexus
-    nx = nexus.connect(remote_url="http://localhost:8080")
-    nx.write("/hello.txt", b"Remote write!")
+    nx = nexus.connect(
+        remote_url="http://localhost:8080",
+        api_key="your-api-key"
+    )
+    nx.write("/workspace/hello.txt", b"Remote write!")
     ```
 
----
+## How It Works
 
-<div class="value-props" markdown>
+```mermaid
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#e3f2fd','primaryTextColor':'#1a237e','primaryBorderColor':'#5C6BC0','lineColor':'#AB47BC','secondaryColor':'#fce4ec','tertiaryColor':'#fff3e0','fontSize':'14px'}}}%%
+graph TB
+    subgraph agents[" 🤖 AI Agents "]
+        agent1["Agent A<br/>(GPT-4)"]
+        agent2["Agent B<br/>(Claude)"]
+        agent3["Agent C<br/>(Custom)"]
+    end
 
-## Why Nexus?
+    subgraph vfs[" 📁 Nexus Virtual File System "]
+        api["Unified VFS API<br/>read() write() list() search()"]
+        memory["💾 Memory API<br/>Persistent learning & context"]
+        rebac["🔒 ReBAC Permissions<br/>Automatic access control"]
+        version["📦 Versioning<br/>Snapshots & time-travel"]
+        router["Smart Router<br/>Backend abstraction"]
+    end
 
-<div class="value-prop-grid" markdown>
+    subgraph backends[" 💾 Storage Backends "]
+        local["Local Filesystem"]
+        gcs["Google Cloud Storage"]
+        s3["AWS S3"]
+    end
 
-<div class="value-prop" markdown>
-#### :octicons-zap-24: Zero Context Loss
-Traditional filesystems lose context when your agent restarts. Nexus preserves everything - metadata, versions, semantic relationships - so your agent never forgets.
-</div>
+    agent1 -.->|"write('/workspace/data.json')"| api
+    agent2 -.->|"read('/shared/model.pkl')"| api
+    agent3 -.->|"memory.store('learned_fact')"| memory
 
-<div class="value-prop" markdown>
-#### :octicons-shield-24: Production-Grade Security
-Stop hacking together permissions. Get Google Zanzibar-style authorization with relationship-based access control, multi-tenancy, and complete audit trails.
-</div>
+    api --> rebac
+    memory --> rebac
+    rebac -->|"✓ Allowed"| version
+    version --> router
+    router -->|"Transparent"| local
+    router -->|"Same API"| gcs
+    router -->|"Same API"| s3
 
-<div class="value-prop" markdown>
-#### :octicons-sync-24: Embedded to Cloud
-Start with embedded SQLite for development. Scale to PostgreSQL for production. Same API, zero code changes.
-</div>
-
-<div class="value-prop" markdown>
-#### :octicons-search-24: AI-First Features
-Semantic search, vector storage, agent memory management, and context preservation built-in. Not bolted on.
-</div>
-
-</div>
-
-</div>
-
----
-
-## Trusted By
-
-<div class="stats-grid" markdown>
-
-<div class="stat-card" markdown>
-### 10K+
-**Downloads**
-</div>
-
-<div class="stat-card" markdown>
-### 500+
-**GitHub Stars**
-</div>
-
-<div class="stat-card" markdown>
-### 99.9%
-**Uptime**
-</div>
-
-<div class="stat-card" markdown>
-### 100%
-**Open Source**
-</div>
-
-</div>
-
----
-
-## Real-World Examples
-
-<div class="example-grid" markdown>
-
-<div class="example-card" markdown>
-### :material-brain: AI Agent Memory
-```python
-# Agent automatically remembers context
-nx.write("/agent/memory/conversation.json",
-         json_data,
-         metadata={"agent_id": "gpt-4"})
-
-# Query semantic memory
-results = nx.search("/agent/memory",
-                   query="user preferences")
+    style agents fill:#e3f2fd,stroke:#5C6BC0,stroke-width:2px,color:#1a237e
+    style vfs fill:#f3e5f5,stroke:#AB47BC,stroke-width:2px,color:#4a148c
+    style backends fill:#fff3e0,stroke:#FF7043,stroke-width:2px,color:#e65100
+    style api fill:#5C6BC0,stroke:#3949AB,stroke-width:2px,color:#fff
+    style memory fill:#AB47BC,stroke:#7B1FA2,stroke-width:2px,color:#fff
+    style rebac fill:#EC407A,stroke:#C2185B,stroke-width:2px,color:#fff
+    style version fill:#66BB6A,stroke:#388E3C,stroke-width:2px,color:#fff
+    style router fill:#42A5F5,stroke:#1976D2,stroke-width:2px,color:#fff
 ```
-</div>
 
-<div class="example-card" markdown>
-### :material-account-multiple: Multi-Tenant SaaS
-```python
-# Complete tenant isolation
-nx.workspace.create(
-    "/tenant/acme-corp",
-    tenant_id="acme-123"
-)
+<div class="benefits-grid" markdown>
 
-# Automatic permission checks
-nx.write("/tenant/acme-corp/data.json",
-         data,
-         context={"user_id": "user-456"})
-```
-</div>
+<div class="benefit-card" markdown>
 
-<div class="example-card" markdown>
-### :material-folder-sync: Distributed Teams
-```python
-# Local development
-local_nx = nexus.connect(
-    config={"data_dir": "./local"}
-)
+### 🎯 One API
 
-# Production deployment
-prod_nx = nexus.connect(
-    remote_url="https://nexus.example.com"
-)
-# Same API, different backends
-```
-</div>
+Agents use simple file operations, regardless of where data lives. No cloud SDKs to learn.
 
 </div>
 
----
+<div class="benefit-card" markdown>
+
+### 🔒 Built-in Security
+
+Every operation checks permissions automatically. Google Zanzibar-style ReBAC included.
+
+</div>
+
+<div class="benefit-card" markdown>
+
+### 💾 Agent Memory
+
+Persistent learning across sessions. Agents remember context and improve automatically.
+
+</div>
+
+<div class="benefit-card" markdown>
+
+### 📦 Versioning
+
+Time-travel debugging with snapshots. Roll back to any point in history instantly.
+
+</div>
+
+<div class="benefit-card" markdown>
+
+### 🔄 Backend Flexibility
+
+Switch from local to cloud without changing agent code. Zero vendor lock-in.
+
+</div>
+
+<div class="benefit-card" markdown>
+
+### 🚀 Production Ready
+
+Multi-tenancy, workspace isolation, and complete audit trails out of the box.
+
+</div>
+
+</div>
+
+## See It In Action
+
+<div class="cta-section">
+  <p class="cta-description"><strong>Ready to see what Nexus can do?</strong> Explore complete examples for AI agent memory, multi-tenant SaaS, distributed teams, versioning, semantic search, and permission management.</p>
+  <div class="cta-buttons">
+    <a href="examples/" class="md-button md-button--primary cta-large">View Examples →</a>
+    <a href="api/" class="md-button cta-large">Read the Docs</a>
+  </div>
+</div>
 
 ## What Makes Nexus Different?
 
@@ -238,22 +198,6 @@ prod_nx = nexus.connect(
 | **Embedded Mode** | ✅ | ❌ | ✅ |
 
 </div>
-
----
-
-<div class="cta-section" markdown>
-
-## Ready to Build Production AI Agents?
-
-<div class="cta-buttons">
-  [Get Started →](getting-started/quickstart.md){ .md-button .md-button--primary .cta-large }
-  [Read the Docs](api/api.md){ .md-button .cta-large }
-  [View Examples](https://github.com/nexi-lab/nexus/tree/main/examples){ .md-button .cta-large }
-</div>
-
-</div>
-
----
 
 <div class="footer-links" markdown>
 
@@ -287,18 +231,5 @@ prod_nx = nexus.connect(
 </div>
 
 </div>
-
-</div>
-
----
-
-<div class="feature-spotlight" markdown>
-
-!!! tip "🚀 New in v0.4"
-    - **Enhanced ReBAC** with relationship-based permissions
-    - **PostgreSQL support** for production deployments
-    - **Workspace snapshots** for easy backups
-    - **Improved semantic search** with better ranking
-    - **API key authentication** for secure remote access
 
 </div>

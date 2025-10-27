@@ -172,6 +172,41 @@ class RemoteNexusFS(NexusFilesystem):
         if api_key:
             self.session.headers["Authorization"] = f"Bearer {api_key}"
 
+            # Fetch authenticated user info to get tenant_id
+            try:
+                self._fetch_auth_info()
+            except Exception as e:
+                logger.warning(f"Failed to fetch auth info: {e}")
+                # Don't fail initialization, just log warning
+
+    def _fetch_auth_info(self) -> None:
+        """Fetch authenticated user info from server.
+
+        This populates self.tenant_id, self.agent_id, and other auth metadata
+        from the server's /api/auth/whoami endpoint.
+        """
+        try:
+            response = self.session.get(
+                urljoin(self.server_url, "/api/auth/whoami"), timeout=self.connect_timeout
+            )
+
+            if response.status_code == 200:
+                auth_info = response.json()
+                if auth_info.get("authenticated"):
+                    self.tenant_id = auth_info.get("tenant_id")
+                    self.agent_id = auth_info.get("subject_id")
+                    logger.info(
+                        f"Authenticated as {auth_info.get('subject_type')}:{auth_info.get('subject_id')} "
+                        f"(tenant: {self.tenant_id})"
+                    )
+                else:
+                    logger.debug("Not authenticated (anonymous access)")
+            else:
+                logger.warning(f"Failed to fetch auth info: HTTP {response.status_code}")
+        except Exception as e:
+            logger.debug(f"Could not fetch auth info: {e}")
+            raise
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
@@ -1020,7 +1055,7 @@ class RemoteNexusFS(NexusFilesystem):
         relation: str,
         object: tuple[str, str],
         expires_at: Any = None,
-        tenant_id: str | None = None,
+        tenant_id: str | None = None,  # Auto-filled from auth if None
     ) -> str:
         """Create a ReBAC relationship tuple.
 
@@ -1029,7 +1064,8 @@ class RemoteNexusFS(NexusFilesystem):
             relation: Relation type (e.g., 'member-of', 'owner-of')
             object: (object_type, object_id) tuple (e.g., ('group', 'developers'))
             expires_at: Optional expiration datetime for temporary relationships
-            tenant_id: Optional tenant ID for multi-tenant isolation (default: "default")
+            tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
+                       tenant_id from authenticated user's credentials.
 
         Returns:
             Tuple ID of created relationship
@@ -1038,11 +1074,13 @@ class RemoteNexusFS(NexusFilesystem):
             >>> nx.rebac_create(
             ...     subject=("agent", "alice"),
             ...     relation="member-of",
-            ...     object=("group", "developers"),
-            ...     tenant_id="default"
+            ...     object=("group", "developers")
             ... )
             'uuid-string'
         """
+        # Use tenant_id from auth if not specified
+        effective_tenant_id = tenant_id if tenant_id is not None else self.tenant_id
+
         result = self._call_rpc(
             "rebac_create",
             {
@@ -1050,7 +1088,7 @@ class RemoteNexusFS(NexusFilesystem):
                 "relation": relation,
                 "object": object,
                 "expires_at": expires_at.isoformat() if expires_at else None,
-                "tenant_id": tenant_id,
+                "tenant_id": effective_tenant_id,
             },
         )
         return result  # type: ignore[no-any-return]
@@ -1060,7 +1098,7 @@ class RemoteNexusFS(NexusFilesystem):
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        tenant_id: str | None = None,  # Auto-filled from auth if None
     ) -> bool:
         """Check if subject has permission on object via ReBAC.
 
@@ -1068,7 +1106,8 @@ class RemoteNexusFS(NexusFilesystem):
             subject: (subject_type, subject_id) tuple
             permission: Permission to check (e.g., 'read', 'write', 'owner')
             object: (object_type, object_id) tuple
-            tenant_id: Optional tenant ID for multi-tenant isolation (default: "default")
+            tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
+                       tenant_id from authenticated user's credentials.
 
         Returns:
             True if permission is granted, False otherwise
@@ -1082,13 +1121,16 @@ class RemoteNexusFS(NexusFilesystem):
             ... )
             True
         """
+        # Use tenant_id from auth if not specified
+        effective_tenant_id = tenant_id if tenant_id is not None else self.tenant_id
+
         result = self._call_rpc(
             "rebac_check",
             {
                 "subject": subject,
                 "permission": permission,
                 "object": object,
-                "tenant_id": tenant_id,
+                "tenant_id": effective_tenant_id,
             },
         )
         return result  # type: ignore[no-any-return]
@@ -1165,7 +1207,7 @@ class RemoteNexusFS(NexusFilesystem):
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        tenant_id: str | None = None,  # Auto-filled from auth if None
     ) -> dict[str, Any]:
         """Explain why a subject has or doesn't have permission on an object.
 
@@ -1176,7 +1218,8 @@ class RemoteNexusFS(NexusFilesystem):
             subject: (subject_type, subject_id) tuple
             permission: Permission to check (e.g., 'read', 'write', 'owner')
             object: (object_type, object_id) tuple
-            tenant_id: Optional tenant ID for multi-tenant isolation
+            tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
+                       tenant_id from authenticated user's credentials.
 
         Returns:
             Dictionary with:
@@ -1195,13 +1238,16 @@ class RemoteNexusFS(NexusFilesystem):
             ... )
             >>> print(explanation["reason"])
         """
+        # Use tenant_id from auth if not specified
+        effective_tenant_id = tenant_id if tenant_id is not None else self.tenant_id
+
         result = self._call_rpc(
             "rebac_explain",
             {
                 "subject": subject,
                 "permission": permission,
                 "object": object,
-                "tenant_id": tenant_id,
+                "tenant_id": effective_tenant_id,
             },
         )
         return result  # type: ignore[no-any-return]

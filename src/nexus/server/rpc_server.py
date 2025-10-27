@@ -151,6 +151,42 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 self._send_json_response(200, {"status": "healthy", "service": "nexus-rpc"})
                 return
 
+            # Whoami endpoint - returns authenticated user info
+            if parsed.path == "/api/auth/whoami":
+                # Validate authentication
+                if not self._validate_auth():
+                    self._send_json_response(
+                        401, {"error": "Unauthorized", "message": "Invalid or missing API key"}
+                    )
+                    return
+
+                # Get authenticated user context
+                context = self._get_operation_context()
+                if context:
+                    self._send_json_response(
+                        200,
+                        {
+                            "authenticated": True,
+                            "subject_type": context.subject_type,
+                            "subject_id": context.subject_id,
+                            "tenant_id": context.tenant_id,
+                            "is_admin": context.is_admin,
+                            "user": context.user,  # For backward compatibility
+                        },
+                    )
+                else:
+                    self._send_json_response(
+                        200,
+                        {
+                            "authenticated": False,
+                            "subject_type": None,
+                            "subject_id": None,
+                            "tenant_id": None,
+                            "is_admin": False,
+                        },
+                    )
+                return
+
             # Status endpoint
             if parsed.path == "/api/nfs/status":
                 # Get backend information

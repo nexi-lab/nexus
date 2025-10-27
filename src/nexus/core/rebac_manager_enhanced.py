@@ -534,15 +534,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if namespace.has_permission(permission):
             usersets = namespace.get_permission_usersets(permission)
             if usersets:
-                logger.debug(f"{indent}  Permission '{permission}' maps to relations: {usersets}")
+                logger.info(
+                    f"{indent}[depth={depth}] Permission '{permission}' maps to relations: {usersets} for {obj}"
+                )
                 # Permission is defined as a mapping to relations (e.g., write -> [editor, owner])
                 # Check if subject has ANY of the relations that grant this permission
                 for relation in usersets:
-                    logger.debug(
-                        f"{indent}  Checking relation '{relation}' from permission mapping"
-                    )
-                    logger.debug(
-                        f"{indent}  About to recursively check: {subject.entity_type}:{subject.entity_id} has '{relation}' on {obj.entity_type}:{obj.entity_id}"
+                    logger.info(
+                        f"{indent}[depth={depth}]   Checking if {subject} has relation '{relation}'"
                     )
                     result = self._compute_permission_tenant_aware_with_limits(
                         subject,
@@ -555,15 +554,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         stats,
                         context,
                     )
-                    logger.debug(f"{indent}  Recursive check returned: {result}")
+                    logger.info(f"{indent}[depth={depth}]   → Result for '{relation}': {result}")
                     if result:
-                        logger.debug(
-                            f"{indent}← RESULT: True (via permission mapping to '{relation}')"
-                        )
+                        logger.info(f"{indent}[depth={depth}] ✅ GRANTED (via '{relation}')")
                         return True
-                logger.debug(
-                    f"{indent}← RESULT: False (no relations from permission mapping granted access)"
-                )
+                logger.info(f"{indent}[depth={depth}] ❌ DENIED (no relations granted access)")
                 return False
 
         # If permission is not mapped, try as a direct relation
@@ -614,8 +609,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             if ttu:
                 tupleset_relation = ttu["tupleset"]
                 computed_userset = ttu["computedUserset"]
-                logger.debug(
-                    f"{indent}  Relation '{permission}' uses tupleToUserset: find objects via '{tupleset_relation}', check '{computed_userset}'"
+                logger.info(
+                    f"{indent}[depth={depth}] Relation '{permission}' uses tupleToUserset: find via '{tupleset_relation}', check '{computed_userset}' on them"
                 )
 
                 # Find all objects related via tupleset (tenant-scoped)
@@ -628,8 +623,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 related_objects = self._find_related_objects_tenant_aware(
                     obj, tupleset_relation, tenant_id
                 )
-                logger.debug(
-                    f"{indent}  Found {len(related_objects)} related objects: {[f'{o.entity_type}:{o.entity_id}' for o in related_objects]}"
+                logger.info(
+                    f"{indent}[depth={depth}]   Found {len(related_objects)} related objects: {[f'{o.entity_type}:{o.entity_id}' for o in related_objects]}"
                 )
 
                 # P0-5: Check fan-out limit
@@ -696,12 +691,15 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         with self._connection() as conn:
             cursor = conn.cursor()
 
+            # FIX: For tupleToUserset, we need to find tuples where obj is the SUBJECT
+            # Example: To find parent of file X, look for (X, parent, Y) and return Y
+            # NOT (?, ?, X) - that would be finding children!
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
-                    SELECT subject_type, subject_id
+                    SELECT object_type, object_id
                     FROM rebac_tuples
-                    WHERE object_type = ? AND object_id = ?
+                    WHERE subject_type = ? AND subject_id = ?
                       AND relation = ?
                       AND tenant_id = ?
                       AND (expires_at IS NULL OR expires_at >= ?)
@@ -719,9 +717,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             results = []
             for row in cursor.fetchall():
                 if hasattr(row, "keys"):
-                    results.append(Entity(row["subject_type"], row["subject_id"]))
+                    results.append(Entity(row["object_type"], row["object_id"]))
                 else:
                     results.append(Entity(row[0], row[1]))
+
+            logger.info(
+                f"_find_related_objects_tenant_aware: Found {len(results)} objects for {obj} via '{relation}': {[str(r) for r in results]}"
+            )
             return results
 
     def _has_direct_relation_tenant_aware(

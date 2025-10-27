@@ -309,16 +309,21 @@ class NexusFSCoreMixin:
             logger = logging.getLogger(__name__)
 
             ctx = context or self._default_context
-            logger.info(f"WRITE PERMISSION CHECK: path={path}, meta_exists={meta is not None}")
+            logger.info(
+                f"📝 WRITE PERMISSION CHECK: path={path}, meta_exists={meta is not None}, user={ctx.user}, is_admin={ctx.is_admin}"
+            )
 
             if meta is not None:
                 # For existing files, check permission on the file itself
-                logger.info(f"  -> Checking EXISTING file: {path}")
+                logger.info(f"  -> ⚠️  File metadata EXISTS - checking permission on FILE: {path}")
+                logger.info(
+                    f"  -> Existing file etag: {meta.etag}, version: {meta.version}, size: {meta.size}"
+                )
                 self._check_permission(path, Permission.WRITE, ctx)
             else:
                 # For new files, check permission on parent directory
                 parent_path = self._get_parent_path(path)  # type: ignore[attr-defined]
-                logger.info(f"  -> Checking NEW file, parent: {parent_path}")
+                logger.info(f"  -> ✨ NEW file - checking permission on PARENT: {parent_path}")
                 if parent_path:
                     self._check_permission(parent_path, Permission.WRITE, ctx)
 

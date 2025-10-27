@@ -2,7 +2,6 @@
 
 import pytest
 
-from nexus.core.metadata import FileMetadata
 from nexus.core.permissions import (
     OperationContext,
     Permission,
@@ -20,6 +19,8 @@ class TestOperationContext:
         assert ctx.groups == ["developers"]
         assert ctx.is_admin is False
         assert ctx.is_system is False
+        assert ctx.subject_type == "user"
+        assert ctx.subject_id == "alice"
 
     def test_create_admin_context(self):
         """Test creating an admin context."""
@@ -37,6 +38,29 @@ class TestOperationContext:
         assert ctx.is_admin is False
         assert ctx.is_system is True
 
+    def test_create_agent_context(self):
+        """Test creating an AI agent context."""
+        ctx = OperationContext(
+            user="claude", groups=["ai_agents"], subject_type="agent", subject_id="claude_001"
+        )
+        assert ctx.subject_type == "agent"
+        assert ctx.subject_id == "claude_001"
+        assert ctx.get_subject() == ("agent", "claude_001")
+
+    def test_create_service_context(self):
+        """Test creating a service context."""
+        ctx = OperationContext(
+            user="backup", groups=["services"], subject_type="service", subject_id="backup_service"
+        )
+        assert ctx.subject_type == "service"
+        assert ctx.subject_id == "backup_service"
+        assert ctx.get_subject() == ("service", "backup_service")
+
+    def test_tenant_id_in_context(self):
+        """Test tenant ID in context for multi-tenant isolation."""
+        ctx = OperationContext(user="alice", groups=["developers"], tenant_id="org_acme")
+        assert ctx.tenant_id == "org_acme"
+
     def test_requires_user(self):
         """Test that user is required."""
         with pytest.raises(ValueError, match="user is required"):
@@ -52,16 +76,20 @@ class TestOperationContext:
         ctx = OperationContext(user="alice", groups=[])
         assert ctx.groups == []
 
+    def test_get_subject_defaults_to_user(self):
+        """Test that get_subject() defaults to user when subject_id is None."""
+        ctx = OperationContext(user="alice", groups=["developers"])
+        assert ctx.get_subject() == ("user", "alice")
+
 
 class TestPermissionEnforcer:
-    """Tests for PermissionEnforcer class."""
+    """Tests for PermissionEnforcer class with ReBAC-only model."""
 
     def test_admin_bypass(self):
         """Test that admin users bypass all checks."""
         enforcer = PermissionEnforcer()
         ctx = OperationContext(user="admin", groups=[], is_admin=True)
 
-        # Admin can access anything
         assert enforcer.check("/any/path", Permission.READ, ctx) is True
         assert enforcer.check("/any/path", Permission.WRITE, ctx) is True
         assert enforcer.check("/any/path", Permission.EXECUTE, ctx) is True
@@ -71,181 +99,83 @@ class TestPermissionEnforcer:
         enforcer = PermissionEnforcer()
         ctx = OperationContext(user="system", groups=[], is_system=True)
 
-        # System can access anything
         assert enforcer.check("/any/path", Permission.READ, ctx) is True
         assert enforcer.check("/any/path", Permission.WRITE, ctx) is True
         assert enforcer.check("/any/path", Permission.EXECUTE, ctx) is True
 
-    def test_no_metadata_store_allows_all(self):
-        """Test that without metadata store, all access is allowed (backward compat)."""
-        enforcer = PermissionEnforcer(metadata_store=None)
+    def test_no_rebac_manager_denies_all(self):
+        """Test that without ReBAC manager, access is denied (secure by default)."""
+        enforcer = PermissionEnforcer(metadata_store=None, rebac_manager=None)
         ctx = OperationContext(user="alice", groups=["developers"])
 
-        # Without metadata store, allow everything
-        assert enforcer.check("/any/path", Permission.READ, ctx) is True
-        assert enforcer.check("/any/path", Permission.WRITE, ctx) is True
+        assert enforcer.check("/any/path", Permission.READ, ctx) is False
+        assert enforcer.check("/any/path", Permission.WRITE, ctx) is False
+        assert enforcer.check("/any/path", Permission.EXECUTE, ctx) is False
 
-    def test_file_not_found_denies_access(self):
-        """Test that non-existent files deny access."""
+    def test_rebac_check_with_mock_manager(self):
+        """Test ReBAC permission checking with mock manager."""
 
-        class MockMetadataStore:
-            def get(self, path: str):
-                return None  # File doesn't exist
+        class MockReBACManager:
+            def __init__(self):
+                self.checks = []
 
-        enforcer = PermissionEnforcer(metadata_store=MockMetadataStore())
-        ctx = OperationContext(user="alice", groups=["developers"])
-
-        # File doesn't exist - deny
-        assert enforcer.check("/nonexistent", Permission.READ, ctx) is False
-
-    def test_no_permissions_set_allows_all(self):
-        """Test that files without permissions allow all access (backward compat)."""
-
-        class MockMetadataStore:
-            def get(self, path: str):
-                # Return file metadata without permissions
-                return FileMetadata(
-                    path=path,
-                    backend_name="local",
-                    physical_path="/tmp/test",
-                    size=100,
-                    owner=None,  # No owner
-                    group=None,  # No group
-                    mode=None,  # No mode
+            def rebac_check(self, subject, permission, object, tenant_id):
+                self.checks.append(
+                    {
+                        "subject": subject,
+                        "permission": permission,
+                        "object": object,
+                        "tenant_id": tenant_id,
+                    }
                 )
+                return subject == ("user", "alice") and permission == "read"
 
-        enforcer = PermissionEnforcer(metadata_store=MockMetadataStore())
+        rebac = MockReBACManager()
+        enforcer = PermissionEnforcer(rebac_manager=rebac)
         ctx = OperationContext(user="alice", groups=["developers"])
 
-        # No permissions set - allow (backward compatibility)
         assert enforcer.check("/file.txt", Permission.READ, ctx) is True
-        assert enforcer.check("/file.txt", Permission.WRITE, ctx) is True
-
-    def test_owner_can_read_write(self):
-        """Test that owner can read and write with 0o644 permissions."""
-
-        class MockMetadataStore:
-            def get(self, path: str):
-                return FileMetadata(
-                    path=path,
-                    backend_name="local",
-                    physical_path="/tmp/test",
-                    size=100,
-                    owner="alice",
-                    group="developers",
-                    mode=0o644,  # rw-r--r--
-                )
-
-        enforcer = PermissionEnforcer(metadata_store=MockMetadataStore())
-        ctx = OperationContext(user="alice", groups=["developers"])
-
-        # Owner can read and write
-        assert enforcer.check("/file.txt", Permission.READ, ctx) is True
-        assert enforcer.check("/file.txt", Permission.WRITE, ctx) is True
-        # But not execute (no x bit)
-        assert enforcer.check("/file.txt", Permission.EXECUTE, ctx) is False
-
-    def test_group_can_read_only(self):
-        """Test that group members can only read with 0o644 permissions."""
-
-        class MockMetadataStore:
-            def get(self, path: str):
-                return FileMetadata(
-                    path=path,
-                    backend_name="local",
-                    physical_path="/tmp/test",
-                    size=100,
-                    owner="alice",
-                    group="developers",
-                    mode=0o644,  # rw-r--r--
-                )
-
-        enforcer = PermissionEnforcer(metadata_store=MockMetadataStore())
-        ctx = OperationContext(user="bob", groups=["developers"])
-
-        # Group member can read
-        assert enforcer.check("/file.txt", Permission.READ, ctx) is True
-        # But not write
         assert enforcer.check("/file.txt", Permission.WRITE, ctx) is False
-        # And not execute
-        assert enforcer.check("/file.txt", Permission.EXECUTE, ctx) is False
 
-    def test_other_can_read_only(self):
-        """Test that others can only read with 0o644 permissions."""
+        assert len(rebac.checks) == 2
+        assert rebac.checks[0]["permission"] == "read"
+        assert rebac.checks[1]["permission"] == "write"
 
-        class MockMetadataStore:
-            def get(self, path: str):
-                return FileMetadata(
-                    path=path,
-                    backend_name="local",
-                    physical_path="/tmp/test",
-                    size=100,
-                    owner="alice",
-                    group="developers",
-                    mode=0o644,  # rw-r--r--
-                )
+    def test_rebac_check_with_tenant_id(self):
+        """Test ReBAC permission checking includes tenant ID."""
 
-        enforcer = PermissionEnforcer(metadata_store=MockMetadataStore())
-        ctx = OperationContext(user="charlie", groups=["designers"])
+        class MockReBACManager:
+            def __init__(self):
+                self.last_tenant_id = None
 
-        # Other users can read
-        assert enforcer.check("/file.txt", Permission.READ, ctx) is True
-        # But not write
-        assert enforcer.check("/file.txt", Permission.WRITE, ctx) is False
-        # And not execute
-        assert enforcer.check("/file.txt", Permission.EXECUTE, ctx) is False
+            def rebac_check(self, subject, permission, object, tenant_id):
+                self.last_tenant_id = tenant_id
+                return True
 
-    def test_no_permissions_for_others_with_0o700(self):
-        """Test that others have no access with 0o700 permissions."""
+        rebac = MockReBACManager()
+        enforcer = PermissionEnforcer(rebac_manager=rebac)
+        ctx = OperationContext(user="alice", groups=["developers"], tenant_id="org_acme")
 
-        class MockMetadataStore:
-            def get(self, path: str):
-                return FileMetadata(
-                    path=path,
-                    backend_name="local",
-                    physical_path="/tmp/test",
-                    size=100,
-                    owner="alice",
-                    group="developers",
-                    mode=0o700,  # rwx------
-                )
+        enforcer.check("/file.txt", Permission.READ, ctx)
+        assert rebac.last_tenant_id == "org_acme"
 
-        enforcer = PermissionEnforcer(metadata_store=MockMetadataStore())
-        ctx = OperationContext(user="charlie", groups=["designers"])
+    def test_rebac_check_defaults_tenant_id(self):
+        """Test ReBAC permission checking defaults to 'default' tenant."""
 
-        # Other users have no access
-        assert enforcer.check("/secret.txt", Permission.READ, ctx) is False
-        assert enforcer.check("/secret.txt", Permission.WRITE, ctx) is False
-        assert enforcer.check("/secret.txt", Permission.EXECUTE, ctx) is False
+        class MockReBACManager:
+            def __init__(self):
+                self.last_tenant_id = None
 
-    def test_execute_permission(self):
-        """Test execute permission checking with 0o755."""
+            def rebac_check(self, subject, permission, object, tenant_id):
+                self.last_tenant_id = tenant_id
+                return True
 
-        class MockMetadataStore:
-            def get(self, path: str):
-                return FileMetadata(
-                    path=path,
-                    backend_name="local",
-                    physical_path="/tmp/test",
-                    size=100,
-                    owner="alice",
-                    group="developers",
-                    mode=0o755,  # rwxr-xr-x
-                )
+        rebac = MockReBACManager()
+        enforcer = PermissionEnforcer(rebac_manager=rebac)
+        ctx = OperationContext(user="alice", groups=["developers"])
 
-        enforcer = PermissionEnforcer(metadata_store=MockMetadataStore())
-
-        # Owner can execute
-        ctx_owner = OperationContext(user="alice", groups=["developers"])
-        assert enforcer.check("/script.sh", Permission.EXECUTE, ctx_owner) is True
-
-        # Group can execute
-        ctx_group = OperationContext(user="bob", groups=["developers"])
-        assert enforcer.check("/script.sh", Permission.EXECUTE, ctx_group) is True
-
-        # Others can execute
-        ctx_other = OperationContext(user="charlie", groups=["designers"])
-        assert enforcer.check("/script.sh", Permission.EXECUTE, ctx_other) is True
+        enforcer.check("/file.txt", Permission.READ, ctx)
+        assert rebac.last_tenant_id == "default"
 
     def test_filter_list_admin_sees_all(self):
         """Test that admins see all files in filter_list."""
@@ -255,7 +185,6 @@ class TestPermissionEnforcer:
         paths = ["/file1.txt", "/file2.txt", "/secret.txt"]
         filtered = enforcer.filter_list(paths, ctx)
 
-        # Admin sees all files
         assert filtered == paths
 
     def test_filter_list_system_sees_all(self):
@@ -266,80 +195,71 @@ class TestPermissionEnforcer:
         paths = ["/file1.txt", "/file2.txt", "/secret.txt"]
         filtered = enforcer.filter_list(paths, ctx)
 
-        # System sees all files
         assert filtered == paths
 
-    def test_filter_list_filters_by_permission(self):
-        """Test that filter_list removes files user can't read."""
+    def test_filter_list_filters_by_rebac_permission(self):
+        """Test that filter_list removes files user can't read via ReBAC."""
 
-        class MockMetadataStore:
-            def __init__(self):
-                self.files = {
-                    "/public.txt": FileMetadata(
-                        path="/public.txt",
-                        backend_name="local",
-                        physical_path="/tmp/public",
-                        size=100,
-                        owner="alice",
-                        group="developers",
-                        mode=0o644,  # rw-r--r-- (everyone can read)
-                    ),
-                    "/secret.txt": FileMetadata(
-                        path="/secret.txt",
-                        backend_name="local",
-                        physical_path="/tmp/secret",
-                        size=100,
-                        owner="alice",
-                        group="developers",
-                        mode=0o600,  # rw------- (only owner can read)
-                    ),
-                }
+        class MockReBACManager:
+            def rebac_check(self, subject, permission, object, tenant_id):
+                _, path = object
+                if path == "/public.txt" and permission == "read":
+                    return True
+                if path == "/secret.txt" and permission == "read":
+                    return False
+                return False
 
-            def get(self, path: str):
-                return self.files.get(path)
-
-        enforcer = PermissionEnforcer(metadata_store=MockMetadataStore())
+        enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
         ctx = OperationContext(user="bob", groups=["designers"])
 
         paths = ["/public.txt", "/secret.txt"]
         filtered = enforcer.filter_list(paths, ctx)
 
-        # Bob can only see public.txt
         assert filtered == ["/public.txt"]
 
-    def test_invalid_permissions_deny_access(self):
-        """Test that invalid permissions deny access."""
+    def test_permission_flags_map_correctly(self):
+        """Test that Permission flags map to correct string permissions."""
 
-        class MockMetadataStore:
-            def get(self, path: str):
-                return FileMetadata(
-                    path=path,
-                    backend_name="local",
-                    physical_path="/tmp/test",
-                    size=100,
-                    owner="alice",
-                    group="developers",
-                    mode=9999,  # Invalid mode
-                )
+        class MockReBACManager:
+            def __init__(self):
+                self.permissions_checked = []
 
-        enforcer = PermissionEnforcer(metadata_store=MockMetadataStore())
+            def rebac_check(self, subject, permission, object, tenant_id):
+                self.permissions_checked.append(permission)
+                return True
+
+        rebac = MockReBACManager()
+        enforcer = PermissionEnforcer(rebac_manager=rebac)
         ctx = OperationContext(user="alice", groups=["developers"])
 
-        # Invalid permissions - deny
-        assert enforcer.check("/file.txt", Permission.READ, ctx) is False
+        enforcer.check("/file.txt", Permission.READ, ctx)
+        enforcer.check("/file.txt", Permission.WRITE, ctx)
+        enforcer.check("/file.txt", Permission.EXECUTE, ctx)
 
-    def test_rebac_stub_returns_false(self):
-        """Test that ReBAC stub always returns False."""
-        enforcer = PermissionEnforcer()
-        ctx = OperationContext(user="alice", groups=["developers"])
+        assert rebac.permissions_checked == ["read", "write", "execute"]
 
-        # ReBAC not implemented yet - always returns False
-        assert enforcer._check_rebac("/file.txt", Permission.READ, ctx) is False
+    def test_acl_store_deprecated_warning(self):
+        """Test that providing acl_store parameter shows deprecation warning."""
+        with pytest.warns(DeprecationWarning, match="acl_store parameter is deprecated"):
+            PermissionEnforcer(acl_store="dummy_acl_store")
 
-    def test_acl_stub_returns_none(self):
-        """Test that ACL stub always returns None."""
-        enforcer = PermissionEnforcer()
-        ctx = OperationContext(user="alice", groups=["developers"])
+    def test_subject_type_passed_to_rebac(self):
+        """Test that subject type is correctly passed to ReBAC manager."""
 
-        # ACL not implemented yet - always returns None
-        assert enforcer._check_acl("/file.txt", Permission.READ, ctx) is None
+        class MockReBACManager:
+            def __init__(self):
+                self.last_subject = None
+
+            def rebac_check(self, subject, permission, object, tenant_id):
+                self.last_subject = subject
+                return True
+
+        rebac = MockReBACManager()
+        enforcer = PermissionEnforcer(rebac_manager=rebac)
+
+        ctx = OperationContext(
+            user="claude", groups=["ai_agents"], subject_type="agent", subject_id="claude_001"
+        )
+
+        enforcer.check("/file.txt", Permission.READ, ctx)
+        assert rebac.last_subject == ("agent", "claude_001")

@@ -140,7 +140,7 @@ class TestSDKOperations:
 
     def test_basic_file_operations(self, tmp_path):
         """Test basic file operations through SDK."""
-        nx = connect(config={"data_dir": str(tmp_path)})
+        nx = connect(config={"data_dir": str(tmp_path), "enforce_permissions": False})
 
         # Write
         nx.write("/test.txt", b"Hello SDK")
@@ -158,7 +158,7 @@ class TestSDKOperations:
 
     def test_list_operations(self, tmp_path):
         """Test list operations through SDK."""
-        nx = connect(config={"data_dir": str(tmp_path)})
+        nx = connect(config={"data_dir": str(tmp_path), "enforce_permissions": False})
 
         nx.write("/file1.txt", b"content1")
         nx.write("/file2.txt", b"content2")
@@ -169,7 +169,7 @@ class TestSDKOperations:
 
     def test_glob_operations(self, tmp_path):
         """Test glob operations through SDK."""
-        nx = connect(config={"data_dir": str(tmp_path)})
+        nx = connect(config={"data_dir": str(tmp_path), "enforce_permissions": False})
 
         nx.write("/test.txt", b"content")
         nx.write("/test.py", b"code")
@@ -179,7 +179,7 @@ class TestSDKOperations:
 
     def test_mkdir_operations(self, tmp_path):
         """Test mkdir operations through SDK."""
-        nx = connect(config={"data_dir": str(tmp_path)})
+        nx = connect(config={"data_dir": str(tmp_path), "enforce_permissions": False})
 
         nx.mkdir("/testdir")
         assert nx.is_directory("/testdir")

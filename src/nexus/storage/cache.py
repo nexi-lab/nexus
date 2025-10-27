@@ -196,14 +196,29 @@ class MetadataCache:
 
             # Invalidate list cache entries that might contain this path
             # Need to invalidate all prefixes that could include this path
-            prefixes_to_invalidate = []
-            for prefix in list(self._list_cache.keys()):
+            # Cache keys are in format "prefix:r" or "prefix:nr" where prefix is the path prefix
+            cache_keys_to_invalidate = []
+            for cache_key in list(self._list_cache.keys()):
+                # Extract prefix from cache key (format: "prefix:r" or "prefix:nr")
+                # Split by last ":" to handle paths that contain ":"
+                if ":r" in cache_key or ":nr" in cache_key:
+                    # Find the last occurrence of :r or :nr
+                    if cache_key.endswith(":r"):
+                        prefix = cache_key[:-2]  # Remove ":r"
+                    elif cache_key.endswith(":nr"):
+                        prefix = cache_key[:-3]  # Remove ":nr"
+                    else:
+                        # Fallback: treat the whole key as prefix
+                        prefix = cache_key
+                else:
+                    prefix = cache_key
+
                 # If path starts with prefix, the listing might be affected
                 if path.startswith(prefix):
-                    prefixes_to_invalidate.append(prefix)
+                    cache_keys_to_invalidate.append(cache_key)
 
-            for prefix in prefixes_to_invalidate:
-                self._list_cache.pop(prefix, None)
+            for cache_key in cache_keys_to_invalidate:
+                self._list_cache.pop(cache_key, None)
 
             # Invalidate all KV cache entries for this path
             kv_keys_to_invalidate = [(p, k) for (p, k) in list(self._kv_cache.keys()) if p == path]

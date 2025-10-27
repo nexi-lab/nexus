@@ -19,6 +19,7 @@ Safety features:
 import asyncio
 import logging
 from collections.abc import Callable
+from functools import lru_cache
 from typing import Any, overload
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,10 @@ def parse_virtual_path(path: str, exists_fn: Callable[[str], bool]) -> tuple[str
 
 
 def get_parsed_content(content: bytes, path: str, view_type: str) -> bytes:  # noqa: ARG001
-    """Get parsed content for a file.
+    """Get parsed content for a file with caching.
+
+    PERFORMANCE OPTIMIZATION: Caches parsed content by hash to avoid re-parsing
+    the same file multiple times. Parsing can be expensive for PDFs, Excel, etc.
 
     Args:
         content: Raw file content as bytes
@@ -102,6 +106,30 @@ def get_parsed_content(content: bytes, path: str, view_type: str) -> bytes:  # n
 
     Raises:
         Exception: If parsing fails (falls back to raw content)
+    """
+    # Compute content hash for caching
+    import hashlib
+
+    content_hash = hashlib.sha256(content).hexdigest()
+
+    # Check cache first
+    return _get_parsed_content_cached(content_hash, content, path, view_type)
+
+
+@lru_cache(maxsize=128)  # Cache last 128 parsed files
+def _get_parsed_content_cached(
+    _content_hash: str, content: bytes, path: str, _view_type: str
+) -> bytes:
+    """Internal cached parsing function.
+
+    Args:
+        content_hash: SHA256 hash of content (for cache key)
+        content: Raw file content as bytes
+        path: Original file path (for parser detection)
+        view_type: View type ("txt" or "md") - reserved for future use
+
+    Returns:
+        Parsed content as bytes (UTF-8 encoded text)
     """
     # Try to decode as text first
     try:

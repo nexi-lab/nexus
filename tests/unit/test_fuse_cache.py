@@ -7,7 +7,6 @@ attribute caching, content caching, parsed content caching, and cache invalidati
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
@@ -16,10 +15,10 @@ from nexus.fuse.cache import FUSECacheManager
 
 @pytest.fixture
 def cache_mgr() -> FUSECacheManager:
-    """Create a cache manager with metrics enabled."""
+    """Create a cache manager with metrics enabled and short TTL."""
     return FUSECacheManager(
         attr_cache_size=10,
-        attr_cache_ttl=2,  # Short TTL for testing
+        attr_cache_ttl=1,  # 1 second TTL for testing
         content_cache_size=5,
         parsed_cache_size=5,
         enable_metrics=True,
@@ -54,17 +53,22 @@ class TestAttributeCache:
         result = cache_mgr.get_attr("/nonexistent")
         assert result is None
 
-    @pytest.mark.slow
     def test_attr_cache_ttl_expiry(self, cache_mgr: FUSECacheManager) -> None:
-        """Test that attribute cache entries expire after TTL."""
+        """Test that attribute cache entries expire after TTL.
+
+        Note: This test uses a real sleep because cachetools.TTLCache uses
+        time.monotonic() which is not affected by freezegun.
+        """
+        import time
+
         attrs = {"st_mode": 0o100644, "st_size": 1024}
         cache_mgr.cache_attr("/file.txt", attrs)
 
         # Should be cached immediately
         assert cache_mgr.get_attr("/file.txt") == attrs
 
-        # Wait for TTL to expire
-        time.sleep(2.5)
+        # Wait for TTL to expire (1 second + small buffer)
+        time.sleep(1.1)
 
         # Should be expired now
         assert cache_mgr.get_attr("/file.txt") is None

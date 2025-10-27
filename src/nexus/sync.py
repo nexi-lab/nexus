@@ -103,8 +103,8 @@ def copy_file(
                 existing_content = raw_existing
                 if existing_content == content:
                     return 0  # Skip - identical content
-            except Exception:
-                # Content is missing or corrupted - re-write it
+            except (OSError, FileNotFoundError, AssertionError):
+                # Content is missing, corrupted, or wrong type - re-write it
                 pass
 
         # Create parent directories in Nexus
@@ -151,8 +151,8 @@ def copy_file(
                 existing_content = raw_existing
                 if existing_content == content:
                     return 0  # Skip - identical content
-            except Exception:
-                # Content is missing or corrupted - re-write it
+            except (OSError, FileNotFoundError, AssertionError):
+                # Content is missing, corrupted, or wrong type - re-write it
                 pass
 
         # Create parent directories in Nexus
@@ -362,5 +362,6 @@ def move_file(
                 nx.delete(source)
             return True
 
-    except Exception:
+    except (OSError, ValueError, TypeError):
+        # File operation or path validation failed
         return False

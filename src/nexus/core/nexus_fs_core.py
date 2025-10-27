@@ -11,8 +11,8 @@ This module contains the fundamental file operations:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
+import logging
 import threading
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -21,6 +21,8 @@ from nexus.core.exceptions import ConflictError, NexusFileNotFoundError
 from nexus.core.metadata import FileMetadata
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
@@ -144,6 +146,63 @@ class NexusFSCoreMixin:
 
         return content
 
+    @rpc_expose(description="Stream file content in chunks")
+    def stream(
+        self, path: str, chunk_size: int = 8192, context: OperationContext | None = None
+    ) -> Any:
+        """
+        Stream file content in chunks without loading entire file into memory.
+
+        This is a memory-efficient alternative to read() for large files.
+        Yields chunks as an iterator, allowing processing of files larger than RAM.
+
+        Args:
+            path: Virtual path to stream
+            chunk_size: Size of each chunk in bytes (default: 8KB)
+            context: Optional operation context for permission checks
+
+        Yields:
+            bytes: Chunks of file content
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            BackendError: If stream operation fails
+            AccessDeniedError: If access is denied
+            PermissionError: If user doesn't have read permission
+
+        Example:
+            >>> # Stream large file efficiently
+            >>> for chunk in nx.stream("/workspace/large_file.bin"):
+            ...     process(chunk)  # Memory usage = chunk_size, not file_size
+
+            >>> # Stream to output
+            >>> import sys
+            >>> for chunk in nx.stream("/workspace/video.mp4", chunk_size=1024*1024):  # 1MB chunks
+            ...     sys.stdout.buffer.write(chunk)
+        """
+        path = self._validate_path(path)
+
+        # Check read permission
+        self._check_permission(path, Permission.READ, context)
+
+        # Route to backend with access control
+        route = self.router.route(
+            path,
+            tenant_id=self.tenant_id,
+            agent_id=self.agent_id,
+            is_admin=self.is_admin,
+            check_write=False,
+        )
+
+        # Check if file exists in metadata
+        meta = self.metadata.get(path)
+        if meta is None or meta.etag is None:
+            raise NexusFileNotFoundError(path)
+
+        # Stream from routed backend using content hash
+        yield from route.backend.stream_content(meta.etag, chunk_size=chunk_size)
+
     @rpc_expose(description="Write file content")
     def write(
         self,
@@ -239,32 +298,14 @@ class NexusFSCoreMixin:
         if meta:
             metadata_snapshot = {
                 "size": meta.size,
-                "owner": meta.owner,
-                "group": meta.group,
-                "mode": meta.mode,
                 "version": meta.version,
                 "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
             }
 
-        # Check write permission (v0.3.0)
-        # Only check permissions if the file is owned by the current user
-        # This allows namespace routing to override Unix permissions when needed
-        # Rationale: Namespace isolation is PRIMARY, Unix permissions are SECONDARY
-        if meta is not None:
+        # Check write permission (use ReBAC, not UNIX permissions)
+        if meta is not None and self._enforce_permissions:  # type: ignore[attr-defined]
             ctx = context or self._default_context
-
-            # Only check permissions if we own the file
-            # If someone else owns it but the router allows write access, namespace wins
-            if meta.owner == ctx.user:
-                # Existing file owned by us - check permissions to prevent accidental overwrites
-                self._check_permission(path, Permission.WRITE, context)
-            # If file is owned by someone else, skip permission check
-            # The router has already validated namespace-level access (tenant/agent isolation)
-        # NOTE: For new files, we do NOT check parent directory permissions because:
-        # 1. The router has already validated namespace-level access (tenant/agent isolation)
-        # 2. The new file will get correct owner/group/mode via permission policies
-        # 3. Checking parent permissions can cause false rejections when namespaces
-        #    allow access but parent was created by a different user
+            self._check_permission(path, Permission.WRITE, ctx)
 
         # Optimistic concurrency control (v0.3.9)
         if not force:
@@ -297,43 +338,13 @@ class NexusFSCoreMixin:
         # Old content should only be deleted when ALL versions are deleted.
         # CAS reference counting handles cleanup automatically.
 
-        # Apply permission policy for new files, preserve for existing files
-        # Also apply policy if existing file has no permissions set (migration case)
-        if meta is None or (meta.owner is None and meta.group is None and meta.mode is None):
-            # New file or existing file without permissions - try policy first, then inheritance
-            owner = None
-            group = None
-            mode = None
-
-            # Build context for variable substitution in policy
-            policy_context = {
-                "agent_id": self.agent_id or "unknown",
-                "tenant_id": self.tenant_id or "default",
-                "user_id": self.agent_id or "unknown",
-            }
-
-            # Try permission policy first
-            policy_result = self.policy_matcher.apply_policy(
-                path=path,
-                tenant_id=self.tenant_id,
-                context=policy_context,
-                is_directory=False,
-            )
-
-            if policy_result:
-                owner, group, mode = policy_result
-            else:
-                # No policy matched - fall back to parent directory inheritance
-                owner, group, mode = self._inherit_permissions_from_parent(path, is_directory=False)
-        else:  # Existing file with permissions - preserve them
-            owner = meta.owner
-            group = meta.group
-            mode = meta.mode
+        # UNIX permissions removed - all access control via ReBAC
 
         # Calculate new version number (increment if updating)
         new_version = (meta.version + 1) if meta else 1
 
         # Store metadata with content hash as both etag and physical_path
+        # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
         metadata = FileMetadata(
             path=path,
             backend_name=self.backend.name,
@@ -343,9 +354,6 @@ class NexusFSCoreMixin:
             created_at=meta.created_at if meta else now,
             modified_at=now,
             version=new_version,
-            owner=owner,  # Apply policy or inherit from parent
-            group=group,  # Apply policy or inherit from parent
-            mode=mode,  # Apply policy or inherit from parent
         )
 
         self.metadata.put(metadata)
@@ -355,6 +363,7 @@ class NexusFSCoreMixin:
             self._auto_parse_file(path)
 
         # Log operation for audit trail and undo capability (v0.3.9)
+        # P0 COMPLIANCE FIX: Properly handle audit log failures instead of silently ignoring them
         try:
             from nexus.storage.operation_logger import OperationLogger
 
@@ -370,9 +379,35 @@ class NexusFSCoreMixin:
                     status="success",
                 )
                 session.commit()
-        except Exception:
-            # Don't fail the write operation if logging fails
-            pass
+        except Exception as e:
+            # P0 COMPLIANCE FIX: Handle audit log failures based on audit_strict_mode
+            import logging
+
+            from nexus.core.exceptions import AuditLogError
+
+            logger = logging.getLogger(__name__)
+
+            if self._audit_strict_mode:  # type: ignore[attr-defined]
+                # STRICT MODE (default): Fail the write operation to ensure audit trail completeness
+                # This is required for compliance with SOX, HIPAA, GDPR, PCI DSS
+                logger.error(
+                    f"AUDIT LOG FAILURE: Write to '{path}' ABORTED due to audit logging failure. "
+                    f"Error: {e}. Enable audit_strict_mode=False to allow writes without audit logs."
+                )
+                raise AuditLogError(
+                    f"Write operation aborted: audit logging failed: {e}",
+                    path=path,
+                    original_error=e,
+                ) from e
+            else:
+                # PERMISSIVE MODE: Allow write to succeed but log at CRITICAL level
+                # WARNING: This creates audit trail gaps and may violate compliance requirements
+                logger.critical(
+                    f"AUDIT LOG FAILURE: Write to '{path}' SUCCEEDED but audit log FAILED. "
+                    f"Error: {e}. This creates an audit trail gap! "
+                    f"Enable audit_strict_mode=True to prevent this."
+                )
+                # Continue execution - write succeeded but audit log failed
 
         # Return metadata for optimistic concurrency control (v0.3.9)
         return {
@@ -452,11 +487,10 @@ class NexusFSCoreMixin:
         existing_metadata = self.metadata.get_batch(paths)
 
         # Check write permissions for existing files owned by current user
-        ctx = context or self._default_context
         for path in paths:
             meta = existing_metadata.get(path)
-            if meta is not None and meta.owner == ctx.user:
-                # Existing file owned by us - check permissions
+            if meta is not None and self._enforce_permissions:  # type: ignore[attr-defined]
+                # Check write permissions via ReBAC
                 self._check_permission(path, Permission.WRITE, context)
 
         now = datetime.now(UTC)
@@ -471,44 +505,13 @@ class NexusFSCoreMixin:
             # Get existing metadata for this file
             meta = existing_metadata.get(path)
 
-            # Apply permission policy for new files, preserve for existing files
-            if meta is None or (meta.owner is None and meta.group is None and meta.mode is None):
-                # New file or existing file without permissions
-                owner = None
-                group = None
-                mode = None
-
-                # Build context for variable substitution in policy
-                policy_context = {
-                    "agent_id": self.agent_id or "unknown",
-                    "tenant_id": self.tenant_id or "default",
-                    "user_id": self.agent_id or "unknown",
-                }
-
-                # Try permission policy first
-                policy_result = self.policy_matcher.apply_policy(
-                    path=path,
-                    tenant_id=self.tenant_id,
-                    context=policy_context,
-                    is_directory=False,
-                )
-
-                if policy_result:
-                    owner, group, mode = policy_result
-                else:
-                    # No policy matched - fall back to parent directory inheritance
-                    owner, group, mode = self._inherit_permissions_from_parent(
-                        path, is_directory=False
-                    )
-            else:  # Existing file with permissions - preserve them
-                owner = meta.owner
-                group = meta.group
-                mode = meta.mode
+            # UNIX permissions removed - all access control via ReBAC
 
             # Calculate new version number (increment if updating)
             new_version = (meta.version + 1) if meta else 1
 
             # Build metadata for batch insert
+            # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
             metadata = FileMetadata(
                 path=path,
                 backend_name=self.backend.name,
@@ -518,9 +521,6 @@ class NexusFSCoreMixin:
                 created_at=meta.created_at if meta else now,
                 modified_at=now,
                 version=new_version,
-                owner=owner,
-                group=group,
-                mode=mode,
             )
             metadata_list.append(metadata)
 
@@ -554,19 +554,24 @@ class NexusFSCoreMixin:
             # Check if parser is available for this file type
             self.parser_registry.get_parser(path)
 
-            # Run parsing in a background thread (fire-and-forget)
+            # Run parsing in a background thread
+            # CRITICAL: Use daemon=False to prevent abrupt termination during DB writes
+            # Threads are tracked for graceful shutdown in close()
             thread = threading.Thread(
                 target=self._parse_in_thread,
                 args=(path,),
-                daemon=True,
+                daemon=False,  # Changed from True to prevent DB corruption on shutdown
+                name=f"parser-{path}",  # Named for debugging
             )
             # Track thread for graceful shutdown
             with self._parser_threads_lock:
+                # Clean up finished threads before adding new one
+                self._parser_threads = [t for t in self._parser_threads if t.is_alive()]
                 self._parser_threads.append(thread)
             thread.start()
-        except Exception:
-            # Silently ignore if no parser available or parsing fails
-            pass
+        except Exception as e:
+            # Log if no parser available (expected) but don't fail the write operation
+            logger.debug(f"Auto-parse skipped for {path}: {type(e).__name__}: {e}")
 
     def _parse_in_thread(self, path: str) -> None:
         """Parse file in a background thread.
@@ -574,10 +579,40 @@ class NexusFSCoreMixin:
         Args:
             path: Virtual path to the file
         """
-        # Silently ignore parsing errors
-        with contextlib.suppress(Exception):
+        try:
             # Run async parse in a new event loop (thread-safe)
             asyncio.run(self.parse(path, store_result=True))
+        except Exception as e:
+            # Log parsing errors for visibility but don't crash
+            # IMPORTANT: Log with enough detail to debug issues
+            import traceback
+
+            error_type = type(e).__name__
+            error_msg = str(e)
+
+            # Categorize errors for better logging
+            if "disk" in error_msg.lower() or "space" in error_msg.lower():
+                logger.error(
+                    f"Auto-parse FAILED for {path}: Disk error - {error_type}: {error_msg}"
+                )
+            elif "database" in error_msg.lower() or "connection" in error_msg.lower():
+                logger.error(
+                    f"Auto-parse FAILED for {path}: Database error - {error_type}: {error_msg}"
+                )
+            elif "memory" in error_msg.lower() or isinstance(e, MemoryError):
+                logger.error(
+                    f"Auto-parse FAILED for {path}: Memory error - {error_type}: {error_msg}"
+                )
+            elif "permission" in error_msg.lower() or isinstance(e, (PermissionError, OSError)):
+                logger.warning(
+                    f"Auto-parse FAILED for {path}: Permission/OS error - {error_type}: {error_msg}"
+                )
+            else:
+                # Unknown error - log with stack trace for debugging
+                logger.warning(
+                    f"Auto-parse FAILED for {path}: {error_type}: {error_msg}\n"
+                    f"Stack trace:\n{traceback.format_exc()}"
+                )
 
     @rpc_expose(description="Delete file")
     def delete(self, path: str, context: OperationContext | None = None) -> None:
@@ -631,9 +666,6 @@ class NexusFSCoreMixin:
         snapshot_hash = meta.etag
         metadata_snapshot = {
             "size": meta.size,
-            "owner": meta.owner,
-            "group": meta.group,
-            "mode": meta.mode,
             "version": meta.version,
             "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
             "backend_name": meta.backend_name,
@@ -736,9 +768,6 @@ class NexusFSCoreMixin:
         if meta:
             metadata_snapshot = {
                 "size": meta.size,
-                "owner": meta.owner,
-                "group": meta.group,
-                "mode": meta.mode,
                 "version": meta.version,
                 "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
             }
@@ -772,18 +801,29 @@ class NexusFSCoreMixin:
             pass
 
     @rpc_expose(description="Check if file exists")
-    def exists(self, path: str) -> bool:
+    def exists(self, path: str, context: OperationContext | None = None) -> bool:
         """
         Check if a file or directory exists.
 
         Args:
             path: Virtual path to check
+            context: Operation context for permission checks (uses default if None)
 
         Returns:
             True if file or implicit directory exists, False otherwise
         """
         try:
             path = self._validate_path(path)
+
+            # Check read permission if enforcement enabled
+            if self._enforce_permissions:  # type: ignore[attr-defined]
+                ctx = context if context is not None else self._default_context
+                try:
+                    self._check_permission(path, Permission.READ, ctx)
+                except PermissionError:
+                    # No permission = treat as non-existent for security
+                    return False
+
             # Check if file exists explicitly
             if self.metadata.exists(path):
                 return True
@@ -914,3 +954,76 @@ class NexusFSCoreMixin:
             self.backend.delete_content(memory.content_hash)
         finally:
             session.close()
+
+    @rpc_expose(description="Shutdown background parser threads")
+    def shutdown_parser_threads(self, timeout: float = 10.0) -> dict[str, Any]:
+        """Gracefully shutdown background parser threads.
+
+        CRITICAL: Must be called before closing NexusFS to prevent database corruption!
+        Non-daemon parser threads can have in-progress database writes that must complete.
+
+        This method waits for all parser threads to finish or times out after the specified
+        duration. This prevents abrupt termination that could corrupt the database.
+
+        Args:
+            timeout: Maximum seconds to wait for each thread to finish (default: 10s)
+
+        Returns:
+            Dict with shutdown statistics:
+                - total_threads: Number of parser threads that were running
+                - completed: Number of threads that finished gracefully
+                - timed_out: Number of threads that exceeded timeout
+                - timeout_threads: List of thread names that timed out
+
+        Example:
+            >>> nx = NexusFS(...)
+            >>> # ... use filesystem ...
+            >>> stats = nx.shutdown_parser_threads(timeout=5.0)
+            >>> if stats['timed_out'] > 0:
+            ...     logger.warning(f"{stats['timed_out']} parser threads timed out")
+            >>> nx.close()
+        """
+        with self._parser_threads_lock:
+            threads_to_wait = [t for t in self._parser_threads if t.is_alive()]
+            total = len(threads_to_wait)
+
+        if total == 0:
+            return {"total_threads": 0, "completed": 0, "timed_out": 0, "timeout_threads": []}
+
+        logger.info(f"Waiting for {total} parser threads to complete (timeout: {timeout}s)...")
+
+        completed = 0
+        timed_out = 0
+        timeout_threads = []
+
+        for thread in threads_to_wait:
+            logger.debug(f"Waiting for parser thread: {thread.name}")
+            thread.join(timeout=timeout)
+
+            if thread.is_alive():
+                # Thread exceeded timeout
+                timed_out += 1
+                timeout_threads.append(thread.name)
+                logger.warning(
+                    f"Parser thread '{thread.name}' did not complete within {timeout}s. "
+                    f"Thread may still be writing to database - potential data loss risk!"
+                )
+            else:
+                # Thread completed successfully
+                completed += 1
+                logger.debug(f"Parser thread '{thread.name}' completed")
+
+        # Clear the thread list
+        with self._parser_threads_lock:
+            self._parser_threads.clear()
+
+        logger.info(
+            f"Parser thread shutdown complete: {completed} completed, {timed_out} timed out"
+        )
+
+        return {
+            "total_threads": total,
+            "completed": completed,
+            "timed_out": timed_out,
+            "timeout_threads": timeout_threads,
+        }

@@ -28,11 +28,12 @@ from nexus.core.export_import import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
-from nexus.core.nexus_fs_permissions import NexusFSPermissionsMixin
+from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
 from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.core.nexus_fs_search import NexusFSSearchMixin
 from nexus.core.nexus_fs_versions import NexusFSVersionsMixin
 from nexus.core.permissions import OperationContext, Permission
+from nexus.core.permissions_enhanced import EnhancedOperationContext
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.parsers import MarkItDownParser, ParserRegistry
@@ -44,9 +45,9 @@ from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 class NexusFS(
     NexusFSCoreMixin,
     NexusFSSearchMixin,
-    NexusFSPermissionsMixin,
     NexusFSReBACMixin,
     NexusFSVersionsMixin,
+    NexusFSMountsMixin,
     NexusFilesystem,
 ):
     """
@@ -67,10 +68,9 @@ class NexusFS(
         self,
         backend: Backend,
         db_path: str | Path | None = None,
-        tenant_id: str | None = None,
-        user_id: str | None = None,
-        agent_id: str | None = None,
         is_admin: bool = False,
+        tenant_id: str | None = None,  # Default tenant ID for operations
+        agent_id: str | None = None,  # Default agent ID for operations
         custom_namespaces: list[NamespaceConfig] | None = None,
         enable_metadata_cache: bool = True,
         cache_path_size: int = 512,
@@ -82,7 +82,10 @@ class NexusFS(
         content_cache_size_mb: int = 256,
         auto_parse: bool = True,
         custom_parsers: list[dict[str, Any]] | None = None,
-        enforce_permissions: bool = True,
+        enforce_permissions: bool = True,  # P0-6: ENABLED by default for security
+        inherit_permissions: bool = True,  # P0-3: Enable automatic parent tuple creation for directory inheritance
+        allow_admin_bypass: bool = False,  # P0-4: Allow admin bypass (DEFAULT OFF for production security)
+        audit_strict_mode: bool = True,  # P0 COMPLIANCE: Fail writes if audit logging fails (DEFAULT ON)
     ):
         """
         Initialize filesystem.
@@ -90,10 +93,9 @@ class NexusFS(
         Args:
             backend: Backend instance for storing file content (LocalBackend, GCSBackend, etc.)
             db_path: Path to SQLite metadata database (auto-generated if None)
-            tenant_id: Tenant identifier for multi-tenant isolation (optional)
-            user_id: User identifier for identity-based memory system (v0.4.0, optional)
-            agent_id: Agent identifier for agent-level isolation in /workspace (optional)
             is_admin: Whether this instance has admin privileges (default: False)
+            tenant_id: Default tenant ID for all operations (optional, for multi-tenancy)
+            agent_id: Default agent ID for all operations (optional, for agent isolation)
             custom_namespaces: Additional custom namespace configurations (optional)
             enable_metadata_cache: Enable in-memory metadata caching (default: True)
             cache_path_size: Max entries for path metadata cache (default: 512)
@@ -106,6 +108,12 @@ class NexusFS(
             auto_parse: Automatically parse files on write (default: True)
             custom_parsers: Custom parser configurations from config (optional)
             enforce_permissions: Enable permission enforcement on file operations (default: True)
+            inherit_permissions: Enable automatic parent tuple creation for directory inheritance (default: True, P0-3)
+            allow_admin_bypass: Allow admin users to bypass permission checks (default: False for security, P0-4)
+
+        Note:
+            When tenant_id or agent_id are provided, they set the default context for all operations.
+            Individual operations can still override context by passing context parameter.
         """
         # Initialize content cache if enabled and backend supports it
         if enable_content_cache:
@@ -120,12 +128,22 @@ class NexusFS(
         # Store backend
         self.backend = backend
 
-        # Store tenant, user, and agent context
-        self.tenant_id = tenant_id
-        self.user_id = user_id  # v0.4.0: Identity-based memory
-        self.agent_id = agent_id
+        # Store admin flag and auto-parse setting
         self.is_admin = is_admin
         self.auto_parse = auto_parse
+
+        # Store default tenant/agent IDs for all operations
+        self.tenant_id: str | None = tenant_id
+        self.agent_id: str | None = agent_id
+        self.user_id: str | None = None
+
+        # Store allow_admin_bypass flag as public attribute for backward compatibility
+        self.allow_admin_bypass = allow_admin_bypass
+
+        # P0 COMPLIANCE: Store audit_strict_mode flag
+        # When True (default): Write operations FAIL if audit logging fails
+        # When False: Write operations succeed but log at CRITICAL level
+        self._audit_strict_mode = audit_strict_mode
 
         # Initialize metadata store (using new SQLAlchemy-based store)
         if db_path is None:
@@ -164,82 +182,103 @@ class NexusFS(
         self._parser_threads: list[threading.Thread] = []
         self._parser_threads_lock = threading.Lock()
 
-        # Initialize permission policy system
-        from nexus.core.permission_policy import PolicyMatcher, create_default_policies
-        from nexus.storage.policy_store import PolicyStore
+        # v0.6.0: Policy system removed - use ReBAC for all permissions
+        self.policy_matcher = None  # type: ignore[assignment]
 
-        # Load policies from database
-        with self.metadata.SessionLocal() as session:
-            policy_store = PolicyStore(session)
-            policies = policy_store.list_policies(tenant_id=self.tenant_id)
+        # P0 Fixes: Use EnhancedOperationContext for GA features
+        from nexus.core.permissions_enhanced import EnhancedOperationContext
 
-            # If no policies exist, create and store default ones
-            if not policies:
-                default_policies = create_default_policies()
-                for policy in default_policies:
-                    policy_store.create_policy(policy)
-                policies = default_policies
-
-        self.policy_matcher = PolicyMatcher(policies)
-
-        # Initialize permission enforcer (v0.3.0)
-        from nexus.core.acl import ACLStore
-        from nexus.core.permissions import OperationContext, PermissionEnforcer
-        from nexus.core.rebac_manager import ReBACManager
-
-        # Create default operation context from init parameters
-        # This context is used for all operations unless overridden per-call
-        user = agent_id or tenant_id or "system"
-        groups: list[str] = []
-        if tenant_id:
-            groups.append(tenant_id)
-
-        self._default_context = OperationContext(
-            user=user,
-            groups=groups,
+        # Create default context using provided tenant_id/agent_id
+        # If tenant_id/agent_id are None, creates an unrestricted context for backward compatibility
+        self._default_context = EnhancedOperationContext(  # type: ignore[assignment]
+            user="anonymous",
+            groups=[],
+            tenant_id=tenant_id,
+            agent_id=agent_id,
             is_admin=is_admin,
-            is_system=(user == "system"),
+            is_system=False,  # SECURITY: Prevent privilege escalation
+            admin_capabilities=set(),  # No capabilities for default context
         )
 
-        # Initialize ACL and ReBAC stores for multi-layer permission checking
-        acl_store = ACLStore(metadata_store=self.metadata)
+        # P0 Fixes: Initialize EnhancedReBACManager with all GA features
+        from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
-        # Initialize ReBACManager with same database as metadata store
-        self._rebac_manager = ReBACManager(
+        self._rebac_manager = EnhancedReBACManager(
             engine=self.metadata.engine,  # Use SQLAlchemy engine (supports SQLite + PostgreSQL)
             cache_ttl_seconds=cache_ttl_seconds or 300,
             max_depth=10,
+            enforce_tenant_isolation=True,  # P0-2: Tenant scoping
+            enable_graph_limits=True,  # P0-5: DoS protection
         )
 
-        # Initialize permission enforcer with full multi-layer support
-        self._permission_enforcer = PermissionEnforcer(
+        # P0-4: Initialize AuditStore for admin bypass logging
+        from nexus.core.permissions_enhanced import AuditStore
+
+        self._audit_store = AuditStore(engine=self.metadata.engine)
+
+        # P0 Fixes: Initialize EnhancedPermissionEnforcer with audit logging
+        from nexus.core.permissions_enhanced import EnhancedPermissionEnforcer
+
+        self._permission_enforcer = EnhancedPermissionEnforcer(  # type: ignore[assignment]
             metadata_store=self.metadata,
-            acl_store=acl_store,
             rebac_manager=self._rebac_manager,
+            allow_admin_bypass=allow_admin_bypass,  # P0-4: Controlled by constructor parameter
+            allow_system_bypass=True,  # P0-4: System operations still allowed
+            audit_store=self._audit_store,  # P0-4: Immutable audit log
+            admin_bypass_paths=[],  # P0-4: Scoped bypass (empty = no bypass paths)
         )
 
         # Permission enforcement is opt-in for backward compatibility
         # Set enforce_permissions=True in init to enable permission checks
         self._enforce_permissions = enforce_permissions
 
+        # P0-3: Initialize HierarchyManager for automatic parent tuple creation
+        from nexus.core.hierarchy_manager import HierarchyManager
+
+        self._hierarchy_manager = HierarchyManager(
+            rebac_manager=self._rebac_manager,
+            enable_inheritance=inherit_permissions,
+        )
+
+        # Initialize workspace registry for managing registered workspaces/memories
+        from nexus.core.workspace_registry import WorkspaceRegistry
+
+        self._workspace_registry = WorkspaceRegistry(metadata=self.metadata)
+
+        # Initialize mount manager for persistent mount configurations
+        from nexus.core.mount_manager import MountManager
+
+        self.mount_manager = MountManager(self.metadata.SessionLocal)
+
+        # Load workspace/memory configs from custom config if provided
+        if custom_namespaces and hasattr(custom_namespaces, "__iter__"):
+            # Check if this came from a config object with workspaces/memories
+            # This is a bit hacky but works for now
+            pass  # Will be handled by separate load method
+
         # Initialize workspace manager for snapshot/versioning
         from nexus.core.workspace_manager import WorkspaceManager
 
-        self._workspace_manager = WorkspaceManager(metadata=self.metadata, backend=self.backend)
+        self._workspace_manager = WorkspaceManager(
+            metadata=self.metadata,
+            backend=self.backend,
+            rebac_manager=self._rebac_manager,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+        )
 
-        # Initialize semantic search (v0.4.0) - lazy initialization
-        # Call initialize_semantic_search() to enable semantic search features
+        # Initialize semantic search - lazy initialization
         self._semantic_search = None
 
-        # Initialize Memory API (v0.4.0)
-
+        # Initialize Memory API
+        # Memory operations should use subject parameter
         self._memory_api: Memory | None = None  # Lazy initialization
         self._entity_registry: EntityRegistry | None = None
         # Store config for lazy init
-        self._memory_config = {
-            "tenant_id": tenant_id,
-            "user_id": user_id,
-            "agent_id": agent_id,
+        self._memory_config: dict[str, str | None] = {
+            "tenant_id": None,
+            "user_id": None,
+            "agent_id": None,
         }
 
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
@@ -282,15 +321,19 @@ class NexusFS(
                 # Register with registry
                 self.parser_registry.register(parser_instance)
 
-            except Exception:
-                # Silently skip parsers that fail to load
+            except (ImportError, AttributeError, TypeError, ValueError) as e:
+                # Skip parsers that fail to load due to config or import errors
                 # This prevents config errors from breaking the entire system
-                # In production environments, enable logging to see errors
-                pass
+                import logging
+
+                parser_id = (
+                    f"{module_path}.{class_name}" if module_path and class_name else "unknown"
+                )
+                logging.warning(f"Failed to load parser {parser_id}: {e}")
 
     @property
     def memory(self) -> Any:
-        """Get Memory API instance for agent memory management (v0.4.0).
+        """Get Memory API instance for agent memory management.
 
         Lazy initialization on first access.
 
@@ -326,29 +369,80 @@ class NexusFS(
 
     def _validate_path(self, path: str) -> str:
         """
-        Validate virtual path.
+        Validate and normalize virtual path.
+
+        SECURITY FIX (v0.7.0): Enhanced validation to prevent cache collisions,
+        database issues, and undefined behavior from whitespace and malformed paths.
 
         Args:
             path: Virtual path to validate
 
         Returns:
-            Normalized path
+            Normalized path (stripped, deduplicated slashes, validated)
 
         Raises:
-            InvalidPathError: If path is invalid
+            InvalidPathError: If path is invalid or malformed
+
+        Examples:
+            >>> fs._validate_path("  /foo/bar  ")  # Stripped
+            '/foo/bar'
+            >>> fs._validate_path("foo///bar")  # Normalized slashes
+            '/foo/bar'
+            >>> fs._validate_path(" ")  # Raises InvalidPathError
+            InvalidPathError: Path cannot be empty or whitespace-only
         """
+        # SECURITY FIX: Strip leading/trailing whitespace to prevent cache collisions
+        # Before: " " → "/ " (space in path, causes cache issues)
+        # After:  " " → raises InvalidPathError
+        original_path = path
+        path = path.strip() if isinstance(path, str) else path
+
         if not path:
-            raise InvalidPathError("", "Path cannot be empty")
+            raise InvalidPathError(original_path, "Path cannot be empty or whitespace-only")
+
+        # SECURITY FIX: Reject root path "/" for file operations
+        # The root "/" is ambiguous - is it a directory or file?
+        # Use list("/") for directory listings, not read("/") or write("/", ...)
+        if path == "/":
+            raise InvalidPathError(
+                "/",
+                "Root path '/' not allowed for file operations. "
+                "Use list('/') for directory listings.",
+            )
 
         # Ensure path starts with /
         if not path.startswith("/"):
             path = "/" + path
 
-        # Check for invalid characters
-        invalid_chars = ["\0", "\n", "\r"]
+        # SECURITY FIX: Normalize multiple consecutive slashes
+        # Before: "///foo//bar///" → stored as-is (database issues)
+        # After:  "///foo//bar///" → "/foo/bar" (normalized)
+        import re
+
+        path = re.sub(r"/+", "/", path)
+
+        # Remove trailing slash (except for root, but we already rejected that)
+        if path.endswith("/") and len(path) > 1:
+            path = path.rstrip("/")
+
+        # SECURITY FIX: Expanded invalid character list to include tab
+        # Tabs are invisible and cause confusion in logs/debugging
+        invalid_chars = ["\0", "\n", "\r", "\t"]
         for char in invalid_chars:
             if char in path:
                 raise InvalidPathError(path, f"Path contains invalid character: {repr(char)}")
+
+        # SECURITY FIX: Check for leading/trailing whitespace in path components
+        # Prevents paths like "/foo/ bar/baz" where " bar" has leading space
+        # This causes cache collisions and database query issues
+        parts = path.split("/")
+        for part in parts:
+            if part and (part != part.strip()):
+                raise InvalidPathError(
+                    path,
+                    f"Path component '{part}' has leading/trailing whitespace. "
+                    f"Path components must not contain spaces at start/end.",
+                )
 
         # Check for parent directory traversal
         if ".." in path:
@@ -392,48 +486,22 @@ class NexusFS(
             return None
 
     def _inherit_permissions_from_parent(
-        self, path: str, is_directory: bool
+        self, _path: str, _is_directory: bool
     ) -> tuple[str | None, str | None, int | None]:
         """
-        Inherit permissions from parent directory.
+        Inherit permissions from parent directory (DEPRECATED).
+
+        This method is deprecated. UNIX permissions are no longer used.
+        Use ReBAC relationships for permission management.
 
         Args:
-            path: Virtual path of the new file/directory
-            is_directory: Whether the new item is a directory
+            _path: Virtual path of the new file/directory (unused)
+            _is_directory: Whether the new item is a directory (unused)
 
         Returns:
-            Tuple of (owner, group, mode) inherited from parent, or (None, None, None) if no inheritance
+            Always returns (None, None, None)
         """
-        from nexus.core.permissions import FileMode, FilePermissions, PermissionInheritance
-
-        # Get parent path
-        parent_path = self._get_parent_path(path)
-        if parent_path is None:
-            # No parent (root level)
-            return (None, None, None)
-
-        # Get parent metadata
-        parent_meta = self.metadata.get(parent_path)
-        if parent_meta is None or parent_meta.owner is None:
-            # Parent doesn't exist or has no permissions set
-            return (None, None, None)
-
-        # Create FilePermissions from parent metadata
-        try:
-            parent_perms = FilePermissions(
-                owner=parent_meta.owner,
-                group=parent_meta.group or parent_meta.owner,
-                mode=FileMode(parent_meta.mode if parent_meta.mode is not None else 0o755),
-            )
-        except Exception:
-            # Failed to create parent permissions
-            return (None, None, None)
-
-        # Use PermissionInheritance to compute child permissions
-        inheritance = PermissionInheritance()
-        child_perms = inheritance.inherit_from_parent(parent_perms, is_directory)
-
-        return (child_perms.owner, child_perms.group, child_perms.mode.mode)
+        return (None, None, None)
 
     def _check_permission(
         self,
@@ -474,8 +542,9 @@ class NexusFS(
         """
         now = datetime.now(UTC)
 
-        # Inherit permissions from parent directory
-        owner, group, mode = self._inherit_permissions_from_parent(path, is_directory=True)
+        # Note: UNIX permissions (owner/group/mode) are deprecated.
+        # All permissions are now managed through ReBAC relationships.
+        # We no longer inherit or store UNIX permissions in metadata.
 
         # Create a marker for the directory in metadata
         # We use an empty content hash as a placeholder
@@ -491,9 +560,6 @@ class NexusFS(
             created_at=now,
             modified_at=now,
             version=1,
-            owner=owner,
-            group=group,
-            mode=mode or 0o755,  # Default directory mode if no inheritance
         )
 
         self.metadata.put(metadata)
@@ -506,7 +572,7 @@ class NexusFS(
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | None = None,
+        context: OperationContext | EnhancedOperationContext | None = None,
     ) -> None:
         """
         Create a directory.
@@ -515,7 +581,7 @@ class NexusFS(
             path: Virtual path to directory
             parents: Create parent directories if needed (like mkdir -p)
             exist_ok: Don't raise error if directory exists
-            context: Optional operation context for permission checks (uses default if not provided)
+            context: Operation context with user, permissions, tenant info (uses default if None)
 
         Raises:
             FileExistsError: If directory exists and exist_ok=False
@@ -527,18 +593,21 @@ class NexusFS(
         """
         path = self._validate_path(path)
 
-        # Check write permission on parent directory (v0.3.0)
+        # Use provided context or default
+        ctx = context if context is not None else self._default_context
+
+        # Check write permission on parent directory
         # Only check if parent exists (skip permission check for root directory)
         parent_path = self._get_parent_path(path)
         if parent_path and self.metadata.exists(parent_path):
-            self._check_permission(parent_path, Permission.WRITE, context)
+            self._check_permission(parent_path, Permission.WRITE, ctx)  # type: ignore[arg-type]
 
         # Route to backend with write access check (mkdir requires write permission)
         route = self.router.route(
             path,
-            tenant_id=self.tenant_id,
-            agent_id=self.agent_id,
-            is_admin=self.is_admin,
+            tenant_id=ctx.tenant_id,
+            agent_id=ctx.agent_id,
+            is_admin=ctx.is_admin,
             check_write=True,
         )
 
@@ -583,14 +652,54 @@ class NexusFS(
         # Create explicit metadata entry for the directory
         self._create_directory_metadata(path)
 
+        # P0-3: Create parent relationship tuples for directory inheritance
+        # This enables granting access to /workspace to automatically grant access to subdirectories
+        if hasattr(self, "_hierarchy_manager"):
+            try:
+                ctx = context or self._default_context
+                created_count = self._hierarchy_manager.ensure_parent_tuples(
+                    path, tenant_id=ctx.tenant_id
+                )
+                if created_count > 0:
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.debug(f"Created {created_count} parent tuples for {path}")
+            except Exception as e:
+                # Log the error but don't fail the mkdir operation
+                # This helps diagnose issues with parent tuple creation
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
+                )
+                import traceback
+
+                logger.debug(traceback.format_exc())
+
     @rpc_expose(description="Remove directory")
-    def rmdir(self, path: str, recursive: bool = False) -> None:
+    def rmdir(
+        self,
+        path: str,
+        recursive: bool = False,
+        subject: tuple[str, str] | None = None,
+        context: OperationContext | EnhancedOperationContext | None = None,
+        tenant_id: str | None = None,
+        agent_id: str | None = None,
+        is_admin: bool | None = None,
+    ) -> None:
         """
         Remove a directory.
 
         Args:
             path: Virtual path to directory
             recursive: Remove non-empty directory (like rm -rf)
+            subject: Subject performing the operation as (type, id) tuple
+            context: Operation context (DEPRECATED, use subject instead)
+            tenant_id: Legacy tenant ID (DEPRECATED)
+            agent_id: Legacy agent ID (DEPRECATED)
+            is_admin: Admin override flag
 
         Raises:
             OSError: If directory not empty and recursive=False
@@ -604,12 +713,57 @@ class NexusFS(
 
         path = self._validate_path(path)
 
+        # P0 Fixes: Create EnhancedOperationContext
+        from nexus.core.permissions_enhanced import EnhancedOperationContext
+
+        if context is not None:
+            ctx = (
+                context
+                if isinstance(context, EnhancedOperationContext)
+                else EnhancedOperationContext(
+                    user=context.user,
+                    groups=context.groups,
+                    tenant_id=context.tenant_id or tenant_id,
+                    agent_id=context.agent_id or agent_id,
+                    is_admin=context.is_admin if is_admin is None else is_admin,
+                    is_system=context.is_system,
+                    admin_capabilities=set(),
+                )
+            )
+        elif subject is not None:
+            ctx = EnhancedOperationContext(
+                user=subject[1],
+                groups=[],
+                tenant_id=tenant_id,
+                agent_id=agent_id,
+                is_admin=is_admin or False,
+                is_system=False,
+                admin_capabilities=set(),
+            )
+        else:
+            ctx = (
+                self._default_context
+                if isinstance(self._default_context, EnhancedOperationContext)
+                else EnhancedOperationContext(
+                    user=self._default_context.user,
+                    groups=self._default_context.groups,
+                    tenant_id=tenant_id or self._default_context.tenant_id,
+                    agent_id=agent_id or self._default_context.agent_id,
+                    is_admin=(is_admin if is_admin is not None else self._default_context.is_admin),
+                    is_system=self._default_context.is_system,
+                    admin_capabilities=set(),
+                )
+            )
+
+        # Check write permission on directory
+        self._check_permission(path, Permission.WRITE, ctx)  # type: ignore[arg-type]
+
         # Route to backend with write access check (rmdir requires write permission)
         route = self.router.route(
             path,
-            tenant_id=self.tenant_id,
-            agent_id=self.agent_id,
-            is_admin=self.is_admin,
+            tenant_id=ctx.tenant_id,
+            agent_id=ctx.agent_id,
+            is_admin=ctx.is_admin,
             check_write=True,
         )
 
@@ -647,24 +801,44 @@ class NexusFS(
             route.backend.rmdir(route.backend_path, recursive=recursive)
 
     @rpc_expose(description="Check if path is a directory")
-    def is_directory(self, path: str) -> bool:
+    def is_directory(
+        self,
+        path: str,
+        context: OperationContext | EnhancedOperationContext | None = None,
+    ) -> bool:
         """
         Check if path is a directory (explicit or implicit).
 
         Args:
             path: Virtual path to check
+            context: Operation context with user, permissions, tenant info (uses default if None)
 
         Returns:
             True if path is a directory, False otherwise
+
+        Note:
+            This method requires READ permission on the path when enforce_permissions=True.
+            Returns False if path doesn't exist or user lacks permission.
         """
         try:
             path = self._validate_path(path)
+
+            # Use provided context or default
+            ctx = context if context is not None else self._default_context
+
+            # Check read permission
+            # Don't raise exception, just return False if no permission
+            try:
+                self._check_permission(path, Permission.READ, ctx)  # type: ignore[arg-type]
+            except PermissionError:
+                return False
+
             # Route with access control (read permission needed to check)
             route = self.router.route(
                 path,
-                tenant_id=self.tenant_id,
-                agent_id=self.agent_id,
-                is_admin=self.is_admin,
+                tenant_id=ctx.tenant_id,  # v0.6.0: from context
+                agent_id=ctx.agent_id,  # v0.6.0: from context
+                is_admin=ctx.is_admin,  # v0.6.0: from context
                 check_write=False,
             )
             # Check if it's an explicit directory in the backend
@@ -733,8 +907,8 @@ class NexusFS(
                 except NotImplementedError:
                     # Backend doesn't support list_dir - skip
                     pass
-                except Exception:
-                    # Other errors - skip silently (best-effort)
+                except (OSError, PermissionError, TypeError):
+                    # I/O, permission, or type errors - skip silently (best-effort directory listing)
                     pass
             else:
                 # Non-root path - use router
@@ -757,11 +931,11 @@ class NexusFS(
                 except NotImplementedError:
                     # Backend doesn't support list_dir - skip
                     pass
-                except Exception:
-                    # Other errors - skip silently (best-effort)
+                except (OSError, PermissionError, TypeError):
+                    # I/O, permission, or type errors - skip silently (best-effort directory listing)
                     pass
 
-        except Exception:
+        except (ValueError, AttributeError, KeyError):
             # Ignore routing errors - directory detection is best-effort
             pass
 
@@ -903,8 +1077,8 @@ class NexusFS(
 
                                 if custom_meta:
                                     metadata_dict["custom_metadata"] = custom_meta
-                except Exception:
-                    # Ignore errors when fetching custom metadata
+                except (OSError, ValueError, json.JSONDecodeError):
+                    # Ignore errors when fetching custom metadata (DB errors or JSON decode issues)
                     pass
 
                 # Write JSON line
@@ -1313,8 +1487,14 @@ class NexusFS(
         # Validate path
         path = self._validate_path(path)
 
-        # Read file content
-        content = self.read(path)
+        # Read file content with admin bypass for background parsing
+        # Auto-parse is a system operation that should not be subject to user permissions
+        from nexus.core.permissions_enhanced import EnhancedOperationContext
+
+        parse_ctx = EnhancedOperationContext(
+            user="system_parser", groups=[], tenant_id=None, is_admin=True
+        )
+        content = self.read(path, context=parse_ctx)  # type: ignore[arg-type]
 
         # Type narrowing: when return_metadata=False (default), result is bytes
         assert isinstance(content, bytes), "Expected bytes from read()"
@@ -1348,107 +1528,179 @@ class NexusFS(
     @rpc_expose(description="Create workspace snapshot")
     def workspace_snapshot(
         self,
-        agent_id: str | None = None,
+        workspace_path: str | None = None,
+        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         description: str | None = None,
         tags: list[str] | None = None,
+        created_by: str | None = None,
     ) -> dict[str, Any]:
-        """Create a snapshot of the current agent's workspace.
+        """Create a snapshot of a registered workspace.
 
         Args:
-            agent_id: Agent identifier (uses self.agent_id if not provided)
+            workspace_path: Path to registered workspace (e.g., "/my-workspace")
+            agent_id: DEPRECATED - Use workspace_path instead
             description: Human-readable description of snapshot
             tags: List of tags for categorization
+            created_by: User/agent who created the snapshot
 
         Returns:
             Snapshot metadata dict
 
         Raises:
-            ValueError: If agent_id not provided and self.agent_id is None
+            ValueError: If workspace not registered or not provided
             BackendError: If snapshot cannot be created
 
         Example:
-            >>> nx = NexusFS(backend, agent_id="agent1")
-            >>> snapshot = nx.workspace_snapshot(description="Before major refactor")
+            >>> nx = NexusFS(backend)
+            >>> nx.register_workspace("/my-workspace")
+            >>> snapshot = nx.workspace_snapshot("/my-workspace", description="Initial state")
             >>> print(f"Created snapshot #{snapshot['snapshot_number']}")
         """
-        agent_id = agent_id or self.agent_id
-        if not agent_id:
-            raise ValueError("agent_id must be provided or set in NexusFS init")
+        # Backward compatibility: support old agent_id parameter
+        if workspace_path is None and agent_id:
+            import warnings
+
+            warnings.warn(
+                "agent_id parameter is deprecated. Use workspace_path parameter instead. "
+                "Auto-registering workspace for backward compatibility.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            # Auto-construct path from agent_id (simple format, no tenant in path)
+            workspace_path = f"/workspace/{agent_id}"
+
+            # Auto-register if not exists
+            if not self._workspace_registry.get_workspace(workspace_path):
+                self._workspace_registry.register_workspace(
+                    workspace_path,
+                    name=f"auto-{agent_id}",
+                    description=f"Auto-registered workspace for agent {agent_id}",
+                )
+
+        if not workspace_path:
+            raise ValueError("workspace_path must be provided")
+
+        # Verify workspace is registered
+        if not self._workspace_registry.get_workspace(workspace_path):
+            raise ValueError(
+                f"Workspace not registered: {workspace_path}. Use register_workspace() first."
+            )
 
         return self._workspace_manager.create_snapshot(
-            agent_id=agent_id,
-            tenant_id=self.tenant_id,
+            workspace_path=workspace_path,
             description=description,
             tags=tags,
-            created_by=agent_id,
+            created_by=created_by,
+            agent_id=self.agent_id,
+            tenant_id=self.tenant_id,
         )
 
     @rpc_expose(description="Restore workspace snapshot")
     def workspace_restore(
         self,
         snapshot_number: int,
-        agent_id: str | None = None,
+        workspace_path: str | None = None,
+        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
     ) -> dict[str, Any]:
         """Restore workspace to a previous snapshot.
 
         Args:
             snapshot_number: Snapshot version number to restore
-            agent_id: Agent identifier (uses self.agent_id if not provided)
+            workspace_path: Path to registered workspace
+            agent_id: DEPRECATED - Use workspace_path instead
 
         Returns:
             Restore operation result
 
         Raises:
-            ValueError: If agent_id not provided and self.agent_id is None
+            ValueError: If workspace not registered or not provided
             NexusFileNotFoundError: If snapshot not found
 
         Example:
-            >>> nx = NexusFS(backend, agent_id="agent1")
-            >>> result = nx.workspace_restore(snapshot_number=5)
+            >>> nx = NexusFS(backend)
+            >>> result = nx.workspace_restore(5, "/my-workspace")
             >>> print(f"Restored {result['files_restored']} files")
         """
-        agent_id = agent_id or self.agent_id
-        if not agent_id:
-            raise ValueError("agent_id must be provided or set in NexusFS init")
+        # Backward compatibility: support old agent_id parameter
+        if workspace_path is None and agent_id:
+            import warnings
+
+            warnings.warn(
+                "agent_id parameter is deprecated. Use workspace_path parameter instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            workspace_path = f"/workspace/{agent_id}"
+
+        if workspace_path is None and self.agent_id:
+            workspace_path = f"/workspace/{self.agent_id}"
+
+        if not workspace_path:
+            raise ValueError("workspace_path must be provided")
+
+        # Verify workspace is registered
+        if not self._workspace_registry.get_workspace(workspace_path):
+            raise ValueError(f"Workspace not registered: {workspace_path}")
 
         return self._workspace_manager.restore_snapshot(
+            workspace_path=workspace_path,
             snapshot_number=snapshot_number,
-            agent_id=agent_id,
+            agent_id=self.agent_id,
             tenant_id=self.tenant_id,
         )
 
     @rpc_expose(description="List workspace snapshots")
     def workspace_log(
         self,
-        agent_id: str | None = None,
+        workspace_path: str | None = None,
+        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         """List snapshot history for workspace.
 
         Args:
-            agent_id: Agent identifier (uses self.agent_id if not provided)
+            workspace_path: Path to registered workspace
+            agent_id: DEPRECATED - Use workspace_path instead
             limit: Maximum number of snapshots to return
 
         Returns:
             List of snapshot metadata dicts (most recent first)
 
         Raises:
-            ValueError: If agent_id not provided and self.agent_id is None
+            ValueError: If workspace not registered or not provided
 
         Example:
-            >>> nx = NexusFS(backend, agent_id="agent1")
-            >>> snapshots = nx.workspace_log(limit=10)
+            >>> nx = NexusFS(backend)
+            >>> snapshots = nx.workspace_log("/my-workspace", limit=10)
             >>> for snap in snapshots:
             >>>     print(f"#{snap['snapshot_number']}: {snap['description']}")
         """
-        agent_id = agent_id or self.agent_id
-        if not agent_id:
-            raise ValueError("agent_id must be provided or set in NexusFS init")
+        # Backward compatibility: support old agent_id parameter
+        if workspace_path is None and agent_id:
+            import warnings
+
+            warnings.warn(
+                "agent_id parameter is deprecated. Use workspace_path parameter instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            workspace_path = f"/workspace/{agent_id}"
+
+        if workspace_path is None and self.agent_id:
+            workspace_path = f"/workspace/{self.agent_id}"
+
+        if not workspace_path:
+            raise ValueError("workspace_path must be provided")
+
+        # Verify workspace is registered
+        if not self._workspace_registry.get_workspace(workspace_path):
+            raise ValueError(f"Workspace not registered: {workspace_path}")
 
         return self._workspace_manager.list_snapshots(
-            agent_id=agent_id,
-            tenant_id=self.tenant_id,
+            workspace_path=workspace_path,
             limit=limit,
+            agent_id=self.agent_id,
+            tenant_id=self.tenant_id,
         )
 
     @rpc_expose(description="Compare workspace snapshots")
@@ -1456,36 +1708,58 @@ class NexusFS(
         self,
         snapshot_1: int,
         snapshot_2: int,
-        agent_id: str | None = None,
+        workspace_path: str | None = None,
+        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
     ) -> dict[str, Any]:
         """Compare two workspace snapshots.
 
         Args:
             snapshot_1: First snapshot number
             snapshot_2: Second snapshot number
-            agent_id: Agent identifier (uses self.agent_id if not provided)
+            workspace_path: Path to registered workspace
+            agent_id: DEPRECATED - Use workspace_path instead
 
         Returns:
             Diff dict with added, removed, modified files
 
         Raises:
-            ValueError: If agent_id not provided and self.agent_id is None
+            ValueError: If workspace_path not provided
             NexusFileNotFoundError: If either snapshot not found
 
         Example:
-            >>> nx = NexusFS(backend, agent_id="agent1")
-            >>> diff = nx.workspace_diff(snapshot_1=5, snapshot_2=10)
+            >>> nx = NexusFS(backend)
+            >>> diff = nx.workspace_diff(snapshot_1=5, snapshot_2=10, workspace_path="/my-workspace")
             >>> print(f"Added: {len(diff['added'])}, Modified: {len(diff['modified'])}")
         """
-        agent_id = agent_id or self.agent_id
-        if not agent_id:
-            raise ValueError("agent_id must be provided or set in NexusFS init")
+        # Backward compatibility: support old agent_id parameter
+        if workspace_path is None and agent_id:
+            import warnings
+
+            warnings.warn(
+                "agent_id parameter is deprecated. Use workspace_path parameter instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            workspace_path = f"/workspace/{agent_id}"
+
+        if workspace_path is None and self.agent_id:
+            workspace_path = f"/workspace/{self.agent_id}"
+
+        if not workspace_path:
+            raise ValueError("workspace_path must be provided")
+
+        # Verify workspace is registered
+        if not self._workspace_registry.get_workspace(workspace_path):
+            raise ValueError(
+                f"Workspace not registered: {workspace_path}. Use register_workspace() first."
+            )
 
         # Get snapshot IDs from numbers
         snapshots = self._workspace_manager.list_snapshots(
-            agent_id=agent_id,
-            tenant_id=self.tenant_id,
+            workspace_path=workspace_path,
             limit=1000,
+            agent_id=self.agent_id,
+            tenant_id=self.tenant_id,
         )
 
         snap_1_id = None
@@ -1507,7 +1781,288 @@ class NexusFS(
                 message=f"Snapshot #{snapshot_2} not found",
             )
 
-        return self._workspace_manager.diff_snapshots(snap_1_id, snap_2_id)
+        return self._workspace_manager.diff_snapshots(
+            snap_1_id,
+            snap_2_id,
+            agent_id=self.agent_id,
+            tenant_id=self.tenant_id,
+        )
+
+    # ===== Workspace Registry Management =====
+
+    @rpc_expose()
+    def load_workspace_memory_config(
+        self,
+        workspaces: list[dict] | None = None,
+        memories: list[dict] | None = None,
+    ) -> dict[str, Any]:
+        """Load workspaces and memories from configuration.
+
+        Args:
+            workspaces: List of workspace config dicts with keys:
+                - path (required): Workspace path
+                - name (optional): Friendly name
+                - description (optional): Description
+                - created_by (optional): Creator
+                - metadata (optional): Additional metadata dict
+            memories: List of memory config dicts (same format as workspaces)
+
+        Returns:
+            Dict with registration results:
+                - workspaces_registered: Number of workspaces registered
+                - memories_registered: Number of memories registered
+                - workspaces_skipped: Number already registered
+                - memories_skipped: Number already registered
+
+        Example YAML:
+            workspaces:
+              - path: /my-workspace
+                name: main
+                description: My main workspace
+              - path: /team/project
+                name: team-project
+
+            memories:
+              - path: /my-memory
+                name: knowledge-base
+        """
+        results = {
+            "workspaces_registered": 0,
+            "workspaces_skipped": 0,
+            "memories_registered": 0,
+            "memories_skipped": 0,
+        }
+
+        # Load workspaces
+        if workspaces:
+            for ws_config in workspaces:
+                path = ws_config.get("path")
+                if not path:
+                    continue
+
+                # Skip if already registered
+                if self._workspace_registry.get_workspace(path):
+                    results["workspaces_skipped"] += 1
+                    continue
+
+                # Register workspace
+                self._workspace_registry.register_workspace(
+                    path=path,
+                    name=ws_config.get("name"),
+                    description=ws_config.get("description", ""),
+                    created_by=ws_config.get("created_by"),
+                    metadata=ws_config.get("metadata"),
+                )
+                results["workspaces_registered"] += 1
+
+        # Load memories
+        if memories:
+            for mem_config in memories:
+                path = mem_config.get("path")
+                if not path:
+                    continue
+
+                # Skip if already registered
+                if self._workspace_registry.get_memory(path):
+                    results["memories_skipped"] += 1
+                    continue
+
+                # Register memory
+                self._workspace_registry.register_memory(
+                    path=path,
+                    name=mem_config.get("name"),
+                    description=mem_config.get("description", ""),
+                    created_by=mem_config.get("created_by"),
+                    metadata=mem_config.get("metadata"),
+                )
+                results["memories_registered"] += 1
+
+        return results
+
+    @rpc_expose()
+    def register_workspace(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        created_by: str | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Register a directory as a workspace.
+
+        Args:
+            path: Absolute path to workspace directory (e.g., "/my-workspace")
+            name: Optional friendly name for the workspace
+            description: Human-readable description
+            created_by: User/agent who created it (for audit)
+            tags: Tags for categorization (reserved for future use)
+            metadata: Additional user-defined metadata
+
+        Returns:
+            Workspace configuration dict
+
+        Raises:
+            ValueError: If path already registered as workspace
+
+        Example:
+            >>> nx = NexusFS(backend)
+            >>> nx.register_workspace("/my-workspace", name="main", description="My main workspace")
+            >>> nx.workspace_snapshot("/my-workspace", description="Initial state")
+        """
+        # tags parameter reserved for future use
+        _ = tags
+
+        config = self._workspace_registry.register_workspace(
+            path=path,
+            name=name,
+            description=description or "",
+            created_by=created_by,
+            metadata=metadata,
+        )
+        return config.to_dict()
+
+    @rpc_expose()
+    def unregister_workspace(self, path: str) -> bool:
+        """Unregister a workspace (does NOT delete files).
+
+        Args:
+            path: Workspace path to unregister
+
+        Returns:
+            True if unregistered, False if not found
+
+        Example:
+            >>> nx.unregister_workspace("/my-workspace")
+            True
+        """
+        return self._workspace_registry.unregister_workspace(path)
+
+    @rpc_expose()
+    def list_workspaces(self) -> list[dict]:
+        """List all registered workspaces.
+
+        Returns:
+            List of workspace configuration dicts
+
+        Example:
+            >>> workspaces = nx.list_workspaces()
+            >>> for ws in workspaces:
+            ...     print(f"{ws['path']}: {ws['name']}")
+        """
+        configs = self._workspace_registry.list_workspaces()
+        return [c.to_dict() for c in configs]
+
+    @rpc_expose()
+    def get_workspace_info(self, path: str) -> dict | None:
+        """Get information about a registered workspace.
+
+        Args:
+            path: Workspace path
+
+        Returns:
+            Workspace configuration dict or None if not found
+
+        Example:
+            >>> info = nx.get_workspace_info("/my-workspace")
+            >>> if info:
+            ...     print(f"Workspace: {info['name']}")
+        """
+        config = self._workspace_registry.get_workspace(path)
+        return config.to_dict() if config else None
+
+    # ===== Memory Registry Management =====
+
+    @rpc_expose()
+    def register_memory(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        created_by: str | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Register a directory as a memory.
+
+        Args:
+            path: Absolute path to memory directory (e.g., "/my-memory")
+            name: Optional friendly name for the memory
+            description: Human-readable description
+            created_by: User/agent who created it (for audit)
+            tags: Tags for categorization (reserved for future use)
+            metadata: Additional user-defined metadata
+
+        Returns:
+            Memory configuration dict
+
+        Raises:
+            ValueError: If path already registered as memory
+
+        Example:
+            >>> nx = NexusFS(backend)
+            >>> nx.register_memory("/my-memory", name="kb", description="Knowledge base")
+        """
+        # tags parameter reserved for future use
+        _ = tags
+
+        config = self._workspace_registry.register_memory(
+            path=path,
+            name=name,
+            description=description or "",
+            created_by=created_by,
+            metadata=metadata,
+        )
+        return config.to_dict()
+
+    @rpc_expose()
+    def unregister_memory(self, path: str) -> bool:
+        """Unregister a memory (does NOT delete files).
+
+        Args:
+            path: Memory path to unregister
+
+        Returns:
+            True if unregistered, False if not found
+
+        Example:
+            >>> nx.unregister_memory("/my-memory")
+            True
+        """
+        return self._workspace_registry.unregister_memory(path)
+
+    @rpc_expose()
+    def list_memories(self) -> list[dict]:
+        """List all registered memories.
+
+        Returns:
+            List of memory configuration dicts
+
+        Example:
+            >>> memories = nx.list_memories()
+            >>> for mem in memories:
+            ...     print(f"{mem['path']}: {mem['name']}")
+        """
+        configs = self._workspace_registry.list_memories()
+        return [c.to_dict() for c in configs]
+
+    @rpc_expose()
+    def get_memory_info(self, path: str) -> dict | None:
+        """Get information about a registered memory.
+
+        Args:
+            path: Memory path
+
+        Returns:
+            Memory configuration dict or None if not found
+
+        Example:
+            >>> info = nx.get_memory_info("/my-memory")
+            >>> if info:
+            ...     print(f"Memory: {info['name']}")
+        """
+        config = self._workspace_registry.get_memory(path)
+        return config.to_dict() if config else None
 
     def close(self) -> None:
         """Close the filesystem and release resources."""
@@ -1527,3 +2082,7 @@ class NexusFS(
         # Close ReBACManager to release database connection
         if hasattr(self, "_rebac_manager"):
             self._rebac_manager.close()
+
+        # Close AuditStore to release database connection
+        if hasattr(self, "_audit_store"):
+            self._audit_store.close()

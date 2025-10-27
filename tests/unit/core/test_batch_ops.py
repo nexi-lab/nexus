@@ -8,14 +8,32 @@ from nexus.core.nexus_fs import NexusFS
 
 @pytest.fixture
 def nx(tmp_path):
-    """Create NexusFS instance for testing."""
+    """Create NexusFS instance for testing with isolated database.
+
+    Each test gets a fresh, isolated database to prevent test pollution.
+    (Environment variable isolation is handled by the global conftest fixture)
+    """
+    # Use unique path for this specific test to ensure complete isolation
+    import uuid
+
+    unique_id = str(uuid.uuid4())[:8]
+    data_dir = tmp_path / f"data_{unique_id}"
+    db_path = data_dir / "metadata.db"
+
     fs = NexusFS(
-        backend=LocalBackend(tmp_path / "data"),
-        db_path=tmp_path / "data" / "metadata.db",
+        backend=LocalBackend(data_dir),
+        db_path=db_path,
         auto_parse=False,
+        enforce_permissions=False,  # Disable permissions for basic functionality tests
     )
     yield fs
+
+    # Clean up
     fs.close()
+
+    # Explicitly remove database file to prevent any leakage
+    if db_path.exists():
+        db_path.unlink()
 
 
 def test_write_batch_basic(nx):
@@ -137,8 +155,8 @@ def test_write_batch_mixed_new_and_update(nx):
 
 
 def test_write_batch_permissions_preserved(nx):
-    """Test that batch write preserves permissions for existing files."""
-    # Create file with specific permissions
+    """Test that batch write preserves metadata for existing files."""
+    # Create file
     nx.write("/test/file.txt", b"content")
     meta1 = nx.metadata.get("/test/file.txt")
 
@@ -146,11 +164,14 @@ def test_write_batch_permissions_preserved(nx):
     files = [("/test/file.txt", b"updated content")]
     nx.write_batch(files)
 
-    # Verify permissions preserved
+    # Verify metadata fields are preserved/updated correctly
     meta2 = nx.metadata.get("/test/file.txt")
-    assert meta2.owner == meta1.owner
-    assert meta2.group == meta1.group
-    assert meta2.mode == meta1.mode
+    assert meta2.path == meta1.path
+    assert meta2.backend_name == meta1.backend_name
+    # Content changed, so etag should be different
+    assert meta2.etag != meta1.etag
+    # Version should increment
+    assert meta2.version == meta1.version + 1
 
 
 def test_write_batch_atomic(nx):

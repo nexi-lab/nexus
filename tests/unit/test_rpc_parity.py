@@ -297,7 +297,7 @@ def test_list_all_exposed_methods():
         "File Operations": ["read", "write", "delete", "rename", "exists"],
         "Directory Operations": ["mkdir", "rmdir", "is_directory"],
         "Search/Query": ["list", "glob", "grep"],
-        "Permissions": ["chmod", "chown", "chgrp", "getfacl", "setfacl"],
+        "Permissions (ReBAC)": ["rebac_create", "rebac_check", "rebac_delete", "rebac_expand"],
         "Versions": ["get_version", "list_versions", "rollback", "diff_versions"],
         "Workspace": ["workspace_snapshot", "workspace_restore", "workspace_log", "workspace_diff"],
         "Batch/Import/Export": [

@@ -394,7 +394,7 @@ nexus write /docs/presentation.pptx --input slides.pptx
 nexus grep "TODO"
 ```
 
-**✅ Config-Based Custom Parsers (v0.2.0)**
+**✅ Config-Based Custom Parsers**
 
 You can now register custom parsers via configuration - **no code needed**!
 
@@ -1314,7 +1314,7 @@ def supported_formats(self) -> list[str]:
     """
     Supported formats:
     - .custom: Custom text format
-    - .cst: Custom binary format (v2.0+)
+    - .cst: Custom binary format
     """
     return ['.custom', '.cst']
 ```
@@ -1356,7 +1356,7 @@ print(f'Selected parser: {parser.name}')
 **Problem**: Files uploaded but `parsed_text` not in metadata.
 
 **Solution**:
-1. Check `auto_parse=True` (default in v0.2.0)
+1. Check `auto_parse=True`
 2. Wait longer for background parsing (increase sleep time)
 3. Check for errors in logs
 4. Try explicit parse to see error

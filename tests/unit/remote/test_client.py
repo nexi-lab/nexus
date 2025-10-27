@@ -186,7 +186,12 @@ class TestRemoteNexusFSIntegration:
 
         # Create filesystem
         data_dir = tmp_path / "server-data"
-        nx = nexus.connect(config={"data_dir": str(data_dir)})
+        nx = nexus.connect(
+            config={
+                "data_dir": str(data_dir),
+                "enforce_permissions": False,  # Disable permissions for testing
+            }
+        )
         nx.mkdir("/test", exist_ok=True)
         nx.write("/test/file.txt", b"test content")
 

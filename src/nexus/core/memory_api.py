@@ -49,9 +49,20 @@ class Memory:
         # Initialize components
         self.entity_registry = entity_registry or EntityRegistry(session)
         self.memory_router = MemoryViewRouter(session, self.entity_registry)
+
+        # Initialize ReBAC manager for permission checks
+        from sqlalchemy import Engine
+
+        from nexus.core.rebac_manager import ReBACManager
+
+        bind = session.get_bind()
+        assert isinstance(bind, Engine), "Expected Engine, got Connection"
+        self.rebac_manager = ReBACManager(bind)
+
         self.permission_enforcer = MemoryPermissionEnforcer(
             memory_router=self.memory_router,
             entity_registry=self.entity_registry,
+            rebac_manager=self.rebac_manager,  # type: ignore[arg-type]
         )
 
         # Create operation context
@@ -157,22 +168,29 @@ class Memory:
             limit=limit,
         )
 
-        # Filter by permissions and enrich with content
-        results = []
+        # Filter by permissions first (before fetching content)
+        accessible_memories = []
         for memory in memories:
             # Check read permission
-            if not self.permission_enforcer.check_memory(memory, Permission.READ, self.context):
-                continue
+            if self.permission_enforcer.check_memory(memory, Permission.READ, self.context):
+                accessible_memories.append(memory)
 
-            # Read content from CAS
-            content = None
-            try:
-                content_bytes = self.backend.read_content(memory.content_hash)
+        # Batch read all content hashes (optimization: single operation instead of N queries)
+        content_hashes = [memory.content_hash for memory in accessible_memories]
+        content_map = self.backend.batch_read_content(content_hashes)
+
+        # Build results with enriched content
+        results = []
+        for memory in accessible_memories:
+            # Get content from batch read result
+            content_bytes = content_map.get(memory.content_hash)
+
+            if content_bytes is not None:
                 try:
                     content = content_bytes.decode("utf-8")
                 except UnicodeDecodeError:
                     content = content_bytes.hex()  # Binary content
-            except Exception:
+            else:
                 content = f"<content not available: {memory.content_hash}>"
 
             results.append(

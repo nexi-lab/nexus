@@ -39,6 +39,9 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+# Wildcard subject for public access
+WILDCARD_SUBJECT = ("*", "*")
+
 
 class RelationType(str, Enum):
     """Standard relationship types in ReBAC."""
@@ -52,9 +55,18 @@ class RelationType(str, Enum):
 
 
 class EntityType(str, Enum):
-    """Types of entities in ReBAC system."""
+    """Types of entities in ReBAC system.
+
+    Note: These are predefined constants for common entity types.
+    The Entity dataclass accepts any string for entity_type to allow flexibility.
+
+    Usage:
+    - EntityRegistry: Enforces strict types (tenant, user, agent) for identity hierarchy
+    - ReBAC: Accepts any string, including these predefined types for permission tuples
+    """
 
     AGENT = "agent"
+    USER = "user"
     GROUP = "group"
     FILE = "file"
     WORKSPACE = "workspace"
@@ -265,6 +277,119 @@ class NamespaceConfig:
             return dict(ttu) if isinstance(ttu, dict) else None
         return None
 
+    def get_permission_usersets(self, permission: str) -> list[str]:
+        """Get the list of usersets (relations) that grant a permission.
+
+        P0-1: Explicit permission-to-userset mapping for Zanzibar-style semantics.
+
+        Permissions can be defined as:
+        1. Simple list: "read": ["viewer", "editor", "owner"]
+        2. Union: "read": {"union": ["viewer", "editor", "owner"]}
+        3. Intersection: "read": {"intersection": ["viewer", "not_denied"]}
+        4. Exclusion: "read": {"exclusion": "denied"}
+
+        Args:
+            permission: Permission name (e.g., "read", "write", "execute")
+
+        Returns:
+            List of relation names that grant this permission.
+            Empty list if permission not defined (fail-safe: deny by default).
+            For complex operators (union/intersection/exclusion), returns the flattened list.
+
+        Example:
+            >>> ns.get_permission_usersets("read")
+            ["viewer", "editor", "owner"]
+        """
+        permissions_config = self.config.get("permissions", {})
+        perm_def = permissions_config.get(permission, [])
+
+        # Case 1: Simple list
+        if isinstance(perm_def, list):
+            return list(perm_def)
+
+        # Case 2: Dict with operators (union, intersection, exclusion)
+        if isinstance(perm_def, dict):
+            # Try union first (most common)
+            if "union" in perm_def:
+                union_list = perm_def["union"]
+                return list(union_list) if isinstance(union_list, list) else []
+            # Try intersection
+            if "intersection" in perm_def:
+                intersection_list = perm_def["intersection"]
+                return list(intersection_list) if isinstance(intersection_list, list) else []
+            # Try exclusion (returns single item)
+            if "exclusion" in perm_def:
+                exclusion = perm_def["exclusion"]
+                return [exclusion] if isinstance(exclusion, str) else []
+
+        return []
+
+    def has_permission(self, permission: str) -> bool:
+        """Check if a permission is defined in this namespace.
+
+        Args:
+            permission: Permission name
+
+        Returns:
+            True if permission is defined
+        """
+        permissions_config = self.config.get("permissions", {})
+        return permission in permissions_config
+
+    def has_intersection(self, relation: str) -> bool:
+        """Check if relation is defined as an intersection (AND logic).
+
+        Args:
+            relation: Relation name
+
+        Returns:
+            True if relation uses intersection
+        """
+        rel_config = self.get_relation_config(relation)
+        return rel_config is not None and "intersection" in rel_config
+
+    def get_intersection_relations(self, relation: str) -> list[str]:
+        """Get the list of relations in an intersection.
+
+        Args:
+            relation: Relation name
+
+        Returns:
+            List of relations that must all be true (AND logic)
+        """
+        rel_config = self.get_relation_config(relation)
+        if rel_config and "intersection" in rel_config:
+            intersection_list = rel_config["intersection"]
+            return list(intersection_list) if isinstance(intersection_list, list) else []
+        return []
+
+    def has_exclusion(self, relation: str) -> bool:
+        """Check if relation is defined as an exclusion (NOT logic).
+
+        Args:
+            relation: Relation name
+
+        Returns:
+            True if relation uses exclusion
+        """
+        rel_config = self.get_relation_config(relation)
+        return rel_config is not None and "exclusion" in rel_config
+
+    def get_exclusion_relation(self, relation: str) -> str | None:
+        """Get the relation to exclude (NOT logic).
+
+        Args:
+            relation: Relation name
+
+        Returns:
+            Relation name to exclude, or None
+        """
+        rel_config = self.get_relation_config(relation)
+        if rel_config and "exclusion" in rel_config:
+            exclusion = rel_config["exclusion"]
+            return str(exclusion) if isinstance(exclusion, str) else None
+        return None
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -421,19 +546,39 @@ DEFAULT_FILE_NAMESPACE = NamespaceConfig(
     object_type="file",
     config={
         "relations": {
-            # Owner has full permissions
-            "owner": {"union": ["direct_owner", "parent_owner"]},
-            # Direct ownership
+            # Structural relation: parent directory
+            "parent": {},
+            # Direct relations (granted explicitly)
             "direct_owner": {},
-            # Inherited from parent (e.g., folder owner)
-            "parent_owner": {"tupleToUserset": {"tupleset": "parent", "computedUserset": "owner"}},
-            # Viewer can read
-            "viewer": {"union": ["owner", "direct_viewer"]},
-            "direct_viewer": {},
-            # Editor can read and write
-            "editor": {"union": ["owner", "direct_editor"]},
             "direct_editor": {},
-        }
+            "direct_viewer": {},
+            # Parent inheritance via tupleToUserset
+            "parent_owner": {"tupleToUserset": {"tupleset": "parent", "computedUserset": "owner"}},
+            "parent_editor": {
+                "tupleToUserset": {"tupleset": "parent", "computedUserset": "editor"}
+            },
+            "parent_viewer": {
+                "tupleToUserset": {"tupleset": "parent", "computedUserset": "viewer"}
+            },
+            # Computed relations (union of direct + parent inheritance)
+            "owner": {"union": ["direct_owner", "parent_owner"]},
+            "editor": {"union": ["direct_editor", "parent_editor", "owner"]},
+            # FIX: viewer should NOT include editor to prevent circular dependency
+            # The "read" permission explicitly lists [viewer, editor, owner], so having
+            # editor grants read access. Including editor in viewer causes recursion issues.
+            "viewer": {"union": ["direct_viewer", "parent_viewer"]},
+        },
+        # P0-1: Explicit permission-to-userset mapping (Zanzibar-style)
+        # Prevents ambiguous check("write") bugs by defining exact semantics
+        "permissions": {
+            "read": [
+                "viewer",
+                "editor",
+                "owner",
+            ],  # Read = viewer OR editor OR owner (explicit for inheritance)
+            "write": ["editor", "owner"],  # Write = editor OR owner
+            "execute": ["owner"],  # Execute = owner only
+        },
     },
 )
 
@@ -448,6 +593,31 @@ DEFAULT_GROUP_NAMESPACE = NamespaceConfig(
             "admin": {},
             # Viewer can see group members
             "viewer": {"union": ["admin", "member"]},
-        }
+        },
+        # P0-1: Explicit permission-to-userset mapping
+        "permissions": {
+            "read": ["viewer", "member", "admin"],  # Read = can view group
+            "write": ["admin"],  # Write = admin only
+            "manage": ["admin"],  # Manage = admin only
+        },
+    },
+)
+
+DEFAULT_MEMORY_NAMESPACE = NamespaceConfig(
+    namespace_id=str(uuid.uuid4()),
+    object_type="memory",
+    config={
+        "relations": {
+            # Direct relations (granted explicitly)
+            "owner": {},
+            "editor": {},
+            "viewer": {},
+        },
+        # P0-1: Explicit permission-to-userset mapping
+        "permissions": {
+            "read": ["viewer", "editor", "owner"],  # Read = viewer OR editor OR owner
+            "write": ["editor", "owner"],  # Write = editor OR owner
+            "execute": ["owner"],  # Execute = owner only
+        },
     },
 )

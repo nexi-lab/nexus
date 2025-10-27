@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import builtins
 import difflib
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.core.permissions import Permission
@@ -19,6 +19,7 @@ from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
+    from nexus.core.permissions_enhanced import EnhancedOperationContext
     from nexus.core.router import PathRouter
     from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
@@ -40,7 +41,12 @@ class NexusFSVersionsMixin:
         ) -> None: ...
 
     @rpc_expose(description="Get specific file version")
-    def get_version(self, path: str, version: int) -> bytes:
+    def get_version(
+        self,
+        path: str,
+        version: int,
+        context: OperationContext | EnhancedOperationContext | None = None,
+    ) -> bytes:
         """Get a specific version of a file.
 
         Retrieves the content for a specific version from CAS using the
@@ -49,6 +55,7 @@ class NexusFSVersionsMixin:
         Args:
             path: Virtual file path
             version: Version number to retrieve
+            context: Operation context for permission checks (uses default if None)
 
         Returns:
             File content as bytes for the specified version
@@ -56,12 +63,23 @@ class NexusFSVersionsMixin:
         Raises:
             NexusFileNotFoundError: If file or version doesn't exist
             InvalidPathError: If path is invalid
+            PermissionError: If user doesn't have READ permission
 
         Example:
-            >>> # Get version 2 of a file
+            >>> # Get a specific version of a file
             >>> content_v2 = nx.get_version("/workspace/data.txt", version=2)
+            >>>
+            >>> # Get version with specific context
+            >>> ctx = OperationContext(user="alice", groups=[])
+            >>> content = nx.get_version("/workspace/file.txt", 5, context=ctx)
         """
         path = self._validate_path(path)
+
+        # Use provided context or default
+        ctx = context if context is not None else self._default_context  # type: ignore[attr-defined]
+
+        # Check READ permission (cast to satisfy type checker)
+        self._check_permission(path, Permission.READ, cast("OperationContext | None", ctx))
 
         # Get version metadata
         version_meta = self.metadata.get_version(path, version)
@@ -75,9 +93,9 @@ class NexusFSVersionsMixin:
         # Read content from CAS using the version's content hash
         route = self.router.route(
             path,
-            tenant_id=self.tenant_id,
-            agent_id=self.agent_id,
-            is_admin=self.is_admin,
+            tenant_id=ctx.tenant_id,
+            agent_id=ctx.agent_id,
+            is_admin=ctx.is_admin,
             check_write=False,
         )
 
@@ -85,26 +103,43 @@ class NexusFSVersionsMixin:
         return content
 
     @rpc_expose(description="List file versions")
-    def list_versions(self, path: str) -> builtins.list[dict[str, Any]]:
+    def list_versions(
+        self,
+        path: str,
+        context: OperationContext | EnhancedOperationContext | None = None,
+    ) -> builtins.list[dict[str, Any]]:
         """List all versions of a file.
 
         Returns version history with metadata for each version.
 
         Args:
             path: Virtual file path
+            context: Operation context for permission checks (uses default if None)
 
         Returns:
             List of version info dicts ordered by version number (newest first)
 
         Raises:
             InvalidPathError: If path is invalid
+            PermissionError: If user doesn't have READ permission
 
         Example:
             >>> versions = nx.list_versions("/workspace/SKILL.md")
             >>> for v in versions:
             ...     print(f"v{v['version']}: {v['size']} bytes, {v['created_at']}")
+            >>>
+            >>> # List versions with specific context
+            >>> ctx = OperationContext(user="alice", groups=[])
+            >>> versions = nx.list_versions("/workspace/file.txt", context=ctx)
         """
         path = self._validate_path(path)
+
+        # Use provided context or default
+        ctx = context if context is not None else self._default_context  # type: ignore[attr-defined]
+
+        # Check READ permission (cast to satisfy type checker)
+        self._check_permission(path, Permission.READ, cast("OperationContext | None", ctx))
+
         return self.metadata.list_versions(path)
 
     @rpc_expose(description="Rollback file to previous version")
@@ -125,7 +160,7 @@ class NexusFSVersionsMixin:
             PermissionError: If user doesn't have write permission
 
         Example:
-            >>> # Rollback to version 2
+            >>> # Rollback to a specific version
             >>> nx.rollback("/workspace/data.txt", version=2)
         """
         path = self._validate_path(path)
@@ -155,7 +190,12 @@ class NexusFSVersionsMixin:
 
     @rpc_expose(description="Compare file versions")
     def diff_versions(
-        self, path: str, v1: int, v2: int, mode: str = "metadata"
+        self,
+        path: str,
+        v1: int,
+        v2: int,
+        mode: str = "metadata",
+        context: OperationContext | EnhancedOperationContext | None = None,
     ) -> dict[str, Any] | str:
         """Compare two versions of a file.
 
@@ -164,6 +204,7 @@ class NexusFSVersionsMixin:
             v1: First version number
             v2: Second version number
             mode: Diff mode - "metadata" (default) or "content"
+            context: Operation context for permission checks (uses default if None)
 
         Returns:
             For "metadata" mode: Dict with metadata differences
@@ -173,6 +214,7 @@ class NexusFSVersionsMixin:
             NexusFileNotFoundError: If file or version doesn't exist
             InvalidPathError: If path is invalid
             ValueError: If mode is invalid
+            PermissionError: If user doesn't have READ permission
 
         Examples:
             >>> # Get metadata diff
@@ -182,8 +224,18 @@ class NexusFSVersionsMixin:
             >>> # Get content diff
             >>> diff_text = nx.diff_versions("/workspace/file.txt", v1=1, v2=3, mode="content")
             >>> print(diff_text)
+            >>>
+            >>> # Diff with specific context
+            >>> ctx = OperationContext(user="alice", groups=[])
+            >>> diff = nx.diff_versions("/workspace/file.txt", 1, 3, context=ctx)
         """
         path = self._validate_path(path)
+
+        # Use provided context or default
+        ctx = context if context is not None else self._default_context  # type: ignore[attr-defined]
+
+        # Check READ permission (cast to satisfy type checker)
+        self._check_permission(path, Permission.READ, cast("OperationContext | None", ctx))
 
         if mode not in ("metadata", "content"):
             raise ValueError(f"Invalid mode: {mode}. Must be 'metadata' or 'content'")

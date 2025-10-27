@@ -13,6 +13,7 @@ import nexus
 from nexus.cli.utils import (
     BackendConfig,
     add_backend_options,
+    add_context_options,
     console,
     get_filesystem,
     handle_error,
@@ -85,11 +86,13 @@ def init(path: str) -> None:
     help="Read file content at a historical operation point (time-travel debugging)",
 )
 @add_backend_options
+@add_context_options
 def cat(
     path: str,
     metadata: bool,
     at_operation: str | None,
     backend_config: BackendConfig,
+    operation_context: dict[str, Any],
 ) -> None:
     """Display file contents.
 
@@ -156,7 +159,7 @@ def cat(
             content = state["content"]
         elif metadata:
             # Read with metadata for OCC
-            data = nx.read(path, return_metadata=True)
+            data = nx.read(path, return_metadata=True, **operation_context)
             nx.close()
 
             # Type narrowing: when return_metadata=True, result is always dict
@@ -173,9 +176,40 @@ def cat(
             console.print("[bold]Content:[/bold]")
             content = data["content"]
         else:
-            # Read normally
-            content = nx.read(path)
-            nx.close()
+            # Check file size to decide between read() and stream()
+            # Stream large files (>10MB) to avoid memory exhaustion
+            STREAM_THRESHOLD = 10 * 1024 * 1024  # 10MB
+            file_size = 0
+
+            # Try to get file size for local filesystems
+            if hasattr(nx, "metadata"):
+                try:
+                    meta = nx.metadata.get(path)
+                    file_size = meta.size if meta else 0
+                except Exception:
+                    # Fall back to reading without size check
+                    file_size = 0
+
+            if file_size > STREAM_THRESHOLD:
+                # Stream large file in chunks (memory-efficient)
+                import sys
+
+                console.print(f"[dim]Streaming large file ({file_size:,} bytes)...[/dim]")
+                try:
+                    for chunk in nx.stream(  # type: ignore[attr-defined]
+                        path, chunk_size=65536, **operation_context
+                    ):  # 64KB chunks
+                        sys.stdout.buffer.write(chunk)
+                    sys.stdout.buffer.flush()
+                    nx.close()
+                    return
+                except Exception as e:
+                    nx.close()
+                    raise e
+            else:
+                # Read normally for small files
+                content = nx.read(path, **operation_context)
+                nx.close()
 
         # Try to detect file type for syntax highlighting
         try:
@@ -225,6 +259,7 @@ def cat(
     help="Show metadata (etag, version) after writing",
 )
 @add_backend_options
+@add_context_options
 def write(
     path: str,
     content: str | None,
@@ -234,6 +269,7 @@ def write(
     force: bool,
     show_metadata: bool,
     backend_config: BackendConfig,
+    operation_context: dict[str, Any],
 ) -> None:
     """Write content to a file with optional optimistic concurrency control.
 
@@ -271,9 +307,14 @@ def write(
             console.print("[red]Error:[/red] Must provide content or use --input")
             sys.exit(1)
 
-        # Write with OCC parameters
+        # Write with OCC parameters and context
         result = nx.write(
-            path, file_content, if_match=if_match, if_none_match=if_none_match, force=force
+            path,
+            file_content,
+            if_match=if_match,
+            if_none_match=if_none_match,
+            force=force,
+            **operation_context,  # Pass subject, tenant_id, etc.
         )
         nx.close()
 

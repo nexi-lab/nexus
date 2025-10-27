@@ -235,7 +235,7 @@ PYTHONPATH=src python -m pytest tests/unit/storage/
    - Use transactions where supported
    - Keep migrations reversible (implement `downgrade()`)
 
-## Future Enhancements (v0.2.0+)
+## Future Enhancements
 
 - [ ] Automatic database type detection
 - [ ] Connection pool configuration via config file

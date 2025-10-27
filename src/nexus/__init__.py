@@ -25,14 +25,14 @@ For command-line usage, use the nexus CLI:
     $ nexus ls /workspace
     $ nexus write /file.txt "content"
 
-Legacy Import (for backward compatibility):
--------------------------------------------
+Backward Compatibility:
+-----------------------
     import nexus
 
     nx = nexus.connect()  # Still works, but prefer nexus.sdk.connect()
 
-The main nexus module re-exports core functionality for backward compatibility,
-but new projects should use nexus.sdk for a cleaner, more stable API.
+The main nexus module re-exports core functionality for backward compatibility.
+New projects should use nexus.sdk for a cleaner API.
 """
 
 __version__ = "0.3.9"
@@ -58,7 +58,7 @@ from nexus.core.nexus_fs import NexusFS
 from nexus.core.router import NamespaceConfig
 from nexus.remote import RemoteNexusFS
 
-# Skills system (v0.3.0)
+# Skills system
 from nexus.skills import (
     Skill,
     SkillDependencyError,
@@ -74,7 +74,7 @@ from nexus.skills import (
     SkillRegistry,
 )
 
-# TODO: Import other modules when they are implemented
+# Planned imports for future modules:
 # from nexus.core.client import NexusClient
 # from nexus.interface import NexusInterface
 
@@ -109,23 +109,22 @@ def connect(
         NotImplementedError: If mode is not yet implemented
 
     Examples:
-        >>> import nexus
+        Use local backend (default):
+            >>> import nexus
+            >>> nx = nexus.connect()
+            >>> nx.write("/workspace/file.txt", b"Hello World")
+            >>> content = nx.read("/workspace/file.txt")
 
-        # Use local backend (default)
-        >>> nx = nexus.connect()
-        >>> nx.write("/workspace/file.txt", b"Hello World")
-        >>> content = nx.read("/workspace/file.txt")
+        Use GCS backend via config:
+            >>> nx = nexus.connect(config={
+            ...     "backend": "gcs",
+            ...     "gcs_bucket_name": "my-bucket",
+            ... })
 
-        # Use GCS backend via config
-        >>> nx = nexus.connect(config={
-        ...     "backend": "gcs",
-        ...     "gcs_bucket_name": "my-bucket",
-        ... })
-
-        # Use GCS backend via environment variables
-        # export NEXUS_BACKEND=gcs
-        # export NEXUS_GCS_BUCKET_NAME=my-bucket
-        >>> nx = nexus.connect()
+        Use GCS backend via environment variables:
+            >>> # export NEXUS_BACKEND=gcs
+            >>> # export NEXUS_GCS_BUCKET_NAME=my-bucket
+            >>> nx = nexus.connect()
     """
     # Load configuration
     cfg = load_config(config)
@@ -184,9 +183,6 @@ def connect(
         nx_fs = NexusFS(
             backend=backend,
             db_path=db_path,
-            tenant_id=cfg.tenant_id,
-            user_id=cfg.user_id,  # v0.4.0: Identity-based memory
-            agent_id=cfg.agent_id,
             is_admin=cfg.is_admin,
             custom_namespaces=custom_namespaces,
             enable_metadata_cache=cfg.enable_metadata_cache,
@@ -200,43 +196,19 @@ def connect(
             enforce_permissions=cfg.enforce_permissions,
         )
 
-        # v0.4.0: Auto-register entities and migrate for identity-based memory
+        # Set memory config for Memory API
         if cfg.tenant_id or cfg.user_id or cfg.agent_id:
-            from nexus.core.entity_registry import EntityRegistry
-            from nexus.migrations.migrate_identity_memory_v04 import IdentityMemoryMigration
-
-            try:
-                # Get database session from metadata store
-                if hasattr(nx_fs, "metadata") and hasattr(nx_fs.metadata, "SessionLocal"):
-                    session = nx_fs.metadata.SessionLocal()
-
-                    # Run migration if needed (Phase 5)
-                    migration = IdentityMemoryMigration(session)
-                    if migration.needs_migration():
-                        migration.create_tables()
-
-                    # Auto-register entities (Phase 1)
-                    entity_registry = EntityRegistry(session)
-                    entity_registry.auto_register_from_config(
-                        {
-                            "tenant_id": cfg.tenant_id,
-                            "user_id": cfg.user_id,
-                            "agent_id": cfg.agent_id,
-                        }
-                    )
-
-                    # Close the session
-                    session.close()
-            except Exception:
-                # Silently fail if entity registration/migration fails (backward compatibility)
-                pass
+            nx_fs._memory_config = {
+                "tenant_id": cfg.tenant_id,
+                "user_id": cfg.user_id,
+                "agent_id": cfg.agent_id,
+            }
 
         return nx_fs
     elif cfg.mode in ["monolithic", "distributed"]:
-        # TODO: Implement in v0.2.0+
         raise NotImplementedError(
             f"{cfg.mode} mode is not yet implemented. "
-            f"Currently only 'embedded' mode is supported in v0.1.0. "
+            f"Currently only 'embedded' mode is supported. "
             f"Set mode='embedded' in your config or NEXUS_MODE environment variable."
         )
     else:
@@ -268,7 +240,7 @@ __all__ = [
     "MetadataError",
     # Router
     "NamespaceConfig",
-    # Skills System (v0.3.0)
+    # Skills System
     "SkillRegistry",
     "SkillExporter",
     "SkillManager",

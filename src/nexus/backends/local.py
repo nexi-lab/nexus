@@ -371,6 +371,66 @@ class LocalBackend(Backend):
             path=content_hash,
         )
 
+    def batch_read_content(self, content_hashes: list[str]) -> dict[str, bytes | None]:
+        """
+        Optimized batch read for local backend.
+
+        Leverages content cache to reduce disk I/O operations.
+        """
+        result: dict[str, bytes | None] = {}
+
+        # First pass: check cache for all hashes
+        uncached_hashes = []
+        if self.content_cache is not None:
+            for content_hash in content_hashes:
+                cached_content = self.content_cache.get(content_hash)
+                if cached_content is not None:
+                    result[content_hash] = cached_content
+                else:
+                    uncached_hashes.append(content_hash)
+        else:
+            uncached_hashes = content_hashes
+
+        # Second pass: read uncached content from disk
+        for content_hash in uncached_hashes:
+            try:
+                content = self.read_content(content_hash)
+                result[content_hash] = content
+            except Exception:
+                # Return None for missing/errored content (per batch_read spec)
+                result[content_hash] = None
+
+        return result
+
+    def stream_content(self, content_hash: str, chunk_size: int = 8192) -> Any:
+        """
+        Stream content from disk in chunks without loading entire file into memory.
+
+        This is optimized for local filesystem to use native file streaming.
+        For very large files (GB+), this prevents memory exhaustion.
+        """
+        content_path = self._hash_to_path(content_hash)
+
+        # Check if file exists
+        if not content_path.exists():
+            raise NexusFileNotFoundError(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+            )
+
+        # Stream file in chunks directly from disk
+        try:
+            with open(content_path, "rb") as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+        except OSError as e:
+            raise BackendError(
+                f"Failed to stream content: {e}", backend="local", path=content_hash
+            ) from e
+
     def delete_content(self, content_hash: str) -> None:
         """Delete content by hash with reference counting."""
         content_path = self._hash_to_path(content_hash)

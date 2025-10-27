@@ -5,6 +5,7 @@ combining content-addressable storage (CAS) with directory operations.
 """
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 
 class Backend(ABC):
@@ -74,6 +75,63 @@ class Backend(ABC):
             BackendError: If read operation fails
         """
         pass
+
+    def batch_read_content(self, content_hashes: list[str]) -> dict[str, bytes | None]:
+        """
+        Read multiple content items by their hashes (batch operation).
+
+        This is an optimization to reduce round-trips for backends that support
+        batch operations. Default implementation calls read_content() for each hash.
+        Backends should override this for better performance.
+
+        Args:
+            content_hashes: List of SHA-256 hashes as hex strings
+
+        Returns:
+            Dictionary mapping content_hash -> content bytes
+            Returns None for hashes that don't exist (instead of raising)
+
+        Note:
+            Unlike read_content(), this does NOT raise on missing content.
+            Missing content is indicated by None values in the result dict.
+        """
+        result: dict[str, bytes | None] = {}
+        for content_hash in content_hashes:
+            try:
+                result[content_hash] = self.read_content(content_hash)
+            except Exception:
+                # Return None for missing/errored content
+                result[content_hash] = None
+        return result
+
+    def stream_content(self, content_hash: str, chunk_size: int = 8192) -> Any:
+        """
+        Stream content by its hash in chunks (generator).
+
+        This is a memory-efficient alternative to read_content() for large files.
+        Instead of loading entire file into memory, yields chunks as an iterator.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            chunk_size: Size of each chunk in bytes (default: 8KB)
+
+        Yields:
+            bytes: Chunks of file content
+
+        Raises:
+            NexusFileNotFoundError: If content doesn't exist
+            BackendError: If read operation fails
+
+        Example:
+            >>> # Stream large file without loading into memory
+            >>> for chunk in backend.stream_content(content_hash):
+            ...     process_chunk(chunk)  # Process incrementally
+        """
+        # Default implementation: read entire file and yield in chunks
+        # Backends can override for true streaming from storage
+        content = self.read_content(content_hash)
+        for i in range(0, len(content), chunk_size):
+            yield content[i : i + chunk_size]
 
     @abstractmethod
     def delete_content(self, content_hash: str) -> None:

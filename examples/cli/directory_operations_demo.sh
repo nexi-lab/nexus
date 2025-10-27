@@ -77,10 +77,6 @@ print_section "1. Basic Directory Creation"
 WORKSPACE_ROOT="/workspace"
 BASE_PATH="/workspace/dir-demo"
 
-# Clear ReBAC cache to ensure fresh permission checks
-print_info "Clearing ReBAC cache..."
-PGPASSWORD=nexus psql -h localhost -U postgres -d nexus -c "DELETE FROM rebac_check_cache;" 2>/dev/null || true
-
 # Setup workspace permissions first
 print_info "Setting up workspace permissions..."
 nexus rebac create user admin direct_owner file $WORKSPACE_ROOT 2>/dev/null || true
@@ -88,7 +84,14 @@ nexus rebac create user admin direct_viewer file $WORKSPACE_ROOT 2>/dev/null || 
 
 # Clean up any existing demo directory
 print_info "Cleaning up previous demo data..."
-nexus rm -r $BASE_PATH 2>/dev/null || true
+# Only try to remove if it exists (avoids permission denied errors on non-existent paths)
+if nexus ls $BASE_PATH >/dev/null 2>&1; then
+    nexus rmdir -r -f $BASE_PATH 2>/dev/null || true
+fi
+
+# Clean up stale metadata from previous runs
+print_info "Cleaning up stale metadata..."
+PGPASSWORD=nexus psql -h localhost -U postgres -d nexus -c "DELETE FROM file_paths WHERE virtual_path LIKE '/workspace/dir-demo%';" 2>/dev/null || true
 
 # Create with --parents flag
 nexus mkdir $BASE_PATH --parents 2>/dev/null || true
@@ -133,10 +136,6 @@ nexus ls -R $BASE_PATH || nexus ls $BASE_PATH
 # 4. Creating files in directories
 print_section "4. Directories vs Files"
 
-# Clear cache again to ensure fresh permission checks for write operations
-print_info "Clearing cache before write operations..."
-PGPASSWORD=nexus psql -h localhost -U postgres -d nexus -c "DELETE FROM rebac_check_cache WHERE object_id LIKE '/workspace/dir-demo%';" 2>/dev/null || true
-
 print_info "Creating test files..."
 
 echo "Python main file" > /tmp/main.py
@@ -163,24 +162,24 @@ nexus ls $BASE_PATH/projects/alpha
 # 5. Checking directory existence
 print_section "5. Checking Directory Existence"
 
-print_info "Using 'nexus info' to check if paths exist..."
+print_info "Using 'nexus ls' to check if paths exist..."
 
 # Check existing directory
-if nexus info $BASE_PATH/projects/alpha >/dev/null 2>&1; then
+if [ -n "$(nexus ls $BASE_PATH/projects/alpha 2>/dev/null | grep -v '^No files')" ]; then
     print_success "$BASE_PATH/projects/alpha exists"
 else
     print_error "$BASE_PATH/projects/alpha does not exist"
 fi
 
 # Check non-existent directory
-if nexus info $BASE_PATH/projects/gamma >/dev/null 2>&1; then
+if [ -n "$(nexus ls $BASE_PATH/projects/gamma 2>/dev/null | grep -v '^No files')" ]; then
     print_error "$BASE_PATH/projects/gamma exists (unexpected!)"
 else
     print_success "$BASE_PATH/projects/gamma doesn't exist (as expected)"
 fi
 
-# Check file (not directory)
-if nexus info $BASE_PATH/config/app.json >/dev/null 2>&1; then
+# Check file (not directory) - use cat for files
+if nexus cat $BASE_PATH/config/app.json >/dev/null 2>&1; then
     print_success "$BASE_PATH/config/app.json exists (file)"
 else
     print_error "$BASE_PATH/config/app.json does not exist"
@@ -241,7 +240,7 @@ nexus rm $EMPTY_DIR
 print_success "Removed empty directory: $EMPTY_DIR"
 
 # Verify it's gone
-if nexus info $EMPTY_DIR >/dev/null 2>&1; then
+if [ -n "$(nexus ls $EMPTY_DIR 2>/dev/null | grep -v '^No files')" ]; then
     print_error "Directory still exists!"
 else
     print_success "Verified: $EMPTY_DIR no longer exists"
@@ -258,11 +257,11 @@ nexus write $TEST_TREE/level1/file2.txt /tmp/test.txt
 print_success "Created test directory tree: $TEST_TREE"
 
 print_info "Removing with --recursive flag..."
-nexus rm -r $TEST_TREE
+nexus rmdir -r -f $TEST_TREE
 print_success "Removed directory tree: $TEST_TREE"
 
 # Verify it's gone
-if nexus info $TEST_TREE >/dev/null 2>&1; then
+if [ -n "$(nexus ls $TEST_TREE 2>/dev/null | grep -v '^No files')" ]; then
     print_error "Directory tree still exists!"
 else
     print_success "Verified: $TEST_TREE no longer exists"
@@ -318,17 +317,17 @@ echo "You've learned:"
 echo "  ✓ Create directories with 'nexus mkdir'"
 echo "  ✓ Create nested directories with --parents flag"
 echo "  ✓ List directory contents with 'nexus ls'"
-echo "  ✓ Check directory existence with 'nexus info'"
+echo "  ✓ Check directory existence with 'nexus ls' / 'nexus cat'"
 echo "  ✓ Create files within directories"
-echo "  ✓ Remove empty directories with 'nexus rm'"
-echo "  ✓ Remove directory trees with --recursive flag"
+echo "  ✓ Remove empty directories with 'nexus rmdir'"
+echo "  ✓ Remove directory trees with 'nexus rmdir --recursive'"
 echo "  ✓ Build complex project structures"
 echo "  ✓ Check directory permissions"
 echo ""
 echo "Demo files created in $BASE_PATH/"
 echo ""
 echo "To cleanup:"
-echo "  nexus rm -r $BASE_PATH"
+echo "  nexus rmdir -r $BASE_PATH"
 echo ""
 echo "Next steps:"
 echo "  - See docs/api/cli/directory-operations.md for full CLI reference"

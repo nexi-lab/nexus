@@ -304,13 +304,21 @@ class NexusFSCoreMixin:
 
         # Check write permission (use ReBAC, not UNIX permissions)
         if self._enforce_permissions:  # type: ignore[attr-defined]
+            import logging
+
+            logger = logging.getLogger(__name__)
+
             ctx = context or self._default_context
+            logger.info(f"WRITE PERMISSION CHECK: path={path}, meta_exists={meta is not None}")
+
             if meta is not None:
                 # For existing files, check permission on the file itself
+                logger.info(f"  -> Checking EXISTING file: {path}")
                 self._check_permission(path, Permission.WRITE, ctx)
             else:
                 # For new files, check permission on parent directory
                 parent_path = self._get_parent_path(path)  # type: ignore[attr-defined]
+                logger.info(f"  -> Checking NEW file, parent: {parent_path}")
                 if parent_path:
                     self._check_permission(parent_path, Permission.WRITE, ctx)
 
@@ -364,6 +372,28 @@ class NexusFSCoreMixin:
         )
 
         self.metadata.put(metadata)
+
+        # P0-3: Create parent relationship tuples for file inheritance
+        # This enables permission inheritance from parent directories
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if hasattr(self, "_hierarchy_manager"):
+            try:
+                ctx = context if context is not None else self._default_context
+                logger.info(
+                    f"write: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id}"
+                )
+                created_count = self._hierarchy_manager.ensure_parent_tuples(
+                    path, tenant_id=ctx.tenant_id
+                )
+                logger.info(f"write: Created {created_count} parent tuples for {path}")
+            except Exception as e:
+                # Log the error but don't fail the write operation
+                logger.warning(
+                    f"write: Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
+                )
 
         # Auto-parse file if enabled and format is supported
         if self.auto_parse:

@@ -342,6 +342,18 @@ def serve(
         # Get filesystem instance
         nx = get_filesystem(backend_config)
 
+        # Safety check: Server should never use RemoteNexusFS (would create circular dependency)
+        from nexus.remote import RemoteNexusFS
+
+        if isinstance(nx, RemoteNexusFS):
+            console.print(
+                "[red]Error:[/red] Server cannot use RemoteNexusFS (circular dependency detected)"
+            )
+            console.print("[yellow]Hint:[/yellow] Unset NEXUS_URL environment variable:")
+            console.print("  unset NEXUS_URL")
+            console.print("  nexus serve ...")
+            sys.exit(1)
+
         # Create authentication provider
         auth_provider = None
         if auth_type == "database":

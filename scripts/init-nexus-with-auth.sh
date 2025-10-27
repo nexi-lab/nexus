@@ -88,6 +88,77 @@ fi
 echo "✓ Database connection successful"
 
 # ============================================
+# Clean Database (Fresh Start)
+# ============================================
+
+echo ""
+echo "🧹 Clearing all existing data for fresh start..."
+
+# Clear filesystem data (to stay in sync with database)
+if [ -d "$NEXUS_DATA_DIR" ]; then
+    echo "Clearing filesystem data: $NEXUS_DATA_DIR"
+    rm -rf "$NEXUS_DATA_DIR"/*
+    echo "✓ Cleared filesystem data"
+fi
+
+# Clear all data from key tables
+python3 << 'PYTHON_CLEANUP'
+from sqlalchemy import create_engine, text
+import os
+import sys
+
+db_url = os.environ.get('NEXUS_DATABASE_URL')
+if not db_url:
+    print("ERROR: NEXUS_DATABASE_URL not set", file=sys.stderr)
+    sys.exit(1)
+
+engine = create_engine(db_url)
+with engine.connect() as conn:
+    # Clear in order to respect foreign key constraints
+    # Start with caches and dependent tables
+    conn.execute(text("DELETE FROM rebac_check_cache"))
+    conn.execute(text("DELETE FROM rebac_changelog"))
+    conn.execute(text("DELETE FROM admin_bypass_audit"))
+    conn.execute(text("DELETE FROM operation_log"))
+
+    # Clear ReBAC tuples
+    conn.execute(text("DELETE FROM rebac_tuples"))
+
+    # Clear file-related tables
+    conn.execute(text("DELETE FROM content_chunks"))
+    conn.execute(text("DELETE FROM document_chunks"))
+    conn.execute(text("DELETE FROM file_metadata"))
+    conn.execute(text("DELETE FROM file_paths"))
+    conn.execute(text("DELETE FROM version_history"))
+
+    # Clear auth tables
+    conn.execute(text("DELETE FROM refresh_tokens"))
+    conn.execute(text("DELETE FROM api_keys"))
+
+    # Clear memory and workspace tables
+    conn.execute(text("DELETE FROM memories"))
+    conn.execute(text("DELETE FROM memory_configs"))
+    conn.execute(text("DELETE FROM workspace_snapshots"))
+    conn.execute(text("DELETE FROM workspace_configs"))
+
+    # Clear workflow tables
+    conn.execute(text("DELETE FROM workflow_executions"))
+    conn.execute(text("DELETE FROM workflows"))
+
+    # Clear mount configs
+    conn.execute(text("DELETE FROM mount_configs"))
+
+    conn.commit()
+    print("✓ Cleared all data from database")
+
+PYTHON_CLEANUP
+
+if [ $? -ne 0 ]; then
+    echo "❌ Failed to clean database"
+    exit 1
+fi
+
+# ============================================
 # Bootstrap (With Admin API Key)
 # ============================================
 

@@ -254,6 +254,8 @@ class DatabaseAPIKeyAuth(AuthProvider):
             tenant_id=tenant_id,
             is_admin=int(is_admin),  # Convert bool to int for PostgreSQL
             expires_at=expires_at,
+            subject_type="user",  # Default to user type
+            subject_id=user_id,  # Use user_id as subject_id for compatibility
         )
 
         session.add(api_key)

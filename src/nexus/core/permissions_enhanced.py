@@ -532,8 +532,8 @@ class EnhancedPermissionEnforcer:
         """Check if system bypass is allowed for this operation (P0-4).
 
         System bypass is limited to:
-        - /system/* paths only
-        - Read, write, execute operations
+        - Read operations on any path (for auto-parse indexing)
+        - Read, write, execute, delete operations on /system/* paths only
 
         Args:
             path: File path
@@ -542,12 +542,16 @@ class EnhancedPermissionEnforcer:
         Returns:
             True if system bypass is allowed
         """
-        # System bypass only allowed for /system paths
+        # Allow read operations on any path (for auto-parse and other system reads)
+        if permission == "read":
+            return True
+
+        # For other operations, only allow /system paths
         if not path.startswith("/system"):
             return False
 
-        # Allow common operations
-        return permission in ["read", "write", "execute", "delete"]
+        # Allow common operations on /system paths
+        return permission in ["write", "execute", "delete"]
 
     def _log_bypass(
         self,
@@ -609,7 +613,12 @@ class EnhancedPermissionEnforcer:
         context: EnhancedOperationContext,
     ) -> bool:
         """Check ReBAC relationships for permission."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         if not self.rebac_manager:
+            logger.warning("_check_rebac: No rebac_manager configured!")
             return False
 
         permission_name = self._permission_to_string(permission)
@@ -618,13 +627,25 @@ class EnhancedPermissionEnforcer:
         # For single-tenant deployments, use "default" as tenant_id
         tenant_id = context.tenant_id if context.tenant_id else "default"
 
+        subject = context.get_subject()
+        logger.info(
+            f"_check_rebac: context details - user={context.user}, subject_type={getattr(context, 'subject_type', 'MISSING')}, subject_id={getattr(context, 'subject_id', 'MISSING')}, tenant_id={context.tenant_id}"
+        )
+        logger.info("_check_rebac calling rebac_manager.rebac_check:")
+        logger.info(
+            f"  subject={subject}, permission={permission_name}, object=('file', {path}), tenant_id={tenant_id}"
+        )
+
         # Check ReBAC permission
-        return self.rebac_manager.rebac_check(
-            subject=context.get_subject(),  # P0-2: Use typed subject
+        result = self.rebac_manager.rebac_check(
+            subject=subject,  # P0-2: Use typed subject
             permission=permission_name,
             object=("file", path),
             tenant_id=tenant_id,
         )
+
+        logger.info(f"  -> rebac_manager.rebac_check returned: {result}")
+        return result
 
     def _permission_to_string(self, permission: Permission) -> str:
         """Convert Permission enum to string."""

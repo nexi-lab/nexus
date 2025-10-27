@@ -215,6 +215,54 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         token = auth_header[7:]  # Remove "Bearer " prefix
         return bool(token == self.api_key)
 
+    def _get_operation_context(self) -> Any:
+        """Get operation context from authentication.
+
+        Extracts authentication information and creates an OperationContext
+        for use in filesystem operations.
+
+        Returns:
+            OperationContext or None if no authentication
+        """
+        from nexus.core.permissions import OperationContext
+
+        # Extract from auth provider if available
+        if self.auth_provider:
+            auth_header = self.headers.get("Authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+
+                # PERFORMANCE FIX: Use persistent event loop instead of creating new ones
+                if self.event_loop is None:
+                    logger.error("Event loop not initialized on request handler")
+                    return None
+
+                result = self.event_loop.run_until_complete(self.auth_provider.authenticate(token))
+                if result.authenticated and result.subject_type and result.subject_id:
+                    return OperationContext(
+                        user=result.subject_id,  # Required for compatibility
+                        subject_type=result.subject_type,
+                        subject_id=result.subject_id,
+                        tenant_id=result.tenant_id,
+                        is_admin=result.is_admin,
+                        groups=[],  # TODO: Extract groups from auth result if available
+                    )
+
+        # Check for explicit subject header (for backward compatibility)
+        subject_header = self.headers.get("X-Nexus-Subject")
+        if subject_header:
+            parts = subject_header.split(":", 1)
+            if len(parts) == 2:
+                return OperationContext(
+                    user=parts[1],  # Required
+                    subject_type=parts[0],
+                    subject_id=parts[1],
+                    groups=[],
+                )
+
+        # No authentication - return None to use default context
+        return None
+
     def _get_backend_info(self) -> dict[str, Any]:
         """Get backend configuration information.
 
@@ -388,6 +436,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         ):
             return self._auto_dispatch(method, params)
 
+        # Extract authentication context for manual dispatch
+        context = self._get_operation_context()
+
         # Fall back to manual dispatch for backward compatibility
         # Core file operations
         if method == "read":
@@ -516,11 +567,13 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         # Directory operations
         elif method == "mkdir":
-            self.nexus_fs.mkdir(params.path, parents=params.parents, exist_ok=params.exist_ok)
+            self.nexus_fs.mkdir(  # type: ignore[call-arg]
+                params.path, parents=params.parents, exist_ok=params.exist_ok, context=context
+            )
             return {"success": True}
 
         elif method == "rmdir":
-            self.nexus_fs.rmdir(params.path, recursive=params.recursive)
+            self.nexus_fs.rmdir(params.path, recursive=params.recursive, context=context)  # type: ignore[call-arg]
             return {"success": True}
 
         elif method == "is_directory":
@@ -743,8 +796,14 @@ class NexusRPCServer:
         """
         exposed = {}
 
+        logger.info(f"Starting method discovery on {type(self.nexus_fs).__name__}")
+        logger.info(f"NexusFS type: {type(self.nexus_fs)}")
+
         # Iterate through all attributes of the NexusFS instance
-        for name in dir(self.nexus_fs):
+        dir_names = dir(self.nexus_fs)
+        logger.info(f"Total attributes to check: {len(dir_names)}")
+
+        for name in dir_names:
             # Skip private methods
             if name.startswith("_"):
                 continue
@@ -752,11 +811,17 @@ class NexusRPCServer:
             try:
                 attr = getattr(self.nexus_fs, name)
 
+                # Log rebac methods specifically
+                if name.startswith("rebac"):
+                    logger.info(
+                        f"Checking {name}: callable={callable(attr)}, has_marker={hasattr(attr, '_rpc_exposed')}"
+                    )
+
                 # Check if it's callable and has the _rpc_exposed marker
                 if callable(attr) and hasattr(attr, "_rpc_exposed"):
                     method_name = getattr(attr, "_rpc_name", name)
                     exposed[method_name] = attr
-                    logger.info(f"Discovered RPC method: {method_name}")
+                    logger.info(f"✓ Discovered RPC method: {method_name}")
 
             except Exception as e:
                 # Some attributes might raise exceptions when accessed

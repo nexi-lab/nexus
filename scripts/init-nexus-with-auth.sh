@@ -11,7 +11,7 @@ set -e  # Exit on error
 # Configuration
 # ============================================
 
-export NEXUS_DATABASE_URL="${NEXUS_DATABASE_URL:-postgresql://$(whoami)@localhost/nexus}"
+export NEXUS_DATABASE_URL="${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@localhost/nexus}"
 export NEXUS_DATA_DIR="${NEXUS_DATA_DIR:-./nexus-data}"
 ADMIN_USER="${NEXUS_ADMIN_USER:-admin}"
 PORT="${NEXUS_PORT:-8080}"
@@ -116,37 +116,63 @@ engine = create_engine(db_url)
 with engine.connect() as conn:
     # Clear in order to respect foreign key constraints
     # Start with caches and dependent tables
-    conn.execute(text("DELETE FROM rebac_check_cache"))
-    conn.execute(text("DELETE FROM rebac_changelog"))
-    conn.execute(text("DELETE FROM admin_bypass_audit"))
-    conn.execute(text("DELETE FROM operation_log"))
+    # Use try/except for tables that might not exist yet
+    try:
+        conn.execute(text("DELETE FROM rebac_check_cache"))
+    except:
+        pass
+    try:
+        conn.execute(text("DELETE FROM rebac_changelog"))
+    except:
+        pass
+    try:
+        conn.execute(text("DELETE FROM admin_bypass_audit"))
+    except:
+        pass
+    try:
+        conn.execute(text("DELETE FROM operation_log"))
+    except:
+        pass
 
     # Clear ReBAC tuples
-    conn.execute(text("DELETE FROM rebac_tuples"))
+    try:
+        conn.execute(text("DELETE FROM rebac_tuples"))
+    except:
+        pass
 
     # Clear file-related tables
-    conn.execute(text("DELETE FROM content_chunks"))
-    conn.execute(text("DELETE FROM document_chunks"))
-    conn.execute(text("DELETE FROM file_metadata"))
-    conn.execute(text("DELETE FROM file_paths"))
-    conn.execute(text("DELETE FROM version_history"))
+    for table in ["content_chunks", "document_chunks", "file_metadata", "file_paths", "version_history"]:
+        try:
+            conn.execute(text(f"DELETE FROM {table}"))
+        except:
+            pass
 
     # Clear auth tables
-    conn.execute(text("DELETE FROM refresh_tokens"))
-    conn.execute(text("DELETE FROM api_keys"))
+    for table in ["refresh_tokens", "api_keys"]:
+        try:
+            conn.execute(text(f"DELETE FROM {table}"))
+        except:
+            pass
 
     # Clear memory and workspace tables
-    conn.execute(text("DELETE FROM memories"))
-    conn.execute(text("DELETE FROM memory_configs"))
-    conn.execute(text("DELETE FROM workspace_snapshots"))
-    conn.execute(text("DELETE FROM workspace_configs"))
+    for table in ["memories", "memory_configs", "workspace_snapshots", "workspace_configs"]:
+        try:
+            conn.execute(text(f"DELETE FROM {table}"))
+        except:
+            pass
 
     # Clear workflow tables
-    conn.execute(text("DELETE FROM workflow_executions"))
-    conn.execute(text("DELETE FROM workflows"))
+    for table in ["workflow_executions", "workflows"]:
+        try:
+            conn.execute(text(f"DELETE FROM {table}"))
+        except:
+            pass
 
     # Clear mount configs
-    conn.execute(text("DELETE FROM mount_configs"))
+    try:
+        conn.execute(text("DELETE FROM mount_configs"))
+    except:
+        pass
 
     conn.commit()
     print("✓ Cleared all data from database")

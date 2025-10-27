@@ -796,7 +796,14 @@ class NexusFS(
             )
 
         # Check write permission on directory
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(
+            f"🗑️  RMDIR: path={path}, recursive={recursive}, user={ctx.user}, is_admin={ctx.is_admin}"
+        )
         self._check_permission(path, Permission.WRITE, ctx)  # type: ignore[arg-type]
+        logger.info(f"  -> Permission check PASSED for rmdir on {path}")
 
         # Route to backend with write access check (rmdir requires write permission)
         route = self.router.route(

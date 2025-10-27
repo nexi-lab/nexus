@@ -136,6 +136,87 @@ class ReBACManager:
             return sql.replace("?", "%s")
         return sql
 
+    def _would_create_cycle_with_conn(
+        self, conn: Any, subject: Entity, object_entity: Entity, tenant_id: str | None
+    ) -> bool:
+        """Check if creating a parent relation would create a cycle.
+
+        A cycle exists if object is already an ancestor of subject.
+        Example cycle: A -> B -> C -> A (would be created by adding A->parent->C)
+
+        Args:
+            subject: The child node (e.g., file A)
+            object_entity: The parent node (e.g., file B)
+            tenant_id: Optional tenant ID for isolation
+
+        Returns:
+            True if adding this relation would create a cycle, False otherwise
+        """
+        # Check if object is already a descendant of subject by traversing parent chain
+        # If object can reach subject by following parent links, then making
+        # subject->parent->object would create a cycle
+
+        logger.debug(
+            f"CYCLE CHECK: Want to create {subject.entity_type}:{subject.entity_id} -> parent -> "
+            f"{object_entity.entity_type}:{object_entity.entity_id}"
+        )
+
+        visited = set()
+        to_visit = [(object_entity.entity_type, object_entity.entity_id)]
+
+        cursor = conn.cursor()
+
+        while to_visit:
+            current_type, current_id = to_visit.pop()
+
+            logger.debug(f"  Visiting: {current_type}:{current_id}")
+
+            # Check if we've reached the subject (would create cycle)
+            if current_type == subject.entity_type and current_id == subject.entity_id:
+                logger.warning(
+                    f"Cycle detected: {current_type}:{current_id} -> ... -> {current_type}:{current_id}. "
+                    f"Cannot create parent relation."
+                )
+                return True
+
+            # Mark as visited
+            node_key = (current_type, current_id)
+            if node_key in visited:
+                logger.debug(f"    Already visited {node_key}, skipping")
+                continue
+            visited.add(node_key)
+
+            # Find all parents of current node
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                        SELECT object_type, object_id
+                        FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                        AND relation = 'parent'
+                        AND (tenant_id = ? OR (tenant_id IS NULL AND ? IS NULL))
+                        """
+                ),
+                (current_type, current_id, tenant_id, tenant_id),
+            )
+
+            parents = cursor.fetchall()
+            logger.debug(f"    Found {len(parents)} parent(s) of {current_type}:{current_id}")
+
+            for row in parents:
+                if isinstance(row, tuple):
+                    parent_type, parent_id = row[0], row[1]
+                else:
+                    parent_type, parent_id = row["object_type"], row["object_id"]
+
+                logger.debug(f"      Parent: {parent_type}:{parent_id}")
+                parent_key = (parent_type, parent_id)
+                if parent_key not in visited:
+                    to_visit.append(parent_key)
+
+        logger.debug("  No cycle detected")
+        return False
+
     def _initialize_default_namespaces_with_conn(self, conn: Any) -> None:
         """Initialize default namespace configurations with given connection."""
         try:
@@ -404,6 +485,17 @@ class ReBACManager:
             )
 
         with self._connection() as conn:
+            # CYCLE DETECTION: Prevent cycles in parent relations
+            # Check if this is a parent relation and would create a cycle
+            # IMPORTANT: Must check inside the connection context to see existing tuples
+            if relation == "parent" and self._would_create_cycle_with_conn(
+                conn, subject_entity, object_entity, tenant_id
+            ):
+                raise ValueError(
+                    f"Cycle detected: Creating parent relation from "
+                    f"{subject_entity.entity_type}:{subject_entity.entity_id} to "
+                    f"{object_entity.entity_type}:{object_entity.entity_id} would create a cycle"
+                )
             cursor = conn.cursor()
 
             # Check if tuple already exists (idempotency fix)
@@ -493,7 +585,9 @@ class ReBACManager:
             conn.commit()
 
             # Invalidate cache entries affected by this change
-            self._invalidate_cache_for_tuple(subject_entity, relation, object_entity, tenant_id)
+            self._invalidate_cache_for_tuple(
+                subject_entity, relation, object_entity, tenant_id, subject_relation
+            )
 
         return tuple_id
 
@@ -515,7 +609,7 @@ class ReBACManager:
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
-                    SELECT subject_type, subject_id, relation, object_type, object_id, tenant_id
+                    SELECT subject_type, subject_id, subject_relation, relation, object_type, object_id, tenant_id
                     FROM rebac_tuples
                     WHERE tuple_id = ?
                       AND (expires_at IS NULL OR expires_at >= ?)
@@ -531,14 +625,16 @@ class ReBACManager:
             # Handle both dict-like (SQLite) and tuple (PostgreSQL) access
             if hasattr(row, "keys"):
                 subject = Entity(row["subject_type"], row["subject_id"])
+                subject_relation = row["subject_relation"]
                 relation = row["relation"]
                 obj = Entity(row["object_type"], row["object_id"])
                 tenant_id = row["tenant_id"]
             else:
                 subject = Entity(row[0], row[1])
-                relation = row[2]
-                obj = Entity(row[3], row[4])
-                tenant_id = row[5]
+                subject_relation = row[2]
+                relation = row[3]
+                obj = Entity(row[4], row[5])
+                tenant_id = row[6]
 
             # Delete tuple
             cursor.execute(
@@ -572,7 +668,7 @@ class ReBACManager:
             conn.commit()
 
             # Invalidate cache entries affected by this change
-            self._invalidate_cache_for_tuple(subject, relation, obj, tenant_id)
+            self._invalidate_cache_for_tuple(subject, relation, obj, tenant_id, subject_relation)
 
         return True
 
@@ -623,6 +719,10 @@ class ReBACManager:
         subject_entity = Entity(subject[0], subject[1])
         object_entity = Entity(object[0], object[1])
 
+        logger.info(
+            f"🔍 REBAC CHECK: subject={subject_entity}, permission={permission}, object={object_entity}, tenant_id={tenant_id}"
+        )
+
         # Clean up expired tuples first (this will invalidate affected caches)
         self._cleanup_expired_tuples_if_needed()
 
@@ -630,9 +730,11 @@ class ReBACManager:
         if context is None:
             cached = self._get_cached_check(subject_entity, permission, object_entity)
             if cached is not None:
+                logger.info(f"✅ CACHE HIT: result={cached}")
                 return cached
 
         # Compute permission via graph traversal with context
+        logger.info("🔎 Computing permission (no cache hit, computing from graph)")
         result = self._compute_permission(
             subject_entity,
             permission,
@@ -642,6 +744,8 @@ class ReBACManager:
             context=context,
             tenant_id=tenant_id,
         )
+
+        logger.info(f"{'✅' if result else '❌'} REBAC RESULT: {result}")
 
         # Cache result (only if no context)
         if context is None:
@@ -1170,18 +1274,29 @@ class ReBACManager:
         namespace = self.get_namespace(obj.entity_type)
         if not namespace:
             # No namespace config - check for direct relation only
+            logger.debug(
+                f"  [depth={depth}] No namespace for {obj.entity_type}, checking direct relation"
+            )
             return self._has_direct_relation(subject, permission, obj, context, tenant_id)
+
+        logger.debug(f"  [depth={depth}] Found namespace for {obj.entity_type}")
 
         # P0-1: Use explicit permission-to-userset mapping (Zanzibar-style)
         # Check if permission is defined via "permissions" config (new way)
         if namespace.has_permission(permission):
             # Permission defined explicitly - check all usersets that grant it
             usersets = namespace.get_permission_usersets(permission)
+            logger.info(
+                f"  [depth={depth}] Permission '{permission}' expands to usersets: {usersets}"
+            )
             for userset in usersets:
+                logger.debug(f"  [depth={depth}] Checking userset '{userset}'")
                 if self._compute_permission(
                     subject, userset, obj, visited.copy(), depth + 1, context, tenant_id
                 ):
+                    logger.info(f"  [depth={depth}] ✅ Grant via userset '{userset}'")
                     return True
+            logger.info(f"  [depth={depth}] ❌ No usersets granted permission")
             return False
 
         # Fallback: Check if permission is defined as a relation (legacy)
@@ -1301,6 +1416,10 @@ class ReBACManager:
         Returns:
             Tuple dict with id, subject, relation, object info, or None if not found
         """
+        logger.debug(
+            f"    _find_direct_relation_tuple: subject={subject}, relation={relation}, obj={obj}, tenant_id={tenant_id}"
+        )
+
         with self._connection() as conn:
             cursor = conn.cursor()
 
@@ -1362,6 +1481,7 @@ class ReBACManager:
 
             row = cursor.fetchone()
             if row:
+                logger.debug(f"    ✅ Found direct tuple for {subject} -> {relation} -> {obj}")
                 # Tuple exists - now check conditions if context provided
                 conditions_json = row["conditions"] if hasattr(row, "keys") else row[8]
 
@@ -1397,6 +1517,8 @@ class ReBACManager:
                         "conditions": row[7],
                         "expires_at": row[8],
                     }
+            else:
+                logger.debug(f"    ❌ No direct tuple found for {subject} -> {relation} -> {obj}")
 
             # Check 2: Wildcard/public access
             # Check if wildcard subject (*:*) has the relation (public access)
@@ -1597,23 +1719,30 @@ class ReBACManager:
     def _find_related_objects(self, obj: Entity, relation: str) -> list[Entity]:
         """Find all objects related to obj via relation.
 
+        For tupleToUserset traversal, finds objects where: (obj, relation, object)
+        Example: Finding parent of file X means finding tuples where:
+          - subject = file X
+          - relation = "parent"
+          - object = parent directory
+
         Args:
-            obj: Object entity
-            relation: Relation type
+            obj: Object entity (the subject of the tuple we're looking for)
+            relation: Relation type (e.g., "parent")
 
         Returns:
-            List of related object entities
+            List of related object entities (the objects from matching tuples)
         """
         with self._connection() as conn:
             cursor = conn.cursor()
 
-            # BUGFIX: Use >= instead of > for exact expiration boundary
+            # FIXED: Query for tuples where obj is the SUBJECT (not object)
+            # This correctly handles parent relations: (child, "parent", parent)
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
-                    SELECT subject_type, subject_id
+                    SELECT object_type, object_id
                     FROM rebac_tuples
-                    WHERE object_type = ? AND object_id = ?
+                    WHERE subject_type = ? AND subject_id = ?
                       AND relation = ?
                       AND (expires_at IS NULL OR expires_at >= ?)
                     """
@@ -1629,7 +1758,7 @@ class ReBACManager:
             results = []
             for row in cursor.fetchall():
                 if hasattr(row, "keys"):
-                    results.append(Entity(row["subject_type"], row["subject_id"]))
+                    results.append(Entity(row["object_type"], row["object_id"]))
                 else:
                     results.append(Entity(row[0], row[1]))
             return results
@@ -2063,7 +2192,12 @@ class ReBACManager:
             conn.commit()
 
     def _invalidate_cache_for_tuple(
-        self, subject: Entity, relation: str, obj: Entity, tenant_id: str | None = None
+        self,
+        subject: Entity,
+        relation: str,
+        obj: Entity,
+        tenant_id: str | None = None,
+        subject_relation: str | None = None,
     ) -> None:
         """Invalidate cache entries affected by tuple change.
 
@@ -2167,6 +2301,54 @@ class ReBACManager:
                     (effective_tenant_id, subject.entity_type, subject.entity_id),
                 )
 
+            # 4. PARENT PERMISSION CHANGE: If this tuple grants/changes permissions on a parent path,
+            #    invalidate cache for ALL child paths that inherit via parent_owner/parent_editor/parent_viewer
+            #    Example: If we add "admin direct_owner file:/workspace", then cache entries for
+            #    file:/workspace/project/* need invalidation because they inherit via parent_owner
+            if obj.entity_type == "file" and relation in (
+                "direct_owner",
+                "direct_editor",
+                "direct_viewer",
+                "owner",
+                "editor",
+                "viewer",
+            ):
+                # Invalidate all cache entries for paths that are children of this object
+                # Match object_id that starts with obj.entity_id/ (children)
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        DELETE FROM rebac_check_cache
+                        WHERE tenant_id = ?
+                          AND object_type = ?
+                          AND (object_id = ? OR object_id LIKE ?)
+                        """
+                    ),
+                    (effective_tenant_id, obj.entity_type, obj.entity_id, obj.entity_id + "/%"),
+                )
+                logger.debug(
+                    f"Invalidated cache for {obj} and all children (parent permission change)"
+                )
+
+            # 5. USERSET-AS-SUBJECT: If subject_relation is present (like "group:eng#member"),
+            #    this grants access to ALL members of that group. Since we don't know who's in the group
+            #    without expensive queries, invalidate ALL cache (aggressive but safe).
+            #    Example: "group:project1-editors#member direct_editor file:/workspace" means any member
+            #    of project1-editors now has access, so invalidate everything to be safe.
+            if subject_relation is not None:
+                logger.info(
+                    f"Userset-as-subject detected ({subject}#{subject_relation}), clearing ALL cache for safety"
+                )
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        DELETE FROM rebac_check_cache
+                        WHERE tenant_id = ?
+                        """
+                    ),
+                    (effective_tenant_id,),
+                )
+
             conn.commit()
 
     def _invalidate_cache_for_namespace(self, object_type: str) -> None:
@@ -2248,7 +2430,7 @@ class ReBACManager:
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
-                    SELECT tuple_id, subject_type, subject_id, relation, object_type, object_id, tenant_id
+                    SELECT tuple_id, subject_type, subject_id, subject_relation, relation, object_type, object_id, tenant_id
                     FROM rebac_tuples
                     WHERE expires_at IS NOT NULL AND expires_at <= ?
                     """
@@ -2276,6 +2458,7 @@ class ReBACManager:
                     tuple_id = row["tuple_id"]
                     subject_type = row["subject_type"]
                     subject_id = row["subject_id"]
+                    subject_relation = row["subject_relation"]
                     relation = row["relation"]
                     object_type = row["object_type"]
                     object_id = row["object_id"]
@@ -2284,10 +2467,11 @@ class ReBACManager:
                     tuple_id = row[0]
                     subject_type = row[1]
                     subject_id = row[2]
-                    relation = row[3]
-                    object_type = row[4]
-                    object_id = row[5]
-                    tenant_id = row[6]
+                    subject_relation = row[3]
+                    relation = row[4]
+                    object_type = row[5]
+                    object_id = row[6]
+                    tenant_id = row[7]
 
                 cursor.execute(
                     self._fix_sql_placeholders(
@@ -2314,7 +2498,9 @@ class ReBACManager:
                 # Invalidate cache for this tuple
                 subject = Entity(subject_type, subject_id)
                 obj = Entity(object_type, object_id)
-                self._invalidate_cache_for_tuple(subject, relation, obj, tenant_id)
+                self._invalidate_cache_for_tuple(
+                    subject, relation, obj, tenant_id, subject_relation
+                )
 
             conn.commit()
             return len(expired_tuples)

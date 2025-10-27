@@ -54,7 +54,7 @@ class ReBACManager:
         self,
         engine: Engine,
         cache_ttl_seconds: int = 300,
-        max_depth: int = 10,
+        max_depth: int = 50,
     ):
         """Initialize ReBAC manager.
 

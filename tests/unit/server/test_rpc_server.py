@@ -159,25 +159,38 @@ class TestNexusRPCServer:
 
     def test_server_initialization(self, mock_filesystem):
         """Test server initialization."""
-        server = NexusRPCServer(mock_filesystem, host="127.0.0.1", port=9999, api_key="test")
+        from unittest.mock import ANY
 
-        assert server.nexus_fs == mock_filesystem
-        assert server.host == "127.0.0.1"
-        assert server.port == 9999
-        assert server.api_key == "test"
+        # Mock HTTPServer to avoid actual port binding
+        with patch("nexus.server.rpc_server.HTTPServer") as mock_http_server:
+            mock_http_server.return_value = Mock()
+            server = NexusRPCServer(mock_filesystem, host="127.0.0.1", port=9999, api_key="test")
+
+            assert server.nexus_fs == mock_filesystem
+            assert server.host == "127.0.0.1"
+            assert server.port == 9999
+            assert server.api_key == "test"
+
+            # Verify HTTPServer was called with correct parameters
+            mock_http_server.assert_called_once_with(("127.0.0.1", 9999), ANY)
 
     def test_server_shutdown(self, mock_filesystem):
         """Test server shutdown."""
-        server = NexusRPCServer(mock_filesystem, host="127.0.0.1", port=9999)
+        # Mock HTTPServer to avoid actual port binding
+        with patch("nexus.server.rpc_server.HTTPServer") as mock_http_server:
+            mock_server_instance = Mock()
+            mock_http_server.return_value = mock_server_instance
+            server = NexusRPCServer(mock_filesystem, host="127.0.0.1", port=9999)
 
-        with (
-            patch.object(server.server, "shutdown") as mock_shutdown,
-            patch.object(server.server, "server_close") as mock_close,
-        ):
-            server.shutdown()
-            mock_shutdown.assert_called_once()
-            mock_close.assert_called_once()
-            mock_filesystem.close.assert_called_once()
+            # Now test shutdown
+            with (
+                patch.object(mock_server_instance, "shutdown") as mock_shutdown,
+                patch.object(mock_server_instance, "server_close") as mock_close,
+            ):
+                server.shutdown()
+                mock_shutdown.assert_called_once()
+                mock_close.assert_called_once()
+                mock_filesystem.close.assert_called_once()
 
 
 class TestRPCRequestHandlerHTTP:
@@ -420,14 +433,18 @@ class TestRPCServerIntegration:
 
     def test_server_with_real_filesystem(self, temp_nexus):
         """Test server with real filesystem."""
-        server = NexusRPCServer(temp_nexus, host="127.0.0.1", port=9998, api_key=None)
+        # Mock HTTPServer to avoid actual port binding
+        with patch("nexus.server.rpc_server.HTTPServer") as mock_http_server:
+            mock_server_instance = Mock()
+            mock_http_server.return_value = mock_server_instance
+            _server = NexusRPCServer(temp_nexus, host="127.0.0.1", port=9998, api_key=None)
 
-        # Verify handler is configured
-        assert RPCRequestHandler.nexus_fs == temp_nexus
-        assert RPCRequestHandler.api_key is None
+            # Verify handler is configured
+            assert RPCRequestHandler.nexus_fs == temp_nexus
+            assert RPCRequestHandler.api_key is None
 
-        # Clean up
-        server.server.server_close()
+            # Verify HTTPServer was created with mocked instance
+            assert mock_http_server.called
 
 
 """Tests for backend and metadata info extraction methods."""

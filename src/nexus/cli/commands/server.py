@@ -35,12 +35,6 @@ from nexus.cli.utils import (
     show_default=True,
 )
 @click.option(
-    "--auto-parse",
-    is_flag=True,
-    help="Auto-parse binary files (PDFs, Office docs) as text by default. "
-    "Eliminates need for .txt suffix on parsed files.",
-)
-@click.option(
     "--daemon",
     is_flag=True,
     help="Run in background (daemon mode)",
@@ -59,7 +53,6 @@ from nexus.cli.utils import (
 def mount(
     mount_point: str,
     mode: str,
-    auto_parse: bool,
     daemon: bool,
     allow_other: bool,
     debug: bool,
@@ -77,8 +70,7 @@ def mount(
 
     Virtual File Views:
     - .raw/ directory: Access original binary content
-    - .txt suffix: View parsed text representation
-    - .md suffix: View formatted markdown representation
+    - _parsed.{ext}.md suffix: View parsed markdown (e.g., file_parsed.xlsx.md)
 
     Examples:
         # Mount in smart mode (default)
@@ -95,7 +87,8 @@ def mount(
 
         # Use standard Unix tools
         ls /mnt/nexus
-        cat /mnt/nexus/workspace/document.pdf.txt
+        cat /mnt/nexus/workspace/document.xlsx      # Binary content
+        cat /mnt/nexus/workspace/document_parsed.xlsx.md  # Parsed markdown
         grep "TODO" /mnt/nexus/workspace/**/*.py
         vim /mnt/nexus/workspace/file.txt
     """
@@ -123,8 +116,7 @@ def mount(
         console.print()
         console.print("[bold cyan]Virtual File Views:[/bold cyan]")
         console.print("  • [cyan].raw/[/cyan] - Access original binary content")
-        console.print("  • [cyan]file.txt[/cyan] - View parsed text representation")
-        console.print("  • [cyan]file.md[/cyan] - View formatted markdown")
+        console.print("  • [cyan]file_parsed.{ext}.md[/cyan] - View parsed markdown")
         console.print()
 
         # Create log file path for daemon mode (before forking)
@@ -197,7 +189,6 @@ def mount(
                     nx,
                     mount_point,
                     mode=mode,
-                    auto_parse=auto_parse,
                     foreground=True,  # Run in foreground to keep daemon process alive
                     allow_other=allow_other,
                     debug=debug,

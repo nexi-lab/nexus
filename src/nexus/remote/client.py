@@ -452,6 +452,7 @@ class RemoteNexusFS(NexusFilesystem):
         recursive: bool = True,
         details: bool = False,
         prefix: str | None = None,
+        show_parsed: bool = True,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """List files in a directory."""
         result = self._call_rpc(
@@ -461,6 +462,7 @@ class RemoteNexusFS(NexusFilesystem):
                 "recursive": recursive,
                 "details": details,
                 "prefix": prefix,
+                "show_parsed": show_parsed,
             },
         )
         return result["files"]  # type: ignore[no-any-return]
@@ -519,6 +521,26 @@ class RemoteNexusFS(NexusFilesystem):
         """
         result = self._call_rpc("get_available_namespaces", {})
         return result["namespaces"]  # type: ignore[no-any-return]
+
+    def get_metadata(self, path: str) -> dict[str, Any] | None:
+        """Get file metadata (permissions, ownership, etc.).
+
+        This method retrieves metadata for FUSE operations without reading
+        the entire file content.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            Metadata dict with keys: path, owner, group, mode, is_directory
+            Returns None if file doesn't exist or server has no metadata
+
+        Examples:
+            >>> metadata = nx.get_metadata("/workspace/file.txt")
+            >>> print(f"Mode: {metadata['mode']:o}")  # e.g., 0o644
+        """
+        result = self._call_rpc("get_metadata", {"path": path})
+        return result.get("metadata")  # type: ignore[no-any-return]
 
     # ============================================================
     # Version Tracking Operations

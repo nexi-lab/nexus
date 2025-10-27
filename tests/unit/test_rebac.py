@@ -160,9 +160,9 @@ def test_hierarchical_permission_parent_child(rebac_manager):
 
     # child folder has parent folder as parent
     rebac_manager.rebac_write(
-        subject=("file", "folder_parent"),
+        subject=("file", "folder_child"),
         relation="parent",
-        object=("file", "folder_child"),
+        object=("file", "folder_parent"),
     )
 
     # alice should have direct_owner permission on parent

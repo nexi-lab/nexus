@@ -406,6 +406,21 @@ class TestRPCServerIntegration:
 
         data_dir = tmp_path / "nexus-data"
         nx = nexus.connect(config={"data_dir": str(data_dir)})
+
+        # Grant permissions to anonymous user for test setup
+        if hasattr(nx, "_rebac_manager"):
+            # Grant write permission on root and test directory to anonymous user
+            nx._rebac_manager.rebac_write(
+                subject=("user", "anonymous"),
+                relation="direct_owner",
+                object=("file", "/"),
+            )
+            nx._rebac_manager.rebac_write(
+                subject=("user", "anonymous"),
+                relation="direct_owner",
+                object=("file", "/test"),
+            )
+
         nx.mkdir("/test", exist_ok=True)
         nx.write("/test/file.txt", b"test content")
         yield nx

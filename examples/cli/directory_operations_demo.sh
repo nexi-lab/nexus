@@ -77,6 +77,10 @@ print_section "1. Basic Directory Creation"
 WORKSPACE_ROOT="/workspace"
 BASE_PATH="/workspace/dir-demo"
 
+# Clear ReBAC cache to ensure fresh permission checks
+print_info "Clearing ReBAC cache..."
+PGPASSWORD=nexus psql -h localhost -U postgres -d nexus -c "DELETE FROM rebac_check_cache;" 2>/dev/null || true
+
 # Setup workspace permissions first
 print_info "Setting up workspace permissions..."
 nexus rebac create user admin direct_owner file $WORKSPACE_ROOT 2>/dev/null || true
@@ -85,7 +89,6 @@ nexus rebac create user admin direct_viewer file $WORKSPACE_ROOT 2>/dev/null || 
 # Clean up any existing demo directory
 print_info "Cleaning up previous demo data..."
 nexus rm -r $BASE_PATH 2>/dev/null || true
-sleep 2  # Give server time to process deletion and clear caches
 
 # Create with --parents flag
 nexus mkdir $BASE_PATH --parents 2>/dev/null || true
@@ -129,6 +132,10 @@ nexus ls -R $BASE_PATH || nexus ls $BASE_PATH
 
 # 4. Creating files in directories
 print_section "4. Directories vs Files"
+
+# Clear cache again to ensure fresh permission checks for write operations
+print_info "Clearing cache before write operations..."
+PGPASSWORD=nexus psql -h localhost -U postgres -d nexus -c "DELETE FROM rebac_check_cache WHERE object_id LIKE '/workspace/dir-demo%';" 2>/dev/null || true
 
 print_info "Creating test files..."
 

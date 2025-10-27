@@ -68,7 +68,7 @@ class TenantAwareReBACManager(ReBACManager):
         self,
         engine: Engine,
         cache_ttl_seconds: int = 300,
-        max_depth: int = 10,
+        max_depth: int = 50,
         enforce_tenant_isolation: bool = True,  # Kill-switch
     ):
         """Initialize tenant-aware ReBAC manager.

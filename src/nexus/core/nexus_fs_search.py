@@ -18,7 +18,6 @@ from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext, PermissionEnforcer
-    from nexus.core.permissions_enhanced import EnhancedOperationContext
     from nexus.search.semantic import SemanticSearch
     from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
@@ -50,7 +49,8 @@ class NexusFSSearchMixin:
         recursive: bool = True,
         details: bool = False,
         prefix: str | None = None,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        show_parsed: bool = True,  # noqa: ARG002
+        context: OperationContext | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """
         List files in a directory.
@@ -63,7 +63,9 @@ class NexusFSSearchMixin:
             details: If True, return detailed metadata; if False, return paths only (default: False)
             prefix: (Deprecated) Path prefix to filter by - for backward compatibility.
                     When used, lists all files recursively with this prefix.
-            context: Operation context with user, permissions, tenant info (uses default if None)
+            show_parsed: If True, include parsed virtual views in listing (default: True).
+                        Note: Virtual views are added at the RPC layer, not in this method.
+            context: Optional operation context for permission filtering (uses default if not provided)
 
         Returns:
             List of file paths (if details=False) or list of file metadata dicts (if details=True).
@@ -102,33 +104,36 @@ class NexusFSSearchMixin:
             results = all_files
         else:
             # New API: list(path="/", recursive=False)
-            # Allow "/" for directory listings (skip validation for root path)
-            if path and path != "/":
+            if path:
                 path = self._validate_path(path)
 
             # Ensure path ends with / for directory listing
             if not path.endswith("/"):
                 path = path + "/"
 
-            # PERFORMANCE FIX (v0.7.0): Use database-level filtering for non-recursive listings
-            # Previous implementation loaded ALL files into memory, then filtered in Python
-            # New implementation filters at the database level using SQL LIKE patterns
-            #
-            # Performance improvement:
-            # - Old: Load 10,000 files, filter to 10 → 10,000 rows transferred
-            # - New: Query 10 files directly → 10 rows transferred
-            results = self.metadata.list(path if path != "/" else "", recursive=recursive)
+            # Get all files with this prefix
+            all_files = self.metadata.list(path if path != "/" else "")
+
+            if recursive:
+                # Include all files under this path
+                results = all_files
+            else:
+                # Only include files directly in this directory (no subdirectories)
+                results = []
+                for meta in all_files:
+                    # Remove the prefix to get relative path
+                    rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
+                    # If there's no "/" in the relative path, it's in this directory
+                    if "/" not in rel_path:
+                        results.append(meta)
 
         # Filter by read permission (v0.3.0)
         if self._enforce_permissions:
-            # Use provided context or default
-            ctx = context if context is not None else self._default_context
+            ctx = context or self._default_context
             result_paths = [meta.path for meta in results]
-            allowed_paths = self._permission_enforcer.filter_list(result_paths, ctx)  # type: ignore[arg-type]
-            # Convert to set for O(1) lookup instead of O(n) - fixes O(n²) performance issue
-            allowed_paths_set = set(allowed_paths)
+            allowed_paths = self._permission_enforcer.filter_list(result_paths, ctx)
             # Filter results to only include allowed paths
-            results = [meta for meta in results if meta.path in allowed_paths_set]
+            results = [meta for meta in results if meta.path in allowed_paths]
 
         # Sort by path name
         results.sort(key=lambda m: m.path)
@@ -137,15 +142,19 @@ class NexusFSSearchMixin:
         # This ensures empty directories show up in listings
         directories = set()
 
+        # Extract directories from directory marker files in results (v0.3.9+)
+        # These are files with mime_type="inode/directory" created by mkdir
+        for meta in results:
+            if meta.mime_type == "inode/directory":
+                directories.add(meta.path)
+
         if not recursive:
             # For non-recursive listings, infer immediate subdirectories from file paths
-            # We need to query ALL files under the path (recursively) to detect subdirectories,
-            # even though we only return direct children files
+            base_path = path if path != "/" else ""
 
-            # Query all files recursively to infer subdirectories
-            all_files = self.metadata.list(path if path != "/" else "", recursive=True)
-
-            for meta in all_files:
+            # Get all files to infer directories
+            all_files_for_dirs = self.metadata.list(base_path)
+            for meta in all_files_for_dirs:
                 # Get relative path
                 rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
                 # Check if there's a directory component
@@ -161,6 +170,8 @@ class NexusFSSearchMixin:
             directories.update(backend_dirs)
 
         if details:
+            # Filter out directory metadata markers to avoid duplicates
+            # Directories are already included in dir_results below
             file_results = [
                 {
                     "path": meta.path,
@@ -172,6 +183,7 @@ class NexusFSSearchMixin:
                     "is_directory": False,
                 }
                 for meta in results
+                if meta.mime_type != "inode/directory"  # Exclude directory metadata markers
             ]
 
             # Add directory entries
@@ -193,18 +205,14 @@ class NexusFSSearchMixin:
             all_results.sort(key=lambda x: str(x["path"]))
             return all_results
         else:
-            # Return paths only
-            all_paths = [meta.path for meta in results] + sorted(directories)
+            # Return paths only (filter out directory metadata markers)
+            file_paths = [meta.path for meta in results if meta.mime_type != "inode/directory"]
+            all_paths = file_paths + sorted(directories)
             all_paths.sort()
             return all_paths
 
     @rpc_expose(description="Find files by glob pattern")
-    def glob(
-        self,
-        pattern: str,
-        path: str = "/",
-        context: OperationContext | EnhancedOperationContext | None = None,
-    ) -> builtins.list[str]:
+    def glob(self, pattern: str, path: str = "/") -> builtins.list[str]:
         """
         Find files matching a glob pattern.
 
@@ -217,10 +225,9 @@ class NexusFSSearchMixin:
         Args:
             pattern: Glob pattern to match (e.g., "**/*.py", "data/*.csv", "test_*.py")
             path: Base path to search from (default: "/")
-            context: Operation context with user, permissions, tenant info (uses default if None)
 
         Returns:
-            List of matching file paths (filtered by read permission), sorted by name
+            List of matching file paths, sorted by name
 
         Examples:
             # Find all Python files recursively
@@ -232,9 +239,11 @@ class NexusFSSearchMixin:
             # Find all test files
             fs.glob("test_*.py")  # Returns: ["/test_foo.py", "/test_bar.py"]
         """
-        # Validate path, but allow "/" for directory operations
-        if path and path != "/":
+        if path:
             path = self._validate_path(path)
+
+        # Get all files
+        all_files = self.metadata.list("")
 
         # Build full pattern
         if not path.endswith("/"):
@@ -255,12 +264,9 @@ class NexusFSSearchMixin:
             base_path = path[1:] if path.startswith("/") else path
             full_pattern = base_path + pattern
 
-        # PERFORMANCE OPTIMIZATION: Use SQL for simple patterns
-        # Complex patterns with ** require in-memory regex
+        # Match files against pattern
+        # Handle ** for recursive matching
         if "**" in full_pattern:
-            # Complex pattern - load all files and regex match
-            all_files = self.metadata.list("")
-
             # Convert glob pattern to regex
             # Split by ** to handle recursive matching
             parts = full_pattern.split("**")
@@ -292,34 +298,13 @@ class NexusFSSearchMixin:
                 if re.match(regex_pattern, meta.path):
                     matches.append(meta.path)
         else:
-            # Simple pattern - use SQL LIKE for efficiency
-            # Convert glob wildcards to SQL LIKE wildcards
-            # * -> % (matches any characters)
-            # ? -> _ (matches single character)
-            sql_pattern = "/" + full_pattern.replace("*", "%").replace("?", "_")
-
-            # Use metadata store's SQL query instead of loading all files
-            # This is MUCH faster for large filesystems
-            try:
-                # Use SQL LIKE query via metadata store
-                all_files = self.metadata.list_with_pattern(sql_pattern)
-                matches = [meta.path for meta in all_files]
-            except AttributeError:
-                # Fallback to in-memory matching if list_with_pattern not available
-                prefix = path if path != "/" else ""
-                all_files = self.metadata.list(prefix)
-
-                matches = []
-                for meta in all_files:
-                    # Remove leading / for matching
-                    file_path = meta.path[1:] if meta.path.startswith("/") else meta.path
-                    if fnmatch.fnmatch(file_path, full_pattern):
-                        matches.append(meta.path)
-
-        # Filter by read permission
-        if self._enforce_permissions:
-            ctx = context if context is not None else self._default_context
-            matches = self._permission_enforcer.filter_list(matches, ctx)  # type: ignore[arg-type]
+            # Use fnmatch for simpler patterns
+            matches = []
+            for meta in all_files:
+                # Remove leading / for matching
+                file_path = meta.path[1:] if meta.path.startswith("/") else meta.path
+                if fnmatch.fnmatch(file_path, full_pattern):
+                    matches.append(meta.path)
 
         return sorted(matches)
 
@@ -332,7 +317,6 @@ class NexusFSSearchMixin:
         ignore_case: bool = False,
         max_results: int = 1000,
         search_mode: str = "auto",
-        context: OperationContext | EnhancedOperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]:
         r"""
         Search file contents using regex patterns.
@@ -347,7 +331,6 @@ class NexusFSSearchMixin:
                 - "auto": Try parsed text first, fallback to raw (default)
                 - "parsed": Only search parsed text (skip files without parsed content)
                 - "raw": Only search raw file content (skip parsing)
-            context: Operation context with user, permissions, tenant info (uses default if None)
 
         Returns:
             List of match dicts, each containing:
@@ -374,8 +357,7 @@ class NexusFSSearchMixin:
             # Case-insensitive search
             fs.grep("error", ignore_case=True)
         """
-        # Validate path, but allow "/" for directory operations
-        if path and path != "/":
+        if path:
             path = self._validate_path(path)
 
         # Validate search_mode
@@ -395,19 +377,14 @@ class NexusFSSearchMixin:
         # Get files to search
         files: list[str]
         if file_pattern:
-            files = self.glob(file_pattern, path, context=context)
+            files = self.glob(file_pattern, path)
         else:
-            # Get all files under path - filter by permissions
+            # Get all files under path
             if not path.endswith("/"):
                 path = path + "/"
             prefix = path if path != "/" else ""
             all_files = self.metadata.list(prefix)
             files = [meta.path for meta in all_files]
-
-            # Filter by read permission
-            if self._enforce_permissions:
-                ctx = context if context is not None else self._default_context
-                files = self._permission_enforcer.filter_list(files, ctx)  # type: ignore[arg-type]
 
         # Search through files
         results: list[dict[str, Any]] = []
@@ -428,8 +405,8 @@ class NexusFSSearchMixin:
 
                 # Get raw text if needed
                 if text is None and search_mode in ("auto", "raw"):
-                    # Read raw content with permission context
-                    content = self.read(file_path, context=context)  # type: ignore[arg-type]
+                    # Read raw content
+                    content = self.read(file_path)
 
                     # Type narrowing: when return_metadata=False (default), result is bytes
                     assert isinstance(content, bytes), "Expected bytes from read()"
@@ -478,7 +455,6 @@ class NexusFSSearchMixin:
         limit: int = 10,
         filters: dict[str, Any] | None = None,
         search_mode: str = "semantic",
-        context: OperationContext | EnhancedOperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """
         Search documents using natural language queries.
@@ -494,10 +470,9 @@ class NexusFSSearchMixin:
             limit: Maximum number of results (default: 10)
             filters: Optional filters (file_type, etc.)
             search_mode: Search mode - "keyword", "semantic", or "hybrid" (default: "semantic")
-            context: Operation context for permission filtering (uses default if None)
 
         Returns:
-            List of search result dicts, each containing (filtered by READ permission):
+            List of search result dicts, each containing:
             - path: File path
             - chunk_index: Index of the chunk in the document
             - chunk_text: Text content of the chunk
@@ -522,14 +497,6 @@ class NexusFSSearchMixin:
                 filters={"file_type": "python"}
             )
 
-            # Search with specific context (permission filtering)
-            from nexus.core.permissions import OperationContext
-            ctx = OperationContext(user="alice", groups=["engineering"])
-            results = await nx.semantic_search(
-                "authentication",
-                context=ctx  # Only returns files alice can read
-            )
-
         Raises:
             ValueError: If semantic search is not initialized
         """
@@ -542,21 +509,6 @@ class NexusFSSearchMixin:
         results = await self._semantic_search.search(
             query=query, path=path, limit=limit, filters=filters, search_mode=search_mode
         )
-
-        # Use provided context or default
-        ctx = context if context is not None else self._default_context
-
-        # Filter results by READ permission
-        if self._enforce_permissions and results:
-            # Extract unique file paths from results
-            result_paths = list({result.path for result in results})
-
-            # Filter by permission
-            allowed_paths = self._permission_enforcer.filter_list(result_paths, ctx)  # type: ignore[arg-type]
-            allowed_paths_set = set(allowed_paths)
-
-            # Filter results to only include allowed paths
-            results = [r for r in results if r.path in allowed_paths_set]
 
         return [
             {
@@ -571,10 +523,7 @@ class NexusFSSearchMixin:
         ]
 
     async def semantic_search_index(
-        self,
-        path: str = "/",
-        recursive: bool = True,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        self, path: str = "/", recursive: bool = True
     ) -> dict[str, int]:
         """
         Index documents for semantic search.
@@ -585,7 +534,6 @@ class NexusFSSearchMixin:
         Args:
             path: Path to index (file or directory)
             recursive: If True, index directory recursively (default: True)
-            context: Operation context for permission checks (uses default if None)
 
         Returns:
             Dictionary mapping file paths to number of chunks indexed
@@ -600,14 +548,8 @@ class NexusFSSearchMixin:
             # Index single file
             await nx.semantic_search_index("/docs/README.md")
 
-            # Index with specific context
-            from nexus.core.permissions import OperationContext
-            ctx = OperationContext(user="alice", groups=["engineering"])
-            await nx.semantic_search_index("/docs", context=ctx)
-
         Raises:
             ValueError: If semantic search is not initialized
-            PermissionError: If user doesn't have READ permission on files
         """
         if not hasattr(self, "_semantic_search") or self._semantic_search is None:
             raise ValueError(
@@ -615,13 +557,10 @@ class NexusFSSearchMixin:
                 "Initialize with: await nx.initialize_semantic_search()"
             )
 
-        # Use provided context or default
-        ctx = context if context is not None else self._default_context
-
         # Check if path is a file or directory
         try:
-            # Try to read as file (with context for permission check)
-            self.read(path, context=ctx)  # type: ignore[arg-type]
+            # Try to read as file
+            self.read(path)
             # It's a file, index it
             num_chunks = await self._semantic_search.index_document(path)
             return {path: num_chunks}
@@ -633,8 +572,8 @@ class NexusFSSearchMixin:
         if recursive:
             return await self._semantic_search.index_directory(path)
         else:
-            # Index only direct files in directory (with context for permission filtering)
-            files = self.list(path, recursive=False, context=ctx)
+            # Index only direct files in directory
+            files = self.list(path, recursive=False)
             results: dict[str, int] = {}
             for item in files:
                 file_path = item["name"] if isinstance(item, dict) else item
@@ -646,15 +585,9 @@ class NexusFSSearchMixin:
                         results[file_path] = -1  # Indicate error
             return results
 
-    async def semantic_search_stats(
-        self,
-        _context: OperationContext | None = None,
-    ) -> dict[str, Any]:
+    async def semantic_search_stats(self) -> dict[str, Any]:
         """
         Get semantic search indexing statistics.
-
-        Args:
-            context: Operation context (uses default if None) - included for API consistency
 
         Returns:
             Dictionary with statistics:

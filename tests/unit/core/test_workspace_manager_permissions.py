@@ -69,10 +69,11 @@ class TestWorkspaceManagerPermissions:
         )
 
         # Verify permission was checked
+        # Note: snapshot:create maps to "write" on "file" object (workspaces are directories)
         mock_rebac_manager.rebac_check.assert_called_once_with(
             subject=("agent", "agent1"),
-            permission="snapshot:create",
-            object=("workspace", "/test-workspace"),
+            permission="write",
+            object=("file", "/test-workspace"),
             tenant_id="tenant1",
         )
 
@@ -103,7 +104,7 @@ class TestWorkspaceManagerPermissions:
         )
 
         # Execute & Verify
-        with pytest.raises(NexusPermissionError, match="no agent_id provided"):
+        with pytest.raises(NexusPermissionError, match="no user_id or agent_id provided"):
             manager.create_snapshot(
                 workspace_path="/test-workspace",
                 description="Test snapshot",
@@ -138,10 +139,11 @@ class TestWorkspaceManagerPermissions:
         result = workspace_manager.restore_snapshot(snapshot_id="snap123")
 
         # Verify permission was checked
+        # Note: snapshot:restore maps to "write" on "file" object
         mock_rebac_manager.rebac_check.assert_called_once_with(
             subject=("agent", "agent1"),
-            permission="snapshot:restore",
-            object=("workspace", "/test-workspace"),
+            permission="write",
+            object=("file", "/test-workspace"),
             tenant_id="tenant1",
         )
 
@@ -187,10 +189,11 @@ class TestWorkspaceManagerPermissions:
         result = workspace_manager.list_snapshots(workspace_path="/test-workspace")
 
         # Verify permission was checked
+        # Note: snapshot:list maps to "read" on "file" object
         mock_rebac_manager.rebac_check.assert_called_once_with(
             subject=("agent", "agent1"),
-            permission="snapshot:list",
-            object=("workspace", "/test-workspace"),
+            permission="read",
+            object=("file", "/test-workspace"),
             tenant_id="tenant1",
         )
 
@@ -241,10 +244,11 @@ class TestWorkspaceManagerPermissions:
         result = workspace_manager.diff_snapshots("snap1", "snap2")
 
         # Verify permission was checked (only once since same workspace)
+        # Note: snapshot:diff maps to "read" on "file" object
         mock_rebac_manager.rebac_check.assert_called_once_with(
             subject=("agent", "agent1"),
-            permission="snapshot:diff",
-            object=("workspace", "/test-workspace"),
+            permission="read",
+            object=("file", "/test-workspace"),
             tenant_id="tenant1",
         )
 
@@ -288,11 +292,12 @@ class TestWorkspaceManagerPermissions:
         workspace_manager.diff_snapshots("snap1", "snap2")
 
         # Verify permission was checked for BOTH workspaces
+        # Note: Checks use "file" object type (workspaces are directories)
         assert mock_rebac_manager.rebac_check.call_count == 2
         calls = mock_rebac_manager.rebac_check.call_args_list
 
-        assert calls[0][1]["object"] == ("workspace", "/workspace-a")
-        assert calls[1][1]["object"] == ("workspace", "/workspace-b")
+        assert calls[0][1]["object"] == ("file", "/workspace-a")
+        assert calls[1][1]["object"] == ("file", "/workspace-b")
 
     def test_diff_snapshots_permission_denied_first_workspace(
         self, workspace_manager, mock_rebac_manager, mock_metadata

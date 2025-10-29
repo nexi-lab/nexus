@@ -21,6 +21,7 @@ import click
 
 # Import all command registration functions
 from nexus.cli.commands import (
+    agent,
     directory,
     file_ops,
     memory,
@@ -61,10 +62,12 @@ def register_all_commands(cli: click.Group) -> None:
     workflows.register_commands(cli)
     mounts.register_commands(cli)  # Mount management commands
     cli.add_command(memory.memory)  # v0.4.0: Memory API commands
+    cli.add_command(agent.agent)  # v0.5.0: Agent management commands
 
 
 __all__ = [
     "register_all_commands",
+    "agent",
     "file_ops",
     "directory",
     "memory",

@@ -194,7 +194,7 @@ class HierarchyManager:
             )
 
     def _invalidate_cache_for_path_hierarchy(self, path: str) -> None:
-        """Invalidate cache for path and all ancestor paths.
+        """Invalidate cache for path, all ancestor paths, AND all descendant paths.
 
         When parent tuples are created, cached permission checks for descendant
         paths may become invalid. This method clears cache for the entire hierarchy.
@@ -206,22 +206,15 @@ class HierarchyManager:
         conn = self.rebac_manager._get_connection()
         cursor = conn.cursor()
 
-        # Invalidate cache for the exact path
-        cursor.execute(
-            self.rebac_manager._fix_sql_placeholders(
-                """
-                DELETE FROM rebac_check_cache
-                WHERE object_type = 'file' AND object_id = ?
-                """
-            ),
-            (path,),
-        )
-
-        # Also invalidate cache for all ancestor paths
-        # This ensures fresh permission checks for the entire hierarchy
+        # Build list of all paths to invalidate (ancestors + exact + descendants via LIKE)
+        # Ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
         parts = path.strip("/").split("/")
+        ancestor_paths = []
         for i in range(len(parts), 0, -1):
-            ancestor_path = "/" + "/".join(parts[:i])
+            ancestor_paths.append("/" + "/".join(parts[:i]))
+
+        # Invalidate cache for all ancestor paths (exact matches)
+        for ancestor_path in ancestor_paths:
             cursor.execute(
                 self.rebac_manager._fix_sql_placeholders(
                     """
@@ -231,6 +224,19 @@ class HierarchyManager:
                 ),
                 (ancestor_path,),
             )
+
+        # CRITICAL FIX: Also invalidate cache for all DESCENDANT paths
+        # When parent tuples are created for /a/b, all cached checks for /a/b/c, /a/b/c/d, etc.
+        # must be invalidated because they can now inherit permissions from /a/b
+        cursor.execute(
+            self.rebac_manager._fix_sql_placeholders(
+                """
+                DELETE FROM rebac_check_cache
+                WHERE object_type = 'file' AND object_id LIKE ?
+                """
+            ),
+            (path + "/%",),
+        )
 
         conn.commit()
 

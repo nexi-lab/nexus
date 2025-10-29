@@ -116,6 +116,24 @@ Demonstrates:
 ./examples/cli/directory_operations_demo.sh
 ```
 
+#### File Operations Demo
+**File**: [`cli/file_operations_demo.sh`](cli/file_operations_demo.sh)
+
+Demonstrates:
+- Writing files (inline, stdin, from file, JSON, binary)
+- Reading files (basic, with metadata)
+- Copying files (simple, cross-directory)
+- Moving/renaming files (same directory, cross-directory)
+- Deleting files (with/without confirmation)
+- Optimistic concurrency control (create-only, conditional updates)
+- Complete workflow example (document versioning)
+- Permission-aware operations (read-only, read-write)
+
+**Run**:
+```bash
+./examples/cli/file_operations_demo.sh
+```
+
 ## Example Workflow
 
 Here's a typical workflow using both Python and CLI:

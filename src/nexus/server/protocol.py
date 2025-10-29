@@ -141,6 +141,7 @@ class RPCEncoder(json.JSONEncoder):
     Handles special types:
     - bytes: base64-encoded strings
     - datetime: ISO format strings
+    - timedelta: total seconds (v0.5.0)
     """
 
     def default(self, obj: Any) -> Any:
@@ -149,6 +150,12 @@ class RPCEncoder(json.JSONEncoder):
             return {"__type__": "bytes", "data": base64.b64encode(obj).decode("utf-8")}
         elif isinstance(obj, datetime):
             return {"__type__": "datetime", "data": obj.isoformat()}
+        elif isinstance(obj, type(obj)) and obj.__class__.__name__ == "timedelta":
+            # v0.5.0: Encode timedelta as total seconds
+            from datetime import timedelta
+
+            if isinstance(obj, timedelta):
+                return {"__type__": "timedelta", "seconds": obj.total_seconds()}
         elif hasattr(obj, "__dict__"):
             # Convert objects to dictionaries, filtering out methods
             return {
@@ -164,6 +171,11 @@ def rpc_decode_hook(obj: Any) -> Any:
             return base64.b64decode(obj["data"])
         elif obj["__type__"] == "datetime":
             return datetime.fromisoformat(obj["data"])
+        elif obj["__type__"] == "timedelta":
+            # v0.5.0: Decode timedelta from seconds
+            from datetime import timedelta
+
+            return timedelta(seconds=obj["seconds"])
     return obj
 
 
@@ -383,6 +395,178 @@ class NamespaceDeleteParams:
     object_type: str
 
 
+@dataclass
+class RegisterWorkspaceParams:
+    """Parameters for register_workspace() method (v0.5.0)."""
+
+    path: str
+    name: str | None = None
+    description: str | None = None
+    created_by: str | None = None
+    tags: list[str] | None = None
+    metadata: dict[str, Any] | None = None
+    session_id: str | None = None  # v0.5.0
+    ttl: Any | None = None  # v0.5.0: Will be converted from seconds
+
+
+@dataclass
+class RegisterMemoryParams:
+    """Parameters for register_memory() method (v0.5.0)."""
+
+    path: str
+    name: str | None = None
+    description: str | None = None
+    created_by: str | None = None
+    metadata: dict[str, Any] | None = None
+    session_id: str | None = None  # v0.5.0
+    ttl: Any | None = None  # v0.5.0: Will be converted from seconds
+
+
+@dataclass
+class GetWorkspaceInfoParams:
+    """Parameters for get_workspace_info() method (v0.5.0)."""
+
+    path: str
+
+
+@dataclass
+class UnregisterWorkspaceParams:
+    """Parameters for unregister_workspace() method (v0.5.0)."""
+
+    path: str
+
+
+@dataclass
+class GetMemoryInfoParams:
+    """Parameters for get_memory_info() method (v0.5.0)."""
+
+    path: str
+
+
+@dataclass
+class UnregisterMemoryParams:
+    """Parameters for unregister_memory() method (v0.5.0)."""
+
+    path: str
+
+
+@dataclass
+class ListWorkspacesParams:
+    """Parameters for list_workspaces() method (v0.5.0)."""
+
+    pass
+
+
+@dataclass
+class ListMemoriesParams:
+    """Parameters for list_memories() method (v0.5.0)."""
+
+    pass
+
+
+@dataclass
+class WorkspaceSnapshotParams:
+    """Parameters for workspace_snapshot() method (v0.5.0)."""
+
+    workspace_path: str | None = None
+    agent_id: str | None = None  # DEPRECATED
+    description: str | None = None
+    tags: list[str] | None = None
+    created_by: str | None = None
+
+
+@dataclass
+class WorkspaceRestoreParams:
+    """Parameters for workspace_restore() method (v0.5.0)."""
+
+    snapshot_number: int
+    workspace_path: str | None = None
+    agent_id: str | None = None  # DEPRECATED
+
+
+@dataclass
+class WorkspaceLogParams:
+    """Parameters for workspace_log() method (v0.5.0)."""
+
+    workspace_path: str | None = None
+    agent_id: str | None = None  # DEPRECATED
+    limit: int = 100
+
+
+@dataclass
+class WorkspaceDiffParams:
+    """Parameters for workspace_diff() method (v0.5.0)."""
+
+    snapshot_1: int
+    snapshot_2: int
+    workspace_path: str | None = None
+    agent_id: str | None = None  # DEPRECATED
+
+
+@dataclass
+class GetVersionParams:
+    """Parameters for get_version() method."""
+
+    path: str
+    version: int
+
+
+@dataclass
+class ListVersionsParams:
+    """Parameters for list_versions() method."""
+
+    path: str
+
+
+@dataclass
+class RollbackParams:
+    """Parameters for rollback() method."""
+
+    path: str
+    version: int
+
+
+@dataclass
+class DiffVersionsParams:
+    """Parameters for diff_versions() method."""
+
+    path: str
+    v1: int
+    v2: int
+    mode: str = "metadata"
+
+
+@dataclass
+class RegisterAgentParams:
+    """Parameters for register_agent() method (v0.5.0)."""
+
+    agent_id: str
+    name: str
+    description: str | None = None
+    generate_api_key: bool = False
+
+
+@dataclass
+class ListAgentsParams:
+    """Parameters for list_agents() method (v0.5.0)."""
+
+    pass
+
+
+@dataclass
+class GetAgentParams:
+    """Parameters for get_agent() method (v0.5.0)."""
+
+    agent_id: str
+
+
+@dataclass
+class DeleteAgentParams:
+    """Parameters for delete_agent() method (v0.5.0)."""
+
+    agent_id: str
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -408,6 +592,27 @@ METHOD_PARAMS = {
     "namespace_get": NamespaceGetParams,
     "namespace_list": NamespaceListParams,
     "namespace_delete": NamespaceDeleteParams,
+    "register_workspace": RegisterWorkspaceParams,  # v0.5.0
+    "unregister_workspace": UnregisterWorkspaceParams,  # v0.5.0
+    "get_workspace_info": GetWorkspaceInfoParams,  # v0.5.0
+    "list_workspaces": ListWorkspacesParams,  # v0.5.0
+    "workspace_snapshot": WorkspaceSnapshotParams,  # v0.5.0
+    "workspace_restore": WorkspaceRestoreParams,  # v0.5.0
+    "workspace_log": WorkspaceLogParams,  # v0.5.0
+    "workspace_diff": WorkspaceDiffParams,  # v0.5.0
+    "register_memory": RegisterMemoryParams,  # v0.5.0
+    "unregister_memory": UnregisterMemoryParams,  # v0.5.0
+    "get_memory_info": GetMemoryInfoParams,  # v0.5.0
+    "list_memories": ListMemoriesParams,  # v0.5.0
+    "register_agent": RegisterAgentParams,  # v0.5.0
+    "list_agents": ListAgentsParams,  # v0.5.0
+    "get_agent": GetAgentParams,  # v0.5.0
+    "delete_agent": DeleteAgentParams,  # v0.5.0
+    # Versioning methods
+    "get_version": GetVersionParams,
+    "list_versions": ListVersionsParams,
+    "rollback": RollbackParams,
+    "diff_versions": DiffVersionsParams,
 }
 
 

@@ -4,25 +4,92 @@ Lightweight registry for ID disambiguation and relationship tracking.
 Enables order-neutral virtual paths for memories.
 """
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.storage.models import EntityRegistryModel
 
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
+    from sqlalchemy.orm import sessionmaker
+
 
 class EntityRegistry:
-    """Entity registry for managing identity relationships."""
+    """Entity registry for managing identity relationships.
 
-    def __init__(self, session: Session):
+    v0.5.0: Refactored to use SessionFactory instead of holding a session.
+    This improves resource management and prevents session lifecycle issues.
+    """
+
+    _session: "Session | None"
+    _session_factory: "sessionmaker[Session] | None"
+
+    def __init__(self, session_or_factory: "Session | sessionmaker[Session] | Engine"):
         """Initialize entity registry.
 
         Args:
-            session: SQLAlchemy database session.
+            session_or_factory: Can be:
+                - Session: Legacy support (will be deprecated)
+                - sessionmaker: Session factory (recommended)
+                - Engine: SQLAlchemy engine (will create sessionmaker)
+
+        Examples:
+            # Recommended: Pass SessionFactory
+            >>> from sqlalchemy.orm import sessionmaker
+            >>> SessionLocal = sessionmaker(bind=engine)
+            >>> registry = EntityRegistry(SessionLocal)
+
+            # Or pass Engine directly
+            >>> registry = EntityRegistry(engine)
+
+            # Legacy: Pass Session (for backward compatibility)
+            >>> session = SessionLocal()
+            >>> registry = EntityRegistry(session)
         """
-        self.session = session
+        from sqlalchemy.engine import Engine
+        from sqlalchemy.orm import Session, sessionmaker
+
+        if isinstance(session_or_factory, Session):
+            # Legacy mode: Hold the session (backward compatibility)
+            self._session = session_or_factory
+            self._session_factory = None
+        elif isinstance(session_or_factory, Engine):
+            # Engine provided: Create sessionmaker
+            self._session = None
+            self._session_factory = sessionmaker(bind=session_or_factory, expire_on_commit=False)
+        else:
+            # SessionFactory provided (recommended)
+            self._session = None
+            self._session_factory = session_or_factory
+
+    @contextmanager
+    def _get_session(self) -> Generator[Session, None, None]:
+        """Get a session (creates new if using factory, or uses held session).
+
+        Yields:
+            Session: Database session
+        """
+        if self._session:
+            # Legacy mode: Use the held session, don't close it
+            yield self._session
+        else:
+            # New mode: Create session from factory, close after use
+            if self._session_factory is None:
+                raise RuntimeError("No session or session factory configured")
+            session = self._session_factory()
+            try:
+                yield session
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
 
     def register_entity(
         self,
@@ -51,20 +118,24 @@ class EntityRegistry:
             return existing
 
         # Create new entity
-        entity = EntityRegistryModel(
-            entity_type=entity_type,
-            entity_id=entity_id,
-            parent_type=parent_type,
-            parent_id=parent_id,
-            created_at=datetime.now(UTC),
-        )
+        with self._get_session() as session:
+            entity = EntityRegistryModel(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                parent_type=parent_type,
+                parent_id=parent_id,
+                created_at=datetime.now(UTC),
+            )
 
-        # Validate before adding
-        entity.validate()
+            # Validate before adding
+            entity.validate()
 
-        self.session.add(entity)
-        self.session.commit()
-        return entity
+            session.add(entity)
+            session.commit()
+
+            # Refresh to ensure we have the committed state
+            session.refresh(entity)
+            return entity
 
     def get_entity(self, entity_type: str, entity_id: str) -> EntityRegistryModel | None:
         """Get an entity from the registry.
@@ -76,11 +147,15 @@ class EntityRegistry:
         Returns:
             EntityRegistryModel or None if not found.
         """
-        stmt = select(EntityRegistryModel).where(
-            EntityRegistryModel.entity_type == entity_type,
-            EntityRegistryModel.entity_id == entity_id,
-        )
-        return self.session.execute(stmt).scalar_one_or_none()
+        with self._get_session() as session:
+            stmt = select(EntityRegistryModel).where(
+                EntityRegistryModel.entity_type == entity_type,
+                EntityRegistryModel.entity_id == entity_id,
+            )
+            result: EntityRegistryModel | None = session.execute(stmt).scalar_one_or_none()
+            if result:
+                session.expunge(result)  # Detach from session so it can be used outside
+            return result
 
     def lookup_entity_by_id(self, entity_id: str) -> list[EntityRegistryModel]:
         """Look up entities by ID (may return multiple if ID is not unique across types).
@@ -91,8 +166,13 @@ class EntityRegistry:
         Returns:
             List of matching entities.
         """
-        stmt = select(EntityRegistryModel).where(EntityRegistryModel.entity_id == entity_id)
-        return list(self.session.execute(stmt).scalars().all())
+        with self._get_session() as session:
+            stmt = select(EntityRegistryModel).where(EntityRegistryModel.entity_id == entity_id)
+            results = list(session.execute(stmt).scalars().all())
+            # Detach all results from session
+            for result in results:
+                session.expunge(result)
+            return results
 
     def get_entities_by_type(self, entity_type: str) -> list[EntityRegistryModel]:
         """Get all entities of a specific type.
@@ -103,8 +183,38 @@ class EntityRegistry:
         Returns:
             List of entities.
         """
-        stmt = select(EntityRegistryModel).where(EntityRegistryModel.entity_type == entity_type)
-        return list(self.session.execute(stmt).scalars().all())
+        with self._get_session() as session:
+            stmt = select(EntityRegistryModel).where(EntityRegistryModel.entity_type == entity_type)
+            results = list(session.execute(stmt).scalars().all())
+            # Detach all results from session
+            for result in results:
+                session.expunge(result)
+            return results
+
+    def get_parent(self, entity_type: str, entity_id: str) -> EntityRegistryModel | None:
+        """Get the parent entity of a given entity.
+
+        v0.5.0 ACE: Used for agent→user permission inheritance
+
+        Args:
+            entity_type: Type of entity (e.g., "agent")
+            entity_id: ID of entity (e.g., "agent_data_analyst")
+
+        Returns:
+            Parent EntityRegistryModel or None if no parent
+
+        Example:
+            >>> # Get agent's owner (user)
+            >>> parent = registry.get_parent("agent", "agent_data_analyst")
+            >>> if parent and parent.parent_type == "user":
+            ...     print(f"Agent owned by user: {parent.parent_id}")
+        """
+        entity = self.get_entity(entity_type, entity_id)
+        if not entity or not entity.parent_type or not entity.parent_id:
+            return None
+
+        # Get the parent entity
+        return self.get_entity(entity.parent_type, entity.parent_id)
 
     def get_children(self, parent_type: str, parent_id: str) -> list[EntityRegistryModel]:
         """Get all child entities of a parent.
@@ -116,11 +226,16 @@ class EntityRegistry:
         Returns:
             List of child entities.
         """
-        stmt = select(EntityRegistryModel).where(
-            EntityRegistryModel.parent_type == parent_type,
-            EntityRegistryModel.parent_id == parent_id,
-        )
-        return list(self.session.execute(stmt).scalars().all())
+        with self._get_session() as session:
+            stmt = select(EntityRegistryModel).where(
+                EntityRegistryModel.parent_type == parent_type,
+                EntityRegistryModel.parent_id == parent_id,
+            )
+            results = list(session.execute(stmt).scalars().all())
+            # Detach all results from session
+            for result in results:
+                session.expunge(result)
+            return results
 
     def delete_entity(self, entity_type: str, entity_id: str) -> bool:
         """Delete an entity from the registry.
@@ -134,8 +249,11 @@ class EntityRegistry:
         """
         entity = self.get_entity(entity_type, entity_id)
         if entity:
-            self.session.delete(entity)
-            self.session.commit()
+            with self._get_session() as session:
+                # Re-attach entity to this session
+                session.merge(entity)
+                session.delete(entity)
+                session.commit()
             return True
         return False
 

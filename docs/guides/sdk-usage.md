@@ -189,9 +189,14 @@ print(f"Hash: {metadata.content_hash}")
 
 ### Permissions (ReBAC)
 
+**Note:** Embedded mode (SDK) doesn't enforce permissions by default - it's single-user like SQLite. For production with permissions, use server mode with authentication.
+
+To test permission logic in embedded mode, explicitly enable permissions:
+
 ```python
 from nexus.sdk import connect
 
+# Opt-in to permissions for testing (disabled by default in embedded mode)
 nx = connect(config={"enforce_permissions": True})
 
 # Grant permissions using ReBAC
@@ -213,6 +218,12 @@ subjects = nx.rebac_expand(
     permission="read",
     object=("file", "/workspace/file.txt")
 )
+```
+
+**Production setup:** For real permission enforcement, use server mode:
+```bash
+# Server with authentication (permissions enabled automatically)
+nexus serve --auth-type database
 ```
 
 See [Permission System Guide](PERMISSION_SYSTEM.md) and [ReBAC API Patterns](REBAC_API_PATTERNS.md) for complete documentation.

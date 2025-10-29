@@ -848,25 +848,45 @@ class MemoryModel(Base):
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
     # Identity relationships
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Real user ownership
-    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Created by agent
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    user_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )  # Real user ownership
+    agent_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )  # Created by agent
 
     # Scope and visibility
     scope: Mapped[str] = mapped_column(
         String(50), nullable=False, default="agent"
-    )  # 'agent', 'user', 'tenant', 'global'
+    )  # 'agent', 'user', 'tenant', 'global', 'session' (v0.5.0)
     visibility: Mapped[str] = mapped_column(
         String(50), nullable=False, default="private"
     )  # 'private', 'shared', 'public'
 
+    # Session scope (v0.5.0 ACE) - for session-scoped memories
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
     # Memory metadata
     memory_type: Mapped[str | None] = mapped_column(
         String(50), nullable=True
-    )  # 'fact', 'preference', 'experience', etc.
+    )  # 'fact', 'preference', 'experience', 'strategy', 'anti_pattern', 'observation', 'trajectory', 'reflection', 'consolidated' (v0.5.0 ACE)
     importance: Mapped[float | None] = mapped_column(
         Float, nullable=True
     )  # 0.0-1.0 importance score
+
+    # ACE (Agentic Context Engineering) relationships (v0.5.0)
+    trajectory_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )  # Link to trajectory
+    playbook_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # Link to playbook
+    consolidated_from: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # JSON array of source memory_ids
+    consolidation_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )  # Consolidation tracking
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -887,6 +907,8 @@ class MemoryModel(Base):
         Index("idx_memory_scope", "scope"),
         Index("idx_memory_type", "memory_type"),
         Index("idx_memory_created_at", "created_at"),
+        Index("idx_memory_session", "session_id"),
+        Index("idx_memory_expires", "expires_at"),
     )
 
     def __repr__(self) -> str:
@@ -1298,12 +1320,34 @@ class WorkspaceConfigModel(Base):
     )
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # Agent identity (v0.5.0 ACE)
+    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # Owner
+    agent_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )  # Agent that created it
+
+    # Session scope (v0.5.0 ACE)
+    scope: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="persistent"
+    )  # "persistent" or "session"
+    session_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )  # FK to user_sessions
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )  # Auto-cleanup time
+
     # User-defined metadata (JSON as text for SQLite compat)
     # Note: Using 'extra_metadata' because 'metadata' is reserved by SQLAlchemy
     extra_metadata: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)
 
     # Indexes
-    __table_args__ = (Index("idx_workspace_configs_created_at", "created_at"),)
+    __table_args__ = (
+        Index("idx_workspace_configs_created_at", "created_at"),
+        Index("idx_workspace_configs_user", "user_id"),
+        Index("idx_workspace_configs_session", "session_id"),
+        Index("idx_workspace_configs_expires", "expires_at"),
+    )
 
     def __repr__(self) -> str:
         return f"<WorkspaceConfigModel(path={self.path}, name={self.name})>"
@@ -1321,7 +1365,7 @@ class MemoryConfigModel(Base):
     __tablename__ = "memory_configs"
 
     # Primary key (the memory path)
-    path: Mapped[str] = mapped_column(Text, primary_key=True)
+    path: Mapped[str | None] = mapped_column(Text, primary_key=True)
 
     # Optional metadata
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -1333,12 +1377,321 @@ class MemoryConfigModel(Base):
     )
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # Agent identity (v0.5.0 ACE)
+    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # Owner
+    agent_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )  # Agent that created it
+
+    # Session scope (v0.5.0 ACE)
+    scope: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="persistent"
+    )  # "persistent" or "session"
+    session_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )  # FK to user_sessions
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )  # Auto-cleanup time
+
     # User-defined metadata (JSON as text for SQLite compat)
     # Note: Using 'extra_metadata' because 'metadata' is reserved by SQLAlchemy
     extra_metadata: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)
 
     # Indexes
-    __table_args__ = (Index("idx_memory_configs_created_at", "created_at"),)
+    __table_args__ = (
+        Index("idx_memory_configs_created_at", "created_at"),
+        Index("idx_memory_configs_user", "user_id"),
+        Index("idx_memory_configs_session", "session_id"),
+        Index("idx_memory_configs_expires", "expires_at"),
+    )
 
     def __repr__(self) -> str:
         return f"<MemoryConfigModel(path={self.path}, name={self.name})>"
+
+
+# ============================================================================
+# ACE (Agentic Context Engineering) Tables - v0.5.0
+# ============================================================================
+
+
+class TrajectoryModel(Base):
+    """Trajectory tracking for ACE (Agentic Context Engineering).
+
+    Tracks execution trajectories for learning and reflection.
+    Each trajectory represents a task execution with steps, decisions, and outcomes.
+
+    Added in v0.5.0 for ACE integration.
+    """
+
+    __tablename__ = "trajectories"
+
+    # Primary key
+    trajectory_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Identity relationships
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # Owner
+    agent_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )  # Agent that created it
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+
+    # Task information
+    task_description: Mapped[str] = mapped_column(Text, nullable=False)
+    task_type: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, index=True
+    )  # 'api_call', 'data_processing', 'reasoning'
+
+    # Execution trace (stored as CAS content)
+    trace_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )  # JSON with steps/decisions/outcomes
+
+    # Outcome
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, index=True
+    )  # 'success', 'failure', 'partial'
+    success_score: Mapped[float | None] = mapped_column(Float, nullable=True)  # 0.0-1.0
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Performance metrics
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Relations
+    parent_trajectory_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("trajectories.trajectory_id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Timestamps
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+    # Relationships
+    parent_trajectory: Mapped["TrajectoryModel | None"] = relationship(
+        "TrajectoryModel", remote_side=[trajectory_id], foreign_keys=[parent_trajectory_id]
+    )
+
+    # Indexes and constraints
+    __table_args__ = (
+        Index("idx_traj_user", "user_id"),
+        Index("idx_traj_agent", "agent_id"),
+        Index("idx_traj_tenant", "tenant_id"),
+        Index("idx_traj_status", "status"),
+        Index("idx_traj_task_type", "task_type"),
+        Index("idx_traj_completed", "completed_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TrajectoryModel(trajectory_id={self.trajectory_id}, status={self.status}, task={self.task_description[:50]})>"
+
+    def validate(self) -> None:
+        """Validate trajectory model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate user_id
+        if not self.user_id:
+            raise ValidationError("user_id is required")
+
+        # Validate task_description
+        if not self.task_description:
+            raise ValidationError("task_description is required")
+
+        # Validate trace_hash
+        if not self.trace_hash:
+            raise ValidationError("trace_hash is required")
+
+        # Validate status
+        valid_statuses = ["success", "failure", "partial"]
+        if self.status not in valid_statuses:
+            raise ValidationError(f"status must be one of {valid_statuses}, got {self.status}")
+
+        # Validate success_score
+        if self.success_score is not None and not 0.0 <= self.success_score <= 1.0:
+            raise ValidationError(
+                f"success_score must be between 0.0 and 1.0, got {self.success_score}"
+            )
+
+
+class PlaybookModel(Base):
+    """Playbook storage for ACE (Agentic Context Engineering).
+
+    Stores learned strategies and patterns for agents.
+    Playbooks contain strategies (helpful, harmful, neutral) with evidence tracking.
+
+    Added in v0.5.0 for ACE integration.
+    """
+
+    __tablename__ = "playbooks"
+
+    # Primary key
+    playbook_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Identity relationships
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # Owner
+    agent_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )  # Agent that created it
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+
+    # Playbook information
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # Content (stored as CAS)
+    content_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )  # Structured playbook data
+
+    # Effectiveness metrics
+    usage_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    avg_improvement: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    # Scope and visibility
+    scope: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="agent", index=True
+    )  # 'agent', 'user', 'tenant', 'global'
+    visibility: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="private"
+    )  # 'private', 'shared', 'public'
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Indexes and constraints
+    __table_args__ = (
+        UniqueConstraint("agent_id", "name", "version", name="uq_playbook_agent_name_version"),
+        Index("idx_playbook_user", "user_id"),
+        Index("idx_playbook_agent", "agent_id"),
+        Index("idx_playbook_tenant", "tenant_id"),
+        Index("idx_playbook_name", "name"),
+        Index("idx_playbook_scope", "scope"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PlaybookModel(playbook_id={self.playbook_id}, name={self.name}, version={self.version})>"
+
+    def validate(self) -> None:
+        """Validate playbook model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate user_id
+        if not self.user_id:
+            raise ValidationError("user_id is required")
+
+        # Validate name
+        if not self.name:
+            raise ValidationError("name is required")
+
+        # Validate version
+        if self.version < 1:
+            raise ValidationError(f"version must be >= 1, got {self.version}")
+
+        # Validate content_hash
+        if not self.content_hash:
+            raise ValidationError("content_hash is required")
+
+        # Validate scope
+        valid_scopes = ["agent", "user", "tenant", "global"]
+        if self.scope not in valid_scopes:
+            raise ValidationError(f"scope must be one of {valid_scopes}, got {self.scope}")
+
+        # Validate visibility
+        valid_visibilities = ["private", "shared", "public"]
+        if self.visibility not in valid_visibilities:
+            raise ValidationError(
+                f"visibility must be one of {valid_visibilities}, got {self.visibility}"
+            )
+
+        # Validate metrics
+        if not 0.0 <= self.success_rate <= 1.0:
+            raise ValidationError(
+                f"success_rate must be between 0.0 and 1.0, got {self.success_rate}"
+            )
+
+        if self.usage_count < 0:
+            raise ValidationError(f"usage_count must be non-negative, got {self.usage_count}")
+
+
+class UserSessionModel(Base):
+    """User session tracking for session-scoped resources.
+
+    Tracks active sessions with optional TTL for automatic cleanup.
+    Sessions can be temporary (with expires_at) or persistent (expires_at=None).
+
+    Added in v0.5.0 for session management.
+    """
+
+    __tablename__ = "user_sessions"
+
+    # Primary key
+    session_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Identity
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+
+    # Lifecycle
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )  # None = persistent session
+    last_activity: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    # Metadata
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)  # IPv6
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_session_user", "user_id"),
+        Index("idx_session_agent", "agent_id"),
+        Index("idx_session_expires", "expires_at"),
+        Index("idx_session_created", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserSessionModel(session_id={self.session_id}, user_id={self.user_id}, expires_at={self.expires_at})>"
+
+    def is_expired(self) -> bool:
+        """Check if session has expired.
+
+        Returns:
+            True if session has expires_at and it's in the past
+        """
+        if self.expires_at is None:
+            return False  # Persistent session never expires
+        return datetime.now(UTC) > self.expires_at

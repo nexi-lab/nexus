@@ -1,12 +1,20 @@
 """Memory management CLI commands (v0.4.0+)."""
 
 import json
+import re
+from datetime import timedelta
 
 import click
 from rich.console import Console
 from rich.table import Table
 
-from nexus.cli.utils import BackendConfig, get_default_filesystem, get_filesystem, handle_error
+from nexus.cli.utils import (
+    BackendConfig,
+    add_backend_options,
+    get_default_filesystem,
+    get_filesystem,
+    handle_error,
+)
 
 console = Console()
 
@@ -278,33 +286,48 @@ def delete(memory_id: str) -> None:
 @click.option("--name", "-n", default=None, help="Friendly name for memory")
 @click.option("--description", "-d", default="", help="Description of memory")
 @click.option("--created-by", default=None, help="User/agent who created it")
-@click.option("--data-dir", default=None, help="Data directory for local backend")
-@click.option("--config", default=None, help="Path to configuration file")
+@click.option(
+    "--session-id", default=None, help="Session ID for temporary session-scoped memory (v0.5.0)"
+)
+@click.option(
+    "--ttl", default=None, help="Time-to-live (e.g., '8h', '2d', '30m') for auto-expiry (v0.5.0)"
+)
+@add_backend_options
 def register_memory_cmd(
     path: str,
     name: str | None,
     description: str,
     created_by: str | None,
-    data_dir: str | None,
-    config: str | None,
+    session_id: str | None,
+    ttl: str | None,
+    backend_config: BackendConfig,
 ) -> None:
     """Register a directory as a memory.
 
     Memories support consolidation, semantic search, and versioning.
 
     Examples:
+        # Persistent memory (traditional)
         nexus memory register /my-memory --name kb
-        nexus memory register /team/knowledge --name team-kb --description "Team knowledge base"
+
+        # Temporary agent memory (v0.5.0 - auto-expire after task)
+        nexus memory register /tmp/agent-context --session-id abc123 --ttl 2h
     """
     try:
-        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
         nx = get_filesystem(backend_config)
+
+        # v0.5.0: Parse TTL string to timedelta
+        ttl_delta = None
+        if ttl:
+            ttl_delta = _parse_ttl(ttl)
 
         result = nx.register_memory(
             path=path,
             name=name,
             description=description,
             created_by=created_by,
+            session_id=session_id,  # v0.5.0
+            ttl=ttl_delta,  # v0.5.0
         )
 
         console.print(f"[green]✓[/green] Registered memory: {result['path']}")
@@ -314,6 +337,11 @@ def register_memory_cmd(
             console.print(f"  Description: {result['description']}")
         if result["created_by"]:
             console.print(f"  Created by: {result['created_by']}")
+        # v0.5.0: Show session-scoped info
+        if session_id:
+            console.print(f"  Session: {session_id} (temporary)")
+            if ttl_delta:
+                console.print(f"  TTL: {ttl} (auto-expires)")
 
         nx.close()
 
@@ -322,11 +350,9 @@ def register_memory_cmd(
 
 
 @memory.command(name="list-registered")
-@click.option("--data-dir", default=None, help="Data directory for local backend")
-@click.option("--config", default=None, help="Path to configuration file")
+@add_backend_options
 def list_registered_cmd(
-    data_dir: str | None,
-    config: str | None,
+    backend_config: BackendConfig,
 ) -> None:
     """List all registered memories.
 
@@ -334,7 +360,6 @@ def list_registered_cmd(
         nexus memory list-registered
     """
     try:
-        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
         nx = get_filesystem(backend_config)
 
         memories = nx.list_memories()
@@ -371,13 +396,11 @@ def list_registered_cmd(
 @memory.command(name="unregister")
 @click.argument("path", type=str)
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
-@click.option("--data-dir", default=None, help="Data directory for local backend")
-@click.option("--config", default=None, help="Path to configuration file")
+@add_backend_options
 def unregister_memory_cmd(
     path: str,
     yes: bool,
-    data_dir: str | None,
-    config: str | None,
+    backend_config: BackendConfig,
 ) -> None:
     """Unregister a memory (does NOT delete files).
 
@@ -388,7 +411,6 @@ def unregister_memory_cmd(
         nexus memory unregister /my-memory --yes
     """
     try:
-        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
         nx = get_filesystem(backend_config)
 
         # Get memory info first
@@ -430,12 +452,10 @@ def unregister_memory_cmd(
 
 @memory.command(name="info")
 @click.argument("path", type=str)
-@click.option("--data-dir", default=None, help="Data directory for local backend")
-@click.option("--config", default=None, help="Path to configuration file")
+@add_backend_options
 def memory_info_cmd(
     path: str,
-    data_dir: str | None,
-    config: str | None,
+    backend_config: BackendConfig,
 ) -> None:
     """Show information about a registered memory.
 
@@ -443,7 +463,6 @@ def memory_info_cmd(
         nexus memory info /my-memory
     """
     try:
-        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
         nx = get_filesystem(backend_config)
 
         info = nx.get_memory_info(path)
@@ -467,3 +486,41 @@ def memory_info_cmd(
 
     except Exception as e:
         handle_error(e)
+
+
+def _parse_ttl(ttl_str: str) -> timedelta:
+    """Parse TTL string to timedelta.
+
+    Supports formats like: 8h, 2d, 30m, 1w, 90s
+
+    Args:
+        ttl_str: TTL string (e.g., "8h", "2d", "30m")
+
+    Returns:
+        timedelta object
+
+    Raises:
+        ValueError: If format is invalid
+    """
+    pattern = r"^(\d+)([smhdw])$"
+    match = re.match(pattern, ttl_str.lower())
+    if not match:
+        raise ValueError(
+            f"Invalid TTL format: '{ttl_str}'. Expected format like '8h', '2d', '30m', '1w', '90s'"
+        )
+
+    value, unit = match.groups()
+    value = int(value)
+
+    if unit == "s":
+        return timedelta(seconds=value)
+    elif unit == "m":
+        return timedelta(minutes=value)
+    elif unit == "h":
+        return timedelta(hours=value)
+    elif unit == "d":
+        return timedelta(days=value)
+    elif unit == "w":
+        return timedelta(weeks=value)
+    else:
+        raise ValueError(f"Invalid time unit: '{unit}'")

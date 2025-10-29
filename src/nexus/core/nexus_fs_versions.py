@@ -163,12 +163,21 @@ class NexusFSVersionsMixin:
             >>> # Rollback to a specific version
             >>> nx.rollback("/workspace/data.txt", version=2)
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        logger.info(f"[ROLLBACK] Starting rollback for path={path}, version={version}")
         path = self._validate_path(path)
+        logger.info(f"[ROLLBACK] Validated path: {path}")
 
         # Check write permission
+        logger.info(f"[ROLLBACK] Checking WRITE permission for path={path}, context={context}")
         self._check_permission(path, Permission.WRITE, context)
+        logger.info("[ROLLBACK] Permission check passed")
 
         # Route to backend
+        logger.info(f"[ROLLBACK] Routing to backend for path={path}")
         route = self.router.route(
             path,
             tenant_id=self.tenant_id,
@@ -176,17 +185,24 @@ class NexusFSVersionsMixin:
             is_admin=self.is_admin,
             check_write=True,
         )
+        logger.info(f"[ROLLBACK] Route: backend={route.backend}, readonly={route.readonly}")
 
         # Check readonly
         if route.readonly:
             raise PermissionError(f"Cannot rollback read-only path: {path}")
 
         # Perform rollback in metadata store
+        logger.info(f"[ROLLBACK] Calling metadata.rollback(path={path}, version={version})")
         self.metadata.rollback(path, version)
+        logger.info("[ROLLBACK] metadata.rollback() completed successfully")
 
         # Invalidate cache
         if self.metadata._cache_enabled and self.metadata._cache:
+            logger.info(f"[ROLLBACK] Invalidating cache for path={path}")
             self.metadata._cache.invalidate_path(path)
+            logger.info("[ROLLBACK] Cache invalidated")
+
+        logger.info(f"[ROLLBACK] Rollback completed successfully for path={path}")
 
     @rpc_expose(description="Compare file versions")
     def diff_versions(
@@ -251,8 +267,8 @@ class NexusFSVersionsMixin:
             return "(no content changes)"
 
         # Retrieve both versions' content
-        content1 = self.get_version(path, v1).decode("utf-8", errors="replace")
-        content2 = self.get_version(path, v2).decode("utf-8", errors="replace")
+        content1 = self.get_version(path, v1, context=ctx).decode("utf-8", errors="replace")
+        content2 = self.get_version(path, v2, context=ctx).decode("utf-8", errors="replace")
 
         # Generate unified diff
         lines1 = content1.splitlines(keepends=True)

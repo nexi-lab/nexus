@@ -46,7 +46,8 @@ class MemoryViewRouter:
             return True
 
         # Pattern 2: /memory/by-{type}/{id}/...
-        if len(parts) >= 1 and parts[0] == "memory":
+        # Only match memory API paths (by-user, by-agent, by-tenant), not registered memory directories
+        if len(parts) >= 2 and parts[0] == "memory" and parts[1].startswith("by-"):
             return True
 
         # Pattern 3: /workspace/{...}/memory/...

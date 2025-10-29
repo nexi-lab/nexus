@@ -25,6 +25,7 @@ import builtins
 import logging
 import time
 import uuid
+from datetime import timedelta
 from typing import Any
 from urllib.parse import urljoin
 
@@ -589,7 +590,7 @@ class RemoteNexusFS(NexusFilesystem):
     def list_versions(self, path: str) -> builtins.list[dict[str, Any]]:
         """List all versions of a file."""
         result = self._call_rpc("list_versions", {"path": path})
-        return result["versions"]  # type: ignore[no-any-return]
+        return result  # type: ignore[no-any-return]
 
     def rollback(self, path: str, version: int, context: Any = None) -> None:  # noqa: ARG002
         """Rollback file to a previous version."""
@@ -1884,6 +1885,9 @@ class RemoteNexusFS(NexusFilesystem):
         created_by: str | None = None,
         tags: builtins.list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str
+        | None = None,  # v0.5.0: If provided, workspace is session-scoped (temporary)
+        ttl: timedelta | None = None,  # v0.5.0: Time-to-live for auto-expiry
     ) -> dict[str, Any]:
         """Register a directory as a workspace.
 
@@ -1894,6 +1898,8 @@ class RemoteNexusFS(NexusFilesystem):
             created_by: User/agent who created it
             tags: Tags for categorization (reserved for future use)
             metadata: Additional user-defined metadata
+            session_id: If provided, workspace is session-scoped (temporary). If None, persistent. (v0.5.0)
+            ttl: Time-to-live as timedelta for auto-expiry (v0.5.0)
 
         Returns:
             Workspace configuration dict
@@ -1912,6 +1918,8 @@ class RemoteNexusFS(NexusFilesystem):
                 "description": description,
                 "created_by": created_by,
                 "metadata": metadata,
+                "session_id": session_id,  # v0.5.0
+                "ttl": ttl,  # v0.5.0
             },
         )
         return result  # type: ignore[no-any-return]
@@ -1966,6 +1974,8 @@ class RemoteNexusFS(NexusFilesystem):
         created_by: str | None = None,
         tags: builtins.list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,  # v0.5.0: If provided, memory is session-scoped (temporary)
+        ttl: timedelta | None = None,  # v0.5.0: Time-to-live for auto-expiry
     ) -> dict[str, Any]:
         """Register a directory as a memory.
 
@@ -1976,6 +1986,8 @@ class RemoteNexusFS(NexusFilesystem):
             created_by: User/agent who created it
             tags: Tags for categorization (reserved for future use)
             metadata: Additional user-defined metadata
+            session_id: If provided, memory is session-scoped (temporary). If None, persistent. (v0.5.0)
+            ttl: Time-to-live as timedelta for auto-expiry (v0.5.0)
 
         Returns:
             Memory configuration dict
@@ -1994,6 +2006,8 @@ class RemoteNexusFS(NexusFilesystem):
                 "description": description,
                 "created_by": created_by,
                 "metadata": metadata,
+                "session_id": session_id,  # v0.5.0
+                "ttl": ttl,  # v0.5.0
             },
         )
         return result  # type: ignore[no-any-return]
@@ -2038,6 +2052,90 @@ class RemoteNexusFS(NexusFilesystem):
             RemoteFilesystemError: If retrieval fails
         """
         result = self._call_rpc("get_memory_info", {"path": path})
+        return result  # type: ignore[no-any-return]
+
+    # ===== Agent Management (v0.5.0) =====
+
+    def register_agent(
+        self,
+        agent_id: str,
+        name: str,
+        description: str | None = None,
+        generate_api_key: bool = False,
+    ) -> dict:
+        """Register an AI agent (v0.5.0).
+
+        Agents are persistent identities owned by users. They do NOT have session_id
+        or expiry - they live forever until explicitly deleted.
+
+        Args:
+            agent_id: Unique agent identifier
+            name: Human-readable name
+            description: Optional description
+            generate_api_key: If True, create API key for agent (not recommended)
+
+        Returns:
+            Agent info dict with agent_id, user_id, name, etc.
+
+        Raises:
+            RemoteFilesystemError: If registration fails
+
+        Example:
+            >>> # Recommended: No API key (uses user's auth + X-Agent-ID)
+            >>> agent = nx.register_agent("data_analyst", "Data Analyst")
+            >>> # Agent uses owner's credentials + X-Agent-ID header
+        """
+        result = self._call_rpc(
+            "register_agent",
+            {
+                "agent_id": agent_id,
+                "name": name,
+                "description": description,
+                "generate_api_key": generate_api_key,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def list_agents(self) -> builtins.list[dict]:
+        """List all registered agents.
+
+        Returns:
+            List of agent info dicts
+
+        Raises:
+            RemoteFilesystemError: If listing fails
+        """
+        result = self._call_rpc("list_agents", {})
+        return result  # type: ignore[no-any-return]
+
+    def get_agent(self, agent_id: str) -> dict | None:
+        """Get agent information.
+
+        Args:
+            agent_id: Agent identifier
+
+        Returns:
+            Agent info dict or None if not found
+
+        Raises:
+            RemoteFilesystemError: If retrieval fails
+        """
+        result = self._call_rpc("get_agent", {"agent_id": agent_id})
+        return result  # type: ignore[no-any-return]
+
+    def delete_agent(self, agent_id: str) -> bool:
+        """Delete an agent.
+
+        Args:
+            agent_id: Agent identifier to delete
+
+        Returns:
+            True if deleted, False if not found
+
+        Raises:
+            RemoteFilesystemError: If deletion fails
+        """
+        result = self._call_rpc("delete_agent", {"agent_id": agent_id})
         return result  # type: ignore[no-any-return]
 
     # ============================================================

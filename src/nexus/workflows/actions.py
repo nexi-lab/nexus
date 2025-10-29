@@ -51,7 +51,7 @@ class BaseAction(ABC):
         if context.file_path:
             variables["file_path"] = context.file_path
             variables["filename"] = Path(context.file_path).name
-            variables["dirname"] = str(Path(context.file_path).parent)
+            variables["dirname"] = Path(context.file_path).parent.as_posix()
         if context.file_metadata:
             variables.update(context.file_metadata)
 

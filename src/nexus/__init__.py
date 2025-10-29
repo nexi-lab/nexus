@@ -179,6 +179,16 @@ def connect(
             ):
                 db_path = str(Path(data_dir) / "metadata.db")
 
+        # Embedded mode: default to no permissions (like SQLite)
+        # User can explicitly enable with config={"enforce_permissions": True}
+        enforce_permissions = cfg.enforce_permissions
+        if config is None:
+            # No explicit config provided - use sensible embedded defaults
+            enforce_permissions = False
+        elif isinstance(config, dict) and "enforce_permissions" not in config:
+            # Dict config without explicit enforce_permissions - use embedded default
+            enforce_permissions = False
+
         # Create NexusFS instance
         nx_fs = NexusFS(
             backend=backend,
@@ -193,7 +203,7 @@ def connect(
             cache_ttl_seconds=cfg.cache_ttl_seconds,
             auto_parse=cfg.auto_parse,
             custom_parsers=cfg.parsers,
-            enforce_permissions=cfg.enforce_permissions,
+            enforce_permissions=enforce_permissions,
         )
 
         # Set memory config for Memory API

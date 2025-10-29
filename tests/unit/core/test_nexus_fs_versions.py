@@ -34,13 +34,17 @@ class TestNexusFSVersions:
         )
 
         # Bind the actual methods
-        fs.get_version = lambda path, version: NexusFSVersionsMixin.get_version(fs, path, version)
+        fs.get_version = lambda path, version, context=None: NexusFSVersionsMixin.get_version(
+            fs, path, version, context
+        )
         fs.list_versions = lambda path: NexusFSVersionsMixin.list_versions(fs, path)
         fs.rollback = lambda path, version, context=None: NexusFSVersionsMixin.rollback(
             fs, path, version, context
         )
-        fs.diff_versions = lambda path, v1, v2, mode="metadata": NexusFSVersionsMixin.diff_versions(
-            fs, path, v1, v2, mode
+        fs.diff_versions = (
+            lambda path, v1, v2, mode="metadata", context=None: NexusFSVersionsMixin.diff_versions(
+                fs, path, v1, v2, mode, context
+            )
         )
 
         return fs

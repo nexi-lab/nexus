@@ -196,8 +196,16 @@ class VersionManager:
             ...     VersionManager.rollback(session, "/workspace/data.txt", version=2)
             ...     session.commit()
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        logger.info(
+            f"[VERSION_MANAGER.rollback] Starting rollback for path={path}, version={version}"
+        )
         try:
             # Get current file with row-level locking to prevent concurrent version conflicts
+            logger.info(f"[VERSION_MANAGER.rollback] Querying file_paths table for path={path}")
             file_stmt = (
                 select(FilePathModel)
                 .where(
@@ -209,9 +217,17 @@ class VersionManager:
             file_path = session.scalar(file_stmt)
 
             if not file_path:
+                logger.error(f"[VERSION_MANAGER.rollback] File not found in database: {path}")
                 raise MetadataError(f"File not found: {path}", path=path)
 
+            logger.info(
+                f"[VERSION_MANAGER.rollback] Found file: path_id={file_path.path_id}, current_version={file_path.current_version}, content_hash={file_path.content_hash[:16] if file_path.content_hash else 'None'}"
+            )
+
             # Get target version
+            logger.info(
+                f"[VERSION_MANAGER.rollback] Querying version_history for target version={version}"
+            )
             version_stmt = select(VersionHistoryModel).where(
                 VersionHistoryModel.resource_type == "file",
                 VersionHistoryModel.resource_id == file_path.path_id,
@@ -220,23 +236,46 @@ class VersionManager:
             target_version = session.scalar(version_stmt)
 
             if not target_version:
+                logger.error(
+                    f"[VERSION_MANAGER.rollback] Target version {version} not found for {path}"
+                )
                 raise MetadataError(f"Version {version} not found for {path}", path=path)
 
+            logger.info(
+                f"[VERSION_MANAGER.rollback] Found target version: version={version}, content_hash={target_version.content_hash[:16]}, size={target_version.size_bytes}"
+            )
+
             # Get current version entry for lineage
+            logger.info(
+                f"[VERSION_MANAGER.rollback] Getting current version entry for version={file_path.current_version}"
+            )
             current_version_stmt = select(VersionHistoryModel).where(
                 VersionHistoryModel.resource_type == "file",
                 VersionHistoryModel.resource_id == file_path.path_id,
                 VersionHistoryModel.version_number == file_path.current_version,
             )
             current_version_entry = session.scalar(current_version_stmt)
+            logger.info(
+                f"[VERSION_MANAGER.rollback] Current version entry found: {current_version_entry is not None}"
+            )
 
             # Update file to target version's content
+            logger.info(
+                "[VERSION_MANAGER.rollback] Updating file_paths record to target version's content"
+            )
+            logger.info(
+                f"[VERSION_MANAGER.rollback] Before: content_hash={file_path.content_hash[:16] if file_path.content_hash else 'None'}, size={file_path.size_bytes}"
+            )
             file_path.content_hash = target_version.content_hash
             file_path.size_bytes = target_version.size_bytes
             file_path.file_type = target_version.mime_type
             file_path.updated_at = datetime.now(UTC)
+            logger.info(
+                f"[VERSION_MANAGER.rollback] After: content_hash={file_path.content_hash[:16]}, size={file_path.size_bytes}"
+            )
 
             # Atomically increment version at database level to prevent race conditions
+            logger.info("[VERSION_MANAGER.rollback] Incrementing current_version in database")
             session.execute(
                 update(FilePathModel)
                 .where(FilePathModel.path_id == file_path.path_id)
@@ -244,8 +283,14 @@ class VersionManager:
             )
             # Refresh to get the new version number
             session.refresh(file_path)
+            logger.info(
+                f"[VERSION_MANAGER.rollback] New version number: {file_path.current_version}"
+            )
 
             # Create version history entry for the NEW version (rollback)
+            logger.info(
+                "[VERSION_MANAGER.rollback] Creating new version_history entry for rollback"
+            )
             rollback_version_entry = VersionHistoryModel(
                 version_id=str(uuid.uuid4()),
                 resource_type="file",
@@ -263,6 +308,8 @@ class VersionManager:
             )
             rollback_version_entry.validate()
             session.add(rollback_version_entry)
+            logger.info("[VERSION_MANAGER.rollback] Added rollback version entry to session")
+            logger.info("[VERSION_MANAGER.rollback] Rollback completed successfully")
 
         except MetadataError:
             raise

@@ -590,7 +590,7 @@ class RemoteNexusFS(NexusFilesystem):
     def list_versions(self, path: str) -> builtins.list[dict[str, Any]]:
         """List all versions of a file."""
         result = self._call_rpc("list_versions", {"path": path})
-        return result["versions"]  # type: ignore[no-any-return]
+        return result  # type: ignore[no-any-return]
 
     def rollback(self, path: str, version: int, context: Any = None) -> None:  # noqa: ARG002
         """Rollback file to a previous version."""

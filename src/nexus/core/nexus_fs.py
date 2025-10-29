@@ -1643,15 +1643,18 @@ class NexusFS(
                 f"Workspace not registered: {workspace_path}. Use register_workspace() first."
             )
 
-        # v0.5.0: Extract user_id from context (set by RPC authentication)
+        # v0.5.0: Extract user_id and tenant_id from context (set by RPC authentication)
         user_id_from_context = None
+        tenant_id_from_context = None
         if context:
             if isinstance(context, dict):
                 user_id_from_context = context.get("user_id") or context.get("user")
+                tenant_id_from_context = context.get("tenant_id") or context.get("tenant")
             else:
                 user_id_from_context = getattr(context, "user_id", None) or getattr(
                     context, "user", None
                 )
+                tenant_id_from_context = getattr(context, "tenant_id", None)
 
         return self._workspace_manager.create_snapshot(
             workspace_path=workspace_path,
@@ -1661,7 +1664,7 @@ class NexusFS(
             user_id=user_id_from_context
             or self.user_id,  # v0.5.0: Pass user_id for permission check
             agent_id=self.agent_id,
-            tenant_id=self.tenant_id,
+            tenant_id=tenant_id_from_context or self.tenant_id,  # v0.5.0: Use context tenant_id
         )
 
     @rpc_expose(description="Restore workspace snapshot")
@@ -1670,6 +1673,7 @@ class NexusFS(
         snapshot_number: int,
         workspace_path: str | None = None,
         agent_id: str | None = None,  # DEPRECATED: For backward compatibility
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Restore workspace to a previous snapshot.
 
@@ -1677,6 +1681,7 @@ class NexusFS(
             snapshot_number: Snapshot version number to restore
             workspace_path: Path to registered workspace
             agent_id: DEPRECATED - Use workspace_path instead
+            context: Operation context with user, permissions, tenant info (uses default if None)
 
         Returns:
             Restore operation result
@@ -1690,6 +1695,9 @@ class NexusFS(
             >>> result = nx.workspace_restore(5, "/my-workspace")
             >>> print(f"Restored {result['files_restored']} files")
         """
+        # Use provided context or default
+        ctx = context if context is not None else self._default_context
+
         # Backward compatibility: support old agent_id parameter
         if workspace_path is None and agent_id:
             import warnings
@@ -1714,9 +1722,9 @@ class NexusFS(
         return self._workspace_manager.restore_snapshot(
             workspace_path=workspace_path,
             snapshot_number=snapshot_number,
-            user_id=self.user_id,  # v0.5.0: Pass user_id for permission check
-            agent_id=self.agent_id,
-            tenant_id=self.tenant_id,
+            user_id=ctx.user,  # v0.5.0: Pass user_id from context
+            agent_id=ctx.agent_id,
+            tenant_id=ctx.tenant_id,
         )
 
     @rpc_expose(description="List workspace snapshots")
@@ -1725,6 +1733,7 @@ class NexusFS(
         workspace_path: str | None = None,
         agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         limit: int = 100,
+        context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """List snapshot history for workspace.
 
@@ -1732,6 +1741,7 @@ class NexusFS(
             workspace_path: Path to registered workspace
             agent_id: DEPRECATED - Use workspace_path instead
             limit: Maximum number of snapshots to return
+            context: Operation context with user, permissions, tenant info (uses default if None)
 
         Returns:
             List of snapshot metadata dicts (most recent first)
@@ -1745,6 +1755,9 @@ class NexusFS(
             >>> for snap in snapshots:
             >>>     print(f"#{snap['snapshot_number']}: {snap['description']}")
         """
+        # Use provided context or default
+        ctx = context if context is not None else self._default_context
+
         # Backward compatibility: support old agent_id parameter
         if workspace_path is None and agent_id:
             import warnings
@@ -1769,9 +1782,9 @@ class NexusFS(
         return self._workspace_manager.list_snapshots(
             workspace_path=workspace_path,
             limit=limit,
-            user_id=self.user_id,  # v0.5.0: Pass user_id for permission check
-            agent_id=self.agent_id,
-            tenant_id=self.tenant_id,
+            user_id=ctx.user,  # v0.5.0: Pass user_id from context
+            agent_id=ctx.agent_id,
+            tenant_id=ctx.tenant_id,
         )
 
     @rpc_expose(description="Compare workspace snapshots")
@@ -1781,6 +1794,7 @@ class NexusFS(
         snapshot_2: int,
         workspace_path: str | None = None,
         agent_id: str | None = None,  # DEPRECATED: For backward compatibility
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Compare two workspace snapshots.
 
@@ -1789,6 +1803,7 @@ class NexusFS(
             snapshot_2: Second snapshot number
             workspace_path: Path to registered workspace
             agent_id: DEPRECATED - Use workspace_path instead
+            context: Operation context with user, permissions, tenant info (uses default if None)
 
         Returns:
             Diff dict with added, removed, modified files
@@ -1802,6 +1817,9 @@ class NexusFS(
             >>> diff = nx.workspace_diff(snapshot_1=5, snapshot_2=10, workspace_path="/my-workspace")
             >>> print(f"Added: {len(diff['added'])}, Modified: {len(diff['modified'])}")
         """
+        # Use provided context or default
+        ctx = context if context is not None else self._default_context
+
         # Backward compatibility: support old agent_id parameter
         if workspace_path is None and agent_id:
             import warnings
@@ -1829,9 +1847,9 @@ class NexusFS(
         snapshots = self._workspace_manager.list_snapshots(
             workspace_path=workspace_path,
             limit=1000,
-            user_id=self.user_id,  # v0.5.0: Pass user_id for permission check
-            agent_id=self.agent_id,
-            tenant_id=self.tenant_id,
+            user_id=ctx.user,  # v0.5.0: Pass user_id from context
+            agent_id=ctx.agent_id,
+            tenant_id=ctx.tenant_id,
         )
 
         snap_1_id = None
@@ -1856,9 +1874,9 @@ class NexusFS(
         return self._workspace_manager.diff_snapshots(
             snap_1_id,
             snap_2_id,
-            user_id=self.user_id,  # v0.5.0: Pass user_id for permission check
-            agent_id=self.agent_id,
-            tenant_id=self.tenant_id,
+            user_id=ctx.user,  # v0.5.0: Pass user_id from context
+            agent_id=ctx.agent_id,
+            tenant_id=ctx.tenant_id,
         )
 
     # ===== Workspace Registry Management =====

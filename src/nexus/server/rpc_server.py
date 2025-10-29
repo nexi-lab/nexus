@@ -581,9 +581,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
             if view_type:
                 # Virtual view exists if the original file exists
-                return {"exists": self.nexus_fs.exists(original_path)}
+                return {"exists": self.nexus_fs.exists(original_path, context=context)}  # type: ignore[call-arg]
             else:
-                return {"exists": self.nexus_fs.exists(params.path)}
+                return {"exists": self.nexus_fs.exists(params.path, context=context)}  # type: ignore[call-arg]
 
         # Discovery operations
         elif method == "list":
@@ -742,30 +742,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 f"[CONTEXT-DEBUG] _auto_dispatch: method={method}, accepts_context=True, context={context}"
             )
             if context is not None:
-                # Convert OperationContext to dict for methods that expect dict
-                from nexus.core.permissions import OperationContext
-
-                if isinstance(context, OperationContext):
-                    # Convert to dict format expected by filesystem methods
-                    # v0.5.0: Include user_id and agent_id for auto-grant ownership
-                    context_dict = {
-                        "user": context.user,
-                        "user_id": getattr(context, "user_id", None),  # v0.5.0
-                        "agent_id": getattr(context, "agent_id", None),  # v0.5.0
-                        "subject": (context.subject_type, context.subject_id)
-                        if context.subject_type and context.subject_id
-                        else None,
-                        "tenant": context.tenant_id,
-                        "is_admin": context.is_admin,
-                        "is_system": context.is_system,
-                    }
-                    logger.warning(
-                        f"[CONTEXT-DEBUG] Auto-dispatch method={method}, context_dict={context_dict}"
-                    )
-                    kwargs["context"] = context_dict
-                else:
-                    # Already a dict
-                    kwargs["context"] = context
+                # Pass the OperationContext object directly
+                # Most methods expect OperationContext, not dict
+                kwargs["context"] = context
 
         # Call the method
         result = fn(**kwargs)

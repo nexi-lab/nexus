@@ -284,11 +284,14 @@ class WorkspaceRegistry:
         self._save_workspace_to_db(config, user_id, agent_id, scope, session_id, expires_at)
 
         # v0.5.0: Auto-grant ownership to registering user
+        # Workspaces are just directories, so we grant permission on the FILE object
+        # The workspace manager will check FILE permissions (using the file namespace)
         logger.warning(
             f"[AUTO-GRANT] workspace_registry: path={path}, user_id={user_id}, rebac_manager={self.rebac_manager is not None}"
         )
         if self.rebac_manager and user_id:
             try:
+                # Grant permission on FILE object (for both file operations and workspace operations)
                 logger.warning(f"[AUTO-GRANT] Creating tuple: user:{user_id} → owner → file:{path}")
                 self.rebac_manager.rebac_write(
                     subject=("user", user_id),

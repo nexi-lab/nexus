@@ -85,6 +85,10 @@ class WorkspaceManager:
             - If agent_id is provided: subject=("agent", agent_id)
             - Else if user_id is provided: subject=("user", user_id)
             - Else: deny by default (no identity)
+
+            Permission mapping to file operations:
+            - snapshot:create, snapshot:restore -> write (modify state)
+            - snapshot:list, snapshot:diff -> read (read-only)
         """
         if not self.rebac_manager:
             # No ReBAC manager configured - allow operation
@@ -112,22 +116,35 @@ class WorkspaceManager:
                 f"WorkspaceManager: No user_id or agent_id provided for permission check: {permission} on {workspace_path}"
             )
             raise NexusPermissionError(
-                f"{permission} on workspace {workspace_path} (no agent_id provided)"
+                f"{permission} on workspace {workspace_path} (no user_id or agent_id provided)"
             )
 
-        # Check permission via ReBAC
-        # v0.5.0: Check workspace permissions directly
+        # Map workspace permissions to file permissions
+        # Workspaces are just directories, so we use the existing "file" namespace
+        # which already has proper permission mappings (owner/editor/viewer)
+        if permission in ("snapshot:create", "snapshot:restore"):
+            # Write operations require write permission
+            file_permission = "write"
+        elif permission in ("snapshot:list", "snapshot:diff"):
+            # Read-only operations require read permission
+            file_permission = "read"
+        else:
+            # Unknown permission - default to write for safety
+            logger.warning(f"Unknown workspace permission: {permission}, defaulting to write")
+            file_permission = "write"
+
+        # Check permission via ReBAC on the FILE object
         has_permission = self.rebac_manager.rebac_check(
             subject=subject,
-            permission=permission,
-            object=("workspace", workspace_path),
+            permission=file_permission,
+            object=("file", workspace_path),
             tenant_id=check_tenant_id,
         )
 
         if not has_permission:
             logger.warning(
                 f"WorkspaceManager: Permission denied for {subject_desc}, "
-                f"permission={permission}, workspace={workspace_path}, tenant={check_tenant_id}"
+                f"permission={permission} (mapped to {file_permission}), workspace={workspace_path}, tenant={check_tenant_id}"
             )
             raise NexusPermissionError(
                 f"Permission denied: {permission} on workspace {workspace_path}"

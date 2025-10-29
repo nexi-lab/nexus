@@ -1291,16 +1291,35 @@ class ReBACManager:
             # Permission defined explicitly - check all usersets that grant it
             usersets = namespace.get_permission_usersets(permission)
             logger.info(
-                f"  [depth={depth}] Permission '{permission}' expands to usersets: {usersets}"
+                f"  [depth={depth}] 🔑 Permission '{permission}' defined in namespace '{obj.entity_type}'"
             )
-            for userset in usersets:
-                logger.debug(f"  [depth={depth}] Checking userset '{userset}'")
-                if self._compute_permission(
+            logger.info(
+                f"  [depth={depth}] 📋 Permission '{permission}' expands to usersets: {usersets}"
+            )
+            logger.info(
+                f"  [depth={depth}] 🧪 Checking {len(usersets)} usersets for {subject} on {obj}"
+            )
+
+            for i, userset in enumerate(usersets):
+                logger.info(
+                    f"  [depth={depth}] 🔍 [{i + 1}/{len(usersets)}] Checking userset '{userset}'..."
+                )
+                result = self._compute_permission(
                     subject, userset, obj, visited.copy(), depth + 1, context, tenant_id
-                ):
-                    logger.info(f"  [depth={depth}] ✅ Grant via userset '{userset}'")
+                )
+                if result:
+                    logger.info(
+                        f"  [depth={depth}] ✅ [{i + 1}/{len(usersets)}] GRANTED via userset '{userset}'"
+                    )
                     return True
-            logger.info(f"  [depth={depth}] ❌ No usersets granted permission")
+                else:
+                    logger.info(
+                        f"  [depth={depth}] ❌ [{i + 1}/{len(usersets)}] DENIED for userset '{userset}'"
+                    )
+
+            logger.info(
+                f"  [depth={depth}] 🚫 ALL {len(usersets)} usersets DENIED - permission DENIED"
+            )
             return False
 
         # Fallback: Check if permission is defined as a relation (legacy)
@@ -1312,11 +1331,26 @@ class ReBACManager:
         # Handle union (OR of multiple relations)
         if namespace.has_union(permission):
             union_relations = namespace.get_union_relations(permission)
-            for rel in union_relations:
-                if self._compute_permission(
+            logger.info(
+                f"  [depth={depth}] 🔗 Relation '{permission}' is UNION of: {union_relations}"
+            )
+            for i, rel in enumerate(union_relations):
+                logger.info(
+                    f"  [depth={depth}] 🔍 [{i + 1}/{len(union_relations)}] Checking union relation '{rel}'..."
+                )
+                result = self._compute_permission(
                     subject, rel, obj, visited.copy(), depth + 1, context, tenant_id
-                ):
+                )
+                if result:
+                    logger.info(
+                        f"  [depth={depth}] ✅ [{i + 1}/{len(union_relations)}] GRANTED via union relation '{rel}'"
+                    )
                     return True
+                else:
+                    logger.info(
+                        f"  [depth={depth}] ❌ [{i + 1}/{len(union_relations)}] DENIED for union relation '{rel}'"
+                    )
+            logger.info(f"  [depth={depth}] 🚫 ALL union relations DENIED")
             return False
 
         # Handle intersection (AND of multiple relations)
@@ -1395,8 +1429,16 @@ class ReBACManager:
         Returns:
             True if direct relation exists and conditions are satisfied
         """
+        logger.info(
+            f"    💾 Checking DATABASE for direct tuple: subject={subject}, relation={relation}, object={obj}, tenant_id={tenant_id}"
+        )
         result = self._find_direct_relation_tuple(subject, relation, obj, context, tenant_id)
-        return result is not None
+        if result is not None:
+            logger.info(f"    ✅ FOUND tuple: {result.get('tuple_id', 'unknown')}")
+            return True
+        else:
+            logger.info("    ❌ NO tuple found in database")
+            return False
 
     def _find_direct_relation_tuple(
         self,

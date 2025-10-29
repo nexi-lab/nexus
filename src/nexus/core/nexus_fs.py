@@ -7,7 +7,7 @@ import contextlib
 import hashlib
 import json
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -243,7 +243,10 @@ class NexusFS(
         # Initialize workspace registry for managing registered workspaces/memories
         from nexus.core.workspace_registry import WorkspaceRegistry
 
-        self._workspace_registry = WorkspaceRegistry(metadata=self.metadata)
+        self._workspace_registry = WorkspaceRegistry(
+            metadata=self.metadata,
+            rebac_manager=self._rebac_manager,  # v0.5.0: Auto-grant ownership on registration
+        )
 
         # Initialize mount manager for persistent mount configurations
         from nexus.core.mount_manager import MountManager
@@ -349,12 +352,12 @@ class NexusFS(
             from nexus.core.entity_registry import EntityRegistry
             from nexus.core.memory_api import Memory
 
+            # Get or create entity registry (v0.5.0: Pass SessionFactory instead of Session)
+            if self._entity_registry is None:
+                self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+
             # Create a session from SessionLocal
             session = self.metadata.SessionLocal()
-
-            # Get or create entity registry
-            if self._entity_registry is None:
-                self._entity_registry = EntityRegistry(session)
 
             self._memory_api = Memory(
                 session=session,
@@ -1585,6 +1588,7 @@ class NexusFS(
         description: str | None = None,
         tags: list[str] | None = None,
         created_by: str | None = None,
+        context: dict | None = None,  # v0.5.0: RPC context with user_id
     ) -> dict[str, Any]:
         """Create a snapshot of a registered workspace.
 
@@ -1594,6 +1598,7 @@ class NexusFS(
             description: Human-readable description of snapshot
             tags: List of tags for categorization
             created_by: User/agent who created the snapshot
+            context: Operation context (v0.5.0)
 
         Returns:
             Snapshot metadata dict
@@ -1638,11 +1643,23 @@ class NexusFS(
                 f"Workspace not registered: {workspace_path}. Use register_workspace() first."
             )
 
+        # v0.5.0: Extract user_id from context (set by RPC authentication)
+        user_id_from_context = None
+        if context:
+            if isinstance(context, dict):
+                user_id_from_context = context.get("user_id") or context.get("user")
+            else:
+                user_id_from_context = getattr(context, "user_id", None) or getattr(
+                    context, "user", None
+                )
+
         return self._workspace_manager.create_snapshot(
             workspace_path=workspace_path,
             description=description,
             tags=tags,
             created_by=created_by,
+            user_id=user_id_from_context
+            or self.user_id,  # v0.5.0: Pass user_id for permission check
             agent_id=self.agent_id,
             tenant_id=self.tenant_id,
         )
@@ -1697,6 +1714,7 @@ class NexusFS(
         return self._workspace_manager.restore_snapshot(
             workspace_path=workspace_path,
             snapshot_number=snapshot_number,
+            user_id=self.user_id,  # v0.5.0: Pass user_id for permission check
             agent_id=self.agent_id,
             tenant_id=self.tenant_id,
         )
@@ -1751,6 +1769,7 @@ class NexusFS(
         return self._workspace_manager.list_snapshots(
             workspace_path=workspace_path,
             limit=limit,
+            user_id=self.user_id,  # v0.5.0: Pass user_id for permission check
             agent_id=self.agent_id,
             tenant_id=self.tenant_id,
         )
@@ -1810,6 +1829,7 @@ class NexusFS(
         snapshots = self._workspace_manager.list_snapshots(
             workspace_path=workspace_path,
             limit=1000,
+            user_id=self.user_id,  # v0.5.0: Pass user_id for permission check
             agent_id=self.agent_id,
             tenant_id=self.tenant_id,
         )
@@ -1836,6 +1856,7 @@ class NexusFS(
         return self._workspace_manager.diff_snapshots(
             snap_1_id,
             snap_2_id,
+            user_id=self.user_id,  # v0.5.0: Pass user_id for permission check
             agent_id=self.agent_id,
             tenant_id=self.tenant_id,
         )
@@ -1940,6 +1961,10 @@ class NexusFS(
         created_by: str | None = None,
         tags: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str
+        | None = None,  # v0.5.0: If provided, workspace is session-scoped (temporary)
+        ttl: timedelta | None = None,  # v0.5.0: Time-to-live for auto-expiry
+        context: Any | None = None,  # v0.5.0: OperationContext (passed by RPC server)
     ) -> dict[str, Any]:
         """Register a directory as a workspace.
 
@@ -1950,6 +1975,8 @@ class NexusFS(
             created_by: User/agent who created it (for audit)
             tags: Tags for categorization (reserved for future use)
             metadata: Additional user-defined metadata
+            session_id: If provided, workspace is session-scoped (temporary). If None, persistent. (v0.5.0)
+            ttl: Time-to-live as timedelta for auto-expiry (v0.5.0)
 
         Returns:
             Workspace configuration dict
@@ -1957,13 +1984,25 @@ class NexusFS(
         Raises:
             ValueError: If path already registered as workspace
 
-        Example:
+        Examples:
+            >>> # Persistent workspace (traditional)
             >>> nx = NexusFS(backend)
             >>> nx.register_workspace("/my-workspace", name="main", description="My main workspace")
-            >>> nx.workspace_snapshot("/my-workspace", description="Initial state")
+
+            >>> # v0.5.0: Temporary 8-hour notebook workspace
+            >>> from datetime import timedelta
+            >>> nx.register_workspace(
+            ...     "/tmp/jupyter",
+            ...     session_id=session.session_id,  # session_id = session-scoped
+            ...     ttl=timedelta(hours=8)
+            ... )
         """
         # tags parameter reserved for future use
         _ = tags
+
+        # v0.5.0: Use provided context, or fall back to instance context
+        if context is None and hasattr(self, "_operation_context"):
+            context = self._operation_context
 
         config = self._workspace_registry.register_workspace(
             path=path,
@@ -1971,6 +2010,9 @@ class NexusFS(
             description=description or "",
             created_by=created_by,
             metadata=metadata,
+            context=context,  # v0.5.0
+            session_id=session_id,  # v0.5.0
+            ttl=ttl,  # v0.5.0
         )
         return config.to_dict()
 
@@ -2034,6 +2076,9 @@ class NexusFS(
         created_by: str | None = None,
         tags: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,  # v0.5.0: If provided, memory is session-scoped (temporary)
+        ttl: timedelta | None = None,  # v0.5.0: Time-to-live for auto-expiry
+        context: Any | None = None,  # v0.5.0: OperationContext (passed by RPC server)
     ) -> dict[str, Any]:
         """Register a directory as a memory.
 
@@ -2044,6 +2089,8 @@ class NexusFS(
             created_by: User/agent who created it (for audit)
             tags: Tags for categorization (reserved for future use)
             metadata: Additional user-defined metadata
+            session_id: If provided, memory is session-scoped (temporary). If None, persistent. (v0.5.0)
+            ttl: Time-to-live as timedelta for auto-expiry (v0.5.0)
 
         Returns:
             Memory configuration dict
@@ -2051,12 +2098,25 @@ class NexusFS(
         Raises:
             ValueError: If path already registered as memory
 
-        Example:
+        Examples:
+            >>> # Persistent memory (traditional)
             >>> nx = NexusFS(backend)
             >>> nx.register_memory("/my-memory", name="kb", description="Knowledge base")
+
+            >>> # v0.5.0: Temporary agent memory (auto-expire after task)
+            >>> from datetime import timedelta
+            >>> nx.register_memory(
+            ...     "/tmp/agent-context",
+            ...     session_id=session.session_id,  # session_id = session-scoped
+            ...     ttl=timedelta(hours=2)
+            ... )
         """
         # tags parameter reserved for future use
         _ = tags
+
+        # v0.5.0: Use provided context, or fall back to instance context
+        if context is None and hasattr(self, "_operation_context"):
+            context = self._operation_context
 
         config = self._workspace_registry.register_memory(
             path=path,
@@ -2064,6 +2124,9 @@ class NexusFS(
             description=description or "",
             created_by=created_by,
             metadata=metadata,
+            context=context,  # v0.5.0
+            session_id=session_id,  # v0.5.0
+            ttl=ttl,  # v0.5.0
         )
         return config.to_dict()
 
@@ -2115,6 +2178,163 @@ class NexusFS(
         """
         config = self._workspace_registry.get_memory(path)
         return config.to_dict() if config else None
+
+    # ===== Agent Management (v0.5.0) =====
+
+    @rpc_expose(description="Register an AI agent")
+    def register_agent(
+        self,
+        agent_id: str,
+        name: str,
+        description: str | None = None,
+        generate_api_key: bool = False,
+        context: dict | None = None,
+    ) -> dict:
+        """Register an AI agent (v0.5.0).
+
+        Agents are persistent identities owned by users. They do NOT have session_id
+        or expiry - they live forever until explicitly deleted.
+
+        Args:
+            agent_id: Unique agent identifier
+            name: Human-readable name
+            description: Optional description
+            generate_api_key: If True, create API key for agent (not recommended)
+            context: Operation context (user_id extracted from here)
+
+        Returns:
+            Agent info dict with agent_id, user_id, name, etc.
+
+        Example:
+            >>> # Recommended: No API key (uses user's auth + X-Agent-ID)
+            >>> agent = nx.register_agent("data_analyst", "Data Analyst")
+            >>> # Agent uses owner's credentials + X-Agent-ID header
+        """
+        from nexus.core.agents import register_agent
+
+        # Extract user_id from context
+        user_id = None
+        if context:
+            if isinstance(context, dict):
+                user_id = context.get("user_id") or context.get("user")
+            else:
+                user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
+
+        if not user_id:
+            raise ValueError("user_id required in context to register agent")
+
+        # Ensure EntityRegistry is initialized
+        if not self._entity_registry:
+            self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+
+        # Register agent (always without API key first)
+        agent = register_agent(
+            user_id=user_id,
+            agent_id=agent_id,
+            name=name,
+            metadata={"description": description} if description else None,
+            entity_registry=self._entity_registry,
+        )
+
+        # Optionally generate API key (not recommended)
+        if generate_api_key:
+            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+
+            session = self.metadata.SessionLocal()
+            try:
+                key_id, raw_key = DatabaseAPIKeyAuth.create_key(
+                    session,
+                    user_id=user_id,
+                    name=f"Agent: {name}",
+                    subject_type="agent",
+                    subject_id=agent_id,
+                )
+                session.commit()
+                agent["api_key"] = raw_key
+                agent["has_api_key"] = True
+            finally:
+                session.close()
+        else:
+            agent["has_api_key"] = False
+
+        return agent
+
+    @rpc_expose(description="List all registered agents")
+    def list_agents(self, _context: dict | None = None) -> list[dict]:
+        """List all registered agents (v0.5.0).
+
+        Returns:
+            List of agent info dicts
+
+        Example:
+            >>> agents = nx.list_agents()
+            >>> for agent in agents:
+            ...     print(f"{agent['agent_id']}: {agent['name']}")
+        """
+        if not self._entity_registry:
+            self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+
+        entities = self._entity_registry.get_entities_by_type("agent")
+        return [
+            {
+                "agent_id": e.entity_id,
+                "user_id": e.parent_id,
+                "name": e.entity_id,  # TODO: Store name in metadata
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in entities
+        ]
+
+    @rpc_expose(description="Get agent information")
+    def get_agent(self, agent_id: str, _context: dict | None = None) -> dict | None:
+        """Get information about a registered agent (v0.5.0).
+
+        Args:
+            agent_id: Agent identifier
+            context: Operation context (optional)
+
+        Returns:
+            Agent info dict or None if not found
+
+        Example:
+            >>> agent = nx.get_agent("data_analyst")
+            >>> if agent:
+            ...     print(f"Owner: {agent['user_id']}")
+        """
+        if not self._entity_registry:
+            self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+
+        entity = self._entity_registry.get_entity("agent", agent_id)
+        if not entity:
+            return None
+
+        return {
+            "agent_id": entity.entity_id,
+            "user_id": entity.parent_id,
+            "name": entity.entity_id,
+            "created_at": entity.created_at.isoformat() if entity.created_at else None,
+        }
+
+    @rpc_expose(description="Delete an agent")
+    def delete_agent(self, agent_id: str, _context: dict | None = None) -> bool:
+        """Delete a registered agent (v0.5.0).
+
+        Args:
+            agent_id: Agent identifier
+            context: Operation context (optional)
+
+        Returns:
+            True if deleted, False if not found
+
+        Example:
+            >>> deleted = nx.delete_agent("data_analyst")
+            >>> if deleted:
+            ...     print("Agent deleted")
+        """
+        if not self._entity_registry:
+            self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+
+        return self._entity_registry.delete_entity("agent", agent_id)
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

@@ -88,6 +88,39 @@ fi
 echo "✓ Database connection successful"
 
 # ============================================
+# Create Database Schema
+# ============================================
+
+echo ""
+echo "📊 Creating database schema..."
+
+# Create tables via SQLAlchemy models (simpler than migrations for fresh install)
+if ! python3 -c "
+from nexus.core.nexus_fs import NexusFS
+from nexus.backends.local import LocalBackend
+backend = LocalBackend('$NEXUS_DATA_DIR')
+nfs = NexusFS(backend, db_path='$NEXUS_DATABASE_URL')
+nfs.close()
+" 2>/tmp/nexus-schema-error.log; then
+    echo "❌ Failed to create database schema!"
+    echo ""
+    echo "Error details:"
+    cat /tmp/nexus-schema-error.log
+    echo ""
+    exit 1
+fi
+
+# Mark database as up-to-date with latest migration
+if command -v alembic &> /dev/null; then
+    LATEST_MIGRATION=$(alembic heads 2>/dev/null | head -1 | awk '{print $1}')
+    if [ -n "$LATEST_MIGRATION" ]; then
+        alembic stamp "$LATEST_MIGRATION" 2>/dev/null || true
+    fi
+fi
+
+echo "✓ Database schema created"
+
+# ============================================
 # Clean Database (Fresh Start)
 # ============================================
 
@@ -116,66 +149,64 @@ engine = create_engine(db_url)
 with engine.connect() as conn:
     # Clear in order to respect foreign key constraints
     # Start with caches and dependent tables
-    # Use try/except for tables that might not exist yet
-    try:
-        conn.execute(text("DELETE FROM rebac_check_cache"))
-    except:
-        pass
-    try:
-        conn.execute(text("DELETE FROM rebac_changelog"))
-    except:
-        pass
-    try:
-        conn.execute(text("DELETE FROM admin_bypass_audit"))
-    except:
-        pass
-    try:
-        conn.execute(text("DELETE FROM operation_log"))
-    except:
-        pass
+    # Track what was deleted for verification
+    deleted_counts = {}
 
-    # Clear ReBAC tuples
-    try:
-        conn.execute(text("DELETE FROM rebac_tuples"))
-    except:
-        pass
-
-    # Clear file-related tables
-    for table in ["content_chunks", "document_chunks", "file_metadata", "file_paths", "version_history"]:
+    # Helper to delete with error reporting
+    def delete_table(table_name):
         try:
-            conn.execute(text(f"DELETE FROM {table}"))
-        except:
-            pass
+            result = conn.execute(text(f"DELETE FROM {table_name}"))
+            count = result.rowcount
+            deleted_counts[table_name] = count
+            if count > 0:
+                print(f"  Deleted {count} rows from {table_name}")
+            return True
+        except Exception as e:
+            # Only ignore "table doesn't exist" errors
+            if "does not exist" in str(e):
+                return False
+            print(f"  WARNING: Failed to clear {table_name}: {e}", file=sys.stderr)
+            return False
+
+    # Clear in dependency order
+    print("Clearing database tables:")
+    delete_table("rebac_check_cache")
+    delete_table("rebac_changelog")
+    delete_table("admin_bypass_audit")
+    delete_table("operation_log")
+    delete_table("rebac_tuples")
+
+    # Clear file-related tables (dependencies: content_chunks -> file_metadata -> file_paths)
+    delete_table("content_chunks")
+    delete_table("document_chunks")
+    delete_table("version_history")
+    delete_table("file_metadata")
+    delete_table("file_paths")
 
     # Clear auth tables
-    for table in ["refresh_tokens", "api_keys"]:
-        try:
-            conn.execute(text(f"DELETE FROM {table}"))
-        except:
-            pass
+    delete_table("refresh_tokens")
+    delete_table("api_keys")
 
     # Clear memory and workspace tables
-    for table in ["memories", "memory_configs", "workspace_snapshots", "workspace_configs"]:
-        try:
-            conn.execute(text(f"DELETE FROM {table}"))
-        except:
-            pass
+    delete_table("memories")
+    delete_table("memory_configs")
+    delete_table("workspace_snapshots")
+    delete_table("workspace_configs")
 
     # Clear workflow tables
-    for table in ["workflow_executions", "workflows"]:
-        try:
-            conn.execute(text(f"DELETE FROM {table}"))
-        except:
-            pass
+    delete_table("workflow_executions")
+    delete_table("workflows")
 
     # Clear mount configs
-    try:
-        conn.execute(text("DELETE FROM mount_configs"))
-    except:
-        pass
+    delete_table("mount_configs")
 
     conn.commit()
-    print("✓ Cleared all data from database")
+
+    total = sum(deleted_counts.values())
+    if total > 0:
+        print(f"✓ Cleared {total} total rows from {len(deleted_counts)} tables")
+    else:
+        print("✓ Database already empty")
 
 PYTHON_CLEANUP
 

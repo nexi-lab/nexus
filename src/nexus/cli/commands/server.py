@@ -339,8 +339,16 @@ def serve(
         # Import server components
         from nexus.server.rpc_server import NexusRPCServer
 
-        # Get filesystem instance
-        nx = get_filesystem(backend_config)
+        # Determine authentication configuration first (needed for permissions logic)
+        has_auth = bool(auth_type or api_key)
+
+        # Server mode permissions logic:
+        # - No auth → enforce_permissions=False (everyone is anonymous)
+        # - With auth → enforce_permissions=True (secure by default)
+        enforce_permissions = has_auth
+
+        # Get filesystem instance with appropriate permissions
+        nx = get_filesystem(backend_config, enforce_permissions=enforce_permissions)
 
         # Safety check: Server should never use RemoteNexusFS (would create circular dependency)
         from nexus.remote import RemoteNexusFS
@@ -393,10 +401,19 @@ def serve(
 
         if auth_provider:
             console.print(f"  Authentication: [yellow]{auth_type}[/yellow]")
+            console.print("  Permissions: [green]Enabled[/green]")
         elif api_key:
             console.print("  Authentication: [yellow]Static API key[/yellow]")
+            console.print("  Permissions: [green]Enabled[/green]")
         else:
             console.print("  Authentication: [yellow]None (open access)[/yellow]")
+            console.print("  Permissions: [yellow]Disabled[/yellow]")
+            console.print()
+            console.print("  [bold red]⚠️  WARNING: No authentication configured[/bold red]")
+            console.print(
+                "  [yellow]Server is running in open access mode - anyone can read/write files[/yellow]"
+            )
+            console.print("  [yellow]For production, use: --auth-type database|local|oidc[/yellow]")
 
         console.print()
         console.print("[bold cyan]Endpoints:[/bold cyan]")

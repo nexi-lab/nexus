@@ -272,6 +272,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         Extracts authentication information and creates an OperationContext
         for use in filesystem operations.
 
+        v0.5.0: Added X-Agent-ID header support for user-authenticated agents.
+
         Returns:
             OperationContext or None if no authentication
         """
@@ -290,8 +292,38 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
                 result = self.event_loop.run_until_complete(self.auth_provider.authenticate(token))
                 if result.authenticated and result.subject_type and result.subject_id:
+                    # v0.5.0: Check for X-Agent-ID header
+                    agent_id = self.headers.get("X-Agent-ID")
+                    user_id = result.subject_id
+
+                    # If agent_id provided and subject is user, validate agent ownership
+                    if (
+                        agent_id
+                        and result.subject_type == "user"
+                        and hasattr(self.nexus_fs, "entity_registry")
+                        and self.nexus_fs.entity_registry
+                    ):
+                        # Validate agent belongs to user
+                        from nexus.core.agents import validate_agent_ownership
+
+                        if not validate_agent_ownership(
+                            agent_id, result.subject_id, self.nexus_fs.entity_registry
+                        ):
+                            logger.warning(
+                                f"Agent {agent_id} not owned by user {result.subject_id}, ignoring X-Agent-ID"
+                            )
+                            agent_id = None
+
+                    # For agent-authenticated requests (via API key), extract user and agent
+                    if result.subject_type == "agent":
+                        agent_id = result.subject_id
+                        # Get user from metadata (owner of the agent key)
+                        user_id = result.metadata.get("legacy_user_id", result.subject_id)
+
                     return OperationContext(
-                        user=result.subject_id,  # Required for compatibility
+                        user=user_id,  # Owner (human user)
+                        user_id=user_id,  # v0.5.0: Explicit owner tracking
+                        agent_id=agent_id,  # v0.5.0: Agent identity (if present)
                         subject_type=result.subject_type,
                         subject_id=result.subject_id,
                         tenant_id=result.tenant_id,
@@ -479,13 +511,26 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             "is_directory",
             "get_available_namespaces",
         }
+
+        has_exposed = hasattr(self, "exposed_methods")
+        is_dict = isinstance(self.exposed_methods, dict) if has_exposed else False
+        in_exposed = method in self.exposed_methods if is_dict else False
+        not_manual = method not in MANUAL_DISPATCH_METHODS
+
+        logger.warning(
+            f"[DISPATCH-DEBUG] method={method}, has_exposed={has_exposed}, is_dict={is_dict}, in_exposed={in_exposed}, not_manual={not_manual}"
+        )
+
         if (
             hasattr(self, "exposed_methods")
             and isinstance(self.exposed_methods, dict)
             and method in self.exposed_methods
             and method not in MANUAL_DISPATCH_METHODS
         ):
+            logger.warning(f"[DISPATCH-DEBUG] Using AUTO-DISPATCH for {method}")
             return self._auto_dispatch(method, params)
+
+        logger.warning(f"[DISPATCH-DEBUG] Using MANUAL-DISPATCH for {method}")
 
         # Extract authentication context for manual dispatch
         context = self._get_operation_context()
@@ -675,6 +720,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         Returns:
             Serialized method result
         """
+        logger.warning(f"[CONTEXT-DEBUG] _auto_dispatch ENTRY: method={method}")
         fn = self.exposed_methods[method]
 
         # Convert params dataclass to kwargs dict
@@ -692,14 +738,20 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         if accepts_context:
             context = self._get_operation_context()
+            logger.warning(
+                f"[CONTEXT-DEBUG] _auto_dispatch: method={method}, accepts_context=True, context={context}"
+            )
             if context is not None:
                 # Convert OperationContext to dict for methods that expect dict
                 from nexus.core.permissions import OperationContext
 
                 if isinstance(context, OperationContext):
                     # Convert to dict format expected by filesystem methods
+                    # v0.5.0: Include user_id and agent_id for auto-grant ownership
                     context_dict = {
                         "user": context.user,
+                        "user_id": getattr(context, "user_id", None),  # v0.5.0
+                        "agent_id": getattr(context, "agent_id", None),  # v0.5.0
                         "subject": (context.subject_type, context.subject_id)
                         if context.subject_type and context.subject_id
                         else None,
@@ -707,6 +759,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         "is_admin": context.is_admin,
                         "is_system": context.is_system,
                     }
+                    logger.warning(
+                        f"[CONTEXT-DEBUG] Auto-dispatch method={method}, context_dict={context_dict}"
+                    )
                     kwargs["context"] = context_dict
                 else:
                     # Already a dict

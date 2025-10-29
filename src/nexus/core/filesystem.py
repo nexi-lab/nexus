@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import builtins
 from abc import ABC, abstractmethod
+from datetime import timedelta
 
 # Import List to avoid name conflict with list() method
 from typing import Any
@@ -580,6 +581,8 @@ class NexusFilesystem(ABC):
         created_by: str | None = None,
         tags: builtins.list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,  # v0.5.0: If provided, workspace is session-scoped
+        ttl: timedelta | None = None,  # v0.5.0
     ) -> dict[str, Any]:
         """Register a workspace path.
 
@@ -590,6 +593,8 @@ class NexusFilesystem(ABC):
             created_by: User/agent who created the workspace
             tags: Optional tags
             metadata: Optional metadata
+            session_id: If provided, workspace is session-scoped (temporary). If None, persistent. (v0.5.0)
+            ttl: Time-to-live for auto-expiry (v0.5.0)
 
         Returns:
             Workspace registration info
@@ -640,6 +645,8 @@ class NexusFilesystem(ABC):
         created_by: str | None = None,
         tags: builtins.list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,  # v0.5.0: If provided, memory is session-scoped
+        ttl: timedelta | None = None,  # v0.5.0
     ) -> dict[str, Any]:
         """Register a memory path.
 

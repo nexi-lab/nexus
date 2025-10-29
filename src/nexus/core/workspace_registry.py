@@ -14,9 +14,12 @@ Key Concepts:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.storage.metadata_store import SQLAlchemyMetadataStore
@@ -116,13 +119,19 @@ class WorkspaceRegistry:
         >>> print(config.name)  # "main"
     """
 
-    def __init__(self, metadata: SQLAlchemyMetadataStore):
+    def __init__(
+        self,
+        metadata: SQLAlchemyMetadataStore,
+        rebac_manager: Any | None = None,  # v0.5.0: For auto-granting ownership
+    ):
         """Initialize workspace registry.
 
         Args:
             metadata: Metadata store for database persistence
+            rebac_manager: ReBAC manager for auto-granting ownership (v0.5.0)
         """
         self.metadata = metadata
+        self.rebac_manager = rebac_manager  # v0.5.0
         self._workspaces: dict[str, WorkspaceConfig] = {}
         self._memories: dict[str, MemoryConfig] = {}
         self._load_from_db()
@@ -148,6 +157,8 @@ class WorkspaceRegistry:
             # Load memories
             memories = session.query(MemoryConfigModel).all()
             for mem in memories:
+                if mem.path is None:
+                    continue  # Skip invalid entries
                 metadata_dict = json.loads(mem.extra_metadata) if mem.extra_metadata else {}
                 self._memories[mem.path] = MemoryConfig(
                     path=mem.path,
@@ -167,6 +178,9 @@ class WorkspaceRegistry:
         description: str = "",
         created_by: str | None = None,
         metadata: dict | None = None,
+        context: Any | None = None,  # v0.5.0: OperationContext
+        session_id: str | None = None,  # v0.5.0: If provided, workspace is session-scoped
+        ttl: Any | None = None,  # v0.5.0: timedelta for auto-expiry
     ) -> WorkspaceConfig:
         """Register a directory as a workspace.
 
@@ -174,24 +188,84 @@ class WorkspaceRegistry:
             path: Absolute path to workspace directory
             name: Optional friendly name
             description: Human-readable description
-            created_by: User/agent who created it
+            created_by: User/agent who created it (legacy, prefer context)
             metadata: Additional metadata
+            context: OperationContext with user_id and agent_id (v0.5.0)
+            session_id: If provided, workspace is session-scoped (temporary). If None, persistent. (v0.5.0)
+            ttl: Time-to-live as timedelta (v0.5.0)
 
         Returns:
             WorkspaceConfig object
 
         Raises:
             ValueError: If path already registered
+            PermissionError: If agent doesn't belong to user
 
-        Example:
+        Examples:
+            >>> # Persistent workspace (traditional)
             >>> registry.register_workspace(
             ...     "/my-workspace",
             ...     name="main-workspace",
-            ...     description="My main work area"
+            ...     created_by="alice"
+            ... )
+
+            >>> # v0.5.0: Session-scoped workspace (temporary)
+            >>> from nexus.core.permissions import OperationContext
+            >>> from datetime import timedelta
+            >>> ctx = OperationContext(user="alice", groups=[])
+            >>> registry.register_workspace(
+            ...     "/tmp/notebook",
+            ...     context=ctx,
+            ...     session_id=session.session_id,  # session_id = session-scoped
+            ...     ttl=timedelta(hours=8)
             ... )
         """
         if path in self._workspaces:
             raise ValueError(f"Workspace already registered: {path}")
+
+        # v0.5.0: Derive scope from session_id
+        scope = "session" if session_id else "persistent"
+
+        # v0.5.0: Extract identity from context if provided
+        user_id = None
+        agent_id = None
+
+        # v0.5.0: Extract tenant_id from context (for auto-grant)
+        tenant_id = None
+
+        if context:
+            # Handle both dict (from RPC) and OperationContext (direct calls)
+            logger.warning(
+                f"[CONTEXT-DEBUG] register_workspace: context type={type(context)}, context={context}"
+            )
+            if isinstance(context, dict):
+                user_id = context.get("user_id") or context.get("user")
+                agent_id = context.get("agent_id")
+                tenant_id = context.get("tenant_id") or context.get("tenant")
+                logger.warning(
+                    f"[CONTEXT-DEBUG] Extracted from dict: user_id={user_id}, agent_id={agent_id}, tenant_id={tenant_id}"
+                )
+            else:
+                user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
+                agent_id = getattr(context, "agent_id", None)
+                tenant_id = getattr(context, "tenant_id", None)
+                logger.warning(
+                    f"[CONTEXT-DEBUG] Extracted from object: user_id={user_id}, agent_id={agent_id}, tenant_id={tenant_id}"
+                )
+
+            # Validate agent ownership
+            if agent_id and user_id and hasattr(self, "entity_registry") and self.entity_registry:
+                from nexus.core.agents import validate_agent_ownership
+
+                if not validate_agent_ownership(agent_id, user_id, self.entity_registry):
+                    raise PermissionError(f"Agent {agent_id} not owned by {user_id}")
+
+        # Calculate expiry
+        expires_at = None
+        if ttl:
+            from datetime import UTC
+
+            expires_at = datetime.now(UTC) + ttl
 
         # Create config
         config = WorkspaceConfig(
@@ -199,15 +273,37 @@ class WorkspaceRegistry:
             name=name,
             description=description,
             created_at=datetime.now(),
-            created_by=created_by,
+            created_by=created_by or user_id,
             metadata=metadata or {},
         )
 
         # Save to cache
         self._workspaces[path] = config
 
-        # Persist to database
-        self._save_workspace_to_db(config)
+        # Persist to database (with v0.5.0 fields)
+        self._save_workspace_to_db(config, user_id, agent_id, scope, session_id, expires_at)
+
+        # v0.5.0: Auto-grant ownership to registering user
+        logger.warning(
+            f"[AUTO-GRANT] workspace_registry: path={path}, user_id={user_id}, rebac_manager={self.rebac_manager is not None}"
+        )
+        if self.rebac_manager and user_id:
+            try:
+                logger.warning(f"[AUTO-GRANT] Creating tuple: user:{user_id} → owner → file:{path}")
+                self.rebac_manager.rebac_write(
+                    subject=("user", user_id),
+                    relation="direct_owner",  # Use concrete relation, not computed union
+                    object=("file", path),
+                    tenant_id=tenant_id,  # v0.5.0: Pass tenant_id from context
+                )
+                logger.warning(f"[AUTO-GRANT] ✓ SUCCESS: user:{user_id} → owner → file:{path}")
+            except Exception as e:
+                # Don't fail registration if permission grant fails
+                logger.error(f"[AUTO-GRANT] ✗ FAILED: {e}", exc_info=True)
+        else:
+            logger.warning(
+                f"[AUTO-GRANT] SKIPPED: rebac={self.rebac_manager is not None}, user={user_id}"
+            )
 
         return config
 
@@ -286,6 +382,9 @@ class WorkspaceRegistry:
         description: str = "",
         created_by: str | None = None,
         metadata: dict | None = None,
+        context: Any | None = None,  # v0.5.0: OperationContext
+        session_id: str | None = None,  # v0.5.0: If provided, memory is session-scoped
+        ttl: Any | None = None,  # v0.5.0: timedelta for auto-expiry
     ) -> MemoryConfig:
         """Register a directory as a memory.
 
@@ -293,24 +392,73 @@ class WorkspaceRegistry:
             path: Absolute path to memory directory
             name: Optional friendly name
             description: Human-readable description
-            created_by: User/agent who created it
+            created_by: User/agent who created it (legacy, prefer context)
             metadata: Additional metadata
+            context: OperationContext with user_id and agent_id (v0.5.0)
+            session_id: If provided, memory is session-scoped (temporary). If None, persistent. (v0.5.0)
+            ttl: Time-to-live as timedelta (v0.5.0)
 
         Returns:
             MemoryConfig object
 
         Raises:
             ValueError: If path already registered
+            PermissionError: If agent doesn't belong to user
 
-        Example:
+        Examples:
+            >>> # Traditional persistent memory
             >>> registry.register_memory(
             ...     "/my-memory",
             ...     name="personal-kb",
-            ...     description="Personal knowledge base"
+            ...     created_by="alice"
+            ... )
+
+            >>> # v0.5.0: Session-scoped memory (temporary)
+            >>> from nexus.core.permissions import OperationContext
+            >>> from datetime import timedelta
+            >>> ctx = OperationContext(user="alice", groups=[])
+            >>> registry.register_memory(
+            ...     "/tmp/memory",
+            ...     context=ctx,
+            ...     session_id=session.session_id,  # session_id = session-scoped
+            ...     ttl=timedelta(hours=8)
             ... )
         """
         if path in self._memories:
             raise ValueError(f"Memory already registered: {path}")
+
+        # v0.5.0: Derive scope from session_id
+        scope = "session" if session_id else "persistent"
+
+        # v0.5.0: Extract identity from context
+        user_id = None
+        agent_id = None
+        tenant_id = None  # v0.5.0: For auto-grant
+
+        if context:
+            # Handle both dict (from RPC) and OperationContext (direct calls)
+            if isinstance(context, dict):
+                user_id = context.get("user_id") or context.get("user")
+                agent_id = context.get("agent_id")
+                tenant_id = context.get("tenant_id") or context.get("tenant")
+            else:
+                user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
+                agent_id = getattr(context, "agent_id", None)
+                tenant_id = getattr(context, "tenant_id", None)
+
+            # Validate agent ownership
+            if agent_id and user_id and hasattr(self, "entity_registry") and self.entity_registry:
+                from nexus.core.agents import validate_agent_ownership
+
+                if not validate_agent_ownership(agent_id, user_id, self.entity_registry):
+                    raise PermissionError(f"Agent {agent_id} not owned by {user_id}")
+
+        # Calculate expiry
+        expires_at = None
+        if ttl:
+            from datetime import UTC
+
+            expires_at = datetime.now(UTC) + ttl
 
         # Create config
         config = MemoryConfig(
@@ -318,15 +466,37 @@ class WorkspaceRegistry:
             name=name,
             description=description,
             created_at=datetime.now(),
-            created_by=created_by,
+            created_by=created_by or user_id,
             metadata=metadata or {},
         )
 
         # Save to cache
         self._memories[path] = config
 
-        # Persist to database
-        self._save_memory_to_db(config)
+        # Persist to database (with v0.5.0 fields)
+        self._save_memory_to_db(config, user_id, agent_id, scope, session_id, expires_at)
+
+        # v0.5.0: Auto-grant ownership to registering user
+        logger.warning(
+            f"[AUTO-GRANT] workspace_registry: path={path}, user_id={user_id}, rebac_manager={self.rebac_manager is not None}"
+        )
+        if self.rebac_manager and user_id:
+            try:
+                logger.warning(f"[AUTO-GRANT] Creating tuple: user:{user_id} → owner → file:{path}")
+                self.rebac_manager.rebac_write(
+                    subject=("user", user_id),
+                    relation="direct_owner",  # Use concrete relation, not computed union
+                    object=("file", path),
+                    tenant_id=tenant_id,  # v0.5.0: Pass tenant_id from context
+                )
+                logger.warning(f"[AUTO-GRANT] ✓ SUCCESS: user:{user_id} → owner → file:{path}")
+            except Exception as e:
+                # Don't fail registration if permission grant fails
+                logger.error(f"[AUTO-GRANT] ✗ FAILED: {e}", exc_info=True)
+        else:
+            logger.warning(
+                f"[AUTO-GRANT] SKIPPED: rebac={self.rebac_manager is not None}, user={user_id}"
+            )
 
         return config
 
@@ -391,7 +561,15 @@ class WorkspaceRegistry:
 
     # === Database Persistence ===
 
-    def _save_workspace_to_db(self, config: WorkspaceConfig) -> None:
+    def _save_workspace_to_db(
+        self,
+        config: WorkspaceConfig,
+        user_id: str | None = None,  # v0.5.0
+        agent_id: str | None = None,  # v0.5.0
+        scope: str = "persistent",  # v0.5.0
+        session_id: str | None = None,  # v0.5.0
+        expires_at: Any | None = None,  # v0.5.0
+    ) -> None:
         """Persist workspace config to database."""
         from nexus.storage.models import WorkspaceConfigModel
 
@@ -402,6 +580,11 @@ class WorkspaceRegistry:
                 description=config.description,
                 created_at=config.created_at or datetime.now(),
                 created_by=config.created_by,
+                user_id=user_id,  # v0.5.0
+                agent_id=agent_id,  # v0.5.0
+                scope=scope,  # v0.5.0
+                session_id=session_id,  # v0.5.0
+                expires_at=expires_at,  # v0.5.0
                 extra_metadata=json.dumps(config.metadata) if config.metadata else None,
             )
             session.add(model)
@@ -417,7 +600,15 @@ class WorkspaceRegistry:
                 session.delete(workspace)
                 session.commit()
 
-    def _save_memory_to_db(self, config: MemoryConfig) -> None:
+    def _save_memory_to_db(
+        self,
+        config: MemoryConfig,
+        user_id: str | None = None,  # v0.5.0
+        agent_id: str | None = None,  # v0.5.0
+        scope: str = "persistent",  # v0.5.0
+        session_id: str | None = None,  # v0.5.0
+        expires_at: Any | None = None,  # v0.5.0
+    ) -> None:
         """Persist memory config to database."""
         from nexus.storage.models import MemoryConfigModel
 
@@ -428,6 +619,11 @@ class WorkspaceRegistry:
                 description=config.description,
                 created_at=config.created_at or datetime.now(),
                 created_by=config.created_by,
+                user_id=user_id,  # v0.5.0
+                agent_id=agent_id,  # v0.5.0
+                scope=scope,  # v0.5.0
+                session_id=session_id,  # v0.5.0
+                expires_at=expires_at,  # v0.5.0
                 extra_metadata=json.dumps(config.metadata) if config.metadata else None,
             )
             session.add(model)

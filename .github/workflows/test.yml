@@ -38,7 +38,7 @@ jobs:
           echo "  1. Exposed via @rpc_expose decorator, OR"
           echo "  2. Explicitly excluded in INTERNAL_ONLY_METHODS"
           echo ""
-          uv run pytest tests/unit/test_rpc_parity.py -v
+          uv run pytest tests/unit/server/test_rpc_parity.py -v
 
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}

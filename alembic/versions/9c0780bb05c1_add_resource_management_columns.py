@@ -1,7 +1,7 @@
 """add_resource_management_columns
 
 Revision ID: 9c0780bb05c1
-Revises: 278a3d730040
+Revises: 58d58578fce0
 Create Date: 2025-10-17 00:45:39.978492
 
 Adds columns for resource management and cache eviction (Issue #36):
@@ -19,7 +19,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "9c0780bb05c1"
-down_revision: Union[str, Sequence[str], None] = "278a3d730040"
+down_revision: Union[str, Sequence[str], None] = "58d58578fce0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

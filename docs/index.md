@@ -31,10 +31,8 @@ hide:
     # Use it
     import nexus
 
-    nx = nexus.connect(config={
-        "data_dir": "./nexus-data",
-        "enforce_permissions": False  # Simple mode for getting started
-    })
+    # Just works - no auth needed in embedded mode
+    nx = nexus.connect(config={"data_dir": "./nexus-data"})
 
     # Write and read files
     nx.write("/hello.txt", b"Hello, Nexus!")
@@ -172,13 +170,49 @@ Multi-tenancy, workspace isolation, and complete audit trails out of the box.
 
 </div>
 
-## See It In Action
+## 📚 Learn by Example
+
+<div class="grid cards" markdown>
+
+-   :material-file-document:{ .lg .middle } __File Operations__
+
+    ---
+
+    Master read, write, copy, move, and delete with optimistic concurrency control.
+
+    [:octicons-arrow-right-24: View Example](examples/file-operations.md)
+
+-   :material-folder:{ .lg .middle } __Directory Operations__
+
+    ---
+
+    Create hierarchies with automatic permission inheritance.
+
+    [:octicons-arrow-right-24: View Example](examples/directory-operations.md)
+
+-   :material-shield-lock:{ .lg .middle } __Permission Management__
+
+    ---
+
+    Fine-grained access control with Google Zanzibar-style ReBAC.
+
+    [:octicons-arrow-right-24: View Example](examples/permissions.md)
+
+-   :material-application:{ .lg .middle } __Workspace & Sessions__
+
+    ---
+
+    Build multi-tenant apps with workspace isolation and session tracking.
+
+    [:octicons-arrow-right-24: View Example](examples/workspace-session.md)
+
+</div>
 
 <div class="cta-section">
-  <p class="cta-description"><strong>Ready to see what Nexus can do?</strong> Explore complete examples for AI agent memory, multi-tenant SaaS, distributed teams, versioning, semantic search, and permission management.</p>
+  <p class="cta-description">Each example includes interactive demos, complete code snippets, and runnable shell scripts.</p>
   <div class="cta-buttons">
-    <a href="examples/" class="md-button md-button--primary cta-large">View Examples →</a>
-    <a href="api/" class="md-button cta-large">Read the Docs</a>
+    <a href="examples/" class="md-button md-button--primary cta-large">View All Examples →</a>
+    <a href="api/" class="md-button cta-large">API Reference</a>
   </div>
 </div>
 

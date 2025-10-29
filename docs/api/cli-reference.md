@@ -425,7 +425,7 @@ nexus search stats
 nexus rebac create agent alice member-of group eng-team
 
 # Give alice viewer access to file
-nexus rebac create agent alice viewer file file123
+nexus rebac create agent alice direct_viewer file file123
 
 # With tenant isolation (via flag)
 nexus rebac create agent alice member-of group eng-team --tenant-id org_acme
@@ -435,7 +435,7 @@ export NEXUS_TENANT_ID=org_acme
 nexus rebac create agent alice member-of group eng-team
 
 # With expiration
-nexus rebac create agent bob viewer file secret --expires 2025-12-31T23:59:59
+nexus rebac create agent bob direct_viewer file secret --expires 2025-12-31T23:59:59
 ```
 
 #### rebac check - Check permission

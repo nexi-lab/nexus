@@ -961,6 +961,13 @@ class NexusFSCoreMixin:
         # Get the created memory
         mem = self.memory.get(memory_id)
 
+        # Handle case where memory.get() returns None
+        if mem is None:
+            raise RuntimeError(
+                f"Failed to retrieve stored memory (id={memory_id}). "
+                "The memory API may not be properly configured or the memory was not persisted."
+            )
+
         return {
             "etag": mem["content_hash"],
             "version": 1,

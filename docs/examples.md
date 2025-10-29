@@ -10,8 +10,8 @@ Store and query agent context with semantic search. Agents learn from past inter
 import nexus
 import json
 
-# Connect to Nexus
-nx = nexus.connect(config={"data_dir": "./nexus-data", "enforce_permissions": False})
+# Connect to Nexus (embedded mode - no auth needed)
+nx = nexus.connect(config={"data_dir": "./nexus-data"})
 
 # Store conversation with rich metadata
 conversation_data = {
@@ -82,13 +82,8 @@ Same API works everywhere - local development, staging, production. Zero code ch
 ```python
 import nexus
 
-# Local development with SQLite
-local_nx = nexus.connect(
-    config={
-        "data_dir": "./local-dev",
-        "enforce_permissions": False
-    }
-)
+# Local development (embedded mode - no auth needed)
+local_nx = nexus.connect(config={"data_dir": "./local-dev"})
 
 # Write locally
 local_nx.write("/project/config.yaml", b"env: development")
@@ -114,7 +109,7 @@ Track every change with built-in versioning. Roll back to any point in time inst
 ```python
 import nexus
 
-nx = nexus.connect(config={"data_dir": "./nexus-data", "enforce_permissions": False})
+nx = nexus.connect(config={"data_dir": "./nexus-data"})
 
 # Write initial version
 nx.write("/model/weights.pkl", b"version 1 data")
@@ -148,7 +143,7 @@ Find files by meaning, not just name. Built-in vector search for AI applications
 ```python
 import nexus
 
-nx = nexus.connect(config={"data_dir": "./nexus-data", "enforce_permissions": False})
+nx = nexus.connect(config={"data_dir": "./nexus-data"})
 
 # Store documents with automatic indexing
 docs = [

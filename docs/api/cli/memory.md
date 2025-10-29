@@ -4,50 +4,330 @@
 
 This document describes CLI commands for memory management and their Python API equivalents.
 
-Memory in Nexus provides a structured way to store and retrieve contextual information, knowledge, and notes.
+Memory in Nexus provides a structured way to store and retrieve contextual information, knowledge, and agent experiences.
 
-## memory register - Register memory
+---
 
-Register a directory as a memory for tracking.
+## Table of Contents
+
+### Memory Operations (v0.4.0+)
+- [memory store](#memory-store---store-memory) - Store a memory
+- [memory query](#memory-query---query-memories) - Query by filters
+- [memory search](#memory-search---semantic-search) - Semantic search
+- [memory list](#memory-list---list-memories) - List memories
+- [memory get](#memory-get---get-memory) - Get specific memory
+- [memory delete](#memory-delete---delete-memory) - Delete memory
+
+### Memory Registry (v0.7.0+)
+- [memory register](#memory-register---register-memory-directory) - Register memory directory
+- [memory list-registered](#memory-list-registered---list-registered-memories) - List registered memories
+- [memory info](#memory-info---show-memory-info) - Show memory info
+- [memory unregister](#memory-unregister---unregister-memory) - Unregister memory
+
+---
+
+## Memory Operations (v0.4.0+)
+
+### memory store - Store memory
+
+Store a new memory entry.
 
 **CLI:**
 ```bash
-# Register memory
-nexus memory register /knowledge-base --name kb --description "Knowledge base"
+# Store user preference
+nexus memory store "User prefers Python" --scope user --type preference
 
-# With metadata
-nexus memory register /kb --name kb --created-by alice
+# Store agent knowledge with importance
+nexus memory store "API key for prod: abc123" --scope agent --importance 0.9
+
+# Store experience
+nexus memory store "Deployment failed on 2024-01-15" --scope user --type experience
 ```
 
 **Python API:**
 ```python
-# Register memory
-nx.register_memory("/knowledge-base", name="kb", description="Knowledge base")
+# Store memory
+memory_id = nx.memory.store(
+    content="User prefers Python",
+    scope="user",
+    memory_type="preference"
+)
 
-# With metadata
-nx.register_memory(
-    "/kb",
-    name="kb",
-    description="Knowledge base",
-    metadata={"created_by": "alice", "category": "technical"}
+# Store with importance
+memory_id = nx.memory.store(
+    content="API key for prod: abc123",
+    scope="agent",
+    importance=0.9
+)
+
+# Store experience
+memory_id = nx.memory.store(
+    content="Deployment failed on 2024-01-15",
+    scope="user",
+    memory_type="experience"
 )
 ```
 
 **Options:**
-- `--name TEXT`: Memory name (required)
-- `--description TEXT`: Description of the memory
-- `--created-by TEXT`: Creator name
-- `--remote-url URL`: Connect to remote server (use NEXUS_URL env var)
-- `--remote-api-key KEY`: API key (use NEXUS_API_KEY env var)
+- `--scope TEXT`: Memory scope (agent/user/tenant/global) - default: "user"
+- `--type TEXT`: Memory type (fact/preference/experience) - optional
+- `--importance FLOAT`: Importance score (0.0-1.0) - optional
 
-**See Also:**
-- [Python API: register_memory()](../memory-management.md#register_memory)
+**Memory Scopes:**
+- `agent`: Private to this agent instance
+- `user`: Shared across user's agents
+- `tenant`: Shared within organization
+- `global`: Shared globally (requires permissions)
+
+**Memory Types:**
+- `fact`: Factual knowledge ("Python uses indentation")
+- `preference`: User/agent preferences ("Prefers concise code")
+- `experience`: Past experiences ("Failed deployment at 3pm")
 
 ---
 
-## memory list-registered - List memories
+### memory query - Query memories
 
-List all registered memories.
+Query memories using filters.
+
+**CLI:**
+```bash
+# Query user preferences
+nexus memory query --scope user --type preference
+
+# Query agent memories
+nexus memory query --agent-id agent1 --limit 10
+
+# Query with JSON output
+nexus memory query --json
+```
+
+**Python API:**
+```python
+# Query user preferences
+results = nx.memory.query(scope="user", memory_type="preference")
+
+# Query by agent
+results = nx.memory.query(agent_id="agent1", limit=10)
+
+# Query with multiple filters
+results = nx.memory.query(
+    user_id="alice",
+    scope="user",
+    memory_type="fact",
+    limit=50
+)
+```
+
+**Options:**
+- `--user-id TEXT`: Filter by user ID
+- `--agent-id TEXT`: Filter by agent ID
+- `--scope TEXT`: Filter by scope
+- `--type TEXT`: Filter by memory type
+- `--limit INT`: Maximum results (default: 100)
+- `--json`: Output as JSON
+
+---
+
+### memory search - Semantic search
+
+Search memories using semantic search (vector similarity).
+
+**CLI:**
+```bash
+# Semantic search
+nexus memory search "Python programming best practices"
+
+# Search with filters
+nexus memory search "user preferences" --scope user --limit 5
+
+# Search with JSON output
+nexus memory search "API keys" --json
+```
+
+**Python API:**
+```python
+# Semantic search
+results = nx.memory.search(query="Python programming best practices")
+
+# Search with filters
+results = nx.memory.search(
+    query="user preferences",
+    scope="user",
+    limit=5
+)
+
+# Process results
+for result in results:
+    print(f"Score: {result['score']:.2f}")
+    print(f"Content: {result['content']}")
+    print(f"Type: {result.get('memory_type', 'N/A')}")
+```
+
+**Options:**
+- `--scope TEXT`: Filter by scope
+- `--type TEXT`: Filter by memory type
+- `--limit INT`: Maximum results (default: 10)
+- `--json`: Output as JSON
+
+**Note:** Semantic search requires embeddings to be enabled on the server.
+
+---
+
+### memory list - List memories
+
+List memories for current user/agent.
+
+**CLI:**
+```bash
+# List all memories
+nexus memory list
+
+# List with filters
+nexus memory list --scope user --type preference
+
+# List with JSON output
+nexus memory list --json
+```
+
+**Python API:**
+```python
+# List all memories
+results = nx.memory.list()
+
+# List with filters
+results = nx.memory.list(scope="user", memory_type="preference")
+
+# Iterate through results
+for mem in results:
+    print(f"{mem['memory_id']}: {mem['content'][:50]}...")
+```
+
+**Options:**
+- `--scope TEXT`: Filter by scope
+- `--type TEXT`: Filter by memory type
+- `--limit INT`: Maximum results (default: 100)
+- `--json`: Output as JSON
+
+---
+
+### memory get - Get memory
+
+Get a specific memory by ID.
+
+**CLI:**
+```bash
+# Get memory by ID
+nexus memory get mem_123
+
+# Get with JSON output
+nexus memory get mem_123 --json
+```
+
+**Python API:**
+```python
+# Get memory
+memory = nx.memory.get("mem_123")
+
+if memory:
+    print(f"Content: {memory['content']}")
+    print(f"Scope: {memory['scope']}")
+    print(f"Type: {memory['memory_type']}")
+    print(f"Importance: {memory['importance']}")
+```
+
+**Options:**
+- `--json`: Output as JSON
+
+---
+
+### memory delete - Delete memory
+
+Delete a memory by ID.
+
+**CLI:**
+```bash
+# Delete memory
+nexus memory delete mem_123
+```
+
+**Python API:**
+```python
+# Delete memory
+deleted = nx.memory.delete("mem_123")
+
+if deleted:
+    print("Memory deleted successfully")
+else:
+    print("Memory not found or no permission")
+```
+
+---
+
+## Memory Registry (v0.7.0+)
+
+### memory register - Register memory directory
+
+Register a directory as a memory for persistent knowledge storage.
+
+**CLI:**
+```bash
+# Register persistent memory
+nexus memory register /knowledge-base --name kb --description "Knowledge base"
+
+# Register with creator metadata
+nexus memory register /kb --name kb --created-by alice
+
+# Register temporary session-scoped memory (v0.5.0)
+nexus memory register /tmp/agent-context --session-id abc123 --ttl 2h
+```
+
+**Python API:**
+```python
+# Register persistent memory
+config = nx.register_memory(
+    path="/knowledge-base",
+    name="kb",
+    description="Knowledge base"
+)
+
+# Register with metadata
+config = nx.register_memory(
+    path="/kb",
+    name="kb",
+    description="Knowledge base",
+    created_by="alice"
+)
+
+# Register session-scoped (v0.5.0)
+from datetime import timedelta
+config = nx.register_memory(
+    path="/tmp/agent-context",
+    name="temp-kb",
+    session_id="abc123",
+    ttl=timedelta(hours=2)
+)
+```
+
+**Options:**
+- `--name, -n TEXT`: Friendly name (optional)
+- `--description, -d TEXT`: Description (optional)
+- `--created-by TEXT`: Creator name (optional)
+- `--session-id TEXT`: Session ID for temporary memory (v0.5.0)
+- `--ttl TEXT`: Time-to-live (e.g., '8h', '2d', '30m') (v0.5.0)
+
+**TTL Format Examples:**
+- `8h` - 8 hours
+- `2d` - 2 days
+- `30m` - 30 minutes
+- `1w` - 1 week
+- `90s` - 90 seconds
+
+---
+
+### memory list-registered - List registered memories
+
+List all registered memory directories.
 
 **CLI:**
 ```bash
@@ -63,14 +343,11 @@ for mem in memories:
     print(f"{mem['path']} - {mem['name']}: {mem['description']}")
 ```
 
-**See Also:**
-- [Python API: list_memories()](../memory-management.md#list_memories)
-
 ---
 
-## memory info - Show memory info
+### memory info - Show memory info
 
-Get detailed information about a memory.
+Get detailed information about a registered memory.
 
 **CLI:**
 ```bash
@@ -82,129 +359,37 @@ nexus memory info /knowledge-base
 ```python
 # Get memory info
 info = nx.get_memory_info("/knowledge-base")
-print(f"Name: {info['name']}")
-print(f"Description: {info['description']}")
-print(f"Entry count: {info['entry_count']}")
-print(f"Created: {info['created_at']}")
+if info:
+    print(f"Name: {info['name']}")
+    print(f"Description: {info['description']}")
+    print(f"Created: {info['created_at']}")
+    print(f"Created by: {info['created_by']}")
 ```
-
-**See Also:**
-- [Python API: get_memory_info()](../memory-management.md#get_memory_info)
 
 ---
 
-## memory unregister - Unregister memory
+### memory unregister - Unregister memory
 
 Unregister a memory (doesn't delete files).
 
 **CLI:**
 ```bash
-# Unregister (doesn't delete files)
+# Unregister (with confirmation)
 nexus memory unregister /knowledge-base
+
+# Unregister (skip confirmation)
+nexus memory unregister /knowledge-base --yes
 ```
 
 **Python API:**
 ```python
 # Unregister memory
-nx.unregister_memory("/knowledge-base")
+success = nx.unregister_memory("/knowledge-base")
 # Note: Files are not deleted, only memory tracking is removed
 ```
 
-**See Also:**
-- [Python API: unregister_memory()](../memory-management.md#unregister_memory)
-
----
-
-## memory store - Store memory
-
-Store a memory entry.
-
-**CLI:**
-```bash
-# Store a memory entry
-nexus memory store --content "Important fact" --tags learning,important
-
-# Note: Memory commands require NEXUS_URL environment variable
-export NEXUS_URL=http://localhost:8765
-export NEXUS_API_KEY=your-api-key
-nexus memory store --content "Authentication uses JWT tokens" --tags security,auth
-```
-
-**Python API:**
-```python
-# Store memory
-memory_id = nx.store_memory(
-    content="Important fact",
-    tags=["learning", "important"]
-)
-print(f"Stored memory: {memory_id}")
-
-# Store with metadata
-memory_id = nx.store_memory(
-    content="Authentication uses JWT tokens",
-    tags=["security", "auth"],
-    metadata={"source": "docs", "author": "alice"}
-)
-```
-
 **Options:**
-- `--content TEXT`: Memory content (required)
-- `--tags TEXT`: Comma-separated tags
-
-**Environment:**
-- Requires `NEXUS_URL` environment variable
-- Requires `NEXUS_API_KEY` if server uses authentication
-
-**See Also:**
-- [Python API: store_memory()](../memory-management.md#store_memory)
-
----
-
-## memory search - Semantic search memories
-
-Search memories using semantic search.
-
-**CLI:**
-```bash
-# Search memories
-nexus memory search "authentication flow"
-
-# Note: Requires NEXUS_URL environment variable
-export NEXUS_URL=http://localhost:8765
-export NEXUS_API_KEY=your-api-key
-nexus memory search "how to authenticate users"
-```
-
-**Python API:**
-```python
-# Search memories (async)
-import asyncio
-
-async def search_memories():
-    results = await nx.search_memories("authentication flow")
-    for result in results:
-        print(f"Score: {result['score']}")
-        print(f"Content: {result['content']}")
-        print(f"Tags: {result.get('tags', [])}")
-
-asyncio.run(search_memories())
-
-# Search with limit
-async def search_top_results():
-    results = await nx.search_memories("authentication flow", limit=5)
-    return results
-```
-
-**Options:**
-- `--limit NUM`: Maximum number of results
-
-**Environment:**
-- Requires `NEXUS_URL` environment variable
-- Requires `NEXUS_API_KEY` if server uses authentication
-
-**See Also:**
-- [Python API: search_memories()](../memory-management.md#search_memories)
-- [Semantic Search](semantic-search.md)
+- `--yes, -y`: Skip confirmation prompt
 
 ---
 
@@ -212,132 +397,143 @@ async def search_top_results():
 
 ### Basic memory management
 ```bash
-# Set up remote connection
-export NEXUS_URL=http://localhost:8765
-export NEXUS_API_KEY=your-api-key
+# Store and query memories
+nexus memory store "Python uses indentation" --scope user --type fact
+nexus memory store "User prefers concise explanations" --scope user --type preference
+nexus memory store "Last deployment failed at 3pm" --scope agent --type experience
 
-# Register a memory
-nexus memory register /knowledge --name kb --description "Team knowledge base"
+# Query memories
+nexus memory query --scope user --type preference
+nexus memory search "Python syntax"
 
-# Store some memories
-nexus memory store --content "Use bcrypt for password hashing" --tags security,best-practice
-nexus memory store --content "Database migrations use Alembic" --tags database,tools
-nexus memory store --content "API rate limit is 100 req/min" --tags api,limits
+# List and get memories
+nexus memory list --scope user
+nexus memory get mem_123
+```
 
-# Search memories
-nexus memory search "password security"
-nexus memory search "database tools"
+### Knowledge base workflow
+```bash
+# Register knowledge base
+nexus memory register /docs/kb --name company-kb --description "Company knowledge"
 
-# List all registered memories
+# Store documentation
+nexus memory store "Deployment: Run tests, build Docker, push, deploy k8s" \
+  --scope user --type fact
+nexus memory store "Code review: 2 approvals, tests passing" \
+  --scope user --type fact
+
+# Query the knowledge base
+nexus memory search "deployment process"
+nexus memory search "code review requirements"
+
+# List registered memories
 nexus memory list-registered
 
 # Get memory info
-nexus memory info /knowledge
+nexus memory info /docs/kb
 ```
 
-### Python equivalent
+---
+
+## Python Workflow Examples
+
+### Store and query memories
 ```python
 import nexus
-import asyncio
 
-# Initialize with remote server
-nx = nexus.Nexus(remote_url="http://localhost:8765", api_key="your-api-key")
+nx = nexus.connect()
 
-# Register a memory
-nx.register_memory("/knowledge", name="kb", description="Team knowledge base")
+# Store various memory types
+fact_id = nx.memory.store(
+    "Python uses indentation for blocks",
+    scope="user",
+    memory_type="fact"
+)
 
-# Store some memories
-memories = [
-    ("Use bcrypt for password hashing", ["security", "best-practice"]),
-    ("Database migrations use Alembic", ["database", "tools"]),
-    ("API rate limit is 100 req/min", ["api", "limits"]),
+pref_id = nx.memory.store(
+    "User prefers concise explanations",
+    scope="user",
+    memory_type="preference",
+    importance=0.8
+)
+
+exp_id = nx.memory.store(
+    "Deployment failed at 3pm on 2024-01-15",
+    scope="agent",
+    memory_type="experience"
+)
+
+# Query memories
+preferences = nx.memory.query(scope="user", memory_type="preference")
+for pref in preferences:
+    print(f"Preference: {pref['content']}")
+
+# Semantic search
+results = nx.memory.search("Python syntax rules")
+for result in results:
+    print(f"[{result['score']:.2f}] {result['content']}")
+```
+
+### Knowledge base management
+```python
+# Register knowledge base
+config = nx.register_memory(
+    path="/docs/kb",
+    name="company-kb",
+    description="Company knowledge base",
+    created_by="admin"
+)
+
+# Store documentation
+kb_entries = [
+    ("Deployment process: Run tests, build Docker image, push to registry, deploy to k8s",
+     "fact"),
+    ("Code review guidelines: At least 2 approvals, all tests passing",
+     "fact"),
+    ("On-call rotation: Week-long shifts, escalate after 30min",
+     "fact"),
 ]
 
-for content, tags in memories:
-    memory_id = nx.store_memory(content=content, tags=tags)
-    print(f"Stored: {memory_id}")
+for content, memory_type in kb_entries:
+    nx.memory.store(content=content, scope="user", memory_type=memory_type)
 
-# Search memories
-async def search():
-    results = await nx.search_memories("password security")
-    print("\nPassword security results:")
-    for result in results:
-        print(f"  - {result['content']} (score: {result['score']})")
+# Query the knowledge base
+results = nx.memory.search("deployment process")
+for result in results:
+    print(f"[{result['score']:.2f}] {result['content']}")
 
-    results = await nx.search_memories("database tools")
-    print("\nDatabase tools results:")
-    for result in results:
-        print(f"  - {result['content']} (score: {result['score']})")
-
-asyncio.run(search())
-
-# List all registered memories
+# List registered memories
 memories = nx.list_memories()
 for mem in memories:
     print(f"{mem['name']}: {mem['description']}")
 
 # Get memory info
-info = nx.get_memory_info("/knowledge")
-print(f"\nMemory: {info['name']}")
-print(f"Entries: {info['entry_count']}")
+info = nx.get_memory_info("/docs/kb")
+print(f"Created by: {info['created_by']}")
+print(f"Created at: {info['created_at']}")
 ```
 
-### Knowledge base workflow
-```bash
-export NEXUS_URL=http://localhost:8765
-export NEXUS_API_KEY=your-api-key
-
-# Create knowledge base
-nexus memory register /docs/kb --name company-kb --description "Company knowledge"
-
-# Store documentation
-nexus memory store --content "Deployment process: Run tests, build Docker image, push to registry, deploy to k8s" --tags deployment,process
-nexus memory store --content "Code review guidelines: At least 2 approvals, all tests passing, no merge conflicts" --tags process,quality
-nexus memory store --content "On-call rotation: Week-long shifts, escalate after 30min, document incidents" --tags oncall,process
-
-# Query the knowledge base
-nexus memory search "how to deploy"
-nexus memory search "code review requirements"
-nexus memory search "on-call procedures"
-```
-
-### Python equivalent
+### Session-scoped memory (v0.5.0)
 ```python
-import asyncio
+from datetime import timedelta
 
-nx = nexus.Nexus(remote_url="http://localhost:8765", api_key="your-api-key")
+# Create temporary memory for notebook session
+config = nx.register_memory(
+    path="/tmp/notebook-memory",
+    name="notebook-context",
+    description="Temporary notebook context",
+    session_id="session_abc123",
+    ttl=timedelta(hours=2)  # Auto-expires after 2 hours
+)
 
-# Create knowledge base
-nx.register_memory("/docs/kb", name="company-kb", description="Company knowledge")
+# Store session-specific memories
+nx.memory.store(
+    "Current analysis focuses on Q4 revenue",
+    scope="agent",
+    memory_type="fact"
+)
 
-# Store documentation
-kb_entries = [
-    ("Deployment process: Run tests, build Docker image, push to registry, deploy to k8s",
-     ["deployment", "process"]),
-    ("Code review guidelines: At least 2 approvals, all tests passing, no merge conflicts",
-     ["process", "quality"]),
-    ("On-call rotation: Week-long shifts, escalate after 30min, document incidents",
-     ["oncall", "process"]),
-]
-
-for content, tags in kb_entries:
-    nx.store_memory(content=content, tags=tags)
-
-# Query the knowledge base
-async def query_kb():
-    queries = [
-        "how to deploy",
-        "code review requirements",
-        "on-call procedures"
-    ]
-
-    for query in queries:
-        print(f"\nQuery: {query}")
-        results = await nx.search_memories(query, limit=3)
-        for result in results:
-            print(f"  [{result['score']:.2f}] {result['content']}")
-
-asyncio.run(query_kb())
+# Memory and registration auto-delete after 2 hours
 ```
 
 ---

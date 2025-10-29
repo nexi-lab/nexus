@@ -201,6 +201,8 @@ class DatabaseAPIKeyAuth(AuthProvider):
         session: Session,
         user_id: str,
         name: str,
+        subject_type: str = "user",  # v0.5.0 ACE: "user" or "agent"
+        subject_id: str | None = None,  # v0.5.0 ACE: Custom agent ID
         tenant_id: str | None = None,
         is_admin: bool = False,
         expires_at: datetime | None = None,
@@ -208,11 +210,15 @@ class DatabaseAPIKeyAuth(AuthProvider):
         """Create a new API key in the database.
 
         P0-5: Generates key with proper prefix and entropy
+        v0.5.0 ACE: Supports agent keys with custom subject IDs
 
         Args:
             session: SQLAlchemy session
-            user_id: User identifier
-            name: Human-readable key name (e.g., "Production Server")
+            user_id: User identifier (owner of the key)
+            name: Human-readable key name (e.g., "Production Server", "agent_data_analyst")
+            subject_type: Type of subject ("user" or "agent") - v0.5.0 NEW
+            subject_id: Custom subject ID (for agents) - v0.5.0 NEW
+                       If None, defaults to user_id
             tenant_id: Optional tenant identifier
             is_admin: Whether this key has admin privileges
             expires_at: Optional expiry datetime (UTC)
@@ -221,7 +227,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
             Tuple of (key_id, raw_key)
             IMPORTANT: Raw key is only returned once, must be saved by caller
 
-        Example:
+        Example (user key):
             from datetime import timedelta
             with session_factory() as session:
                 key_id, raw_key = DatabaseAPIKeyAuth.create_key(
@@ -233,29 +239,53 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 )
                 print(f"Save this key: {raw_key}")
                 session.commit()
+
+        Example (agent key - v0.5.0):
+            with session_factory() as session:
+                key_id, raw_key = DatabaseAPIKeyAuth.create_key(
+                    session,
+                    user_id="alice",  # Owner
+                    name="Data Analyst Agent",
+                    subject_type="agent",
+                    subject_id="agent_data_analyst",
+                    expires_at=datetime.now(UTC) + timedelta(days=90)
+                )
+                print(f"Agent API key: {raw_key}")
+                session.commit()
         """
         from nexus.storage.models import APIKeyModel
 
+        # v0.5.0: If subject_id not provided, use user_id
+        final_subject_id = subject_id or user_id
+
+        # v0.5.0: Validate subject_type
+        valid_subject_types = ["user", "agent", "service"]
+        if subject_type not in valid_subject_types:
+            raise ValueError(
+                f"subject_type must be one of {valid_subject_types}, got {subject_type}"
+            )
+
         # P0-5: Generate key with prefix, tenant, and high entropy (32+ bytes)
-        # Format: sk-<tenant>_<user>_<id>_<random-hex>
+        # Format: sk-<tenant>_<subject>_<id>_<random-hex>
         tenant_prefix = f"{tenant_id[:8]}_" if tenant_id else ""
+        subject_prefix = final_subject_id[:12] if subject_type == "agent" else user_id[:8]
         random_suffix = secrets.token_hex(16)  # 32 hex chars = 16 bytes
         key_id_part = secrets.token_hex(4)  # 8 hex chars for uniqueness
 
-        raw_key = f"{API_KEY_PREFIX}{tenant_prefix}{user_id[:8]}_{key_id_part}_{random_suffix}"
+        raw_key = f"{API_KEY_PREFIX}{tenant_prefix}{subject_prefix}_{key_id_part}_{random_suffix}"
         key_hash = cls._hash_key(raw_key)
 
         # Create database record
         # Note: PostgreSQL has is_admin as INTEGER, so convert bool to int
         api_key = APIKeyModel(
             key_hash=key_hash,
-            user_id=user_id,
+            user_id=user_id,  # Always track the owner
             name=name,
             tenant_id=tenant_id,
             is_admin=int(is_admin),  # Convert bool to int for PostgreSQL
             expires_at=expires_at,
-            subject_type="user",  # Default to user type
-            subject_id=user_id,  # Use user_id as subject_id for compatibility
+            subject_type=subject_type,  # v0.5.0: "user" or "agent"
+            subject_id=final_subject_id,  # v0.5.0: Actual identity
         )
 
         session.add(api_key)

@@ -71,6 +71,8 @@ class EntityType(str, Enum):
     FILE = "file"
     WORKSPACE = "workspace"
     TENANT = "tenant"
+    PLAYBOOK = "playbook"  # v0.5.0 ACE
+    TRAJECTORY = "trajectory"  # v0.5.0 ACE
 
 
 @dataclass
@@ -618,6 +620,45 @@ DEFAULT_MEMORY_NAMESPACE = NamespaceConfig(
             "read": ["viewer", "editor", "owner"],  # Read = viewer OR editor OR owner
             "write": ["editor", "owner"],  # Write = editor OR owner
             "execute": ["owner"],  # Execute = owner only
+        },
+    },
+)
+
+# v0.5.0 ACE: Playbook namespace
+DEFAULT_PLAYBOOK_NAMESPACE = NamespaceConfig(
+    namespace_id=str(uuid.uuid4()),
+    object_type="playbook",
+    config={
+        "relations": {
+            # Direct relations (granted explicitly)
+            "owner": {},
+            "editor": {},
+            "viewer": {},
+        },
+        # P0-1: Explicit permission-to-userset mapping
+        "permissions": {
+            "read": ["viewer", "editor", "owner"],  # Read = viewer OR editor OR owner
+            "write": ["editor", "owner"],  # Write = editor OR owner
+            "delete": ["owner"],  # Delete = owner only
+        },
+    },
+)
+
+# v0.5.0 ACE: Trajectory namespace
+DEFAULT_TRAJECTORY_NAMESPACE = NamespaceConfig(
+    namespace_id=str(uuid.uuid4()),
+    object_type="trajectory",
+    config={
+        "relations": {
+            # Direct relations (granted explicitly)
+            "owner": {},
+            "viewer": {},
+        },
+        # P0-1: Explicit permission-to-userset mapping
+        "permissions": {
+            "read": ["viewer", "owner"],  # Read = viewer OR owner
+            "write": ["owner"],  # Write = owner only (trajectories typically write-once)
+            "delete": ["owner"],  # Delete = owner only
         },
     },
 )

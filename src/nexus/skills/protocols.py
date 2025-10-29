@@ -14,6 +14,7 @@ See test_protocol_compatibility.py for automated verification.
 from __future__ import annotations
 
 import builtins
+from datetime import timedelta
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -567,6 +568,8 @@ class NexusFilesystem(Protocol):
         created_by: str | None = None,
         tags: builtins.list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,  # v0.5.0: If provided, workspace is session-scoped
+        ttl: timedelta | None = None,  # v0.5.0
     ) -> dict[str, Any]:
         """Register a workspace path.
 
@@ -577,6 +580,8 @@ class NexusFilesystem(Protocol):
             created_by: User/agent who created the workspace
             tags: Optional list of tags
             metadata: Optional custom metadata
+            session_id: If provided, workspace is session-scoped (temporary). If None, persistent. (v0.5.0)
+            ttl: Time-to-live for auto-expiry (v0.5.0)
 
         Returns:
             Workspace info dict
@@ -621,6 +626,8 @@ class NexusFilesystem(Protocol):
         created_by: str | None = None,
         tags: builtins.list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,  # v0.5.0: If provided, memory is session-scoped
+        ttl: timedelta | None = None,  # v0.5.0
     ) -> dict[str, Any]:
         """Register a memory path.
 
@@ -629,6 +636,8 @@ class NexusFilesystem(Protocol):
             name: Optional memory name
             description: Optional description
             created_by: User/agent who created the memory
+            session_id: If provided, memory is session-scoped (temporary). If None, persistent. (v0.5.0)
+            ttl: Time-to-live for auto-expiry (v0.5.0)
             tags: Optional list of tags
             metadata: Optional custom metadata
 

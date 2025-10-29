@@ -14,7 +14,7 @@ Create a relationship tuple between subject and object.
 nexus rebac create agent alice member-of group eng-team
 
 # Give alice viewer access to file
-nexus rebac create agent alice viewer file file123
+nexus rebac create agent alice direct_viewer file file123
 
 # With tenant isolation (via flag)
 nexus rebac create agent alice member-of group eng-team --tenant-id org_acme
@@ -24,7 +24,7 @@ export NEXUS_TENANT_ID=org_acme
 nexus rebac create agent alice member-of group eng-team
 
 # With expiration
-nexus rebac create agent bob viewer file secret --expires 2025-12-31T23:59:59
+nexus rebac create agent bob direct_viewer file secret --expires 2025-12-31T23:59:59
 ```
 
 **Python API:**
@@ -333,8 +333,8 @@ nexus rebac create agent bob member-of group eng-team
 nexus rebac create agent charlie member-of group product-team
 
 # Give team access to workspace
-nexus rebac create group eng-team editor workspace eng-workspace
-nexus rebac create group product-team viewer workspace product-workspace
+nexus rebac create group eng-team direct_editor workspace eng-workspace
+nexus rebac create group product-team direct_viewer workspace product-workspace
 
 # Check access
 nexus rebac check agent alice write workspace eng-workspace

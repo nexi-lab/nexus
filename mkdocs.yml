@@ -195,6 +195,13 @@ nav:
     - Configuration: getting-started/configuration.md
     - Deployment Modes: getting-started/deployment-modes.md
 
+  - Examples:
+    - examples/index.md
+    - File Operations: examples/file-operations.md
+    - Directory Operations: examples/directory-operations.md
+    - Permission Management: examples/permissions.md
+    - Workspace & Sessions: examples/workspace-session.md
+
   - Core Concepts:
     - Permissions & ReBAC: PERMISSIONS.md
     - Multi-Tenancy: MULTI_TENANT.md

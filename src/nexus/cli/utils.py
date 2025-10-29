@@ -448,16 +448,31 @@ def get_subject(subject_option: str | None) -> tuple[str, str] | None:
 
 
 def handle_error(e: Exception) -> None:
-    """Handle errors with beautiful output."""
-    if isinstance(e, PermissionError):
+    """Handle errors with beautiful output and proper exit codes.
+
+    Exit codes follow Unix conventions:
+    - 0: Success (not used here)
+    - 1: General error
+    - 2: File/resource not found
+    - 3: Permission denied
+    """
+    # Import exception types here to avoid circular imports
+    from nexus.core.exceptions import NexusPermissionError
+    from nexus.core.router import AccessDeniedError
+
+    if isinstance(e, (PermissionError, AccessDeniedError, NexusPermissionError)):
         console.print(f"[red]Permission Denied:[/red] {e}")
+        sys.exit(3)  # Exit code 3 for permission errors
     elif isinstance(e, NexusFileNotFoundError):
         # Don't add "File not found:" prefix - the exception message already contains it
         console.print(f"[red]Error:[/red] {e}")
+        sys.exit(2)  # Exit code 2 for not found errors
     elif isinstance(e, ValidationError):
         console.print(f"[red]Validation Error:[/red] {e}")
+        sys.exit(1)
     elif isinstance(e, NexusError):
         console.print(f"[red]Nexus Error:[/red] {e}")
+        sys.exit(1)
     else:
         console.print(f"[red]Unexpected error:[/red] {e}")
-    sys.exit(1)
+        sys.exit(1)

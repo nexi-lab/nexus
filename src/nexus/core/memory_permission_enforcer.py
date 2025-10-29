@@ -167,12 +167,39 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
 
             # P0-4: Pass tenant_id for multi-tenant isolation
             tenant_id = context.tenant_id or "default"
-            return self.rebac_manager.rebac_check(
+
+            # 4a. Direct permission check
+            if self.rebac_manager.rebac_check(
                 subject=context.get_subject(),  # P0-2: Use typed subject
                 permission=permission_name,
                 object=("memory", memory.memory_id),
                 tenant_id=tenant_id,
-            )
+            ):
+                return True
+
+            # 4b. v0.5.0 ACE: Agent inheritance from user
+            # If subject is an agent, check if the agent's owner (user) has permission
+            if context.subject_type == "agent" and context.agent_id and self.entity_registry:
+                # Look up agent's owner
+                parent = self.entity_registry.get_parent(
+                    entity_type="agent", entity_id=context.agent_id
+                )
+
+                if (
+                    parent
+                    and parent.entity_type == "user"
+                    and self.rebac_manager.rebac_check(
+                        subject=("user", parent.entity_id),
+                        permission=permission_name,
+                        object=("memory", memory.memory_id),
+                        tenant_id=tenant_id,
+                    )
+                ):
+                    # ✅ Agent inherits user's permission
+                    return True
+
+            # Permission not granted
+            return False
 
         return False
 

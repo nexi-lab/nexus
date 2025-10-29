@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import re
+from datetime import timedelta
+
 import click
 from rich.console import Console
 from rich.table import Table
 
-from nexus.cli.utils import BackendConfig, get_filesystem, handle_error
+from nexus.cli.utils import BackendConfig, add_backend_options, get_filesystem, handle_error
 
 console = Console()
 
@@ -48,33 +51,51 @@ def workspace_group() -> None:
 @click.option("--name", "-n", default=None, help="Friendly name for workspace")
 @click.option("--description", "-d", default="", help="Description of workspace")
 @click.option("--created-by", default=None, help="User/agent who created it")
-@click.option("--data-dir", default=None, help="Data directory for local backend")
-@click.option("--config", default=None, help="Path to configuration file")
+@click.option(
+    "--session-id", default=None, help="Session ID for temporary session-scoped workspace (v0.5.0)"
+)
+@click.option(
+    "--ttl", default=None, help="Time-to-live (e.g., '8h', '2d', '30m') for auto-expiry (v0.5.0)"
+)
+@add_backend_options
 def register_cmd(
     path: str,
     name: str | None,
     description: str,
     created_by: str | None,
-    data_dir: str | None,
-    config: str | None,
+    session_id: str | None,
+    ttl: str | None,
+    backend_config: BackendConfig,
 ) -> None:
     """Register a directory as a workspace.
 
     Workspaces support snapshots, versioning, and rollback functionality.
 
     Examples:
+        # Persistent workspace (traditional)
         nexus workspace register /my-workspace --name main
-        nexus workspace register /projects/alpha --name alpha --description "Alpha project workspace"
+
+        # Temporary 8-hour Jupyter workspace (v0.5.0)
+        nexus workspace register /tmp/jupyter --session-id abc123 --ttl 8h
+
+        # CI/CD build workspace (auto-cleanup in 2 hours)
+        nexus workspace register /tmp/build-$BUILD_ID --session-id $BUILD_ID --ttl 2h
     """
     try:
-        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
         nx = get_filesystem(backend_config)
+
+        # v0.5.0: Parse TTL string to timedelta
+        ttl_delta = None
+        if ttl:
+            ttl_delta = _parse_ttl(ttl)
 
         result = nx.register_workspace(
             path=path,
             name=name,
             description=description,
             created_by=created_by,
+            session_id=session_id,  # v0.5.0
+            ttl=ttl_delta,  # v0.5.0
         )
 
         console.print(f"[green]✓[/green] Registered workspace: {result['path']}")
@@ -84,6 +105,11 @@ def register_cmd(
             console.print(f"  Description: {result['description']}")
         if result["created_by"]:
             console.print(f"  Created by: {result['created_by']}")
+        # v0.5.0: Show session-scoped info
+        if session_id:
+            console.print(f"  Session: {session_id} (temporary)")
+            if ttl_delta:
+                console.print(f"  TTL: {ttl} (auto-expires)")
 
         nx.close()
 
@@ -92,11 +118,9 @@ def register_cmd(
 
 
 @workspace_group.command(name="list")
-@click.option("--data-dir", default=None, help="Data directory for local backend")
-@click.option("--config", default=None, help="Path to configuration file")
+@add_backend_options
 def list_cmd(
-    data_dir: str | None,
-    config: str | None,
+    backend_config: BackendConfig,
 ) -> None:
     """List all registered workspaces.
 
@@ -104,7 +128,6 @@ def list_cmd(
         nexus workspace list
     """
     try:
-        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
         nx = get_filesystem(backend_config)
 
         workspaces = nx.list_workspaces()
@@ -141,13 +164,11 @@ def list_cmd(
 @workspace_group.command(name="unregister")
 @click.argument("path", type=str)
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
-@click.option("--data-dir", default=None, help="Data directory for local backend")
-@click.option("--config", default=None, help="Path to configuration file")
+@add_backend_options
 def unregister_cmd(
     path: str,
     yes: bool,
-    data_dir: str | None,
-    config: str | None,
+    backend_config: BackendConfig,
 ) -> None:
     """Unregister a workspace (does NOT delete files).
 
@@ -158,7 +179,6 @@ def unregister_cmd(
         nexus workspace unregister /my-workspace --yes
     """
     try:
-        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
         nx = get_filesystem(backend_config)
 
         # Get workspace info first
@@ -200,12 +220,10 @@ def unregister_cmd(
 
 @workspace_group.command(name="info")
 @click.argument("path", type=str)
-@click.option("--data-dir", default=None, help="Data directory for local backend")
-@click.option("--config", default=None, help="Path to configuration file")
+@add_backend_options
 def info_cmd(
     path: str,
-    data_dir: str | None,
-    config: str | None,
+    backend_config: BackendConfig,
 ) -> None:
     """Show information about a registered workspace.
 
@@ -213,7 +231,6 @@ def info_cmd(
         nexus workspace info /my-workspace
     """
     try:
-        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
         nx = get_filesystem(backend_config)
 
         info = nx.get_workspace_info(path)
@@ -243,14 +260,12 @@ def info_cmd(
 @click.argument("path", type=str)
 @click.option("--description", "-d", default=None, help="Snapshot description")
 @click.option("--tag", "-g", multiple=True, help="Tags for categorization (can specify multiple)")
-@click.option("--data-dir", default=None, help="Data directory for local backend")
-@click.option("--config", default=None, help="Path to configuration file")
+@add_backend_options
 def snapshot_cmd(
     path: str,
     description: str | None,
     tag: tuple[str, ...],
-    data_dir: str | None,
-    config: str | None,
+    backend_config: BackendConfig,
 ) -> None:
     """Create a snapshot of a workspace.
 
@@ -261,7 +276,6 @@ def snapshot_cmd(
         nexus workspace snapshot /my-workspace --tag experiment --tag v1.0
     """
     try:
-        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
         nx = get_filesystem(backend_config)
         tags = list(tag) if tag else None
 
@@ -292,13 +306,11 @@ def snapshot_cmd(
 @workspace_group.command(name="log")
 @click.argument("path", type=str)
 @click.option("--limit", "-n", default=20, help="Maximum number of snapshots to show")
-@click.option("--data-dir", default=None, help="Data directory for local backend")
-@click.option("--config", default=None, help="Path to configuration file")
+@add_backend_options
 def log_cmd(
     path: str,
     limit: int,
-    data_dir: str | None,
-    config: str | None,
+    backend_config: BackendConfig,
 ) -> None:
     """Show snapshot history for a workspace.
 
@@ -309,7 +321,6 @@ def log_cmd(
         nexus workspace log /my-workspace --limit 50
     """
     try:
-        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
         nx = get_filesystem(backend_config)
 
         snapshots = nx.workspace_log(workspace_path=path, limit=limit)
@@ -354,14 +365,12 @@ def log_cmd(
 @click.argument("path", type=str)
 @click.option("--snapshot", "-s", required=True, type=int, help="Snapshot number to restore")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
-@click.option("--data-dir", default=None, help="Data directory for local backend")
-@click.option("--config", default=None, help="Path to configuration file")
+@add_backend_options
 def restore_cmd(
     path: str,
     snapshot: int,
     yes: bool,
-    data_dir: str | None,
-    config: str | None,
+    backend_config: BackendConfig,
 ) -> None:
     """Restore workspace to a previous snapshot.
 
@@ -372,7 +381,6 @@ def restore_cmd(
         nexus workspace restore /my-workspace --snapshot 10 --yes
     """
     try:
-        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
         nx = get_filesystem(backend_config)
 
         # Get snapshot info
@@ -422,14 +430,12 @@ def restore_cmd(
 @click.argument("path", type=str)
 @click.option("--snapshot1", "-s1", required=True, type=int, help="First snapshot number")
 @click.option("--snapshot2", "-s2", required=True, type=int, help="Second snapshot number")
-@click.option("--data-dir", default=None, help="Data directory for local backend")
-@click.option("--config", default=None, help="Path to configuration file")
+@add_backend_options
 def diff_cmd(
     path: str,
     snapshot1: int,
     snapshot2: int,
-    data_dir: str | None,
-    config: str | None,
+    backend_config: BackendConfig,
 ) -> None:
     """Compare two workspace snapshots.
 
@@ -439,7 +445,6 @@ def diff_cmd(
         nexus workspace diff /my-workspace --snapshot1 5 --snapshot2 10
     """
     try:
-        backend_config = BackendConfig(data_dir=data_dir or "./nexus-data", config_path=config)
         nx = get_filesystem(backend_config)
 
         with console.status("[bold cyan]Computing diff between snapshots..."):
@@ -510,6 +515,44 @@ def _format_size(size_bytes: int) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} TB"
+
+
+def _parse_ttl(ttl_str: str) -> timedelta:
+    """Parse TTL string to timedelta.
+
+    Supports formats like: 8h, 2d, 30m, 1w, 90s
+
+    Args:
+        ttl_str: TTL string (e.g., "8h", "2d", "30m")
+
+    Returns:
+        timedelta object
+
+    Raises:
+        ValueError: If format is invalid
+    """
+    pattern = r"^(\d+)([smhdw])$"
+    match = re.match(pattern, ttl_str.lower())
+    if not match:
+        raise ValueError(
+            f"Invalid TTL format: '{ttl_str}'. Expected format like '8h', '2d', '30m', '1w', '90s'"
+        )
+
+    value, unit = match.groups()
+    value = int(value)
+
+    if unit == "s":
+        return timedelta(seconds=value)
+    elif unit == "m":
+        return timedelta(minutes=value)
+    elif unit == "h":
+        return timedelta(hours=value)
+    elif unit == "d":
+        return timedelta(days=value)
+    elif unit == "w":
+        return timedelta(weeks=value)
+    else:
+        raise ValueError(f"Invalid time unit: '{unit}'")
 
 
 def register_commands(cli: click.Group) -> None:

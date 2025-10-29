@@ -1,7 +1,7 @@
 """add_sql_views_for_ready_work_detection
 
 Revision ID: 278a3d730040
-Revises: 58d58578fce0
+Revises: 9c0780bb05c1
 Create Date: 2025-10-17 00:12:19.968467
 
 Adds SQL views for efficient work detection:
@@ -19,7 +19,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "278a3d730040"
-down_revision: Union[str, Sequence[str], None] = "58d58578fce0"
+down_revision: Union[str, Sequence[str], None] = "9c0780bb05c1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

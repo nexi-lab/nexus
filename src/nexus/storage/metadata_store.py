@@ -384,8 +384,16 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     )
                     existing = session.scalar(stmt)
 
-                    # If no active entry found, check for soft-deleted entry to restore
+                    # FIX: Permanently delete soft-deleted entries to avoid version conflicts
+                    # When a file is soft-deleted, its version_history entries remain in the database.
+                    # Reusing the same path_id would cause UniqueViolation on version_history inserts.
+                    # Also, the unique constraint on virtual_path prevents creating a new entry
+                    # at the same path while a soft-deleted entry exists.
+                    #
+                    # Solution: Permanently delete the soft-deleted entry before creating new one.
+                    # The old version_history entries will remain (orphaned) for potential recovery.
                     if not existing:
+                        # Check for soft-deleted entry at this path
                         deleted_stmt = (
                             select(FilePathModel)
                             .where(
@@ -396,19 +404,11 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         )
                         deleted_entry = session.scalar(deleted_stmt)
                         if deleted_entry:
-                            # Restore the soft-deleted entry
-                            deleted_entry.deleted_at = None
-                            deleted_entry.backend_id = metadata.backend_name
-                            deleted_entry.physical_path = metadata.physical_path
-                            deleted_entry.size_bytes = metadata.size
-                            deleted_entry.content_hash = metadata.etag
-                            deleted_entry.file_type = metadata.mime_type
-                            deleted_entry.updated_at = metadata.modified_at or datetime.now(UTC)
-                            # Don't increment version for restores - use provided version
-                            if metadata.version:
-                                deleted_entry.current_version = metadata.version
-                            # Use this as the existing entry for version history below
-                            existing = deleted_entry
+                            # Permanently delete the soft-deleted entry
+                            # This allows us to create a new file at the same path
+                            # Note: version_history entries for old path_id remain for recovery
+                            session.delete(deleted_entry)
+                            session.flush()  # Ensure deletion completes before insert
 
                     if existing:
                         # FILE UPDATE - Increment version and create history entry for NEW version

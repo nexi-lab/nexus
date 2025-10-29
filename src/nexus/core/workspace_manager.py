@@ -64,19 +64,31 @@ class WorkspaceManager:
         self,
         workspace_path: str,
         permission: str,
+        user_id: str | None = None,
         agent_id: str | None = None,
         tenant_id: str | None = None,
     ) -> None:
-        """Check if agent has permission on workspace.
+        """Check if user or agent has permission on workspace.
 
         Args:
             workspace_path: Path to workspace
             permission: Permission to check (e.g., 'snapshot:create', 'snapshot:list')
-            agent_id: Agent ID to check (uses default if not provided)
+            user_id: User ID to check (for user operations)
+            agent_id: Agent ID to check (for agent operations)
             tenant_id: Tenant ID for isolation (uses default if not provided)
 
         Raises:
             NexusPermissionError: If permission check fails
+
+        Note:
+            v0.5.0: Now supports both user and agent subjects.
+            - If agent_id is provided: subject=("agent", agent_id)
+            - Else if user_id is provided: subject=("user", user_id)
+            - Else: deny by default (no identity)
+
+            Permission mapping to file operations:
+            - snapshot:create, snapshot:restore -> write (modify state)
+            - snapshot:list, snapshot:diff -> read (read-only)
         """
         if not self.rebac_manager:
             # No ReBAC manager configured - allow operation
@@ -90,27 +102,49 @@ class WorkspaceManager:
         check_agent_id = agent_id or self.agent_id
         check_tenant_id = tenant_id or self.tenant_id
 
-        if not check_agent_id:
-            # No agent ID available - deny by default for security
+        # Determine subject based on available context
+        # v0.5.0: Support both users and agents
+        if check_agent_id:
+            subject = ("agent", check_agent_id)
+            subject_desc = f"agent={check_agent_id}"
+        elif user_id:
+            subject = ("user", user_id)
+            subject_desc = f"user={user_id}"
+        else:
+            # No identity available - deny by default for security
             logger.error(
-                f"WorkspaceManager: No agent_id provided for permission check: {permission} on {workspace_path}"
+                f"WorkspaceManager: No user_id or agent_id provided for permission check: {permission} on {workspace_path}"
             )
             raise NexusPermissionError(
-                f"Permission denied: {permission} on workspace {workspace_path} (no agent_id provided)"
+                f"{permission} on workspace {workspace_path} (no user_id or agent_id provided)"
             )
 
-        # Check permission via ReBAC
+        # Map workspace permissions to file permissions
+        # Workspaces are just directories, so we use the existing "file" namespace
+        # which already has proper permission mappings (owner/editor/viewer)
+        if permission in ("snapshot:create", "snapshot:restore"):
+            # Write operations require write permission
+            file_permission = "write"
+        elif permission in ("snapshot:list", "snapshot:diff"):
+            # Read-only operations require read permission
+            file_permission = "read"
+        else:
+            # Unknown permission - default to write for safety
+            logger.warning(f"Unknown workspace permission: {permission}, defaulting to write")
+            file_permission = "write"
+
+        # Check permission via ReBAC on the FILE object
         has_permission = self.rebac_manager.rebac_check(
-            subject=("agent", check_agent_id),
-            permission=permission,
-            object=("workspace", workspace_path),
+            subject=subject,
+            permission=file_permission,
+            object=("file", workspace_path),
             tenant_id=check_tenant_id,
         )
 
         if not has_permission:
             logger.warning(
-                f"WorkspaceManager: Permission denied for agent={check_agent_id}, "
-                f"permission={permission}, workspace={workspace_path}, tenant={check_tenant_id}"
+                f"WorkspaceManager: Permission denied for {subject_desc}, "
+                f"permission={permission} (mapped to {file_permission}), workspace={workspace_path}, tenant={check_tenant_id}"
             )
             raise NexusPermissionError(
                 f"Permission denied: {permission} on workspace {workspace_path}"
@@ -122,6 +156,7 @@ class WorkspaceManager:
         description: str | None = None,
         tags: list[str] | None = None,
         created_by: str | None = None,
+        user_id: str | None = None,
         agent_id: str | None = None,
         tenant_id: str | None = None,
     ) -> dict[str, Any]:
@@ -132,6 +167,7 @@ class WorkspaceManager:
             description: Human-readable description of snapshot
             tags: List of tags for categorization
             created_by: User/agent who created the snapshot
+            user_id: User ID for permission check (v0.5.0)
             agent_id: Agent ID for permission check (uses default if not provided)
             tenant_id: Tenant ID for isolation (uses default if not provided)
 
@@ -145,13 +181,14 @@ class WorkspaceManager:
                 - created_at: Snapshot creation timestamp
 
         Raises:
-            NexusPermissionError: If agent lacks snapshot:create permission
+            NexusPermissionError: If user/agent lacks snapshot:create permission
             BackendError: If manifest cannot be stored
         """
-        # Check permission first
+        # Check permission first (v0.5.0: supports both user and agent)
         self._check_workspace_permission(
             workspace_path=workspace_path,
             permission="snapshot:create",
+            user_id=user_id,
             agent_id=agent_id,
             tenant_id=tenant_id,
         )
@@ -258,6 +295,7 @@ class WorkspaceManager:
         snapshot_id: str | None = None,
         snapshot_number: int | None = None,
         workspace_path: str | None = None,
+        user_id: str | None = None,
         agent_id: str | None = None,
         tenant_id: str | None = None,
     ) -> dict[str, Any]:
@@ -267,6 +305,7 @@ class WorkspaceManager:
             snapshot_id: Snapshot ID to restore (takes precedence)
             snapshot_number: Snapshot version number to restore
             workspace_path: Workspace path (required if using snapshot_number)
+            user_id: User ID for permission check (v0.5.0)
             agent_id: Agent ID for permission check (uses default if not provided)
             tenant_id: Tenant ID for isolation (uses default if not provided)
 
@@ -278,7 +317,7 @@ class WorkspaceManager:
 
         Raises:
             ValueError: If neither snapshot_id nor (snapshot_number + workspace_path) provided
-            NexusPermissionError: If agent lacks snapshot:restore permission
+            NexusPermissionError: If user/agent lacks snapshot:restore permission
             NexusFileNotFoundError: If snapshot not found
             BackendError: If manifest cannot be read
         """
@@ -301,10 +340,11 @@ class WorkspaceManager:
                     message="Snapshot not found",
                 )
 
-            # Check permission to restore this workspace
+            # Check permission to restore this workspace (v0.5.0: supports user_id)
             self._check_workspace_permission(
                 workspace_path=snapshot.workspace_path,
                 permission="snapshot:restore",
+                user_id=user_id,
                 agent_id=agent_id,
                 tenant_id=tenant_id,
             )
@@ -384,6 +424,7 @@ class WorkspaceManager:
         self,
         workspace_path: str,
         limit: int = 100,
+        user_id: str | None = None,
         agent_id: str | None = None,
         tenant_id: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -392,6 +433,7 @@ class WorkspaceManager:
         Args:
             workspace_path: Path to registered workspace
             limit: Maximum number of snapshots to return
+            user_id: User ID for permission check (v0.5.0)
             agent_id: Agent ID for permission check (uses default if not provided)
             tenant_id: Tenant ID for isolation (uses default if not provided)
 
@@ -399,12 +441,13 @@ class WorkspaceManager:
             List of snapshot metadata dicts (most recent first)
 
         Raises:
-            NexusPermissionError: If agent lacks snapshot:list permission
+            NexusPermissionError: If user/agent lacks snapshot:list permission
         """
-        # Check permission first
+        # Check permission first (v0.5.0: supports user_id)
         self._check_workspace_permission(
             workspace_path=workspace_path,
             permission="snapshot:list",
+            user_id=user_id,
             agent_id=agent_id,
             tenant_id=tenant_id,
         )
@@ -439,6 +482,7 @@ class WorkspaceManager:
         self,
         snapshot_id_1: str,
         snapshot_id_2: str,
+        user_id: str | None = None,
         agent_id: str | None = None,
         tenant_id: str | None = None,
     ) -> dict[str, Any]:
@@ -447,6 +491,7 @@ class WorkspaceManager:
         Args:
             snapshot_id_1: First snapshot ID
             snapshot_id_2: Second snapshot ID
+            user_id: User ID for permission check (v0.5.0)
             agent_id: Agent ID for permission check (uses default if not provided)
             tenant_id: Tenant ID for isolation (uses default if not provided)
 
@@ -458,7 +503,7 @@ class WorkspaceManager:
                 - unchanged: Number of unchanged files
 
         Raises:
-            NexusPermissionError: If agent lacks snapshot:diff permission
+            NexusPermissionError: If user/agent lacks snapshot:diff permission
             NexusFileNotFoundError: If either snapshot not found
         """
         with self.metadata.SessionLocal() as session:
@@ -475,10 +520,11 @@ class WorkspaceManager:
                     path=f"snapshot:{snapshot_id_2}", message="Snapshot 2 not found"
                 )
 
-            # Check permission for both workspaces (they might be different)
+            # Check permission for both workspaces (v0.5.0: supports user_id)
             self._check_workspace_permission(
                 workspace_path=snap1.workspace_path,
                 permission="snapshot:diff",
+                user_id=user_id,
                 agent_id=agent_id,
                 tenant_id=tenant_id,
             )
@@ -487,6 +533,7 @@ class WorkspaceManager:
                 self._check_workspace_permission(
                     workspace_path=snap2.workspace_path,
                     permission="snapshot:diff",
+                    user_id=user_id,
                     agent_id=agent_id,
                     tenant_id=tenant_id,
                 )

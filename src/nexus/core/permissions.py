@@ -46,67 +46,80 @@ class Permission(IntFlag):
 
 @dataclass
 class OperationContext:
-    """Context for file operations with subject identity (P0-2).
+    """Context for file operations with subject identity (v0.5.0).
 
     This class carries authentication and authorization context through
     all filesystem operations to enable permission checking.
 
-    P0-2: Subject-based identity supports:
+    v0.5.0 ACE: Unified agent identity system
+    - user_id: Human owner (always tracked)
+    - agent_id: Agent identity (optional)
+    - subject_type: "user" or "agent" (for authentication)
+    - subject_id: Actual identity (user_id or agent_id)
+
+    Agent lifecycle managed via API key TTL (no agent_type field needed).
+
+    Subject-based identity supports:
     - user: Human users (alice, bob)
     - agent: AI agents (claude_001, gpt4_agent)
     - service: Backend services (backup_service, indexer)
     - session: Temporary sessions (session_abc123)
 
     Attributes:
-        user: Subject ID performing the operation (LEGACY: use subject_id)
+        user: Subject ID performing the operation (LEGACY: use user_id)
+        user_id: Human owner ID (v0.5.0: NEW, for explicit tracking)
+        agent_id: Agent ID if operation is from agent (optional)
         subject_type: Type of subject (user, agent, service, session)
         subject_id: Unique identifier for the subject
         groups: List of group IDs the subject belongs to
         tenant_id: Tenant/organization ID for multi-tenant isolation (optional)
-        agent_id: Agent ID for workspace isolation (optional, DEPRECATED)
         is_admin: Whether the subject has admin privileges
         is_system: Whether this is a system operation (bypasses all checks)
 
     Examples:
-        >>> # Human user context (P0-2)
+        >>> # Human user context
         >>> ctx = OperationContext(
-        ...     subject_type="user",
-        ...     subject_id="alice",
+        ...     user="alice",
         ...     groups=["developers"],
         ...     tenant_id="org_acme"
         ... )
-        >>> # AI agent context (P0-2)
+        >>> # User-authenticated agent (uses user's auth)
         >>> ctx = OperationContext(
-        ...     subject_type="agent",
-        ...     subject_id="claude_001",
-        ...     groups=["ai_agents"],
-        ...     tenant_id="org_acme"
+        ...     user="alice",
+        ...     agent_id="notebook_xyz",
+        ...     subject_type="user",  # Authenticates as user
+        ...     groups=[]
         ... )
-        >>> # Service context (P0-2)
+        >>> # Agent-authenticated (has own API key)
         >>> ctx = OperationContext(
-        ...     subject_type="service",
-        ...     subject_id="backup_service",
-        ...     groups=[],
-        ...     is_system=True
+        ...     user="alice",
+        ...     agent_id="agent_data_analyst",
+        ...     subject_type="agent",  # Authenticates as agent
+        ...     subject_id="agent_data_analyst",
+        ...     groups=[]
         ... )
-        >>> # Legacy: user field (backward compatibility)
-        >>> ctx = OperationContext(user="alice", groups=["developers"])
-        >>> # Auto-sets: subject_type="user", subject_id="alice"
     """
 
-    user: str  # LEGACY: Kept for backward compatibility
+    user: str  # LEGACY: Kept for backward compatibility (maps to user_id)
     groups: list[str]
     tenant_id: str | None = None
-    agent_id: str | None = None  # DEPRECATED: Use subject_type + subject_id
+    agent_id: str | None = None  # Agent identity (optional)
     is_admin: bool = False
     is_system: bool = False
+
+    # v0.5.0 ACE: Unified agent identity
+    user_id: str | None = None  # NEW: Human owner (auto-populated from user if None)
 
     # P0-2: Subject-based identity
     subject_type: str = "user"  # Default to "user" for backward compatibility
     subject_id: str | None = None  # If None, uses self.user
 
     def __post_init__(self) -> None:
-        """Validate context and apply P0-2 subject defaults."""
+        """Validate context and apply defaults."""
+        # v0.5.0: Auto-populate user_id from user if not provided
+        if self.user_id is None:
+            self.user_id = self.user
+
         # P0-2: If subject_id not provided, use user field for backward compatibility
         if self.subject_id is None:
             self.subject_id = self.user
@@ -119,15 +132,24 @@ class OperationContext:
     def get_subject(self) -> tuple[str, str]:
         """Get subject as (type, id) tuple for ReBAC.
 
-        P0-2: Returns properly typed subject for permission checking.
+        Returns properly typed subject for permission checking.
 
         Returns:
             Tuple of (subject_type, subject_id)
 
         Example:
-            >>> ctx = OperationContext(subject_type="agent", subject_id="claude_001", groups=[])
+            >>> ctx = OperationContext(user="alice", groups=[])
             >>> ctx.get_subject()
-            ('agent', 'claude_001')
+            ('user', 'alice')
+            >>> ctx = OperationContext(
+            ...     user="alice",
+            ...     agent_id="agent_data_analyst",
+            ...     subject_type="agent",
+            ...     subject_id="agent_data_analyst",
+            ...     groups=[]
+            ... )
+            >>> ctx.get_subject()
+            ('agent', 'agent_data_analyst')
         """
         return (self.subject_type, self.subject_id or self.user)
 
@@ -141,6 +163,7 @@ class PermissionEnforcer:
     Permission checks:
     1. Admin/system bypass - Always allow for admin and system users
     2. ReBAC relationship check - Check permission graph for relationships
+    3. v0.5.0 ACE: Agent inheritance from user (if entity_registry provided)
 
     This is a simplified version that removed the legacy ACL and UNIX permission
     layers. All permissions are now managed through ReBAC relationships.
@@ -156,6 +179,7 @@ class PermissionEnforcer:
         metadata_store: Any = None,
         acl_store: Any | None = None,  # Deprecated, kept for backward compatibility
         rebac_manager: EnhancedReBACManager | None = None,
+        entity_registry: Any = None,  # v0.5.0 ACE: For agent inheritance
     ):
         """Initialize permission enforcer.
 
@@ -163,9 +187,11 @@ class PermissionEnforcer:
             metadata_store: Metadata store for file lookup (optional)
             acl_store: Deprecated, ignored (kept for backward compatibility)
             rebac_manager: ReBAC manager for relationship-based permissions
+            entity_registry: Entity registry for agent→user inheritance (v0.5.0)
         """
         self.metadata_store = metadata_store
         self.rebac_manager: EnhancedReBACManager | None = rebac_manager
+        self.entity_registry = entity_registry  # v0.5.0 ACE
 
         # Warn if ACL store is provided (deprecated)
         if acl_store is not None:
@@ -266,6 +292,7 @@ class PermissionEnforcer:
             f"[_check_rebac] Calling rebac_check: subject={subject}, permission={permission_name}, object=('file', '{path}'), tenant_id={tenant_id}"
         )
 
+        # 1. Direct permission check
         result = self.rebac_manager.rebac_check(
             subject=subject,  # P0-2: Use typed subject
             permission=permission_name,
@@ -273,7 +300,39 @@ class PermissionEnforcer:
             tenant_id=tenant_id,
         )
         logger.info(f"[_check_rebac] rebac_manager.rebac_check returned: {result}")
-        return result
+
+        if result:
+            return True
+
+        # 2. v0.5.0 ACE: Agent inheritance from user
+        # If subject is an agent, check if the agent's owner (user) has permission
+        if context.subject_type == "agent" and context.agent_id and self.entity_registry:
+            logger.info(f"[_check_rebac] Checking agent inheritance for agent={context.agent_id}")
+            # Look up agent's owner
+            parent = self.entity_registry.get_parent(
+                entity_type="agent", entity_id=context.agent_id
+            )
+
+            if parent and parent.entity_type == "user":
+                logger.info(
+                    f"[_check_rebac] Agent {context.agent_id} owned by user {parent.entity_id}, checking user permission"
+                )
+                # Check if user has permission
+                user_result = self.rebac_manager.rebac_check(
+                    subject=("user", parent.entity_id),
+                    permission=permission_name,
+                    object=("file", path),
+                    tenant_id=tenant_id,
+                )
+                logger.info(f"[_check_rebac] User permission check returned: {user_result}")
+                if user_result:
+                    # ✅ Agent inherits user's permission
+                    logger.info(
+                        f"[_check_rebac] ALLOW (agent {context.agent_id} inherits from user {parent.entity_id})"
+                    )
+                    return True
+
+        return False
 
     def filter_list(
         self,

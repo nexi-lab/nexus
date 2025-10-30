@@ -112,7 +112,7 @@ class GraphLimits:
 
     MAX_DEPTH = 50  # Max recursion depth (increased for deep directory hierarchies)
     MAX_FAN_OUT = 1000  # Max edges per union/expand
-    MAX_EXECUTION_TIME_MS = 100  # Hard timeout (100ms)
+    MAX_EXECUTION_TIME_MS = 1000  # Hard timeout (1000ms = 1 second, increased for deep hierarchies with parent traversal)
     MAX_VISITED_NODES = 10000  # Memory bound
     MAX_TUPLE_QUERIES = 100  # DB query limit
 
@@ -318,6 +318,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 )
             except GraphLimitExceeded as e:
                 # BUGFIX (Issue #5): Fail-closed on limit exceeded, but mark as indeterminate
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.error(
+                    f"GraphLimitExceeded caught: limit_type={e.limit_type}, limit_value={e.limit_value}, actual_value={e.actual_value}"
+                )
                 result = False
                 limit_error = e
 
@@ -382,10 +388,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         else:  # ConsistencyLevel.EVENTUAL (default)
             # Eventual consistency: Use cache (up to cache_ttl_seconds staleness)
+            import logging
+
+            logger = logging.getLogger(__name__)
             cached = self._get_cached_check_tenant_aware(
                 subject_entity, permission, object_entity, tenant_id
             )
             if cached is not None:
+                logger.info(f"  -> CACHE HIT: returning cached result={cached}")
                 decision_time_ms = (time.perf_counter() - start_time) * 1000
                 return CheckResult(
                     allowed=cached,
@@ -395,6 +405,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     cache_age_ms=None,  # Could be up to cache_ttl_seconds old
                     traversal_stats=None,
                 )
+            logger.info("  -> CACHE MISS: computing fresh result")
 
             # Cache miss - compute fresh
             stats = TraversalStats()
@@ -482,8 +493,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         logger = logging.getLogger(__name__)
         indent = "  " * depth
-        logger.debug(
-            f"{indent}→ CHECK: {subject.entity_type}:{subject.entity_id} has '{permission}' on {obj.entity_type}:{obj.entity_id}?"
+        logger.info(
+            f"{indent}→ [ENTER depth={depth}] CHECK: {subject.entity_type}:{subject.entity_id} has '{permission}' on {obj.entity_type}:{obj.entity_id}?"
         )
 
         # P0-5: Check execution time (using perf_counter for monotonic measurement)
@@ -579,28 +590,49 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         # Handle union (OR of multiple relations)
         if namespace.has_union(permission):
             union_relations = namespace.get_union_relations(permission)
-            logger.debug(f"{indent}  Relation '{permission}' is union of: {union_relations}")
+            logger.info(
+                f"{indent}[depth={depth}] Relation '{permission}' is union of: {union_relations}"
+            )
 
             # P0-5: Check fan-out limit
             if self.enable_graph_limits and len(union_relations) > GraphLimits.MAX_FAN_OUT:
                 raise GraphLimitExceeded("fan_out", GraphLimits.MAX_FAN_OUT, len(union_relations))
 
-            for rel in union_relations:
-                logger.debug(f"{indent}  Checking union member '{rel}'")
-                if self._compute_permission_tenant_aware_with_limits(
-                    subject,
-                    rel,
-                    obj,
-                    tenant_id,
-                    visited.copy(),
-                    depth + 1,
-                    start_time,
-                    stats,
-                    context,
-                ):
-                    logger.debug(f"{indent}← RESULT: True (via union member '{rel}')")
-                    return True
-            logger.debug(f"{indent}← RESULT: False (no union members granted access)")
+            for i, rel in enumerate(union_relations):
+                logger.info(
+                    f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] Checking union member '{rel}'..."
+                )
+                try:
+                    result = self._compute_permission_tenant_aware_with_limits(
+                        subject,
+                        rel,
+                        obj,
+                        tenant_id,
+                        visited.copy(),
+                        depth + 1,
+                        start_time,
+                        stats,
+                        context,
+                    )
+                    logger.info(
+                        f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] Result for '{rel}': {result}"
+                    )
+                    if result:
+                        logger.info(f"{indent}[depth={depth}] ✅ GRANTED via union member '{rel}'")
+                        return True
+                except GraphLimitExceeded as e:
+                    logger.error(
+                        f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] GraphLimitExceeded while checking '{rel}': limit_type={e.limit_type}, limit_value={e.limit_value}, actual_value={e.actual_value}"
+                    )
+                    # Re-raise to propagate to caller
+                    raise
+                except Exception as e:
+                    logger.error(
+                        f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] Unexpected exception while checking '{rel}': {type(e).__name__}: {e}"
+                    )
+                    # Re-raise to maintain error handling semantics
+                    raise
+            logger.info(f"{indent}[depth={depth}] ❌ DENIED - no union members granted access")
             return False
 
         # Handle tupleToUserset (indirect relation via another object)
@@ -658,14 +690,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             return False
 
         # Direct relation check
-        logger.debug(f"{indent}  Checking direct relation (fallback)")
+        logger.info(f"{indent}[depth={depth}] Checking direct relation (fallback)")
         stats.queries += 1
         if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
             raise GraphLimitExceeded("queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries)
         result = self._has_direct_relation_tenant_aware(
             subject, permission, obj, tenant_id, context
         )
-        logger.debug(f"{indent}← RESULT: {result}")
+        logger.info(f"{indent}← [EXIT depth={depth}] Direct relation result: {result}")
         return result
 
     def _find_related_objects_tenant_aware(

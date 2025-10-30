@@ -630,6 +630,98 @@ for skill_name, usage_count in popular:
     print(f"{skill_name}: {usage_count} uses")
 ```
 
+### Approval Workflow
+
+Skills can be submitted for approval before publishing to tenant tier:
+
+```python
+from nexus.skills import SkillGovernance
+
+# Initialize with database connection
+governance = SkillGovernance(db_connection=db_conn, rebac_manager=rebac)
+
+# Submit skill for approval
+approval_id = await governance.submit_for_approval(
+    skill_name="my-analyzer",
+    submitted_by="alice",
+    reviewers=["bob", "charlie"],
+    comments="Ready for team-wide use"
+)
+print(f"Submitted for approval: {approval_id}")
+
+# List pending approvals (as reviewer)
+pending = await governance.list_approvals(status="pending")
+for approval in pending:
+    print(f"{approval.skill_name} by {approval.submitted_by}")
+
+# Approve skill
+await governance.approve_skill(
+    approval_id=approval_id,
+    reviewed_by="bob",
+    reviewer_type="user",
+    comments="Code quality looks excellent!"
+)
+
+# Or reject skill
+await governance.reject_skill(
+    approval_id=approval_id,
+    reviewed_by="bob",
+    reviewer_type="user",
+    comments="Needs more input validation"
+)
+
+# Check if skill is approved
+is_approved = await governance.is_approved("my-analyzer")
+if is_approved:
+    # Publish to tenant tier
+    await manager.publish_skill("my-analyzer", tier="tenant")
+```
+
+#### CLI Commands
+
+The approval workflow is also available via CLI:
+
+```bash
+# Submit skill for approval
+nexus skills submit-approval my-analyzer \
+    --submitted-by alice \
+    --reviewers bob,charlie \
+    --comments "Ready for team use"
+
+# List pending approvals
+nexus skills list-approvals --status pending
+
+# Approve skill
+nexus skills approve <approval-id> \
+    --reviewed-by bob \
+    --comments "Excellent work!"
+
+# Reject skill
+nexus skills reject <approval-id> \
+    --reviewed-by bob \
+    --comments "Needs improvements"
+```
+
+#### Database Setup
+
+The approval workflow requires a database connection:
+
+```bash
+# Set database URL
+export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
+
+# Run migrations to create skill_approvals table
+alembic upgrade head
+```
+
+#### ReBAC Integration
+
+When ReBAC is enabled, the approval workflow checks permissions:
+
+- Submitters need `write` permission on agent tier skills
+- Reviewers need `approve` permission on skills
+- Only approved skills can be published to tenant tier
+
 ## Error Handling
 
 Handle common errors gracefully:

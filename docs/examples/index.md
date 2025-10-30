@@ -38,6 +38,14 @@ Explore Nexus through hands-on examples that demonstrate key features and real-w
 
     [:octicons-arrow-right-24: View Example](workspace-session.md)
 
+-   :material-brain:{ .lg .middle } __Agentic Context Engineering (ACE)__
+
+    ---
+
+    Enable AI agents to learn from experience through self-reflection and memory.
+
+    [:octicons-arrow-right-24: View Example](ace.md)
+
 </div>
 
 ## 💡 Use Case Examples
@@ -158,6 +166,7 @@ All examples include runnable shell scripts that demonstrate the full workflow:
 | Permissions | `examples/cli/permissions_demo_enhanced.sh` | ReBAC permissions, groups, and inheritance |
 | Workspace & Sessions | `examples/cli/workspace_session_demo.sh` | Multi-tenant isolation and session tracking |
 | Advanced Usage | `examples/cli/advanced_usage_demo.sh` | Mounts, versioning, and advanced features |
+| ACE Learning Agent | `examples/ace/demo_3_data_validator.py` | Agent learns validation rules from experience |
 
 ## 🎯 What's Next?
 

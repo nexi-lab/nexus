@@ -201,6 +201,7 @@ nav:
     - Directory Operations: examples/directory-operations.md
     - Permission Management: examples/permissions.md
     - Workspace & Sessions: examples/workspace-session.md
+    - Agentic Context Engineering (ACE): examples/ace.md
 
   - Core Concepts:
     - Permissions & ReBAC: PERMISSIONS.md

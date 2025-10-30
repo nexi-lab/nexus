@@ -281,6 +281,75 @@ Features demonstrated:
 - **Task discovery** - Dynamic workflow generation
 - **Embedded mode** - Runs locally with zero deployment
 
+## DeepAgents Integration
+
+Build autonomous research agents with event-driven workflows that automatically process outputs and consolidate knowledge - zero prompt engineering required.
+
+This example demonstrates:
+- DeepAgents filesystem backend using Nexus
+- Event-driven workflows triggered on file writes
+- Automatic memory consolidation from agent outputs
+- Multi-agent coordination via shared context
+
+```python
+import nexus
+from deepagents import create_deep_agent
+from nexus_backend import NexusBackend
+from nexus.workflows import WorkflowAPI
+
+# Connect to Nexus with workflows enabled
+nx = nexus.connect(config={"enable_workflows": True})
+
+# Create research agent with Nexus backend
+agent = create_deep_agent(
+    model="anthropic:claude-sonnet-4",
+    backend=NexusBackend(nx, base_path="/workspace"),
+    tools=[internet_search]
+)
+
+# Define workflow to auto-process agent outputs
+workflow = {
+    "name": "agent-processor",
+    "triggers": [{"type": "file_write", "pattern": "/workspace/*.md"}],
+    "actions": [{
+        "type": "python",
+        "code": """
+nx = nexus.connect()
+content = nx.read(context.file_path).decode()
+
+# Extract insights and store in memory
+insight = f"Agent researched: {context.file_path}"
+nx.memory.store(insight, scope="user", memory_type="research")
+nx.memory.session.commit()
+        """
+    }]
+}
+
+# Register workflow (runs automatically on file writes)
+WorkflowAPI().load(workflow, enabled=True)
+
+# Agent writes files → workflow triggers → memory updates
+agent.invoke({
+    "messages": [{"role": "user", "content": "Research transformers"}]
+})
+
+# Query consolidated memories
+memories = nx.memory.search("transformers", scope="user")
+```
+
+**Three-tier architecture:**
+- **Tier 1**: Files stored in Nexus with versioning
+- **Tier 2**: Workflows process outputs automatically
+- **Tier 3**: Memories consolidated for semantic search
+
+**Full working demo:** See [`examples/deepagents/`](examples/deepagents.md) for complete implementation with workflow automation, multi-agent coordination, and production patterns.
+
+Key features:
+- **Zero prompt engineering** - Workflows handle memory storage automatically
+- **Event-driven processing** - Triggers on filesystem events (no polling)
+- **Reliable execution** - Workflows run independent of LLM behavior
+- **Production ready** - Versioning, permissions, multi-tenancy built-in
+
 ## Agentic Context Engineering (ACE)
 
 Enable AI agents to learn from experience and continuously improve performance through automated reflection and strategy curation.
@@ -344,6 +413,59 @@ Key features:
 - **Reflection engine** - Extracts insights from successes and failures
 - **Playbook curation** - Stores and evolves proven strategies
 - **Measurable ROI** - Quantified performance improvements
+
+## LangGraph + Nexus Integration
+
+Build powerful ReAct (Reasoning + Acting) agents with LangGraph that interact with Nexus filesystem. Perfect for code analysis, documentation generation, and autonomous file operations.
+
+This example demonstrates:
+- ReAct agent architecture for multi-step reasoning
+- Familiar file operation tools (grep, glob, cat/less, write)
+- Remote Nexus filesystem for persistent storage
+- Multi-LLM support (Claude, GPT-4, OpenRouter)
+- Multi-tenancy for team collaboration
+
+```python
+import nexus
+from langgraph_react_demo import create_react_agent
+
+# Connect to remote Nexus server
+nx = nexus.connect(
+    remote_url="http://nexus-server:8080",
+    config={"tenant_id": "team-dev", "agent_id": "code-analyzer"}
+)
+
+# Create ReAct agent with file operation tools
+agent = create_react_agent(nx)
+
+# Agent autonomously searches, reads, and writes files
+result = agent.invoke({
+    "messages": [{
+        "role": "user",
+        "content": "Find all async/await patterns, analyze them, and create a summary report"
+    }]
+})
+
+# Agent automatically:
+# 1. grep_files("async def /workspace") - Search for patterns
+# 2. read_file("cat /workspace/api.py") - Read relevant files
+# 3. write_file("/reports/analysis.md", "...") - Save analysis
+```
+
+**Real-world use cases:**
+- **Code Analysis** - Find patterns, security issues, performance bottlenecks
+- **Documentation** - Auto-generate API docs, onboarding guides
+- **Code Review** - Analyze PRs, suggest improvements
+- **Migration** - Find and update deprecated patterns
+
+**Full working demo:** See [`examples/langgraph/`](../examples/langgraph/) for complete implementation with sample tasks, multi-LLM support, and ReAct loop visualization.
+
+Key features:
+- **ReAct Architecture** - Agents reason, act, and observe in a loop
+- **File Operations** - grep, glob, read, write with Nexus
+- **Remote Execution** - Work with shared Nexus servers
+- **Multi-Tenancy** - Isolated workspaces for teams
+- **Framework Integration** - Shows Nexus as infrastructure for LangGraph
 
 ---
 

@@ -3,11 +3,15 @@
 import logging
 from collections import defaultdict
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from nexus.core.exceptions import ValidationError
+from nexus.core.exceptions import PermissionDeniedError, ValidationError
 from nexus.skills.models import Skill, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
 from nexus.skills.protocols import NexusFilesystem
+
+if TYPE_CHECKING:
+    from nexus.core.rebac_manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -57,14 +61,18 @@ class SkillRegistry:
         "system": 1,
     }
 
-    def __init__(self, filesystem: NexusFilesystem | None = None):
+    def __init__(
+        self, filesystem: NexusFilesystem | None = None, rebac_manager: "ReBACManager | None" = None
+    ):
         """Initialize skill registry.
 
         Args:
             filesystem: Optional filesystem instance (defaults to local FS)
+            rebac_manager: Optional ReBAC manager for permission checks
         """
         self._filesystem = filesystem
         self._parser = SkillParser()
+        self._rebac = rebac_manager
 
         # Metadata index: skill_name -> SkillMetadata
         # Loaded during discovery (lightweight)
@@ -185,6 +193,10 @@ class SkillRegistry:
                 # Parse metadata only (progressive disclosure)
                 metadata = self._parse_metadata(skill_file, tier)
 
+                # Skip if parsing failed (e.g., CAS error)
+                if metadata is None:
+                    continue
+
                 # Index by name (tier priority: agent > tenant > system)
                 existing = self._metadata_index.get(metadata.name)
                 if existing:
@@ -216,7 +228,7 @@ class SkillRegistry:
 
         return count
 
-    def _parse_metadata(self, file_path: str, tier: str) -> SkillMetadata:
+    def _parse_metadata(self, file_path: str, tier: str) -> SkillMetadata | None:
         """Parse skill metadata from file.
 
         Args:
@@ -224,20 +236,34 @@ class SkillRegistry:
             tier: Tier name
 
         Returns:
-            SkillMetadata object
+            SkillMetadata object, or None if parsing failed
         """
         if self._filesystem:
             # Use NexusFS to read content and parse directly
-            raw_content = self._filesystem.read(file_path)
-            # Type narrowing: when return_metadata=False (default), result is bytes
-            assert isinstance(raw_content, bytes), "Expected bytes from read()"
-            content = raw_content.decode("utf-8")
-            return self._parser.parse_metadata_from_content(content, file_path, tier)
+            try:
+                raw_content = self._filesystem.read(file_path)
+                # Type narrowing: when return_metadata=False (default), result is bytes
+                assert isinstance(raw_content, bytes), "Expected bytes from read()"
+                content = raw_content.decode("utf-8")
+                return self._parser.parse_metadata_from_content(content, file_path, tier)
+            except Exception as e:
+                # Handle CAS errors or other read failures gracefully
+                # Log warning but don't fail the entire discovery
+                logger.warning(f"Failed to read skill {file_path}: {e}")
+                # Return None to skip this skill
+                return None
         else:
             # Use local filesystem
             return self._parser.parse_metadata_only(file_path, tier)
 
-    async def get_skill(self, name: str, load_dependencies: bool = False) -> Skill:
+    async def get_skill(
+        self,
+        name: str,
+        load_dependencies: bool = False,
+        subject_id: str | None = None,
+        subject_type: str = "agent",
+        tenant_id: str | None = None,
+    ) -> Skill:
         """Get a skill by name (loads full content on-demand).
 
         Lazy loading: Loads full content only when requested.
@@ -245,12 +271,16 @@ class SkillRegistry:
         Args:
             name: Skill name
             load_dependencies: If True, also load all dependencies
+            subject_id: ID of the requesting agent/user (for ReBAC)
+            subject_type: Type of subject (agent, user) - default: agent
+            tenant_id: Tenant ID for scoping (for ReBAC)
 
         Returns:
             Complete Skill object (metadata + content)
 
         Raises:
             SkillNotFoundError: If skill not found
+            PermissionDeniedError: If subject lacks read permission
 
         Example:
             >>> skill = await registry.get_skill("analyze-code")
@@ -264,6 +294,27 @@ class SkillRegistry:
         # Check metadata index
         if name not in self._metadata_index:
             raise SkillNotFoundError(f"Skill not found: {name}")
+
+        # Check read permission
+        if subject_id and self._rebac:
+            try:
+                has_permission = self._rebac.rebac_check(
+                    subject=(subject_type, subject_id),
+                    permission="read",
+                    object=("skill", name),
+                    tenant_id=tenant_id,
+                )
+                if not has_permission:
+                    raise PermissionDeniedError(
+                        f"No permission to read skill '{name}'. "
+                        f"Subject ({subject_type}:{subject_id}) lacks 'read' permission."
+                    )
+            except PermissionDeniedError:
+                # Re-raise permission errors
+                raise
+            except Exception as e:
+                logger.warning(f"ReBAC check failed for skill '{name}': {e}")
+                # Continue if ReBAC check fails (backward compatibility)
 
         metadata = self._metadata_index[name]
 

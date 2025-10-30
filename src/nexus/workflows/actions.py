@@ -282,26 +282,97 @@ class PythonAction(BaseAction):
 
     async def execute(self, context: WorkflowContext) -> ActionResult:
         """Execute Python action."""
+        import sys
+        from io import StringIO
+
         try:
             code = self.config.get("code", "")
             file_path = context.file_path
 
+            print(f"[PYTHON ACTION DEBUG] Code length: {len(code)} bytes", file=sys.stderr)
+            print(f"[PYTHON ACTION DEBUG] First 200 chars of code: {code[:200]}", file=sys.stderr)
+            print(f"[PYTHON ACTION DEBUG] file_path: {file_path}", file=sys.stderr)
+
             # Create execution context
-            exec_globals = {
+            exec_globals: dict[str, Any] = {
                 "context": context,
                 "file_path": file_path,
                 "variables": context.variables,
             }
 
-            # Execute code
-            exec(code, exec_globals)
+            # Capture stdout and stderr
+            old_stdout = sys.stdout
+            old_stderr = sys.stderr
+            captured_stdout = StringIO()
+            captured_stderr = StringIO()
+
+            try:
+                # Redirect stdout/stderr
+                sys.stdout = captured_stdout
+                sys.stderr = captured_stderr
+
+                # Add print function that explicitly uses the redirected stdout
+                # This ensures print() in exec'd code uses our captured stream
+                def _print(*args: Any, **kwargs: Any) -> None:
+                    import builtins
+
+                    kwargs.setdefault("file", captured_stdout)
+                    builtins.print(*args, **kwargs)
+
+                # Add to exec globals so print uses our captured stream
+                exec_globals["print"] = _print
+
+                # Execute code
+                try:
+                    exec(code, exec_globals)
+                except Exception as exec_error:
+                    # Capture any errors during code execution
+                    import traceback
+
+                    error_msg = f"Error during exec: {exec_error}\n{traceback.format_exc()}"
+                    captured_stderr.write(error_msg)
+                    print(f"[PYTHON ACTION ERROR] {error_msg}", file=sys.stderr)
+            finally:
+                # Restore stdout/stderr
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+
+            # Get captured output
+            stdout_value = captured_stdout.getvalue()
+            stderr_value = captured_stderr.getvalue()
+
+            # Print captured output to stderr so it's visible
+            print(
+                f"[PYTHON ACTION] stdout length: {len(stdout_value)}, stderr length: {len(stderr_value)}",
+                file=sys.stderr,
+            )
+            if stdout_value:
+                print(f"[PYTHON ACTION STDOUT]\n{stdout_value}", file=sys.stderr, end="")
+            if stderr_value:
+                print(f"[PYTHON ACTION STDERR]\n{stderr_value}", file=sys.stderr, end="")
+
+            # Check if there was an error during execution
+            if stderr_value:
+                return ActionResult(
+                    action_name=self.name,
+                    success=False,
+                    error=stderr_value,
+                )
 
             # Get result if 'result' variable was set
             result = exec_globals.get("result")
 
-            return ActionResult(action_name=self.name, success=True, output=result)
+            return ActionResult(
+                action_name=self.name,
+                success=True,
+                output=result,
+            )
         except Exception as e:
-            logger.error(f"Python action failed: {e}")
+            import traceback
+
+            full_error = f"Python action failed: {e}\n{traceback.format_exc()}"
+            print(f"[PYTHON ACTION EXCEPTION] {full_error}", file=sys.stderr)
+            logger.error(full_error)
             return ActionResult(action_name=self.name, success=False, error=str(e))
 
 

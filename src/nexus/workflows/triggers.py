@@ -186,17 +186,40 @@ class TriggerManager:
         Returns:
             Number of workflows triggered
         """
+        import sys
+
         triggered_count = 0
         trigger_list = self.triggers.get(trigger_type.value, [])
 
+        print(
+            f"[TRIGGER MANAGER] fire_event called with trigger_type={trigger_type}, event_context={event_context}",
+            file=sys.stderr,
+        )
+        print(
+            f"[TRIGGER MANAGER] Found {len(trigger_list)} triggers for type {trigger_type.value}",
+            file=sys.stderr,
+        )
+
         for trigger, callback in trigger_list:
+            print(f"[TRIGGER MANAGER] Checking trigger: {trigger}", file=sys.stderr)
             if trigger.matches(event_context):
+                print("[TRIGGER MANAGER] Trigger matches! Executing callback...", file=sys.stderr)
                 try:
                     await callback(event_context)
                     triggered_count += 1
+                    print("[TRIGGER MANAGER] Callback completed successfully", file=sys.stderr)
                 except Exception as e:
-                    logger.error(f"Error executing trigger callback: {e}")
+                    print(
+                        f"[TRIGGER MANAGER] Error executing trigger callback: {e}", file=sys.stderr
+                    )
+                    import traceback
 
+                    traceback.print_exc(file=sys.stderr)
+                    logger.error(f"Error executing trigger callback: {e}")
+            else:
+                print("[TRIGGER MANAGER] Trigger does not match", file=sys.stderr)
+
+        print(f"[TRIGGER MANAGER] Total workflows triggered: {triggered_count}", file=sys.stderr)
         return triggered_count
 
     def get_triggers(self, trigger_type: TriggerType | None = None) -> list[tuple]:

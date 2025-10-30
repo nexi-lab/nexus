@@ -1,0 +1,15 @@
+# DeepAgents Nexus Integration Requirements
+
+# Core dependencies
+deepagents>=0.2.0
+nexus-ai-fs>=0.1.0
+
+# LangChain dependencies (required by deepagents)
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+langchain-anthropic>=0.2.0
+
+# DeepAgents research example dependencies
+tavily-python>=0.7.0
+langchain-tavily>=0.2.0  # Updated Tavily integration

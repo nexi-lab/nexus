@@ -7,9 +7,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from nexus.core.exceptions import ValidationError
+from nexus.core.exceptions import PermissionDeniedError, ValidationError
+
+if TYPE_CHECKING:
+    from nexus.core.rebac_manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -114,13 +117,19 @@ class SkillGovernance:
         >>> is_approved = await gov.is_approved("my-analyzer")
     """
 
-    def __init__(self, db_connection: DatabaseConnection | None = None):
+    def __init__(
+        self,
+        db_connection: DatabaseConnection | None = None,
+        rebac_manager: ReBACManager | None = None,
+    ):
         """Initialize governance system.
 
         Args:
             db_connection: Optional database connection (defaults to in-memory)
+            rebac_manager: Optional ReBAC manager for permission checks
         """
         self._db = db_connection
+        self._rebac = rebac_manager
         self._in_memory_approvals: dict[str, SkillApproval] = {}
 
     async def submit_for_approval(
@@ -212,6 +221,8 @@ class SkillGovernance:
         approval_id: str,
         reviewed_by: str,
         comments: str | None = None,
+        reviewer_type: str = "user",
+        tenant_id: str | None = None,
     ) -> None:
         """Approve a skill for publication.
 
@@ -219,9 +230,12 @@ class SkillGovernance:
             approval_id: ID of the approval request
             reviewed_by: ID of the reviewer
             comments: Optional review comments
+            reviewer_type: Type of reviewer (user, agent) - default: user
+            tenant_id: Tenant ID for scoping (for ReBAC)
 
         Raises:
             GovernanceError: If approval fails
+            PermissionDeniedError: If reviewer lacks approve permission
 
         Example:
             >>> await gov.approve_skill(
@@ -238,6 +252,29 @@ class SkillGovernance:
             raise GovernanceError(
                 f"Approval {approval_id} is already {approval.status.value}, cannot approve"
             )
+
+        # Check approve permission
+        if self._rebac:
+            try:
+                has_permission = self._rebac.rebac_check(
+                    subject=(reviewer_type, reviewed_by),
+                    permission="approve",
+                    object=("skill", approval.skill_name),
+                    tenant_id=tenant_id,
+                )
+                if not has_permission:
+                    raise PermissionDeniedError(
+                        f"No permission to approve skill '{approval.skill_name}'. "
+                        f"Reviewer ({reviewer_type}:{reviewed_by}) lacks 'approve' permission."
+                    )
+            except PermissionDeniedError:
+                # Re-raise permission errors
+                raise
+            except Exception as e:
+                logger.warning(
+                    f"ReBAC check failed for approval of skill '{approval.skill_name}': {e}"
+                )
+                # Continue if ReBAC check fails (backward compatibility)
 
         reviewed_at = datetime.now(UTC)
 
@@ -277,6 +314,8 @@ class SkillGovernance:
         approval_id: str,
         reviewed_by: str,
         comments: str | None = None,
+        reviewer_type: str = "user",
+        tenant_id: str | None = None,
     ) -> None:
         """Reject a skill approval request.
 
@@ -284,9 +323,12 @@ class SkillGovernance:
             approval_id: ID of the approval request
             reviewed_by: ID of the reviewer
             comments: Optional rejection reason
+            reviewer_type: Type of reviewer (user, agent) - default: user
+            tenant_id: Tenant ID for scoping (for ReBAC)
 
         Raises:
             GovernanceError: If rejection fails
+            PermissionDeniedError: If reviewer lacks approve permission
 
         Example:
             >>> await gov.reject_skill(
@@ -303,6 +345,29 @@ class SkillGovernance:
             raise GovernanceError(
                 f"Approval {approval_id} is already {approval.status.value}, cannot reject"
             )
+
+        # Check approve permission (same as approve - reviewer can approve or reject)
+        if self._rebac:
+            try:
+                has_permission = self._rebac.rebac_check(
+                    subject=(reviewer_type, reviewed_by),
+                    permission="approve",
+                    object=("skill", approval.skill_name),
+                    tenant_id=tenant_id,
+                )
+                if not has_permission:
+                    raise PermissionDeniedError(
+                        f"No permission to reject skill '{approval.skill_name}'. "
+                        f"Reviewer ({reviewer_type}:{reviewed_by}) lacks 'approve' permission."
+                    )
+            except PermissionDeniedError:
+                # Re-raise permission errors
+                raise
+            except Exception as e:
+                logger.warning(
+                    f"ReBAC check failed for rejection of skill '{approval.skill_name}': {e}"
+                )
+                # Continue if ReBAC check fails (backward compatibility)
 
         reviewed_at = datetime.now(UTC)
 
@@ -416,7 +481,12 @@ class SkillGovernance:
             results = self._db.fetchall(query, params)
             approvals = []
             for row in results:
-                reviewers = json.loads(row["reviewers"]) if row.get("reviewers") else None
+                # Handle JSON column - PostgreSQL auto-deserializes, SQLite returns string
+                reviewers_data = row.get("reviewers")
+                if isinstance(reviewers_data, str):
+                    reviewers = json.loads(reviewers_data)
+                else:
+                    reviewers = reviewers_data  # Already deserialized (PostgreSQL)
                 approvals.append(
                     SkillApproval(
                         approval_id=row["approval_id"],
@@ -470,7 +540,12 @@ class SkillGovernance:
             results = self._db.fetchall(query, {"skill_name": skill_name})
             approvals = []
             for row in results:
-                reviewers = json.loads(row["reviewers"]) if row.get("reviewers") else None
+                # Handle JSON column - PostgreSQL auto-deserializes, SQLite returns string
+                reviewers_data = row.get("reviewers")
+                if isinstance(reviewers_data, str):
+                    reviewers = json.loads(reviewers_data)
+                else:
+                    reviewers = reviewers_data  # Already deserialized (PostgreSQL)
                 approvals.append(
                     SkillApproval(
                         approval_id=row["approval_id"],
@@ -493,6 +568,82 @@ class SkillGovernance:
             ]
             return sorted(approvals, key=lambda a: a.submitted_at or datetime.min, reverse=True)
 
+    async def list_approvals(
+        self, status: str | None = None, skill_name: str | None = None
+    ) -> list[SkillApproval]:
+        """List approval requests with optional filters.
+
+        Args:
+            status: Optional status filter (pending, approved, rejected)
+            skill_name: Optional skill name filter
+
+        Returns:
+            List of approval records matching filters
+
+        Example:
+            >>> # List all approvals
+            >>> all_approvals = await gov.list_approvals()
+            >>>
+            >>> # List pending approvals
+            >>> pending = await gov.list_approvals(status="pending")
+            >>>
+            >>> # List approvals for a specific skill
+            >>> skill_approvals = await gov.list_approvals(skill_name="my-analyzer")
+        """
+        if self._db:
+            # Build query with filters
+            query = "SELECT * FROM skill_approvals WHERE 1=1"
+            params: dict[str, Any] = {}
+
+            if status:
+                query += " AND status = :status"
+                params["status"] = status
+
+            if skill_name:
+                query += " AND skill_name = :skill_name"
+                params["skill_name"] = skill_name
+
+            query += " ORDER BY submitted_at DESC"
+
+            import json
+
+            results = self._db.fetchall(query, params)
+            approvals = []
+            for row in results:
+                # Handle JSON column - PostgreSQL auto-deserializes, SQLite returns string
+                reviewers_data = row.get("reviewers")
+                if isinstance(reviewers_data, str):
+                    reviewers = json.loads(reviewers_data)
+                else:
+                    reviewers = reviewers_data  # Already deserialized (PostgreSQL)
+                approvals.append(
+                    SkillApproval(
+                        approval_id=row["approval_id"],
+                        skill_name=row["skill_name"],
+                        submitted_by=row["submitted_by"],
+                        status=ApprovalStatus(row["status"]),
+                        reviewers=reviewers,
+                        comments=row.get("comments"),
+                        submitted_at=row.get("submitted_at"),
+                        reviewed_at=row.get("reviewed_at"),
+                        reviewed_by=row.get("reviewed_by"),
+                    )
+                )
+            return approvals
+
+        else:
+            # Filter in-memory approvals
+            approvals = list(self._in_memory_approvals.values())
+
+            if status:
+                status_enum = ApprovalStatus(status)
+                approvals = [a for a in approvals if a.status == status_enum]
+
+            if skill_name:
+                approvals = [a for a in approvals if a.skill_name == skill_name]
+
+            return sorted(approvals, key=lambda a: a.submitted_at or datetime.min, reverse=True)
+
     async def _get_approval(self, approval_id: str) -> SkillApproval | None:
         """Get approval by ID (internal helper)."""
         if self._db:
@@ -504,7 +655,12 @@ class SkillGovernance:
             if not result:
                 return None
 
-            reviewers = json.loads(result["reviewers"]) if result.get("reviewers") else None
+            # Handle JSON column - PostgreSQL auto-deserializes, SQLite returns string
+            reviewers_data = result.get("reviewers")
+            if isinstance(reviewers_data, str):
+                reviewers = json.loads(reviewers_data)
+            else:
+                reviewers = reviewers_data  # Already deserialized (PostgreSQL)
             return SkillApproval(
                 approval_id=result["approval_id"],
                 skill_name=result["skill_name"],
@@ -538,7 +694,12 @@ class SkillGovernance:
             if not result:
                 return None
 
-            reviewers = json.loads(result["reviewers"]) if result.get("reviewers") else None
+            # Handle JSON column - PostgreSQL auto-deserializes, SQLite returns string
+            reviewers_data = result.get("reviewers")
+            if isinstance(reviewers_data, str):
+                reviewers = json.loads(reviewers_data)
+            else:
+                reviewers = reviewers_data  # Already deserialized (PostgreSQL)
             return SkillApproval(
                 approval_id=result["approval_id"],
                 skill_name=result["skill_name"],

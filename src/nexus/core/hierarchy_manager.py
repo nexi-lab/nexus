@@ -90,9 +90,10 @@ class HierarchyManager:
         # Example: /a/b/c.txt
         # - /a/b/c.txt -> /a/b
         # - /a/b -> /a
+        # FIX: Paths should NOT have leading slashes to match permission check behavior
         for i in range(len(parts), 1, -1):
-            child_path = "/" + "/".join(parts[:i])
-            parent_path = "/" + "/".join(parts[: i - 1])
+            child_path = "/".join(parts[:i])
+            parent_path = "/".join(parts[: i - 1])
 
             # Check if parent tuple already exists
             if self._has_parent_tuple(child_path, parent_path, tenant_id):

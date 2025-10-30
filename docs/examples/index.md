@@ -22,6 +22,14 @@ Explore Nexus through hands-on examples that demonstrate key features and real-w
 
     [:octicons-arrow-right-24: View Example](directory-operations.md)
 
+-   :material-brain:{ .lg .middle } __Agentic Context Engineering (ACE)__
+
+    ---
+
+    Enable AI agents to learn from experience through self-reflection and memory.
+
+    [:octicons-arrow-right-24: View Example](ace.md)
+
 -   :material-shield-lock:{ .lg .middle } __Permission Management__
 
     ---
@@ -37,14 +45,6 @@ Explore Nexus through hands-on examples that demonstrate key features and real-w
     Build multi-tenant applications with workspace isolation and session tracking.
 
     [:octicons-arrow-right-24: View Example](workspace-session.md)
-
--   :material-brain:{ .lg .middle } __Agentic Context Engineering (ACE)__
-
-    ---
-
-    Enable AI agents to learn from experience through self-reflection and memory.
-
-    [:octicons-arrow-right-24: View Example](ace.md)
 
 </div>
 

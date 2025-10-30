@@ -2305,6 +2305,8 @@ class NexusFS(
 
         # Ensure EntityRegistry is initialized
         if not self._entity_registry:
+            from nexus.core.entity_registry import EntityRegistry
+
             self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
 
         # Register agent (always without API key first)
@@ -2352,6 +2354,8 @@ class NexusFS(
             ...     print(f"{agent['agent_id']}: {agent['name']}")
         """
         if not self._entity_registry:
+            from nexus.core.entity_registry import EntityRegistry
+
             self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
 
         entities = self._entity_registry.get_entities_by_type("agent")
@@ -2382,6 +2386,8 @@ class NexusFS(
             ...     print(f"Owner: {agent['user_id']}")
         """
         if not self._entity_registry:
+            from nexus.core.entity_registry import EntityRegistry
+
             self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
 
         entity = self._entity_registry.get_entity("agent", agent_id)
@@ -2412,6 +2418,8 @@ class NexusFS(
             ...     print("Agent deleted")
         """
         if not self._entity_registry:
+            from nexus.core.entity_registry import EntityRegistry
+
             self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
 
         return self._entity_registry.delete_entity("agent", agent_id)

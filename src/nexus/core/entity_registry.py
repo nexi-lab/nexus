@@ -237,25 +237,54 @@ class EntityRegistry:
                 session.expunge(result)
             return results
 
-    def delete_entity(self, entity_type: str, entity_id: str) -> bool:
+    def delete_entity(self, entity_type: str, entity_id: str, cascade: bool = True) -> bool:
         """Delete an entity from the registry.
 
         Args:
             entity_type: Type of entity.
             entity_id: Unique identifier.
+            cascade: If True, recursively delete child entities (default: True).
+                     When deleting a user, all their owned agents are also deleted.
+                     When deleting a tenant, all users and agents are also deleted.
 
         Returns:
             True if deleted, False if not found.
+
+        Examples:
+            >>> # Delete user and all their agents (cascade=True by default)
+            >>> registry.delete_entity("user", "alice")
+            True
+
+            >>> # Delete only the user, leave agents orphaned (not recommended)
+            >>> registry.delete_entity("user", "alice", cascade=False)
+            True
         """
+        # Check if entity exists
         entity = self.get_entity(entity_type, entity_id)
-        if entity:
-            with self._get_session() as session:
-                # Re-attach entity to this session
-                session.merge(entity)
-                session.delete(entity)
+        if not entity:
+            return False
+
+        # Cascade delete: recursively delete all child entities first
+        if cascade:
+            children = self.get_children(entity_type, entity_id)
+            for child in children:
+                # Recursively delete child (with cascade)
+                self.delete_entity(child.entity_type, child.entity_id, cascade=True)
+
+        # Delete the entity itself using a fresh query in the session context
+        with self._get_session() as session:
+            # Query the entity within this session (don't reuse detached entity)
+            stmt = select(EntityRegistryModel).where(
+                EntityRegistryModel.entity_type == entity_type,
+                EntityRegistryModel.entity_id == entity_id,
+            )
+            entity_to_delete = session.execute(stmt).scalar_one_or_none()
+
+            if entity_to_delete:
+                session.delete(entity_to_delete)
                 session.commit()
-            return True
-        return False
+
+        return True
 
     def auto_register_from_config(self, config: dict[str, Any]) -> None:
         """Auto-register entities from Nexus config.

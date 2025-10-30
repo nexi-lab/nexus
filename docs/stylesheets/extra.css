@@ -557,6 +557,10 @@
   margin-top: 4rem;
   padding: 2rem 0;
   border-top: 2px solid #e0e0e0;
+  width: 100%;
+  max-width: 100%;
+  clear: both;
+  display: block;
 }
 
 .footer-grid {
@@ -564,6 +568,7 @@
   grid-template-columns: repeat(3, 1fr);
   gap: 2rem;
   width: 100%;
+  max-width: 100%;
 }
 
 @media screen and (max-width: 900px) {

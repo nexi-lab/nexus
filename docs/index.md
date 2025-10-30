@@ -264,8 +264,6 @@ Multi-tenancy, workspace isolation, and complete audit trails out of the box.
 - **🔄 Self-Learning**: ACE system automatically consolidates agent experiences into reusable knowledge
 - **📚 LLM Document Reading**: Ask questions about your files, get answers with citations and cost tracking
 
-</div>
-
 <div class="footer-links" markdown>
 
 <div class="footer-grid" markdown>

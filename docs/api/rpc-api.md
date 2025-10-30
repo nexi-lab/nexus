@@ -333,6 +333,304 @@ POST /api/nfs/delete
 
 ---
 
+### Workspace Registry
+
+Before using workspace snapshots, directories must be registered as workspaces.
+
+#### register_workspace - Register a directory as a workspace
+
+```bash
+POST /api/nfs/register_workspace
+
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "register_workspace",
+  "params": {
+    "path": "/my-workspace",
+    "name": "main",
+    "description": "My main workspace",
+    "created_by": "alice",
+    "metadata": {
+      "project_id": "12345",
+      "team": "engineering"
+    }
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "result": {
+    "path": "/my-workspace",
+    "name": "main",
+    "description": "My main workspace",
+    "created_by": "alice",
+    "created_at": "2025-01-15T10:30:00Z",
+    "metadata": {
+      "project_id": "12345",
+      "team": "engineering"
+    }
+  }
+}
+```
+
+---
+
+#### list_workspaces - List all registered workspaces
+
+```bash
+POST /api/nfs/list_workspaces
+
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "list_workspaces",
+  "params": {}
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "result": [
+    {
+      "path": "/my-workspace",
+      "name": "main",
+      "description": "My main workspace",
+      "created_by": "alice",
+      "created_at": "2025-01-15T10:30:00Z"
+    },
+    {
+      "path": "/team/project",
+      "name": "team-project",
+      "description": "Team collaboration workspace",
+      "created_at": "2025-01-15T11:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
+#### get_workspace_info - Get workspace information
+
+```bash
+POST /api/nfs/get_workspace_info
+
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "get_workspace_info",
+  "params": {
+    "path": "/my-workspace"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "result": {
+    "path": "/my-workspace",
+    "name": "main",
+    "description": "My main workspace",
+    "created_by": "alice",
+    "created_at": "2025-01-15T10:30:00Z",
+    "metadata": {
+      "project_id": "12345",
+      "team": "engineering"
+    }
+  }
+}
+```
+
+**Note:** Returns `null` if workspace not found.
+
+---
+
+#### unregister_workspace - Unregister a workspace
+
+```bash
+POST /api/nfs/unregister_workspace
+
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "unregister_workspace",
+  "params": {
+    "path": "/my-workspace"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "result": true
+}
+```
+
+**Note:** This only removes the workspace registration. Files are NOT deleted.
+
+---
+
+### Workspace Snapshots
+
+Create, restore, and compare workspace snapshots for version control.
+
+#### workspace_snapshot - Create a snapshot
+
+```bash
+POST /api/nfs/workspace_snapshot
+
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "method": "workspace_snapshot",
+  "params": {
+    "workspace_path": "/my-workspace",
+    "description": "Before refactoring",
+    "agent_id": "agent-123"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "result": {
+    "snapshot_number": 1,
+    "timestamp": "2025-01-15T12:00:00Z",
+    "description": "Before refactoring",
+    "file_count": 42,
+    "total_size": 1048576
+  }
+}
+```
+
+---
+
+#### workspace_log - List workspace snapshots
+
+```bash
+POST /api/nfs/workspace_log
+
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "method": "workspace_log",
+  "params": {
+    "workspace_path": "/my-workspace",
+    "limit": 10
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "result": [
+    {
+      "snapshot_number": 2,
+      "timestamp": "2025-01-15T14:00:00Z",
+      "description": "After refactoring",
+      "file_count": 45
+    },
+    {
+      "snapshot_number": 1,
+      "timestamp": "2025-01-15T12:00:00Z",
+      "description": "Before refactoring",
+      "file_count": 42
+    }
+  ]
+}
+```
+
+---
+
+#### workspace_restore - Restore a snapshot
+
+```bash
+POST /api/nfs/workspace_restore
+
+{
+  "jsonrpc": "2.0",
+  "id": 12,
+  "method": "workspace_restore",
+  "params": {
+    "snapshot_number": 1,
+    "workspace_path": "/my-workspace"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 12,
+  "result": {
+    "restored": true,
+    "files_restored": 42,
+    "snapshot_number": 1,
+    "timestamp": "2025-01-15T12:00:00Z"
+  }
+}
+```
+
+---
+
+#### workspace_diff - Compare snapshots
+
+```bash
+POST /api/nfs/workspace_diff
+
+{
+  "jsonrpc": "2.0",
+  "id": 13,
+  "method": "workspace_diff",
+  "params": {
+    "snapshot_1": 1,
+    "snapshot_2": 2,
+    "workspace_path": "/my-workspace"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 13,
+  "result": {
+    "added": ["/my-workspace/new-file.txt"],
+    "modified": ["/my-workspace/config.json"],
+    "deleted": ["/my-workspace/old-file.txt"],
+    "summary": {
+      "added_count": 1,
+      "modified_count": 1,
+      "deleted_count": 1
+    }
+  }
+}
+```
+
+---
+
 ### Python Client
 
 Use the remote client to connect to a Nexus RPC server:

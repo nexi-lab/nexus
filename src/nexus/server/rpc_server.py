@@ -1281,6 +1281,7 @@ class NexusRPCServer:
         self.host = host
         self.port = port
         self.api_key = api_key
+        self.auth_provider = auth_provider
         self._event_loop = asyncio.new_event_loop()
 
         # Auto-discover all @rpc_expose decorated methods
@@ -1343,8 +1344,12 @@ class NexusRPCServer:
         """Start server and handle requests."""
         logger.info(f"Starting Nexus RPC server on {self.host}:{self.port}")
         logger.info(f"Endpoint: http://{self.host}:{self.port}/api/nfs/{{method}}")
-        if self.api_key:
-            logger.info("Authentication: API key required")
+
+        # Check both authentication methods
+        if self.auth_provider:
+            logger.info(f"Authentication: Database provider ({type(self.auth_provider).__name__})")
+        elif self.api_key:
+            logger.info("Authentication: Static API key")
         else:
             logger.info("Authentication: None (open access)")
 

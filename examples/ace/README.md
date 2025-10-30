@@ -239,7 +239,6 @@ reward_signal = {
 ## 📚 Learn More
 
 - **ACE Paper**: https://arxiv.org/abs/2510.04618
-- **kayba-ai Implementation**: https://github.com/kayba-ai/agentic-context-engine
 - **Nexus ACE Design**: `docs/design/ACE_INTEGRATION.md`
 - **Nexus Documentation**: https://docs.nexus-ai.com
 

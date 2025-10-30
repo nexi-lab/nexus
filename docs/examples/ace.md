@@ -313,7 +313,6 @@ nx.memory.curate_playbook([nx.memory.reflect(traj_id).id], "lead_qualifier")
 ## 📚 Learn More
 
 - **ACE Paper**: [Agentic Context Engineering (arXiv)](https://arxiv.org/abs/2510.04618)
-- **Implementation**: [kayba-ai/agentic-context-engine](https://github.com/kayba-ai/agentic-context-engine)
 - **Nexus ACE Design**: See `docs/design/ACE_INTEGRATION.md` in the repository
 - **Demo Code**: See `examples/ace/demo_3_data_validator.py`
 

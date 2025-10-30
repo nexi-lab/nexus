@@ -11,13 +11,17 @@ Authentication:
 
 import hashlib
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from google.cloud import storage
 from google.cloud.exceptions import NotFound
 
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+
+if TYPE_CHECKING:
+    from nexus.core.permissions import OperationContext
+    from nexus.core.permissions_enhanced import EnhancedOperationContext
 
 
 class GCSBackend(Backend):
@@ -167,11 +171,15 @@ class GCSBackend(Backend):
                 f"Failed to write metadata: {e}", backend="gcs", path=content_hash
             ) from e
 
-    def write_content(self, content: bytes) -> str:
+    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
         """
         Write content to CAS storage and return its hash.
 
         If content already exists, increments reference count.
+
+        Args:
+            content: File content as bytes
+            _context: Operation context (ignored for GCS backend)
         """
         content_hash = self._compute_hash(content)
         content_path = self._hash_to_path(content_hash)
@@ -200,8 +208,13 @@ class GCSBackend(Backend):
                 f"Failed to write content: {e}", backend="gcs", path=content_hash
             ) from e
 
-    def read_content(self, content_hash: str) -> bytes:
-        """Read content by its hash."""
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+        """Read content by its hash.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            _context: Operation context (ignored for GCS backend)
+        """
         content_path = self._hash_to_path(content_hash)
 
         try:
@@ -232,8 +245,13 @@ class GCSBackend(Backend):
                 f"Failed to read content: {e}", backend="gcs", path=content_hash
             ) from e
 
-    def delete_content(self, content_hash: str) -> None:
-        """Delete content by hash with reference counting."""
+    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+        """Delete content by hash with reference counting.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            _context: Operation context (ignored for GCS backend)
+        """
         content_path = self._hash_to_path(content_hash)
 
         try:
@@ -266,8 +284,13 @@ class GCSBackend(Backend):
                 f"Failed to delete content: {e}", backend="gcs", path=content_hash
             ) from e
 
-    def content_exists(self, content_hash: str) -> bool:
-        """Check if content exists."""
+    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+        """Check if content exists.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            _context: Operation context (ignored for GCS backend)
+        """
         try:
             content_path = self._hash_to_path(content_hash)
             blob = self.bucket.blob(content_path)
@@ -275,8 +298,13 @@ class GCSBackend(Backend):
         except Exception:
             return False
 
-    def get_content_size(self, content_hash: str) -> int:
-        """Get content size in bytes."""
+    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+        """Get content size in bytes.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            _context: Operation context (ignored for GCS backend)
+        """
         content_path = self._hash_to_path(content_hash)
 
         try:
@@ -305,9 +333,14 @@ class GCSBackend(Backend):
                 f"Failed to get content size: {e}", backend="gcs", path=content_hash
             ) from e
 
-    def get_ref_count(self, content_hash: str) -> int:
-        """Get reference count for content."""
-        if not self.content_exists(content_hash):
+    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+        """Get reference count for content.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            context: Operation context (ignored for GCS backend)
+        """
+        if not self.content_exists(content_hash, context=context):
             raise NexusFileNotFoundError(content_hash)
 
         metadata = self._read_metadata(content_hash)
@@ -315,7 +348,13 @@ class GCSBackend(Backend):
 
     # === Directory Operations ===
 
-    def mkdir(self, path: str, parents: bool = False, exist_ok: bool = False) -> None:
+    def mkdir(
+        self,
+        path: str,
+        parents: bool = False,
+        exist_ok: bool = False,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
+    ) -> None:
         """
         Create directory marker in GCS.
 

@@ -180,6 +180,7 @@ class PermissionEnforcer:
         acl_store: Any | None = None,  # Deprecated, kept for backward compatibility
         rebac_manager: EnhancedReBACManager | None = None,
         entity_registry: Any = None,  # v0.5.0 ACE: For agent inheritance
+        router: Any = None,  # PathRouter for backend object type resolution
     ):
         """Initialize permission enforcer.
 
@@ -188,10 +189,12 @@ class PermissionEnforcer:
             acl_store: Deprecated, ignored (kept for backward compatibility)
             rebac_manager: ReBAC manager for relationship-based permissions
             entity_registry: Entity registry for agent→user inheritance (v0.5.0)
+            router: PathRouter for resolving backend object types (v0.5.0+)
         """
         self.metadata_store = metadata_store
         self.rebac_manager: EnhancedReBACManager | None = rebac_manager
         self.entity_registry = entity_registry  # v0.5.0 ACE
+        self.router = router  # For backend object type resolution
 
         # Warn if ACL store is provided (deprecated)
         if acl_store is not None:
@@ -283,20 +286,42 @@ class PermissionEnforcer:
             logger.info(f"  -> DENY (unknown permission: {permission})")
             return False
 
-        # Check ReBAC permission using path directly
-        # Object: ("file", path) - use path as the file identifier
+        # Get backend-specific object type for ReBAC check
+        # This allows different backends (Postgres, Redis, etc.) to have different permission models
+        object_type = "file"  # Default
+        object_id = path  # Default
+
+        if self.router:
+            try:
+                # Route path to backend to get object type
+                route = self.router.route(
+                    path,
+                    tenant_id=context.tenant_id,
+                    is_admin=context.is_admin,
+                    check_write=False,
+                )
+                # Ask backend for its object type
+                object_type = route.backend.get_object_type(route.backend_path)
+                object_id = route.backend.get_object_id(route.backend_path)
+            except Exception as e:
+                # If routing fails, fall back to default "file" type
+                logger.warning(
+                    f"[_check_rebac] Failed to route path for object type: {e}, using default 'file'"
+                )
+
+        # Check ReBAC permission using backend-provided object type
         # P0-4: Pass tenant_id for multi-tenant isolation
         tenant_id = context.tenant_id or "default"
         subject = context.get_subject()
         logger.info(
-            f"[_check_rebac] Calling rebac_check: subject={subject}, permission={permission_name}, object=('file', '{path}'), tenant_id={tenant_id}"
+            f"[_check_rebac] Calling rebac_check: subject={subject}, permission={permission_name}, object=('{object_type}', '{object_id}'), tenant_id={tenant_id}"
         )
 
         # 1. Direct permission check
         result = self.rebac_manager.rebac_check(
             subject=subject,  # P0-2: Use typed subject
             permission=permission_name,
-            object=("file", path),
+            object=(object_type, object_id),
             tenant_id=tenant_id,
         )
         logger.info(f"[_check_rebac] rebac_manager.rebac_check returned: {result}")
@@ -317,11 +342,11 @@ class PermissionEnforcer:
                 logger.info(
                     f"[_check_rebac] Agent {context.agent_id} owned by user {parent.entity_id}, checking user permission"
                 )
-                # Check if user has permission
+                # Check if user has permission (using same object type as direct check)
                 user_result = self.rebac_manager.rebac_check(
                     subject=("user", parent.entity_id),
                     permission=permission_name,
-                    object=("file", path),
+                    object=(object_type, object_id),
                     tenant_id=tenant_id,
                 )
                 logger.info(f"[_check_rebac] User permission check returned: {user_result}")

@@ -82,11 +82,11 @@ jobs:
 
       - name: Check coverage threshold
         run: |
-          # v0.5.0: Temporarily lowered to 60% due to new ReBAC/workspace code without tests
+          # Temporarily lowered to 60% due to new ReBAC/workspace code without tests
           # Previous: 65% with workflow module tests
-          # New v0.5 modules with low coverage: rebac_manager (51%), workspace_registry (29%),
+          # New modules with low coverage: rebac_manager (51%), workspace_registry (29%),
           # nexus_fs_rebac (22%), rebac_manager_enhanced (17%)
-          # TODO: Raise back to 65% after adding tests for v0.5 ReBAC and workspace modules
+          # TODO: Raise back to 65% after adding tests for ReBAC and workspace modules
           # TODO: Target 75% after comprehensive coverage of all core modules
           uv run coverage report --fail-under=60
 

@@ -6,7 +6,7 @@ This document details the deep integration of ACE (Agentic Context Engineering) 
 
 **Paper Reference:** ["Agentic Context Engineering: Evolving Contexts for Self-Improving Language Models" (2024)](https://arxiv.org/abs/2510.04618)
 
-**Key Innovation:** Instead of wrapping the kayba-ai ACE library, we build ACE concepts **natively** into Nexus using its existing infrastructure (memory storage, ReBAC permissions, workflows, content-addressable storage).
+**Key Innovation:** We build ACE concepts **natively** into Nexus using its existing infrastructure (memory storage, ReBAC permissions, workflows, content-addressable storage).
 
 ---
 
@@ -1073,90 +1073,7 @@ PLAYBOOK_VERSION_RETENTION = {
 
 ---
 
-## 8. Comparison: kayba-ai ACE vs Nexus ACE
-
-| Feature | kayba-ai ACE | Nexus ACE |
-|---------|--------------|-----------|
-| **Playbook Storage** | In-memory / file-based | PostgreSQL/SQLite with CAS |
-| **Multi-tenancy** | ❌ Not supported | ✅ Native ReBAC permissions |
-| **Trajectory Tracking** | Manual instrumentation | Automatic with decorators |
-| **Consolidation** | ❌ Not implemented | ✅ Importance-based preservation |
-| **Semantic Search** | ❌ Not available | ✅ Vector embeddings (pgvector) |
-| **Multi-Agent Sharing** | ❌ Not supported | ✅ Permission-based sharing |
-| **Production Ready** | 🟡 Early stage | ✅ Enterprise features |
-| **LLM Providers** | 100+ via LiteLLM | Same (will integrate LiteLLM) |
-| **Evidence Tracking** | 🟡 Basic | ✅ Full trajectory lineage |
-| **Versioning** | ❌ Not supported | ✅ Playbook versions + rollback |
-
----
-
-## 9. Migration Path from kayba-ai ACE
-
-For users currently using kayba-ai ACE, we provide a migration adapter:
-
-```python
-# Before (kayba-ai ACE)
-from ace import LiteLLMClient, Generator, Reflector, Curator, Playbook
-
-client = LiteLLMClient(model="gpt-4o-mini")
-generator = Generator(client)
-reflector = Reflector(client)
-curator = Curator(client)
-playbook = Playbook()
-
-result = generator.generate(
-    question="Process this invoice",
-    context="...",
-    playbook=playbook
-)
-
-# After (Nexus ACE)
-import nexus
-
-nx = nexus.connect()
-
-def process_invoice(playbook):
-    # Your logic here using playbook strategies
-    return result, "success"
-
-result, traj_id = nx.memory.execute_with_learning(
-    lambda: process_invoice(nx.memory.get_playbook()),
-    task_description="Process this invoice",
-    task_type="document_processing"
-)
-
-# Automatic reflection + curation!
-```
-
-**Migration adapter:**
-```python
-# src/nexus/adapters/ace_compat.py
-
-class ACECompatibilityLayer:
-    """Adapter for kayba-ai ACE users."""
-
-    def __init__(self, nexus_memory):
-        self.memory = nexus_memory
-
-    class Generator:
-        def generate(self, question, context, playbook):
-            # Translate to Nexus execute_with_learning()
-            ...
-
-    class Reflector:
-        def reflect(self, result):
-            # Use Nexus reflection
-            ...
-
-    class Curator:
-        def curate(self, reflections):
-            # Use Nexus curation
-            ...
-```
-
----
-
-## 10. Next Steps
+## 8. Next Steps
 
 ### Immediate (This PR)
 1. ✅ Design review (this document)
@@ -1185,10 +1102,9 @@ class ACECompatibilityLayer:
 
 ---
 
-## 11. References
+## 9. References
 
 - **ACE Paper:** https://arxiv.org/abs/2510.04618
-- **kayba-ai Implementation:** https://github.com/kayba-ai/agentic-context-engine
 - **Google Zanzibar (ReBAC):** https://research.google/pubs/pub48190/
 - **Nexus Issues:**
   - #152 - Importance-Based Memory Preservation

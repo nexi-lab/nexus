@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2025-10-30
+
+### Added
+
+#### Admin API for User Management (Issue #322)
+- **RESTful Admin API**: Manage users via HTTP API (no SSH access required)
+  - `POST /admin/users` - Create new users with username, password, and admin flag
+  - `GET /admin/users` - List all users with detailed information
+  - `GET /admin/users/{username}` - Get specific user details
+  - `DELETE /admin/users/{username}` - Delete user accounts
+  - `PUT /admin/users/{username}/password` - Update user passwords
+  - `PUT /admin/users/{username}/admin` - Toggle admin privileges
+- **CLI Commands**: Manage users from command line
+  - `nexus admin create-user <username>` - Interactive user creation
+  - `nexus admin list-users` - Display all users in table format
+  - `nexus admin delete-user <username>` - Remove user with confirmation
+  - `nexus admin reset-password <username>` - Reset user password
+  - `nexus admin grant-admin <username>` - Grant admin privileges
+  - `nexus admin revoke-admin <username>` - Revoke admin privileges
+- **Authentication**: Bearer token auth for admin endpoints
+  - Requires admin user credentials
+  - JWT-based authentication via AuthManager
+- **Documentation**: Complete API documentation with examples
+  - HTTP API reference in `docs/api/rpc-api.md`
+  - CLI usage guide
+  - Security best practices
+
+#### Workspace Management API Documentation
+- **Complete RPC API Docs**: Added comprehensive workspace management documentation
+  - `register_workspace` - Register directories as workspaces
+  - `list_workspaces` - List all registered workspaces
+  - `get_workspace_info` - Get workspace information
+  - `unregister_workspace` - Remove workspace registration
+  - `workspace_snapshot` - Create workspace snapshots
+  - `workspace_log` - List workspace snapshots
+  - `workspace_restore` - Restore workspace to snapshot
+  - `workspace_diff` - Compare snapshots
+- **JSON-RPC Examples**: Complete request/response examples for all operations
+
+### Fixed
+
+#### ReBAC Permission Path Normalization (Issue #330)
+- **Path Format Consistency**: Fixed permission check failures due to path format mismatches
+  - Router uses relative paths: `workspace/bob`
+  - ReBAC tuples use absolute paths: `/workspace/bob`
+  - Now normalizes paths by adding leading slash when missing
+- **Permission Checks**: Users with correct ownership tuples can now access their workspaces
+  - Fixed write permission denials for valid users
+  - Consistent path format across permission layers
+- **Test Coverage**: Added comprehensive path normalization tests
+  - 23 permission enforcer tests all passing
+  - Integration tests verify cross-user isolation
+
+#### PostgreSQL Cursor Handling (Issue #323)
+- **Unified Row Access**: Refactored cursor handling for consistent dict-like row access
+  - Use `RealDictCursor` for PostgreSQL
+  - Use `sqlite3.Row` for SQLite
+  - Removed 25+ conditional row access patterns
+- **Server Startup Fix**: Resolved `AssertionError: Could not determine version from string 'version'`
+  - Cursor factory set per-cursor, not per-connection
+  - Prevents breaking SQLAlchemy's internal version detection
+- **Code Quality**: Simplified codebase with single unified code path
+  - Removed `hasattr(row, "keys")` conditionals
+  - Refactored 37 cursor creation points
+  - Improved maintainability
+
+### Changed
+
+#### RPC Server Improvements
+- **Enhanced Auth Logging**: Better startup logging for authentication methods
+  - Shows database provider class name
+  - Distinguishes between static API key and no auth
+  - Improved debugging experience
+- **Documentation**: Added 298 lines of workspace API documentation
+
+### Technical Details
+- **New API Endpoints**: 6 new admin endpoints for user management
+- **New CLI Commands**: 6 new `nexus admin` commands
+- **Database Changes**: No schema migrations required
+- **Test Coverage**: All tests passing (17/17 ReBAC, 44/44 metadata store)
+- **Files Modified**:
+  - `src/nexus/server/rpc_server.py` - Admin API endpoints, auth logging
+  - `src/nexus/cli/admin.py` - Admin CLI commands
+  - `src/nexus/core/permissions.py` - Path normalization
+  - `src/nexus/core/permissions_enhanced.py` - Path normalization
+  - `src/nexus/core/rebac_manager.py` - Cursor handling
+  - `docs/api/rpc-api.md` - Workspace API documentation
+
 ## [0.5.0] - 2025-10-29
 
 ### Added
@@ -870,7 +958,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/nexi-lab/nexus/compare/v0.3.9...HEAD
+[Unreleased]: https://github.com/nexi-lab/nexus/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/nexi-lab/nexus/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/nexi-lab/nexus/compare/v0.3.9...v0.5.0
 [0.3.9]: https://github.com/nexi-lab/nexus/compare/v0.3.0...v0.3.9
 [0.3.0]: https://github.com/nexi-lab/nexus/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nexi-lab/nexus/compare/v0.1.3...v0.2.0

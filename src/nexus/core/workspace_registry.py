@@ -291,24 +291,15 @@ class WorkspaceRegistry:
         )
         if self.rebac_manager and user_id:
             try:
-                # FIX: Normalize path by stripping leading slash to match permission check behavior
-                # Permission checks use router which strips leading slashes from virtual paths
-                # So ReBAC object IDs should NOT have leading slashes
-                normalized_path = path.lstrip("/")
-
                 # Grant permission on FILE object (for both file operations and workspace operations)
-                logger.warning(
-                    f"[AUTO-GRANT] Creating tuple: user:{user_id} → owner → file:{normalized_path}"
-                )
+                logger.warning(f"[AUTO-GRANT] Creating tuple: user:{user_id} → owner → file:{path}")
                 self.rebac_manager.rebac_write(
                     subject=("user", user_id),
                     relation="direct_owner",  # Use concrete relation, not computed union
-                    object=("file", normalized_path),
+                    object=("file", path),
                     tenant_id=tenant_id,  # v0.5.0: Pass tenant_id from context
                 )
-                logger.warning(
-                    f"[AUTO-GRANT] ✓ SUCCESS: user:{user_id} → owner → file:{normalized_path}"
-                )
+                logger.warning(f"[AUTO-GRANT] ✓ SUCCESS: user:{user_id} → owner → file:{path}")
             except Exception as e:
                 # Don't fail registration if permission grant fails
                 logger.error(f"[AUTO-GRANT] ✗ FAILED: {e}", exc_info=True)
@@ -494,21 +485,14 @@ class WorkspaceRegistry:
         )
         if self.rebac_manager and user_id:
             try:
-                # FIX: Normalize path by stripping leading slash to match permission check behavior
-                normalized_path = path.lstrip("/")
-
-                logger.warning(
-                    f"[AUTO-GRANT] Creating tuple: user:{user_id} → owner → file:{normalized_path}"
-                )
+                logger.warning(f"[AUTO-GRANT] Creating tuple: user:{user_id} → owner → file:{path}")
                 self.rebac_manager.rebac_write(
                     subject=("user", user_id),
                     relation="direct_owner",  # Use concrete relation, not computed union
-                    object=("file", normalized_path),
+                    object=("file", path),
                     tenant_id=tenant_id,  # v0.5.0: Pass tenant_id from context
                 )
-                logger.warning(
-                    f"[AUTO-GRANT] ✓ SUCCESS: user:{user_id} → owner → file:{normalized_path}"
-                )
+                logger.warning(f"[AUTO-GRANT] ✓ SUCCESS: user:{user_id} → owner → file:{path}")
             except Exception as e:
                 # Don't fail registration if permission grant fails
                 logger.error(f"[AUTO-GRANT] ✗ FAILED: {e}", exc_info=True)

@@ -662,7 +662,8 @@ class EnhancedPermissionEnforcer:
         # Get backend-specific object type for ReBAC check
         # This allows different backends (Postgres, Redis, etc.) to have different permission models
         object_type = "file"  # Default
-        object_id = path  # Default
+        # Ensure path has leading slash for ReBAC consistency (virtual paths always start with "/")
+        object_id = path if path.startswith("/") else "/" + path
 
         if self.router:
             try:
@@ -675,7 +676,10 @@ class EnhancedPermissionEnforcer:
                 )
                 # Ask backend for its object type
                 object_type = route.backend.get_object_type(route.backend_path)
-                object_id = route.backend.get_object_id(route.backend_path)
+                # BUGFIX: Don't override object_id with backend path - keep virtual path with leading slash
+                # The backend path may strip the leading slash, but ReBAC tuples are created with
+                # the full virtual path (with leading slash), so we must preserve it for consistency
+                # object_id = route.backend.get_object_id(route.backend_path)  # OLD BUG: strips leading slash
             except Exception as e:
                 # If routing fails, fall back to default "file" type
                 logger.warning(

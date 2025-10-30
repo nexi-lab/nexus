@@ -24,6 +24,7 @@ from nexus.cli.commands import (
     agent,
     directory,
     file_ops,
+    llm,
     memory,
     metadata,
     mounts,
@@ -61,7 +62,8 @@ def register_all_commands(cli: click.Group) -> None:
     operations.register_commands(cli)
     workflows.register_commands(cli)
     mounts.register_commands(cli)  # Mount management commands
-    cli.add_command(memory.memory)  # v0.4.0: Memory API commands
+    llm.register_commands(cli)  # v0.4.0: LLM document reading commands
+    cli.add_command(memory.memory)  # v0.4.0: Memory API commands (includes ACE trajectory/playbook)
     cli.add_command(agent.agent)  # v0.5.0: Agent management commands
 
 
@@ -70,6 +72,7 @@ __all__ = [
     "agent",
     "file_ops",
     "directory",
+    "llm",
     "memory",
     "mounts",
     "search",

@@ -1,0 +1,20 @@
+# ACE Demo Requirements
+# Install with: pip install -r requirements.txt
+
+# Core Nexus
+nexus-ai-fs>=0.5.0
+
+# Dataset loading
+datasets>=2.14.0
+huggingface-hub>=0.19.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Visualization
+matplotlib>=3.7.0
+rich>=13.0.0
+
+# Optional: Progress bars
+tqdm>=4.65.0

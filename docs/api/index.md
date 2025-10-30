@@ -65,6 +65,13 @@ Semantic search capabilities.
 </div>
 
 <div class="feature-card" markdown>
+### :material-robot: LLM Reading
+AI-powered document Q&A.
+
+[LLM Reading API →](llm-document-reading.md){ .md-button }
+</div>
+
+<div class="feature-card" markdown>
 ### :material-console: CLI
 Command-line interface reference.
 

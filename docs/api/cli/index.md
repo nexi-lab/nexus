@@ -91,6 +91,13 @@ Commands for AI-powered semantic search.
 
 [**→ Full Semantic Search Reference**](semantic-search.md)
 
+### LLM Document Reading
+Commands for AI-powered document question answering.
+
+- [`llm read`](llm-reading.md#llm-read---ask-questions-about-documents) - Ask questions about documents
+
+[**→ Full LLM Document Reading Reference**](llm-reading.md)
+
 ### Permissions (ReBAC)
 Commands for relationship-based access control.
 
@@ -261,6 +268,7 @@ Every CLI command has a Python API equivalent:
 | `nexus versions history /file.txt` | `nx.list_versions("/file.txt")` |
 | `nexus workspace snapshot /ws` | `nx.workspace_snapshot("/ws")` |
 | `nexus search query "auth"` | `await nx.semantic_search("auth")` |
+| `nexus llm read /doc.pdf "Question"` | `await nx.llm_read("/doc.pdf", "Question")` |
 
 See individual command references for detailed Python API examples.
 
@@ -338,6 +346,25 @@ nexus --backend local ls /
 
 # Use GCS backend
 nexus --backend gcs --gcs-bucket my-bucket ls /
+```
+
+### 6. LLM document reading workflow
+```bash
+# Set up API key
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Index documents for semantic search
+nexus search init --provider openai
+nexus search index /docs
+
+# Ask questions
+nexus llm read /docs/**/*.md "How does authentication work?"
+
+# Get detailed output with citations
+nexus llm read /reports/q4.pdf "What were the challenges?" --detailed
+
+# Stream long analysis
+nexus llm read /data/**/*.csv "Analyze trends" --stream
 ```
 
 ---

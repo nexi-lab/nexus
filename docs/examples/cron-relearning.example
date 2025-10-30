@@ -1,0 +1,22 @@
+# Example cron configuration for Nexus ACE re-learning queue
+# Copy this to your crontab: crontab -e
+
+# Process re-learning queue every 5 minutes (recommended for production)
+*/5 * * * * /usr/local/bin/nexus memory process-relearning --limit 10
+
+# Process high-priority items more frequently (every 2 minutes)
+*/2 * * * * /usr/local/bin/nexus memory process-relearning --min-priority 8 --limit 5
+
+# Process all items hourly (low-frequency deployments)
+0 * * * * /usr/local/bin/nexus memory process-relearning --limit 50
+
+# With logging
+*/5 * * * * /usr/local/bin/nexus memory process-relearning --limit 10 >> /var/log/nexus-relearning.log 2>&1
+
+# JSON output for monitoring/alerting
+*/5 * * * * /usr/local/bin/nexus memory process-relearning --json | /usr/local/bin/process-results.sh
+
+# Notes:
+# - Adjust the path to nexus binary based on your installation
+# - Set NEXUS_URL and NEXUS_API_KEY environment variables if using remote server
+# - For systemd timer alternative, see systemd-relearning.example

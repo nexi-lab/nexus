@@ -200,7 +200,7 @@ See [Configuration](configuration.md) for complete details.
 
 Nexus supports three deployment modes with one codebase:
 
-- **Embedded** - Zero-deployment, library mode (like SQLite) - Currently available
+- **Embedded** - Zero-deployment, library mode - Currently available
 - **Monolithic** - Single server for teams - Coming soon
 - **Distributed** - Kubernetes-ready for enterprise scale - Coming soon
 

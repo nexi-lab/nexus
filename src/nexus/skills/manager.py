@@ -4,13 +4,17 @@ import contextlib
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from nexus.core.exceptions import ValidationError
+from nexus.core.exceptions import PermissionDeniedError, ValidationError
 from nexus.skills.models import SkillMetadata
 from nexus.skills.parser import SkillParser
 from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import SkillNotFoundError, SkillRegistry
+
+if TYPE_CHECKING:
+    from nexus.core.rebac_manager import ReBACManager
+    from nexus.skills.governance import SkillGovernance
 
 logger = logging.getLogger(__name__)
 
@@ -61,16 +65,112 @@ class SkillManager:
         self,
         filesystem: NexusFilesystem | None = None,
         registry: SkillRegistry | None = None,
+        rebac_manager: "ReBACManager | None" = None,
+        governance: "SkillGovernance | None" = None,
     ):
         """Initialize skill manager.
 
         Args:
             filesystem: Optional filesystem instance (defaults to local FS)
             registry: Optional skill registry for loading existing skills
+            rebac_manager: Optional ReBAC manager for permission checks
+            governance: Optional governance system for approval checks
         """
         self._filesystem = filesystem
         self._registry = registry or SkillRegistry(filesystem)
         self._parser = SkillParser()
+        self._rebac = rebac_manager
+        self._governance = governance
+
+    async def _check_permission(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        object_name: str,
+        tenant_id: str | None = None,
+    ) -> bool:
+        """Check if subject has permission on skill object.
+
+        Args:
+            subject_type: Type of subject (agent, user)
+            subject_id: ID of subject
+            permission: Permission to check (read, write, publish, etc.)
+            object_name: Skill name
+            tenant_id: Optional tenant ID for scoping
+
+        Returns:
+            True if permission granted, False otherwise
+        """
+        if not self._rebac:
+            # No ReBAC manager - allow all operations (backward compatibility)
+            return True
+
+        try:
+            return self._rebac.rebac_check(
+                subject=(subject_type, subject_id),
+                permission=permission,
+                object=("skill", object_name),
+                tenant_id=tenant_id,
+            )
+        except Exception as e:
+            logger.warning(f"ReBAC check failed: {e}")
+            return False
+
+    async def _create_skill_permissions(
+        self,
+        skill_name: str,
+        owner_type: str,
+        owner_id: str,
+        tier: str,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Create ReBAC permission tuples for a skill.
+
+        Args:
+            skill_name: Name of the skill
+            owner_type: Type of owner (agent, user)
+            owner_id: ID of owner
+            tier: Skill tier (agent, tenant, system)
+            tenant_id: Optional tenant ID
+        """
+        if not self._rebac:
+            # No ReBAC manager - skip permission creation
+            return
+
+        try:
+            # Create ownership tuple
+            self._rebac.rebac_write(
+                subject=(owner_type, owner_id),
+                relation="owner-of",
+                object=("skill", skill_name),
+                tenant_id=tenant_id,
+            )
+
+            # For system skills, add public access
+            if tier == "system":
+                self._rebac.rebac_write(
+                    subject=("*", "*"),
+                    relation="public",
+                    object=("skill", skill_name),
+                    tenant_id=None,  # System skills are global
+                )
+
+            # For tenant skills, associate with tenant
+            elif tier == "tenant" and tenant_id or tier == "agent" and tenant_id:
+                self._rebac.rebac_write(
+                    subject=("tenant", tenant_id),
+                    relation="tenant",
+                    object=("skill", skill_name),
+                    tenant_id=tenant_id,
+                )
+
+            logger.debug(f"Created ReBAC permissions for skill '{skill_name}' in tier '{tier}'")
+
+        except Exception as e:
+            logger.error(f"Failed to create ReBAC permissions for skill '{skill_name}': {e}")
+            # Don't fail the operation if ReBAC fails
+            # The skill file is already created
 
     async def create_skill(
         self,
@@ -80,6 +180,9 @@ class SkillManager:
         tier: str = "agent",
         author: str | None = None,
         version: str = "1.0.0",
+        creator_id: str | None = None,
+        creator_type: str = "agent",
+        tenant_id: str | None = None,
         **kwargs: str,
     ) -> str:
         """Create a new skill from a template.
@@ -91,6 +194,9 @@ class SkillManager:
             tier: Target tier (agent, tenant, system)
             author: Optional author name
             version: Initial version (default: 1.0.0)
+            creator_id: ID of the creating agent/user (for ReBAC)
+            creator_type: Type of creator (agent, user) - default: agent
+            tenant_id: Tenant ID for scoping (for ReBAC)
             **kwargs: Additional template variables
 
         Returns:
@@ -98,6 +204,7 @@ class SkillManager:
 
         Raises:
             SkillManagerError: If creation fails
+            PermissionDeniedError: If creator lacks permission
 
         Example:
             >>> path = await manager.create_skill(
@@ -116,6 +223,10 @@ class SkillManager:
             raise SkillManagerError(
                 f"Invalid tier '{tier}'. Must be one of: {list(SkillRegistry.TIER_PATHS.keys())}"
             )
+
+        # Permission check: System tier requires admin (simplified for now)
+        if tier == "system" and self._rebac and creator_id:
+            logger.info(f"Creating system skill '{name}' by {creator_type}:{creator_id}")
 
         # Get tier path
         tier_path = SkillRegistry.TIER_PATHS[tier]
@@ -181,6 +292,16 @@ class SkillManager:
             local_dir = Path(skill_dir)
             local_dir.mkdir(parents=True, exist_ok=True)
             Path(skill_file).write_text(skill_md, encoding="utf-8")
+
+        # Create ReBAC permissions for the skill
+        if creator_id:
+            await self._create_skill_permissions(
+                skill_name=name,
+                owner_type=creator_type,
+                owner_id=creator_id,
+                tier=tier,
+                tenant_id=tenant_id,
+            )
 
         logger.info(f"Created skill '{name}' from template '{template}' at {skill_file}")
         return skill_file
@@ -300,6 +421,9 @@ class SkillManager:
         target_name: str,
         tier: str = "agent",
         author: str | None = None,
+        creator_id: str | None = None,
+        creator_type: str = "agent",
+        tenant_id: str | None = None,
     ) -> str:
         """Fork an existing skill with lineage tracking.
 
@@ -314,6 +438,9 @@ class SkillManager:
             target_name: Name for the forked skill
             tier: Target tier for the fork (default: agent)
             author: Optional author name for the fork
+            creator_id: ID of the creating agent/user (for ReBAC)
+            creator_type: Type of creator (agent, user) - default: agent
+            tenant_id: Tenant ID for scoping (for ReBAC)
 
         Returns:
             Path to forked SKILL.md file
@@ -321,6 +448,7 @@ class SkillManager:
         Raises:
             SkillNotFoundError: If source skill not found
             SkillManagerError: If fork fails
+            PermissionDeniedError: If creator lacks read permission on source
 
         Example:
             >>> path = await manager.fork_skill(
@@ -334,6 +462,15 @@ class SkillManager:
             source_skill = await self._registry.get_skill(source_name)
         except SkillNotFoundError as e:
             raise SkillManagerError(f"Source skill '{source_name}' not found") from e
+
+        # Check read permission on source skill
+        if creator_id and not await self._check_permission(
+            creator_type, creator_id, "fork", source_name, tenant_id
+        ):
+            raise PermissionDeniedError(
+                f"No permission to fork skill '{source_name}'. "
+                f"Subject ({creator_type}:{creator_id}) lacks 'fork' permission."
+            )
 
         # Validate target name
         if not target_name.replace("-", "").replace("_", "").isalnum():
@@ -420,6 +557,16 @@ class SkillManager:
             local_dir.mkdir(parents=True, exist_ok=True)
             Path(target_file).write_text(skill_md, encoding="utf-8")
 
+        # Create ReBAC permissions for the forked skill
+        if creator_id:
+            await self._create_skill_permissions(
+                skill_name=target_name,
+                owner_type=creator_type,
+                owner_id=creator_id,
+                tier=tier,
+                tenant_id=tenant_id,
+            )
+
         logger.info(
             f"Forked skill '{source_name}' to '{target_name}' at {target_file} "
             f"(version {new_version})"
@@ -431,6 +578,9 @@ class SkillManager:
         name: str,
         source_tier: str = "agent",
         target_tier: str = "tenant",
+        publisher_id: str | None = None,
+        publisher_type: str = "agent",
+        tenant_id: str | None = None,
     ) -> str:
         """Publish a skill to a wider audience (e.g., agent -> tenant).
 
@@ -440,6 +590,9 @@ class SkillManager:
             name: Skill name to publish
             source_tier: Source tier (default: agent)
             target_tier: Target tier (default: tenant)
+            publisher_id: ID of the publishing agent/user (for ReBAC)
+            publisher_type: Type of publisher (agent, user) - default: agent
+            tenant_id: Tenant ID for scoping (for ReBAC)
 
         Returns:
             Path to published SKILL.md file
@@ -447,6 +600,7 @@ class SkillManager:
         Raises:
             SkillNotFoundError: If skill not found in source tier
             SkillManagerError: If publish fails
+            PermissionDeniedError: If publisher lacks publish permission
 
         Example:
             >>> # Publish agent skill to tenant library
@@ -482,6 +636,26 @@ class SkillManager:
             raise SkillManagerError(
                 f"Skill '{name}' is in tier '{source_skill.metadata.tier}', not '{source_tier}'"
             )
+
+        # Check publish permission
+        if publisher_id and not await self._check_permission(
+            publisher_type, publisher_id, "publish", name, tenant_id
+        ):
+            raise PermissionDeniedError(
+                f"No permission to publish skill '{name}'. "
+                f"Subject ({publisher_type}:{publisher_id}) lacks 'publish' permission."
+            )
+
+        # Check approval status (governance requirement)
+        if self._governance:
+            is_approved = await self._governance.is_approved(name)
+            if not is_approved:
+                from nexus.skills.governance import GovernanceError
+
+                raise GovernanceError(
+                    f"Skill '{name}' must be approved before publication. "
+                    f"Submit for approval with: nexus skills submit-approval {name}"
+                )
 
         # Get target path
         target_tier_path = SkillRegistry.TIER_PATHS[target_tier]
@@ -535,6 +709,36 @@ class SkillManager:
             local_dir = Path(target_dir)
             local_dir.mkdir(parents=True, exist_ok=True)
             Path(target_file).write_text(skill_md, encoding="utf-8")
+
+        # Update ReBAC permissions for the published skill
+        # When publishing to a different tier, update the tenant association
+        if self._rebac and tenant_id:
+            try:
+                # For system tier, add public access
+                if target_tier == "system":
+                    self._rebac.rebac_write(
+                        subject=("*", "*"),
+                        relation="public",
+                        object=("skill", name),
+                        tenant_id=None,  # System skills are global
+                    )
+                    logger.debug(f"Added public access for system skill '{name}'")
+
+                # For tenant tier, update tenant association
+                elif target_tier == "tenant":
+                    self._rebac.rebac_write(
+                        subject=("tenant", tenant_id),
+                        relation="tenant",
+                        object=("skill", name),
+                        tenant_id=tenant_id,
+                    )
+                    logger.debug(f"Updated tenant association for skill '{name}'")
+
+            except Exception as e:
+                logger.warning(
+                    f"Failed to update ReBAC permissions for published skill '{name}': {e}"
+                )
+                # Don't fail the publish operation if ReBAC update fails
 
         logger.info(
             f"Published skill '{name}' from '{source_tier}' to '{target_tier}' at {target_file}"

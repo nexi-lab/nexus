@@ -120,13 +120,32 @@ class WorkflowEngine:
             self.enabled_workflows[definition.name] = enabled
 
             # Register triggers
+            import sys
+
+            print(f"[ENGINE] Registering triggers for workflow: {definition.name}", file=sys.stderr)
+            print(f"[ENGINE] Number of triggers: {len(definition.triggers)}", file=sys.stderr)
+            print(
+                f"[ENGINE] Trigger registry has: {list(self.trigger_registry.keys())}",
+                file=sys.stderr,
+            )
+
             for trigger_def in definition.triggers:
+                print(
+                    f"[ENGINE] Processing trigger_def: type={trigger_def.type}, config={trigger_def.config}",
+                    file=sys.stderr,
+                )
                 trigger_class = self.trigger_registry.get(trigger_def.type)
+                print(f"[ENGINE] Got trigger_class: {trigger_class}", file=sys.stderr)
                 if not trigger_class:
                     logger.warning(f"Unknown trigger type: {trigger_def.type}, skipping")
+                    print(
+                        f"[ENGINE] WARNING: Unknown trigger type {trigger_def.type}, skipping",
+                        file=sys.stderr,
+                    )
                     continue
 
                 trigger = trigger_class(trigger_def.config)  # type: ignore[abstract]
+                print(f"[ENGINE] Created trigger instance: {trigger}", file=sys.stderr)
 
                 # Create callback that executes this workflow
                 # Bind definition.name to avoid closure issue
@@ -135,9 +154,12 @@ class WorkflowEngine:
                 ) -> None:
                     await self.trigger_workflow(wf_name, event_context)
 
+                print("[ENGINE] Registering trigger with trigger_manager...", file=sys.stderr)
                 self.trigger_manager.register_trigger(trigger, trigger_callback)  # type: ignore[arg-type]
+                print("[ENGINE] Trigger registered successfully", file=sys.stderr)
 
             logger.info(f"Loaded workflow: {definition.name} (enabled={enabled})")
+            print(f"[ENGINE] Workflow loaded successfully: {definition.name}", file=sys.stderr)
             return True
 
         except Exception as e:
@@ -245,12 +267,32 @@ class WorkflowEngine:
 
         # Create execution context
         execution_id = uuid.uuid4()
-        workflow_id = uuid.uuid4()  # In real impl, this would be from DB
+
+        # Get the actual workflow_id from storage (stored when workflow was loaded)
+        workflow_id_str = self.workflow_ids.get(workflow_name)
+        if workflow_id_str:
+            # Convert string UUID to UUID object
+            workflow_id = uuid.UUID(workflow_id_str)
+        else:
+            # Fallback: generate a new UUID if not found (shouldn't happen in normal operation)
+            workflow_id = uuid.uuid4()
+            logger.warning(f"No workflow_id found for {workflow_name}, using generated UUID")
+
+        # Get tenant_id from event context or workflow store
+        tenant_id_str = event_context.get("tenant_id", "default")
+        try:
+            # Try to convert to UUID if it's a valid UUID string
+            import uuid as uuid_module
+
+            tenant_id = uuid_module.UUID(tenant_id_str) if tenant_id_str != "default" else None
+        except (ValueError, AttributeError):
+            # If not a valid UUID, use None or default
+            tenant_id = None
 
         context = WorkflowContext(
             workflow_id=workflow_id,
             execution_id=execution_id,
-            tenant_id=uuid.uuid4(),  # TODO: Get from session/config
+            tenant_id=tenant_id,
             trigger_type=TriggerType(event_context.get("trigger_type", TriggerType.MANUAL.value)),
             trigger_context=event_context,
             variables=definition.variables.copy(),
@@ -288,20 +330,36 @@ class WorkflowEngine:
 
         logger.info(f"Executing workflow: {definition.name} (execution_id={context.execution_id})")
 
+        import sys
+
+        print(f"[EXECUTE_WORKFLOW] Starting workflow: {definition.name}", file=sys.stderr)
+        print(f"[EXECUTE_WORKFLOW] Number of actions: {len(definition.actions)}", file=sys.stderr)
+
         try:
             # Execute actions sequentially
-            for action_def in definition.actions:
+            for i, action_def in enumerate(definition.actions, 1):
+                print(
+                    f"[EXECUTE_WORKFLOW] Processing action {i}/{len(definition.actions)}: {action_def.name} (type={action_def.type})",
+                    file=sys.stderr,
+                )
                 action_class = self.action_registry.get(action_def.type)
+                print(f"[EXECUTE_WORKFLOW] Got action_class: {action_class}", file=sys.stderr)
                 if not action_class:
                     raise ValueError(f"Unknown action type: {action_def.type}")
 
                 # Create action instance
                 action = action_class(action_def.name, action_def.config)  # type: ignore[abstract]
+                print(f"[EXECUTE_WORKFLOW] Created action instance: {action}", file=sys.stderr)
 
                 # Execute action
+                print("[EXECUTE_WORKFLOW] Executing action...", file=sys.stderr)
                 start_time = time.time()
                 result = await action.execute(context)
                 result.duration_ms = (time.time() - start_time) * 1000
+                print(
+                    f"[EXECUTE_WORKFLOW] Action completed. Success={result.success}, Output={result.output}",
+                    file=sys.stderr,
+                )
 
                 # Record result
                 execution.action_results.append(result)

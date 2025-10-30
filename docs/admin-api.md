@@ -1,17 +1,57 @@
 # Admin API Documentation
 
 **Version:** v0.5.1
-**Issue:** [#322](https://github.com/nexi-lab/nexus/issues/322)
+**Issues:** [#322](https://github.com/nexi-lab/nexus/issues/322) (API), [#266](https://github.com/nexi-lab/nexus/issues/266) (CLI)
 
 ## Overview
 
 The Admin API provides secure, remote management of API keys without requiring SSH access to the server. This solves a critical security and operational gap in production deployments.
 
 **Key Benefits:**
-- No SSH access required for user provisioning
-- Remote API key management via HTTP
-- Secure admin-only endpoints
-- Production-ready security (HMAC-SHA256, expiry, revocation)
+- ✅ No SSH access required for user provisioning
+- ✅ Remote API key management via HTTP or CLI
+- ✅ Secure admin-only endpoints
+- ✅ Production-ready security (HMAC-SHA256, expiry, revocation)
+- ✅ Beautiful CLI with tables and JSON output
+
+## Two Ways to Use Admin API
+
+### 1. CLI Commands (Recommended) - Issue #266
+
+User-friendly command-line interface with formatted output:
+
+```bash
+# Set environment variables
+export NEXUS_URL=http://localhost:8080
+export NEXUS_API_KEY=<your_admin_key>
+
+# Create a user
+nexus admin create-user alice --name "Alice Smith" --expires-days 90
+
+# List users (beautiful table output)
+nexus admin list-users
+```
+
+**Best for:**
+- Interactive use
+- Automation scripts
+- Day-to-day operations
+- Beautiful formatted output
+
+### 2. JSON-RPC API (Lower-level) - Issue #322
+
+Direct HTTP API calls for custom integrations:
+
+```bash
+curl -X POST http://localhost:8080/api/nfs/admin_create_key \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -d '{"jsonrpc":"2.0","id":1,"params":{"user_id":"alice",...}}'
+```
+
+**Best for:**
+- Custom integrations
+- Non-CLI environments
+- Programmatic access
 
 ---
 
@@ -29,10 +69,12 @@ The Admin API provides secure, remote management of API keys without requiring S
    python scripts/create-api-key.py admin "Admin Key" --admin --days 365
    ```
 
-3. **Server must be running**:
+3. **Server must be running with database authentication**:
    ```bash
-   nexus serve --host 0.0.0.0 --port 8080
+   nexus serve --host 0.0.0.0 --port 8080 --auth-type=database
    ```
+
+   **Note:** The `--auth-type=database` flag is required for admin API functionality.
 
 ---
 
@@ -308,6 +350,308 @@ curl -X POST http://localhost:8080/api/nfs/admin_revoke_key \
 
 ---
 
+## CLI Commands (v0.5.1+)
+
+### Overview
+
+The Nexus CLI provides user-friendly commands that wrap the Admin API endpoints. All commands support both interactive use and JSON output for automation.
+
+**Command Group:** `nexus admin`
+
+**Global Options:**
+- `--remote-url <url>` - Server URL (or set `NEXUS_URL`)
+- `--remote-api-key <key>` - Admin API key (or set `NEXUS_API_KEY`)
+- `--json-output` - Output as JSON instead of formatted tables
+
+### Setup
+
+```bash
+# Set environment variables (recommended)
+export NEXUS_URL=http://localhost:8080
+export NEXUS_API_KEY=<your_admin_key>
+
+# Or use flags with each command
+nexus admin list-users --remote-url http://localhost:8080 --remote-api-key <key>
+```
+
+### Command Reference
+
+#### 1. Create User
+
+**Command:** `nexus admin create-user <user_id> --name <name> [options]`
+
+**Description:** Create a new user and generate their API key.
+
+**Options:**
+- `--name <text>` (required) - Human-readable key name
+- `--email <text>` - User email (for documentation)
+- `--is-admin` - Grant admin privileges
+- `--expires-days <int>` - Key expiry in days
+- `--tenant-id <text>` - Tenant ID (default: "default")
+- `--subject-type <text>` - Subject type: "user" or "agent"
+- `--json-output` - Output as JSON
+
+**Examples:**
+
+```bash
+# Create regular user with 90-day expiry
+nexus admin create-user alice --name "Alice Smith" --expires-days 90
+
+# Create admin user
+nexus admin create-user admin --name "Admin Key" --is-admin
+
+# Create agent key
+nexus admin create-user bot1 --name "Bot Agent" --subject-type agent
+
+# JSON output for automation
+nexus admin create-user charlie --name "Charlie" --json-output
+```
+
+**Output:**
+
+```
+✓ User created successfully
+
+⚠ Save this API key - it will only be shown once!
+
+User ID:     alice
+Key ID:      d6f5e137-5fce-4e06-9432-6e30324dfad1
+API Key:     sk-default_alice_cd01ee6c_...
+Tenant:      default
+Admin:       False
+Expires:     2026-01-28T18:39:29Z
+```
+
+#### 2. List Users
+
+**Command:** `nexus admin list-users [options]`
+
+**Description:** List all users with their API keys.
+
+**Options:**
+- `--user-id <text>` - Filter by user ID
+- `--tenant-id <text>` - Filter by tenant ID
+- `--is-admin` - Show only admin keys
+- `--include-revoked` - Include revoked keys
+- `--include-expired` - Include expired keys
+- `--limit <int>` - Max results (default: 100)
+- `--json-output` - Output as JSON
+
+**Examples:**
+
+```bash
+# List all active users
+nexus admin list-users
+
+# List keys for specific user
+nexus admin list-users --user-id alice
+
+# List admin keys only
+nexus admin list-users --is-admin
+
+# Include revoked and expired keys
+nexus admin list-users --include-revoked --include-expired
+
+# JSON output
+nexus admin list-users --json-output
+```
+
+**Output (Table):**
+
+```
+                               API Keys (3 total)
+┏━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┓
+┃ User ID ┃ Name       ┃ Key ID     ┃ Admin ┃ Created    ┃ Expires    ┃ Status ┃
+┡━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━┩
+│ admin   │ Admin Key  │ 480d353f-… │ ✓     │ 2025-10-30 │ 2026-10-30 │ Active │
+│ alice   │ Alice      │ e4b8f69e-… │       │ 2025-10-30 │ 2026-01-28 │ Active │
+│ bob     │ Bob Admin  │ 7b1e2f75-… │ ✓     │ 2025-10-30 │ Never      │ Active │
+└─────────┴────────────┴────────────┴───────┴────────────┴────────────┴────────┘
+```
+
+#### 3. Get User Details
+
+**Command:** `nexus admin get-user --user-id <id> | --key-id <id> [options]`
+
+**Description:** Get detailed information about a user or API key.
+
+**Options:**
+- `--user-id <text>` - Look up by user ID
+- `--key-id <text>` - Look up by key ID
+- `--json-output` - Output as JSON
+
+**Examples:**
+
+```bash
+# Get by user ID
+nexus admin get-user --user-id alice
+
+# Get by key ID
+nexus admin get-user --key-id d6f5e137-5fce-4e06-9432-6e30324dfad1
+
+# JSON output
+nexus admin get-user --user-id alice --json-output
+```
+
+**Output:**
+
+```
+User Information
+
+User ID:      alice
+Key ID:       d6f5e137-5fce-4e06-9432-6e30324dfad1
+Name:         Alice Smith
+Tenant:       default
+Admin:        False
+Created:      2025-10-30T08:08:28.289236
+Expires:      2026-01-28T08:08:28.288762
+Last Used:    2025-10-30T10:15:00.123456
+Revoked:      False
+Subject Type: user
+Subject ID:   alice
+```
+
+#### 4. Create Additional Key
+
+**Command:** `nexus admin create-key <user_id> --name <name> [options]`
+
+**Description:** Create an additional API key for an existing user.
+
+**Options:**
+- `--name <text>` (required) - Human-readable key name
+- `--expires-days <int>` - Key expiry in days
+- `--json-output` - Output as JSON
+
+**Examples:**
+
+```bash
+# Create second key for alice
+nexus admin create-key alice --name "Alice's Laptop" --expires-days 90
+
+# Create key with no expiry
+nexus admin create-key alice --name "Alice's Server"
+```
+
+**Output:**
+
+```
+✓ API key created successfully
+
+⚠ Save this API key - it will only be shown once!
+
+User ID:     alice
+Key ID:      5f511ba4-0dad-4695-a50d-e9bb2866150f
+API Key:     sk-default_alice_c2fca930_...
+Expires:     2025-11-29T08:08:32.638821
+```
+
+#### 5. Revoke Key
+
+**Command:** `nexus admin revoke-key <key_id> [options]`
+
+**Description:** Revoke an API key immediately (cannot be undone).
+
+**Options:**
+- `--json-output` - Output as JSON
+
+**Examples:**
+
+```bash
+# Revoke a key
+nexus admin revoke-key d6f5e137-5fce-4e06-9432-6e30324dfad1
+
+# With JSON output
+nexus admin revoke-key d6f5e137-5fce-4e06-9432-6e30324dfad1 --json-output
+```
+
+**Output:**
+
+```
+✓ API key revoked successfully
+Key ID: d6f5e137-5fce-4e06-9432-6e30324dfad1
+```
+
+#### 6. Update Key
+
+**Command:** `nexus admin update-key <key_id> [options]`
+
+**Description:** Update API key settings (expiry, admin status).
+
+**Options:**
+- `--expires-days <int>` - Extend expiry by days from now
+- `--is-admin <bool>` - Change admin status (true/false)
+- `--json-output` - Output as JSON
+
+**Examples:**
+
+```bash
+# Extend expiry by 180 days
+nexus admin update-key d6f5e137-5fce-4e06-9432-6e30324dfad1 --expires-days 180
+
+# Grant admin privileges
+nexus admin update-key d6f5e137-5fce-4e06-9432-6e30324dfad1 --is-admin true
+
+# Revoke admin privileges
+nexus admin update-key d6f5e137-5fce-4e06-9432-6e30324dfad1 --is-admin false
+```
+
+**Output:**
+
+```
+✓ API key updated successfully
+Key ID: d6f5e137-5fce-4e06-9432-6e30324dfad1
+New expiry: 2026-04-28T18:39:29Z
+Admin: True
+```
+
+### CLI Automation Example
+
+The CLI commands work great in shell scripts:
+
+```bash
+#!/bin/bash
+# Automated user provisioning script
+
+export NEXUS_URL="http://nexus-server:8080"
+export NEXUS_API_KEY="<admin_key>"
+
+# Create users from CSV
+while IFS=',' read -r username fullname email; do
+  echo "Creating user: $username"
+
+  # Create user and capture JSON output
+  result=$(nexus admin create-user "$username" \
+    --name "$fullname" \
+    --email "$email" \
+    --expires-days 90 \
+    --json-output)
+
+  # Extract API key from JSON
+  api_key=$(echo "$result" | jq -r '.api_key')
+
+  # Send key to user via secure channel
+  echo "User: $username, Key: $api_key" >> keys.txt
+done < users.csv
+
+echo "✓ All users created"
+```
+
+### CLI Testing
+
+Run the comprehensive demo to see all commands in action:
+
+```bash
+# Run full CLI demo with automatic cleanup
+./examples/cli/admin_cli_demo.sh
+
+# Keep resources for manual testing
+KEEP=1 ./examples/cli/admin_cli_demo.sh
+```
+
+See [examples/cli/README_ADMIN_CLI.md](../examples/cli/README_ADMIN_CLI.md) for detailed CLI documentation.
+
+---
+
 ## Security Considerations
 
 ### ✅ What's Secure
@@ -381,75 +725,168 @@ curl -X POST http://localhost:8080/api/nfs/admin_revoke_key \
 
 ## Migration Guide
 
-### Before (SSH Required)
+### Before (SSH Required) ❌
+
+The old way required SSH access to the production server:
 
 ```bash
-# Admin must SSH to server
+# Step 1: SSH to server
 ssh nexus-server
 
-# Run script directly on server
+# Step 2: Switch to nexus user
+sudo su - nexus
+
+# Step 3: Run script directly on server
+cd /opt/nexus
 export NEXUS_DATABASE_URL="postgresql://..."
 python scripts/create-api-key.py alice "Alice Key" --days 90
 ```
 
-### After (Remote API)
+**Problems:**
+- ❌ Requires SSH access (security risk)
+- ❌ Requires server file system access
+- ❌ Manual process, error-prone
+- ❌ Difficult to audit
+- ❌ Cannot be automated easily
+
+### After (Remote CLI) ✅ Recommended
+
+The new way uses the admin CLI remotely:
+
+```bash
+# One-time setup
+export NEXUS_URL=http://nexus-server:8080
+export NEXUS_API_KEY=<your_admin_key>
+
+# Create user (no SSH needed!)
+nexus admin create-user alice --name "Alice Key" --expires-days 90
+
+# List users
+nexus admin list-users
+
+# Revoke key if compromised
+nexus admin revoke-key <key_id>
+```
+
+**Benefits:**
+- ✅ No SSH access required
+- ✅ Works from any machine with CLI installed
+- ✅ Beautiful formatted output
+- ✅ Easy to automate
+- ✅ Full audit trail via API logs
+
+### After (Remote API) - For Custom Integrations
+
+For custom scripts or non-CLI environments:
 
 ```bash
 # Admin calls API remotely (no SSH)
 curl -X POST http://nexus-server/api/nfs/admin_create_key \
   -H "Authorization: Bearer $ADMIN_KEY" \
-  -d '{"params": {"user_id": "alice", "name": "Alice Key", "expires_days": 90}}'
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "params": {
+      "user_id": "alice",
+      "name": "Alice Key",
+      "expires_days": 90
+    }
+  }'
 ```
 
 ---
 
 ## Testing
 
-### Quick Start (One Command!)
+### CLI Commands Demo (Recommended)
+
+Test all CLI commands with beautiful output:
 
 ```bash
-# Automated testing - sets up everything and runs tests
-./examples/cli/test_admin_api.sh --auto
+# Run comprehensive CLI demo with automatic cleanup
+./examples/cli/admin_cli_demo.sh
+
+# Keep resources for manual testing
+KEEP=1 ./examples/cli/admin_cli_demo.sh
 ```
 
-This automatically:
-1. Creates a temporary SQLite database
-2. Starts the Nexus server
-3. Creates an admin API key
-4. Tests `admin_create_key` and `admin_list_keys`
-5. Cleans up resources
+**What it tests:**
+- ✅ All 6 CLI commands (`create-user`, `list-users`, `get-user`, `create-key`, `revoke-key`, `update-key`)
+- ✅ Multiple user types (regular, admin, agent)
+- ✅ Table and JSON output formats
+- ✅ Filtering and pagination
+- ✅ Key revocation workflow
+- ✅ Key updates and expiry management
 
-### Comprehensive Demo
+**Output includes:**
+- Beautiful color-coded tables
+- JSON output examples
+- Command reference guide
+- Migration examples
+- Comprehensive test summary
 
-For a full demonstration of all 5 endpoints with detailed output:
+See the [CLI Demo README](../examples/cli/README_ADMIN_CLI.md) for details.
+
+### API Endpoints Demo
+
+For testing the underlying JSON-RPC API:
 
 ```bash
-# Run complete demo with automatic cleanup
+# Run complete API demo with automatic cleanup
 ./examples/cli/admin_api_demo.sh
 
 # Keep resources for manual inspection
 KEEP=1 ./examples/cli/admin_api_demo.sh
 ```
 
-This script demonstrates:
-- All 5 Admin API endpoints
+**What it tests:**
+- All 5 Admin API endpoints via `curl`
 - Authentication verification
 - Key revocation testing
 - Before/after comparisons
+- Error handling
 
 ### Manual Testing
+
+#### With CLI
 
 If you have an existing server:
 
 ```bash
-# With existing server and admin key
-ADMIN_KEY="sk-default_admin_..." ./examples/cli/test_admin_api.sh
+# Set up environment
+export NEXUS_URL=http://localhost:8080
+export NEXUS_API_KEY=<your_admin_key>
 
-# Or set up from scratch
+# Test commands
+nexus admin create-user testuser --name "Test User"
+nexus admin list-users
+nexus admin get-user --user-id testuser
+```
+
+#### With API
+
+```bash
+# With existing server and admin key
+ADMIN_KEY="sk-default_admin_..." curl -X POST http://localhost:8080/api/nfs/admin_list_keys \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"params":{}}'
+```
+
+#### From Scratch
+
+```bash
+# Start server
 export NEXUS_DATABASE_URL="postgresql://postgres:nexus@localhost/nexus"
 nexus serve --host 0.0.0.0 --port 8080 --auth-type=database
+
+# In another terminal: create admin key
 python scripts/create-api-key.py admin "Admin Key" --admin
-ADMIN_KEY="<key>" ./examples/cli/test_admin_api.sh
+
+# Use the key
+export NEXUS_API_KEY="<generated_key>"
+nexus admin list-users
 ```
 
 ---
@@ -539,5 +976,12 @@ nexus serve ...
 
 ## Support
 
-- GitHub Issue: https://github.com/nexi-lab/nexus/issues/322
-- Documentation: https://docs.nexus.ai
+- GitHub Issues:
+  - [#322](https://github.com/nexi-lab/nexus/issues/322) - Admin API (Backend)
+  - [#266](https://github.com/nexi-lab/nexus/issues/266) - Admin CLI Commands
+- Demo Scripts:
+  - [`admin_cli_demo.sh`](../examples/cli/admin_cli_demo.sh) - CLI Commands Demo
+  - [`admin_api_demo.sh`](../examples/cli/admin_api_demo.sh) - API Endpoints Demo
+- Documentation:
+  - [CLI Demo README](../examples/cli/README_ADMIN_CLI.md)
+  - Main docs: https://docs.nexus.ai

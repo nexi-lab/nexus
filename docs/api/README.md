@@ -23,6 +23,7 @@ This documentation is organized into focused, maintainable sections. Choose your
 
 ### Advanced Features
 
+- **[Workflow Automation](workflows.md)** - Event-driven workflows that trigger automatically on file operations
 - **[Versioning](versioning.md)** - Version tracking and workspace snapshots
 - **[Workspace Management](workspace-management.md)** - Workspace registry and configuration
 - **[Memory Management](memory-management.md)** - Memory registry for agent memories

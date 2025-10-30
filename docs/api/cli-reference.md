@@ -804,7 +804,29 @@ nexus plugins list
 #### skills - Manage AI skills
 
 ```bash
-# Skills management
+# Discover and list skills
+nexus skills list
+nexus skills list --tier agent
+nexus skills show my-analyzer
+
+# Create and manage skills
+nexus skills create my-skill --description "Description"
+nexus skills fork code-reviewer my-fork
+
+# Approval workflow (requires database)
+nexus skills submit-approval my-analyzer \
+    --submitted-by alice \
+    --reviewers bob,charlie \
+    --comments "Ready for team use"
+
+nexus skills list-approvals --status pending
+nexus skills approve <approval-id> --reviewed-by bob
+nexus skills reject <approval-id> --reviewed-by bob --comments "Needs work"
+
+# Export and share
+nexus skills export my-analyzer --output skill.zip
+
+# Full help
 nexus skills --help
 ```
 
@@ -835,7 +857,7 @@ export NEXUS_TENANT_ID=org_acme
 # Subject identity
 export NEXUS_SUBJECT=user:alice
 
-# Database URL (PostgreSQL)
+# Database URL (PostgreSQL) - Required for skills approval workflow
 export NEXUS_DATABASE_URL=postgresql://user:pass@localhost/nexus
 
 # GCS configuration

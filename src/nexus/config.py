@@ -108,6 +108,12 @@ class NexusConfig(BaseModel):
         description="Memory registry configurations (list of dicts with path, name, description, created_by, metadata)",
     )
 
+    # Workflow automation settings (v0.7.0)
+    enable_workflows: bool = Field(
+        default=True,
+        description="Enable automatic workflow triggering on file operations (default: True)",
+    )
+
     # Remote mode settings (monolithic/distributed)
     url: str | None = Field(default=None, description="Nexus server URL for remote modes")
     api_key: str | None = Field(default=None, description="API key for authentication")

@@ -73,6 +73,7 @@ class EntityType(str, Enum):
     TENANT = "tenant"
     PLAYBOOK = "playbook"  # v0.5.0 ACE
     TRAJECTORY = "trajectory"  # v0.5.0 ACE
+    SKILL = "skill"  # v0.5.0 Skills System
 
 
 @dataclass
@@ -659,6 +660,38 @@ DEFAULT_TRAJECTORY_NAMESPACE = NamespaceConfig(
             "read": ["viewer", "owner"],  # Read = viewer OR owner
             "write": ["owner"],  # Write = owner only (trajectories typically write-once)
             "delete": ["owner"],  # Delete = owner only
+        },
+    },
+)
+
+# v0.5.0 Skills System: Skill namespace
+DEFAULT_SKILL_NAMESPACE = NamespaceConfig(
+    namespace_id=str(uuid.uuid4()),
+    object_type="skill",
+    config={
+        "relations": {
+            # Direct ownership relations
+            "owner": {},  # Full control over skill
+            "editor": {},  # Can modify skill content
+            "viewer": {},  # Can read and fork skill
+            # Tenant membership for skill access
+            "tenant": {},  # Skill belongs to this tenant
+            "tenant_member": {  # Inherit viewer from tenant membership
+                "tupleToUserset": {"tupleset": "tenant", "computedUserset": "member"}
+            },
+            # Public/system skill access
+            "public": {},  # Globally readable (system skills)
+            # Governance roles
+            "approver": {},  # Can approve skill for publication
+        },
+        # P0-1: Explicit permission-to-userset mapping
+        "permissions": {
+            "read": ["viewer", "editor", "owner", "tenant_member", "public"],
+            "write": ["editor", "owner"],
+            "delete": ["owner"],
+            "fork": ["viewer", "editor", "owner", "tenant_member", "public"],
+            "publish": ["owner"],  # Requires ownership (+ approval in workflow)
+            "approve": ["approver"],  # Can approve for publication
         },
     },
 )

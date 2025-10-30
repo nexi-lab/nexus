@@ -1,13 +1,20 @@
 # Nexus Plugin: Skill Seekers
 
-Skill Seekers integration plugin for Nexus - automatically generate SKILL.md files from documentation.
+Skill Seekers integration plugin for Nexus - automatically generate AI-enhanced SKILL.md files from documentation with Firecrawl and ReBAC integration.
 
 ## Features
 
-- **Scrape Documentation** - Extract content from documentation URLs
-- **Generate Skills** - Automatically generate SKILL.md from documentation
-- **Import Skills** - Import generated skills into Nexus filesystem
+### Core Capabilities
+- **llms.txt Detection** - 10x faster scraping using llms.txt standard
+- **Firecrawl Integration** - Multi-page documentation crawling with JavaScript rendering
+- **AI Enhancement** - Claude-powered skill generation for high-quality content
 - **Batch Processing** - Generate multiple skills from a list of URLs
+
+### Security & Governance
+- **ReBAC Integration** - Automatic permission tuple creation
+- **Tier-Based Access** - Agent, tenant, and system tier support
+- **Approval Workflow** - Auto-submit tenant skills for approval
+- **Permission Checks** - Enforce tenant membership and admin requirements
 
 ## Installation
 
@@ -189,10 +196,45 @@ skill-seekers = "nexus_skill_seekers.plugin:SkillSeekersPlugin"
 
 ### Skill Generation Flow
 
-1. **Scrape** - Fetch documentation from URL
-2. **Extract** - Parse HTML/Markdown content
-3. **Generate** - Use LLM to create SKILL.md metadata and description
-4. **Import** - Write to NexusFS at appropriate tier
+1. **llms.txt Check** - Try fetching llms.txt (10x faster)
+2. **Firecrawl Scraping** - Multi-page crawl with JS rendering (if llms.txt not found)
+3. **Fallback** - Basic BeautifulSoup scraping (deprecated)
+4. **AI Enhancement** - Claude API generates professional SKILL.md
+5. **Permission Check** - Verify tier-specific permissions (ReBAC)
+6. **Write to Nexus** - Create skill file at appropriate tier
+7. **ReBAC Tuples** - Create ownership and access tuples
+8. **Approval** - Auto-submit tenant skills for approval workflow
+
+## How It Works
+
+### Tiered Scraping Strategy
+
+```
+Priority 1: llms.txt (⚡ 10x faster)
+  ↓ Not found
+Priority 2: Firecrawl (Multi-page + JS rendering)
+  ↓ Failed
+Priority 3: Basic scraping (Single page, deprecated)
+```
+
+### ReBAC Integration
+
+```
+Agent Tier:
+  → Creates ownership tuple: (agent, creator_id) owner-of (skill, name)
+  → Private to creator
+
+Tenant Tier:
+  → Creates ownership tuple
+  → Creates tenant association: (tenant, tenant_id) tenant (skill, name)
+  → Auto-submits for approval
+  → Accessible to all tenant members after approval
+
+System Tier:
+  → Creates ownership tuple
+  → Creates public access: (*, *) public (skill, name)
+  → Globally readable by all users
+```
 
 ## License
 

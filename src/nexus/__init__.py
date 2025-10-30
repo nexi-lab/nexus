@@ -204,6 +204,7 @@ def connect(
             auto_parse=cfg.auto_parse,
             custom_parsers=cfg.parsers,
             enforce_permissions=enforce_permissions,
+            enable_workflows=cfg.enable_workflows,  # v0.7.0: Workflow automation
         )
 
         # Set memory config for Memory API

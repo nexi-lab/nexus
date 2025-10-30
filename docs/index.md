@@ -189,6 +189,14 @@ Multi-tenancy, workspace isolation, and complete audit trails out of the box.
 
 </div>
 
+<div class="benefit-card" markdown>
+
+### ⚡ Workflow Automation
+
+Event-driven workflows fire automatically on file operations. No manual triggering needed.
+
+</div>
+
 </div>
 
 ## 📚 Learn by Example
@@ -226,6 +234,22 @@ Multi-tenancy, workspace isolation, and complete audit trails out of the box.
     Build multi-tenant apps with workspace isolation and session tracking.
 
     [:octicons-arrow-right-24: View Example](examples/workspace-session.md)
+
+-   :material-robot:{ .lg .middle } __LangGraph Integration__
+
+    ---
+
+    Build ReAct agents with LangGraph using Nexus as persistent filesystem infrastructure.
+
+    [:octicons-arrow-right-24: View Example](examples/langgraph.md)
+
+-   :material-brain:{ .lg .middle } __Agentic Context Engineering__
+
+    ---
+
+    Enable agents to learn from experience with automated reflection and continuous improvement.
+
+    [:octicons-arrow-right-24: View Example](examples/ace.md)
 
 </div>
 

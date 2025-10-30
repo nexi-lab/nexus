@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from typing import Any
 from urllib.parse import urlparse
 
 import click
@@ -26,6 +27,64 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+
+
+class SQLAlchemyDatabaseConnection:
+    """Wrapper for SQLAlchemy session to match DatabaseConnection protocol."""
+
+    def __init__(self, session: Any) -> None:
+        self._session = session
+
+    def execute(self, query: str, params: dict | None = None) -> Any:
+        """Execute a query."""
+        from sqlalchemy import text
+
+        return self._session.execute(text(query), params or {})
+
+    def fetchall(self, query: str, params: dict | None = None) -> list[dict]:
+        """Fetch all results from a query."""
+        from sqlalchemy import text
+
+        result = self._session.execute(text(query), params or {})
+        return [dict(row._mapping) for row in result]
+
+    def fetchone(self, query: str, params: dict | None = None) -> dict | None:
+        """Fetch one result from a query."""
+        from sqlalchemy import text
+
+        result = self._session.execute(text(query), params or {})
+        row = result.fetchone()
+        return dict(row._mapping) if row else None
+
+    def commit(self) -> None:
+        """Commit the transaction."""
+        self._session.commit()
+
+
+def _get_database_connection() -> SQLAlchemyDatabaseConnection | None:
+    """Get database connection for skill governance.
+
+    Returns wrapped SQLAlchemy session using NEXUS_DATABASE_URL environment variable.
+    Returns None if not configured (falls back to in-memory storage).
+    """
+    import os
+
+    db_url = os.getenv("NEXUS_DATABASE_URL")
+    if not db_url:
+        return None
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    try:
+        engine = create_engine(db_url, echo=False)
+        SessionLocal = sessionmaker(bind=engine)
+        session = SessionLocal()
+        return SQLAlchemyDatabaseConnection(session)
+    except Exception as e:
+        console.print(f"[yellow]Warning:[/yellow] Could not connect to database: {e}")
+        console.print("[dim]Falling back to in-memory governance storage[/dim]")
+        return None
 
 
 def register_commands(cli: click.Group) -> None:
@@ -889,6 +948,243 @@ def skills_deps(
 
         asyncio.run(show_deps_async())
         nx.close()
+
+    except Exception as e:
+        handle_error(e)
+
+
+@skills.command(name="submit-approval")
+@click.argument("skill_name", type=str)
+@click.option("--submitted-by", required=True, help="Submitter ID (user or agent)")
+@click.option("--reviewers", help="Comma-separated list of reviewer IDs")
+@click.option("--comments", help="Optional submission comments")
+@add_backend_options
+def skills_submit_approval(
+    skill_name: str,
+    submitted_by: str,
+    reviewers: str | None,
+    comments: str | None,
+    backend_config: BackendConfig,  # noqa: ARG001
+) -> None:
+    """Submit a skill for approval to publish to tenant library.
+
+    Examples:
+        nexus skills submit-approval my-analyzer --submitted-by alice
+        nexus skills submit-approval code-review --submitted-by alice --reviewers bob,charlie
+        nexus skills submit-approval my-skill --submitted-by alice --comments "Ready for team use"
+    """
+    try:
+        import asyncio
+
+        from nexus.skills import SkillGovernance
+
+        # Parse reviewers list
+        reviewer_list = [r.strip() for r in reviewers.split(",")] if reviewers else None
+
+        # Get database connection
+        db_conn = _get_database_connection()
+        governance = SkillGovernance(db_connection=db_conn)
+
+        async def submit_async() -> None:
+            approval_id = await governance.submit_for_approval(
+                skill_name=skill_name,
+                submitted_by=submitted_by,
+                reviewers=reviewer_list,
+                comments=comments,
+            )
+
+            console.print(
+                f"[green]✓[/green] Submitted skill [cyan]{skill_name}[/cyan] for approval"
+            )
+            console.print(f"  Approval ID: [yellow]{approval_id}[/yellow]")
+            console.print(f"  Submitted by: [cyan]{submitted_by}[/cyan]")
+            if reviewer_list:
+                console.print(f"  Reviewers: [cyan]{', '.join(reviewer_list)}[/cyan]")
+            if comments:
+                console.print(f"  Comments: [dim]{comments}[/dim]")
+
+        asyncio.run(submit_async())
+
+    except Exception as e:
+        handle_error(e)
+
+
+@skills.command(name="approve")
+@click.argument("approval_id", type=str)
+@click.option("--reviewed-by", required=True, help="Reviewer ID")
+@click.option(
+    "--reviewer-type", default="user", type=click.Choice(["user", "agent"]), help="Reviewer type"
+)
+@click.option("--comments", help="Optional review comments")
+@click.option("--tenant-id", help="Tenant ID for scoping")
+@add_backend_options
+def skills_approve(
+    approval_id: str,
+    reviewed_by: str,
+    reviewer_type: str,
+    comments: str | None,
+    tenant_id: str | None,
+    backend_config: BackendConfig,  # noqa: ARG001
+) -> None:
+    """Approve a skill for publication.
+
+    Examples:
+        nexus skills approve <approval-id> --reviewed-by bob
+        nexus skills approve <approval-id> --reviewed-by bob --comments "Code quality excellent!"
+        nexus skills approve <approval-id> --reviewed-by manager-id --reviewer-type user --tenant-id acme-corp
+    """
+    try:
+        import asyncio
+
+        from nexus.skills import SkillGovernance
+
+        # Get database connection and rebac manager
+        db_conn = _get_database_connection()
+        # TODO: Add rebac_manager when needed for permission checks
+        governance = SkillGovernance(db_connection=db_conn, rebac_manager=None)
+
+        async def approve_async() -> None:
+            await governance.approve_skill(
+                approval_id=approval_id,
+                reviewed_by=reviewed_by,
+                reviewer_type=reviewer_type,
+                comments=comments,
+                tenant_id=tenant_id,
+            )
+
+            console.print(
+                f"[green]✓[/green] Approved skill (Approval ID: [cyan]{approval_id}[/cyan])"
+            )
+            console.print(f"  Reviewed by: [cyan]{reviewed_by}[/cyan] ({reviewer_type})")
+            if comments:
+                console.print(f"  Comments: [dim]{comments}[/dim]")
+
+        asyncio.run(approve_async())
+
+    except Exception as e:
+        handle_error(e)
+
+
+@skills.command(name="reject")
+@click.argument("approval_id", type=str)
+@click.option("--reviewed-by", required=True, help="Reviewer ID")
+@click.option(
+    "--reviewer-type", default="user", type=click.Choice(["user", "agent"]), help="Reviewer type"
+)
+@click.option("--comments", help="Optional rejection reason")
+@click.option("--tenant-id", help="Tenant ID for scoping")
+@add_backend_options
+def skills_reject(
+    approval_id: str,
+    reviewed_by: str,
+    reviewer_type: str,
+    comments: str | None,
+    tenant_id: str | None,
+    backend_config: BackendConfig,  # noqa: ARG001
+) -> None:
+    """Reject a skill for publication.
+
+    Examples:
+        nexus skills reject <approval-id> --reviewed-by bob --comments "Security concerns"
+        nexus skills reject <approval-id> --reviewed-by manager-id --reviewer-type user --tenant-id acme-corp
+    """
+    try:
+        import asyncio
+
+        from nexus.skills import SkillGovernance
+
+        # Get database connection and rebac manager
+        db_conn = _get_database_connection()
+        # TODO: Add rebac_manager when needed for permission checks
+        governance = SkillGovernance(db_connection=db_conn, rebac_manager=None)
+
+        async def reject_async() -> None:
+            await governance.reject_skill(
+                approval_id=approval_id,
+                reviewed_by=reviewed_by,
+                reviewer_type=reviewer_type,
+                comments=comments,
+                tenant_id=tenant_id,
+            )
+
+            console.print(f"[red]✗[/red] Rejected skill (Approval ID: [cyan]{approval_id}[/cyan])")
+            console.print(f"  Reviewed by: [cyan]{reviewed_by}[/cyan] ({reviewer_type})")
+            if comments:
+                console.print(f"  Reason: [dim]{comments}[/dim]")
+
+        asyncio.run(reject_async())
+
+    except Exception as e:
+        handle_error(e)
+
+
+@skills.command(name="list-approvals")
+@click.option(
+    "--status", type=click.Choice(["pending", "approved", "rejected"]), help="Filter by status"
+)
+@click.option("--skill", help="Filter by skill name")
+@add_backend_options
+def skills_list_approvals(
+    status: str | None,
+    skill: str | None,
+    backend_config: BackendConfig,  # noqa: ARG001
+) -> None:
+    """List skill approval requests.
+
+    Examples:
+        nexus skills list-approvals
+        nexus skills list-approvals --status pending
+        nexus skills list-approvals --skill my-analyzer
+        nexus skills list-approvals --status approved --skill my-skill
+    """
+    try:
+        import asyncio
+
+        from nexus.skills import SkillGovernance
+
+        # Get database connection
+        db_conn = _get_database_connection()
+        governance = SkillGovernance(db_connection=db_conn)
+
+        async def list_approvals_async() -> None:
+            approvals = await governance.list_approvals(status=status, skill_name=skill)
+
+            if not approvals:
+                console.print("[yellow]No approval requests found[/yellow]")
+                return
+
+            # Display approvals in table
+            table = Table(title=f"Skill Approvals ({len(approvals)} found)")
+            table.add_column("Approval ID", style="cyan")
+            table.add_column("Skill Name", style="green")
+            table.add_column("Status", style="yellow")
+            table.add_column("Submitted By", style="magenta")
+            table.add_column("Submitted At", style="dim")
+
+            for approval in approvals:
+                status_color = {
+                    "pending": "yellow",
+                    "approved": "green",
+                    "rejected": "red",
+                }.get(approval.status.value, "white")
+
+                submitted_at_str = (
+                    approval.submitted_at.strftime("%Y-%m-%d %H:%M")
+                    if approval.submitted_at
+                    else "N/A"
+                )
+
+                table.add_row(
+                    approval.approval_id[:16] + "...",
+                    approval.skill_name,
+                    f"[{status_color}]{approval.status.value}[/{status_color}]",
+                    approval.submitted_by,
+                    submitted_at_str,
+                )
+
+            console.print(table)
+
+        asyncio.run(list_approvals_async())
 
     except Exception as e:
         handle_error(e)

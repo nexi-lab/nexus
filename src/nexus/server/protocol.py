@@ -671,6 +671,76 @@ class ProcessRelearningParams:
     limit: int = 10
 
 
+# ============================================================
+# Admin API Parameters (v0.5.1)
+# ============================================================
+
+
+@dataclass
+class AdminCreateKeyParams:
+    """Parameters for admin_create_key() method.
+
+    Admin-only API to create API keys for users without requiring SSH access.
+    """
+
+    user_id: str
+    name: str
+    is_admin: bool = False
+    expires_days: int | None = None
+    tenant_id: str = "default"
+    subject_type: str = "user"
+    subject_id: str | None = None
+
+
+@dataclass
+class AdminListKeysParams:
+    """Parameters for admin_list_keys() method.
+
+    Admin-only API to list API keys with optional filtering.
+    """
+
+    user_id: str | None = None
+    tenant_id: str | None = None
+    is_admin: bool | None = None
+    include_revoked: bool = False
+    include_expired: bool = False
+    limit: int = 100
+    offset: int = 0
+
+
+@dataclass
+class AdminGetKeyParams:
+    """Parameters for admin_get_key() method.
+
+    Admin-only API to get details of a specific API key.
+    """
+
+    key_id: str
+
+
+@dataclass
+class AdminRevokeKeyParams:
+    """Parameters for admin_revoke_key() method.
+
+    Admin-only API to revoke an API key.
+    """
+
+    key_id: str
+
+
+@dataclass
+class AdminUpdateKeyParams:
+    """Parameters for admin_update_key() method.
+
+    Admin-only API to update API key properties.
+    """
+
+    key_id: str
+    expires_days: int | None = None
+    is_admin: bool | None = None
+    name: str | None = None
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -729,6 +799,12 @@ METHOD_PARAMS = {
     "list_versions": ListVersionsParams,
     "rollback": RollbackParams,
     "diff_versions": DiffVersionsParams,
+    # Admin API methods (v0.5.1)
+    "admin_create_key": AdminCreateKeyParams,
+    "admin_list_keys": AdminListKeysParams,
+    "admin_get_key": AdminGetKeyParams,
+    "admin_revoke_key": AdminRevokeKeyParams,
+    "admin_update_key": AdminUpdateKeyParams,
 }
 
 

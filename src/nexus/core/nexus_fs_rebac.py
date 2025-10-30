@@ -490,6 +490,12 @@ class NexusFSReBACMixin:
         results = []
         for row in cursor.fetchall():
             # Both SQLite and PostgreSQL now return dict-like rows
+            # Note: sqlite3.Row doesn't have .get() method, so use try/except for optional fields
+            try:
+                tenant_id = row["tenant_id"]
+            except (KeyError, IndexError):
+                tenant_id = None
+
             results.append(
                 {
                     "tuple_id": row["tuple_id"],
@@ -500,7 +506,7 @@ class NexusFSReBACMixin:
                     "object_id": row["object_id"],
                     "created_at": row["created_at"],
                     "expires_at": row["expires_at"],
-                    "tenant_id": row.get("tenant_id"),
+                    "tenant_id": tenant_id,
                 }
             )
 

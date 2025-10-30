@@ -898,7 +898,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     (tenant_id,),
                 )
                 row = cursor.fetchone()
-                version = row[0] if row else 1
+                version = row["current_version"] if row else 1
             else:
                 # SQLite: Two-step increment
                 cursor.execute(
@@ -910,7 +910,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 row = cursor.fetchone()
 
                 if row:
-                    current = row[0] if isinstance(row, tuple) else row["current_version"]
+                    current = row["current_version"]
                     new_version = current + 1
                     cursor.execute(
                         self._fix_sql_placeholders(

@@ -242,10 +242,8 @@ class ReBACManager:
             logger.debug(f"    Found {len(parents)} parent(s) of {current_type}:{current_id}")
 
             for row in parents:
-                if isinstance(row, tuple):
-                    parent_type, parent_id = row[0], row[1]
-                else:
-                    parent_type, parent_id = row["object_type"], row["object_id"]
+                # Now always dict-like thanks to RealDictCursor/Row factory
+                parent_type, parent_id = row["object_type"], row["object_id"]
 
                 logger.debug(f"      Parent: {parent_type}:{parent_id}")
                 parent_key = (parent_type, parent_id)

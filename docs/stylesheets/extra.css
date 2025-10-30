@@ -561,8 +561,15 @@
 
 .footer-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 2rem;
+  width: 100%;
+}
+
+@media screen and (max-width: 900px) {
+  .footer-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .footer-grid strong {

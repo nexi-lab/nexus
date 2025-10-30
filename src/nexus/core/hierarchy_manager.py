@@ -204,7 +204,7 @@ class HierarchyManager:
         """
         # Get connection to cache database
         conn = self.rebac_manager._get_connection()
-        cursor = conn.cursor()
+        cursor = self.rebac_manager._create_cursor(conn)
 
         # Build list of all paths to invalidate (ancestors + exact + descendants via LIKE)
         # Ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
@@ -266,7 +266,7 @@ class HierarchyManager:
         # This requires querying the database directly
 
         conn = self.rebac_manager._get_connection()
-        cursor = conn.cursor()
+        cursor = self.rebac_manager._create_cursor(conn)
 
         if tenant_id:
             # Tenant-aware query
@@ -298,10 +298,7 @@ class HierarchyManager:
 
         tuple_ids = []
         for row in cursor.fetchall():
-            if hasattr(row, "keys"):
-                tuple_ids.append(row["tuple_id"])
-            else:
-                tuple_ids.append(row[0])
+            tuple_ids.append(row["tuple_id"])
 
         # Delete each tuple
         for tuple_id in tuple_ids:

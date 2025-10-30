@@ -35,7 +35,7 @@ class NexusFSReBACMixin:
         object: tuple[str, str],
         expires_at: datetime | None = None,
         tenant_id: str | None = None,
-        context: dict[str, Any] | None = None,
+        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
     ) -> str:
         """Create a relationship tuple in ReBAC system.
 
@@ -98,7 +98,11 @@ class NexusFSReBACMixin:
         # Use tenant_id from context if not explicitly provided
         effective_tenant_id = tenant_id
         if effective_tenant_id is None and context:
-            effective_tenant_id = context.get("tenant")
+            # Handle both dict and OperationContext/EnhancedOperationContext
+            if isinstance(context, dict):
+                effective_tenant_id = context.get("tenant")
+            elif hasattr(context, "tenant_id"):
+                effective_tenant_id = context.tenant_id
 
         # Create relationship
         return self._rebac_manager.rebac_write(
@@ -115,7 +119,7 @@ class NexusFSReBACMixin:
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        context: dict[str, Any] | None = None,
+        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
         tenant_id: str | None = None,
     ) -> bool:
         """Check if subject has permission on object via ReBAC.
@@ -180,15 +184,15 @@ class NexusFSReBACMixin:
         if not isinstance(object, tuple) or len(object) != 2:
             raise ValueError(f"object must be (type, id) tuple, got {object}")
 
-        # Validate context if provided
-        if context is not None and not isinstance(context, dict):
-            raise ValueError(f"context must be dict, got {type(context)}")
-
         # P0-4: Pass tenant_id for multi-tenant isolation
         # Use tenant_id from operation context if not explicitly provided
         effective_tenant_id = tenant_id
         if effective_tenant_id is None and context:
-            effective_tenant_id = context.get("tenant")
+            # Handle both dict and OperationContext/EnhancedOperationContext
+            if isinstance(context, dict):
+                effective_tenant_id = context.get("tenant")
+            elif hasattr(context, "tenant_id"):
+                effective_tenant_id = context.tenant_id
         # BUGFIX: Don't default to "default" - let ReBAC manager handle None
         # This allows proper tenant isolation testing
 
@@ -256,7 +260,7 @@ class NexusFSReBACMixin:
         permission: str,
         object: tuple[str, str],
         tenant_id: str | None = None,
-        context: dict[str, Any] | None = None,
+        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
     ) -> dict:
         """Explain why a subject has or doesn't have permission on an object.
 
@@ -317,7 +321,11 @@ class NexusFSReBACMixin:
         # Use tenant_id from context if not explicitly provided
         effective_tenant_id = tenant_id
         if effective_tenant_id is None and context:
-            effective_tenant_id = context.get("tenant")
+            # Handle both dict and OperationContext/EnhancedOperationContext
+            if isinstance(context, dict):
+                effective_tenant_id = context.get("tenant")
+            elif hasattr(context, "tenant_id"):
+                effective_tenant_id = context.tenant_id
 
         # Get explanation
         return self._rebac_manager.rebac_explain(
@@ -476,53 +484,31 @@ class NexusFSReBACMixin:
         # Fix SQL placeholders for PostgreSQL
         query = self._rebac_manager._fix_sql_placeholders(query)
 
-        cursor = conn.cursor()
+        cursor = self._rebac_manager._create_cursor(conn)
         cursor.execute(query, params)
 
         results = []
         for row in cursor.fetchall():
-            # Handle both dict-like (SQLite) and tuple (PostgreSQL) access
-            if hasattr(row, "keys"):
-                results.append(
-                    {
-                        "tuple_id": row["tuple_id"],
-                        "subject_type": row["subject_type"],
-                        "subject_id": row["subject_id"],
-                        "relation": row["relation"],
-                        "object_type": row["object_type"],
-                        "object_id": row["object_id"],
-                        "created_at": row["created_at"],
-                        "expires_at": row["expires_at"],
-                        "tenant_id": row.get("tenant_id"),  # BUGFIX: Include tenant_id
-                    }
-                )
-            else:
-                # PostgreSQL returns tuples
-                # Schema order: tuple_id(0), subject_type(1), subject_id(2), relation(3),
-                #               object_type(4), object_id(5), created_at(6), expires_at(7),
-                #               conditions(8), tenant_id(9), subject_tenant_id(10),
-                #               object_tenant_id(11), subject_relation(12)
-                import logging
+            # Both SQLite and PostgreSQL now return dict-like rows
+            # Note: sqlite3.Row doesn't have .get() method, so use try/except for optional fields
+            try:
+                tenant_id = row["tenant_id"]
+            except (KeyError, IndexError):
+                tenant_id = None
 
-                logger = logging.getLogger(__name__)
-                logger.debug(f"rebac_list_tuples: row has {len(row)} columns")
-                logger.debug(
-                    f"rebac_list_tuples: row[9] (tenant_id) = {row[9] if len(row) > 9 else 'N/A'}"
-                )
-
-                results.append(
-                    {
-                        "tuple_id": row[0],
-                        "subject_type": row[1],
-                        "subject_id": row[2],
-                        "relation": row[3],
-                        "object_type": row[4],
-                        "object_id": row[5],
-                        "created_at": row[6],
-                        "expires_at": row[7],
-                        "tenant_id": row[9] if len(row) > 9 else None,  # BUGFIX: Include tenant_id
-                    }
-                )
+            results.append(
+                {
+                    "tuple_id": row["tuple_id"],
+                    "subject_type": row["subject_type"],
+                    "subject_id": row["subject_id"],
+                    "relation": row["relation"],
+                    "object_type": row["object_type"],
+                    "object_id": row["object_id"],
+                    "created_at": row["created_at"],
+                    "expires_at": row["expires_at"],
+                    "tenant_id": tenant_id,
+                }
+            )
 
         return results
 
@@ -767,7 +753,7 @@ class NexusFSReBACMixin:
 
         # Get all namespaces by querying the database
         conn = self._rebac_manager._get_connection()
-        cursor = conn.cursor()
+        cursor = self._rebac_manager._create_cursor(conn)
 
         cursor.execute(
             self._rebac_manager._fix_sql_placeholders(
@@ -781,11 +767,11 @@ class NexusFSReBACMixin:
 
             namespaces.append(
                 {
-                    "namespace_id": row[0],
-                    "object_type": row[1],
-                    "config": json.loads(row[2]),
-                    "created_at": row[3],
-                    "updated_at": row[4],
+                    "namespace_id": row["namespace_id"],
+                    "object_type": row["object_type"],
+                    "config": json.loads(row["config"]),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
                 }
             )
 
@@ -815,7 +801,7 @@ class NexusFSReBACMixin:
             )
 
         conn = self._rebac_manager._get_connection()
-        cursor = conn.cursor()
+        cursor = self._rebac_manager._create_cursor(conn)
 
         # Check if exists
         cursor.execute(

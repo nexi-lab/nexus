@@ -439,6 +439,7 @@ class EnhancedPermissionEnforcer:
         allow_system_bypass: bool = True,  # P0-4: System bypass still enabled (for service operations)
         audit_store: AuditStore | None = None,  # P0-4: Audit logging
         admin_bypass_paths: list[str] | None = None,  # P0-4: Scoped bypass (allowlist)
+        router: Any = None,  # PathRouter for backend object type resolution
     ):
         """Initialize enhanced permission enforcer.
 
@@ -449,6 +450,7 @@ class EnhancedPermissionEnforcer:
             allow_system_bypass: Enable system bypass (for internal operations)
             audit_store: Audit store for bypass logging
             admin_bypass_paths: Optional path allowlist for admin bypass (e.g., ["/admin/*"])
+            router: PathRouter for resolving backend object types (v0.5.0+)
         """
         self.metadata_store = metadata_store
         self.rebac_manager = rebac_manager
@@ -456,6 +458,7 @@ class EnhancedPermissionEnforcer:
         self.allow_system_bypass = allow_system_bypass  # P0-4
         self.audit_store = audit_store  # P0-4
         self.admin_bypass_paths = admin_bypass_paths or []  # P0-4: Scoped bypass
+        self.router = router  # For backend object type resolution
 
     def check(
         self,
@@ -623,6 +626,29 @@ class EnhancedPermissionEnforcer:
 
         permission_name = self._permission_to_string(permission)
 
+        # Get backend-specific object type for ReBAC check
+        # This allows different backends (Postgres, Redis, etc.) to have different permission models
+        object_type = "file"  # Default
+        object_id = path  # Default
+
+        if self.router:
+            try:
+                # Route path to backend to get object type
+                route = self.router.route(
+                    path,
+                    tenant_id=context.tenant_id,
+                    is_admin=context.is_admin,
+                    check_write=False,
+                )
+                # Ask backend for its object type
+                object_type = route.backend.get_object_type(route.backend_path)
+                object_id = route.backend.get_object_id(route.backend_path)
+            except Exception as e:
+                # If routing fails, fall back to default "file" type
+                logger.warning(
+                    f"_check_rebac: Failed to route path for object type: {e}, using default 'file'"
+                )
+
         # P0-2: Pass tenant_id to EnhancedReBACManager
         # For single-tenant deployments, use "default" as tenant_id
         tenant_id = context.tenant_id if context.tenant_id else "default"
@@ -633,14 +659,14 @@ class EnhancedPermissionEnforcer:
         )
         logger.info("_check_rebac calling rebac_manager.rebac_check:")
         logger.info(
-            f"  subject={subject}, permission={permission_name}, object=('file', {path}), tenant_id={tenant_id}"
+            f"  subject={subject}, permission={permission_name}, object=('{object_type}', '{object_id}'), tenant_id={tenant_id}"
         )
 
         # Check ReBAC permission
         result = self.rebac_manager.rebac_check(
             subject=subject,  # P0-2: Use typed subject
             permission=permission_name,
-            object=("file", path),
+            object=(object_type, object_id),
             tenant_id=tenant_id,
         )
 

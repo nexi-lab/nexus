@@ -74,7 +74,7 @@ This document defines the foundational principles that guide all design decision
 
 ## 3. Zero-Deployment Option
 
-**Principle:** Nexus must work as a library with zero deployment, like SQLite.
+**Principle:** Nexus must work as a library with zero deployment.
 
 **Why:** Developers should be able to:
 - `pip install nexus-ai-fs` and start coding immediately

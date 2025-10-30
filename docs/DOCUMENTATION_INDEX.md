@@ -43,6 +43,7 @@ Complete guide to Nexus documentation organized by topic.
 | [Mounts](api/mounts.md) | Backend mounts |
 | [Versioning](api/versioning.md) | Time travel |
 | [Semantic Search](api/semantic-search.md) | Vector search |
+| [LLM Document Reading](api/llm-document-reading.md) | AI-powered Q&A |
 | [Configuration](api/configuration.md) | Config options |
 | [Error Handling](api/error-handling.md) | Error handling |
 | [CLI Reference](api/cli-reference.md) | CLI commands |
@@ -196,4 +197,4 @@ See [Authentication Guide](authentication.md) for complete documentation.
 
 ---
 
-**Last Updated:** 2025-10-26
+**Last Updated:** 2025-10-29

@@ -416,6 +416,90 @@ nexus search stats
 
 ---
 
+### LLM Document Reading
+
+AI-powered document question answering with citations and cost tracking.
+
+#### llm read - Ask questions about documents
+
+```bash
+# Basic question answering
+nexus llm read /reports/q4.pdf "What were the top 3 challenges?"
+
+# Query multiple documents
+nexus llm read "/docs/**/*.md" "How does authentication work?"
+
+# Use different model
+nexus llm read /report.pdf "Summarize this" --model gpt-4o
+nexus llm read /report.pdf "Question" --model anthropic/claude-sonnet-4.5
+
+# Stream response
+nexus llm read /long-report.pdf "Analyze trends" --stream
+
+# Get detailed output with citations
+nexus llm read /docs/**/*.md "Explain the API" --detailed
+
+# Disable semantic search (read full document)
+nexus llm read /report.txt "Summarize" --no-search
+
+# Use keyword search instead of semantic
+nexus llm read /docs/**/*.md "API endpoints" --search-mode keyword
+
+# Use with remote server
+export NEXUS_URL=http://localhost:8080
+export NEXUS_API_KEY=your-api-key
+nexus llm read /doc.pdf "Question"
+```
+
+**Options:**
+- `--model TEXT`: LLM model to use (default: claude-sonnet-4)
+- `--max-tokens INTEGER`: Maximum tokens in response (default: 1000)
+- `--api-key TEXT`: API key for LLM provider (or set ANTHROPIC_API_KEY/OPENAI_API_KEY/OPENROUTER_API_KEY)
+- `--no-search`: Disable semantic search (read entire document)
+- `--search-mode [semantic|keyword|hybrid]`: Search mode for context retrieval (default: semantic)
+- `--stream`: Stream the response (show output as it's generated)
+- `--detailed`: Show detailed output with citations and metadata
+
+**Supported Models:**
+
+**Anthropic Claude** (set `ANTHROPIC_API_KEY`):
+- `claude-sonnet-4` - Balanced performance (recommended)
+- `claude-opus-4` - Most capable
+- `claude-haiku-4` - Fastest and cheapest
+
+**OpenAI GPT** (set `OPENAI_API_KEY`):
+- `gpt-4o` - Latest GPT-4
+- `gpt-4o-mini` - Faster and cheaper
+
+**OpenRouter** (set `OPENROUTER_API_KEY` - 100+ models):
+- `anthropic/claude-sonnet-4.5` - Latest Claude
+- `anthropic/claude-haiku-4.5` - Fast Claude
+- `openrouter/google/gemini-pro-1.5` - Google Gemini
+- See all: https://openrouter.ai/models
+
+**Examples:**
+
+```bash
+# Document Q&A
+nexus llm read /manual.pdf "How do I configure SSL?"
+
+# Code documentation
+nexus llm read "/src/**/*.py" "What design patterns are used?"
+
+# Research analysis
+nexus llm read "/papers/**/*.pdf" "Compare methodologies" --detailed
+
+# Report summarization
+nexus llm read "/reports/*.txt" "Summarize key metrics" --stream
+
+# Multi-language
+nexus llm read /doc.pdf "请用中文总结" --model claude-sonnet-4
+```
+
+See [LLM Document Reading API](llm-document-reading.md) for Python SDK usage and advanced examples.
+
+---
+
 ### Permissions (ReBAC)
 
 #### rebac create - Create relationship

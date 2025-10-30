@@ -68,7 +68,7 @@ class NexusFSCoreMixin:
         Read file content as bytes.
 
         Args:
-            path: Virtual path to read (supports memory virtual paths since v0.4.0)
+            path: Virtual path to read (supports memory virtual paths)
             context: Optional operation context for permission checks (uses default if not provided)
             return_metadata: If True, return dict with content and metadata (etag, version, modified_at).
                            If False, return only content bytes (default: False)
@@ -102,19 +102,18 @@ class NexusFSCoreMixin:
             >>> # Later, write with version check
             >>> nx.write("/workspace/data.json", new_content, if_match=etag)
 
-            >>> # Read memory via virtual path (v0.4.0)
-            >>> content = nx.read("/workspace/alice/agent1/memory/facts")
+            >>> # Read memory via virtual path            >>> content = nx.read("/workspace/alice/agent1/memory/facts")
             >>> content = nx.read("/memory/by-user/alice/facts")  # Same memory!
         """
         path = self._validate_path(path)
 
-        # Phase 2 Integration (v0.4.0): Intercept memory paths
+        # Phase 2 Integration: Intercept memory paths
         from nexus.core.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
-            return self._read_memory_path(path, return_metadata)
+            return self._read_memory_path(path, return_metadata, context=context)
 
-        # Check read permission (v0.3.0)
+        # Check read permission
         self._check_permission(path, Permission.READ, context)
 
         # Route to backend with access control
@@ -132,7 +131,7 @@ class NexusFSCoreMixin:
             raise NexusFileNotFoundError(path)
 
         # Read from routed backend using content hash
-        content = route.backend.read_content(meta.etag)
+        content = route.backend.read_content(meta.etag, context=context)
 
         # Return content with metadata if requested
         if return_metadata:
@@ -201,7 +200,7 @@ class NexusFSCoreMixin:
             raise NexusFileNotFoundError(path)
 
         # Stream from routed backend using content hash
-        yield from route.backend.stream_content(meta.etag, chunk_size=chunk_size)
+        yield from route.backend.stream_content(meta.etag, chunk_size=chunk_size, context=context)
 
     @rpc_expose(description="Write file content")
     def write(
@@ -243,8 +242,7 @@ class NexusFSCoreMixin:
             BackendError: If write operation fails
             AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
             PermissionError: If path is read-only or user doesn't have write permission
-            ConflictError: If if_match is provided and doesn't match current etag (v0.3.9)
-            FileExistsError: If if_none_match=True and file already exists
+            ConflictError: If if_match is provided and doesn't match current etag            FileExistsError: If if_none_match=True and file already exists
 
         Examples:
             >>> # Simple write (no version checking)
@@ -262,13 +260,12 @@ class NexusFSCoreMixin:
             >>> # Create-only mode
             >>> nx.write("/workspace/new.txt", b'content', if_none_match=True)
 
-            >>> # Write memory via virtual path (v0.4.0)
-            >>> nx.write("/workspace/alice/agent1/memory/facts", b'Python is great')
+            >>> # Write memory via virtual path            >>> nx.write("/workspace/alice/agent1/memory/facts", b'Python is great')
             >>> nx.write("/memory/by-user/alice/facts", b'Update')  # Same memory!
         """
         path = self._validate_path(path)
 
-        # Phase 2 Integration (v0.4.0): Intercept memory paths
+        # Phase 2 Integration: Intercept memory paths
         from nexus.core.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
@@ -292,7 +289,7 @@ class NexusFSCoreMixin:
         now = datetime.now(UTC)
         meta = self.metadata.get(path)
 
-        # Capture snapshot before operation for undo capability (v0.3.9)
+        # Capture snapshot before operation for undo capability
         snapshot_hash = meta.etag if meta else None
         metadata_snapshot = None
         if meta:
@@ -327,7 +324,7 @@ class NexusFSCoreMixin:
                 if parent_path:
                     self._check_permission(parent_path, Permission.WRITE, ctx)
 
-        # Optimistic concurrency control (v0.3.9)
+        # Optimistic concurrency control
         if not force:
             # Check if_none_match (create-only mode)
             if if_none_match and meta is not None:
@@ -351,10 +348,10 @@ class NexusFSCoreMixin:
                     )
 
         # Write to routed backend - returns content hash
-        content_hash = route.backend.write_content(content)
+        content_hash = route.backend.write_content(content, context=context)
 
         # NOTE: Do NOT delete old content when updating a file!
-        # Version history (v0.3.5) preserves references to old content hashes.
+        # Version history preserves references to old content hashes.
         # Old content should only be deleted when ALL versions are deleted.
         # CAS reference counting handles cleanup automatically.
 
@@ -404,8 +401,7 @@ class NexusFSCoreMixin:
         if self.auto_parse:
             self._auto_parse_file(path)
 
-        # Log operation for audit trail and undo capability (v0.3.9)
-        # P0 COMPLIANCE FIX: Properly handle audit log failures instead of silently ignoring them
+        # Log operation for audit trail and undo capability        # P0 COMPLIANCE FIX: Properly handle audit log failures instead of silently ignoring them
         try:
             from nexus.storage.operation_logger import OperationLogger
 
@@ -451,7 +447,7 @@ class NexusFSCoreMixin:
                 )
                 # Continue execution - write succeeded but audit log failed
 
-        # Return metadata for optimistic concurrency control (v0.3.9)
+        # Return metadata for optimistic concurrency control
         return {
             "etag": content_hash,
             "version": new_version,
@@ -542,7 +538,7 @@ class NexusFSCoreMixin:
         # Write all content to backend CAS (deduplicated automatically)
         for (path, content), route in zip(validated_files, routes, strict=False):
             # Write to backend - returns content hash
-            content_hash = route.backend.write_content(content)
+            content_hash = route.backend.write_content(content, context=context)
 
             # Get existing metadata for this file
             meta = existing_metadata.get(path)
@@ -664,7 +660,7 @@ class NexusFSCoreMixin:
         Removes file from backend and metadata store.
         Decrements reference count in CAS (only deletes when ref_count=0).
 
-        Supports memory virtual paths since v0.4.0.
+        Supports memory virtual paths.
 
         Args:
             path: Virtual path to delete (supports memory paths)
@@ -679,11 +675,11 @@ class NexusFSCoreMixin:
         """
         path = self._validate_path(path)
 
-        # Phase 2 Integration (v0.4.0): Intercept memory paths
+        # Phase 2 Integration: Intercept memory paths
         from nexus.core.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
-            return self._delete_memory_path(path)
+            return self._delete_memory_path(path, context=context)
 
         # Route to backend with write access check FIRST (to check tenant/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
@@ -704,7 +700,7 @@ class NexusFSCoreMixin:
         if meta is None:
             raise NexusFileNotFoundError(path)
 
-        # Capture snapshot before operation for undo capability (v0.3.9)
+        # Capture snapshot before operation for undo capability
         snapshot_hash = meta.etag
         metadata_snapshot = {
             "size": meta.size,
@@ -714,12 +710,10 @@ class NexusFSCoreMixin:
             "physical_path": meta.physical_path,
         }
 
-        # Check write permission for delete (v0.3.0)
-        # This comes AFTER tenant isolation check so AccessDeniedError takes precedence
+        # Check write permission for delete        # This comes AFTER tenant isolation check so AccessDeniedError takes precedence
         self._check_permission(path, Permission.WRITE, context)
 
-        # Log operation BEFORE deleting CAS content (v0.3.9)
-        # This ensures the snapshot is recorded while content still exists
+        # Log operation BEFORE deleting CAS content        # This ensures the snapshot is recorded while content still exists
         try:
             from nexus.storage.operation_logger import OperationLogger
 
@@ -743,7 +737,7 @@ class NexusFSCoreMixin:
         # Content is only physically deleted when ref_count reaches 0
         # If other files reference the same content, it remains in CAS
         if meta.etag:
-            route.backend.delete_content(meta.etag)
+            route.backend.delete_content(meta.etag, context=context)
 
         # Remove from metadata
         self.metadata.delete(path)
@@ -803,7 +797,7 @@ class NexusFSCoreMixin:
         if not self.metadata.exists(old_path):
             raise NexusFileNotFoundError(old_path)
 
-        # Capture snapshot before operation for undo capability (v0.3.9)
+        # Capture snapshot before operation for undo capability
         meta = self.metadata.get(old_path)
         snapshot_hash = meta.etag if meta else None
         metadata_snapshot = None
@@ -821,7 +815,7 @@ class NexusFSCoreMixin:
         # Perform metadata-only rename (no CAS I/O!)
         self.metadata.rename_path(old_path, new_path)
 
-        # Log operation for audit trail and undo capability (v0.3.9)
+        # Log operation for audit trail and undo capability
         try:
             from nexus.storage.operation_logger import OperationLogger
 
@@ -886,8 +880,10 @@ class NexusFSCoreMixin:
         """
         return hashlib.md5(content).hexdigest()
 
-    def _read_memory_path(self, path: str, return_metadata: bool = False) -> bytes | dict[str, Any]:
-        """Read memory via virtual path (Phase 2 Integration v0.4.0).
+    def _read_memory_path(
+        self, path: str, return_metadata: bool = False, context: OperationContext | None = None
+    ) -> bytes | dict[str, Any]:
+        """Read memory via virtual path (Phase 2 Integration).
 
         Args:
             path: Memory virtual path.
@@ -912,7 +908,7 @@ class NexusFSCoreMixin:
                 raise NexusFileNotFoundError(f"Memory not found at path: {path}")
 
             # Read content from CAS
-            content = self.backend.read_content(memory.content_hash)
+            content = self.backend.read_content(memory.content_hash, context=context)
 
             if return_metadata:
                 return {
@@ -928,7 +924,7 @@ class NexusFSCoreMixin:
             session.close()
 
     def _write_memory_path(self, path: str, content: bytes) -> dict[str, Any]:
-        """Write memory via virtual path (Phase 2 Integration v0.4.0).
+        """Write memory via virtual path (Phase 2 Integration).
 
         Args:
             path: Memory virtual path.
@@ -975,8 +971,8 @@ class NexusFSCoreMixin:
             "size": len(content),
         }
 
-    def _delete_memory_path(self, path: str) -> None:
-        """Delete memory via virtual path (Phase 2 Integration v0.4.0).
+    def _delete_memory_path(self, path: str, context: OperationContext | None = None) -> None:
+        """Delete memory via virtual path (Phase 2 Integration).
 
         Args:
             path: Memory virtual path.
@@ -1000,7 +996,7 @@ class NexusFSCoreMixin:
             router.delete_memory(memory.memory_id)
 
             # Also delete content from CAS (decrement ref count)
-            self.backend.delete_content(memory.content_hash)
+            self.backend.delete_content(memory.content_hash, context=context)
         finally:
             session.close()
 

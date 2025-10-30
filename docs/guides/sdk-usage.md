@@ -189,7 +189,7 @@ print(f"Hash: {metadata.content_hash}")
 
 ### Permissions (ReBAC)
 
-**Note:** Embedded mode (SDK) doesn't enforce permissions by default - it's single-user like SQLite. For production with permissions, use server mode with authentication.
+**Note:** Embedded mode (SDK) doesn't enforce permissions by default - it's single-user with zero deployment. For production with permissions, use server mode with authentication.
 
 To test permission logic in embedded mode, explicitly enable permissions:
 

@@ -194,6 +194,157 @@ users = nx.rebac_expand("write", "file", "/workspace/project")
 print(f"Users with write access: {users}")
 ```
 
+## Autonomous Agent Task Workflow
+
+Build autonomous task management agents using only Nexus memory primitives. No dedicated task system required.
+
+This example demonstrates:
+- Flexible data storage with memory system
+- Agent identity and permissions
+- Task discovery and dynamic workflow generation
+- Multi-agent coordination capabilities
+
+```python
+import nexus
+import json
+import time
+import random
+from datetime import datetime
+
+# Connect with agent identity
+nx = nexus.connect(config={
+    "data_dir": "./nexus-task-demo",
+    "agent_id": "agent_demo",
+})
+
+# Store task as structured memory
+task_data = {
+    "task_id": "task_001",
+    "title": "Implement authentication",
+    "status": "pending",      # pending | in_progress | completed
+    "priority": 1,            # 1=highest
+    "blocked_by": [],         # List of task_ids that block this
+    "discovered_from": None,  # Parent task_id for discovered tasks
+    "agent_id": None,
+    "created_at": datetime.now().isoformat(),
+    "completed_at": None,
+}
+
+# Store task in memory
+memory_id = nx.memory.store(
+    json.dumps(task_data),
+    scope="agent",
+    memory_type="task"
+)
+
+# Query ready tasks (no blockers)
+def find_ready_work(nx):
+    memories = nx.memory.query(scope="agent", memory_type="task")
+    tasks = [json.loads(m['content']) for m in memories]
+
+    # Filter to pending tasks with no blockers
+    ready = [
+        t for t in tasks
+        if t['status'] == 'pending' and not t['blocked_by']
+    ]
+
+    # Sort by priority
+    ready.sort(key=lambda t: t['priority'])
+    return ready
+
+# Autonomous agent loop
+ready_tasks = find_ready_work(nx)
+for task in ready_tasks:
+    print(f"Working on: {task['title']}")
+    time.sleep(1)  # Simulate work
+
+    # Discover new tasks (50% chance)
+    if random.random() < 0.5:
+        new_task = {
+            "task_id": f"task_{random.randint(1000, 9999)}",
+            "title": f"Test: {task['title']}",
+            "status": "pending",
+            "priority": 2,
+            "discovered_from": task['task_id'],
+            "created_at": datetime.now().isoformat(),
+        }
+        nx.memory.store(json.dumps(new_task), scope="agent", memory_type="task")
+        print(f"  → Discovered: {new_task['task_id']}")
+```
+
+**Full working demo:** See [`examples/task_workflow/`](../examples/task_workflow/) for a complete autonomous agent implementation.
+
+Features demonstrated:
+- **Zero dependencies** - Pure memory operations, no external services
+- **Agent identity** - Automatic permission handling
+- **Multi-agent coordination** - Multiple agents work on shared task pool
+- **Task discovery** - Dynamic workflow generation
+- **Embedded mode** - Runs locally with zero deployment
+
+## Agentic Context Engineering (ACE)
+
+Enable AI agents to learn from experience and continuously improve performance through automated reflection and strategy curation.
+
+This example demonstrates:
+- Trajectory tracking for agent actions
+- Automated reflection on successes and failures
+- Dynamic playbook updates with learned strategies
+- Measurable performance improvement over time
+
+```python
+import nexus
+
+# Connect to Nexus
+nx = nexus.connect(config={"data_dir": "./nexus-data"})
+
+# Start tracking an agent task
+traj_id = nx.memory.start_trajectory(
+    task_description="Validate customer data records",
+    playbook="data_validator"
+)
+
+# Load learned strategies from previous runs
+playbook = nx.memory.get_playbook("data_validator")
+strategies = playbook.get("strategies", [])
+
+# Execute task using learned strategies
+accuracy = validate_data(records, strategies=strategies)
+
+# Complete trajectory with performance metric
+nx.memory.complete_trajectory(
+    traj_id,
+    outcome="success",
+    success_score=accuracy
+)
+
+# Agent automatically reflects on what worked
+reflection = nx.memory.reflect(traj_id)
+
+# Curate playbook with high-performing strategies
+nx.memory.curate_playbook(
+    reflection_ids=[reflection.id],
+    playbook_name="data_validator"
+)
+
+# Next run will use improved strategies
+# Repeat over epochs → continuous improvement
+```
+
+**Real results from the ACE demo:**
+- **Epoch 0**: 58% accuracy (no learned rules)
+- **Epoch 10**: 95% accuracy (+37% improvement)
+- Agent automatically discovered 15+ validation rules
+- Zero manual rule engineering required
+
+**Full working demo:** See [`examples/ace/`](../examples/ace/) for complete implementation with Titanic dataset, learning curves, and mermaid diagrams showing the auto-improvement loop.
+
+Key features:
+- **Automated learning** - Agent improves without human intervention
+- **Trajectory tracking** - Full observability of agent behavior
+- **Reflection engine** - Extracts insights from successes and failures
+- **Playbook curation** - Stores and evolves proven strategies
+- **Measurable ROI** - Quantified performance improvements
+
 ---
 
 ## Next Steps

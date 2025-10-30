@@ -1,0 +1,64 @@
+{
+  "description": "Simulated API endpoints with controlled failure rates for ACE testing",
+  "endpoints": [
+    {
+      "url": "https://flaky-api.example.com/users",
+      "description": "User API - High failure rate for rate limiting",
+      "failure_rate": 0.5,
+      "failure_types": [
+        {"status_code": 429, "probability": 0.7, "message": "Too Many Requests"},
+        {"status_code": 503, "probability": 0.2, "message": "Service Unavailable"},
+        {"status_code": 500, "probability": 0.1, "message": "Internal Server Error"}
+      ],
+      "response_time_ms": 200,
+      "expected_success_with_retries": 0.95
+    },
+    {
+      "url": "https://flaky-api.example.com/orders",
+      "description": "Orders API - Moderate timeout rate",
+      "failure_rate": 0.3,
+      "failure_types": [
+        {"status_code": 504, "probability": 0.5, "message": "Gateway Timeout"},
+        {"status_code": 429, "probability": 0.5, "message": "Too Many Requests"}
+      ],
+      "response_time_ms": 500,
+      "expected_success_with_retries": 0.92
+    },
+    {
+      "url": "https://flaky-api.example.com/products",
+      "description": "Products API - Low failure rate",
+      "failure_rate": 0.1,
+      "failure_types": [
+        {"status_code": 500, "probability": 1.0, "message": "Internal Server Error"}
+      ],
+      "response_time_ms": 100,
+      "expected_success_with_retries": 0.99
+    },
+    {
+      "url": "https://stable-api.example.com/health",
+      "description": "Health Check API - Very reliable",
+      "failure_rate": 0.01,
+      "failure_types": [
+        {"status_code": 503, "probability": 1.0, "message": "Service Unavailable"}
+      ],
+      "response_time_ms": 50,
+      "expected_success_with_retries": 1.0
+    }
+  ],
+  "test_scenarios": [
+    {
+      "name": "High Volume Requests",
+      "endpoints": ["users", "orders"],
+      "requests_per_endpoint": 20,
+      "expected_baseline_success": 0.40,
+      "expected_learned_success": 0.93
+    },
+    {
+      "name": "Mixed Traffic",
+      "endpoints": ["users", "products", "health"],
+      "requests_per_endpoint": 15,
+      "expected_baseline_success": 0.53,
+      "expected_learned_success": 0.96
+    }
+  ]
+}

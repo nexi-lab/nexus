@@ -201,6 +201,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "parse",  # Async - requires async RPC support
         # Already exposed via different mechanism
         "write_batch",  # Exposed via different RPC endpoint
+        "list_memories",  # Handled manually by dispatcher, calls memory.list() instead
     }
 
     # Get all public methods

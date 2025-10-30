@@ -18,7 +18,10 @@ from nexus.llm.cancellation import (
     reset_shutdown_flag,
     should_continue,
 )
+from nexus.llm.citation import Citation, CitationExtractor, DocumentReadResult
 from nexus.llm.config import LLMConfig
+from nexus.llm.context_builder import ContextBuilder
+from nexus.llm.document_reader import LLMDocumentReader
 from nexus.llm.exceptions import (
     LLMAuthenticationError,
     LLMCancellationError,
@@ -52,6 +55,12 @@ __all__ = [
     "LLMProvider",
     "LiteLLMProvider",
     "LLMResponse",
+    # Document Reading
+    "LLMDocumentReader",
+    "DocumentReadResult",
+    "Citation",
+    "CitationExtractor",
+    "ContextBuilder",
     # Messages
     "Message",
     "MessageRole",

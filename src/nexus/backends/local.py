@@ -9,11 +9,15 @@ import platform
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.storage.content_cache import ContentCache
+
+if TYPE_CHECKING:
+    from nexus.core.permissions import OperationContext
+    from nexus.core.permissions_enhanced import EnhancedOperationContext
 
 
 class LocalBackend(Backend):
@@ -226,12 +230,16 @@ class LocalBackend(Backend):
         """Acquire lock on file."""
         return FileLock(path)
 
-    def write_content(self, content: bytes) -> str:
+    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
         """
         Write content to CAS storage and return its hash.
 
         If content already exists, increments reference count.
         Handles race conditions when multiple threads write the same content.
+
+        Args:
+            content: File content as bytes
+            _context: Operation context (ignored for local backend)
         """
         content_hash = self._compute_hash(content)
         content_path = self._hash_to_path(content_hash)
@@ -304,8 +312,13 @@ class LocalBackend(Backend):
                 f"Failed to write content: {e}", backend="local", path=content_hash
             ) from e
 
-    def read_content(self, content_hash: str) -> bytes:
-        """Read content by its hash with retry for Windows file locking."""
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+        """Read content by its hash with retry for Windows file locking.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            _context: Operation context (ignored for local backend)
+        """
         # Check cache first for fast path
         if self.content_cache is not None:
             cached_content = self.content_cache.get(content_hash)
@@ -371,11 +384,17 @@ class LocalBackend(Backend):
             path=content_hash,
         )
 
-    def batch_read_content(self, content_hashes: list[str]) -> dict[str, bytes | None]:
+    def batch_read_content(
+        self, content_hashes: list[str], context: "OperationContext | None" = None
+    ) -> dict[str, bytes | None]:
         """
         Optimized batch read for local backend.
 
         Leverages content cache to reduce disk I/O operations.
+
+        Args:
+            content_hashes: List of SHA-256 hashes as hex strings
+            context: Operation context (ignored for local backend)
         """
         result: dict[str, bytes | None] = {}
 
@@ -394,7 +413,7 @@ class LocalBackend(Backend):
         # Second pass: read uncached content from disk
         for content_hash in uncached_hashes:
             try:
-                content = self.read_content(content_hash)
+                content = self.read_content(content_hash, context=context)
                 result[content_hash] = content
             except Exception:
                 # Return None for missing/errored content (per batch_read spec)
@@ -402,12 +421,19 @@ class LocalBackend(Backend):
 
         return result
 
-    def stream_content(self, content_hash: str, chunk_size: int = 8192) -> Any:
+    def stream_content(
+        self, content_hash: str, chunk_size: int = 8192, _context: "OperationContext | None" = None
+    ) -> Any:
         """
         Stream content from disk in chunks without loading entire file into memory.
 
         This is optimized for local filesystem to use native file streaming.
         For very large files (GB+), this prevents memory exhaustion.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            chunk_size: Size of each chunk in bytes (default: 8KB)
+            _context: Operation context (ignored for local backend)
         """
         content_path = self._hash_to_path(content_hash)
 
@@ -431,8 +457,13 @@ class LocalBackend(Backend):
                 f"Failed to stream content: {e}", backend="local", path=content_hash
             ) from e
 
-    def delete_content(self, content_hash: str) -> None:
-        """Delete content by hash with reference counting."""
+    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+        """Delete content by hash with reference counting.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            _context: Operation context (ignored for local backend)
+        """
         content_path = self._hash_to_path(content_hash)
 
         if not content_path.exists():
@@ -475,13 +506,23 @@ class LocalBackend(Backend):
         except OSError:
             pass
 
-    def content_exists(self, content_hash: str) -> bool:
-        """Check if content exists."""
+    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+        """Check if content exists.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            _context: Operation context (ignored for local backend)
+        """
         content_path = self._hash_to_path(content_hash)
         return content_path.exists()
 
-    def get_content_size(self, content_hash: str) -> int:
-        """Get content size in bytes."""
+    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+        """Get content size in bytes.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            _context: Operation context (ignored for local backend)
+        """
         content_path = self._hash_to_path(content_hash)
 
         if not content_path.exists():
@@ -494,9 +535,14 @@ class LocalBackend(Backend):
                 f"Failed to get content size: {e}", backend="local", path=content_hash
             ) from e
 
-    def get_ref_count(self, content_hash: str) -> int:
-        """Get reference count for content."""
-        if not self.content_exists(content_hash):
+    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+        """Get reference count for content.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            context: Operation context (ignored for local backend)
+        """
+        if not self.content_exists(content_hash, context=context):
             raise NexusFileNotFoundError(content_hash)
 
         metadata = self._read_metadata(content_hash)
@@ -504,8 +550,21 @@ class LocalBackend(Backend):
 
     # === Directory Operations ===
 
-    def mkdir(self, path: str, parents: bool = False, exist_ok: bool = False) -> None:
-        """Create directory in virtual directory structure."""
+    def mkdir(
+        self,
+        path: str,
+        parents: bool = False,
+        exist_ok: bool = False,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
+    ) -> None:
+        """Create directory in virtual directory structure.
+
+        Args:
+            path: Directory path (relative to backend root)
+            parents: Create parent directories if needed (like mkdir -p)
+            exist_ok: Don't raise error if directory exists
+            _context: Operation context (ignored for local backend)
+        """
         full_path = self.dir_root / path.lstrip("/")
 
         try:

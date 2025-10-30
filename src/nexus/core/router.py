@@ -619,3 +619,26 @@ class PathRouter:
             ...     print(f"{mount.mount_point} -> {mount.backend}")
         """
         return self._mounts.copy()
+
+    def get_backend_by_name(self, name: str) -> "Backend | None":
+        """
+        Look up backend by name.
+
+        Useful for operations that need to access a specific backend
+        (e.g., CLI undo needs to read from the backend that stored content).
+
+        Args:
+            name: Backend name (e.g., "local", "gcs", "postgres")
+
+        Returns:
+            Backend instance if found, None otherwise
+
+        Example:
+            >>> backend = router.get_backend_by_name("local")
+            >>> if backend:
+            ...     content = backend.read_content(content_hash)
+        """
+        for mount in self._mounts:
+            if mount.backend.name == name:
+                return mount.backend
+        return None

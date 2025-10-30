@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -45,8 +46,8 @@ class FilePathModel(Base):
     )
 
     # P0 SECURITY: Defense-in-depth tenant isolation
-    # v0.7.0: tenant_id restored for database-level filtering (defense-in-depth)
-    # Previous v0.5.0 architecture relied solely on ReBAC, creating single point of failure
+    # tenant_id restored for database-level filtering (defense-in-depth)
+    # Previous architecture relied solely on ReBAC, creating single point of failure
     tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     # Path information
@@ -79,7 +80,7 @@ class FilePathModel(Base):
         String(255), nullable=True
     )  # Worker/process ID that locked this file
 
-    # Version tracking (v0.3.5)
+    # Version tracking
     current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     # Relationships
@@ -89,7 +90,7 @@ class FilePathModel(Base):
 
     # Indexes and constraints
     __table_args__ = (
-        # v0.7.0 P0 SECURITY: Restore tenant-scoped unique constraint for defense-in-depth
+        # P0 SECURITY: Restore tenant-scoped unique constraint for defense-in-depth
         # Old uq_virtual_path (global uniqueness) kept for backward compatibility with NULL tenant_id
         # New uq_tenant_virtual_path enforces uniqueness within tenant
         UniqueConstraint("virtual_path", name="uq_virtual_path"),  # Legacy, for NULL tenant_id
@@ -135,7 +136,7 @@ class FilePathModel(Base):
         if self.size_bytes < 0:
             raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")
 
-        # v0.5.0: tenant_id is now optional (nullable)
+        # tenant_id is now optional (nullable)
         # Validation removed for backward compatibility
 
 
@@ -769,7 +770,7 @@ class WorkflowExecutionModel(Base):
 
 
 class EntityRegistryModel(Base):
-    """Entity registry for identity-based memory system (v0.4.0).
+    """Entity registry for identity-based memory system.
 
     Lightweight registry for ID disambiguation and relationship tracking.
     Enables order-neutral virtual paths for memories.
@@ -831,7 +832,7 @@ class EntityRegistryModel(Base):
 
 
 class MemoryModel(Base):
-    """Memory storage for AI agents (v0.4.0).
+    """Memory storage for AI agents.
 
     Identity-based memory with order-neutral paths and 3-layer permissions.
     Canonical storage by memory_id, with virtual path views for browsing.
@@ -859,24 +860,24 @@ class MemoryModel(Base):
     # Scope and visibility
     scope: Mapped[str] = mapped_column(
         String(50), nullable=False, default="agent"
-    )  # 'agent', 'user', 'tenant', 'global', 'session' (v0.5.0)
+    )  # 'agent', 'user', 'tenant', 'global', 'session'
     visibility: Mapped[str] = mapped_column(
         String(50), nullable=False, default="private"
     )  # 'private', 'shared', 'public'
 
-    # Session scope (v0.5.0 ACE) - for session-scoped memories
+    # Session scope for session-scoped memories
     session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     # Memory metadata
     memory_type: Mapped[str | None] = mapped_column(
         String(50), nullable=True
-    )  # 'fact', 'preference', 'experience', 'strategy', 'anti_pattern', 'observation', 'trajectory', 'reflection', 'consolidated' (v0.5.0 ACE)
+    )  # 'fact', 'preference', 'experience', 'strategy', 'anti_pattern', 'observation', 'trajectory', 'reflection', 'consolidated'
     importance: Mapped[float | None] = mapped_column(
         Float, nullable=True
     )  # 0.0-1.0 importance score
 
-    # ACE (Agentic Context Engineering) relationships (v0.5.0)
+    # ACE (Agentic Context Engineering) relationships
     trajectory_id: Mapped[str | None] = mapped_column(
         String(36), nullable=True
     )  # Link to trajectory
@@ -954,7 +955,7 @@ class ReBACTupleModel(Base):
     Stores (subject, relation, object) tuples representing relationships
     between entities in the authorization graph.
 
-    v0.6.0: Added tenant_id for tenant isolation (P0-2 fix)
+    Added tenant_id for tenant isolation (P0-2 fix)
 
     Examples:
         - (agent:alice, member-of, group:developers)
@@ -965,7 +966,7 @@ class ReBACTupleModel(Base):
 
     tuple_id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
-    # Tenant isolation (v0.6.0) - P0-2 Critical Security Fix
+    # Tenant isolation - P0-2 Critical Security Fix
     tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     subject_tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     object_tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -995,7 +996,7 @@ class ReBACTupleModel(Base):
 
     # Composite index for efficient lookups
     __table_args__ = (
-        # Tenant-scoped indexes (v0.6.0)
+        # Tenant-scoped indexes
         Index("idx_rebac_tenant_subject", "tenant_id", "subject_type", "subject_id"),
         Index("idx_rebac_tenant_object", "tenant_id", "object_type", "object_id"),
         # Original indexes (kept for backward compatibility)
@@ -1003,7 +1004,7 @@ class ReBACTupleModel(Base):
         Index("idx_rebac_object", "object_type", "object_id"),
         Index("idx_rebac_relation", "relation"),
         Index("idx_rebac_expires", "expires_at"),
-        # Subject relation index for userset-as-subject (v0.7.0)
+        # Subject relation index for userset-as-subject
         Index("idx_rebac_subject_relation", "subject_type", "subject_id", "subject_relation"),
     )
 
@@ -1080,8 +1081,6 @@ class ReBACVersionSequenceModel(Base):
 
     Stores monotonic version counters used to track ReBAC tuple changes
     for each tenant. Used for bounded staleness caching (P0-1).
-
-    Added in v0.7.0 (migration 04a22b67d228).
     """
 
     __tablename__ = "rebac_version_sequences"
@@ -1101,14 +1100,14 @@ class ReBACCheckCacheModel(Base):
     Caches the results of expensive graph traversal operations
     to improve performance of repeated permission checks.
 
-    v0.6.0: Added tenant_id for tenant-scoped caching
+    Added tenant_id for tenant-scoped caching
     """
 
     __tablename__ = "rebac_check_cache"
 
     cache_id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
-    # Tenant isolation (v0.6.0)
+    # Tenant isolation
     tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     # Cached check parameters
@@ -1129,7 +1128,7 @@ class ReBACCheckCacheModel(Base):
 
     # Composite index for efficient lookups
     __table_args__ = (
-        # Tenant-aware cache lookup (v0.6.0)
+        # Tenant-aware cache lookup
         Index(
             "idx_rebac_cache_tenant_check",
             "tenant_id",
@@ -1291,7 +1290,7 @@ class MountConfigModel(Base):
             raise ValidationError(f"priority must be non-negative, got {self.priority}")
 
 
-# === Workspace & Memory Registry Models (v2.0) ===
+# === Workspace & Memory Registry Models ===
 
 
 class WorkspaceConfigModel(Base):
@@ -1320,13 +1319,13 @@ class WorkspaceConfigModel(Base):
     )
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # Agent identity (v0.5.0 ACE)
+    # Agent identity
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # Owner
     agent_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True, index=True
     )  # Agent that created it
 
-    # Session scope (v0.5.0 ACE)
+    # Session scope
     scope: Mapped[str] = mapped_column(
         String(20), nullable=False, default="persistent"
     )  # "persistent" or "session"
@@ -1377,13 +1376,13 @@ class MemoryConfigModel(Base):
     )
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # Agent identity (v0.5.0 ACE)
+    # Agent identity
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # Owner
     agent_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True, index=True
     )  # Agent that created it
 
-    # Session scope (v0.5.0 ACE)
+    # Session scope
     scope: Mapped[str] = mapped_column(
         String(20), nullable=False, default="persistent"
     )  # "persistent" or "session"
@@ -1411,7 +1410,7 @@ class MemoryConfigModel(Base):
 
 
 # ============================================================================
-# ACE (Agentic Context Engineering) Tables - v0.5.0
+# ACE (Agentic Context Engineering) Tables
 # ============================================================================
 
 
@@ -1420,8 +1419,6 @@ class TrajectoryModel(Base):
 
     Tracks execution trajectories for learning and reflection.
     Each trajectory represents a task execution with steps, decisions, and outcomes.
-
-    Added in v0.5.0 for ACE integration.
     """
 
     __tablename__ = "trajectories"
@@ -1472,6 +1469,22 @@ class TrajectoryModel(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
+    # Feedback tracking (Dynamic Feedback System)
+    feedback_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    effective_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    needs_relearning: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )  # Boolean for PostgreSQL compatibility
+    relearning_priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_feedback_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Path context (Optional path-based filtering)
+    path: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+
+    # Session lifecycle (For temporary trajectories)
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
     # Relationships
     parent_trajectory: Mapped["TrajectoryModel | None"] = relationship(
         "TrajectoryModel", remote_side=[trajectory_id], foreign_keys=[parent_trajectory_id]
@@ -1485,6 +1498,10 @@ class TrajectoryModel(Base):
         Index("idx_traj_status", "status"),
         Index("idx_traj_task_type", "task_type"),
         Index("idx_traj_completed", "completed_at"),
+        Index("idx_traj_relearning", "needs_relearning", "relearning_priority"),
+        Index("idx_traj_path", "path"),
+        Index("idx_traj_session", "session_id"),
+        Index("idx_traj_expires", "expires_at"),
     )
 
     def __repr__(self) -> str:
@@ -1527,8 +1544,6 @@ class PlaybookModel(Base):
 
     Stores learned strategies and patterns for agents.
     Playbooks contain strategies (helpful, harmful, neutral) with evidence tracking.
-
-    Added in v0.5.0 for ACE integration.
     """
 
     __tablename__ = "playbooks"
@@ -1580,6 +1595,13 @@ class PlaybookModel(Base):
     )
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # Path context (Optional path-based filtering)
+    path: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+
+    # Session lifecycle (For temporary playbooks)
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
     # Indexes and constraints
     __table_args__ = (
         UniqueConstraint("agent_id", "name", "version", name="uq_playbook_agent_name_version"),
@@ -1588,6 +1610,9 @@ class PlaybookModel(Base):
         Index("idx_playbook_tenant", "tenant_id"),
         Index("idx_playbook_name", "name"),
         Index("idx_playbook_scope", "scope"),
+        Index("idx_playbook_path", "path"),
+        Index("idx_playbook_session", "session_id"),
+        Index("idx_playbook_expires", "expires_at"),
     )
 
     def __repr__(self) -> str:
@@ -1644,8 +1669,6 @@ class UserSessionModel(Base):
 
     Tracks active sessions with optional TTL for automatic cleanup.
     Sessions can be temporary (with expires_at) or persistent (expires_at=None).
-
-    Added in v0.5.0 for session management.
     """
 
     __tablename__ = "user_sessions"
@@ -1695,3 +1718,70 @@ class UserSessionModel(Base):
         if self.expires_at is None:
             return False  # Persistent session never expires
         return datetime.now(UTC) > self.expires_at
+
+
+class TrajectoryFeedbackModel(Base):
+    """Dynamic feedback for trajectories.
+
+    Allows adding feedback to completed trajectories for:
+    - Production monitoring results
+    - Human ratings and reviews
+    - A/B test outcomes
+    - Long-term metrics
+
+    This enables agents to learn from complete lifecycle data,
+    not just initial success/failure.
+    """
+
+    __tablename__ = "trajectory_feedback"
+
+    # Primary key
+    feedback_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Foreign key to trajectories
+    trajectory_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("trajectories.trajectory_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Feedback details
+    feedback_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, index=True
+    )  # 'human', 'monitoring', 'ab_test', 'production'
+    revised_score: Mapped[float | None] = mapped_column(Float, nullable=True)  # New score (0.0-1.0)
+    source: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )  # Who/what provided feedback
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)  # Human-readable explanation
+
+    # Metrics (stored as JSON)
+    metrics_json: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # Additional structured data
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_feedback_trajectory", "trajectory_id"),
+        Index("idx_feedback_type", "feedback_type"),
+        Index("idx_feedback_created", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TrajectoryFeedbackModel(feedback_id={self.feedback_id}, trajectory_id={self.trajectory_id}, type={self.feedback_type})>"
+
+
+# Add fields to TrajectoryModel for feedback support (these will be added via migration)
+# - feedback_count: INTEGER DEFAULT 0
+# - effective_score: FLOAT (latest/weighted score)
+# - needs_relearning: BOOLEAN DEFAULT FALSE
+# - relearning_priority: INTEGER DEFAULT 0
+# - last_feedback_at: TIMESTAMP

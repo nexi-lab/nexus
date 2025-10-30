@@ -1,0 +1,62 @@
+# Systemd timer for Nexus ACE re-learning queue
+# More reliable than cron for production systems
+
+# ==========================================
+# File: /etc/systemd/system/nexus-relearning.service
+# ==========================================
+[Unit]
+Description=Nexus ACE Re-learning Queue Processor
+After=network.target
+
+[Service]
+Type=oneshot
+User=nexus
+Group=nexus
+Environment="NEXUS_URL=http://localhost:8080"
+Environment="NEXUS_API_KEY=your-api-key-here"
+ExecStart=/usr/local/bin/nexus memory process-relearning --limit 10
+StandardOutput=journal
+StandardError=journal
+
+# Restart policy for failed runs
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
+
+# ==========================================
+# File: /etc/systemd/system/nexus-relearning.timer
+# ==========================================
+[Unit]
+Description=Run Nexus Re-learning Every 5 Minutes
+Requires=nexus-relearning.service
+
+[Timer]
+# Run 5 minutes after system boot
+OnBootSec=5min
+
+# Then every 5 minutes
+OnUnitActiveSec=5min
+
+# Run even if missed during system sleep
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
+# ==========================================
+# Installation
+# ==========================================
+# 1. Copy both files to /etc/systemd/system/
+# 2. Reload systemd:
+#    sudo systemctl daemon-reload
+# 3. Enable the timer:
+#    sudo systemctl enable nexus-relearning.timer
+# 4. Start the timer:
+#    sudo systemctl start nexus-relearning.timer
+# 5. Check status:
+#    sudo systemctl status nexus-relearning.timer
+#    sudo systemctl list-timers nexus-relearning*
+# 6. View logs:
+#    sudo journalctl -u nexus-relearning.service -f

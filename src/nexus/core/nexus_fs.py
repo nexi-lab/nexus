@@ -9,7 +9,7 @@ import json
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import select
 
@@ -28,6 +28,7 @@ from nexus.core.export_import import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
+from nexus.core.nexus_fs_llm import NexusFSLLMMixin
 from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
 from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.core.nexus_fs_search import NexusFSSearchMixin
@@ -48,6 +49,7 @@ class NexusFS(
     NexusFSReBACMixin,
     NexusFSVersionsMixin,
     NexusFSMountsMixin,
+    NexusFSLLMMixin,
     NexusFilesystem,
 ):
     """
@@ -226,6 +228,7 @@ class NexusFS(
             allow_system_bypass=True,  # P0-4: System operations still allowed
             audit_store=self._audit_store,  # P0-4: Immutable audit log
             admin_bypass_paths=[],  # P0-4: Scoped bypass (empty = no bypass paths)
+            router=self.router,  # For backend object type resolution
         )
 
         # Permission enforcement is opt-in for backward compatibility
@@ -369,6 +372,62 @@ class NexusFS(
             )
 
         return self._memory_api
+
+    def _get_memory_api(self, context: dict | None = None) -> Memory:
+        """Get Memory API instance with context-specific configuration.
+
+        Args:
+            context: Optional context dict with tenant_id, user_id, agent_id
+
+        Returns:
+            Memory API instance
+        """
+        from nexus.core.entity_registry import EntityRegistry
+        from nexus.core.memory_api import Memory
+
+        # Get or create entity registry
+        if self._entity_registry is None:
+            self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+
+        # Create a session
+        session = self.metadata.SessionLocal()
+
+        # Extract context values or use defaults
+        tenant_id = context.get("tenant_id") if context else self._memory_config.get("tenant_id")
+        user_id = context.get("user_id") if context else self._memory_config.get("user_id")
+        agent_id = context.get("agent_id") if context else self._memory_config.get("agent_id")
+
+        return Memory(
+            session=session,
+            backend=self.backend,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            entity_registry=self._entity_registry,
+        )
+
+    def _parse_context(self, context: dict | None = None) -> OperationContext:
+        """Parse context dict into OperationContext.
+
+        Args:
+            context: Optional context dict with user, groups, tenant_id, etc.
+
+        Returns:
+            OperationContext instance
+        """
+        from nexus.core.permissions import OperationContext
+
+        if context is None:
+            context = {}
+
+        return OperationContext(
+            user=context.get("user", "system"),
+            groups=context.get("groups", []),
+            tenant_id=context.get("tenant_id"),
+            agent_id=context.get("agent_id"),
+            is_admin=context.get("is_admin", False),
+            is_system=context.get("is_system", False),
+        )
 
     def _validate_path(self, path: str, allow_root: bool = False) -> str:
         """
@@ -645,7 +704,7 @@ class NexusFS(
                 return
 
         # Create directory in backend
-        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True)
+        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True, context=ctx)
 
         # Create metadata entries for parent directories if parents=True
         if parents:
@@ -2164,7 +2223,6 @@ class NexusFS(
         """
         return self._workspace_registry.unregister_memory(path)
 
-    @rpc_expose()
     def list_memories(self) -> list[dict]:
         """List all registered memories.
 
@@ -2175,6 +2233,10 @@ class NexusFS(
             >>> memories = nx.list_memories()
             >>> for mem in memories:
             ...     print(f"{mem['path']}: {mem['name']}")
+
+        Note:
+            RPC: This method is NOT auto-exposed. The RPC endpoint "list_memories"
+            is handled manually by the dispatcher which calls memory.list() instead.
         """
         configs = self._workspace_registry.list_memories()
         return [c.to_dict() for c in configs]
@@ -2353,6 +2415,334 @@ class NexusFS(
             self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
 
         return self._entity_registry.delete_entity("agent", agent_id)
+
+    # ===== ACE (Agentic Context Engineering) Integration (v0.5.0) =====
+
+    @rpc_expose(description="Start a new execution trajectory")
+    def ace_start_trajectory(
+        self,
+        task_description: str,
+        task_type: str | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Start tracking a new execution trajectory for ACE learning.
+
+        Args:
+            task_description: Description of the task being executed
+            task_type: Optional task type ('api_call', 'data_processing', etc.)
+            context: Operation context
+
+        Returns:
+            Dict with trajectory_id
+
+        Example:
+            >>> result = nx.ace_start_trajectory("Deploy caching strategy")
+            >>> traj_id = result['trajectory_id']
+        """
+        memory_api = self._get_memory_api(context)
+        trajectory_id = memory_api.start_trajectory(task_description, task_type)
+        return {"trajectory_id": trajectory_id}
+
+    @rpc_expose(description="Log a step in a trajectory")
+    def ace_log_trajectory_step(
+        self,
+        trajectory_id: str,
+        step_type: str,
+        description: str,
+        result: Any = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Log a step in an execution trajectory.
+
+        Args:
+            trajectory_id: Trajectory ID
+            step_type: Type of step ('action', 'decision', 'observation')
+            description: Step description
+            result: Optional result data
+            context: Operation context
+
+        Returns:
+            Success status
+
+        Example:
+            >>> nx.ace_log_trajectory_step(
+            ...     traj_id,
+            ...     "action",
+            ...     "Configured cache with 5min TTL"
+            ... )
+        """
+        memory_api = self._get_memory_api(context)
+        memory_api.log_trajectory_step(trajectory_id, step_type, description, result)
+        return {"success": True}
+
+    @rpc_expose(description="Complete a trajectory")
+    def ace_complete_trajectory(
+        self,
+        trajectory_id: str,
+        status: str,
+        success_score: float | None = None,
+        error_message: str | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Complete a trajectory with outcome.
+
+        Args:
+            trajectory_id: Trajectory ID
+            status: Status ('success', 'failure', 'partial')
+            success_score: Success score (0.0-1.0)
+            error_message: Error message if failed
+            context: Operation context
+
+        Returns:
+            Dict with trajectory_id
+
+        Example:
+            >>> nx.ace_complete_trajectory(traj_id, "success", success_score=0.95)
+        """
+        memory_api = self._get_memory_api(context)
+        completed_id = memory_api.complete_trajectory(
+            trajectory_id, status, success_score, error_message
+        )
+        return {"trajectory_id": completed_id}
+
+    @rpc_expose(description="Add feedback to a trajectory")
+    def ace_add_feedback(
+        self,
+        trajectory_id: str,
+        feedback_type: str,
+        score: float | None = None,
+        source: str | None = None,
+        message: str | None = None,
+        metrics: dict | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Add feedback to a completed trajectory.
+
+        Args:
+            trajectory_id: Trajectory ID
+            feedback_type: Type of feedback
+            score: Revised score (0.0-1.0)
+            source: Feedback source
+            message: Human-readable message
+            metrics: Additional metrics
+            context: Operation context
+
+        Returns:
+            Dict with feedback_id
+
+        Example:
+            >>> nx.ace_add_feedback(
+            ...     traj_id,
+            ...     "monitoring_alert",
+            ...     score=0.3,
+            ...     message="Error rate spiked"
+            ... )
+        """
+        memory_api = self._get_memory_api(context)
+        feedback_id = memory_api.add_feedback(
+            trajectory_id, feedback_type, score, source, message, metrics
+        )
+        return {"feedback_id": feedback_id}
+
+    @rpc_expose(description="Get feedback for a trajectory")
+    def ace_get_trajectory_feedback(
+        self, trajectory_id: str, context: dict | None = None
+    ) -> list[dict[str, Any]]:
+        """Get all feedback for a trajectory.
+
+        Args:
+            trajectory_id: Trajectory ID
+            context: Operation context
+
+        Returns:
+            List of feedback dicts
+        """
+        memory_api = self._get_memory_api(context)
+        return memory_api.get_trajectory_feedback(trajectory_id)
+
+    @rpc_expose(description="Get effective score for a trajectory")
+    def ace_get_effective_score(
+        self,
+        trajectory_id: str,
+        strategy: Literal["latest", "average", "weighted"] = "latest",
+        context: dict | None = None,
+    ) -> dict:
+        """Get effective score for a trajectory.
+
+        Args:
+            trajectory_id: Trajectory ID
+            strategy: Scoring strategy ('latest', 'average', 'weighted')
+            context: Operation context
+
+        Returns:
+            Dict with effective_score
+        """
+        memory_api = self._get_memory_api(context)
+        score = memory_api.get_effective_score(trajectory_id, strategy)
+        return {"effective_score": score}
+
+    @rpc_expose(description="Mark trajectory for re-learning")
+    def ace_mark_for_relearning(
+        self,
+        trajectory_id: str,
+        reason: str,
+        priority: int = 5,
+        context: dict | None = None,
+    ) -> dict:
+        """Mark trajectory for re-learning.
+
+        Args:
+            trajectory_id: Trajectory ID
+            reason: Reason for re-learning
+            priority: Priority (1-10)
+            context: Operation context
+
+        Returns:
+            Success status
+        """
+        memory_api = self._get_memory_api(context)
+        memory_api.mark_for_relearning(trajectory_id, reason, priority)
+        return {"success": True}
+
+    @rpc_expose(description="Query trajectories")
+    def ace_query_trajectories(
+        self,
+        task_type: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        context: dict | None = None,
+    ) -> list[dict]:
+        """Query execution trajectories.
+
+        Args:
+            task_type: Filter by task type
+            status: Filter by status
+            limit: Maximum results
+            context: Operation context
+
+        Returns:
+            List of trajectory summaries
+        """
+        from nexus.core.ace.trajectory import TrajectoryManager
+
+        session = self.metadata.SessionLocal()
+        try:
+            ctx = self._parse_context(context)
+            traj_mgr = TrajectoryManager(
+                session,
+                self.backend,
+                ctx.user or "system",
+                self.agent_id,
+                self.tenant_id,
+            )
+            return traj_mgr.query_trajectories(
+                agent_id=self.agent_id,
+                task_type=task_type,
+                status=status,
+                limit=limit,
+            )
+        finally:
+            session.close()
+
+    @rpc_expose(description="Create a new playbook")
+    def ace_create_playbook(
+        self,
+        name: str,
+        description: str | None = None,
+        scope: str = "agent",
+        context: dict | None = None,
+    ) -> dict:
+        """Create a new playbook.
+
+        Args:
+            name: Playbook name
+            description: Optional description
+            scope: Scope level ('agent', 'user', 'tenant', 'global')
+            context: Operation context
+
+        Returns:
+            Dict with playbook_id
+        """
+        from nexus.core.ace.playbook import PlaybookManager
+
+        session = self.metadata.SessionLocal()
+        try:
+            ctx = self._parse_context(context)
+            playbook_mgr = PlaybookManager(
+                session,
+                self.backend,
+                ctx.user or "system",
+                self.agent_id,
+                self.tenant_id,
+            )
+            playbook_id = playbook_mgr.create_playbook(name, description, scope)  # type: ignore
+            return {"playbook_id": playbook_id}
+        finally:
+            session.close()
+
+    @rpc_expose(description="Get playbook details")
+    def ace_get_playbook(self, playbook_id: str, context: dict | None = None) -> dict | None:
+        """Get playbook details.
+
+        Args:
+            playbook_id: Playbook ID
+            context: Operation context
+
+        Returns:
+            Playbook dict or None
+        """
+        from nexus.core.ace.playbook import PlaybookManager
+
+        session = self.metadata.SessionLocal()
+        try:
+            ctx = self._parse_context(context)
+            playbook_mgr = PlaybookManager(
+                session,
+                self.backend,
+                ctx.user or "system",
+                self.agent_id,
+                self.tenant_id,
+            )
+            return playbook_mgr.get_playbook(playbook_id)
+        finally:
+            session.close()
+
+    @rpc_expose(description="Query playbooks")
+    def ace_query_playbooks(
+        self,
+        scope: str | None = None,
+        limit: int = 50,
+        context: dict | None = None,
+    ) -> list[dict]:
+        """Query playbooks.
+
+        Args:
+            scope: Filter by scope
+            limit: Maximum results
+            context: Operation context
+
+        Returns:
+            List of playbook summaries
+        """
+        from nexus.core.ace.playbook import PlaybookManager
+
+        session = self.metadata.SessionLocal()
+        try:
+            ctx = self._parse_context(context)
+            playbook_mgr = PlaybookManager(
+                session,
+                self.backend,
+                ctx.user or "system",
+                self.agent_id,
+                self.tenant_id,
+            )
+            return playbook_mgr.query_playbooks(
+                agent_id=self.agent_id,
+                scope=scope,
+                limit=limit,
+            )
+        finally:
+            session.close()
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

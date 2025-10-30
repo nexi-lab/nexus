@@ -85,38 +85,59 @@ graph TB
     subgraph vfs[" 📁 Nexus Virtual File System "]
         api["Unified VFS API<br/>read() write() list() search()"]
         memory["💾 Memory API<br/>Persistent learning & context"]
-        rebac["🔒 ReBAC Permissions<br/>Automatic access control"]
+        rebac["🔒 ReBAC Permissions<br/>Backend-aware object types"]
         version["📦 Versioning<br/>Snapshots & time-travel"]
-        router["Smart Router<br/>Backend abstraction"]
+        router["Smart Router<br/>Path → Backend + Object Type"]
     end
 
-    subgraph backends[" 💾 Storage Backends "]
-        local["Local Filesystem"]
-        gcs["Google Cloud Storage"]
-        s3["AWS S3"]
+    subgraph backends[" 💾 Storage & Data Backends "]
+        subgraph storage[" File Storage "]
+            local["Local Filesystem<br/>object: file"]
+            gcs["Cloud Storage<br/>object: file"]
+        end
+        subgraph data[" Data Sources "]
+            postgres["PostgreSQL<br/>object: postgres:table/row"]
+            redis["Redis<br/>object: redis:instance/key"]
+            mongo["MongoDB<br/>object: mongo:collection/doc"]
+        end
     end
 
     agent1 -.->|"write('/workspace/data.json')"| api
-    agent2 -.->|"read('/shared/model.pkl')"| api
+    agent2 -.->|"read('/db/public/users')"| api
     agent3 -.->|"memory.store('learned_fact')"| memory
 
     api --> rebac
     memory --> rebac
+    rebac <-->|"Check with object type"| router
     rebac -->|"✓ Allowed"| version
     version --> router
-    router -->|"Transparent"| local
-    router -->|"Same API"| gcs
-    router -->|"Same API"| s3
+
+    router -->|"File operations"| local
+    router -->|"File operations"| gcs
+    router -->|"Queries as files"| postgres
+    router -->|"KV as files"| redis
+    router -->|"Documents as files"| mongo
 
     style agents fill:#e3f2fd,stroke:#5C6BC0,stroke-width:2px,color:#1a237e
     style vfs fill:#f3e5f5,stroke:#AB47BC,stroke-width:2px,color:#4a148c
     style backends fill:#fff3e0,stroke:#FF7043,stroke-width:2px,color:#e65100
+    style storage fill:#e8f5e9,stroke:#4CAF50,stroke-width:1px
+    style data fill:#e1f5fe,stroke:#0288D1,stroke-width:1px
     style api fill:#5C6BC0,stroke:#3949AB,stroke-width:2px,color:#fff
     style memory fill:#AB47BC,stroke:#7B1FA2,stroke-width:2px,color:#fff
     style rebac fill:#EC407A,stroke:#C2185B,stroke-width:2px,color:#fff
     style version fill:#66BB6A,stroke:#388E3C,stroke-width:2px,color:#fff
     style router fill:#42A5F5,stroke:#1976D2,stroke-width:2px,color:#fff
 ```
+
+**Backend Abstraction:**
+
+Nexus presents everything as files to users, while backends provide appropriate object types for permission control:
+
+- **File Storage** (Local, GCS, S3): Standard file objects
+- **Databases** (PostgreSQL, Redis, MongoDB): Backend-specific objects (tables, keys, documents)
+- **Unified Interface**: All accessed through the same VFS API (read/write/list)
+- **Fine-Grained Permissions**: ReBAC uses backend-appropriate object types (e.g., grant access to a PostgreSQL schema vs. individual rows)
 
 <div class="benefits-grid" markdown>
 
@@ -222,14 +243,26 @@ Multi-tenancy, workspace isolation, and complete audit trails out of the box.
 
 | Feature | Traditional FS | Object Storage | **Nexus** |
 |---------|---------------|----------------|----------|
-| **AI Context Preservation** | ❌ | ❌ | ✅ |
-| **Semantic Search** | ❌ | ❌ | ✅ |
-| **Built-in Permissions** | 🟡 Basic | 🟡 Basic | ✅ Advanced ReBAC |
-| **Multi-Tenancy** | ❌ | 🟡 Manual | ✅ Native |
-| **Time Travel** | ❌ | 🟡 Versioning | ✅ Full History |
-| **Distributed Mode** | ❌ | ✅ | ✅ |
-| **Type Safety** | ❌ | ❌ | ✅ |
-| **Embedded Mode** | ✅ | ❌ | ✅ |
+| **Agent Memory & Learning** | ❌ | ❌ | ✅ ACE system with auto-consolidation |
+| **LLM-Powered Reading** | ❌ | ❌ | ✅ Query docs with citations |
+| **Semantic Search** | ❌ | ❌ | ✅ Vector-based with pgvector |
+| **Backend Abstraction** | ❌ | ❌ | ✅ Access DBs/APIs as files |
+| **Built-in Permissions** | 🟡 UNIX perms | 🟡 IAM policies | ✅ ReBAC (Zanzibar-style) |
+| **Multi-Tenancy** | ❌ | 🟡 Manual buckets | ✅ Native with isolation |
+| **Time Travel** | ❌ | 🟡 Versioning only | ✅ Full history + diffs |
+| **Distributed Mode** | ❌ | ✅ | ✅ K8s-ready |
+| **Embedded Mode** | ✅ | ❌ | ✅ Zero-config start |
+| **Event-Driven** | ❌ | 🟡 S3 notifications | ✅ Webhooks + SSE (v0.7) |
+
+</div>
+
+**Key Differentiators:**
+
+- **🧠 Built for AI Agents**: Memory API, learning loops, semantic search, and LLM integration
+- **🗄️ Database as Files**: Access PostgreSQL, Redis, MongoDB through unified file interface
+- **🔒 Fine-Grained Security**: Backend-aware permissions (file vs. table vs. row-level access)
+- **🔄 Self-Learning**: ACE system automatically consolidates agent experiences into reusable knowledge
+- **📚 LLM Document Reading**: Ask questions about your files, get answers with citations and cost tracking
 
 </div>
 

@@ -1,6 +1,6 @@
 [project]
 name = "nexus-ai-fs"
-version = "0.3.9"
+version = "0.5.0"
 description = "AI-Native Distributed Filesystem Architecture"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -46,29 +46,23 @@ dependencies = [
     "httpx>=0.27.0",
     "requests>=2.31.0",
     "tenacity>=8.2.0",  # Retry logic with exponential backoff
-    # Database (v0.1.0)
+    # Database
     "sqlalchemy>=2.0.0",
     "alembic>=1.13.0",
     "psycopg2-binary>=2.9.0",  # PostgreSQL driver
-    # Caching (v0.1.0)
+    # Caching
     "cachetools>=5.3.0",
-    # Authentication (v0.5.0)
+    # Authentication
     "authlib>=1.3.0",  # JWT and OAuth support for OIDC auth
     "bcrypt>=4.0.0",  # Password hashing for local auth
     # Cloud Storage Backends
     "google-cloud-storage>=2.14.0",
-    # Document Parsing (v0.2.0)
+    # Document Parsing
     "markitdown[all]>=0.0.1a2",  # Includes PDF, Excel, PowerPoint, etc.
-    # LLM Provider Abstraction (v0.4.0)
+    # LLM Provider Abstraction
     "litellm>=1.0",  # Multi-provider LLM support
     "tiktoken>=0.5",  # Token counting for OpenAI models and chunking
     "anthropic>=0.40",  # Native Anthropic SDK for better Claude support
-    # Note: Dependencies will be added incrementally as features are implemented
-    # v0.1.0: Will add SQLAlchemy, aiosqlite, cachetools
-    # v0.2.0: Will add pypdf, openpyxl, pandas
-    # v0.3.0: Will add anthropic, openai, tiktoken
-    # v0.4.0: Will add sqlite-vec, pgvector, optional: openai, sentence-transformers
-    # v0.5.0: Will add fastapi, uvicorn
     "dotenv>=0.9.9",
 ]
 
@@ -111,17 +105,17 @@ test = [
 ]
 
 fuse = [
-    # FUSE filesystem support (v0.2.0)
+    # FUSE filesystem support
     "fusepy>=3.0.1",  # Python FUSE bindings
 ]
 
 postgres = [
-    # PostgreSQL support (v0.3.5+)
+    # PostgreSQL support
     "psycopg2-binary>=2.9.9",  # PostgreSQL adapter
 ]
 
 semantic-search = [
-    # Keyword search support (v0.4.0) - uses existing SQLite/PostgreSQL FTS
+    # Keyword search support - uses existing SQLite/PostgreSQL FTS
     # Vector database extensions for semantic/hybrid search:
     "sqlite-vec>=0.1.0",  # SQLite vector search (pip installable)
     "pgvector>=0.3.0",    # PostgreSQL vector search (Python client - requires pgvector extension in database)
@@ -298,6 +292,8 @@ ignore = [
 "__init__.py" = ["F401"]
 "tests/*" = ["ARG", "S101"]
 "alembic/*" = ["UP007", "E402"]  # Alembic: Union syntax, import order
+"src/nexus/backends/*.py" = ["ARG002"]  # Keep unused context params for API compatibility
+"src/nexus/core/ace/trajectory.py" = ["ARG002"]  # Keep unused permission param for API compatibility
 
 [tool.ruff.lint.isort]
 known-first-party = ["nexus"]

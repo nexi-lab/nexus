@@ -49,9 +49,9 @@ Nexus provides a flexible authentication and authorization system that supports:
   nx.write("/workspace/file.txt", b"Hello!")
   ```
 
-Think of it like SQLite vs PostgreSQL:
-- **Embedded mode** = SQLite (direct file access, single process, no auth)
-- **Server mode** = PostgreSQL (client-server, multi-user, requires auth)
+Two modes of operation:
+- **Embedded mode** = direct file access, single process, no auth
+- **Server mode** = client-server, multi-user, requires auth
 
 **Quick Reference:**
 

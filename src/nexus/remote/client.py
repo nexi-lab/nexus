@@ -48,6 +48,7 @@ from nexus.core.exceptions import (
     ValidationError,
 )
 from nexus.core.filesystem import NexusFilesystem
+from nexus.core.nexus_fs_llm import NexusFSLLMMixin
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
@@ -57,6 +58,341 @@ from nexus.server.protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class RemoteMemory:
+    """Remote Memory API client.
+
+    Provides the same interface as core.memory_api.Memory but makes RPC calls
+    to a remote Nexus server instead of direct database access.
+    """
+
+    def __init__(self, remote_fs: RemoteNexusFS):
+        """Initialize remote memory client.
+
+        Args:
+            remote_fs: RemoteNexusFS instance to use for RPC calls
+        """
+        self.remote_fs = remote_fs
+
+    # ========== Trajectory Methods ==========
+
+    def start_trajectory(
+        self,
+        task_description: str,
+        task_type: str | None = None,
+        _parent_trajectory_id: str | None = None,
+        _metadata: dict[str, Any] | None = None,
+        _path: str | None = None,
+    ) -> str:
+        """Start tracking a new execution trajectory.
+
+        Args:
+            task_description: Description of the task
+            task_type: Optional task type
+            _parent_trajectory_id: Optional parent trajectory (not supported in RPC yet)
+            _metadata: Additional metadata (not supported in RPC yet)
+            _path: Optional path context (not supported in RPC yet)
+
+        Returns:
+            trajectory_id: ID of created trajectory
+        """
+        # Note: RPC method doesn't support _parent_trajectory_id, _metadata, _path yet
+        params = {"task_description": task_description}
+        if task_type is not None:
+            params["task_type"] = task_type
+        result = self.remote_fs._call_rpc("start_trajectory", params)
+        return result["trajectory_id"]  # type: ignore[no-any-return]
+
+    def log_step(
+        self,
+        trajectory_id: str,
+        step_type: str,
+        description: str,
+        result: Any = None,
+        _metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Log a step in the trajectory.
+
+        Args:
+            trajectory_id: Trajectory ID
+            step_type: Step type (action/decision/observation)
+            description: Step description
+            result: Optional result data
+            _metadata: Additional metadata (not supported in RPC yet)
+        """
+        # Note: RPC method doesn't support _metadata yet
+        params = {
+            "trajectory_id": trajectory_id,
+            "step_type": step_type,
+            "description": description,
+        }
+        if result is not None:
+            params["result"] = result
+        self.remote_fs._call_rpc("log_trajectory_step", params)
+
+    def log_trajectory_step(
+        self,
+        trajectory_id: str,
+        step_type: str,
+        description: str,
+        result: Any = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Alias for log_step (for compatibility)."""
+        self.log_step(trajectory_id, step_type, description, result, metadata)
+
+    def complete_trajectory(
+        self,
+        trajectory_id: str,
+        status: str,
+        success_score: float | None = None,
+        error_message: str | None = None,
+        _metrics: dict[str, Any] | None = None,
+    ) -> str:
+        """Complete a trajectory.
+
+        Args:
+            trajectory_id: Trajectory ID
+            status: Status (success/failure/partial)
+            success_score: Success score 0.0-1.0
+            error_message: Optional error message
+            _metrics: Performance metrics (not supported in RPC yet)
+
+        Returns:
+            trajectory_id: The completed trajectory ID
+        """
+        # Note: RPC method doesn't support _metrics yet
+        params: dict[str, Any] = {
+            "trajectory_id": trajectory_id,
+            "status": status,
+        }
+        if success_score is not None:
+            params["success_score"] = success_score
+        if error_message is not None:
+            params["error_message"] = error_message
+        result = self.remote_fs._call_rpc("complete_trajectory", params)
+        return result["trajectory_id"]  # type: ignore[no-any-return]
+
+    def query_trajectories(
+        self,
+        agent_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Query execution trajectories.
+
+        Args:
+            agent_id: Filter by agent ID
+            status: Filter by status
+            limit: Maximum results
+
+        Returns:
+            List of trajectory dictionaries
+        """
+        params: dict[str, Any] = {}
+        if agent_id is not None:
+            params["agent_id"] = agent_id
+        if status is not None:
+            params["status"] = status
+        if limit != 50:
+            params["limit"] = limit
+        result = self.remote_fs._call_rpc("query_trajectories", params)
+        return result.get("trajectories", [])  # type: ignore[no-any-return]
+
+    # ========== Playbook Methods ==========
+
+    def get_playbook(self, playbook_name: str = "default") -> dict[str, Any] | None:
+        """Get agent's playbook.
+
+        Args:
+            playbook_name: Playbook name
+
+        Returns:
+            Playbook dict or None
+        """
+        params = {"playbook_name": playbook_name}
+        result = self.remote_fs._call_rpc("get_playbook", params)
+        return result  # type: ignore[no-any-return]
+
+    def query_playbooks(
+        self,
+        agent_id: str | None = None,
+        scope: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Query playbooks.
+
+        Args:
+            agent_id: Filter by agent ID
+            scope: Filter by scope
+            limit: Maximum results
+
+        Returns:
+            List of playbook dictionaries
+        """
+        params: dict[str, Any] = {}
+        if agent_id is not None:
+            params["agent_id"] = agent_id
+        if scope is not None:
+            params["scope"] = scope
+        if limit != 50:
+            params["limit"] = limit
+        result = self.remote_fs._call_rpc("query_playbooks", params)
+        return result.get("playbooks", [])  # type: ignore[no-any-return]
+
+    def process_relearning(
+        self,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Process trajectories flagged for re-learning.
+
+        Args:
+            limit: Maximum number of trajectories to process
+
+        Returns:
+            List of re-learning results
+        """
+        params: dict[str, Any] = {}
+        if limit != 10:
+            params["limit"] = limit
+        result = self.remote_fs._call_rpc("process_relearning", params)
+        return result.get("results", [])  # type: ignore[no-any-return]
+
+    def curate_playbook(
+        self,
+        reflection_memory_ids: list[str],
+        playbook_name: str = "default",
+        merge_threshold: float = 0.7,
+    ) -> dict[str, Any]:
+        """Curate playbook from reflections.
+
+        Args:
+            reflection_memory_ids: List of reflection memory IDs
+            playbook_name: Playbook name
+            merge_threshold: Similarity threshold for merging
+
+        Returns:
+            Curation results
+        """
+        params: dict[str, Any] = {
+            "reflection_memory_ids": reflection_memory_ids,
+            "playbook_name": playbook_name,
+            "merge_threshold": merge_threshold,
+        }
+        result = self.remote_fs._call_rpc("curate_playbook", params)
+        return result  # type: ignore[no-any-return]
+
+    # ========== Reflection Methods ==========
+
+    def batch_reflect(
+        self,
+        agent_id: str | None = None,
+        since: str | None = None,
+        min_trajectories: int = 10,
+        task_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Batch reflection across trajectories.
+
+        Args:
+            agent_id: Filter by agent ID
+            since: ISO timestamp filter
+            min_trajectories: Minimum trajectories needed
+            task_type: Filter by task type
+
+        Returns:
+            Reflection results with common patterns
+        """
+        params: dict[str, Any] = {"min_trajectories": min_trajectories}
+        if agent_id is not None:
+            params["agent_id"] = agent_id
+        if since is not None:
+            params["since"] = since
+        if task_type is not None:
+            params["task_type"] = task_type
+        result = self.remote_fs._call_rpc("batch_reflect", params)
+        return result  # type: ignore[no-any-return]
+
+    # ========== Memory Storage Methods ==========
+
+    def store(
+        self,
+        content: str,
+        memory_type: str = "fact",
+        scope: str = "agent",
+        importance: float = 0.5,
+        tags: list[str] | None = None,
+    ) -> str:
+        """Store a memory.
+
+        Args:
+            content: Memory content
+            memory_type: Type of memory
+            scope: Memory scope
+            importance: Importance score
+            tags: Optional tags
+
+        Returns:
+            memory_id: ID of stored memory
+        """
+        params: dict[str, Any] = {
+            "content": content,
+            "memory_type": memory_type,
+            "scope": scope,
+            "importance": importance,
+        }
+        if tags is not None:
+            params["tags"] = tags
+        result = self.remote_fs._call_rpc("store_memory", params)
+        return result["memory_id"]  # type: ignore[no-any-return]
+
+    def list(
+        self,
+        scope: str | None = None,
+        memory_type: str | None = None,
+        limit: int = 50,
+    ) -> builtins.list[dict[str, Any]]:
+        """List memories.
+
+        Args:
+            scope: Filter by scope
+            memory_type: Filter by type
+            limit: Maximum results
+
+        Returns:
+            List of memories
+        """
+        params: dict[str, Any] = {"limit": limit}
+        if scope is not None:
+            params["scope"] = scope
+        if memory_type is not None:
+            params["memory_type"] = memory_type
+        result = self.remote_fs._call_rpc("list_memories", params)
+        return result["memories"]  # type: ignore[no-any-return]
+
+    def query(
+        self,
+        memory_type: str | None = None,
+        scope: str | None = None,
+        limit: int = 50,
+    ) -> builtins.list[dict[str, Any]]:
+        """Query memories.
+
+        Args:
+            memory_type: Filter by type
+            scope: Filter by scope
+            limit: Maximum results
+
+        Returns:
+            List of matching memories
+        """
+        params: dict[str, Any] = {"limit": limit}
+        if memory_type is not None:
+            params["memory_type"] = memory_type
+        if scope is not None:
+            params["scope"] = scope
+        result = self.remote_fs._call_rpc("query_memories", params)
+        return result["memories"]  # type: ignore[no-any-return]
 
 
 class RemoteFilesystemError(NexusError):
@@ -111,10 +447,11 @@ class RemoteTimeoutError(RemoteFilesystemError):
     pass
 
 
-class RemoteNexusFS(NexusFilesystem):
+class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
     """Remote Nexus filesystem client.
 
     Implements NexusFilesystem interface by making RPC calls to a remote server.
+    Includes LLM-powered document reading capabilities via NexusFSLLMMixin.
     """
 
     def __init__(
@@ -147,6 +484,13 @@ class RemoteNexusFS(NexusFilesystem):
         # Set agent_id and tenant_id (required by NexusFilesystem protocol)
         self.agent_id: str | None = None
         self.tenant_id: str | None = None
+
+        # Initialize semantic search as None (remote clients don't have local search)
+        # LLM mixin will check this and fall back to direct file reading
+        self._semantic_search = None
+
+        # Initialize memory API as None (lazy initialization)
+        self._memory_api: RemoteMemory | None = None
 
         # Create HTTP session with connection pooling
         self.session = requests.Session()
@@ -2141,6 +2485,313 @@ class RemoteNexusFS(NexusFilesystem):
     # ============================================================
     # Lifecycle Management
     # ============================================================
+
+    # ACE (Adaptive Concurrency Engine) Methods
+
+    def ace_start_trajectory(
+        self,
+        task_description: str,
+        task_type: str | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Start tracking a new execution trajectory for ACE learning.
+
+        Args:
+            task_description: Description of the task being executed
+            task_type: Optional task type ('api_call', 'data_processing', etc.)
+            context: Operation context
+
+        Returns:
+            Dict with trajectory_id
+        """
+        params: dict[str, Any] = {"task_description": task_description}
+        if task_type is not None:
+            params["task_type"] = task_type
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("ace_start_trajectory", params)
+        return result  # type: ignore[no-any-return]
+
+    def ace_log_trajectory_step(
+        self,
+        trajectory_id: str,
+        step_type: str,
+        description: str,
+        result: Any = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Log a step in an execution trajectory.
+
+        Args:
+            trajectory_id: Trajectory ID
+            step_type: Type of step ('action', 'decision', 'observation')
+            description: Step description
+            result: Optional result data
+            context: Operation context
+
+        Returns:
+            Success status
+        """
+        params: dict[str, Any] = {
+            "trajectory_id": trajectory_id,
+            "step_type": step_type,
+            "description": description,
+        }
+        if result is not None:
+            params["result"] = result
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("ace_log_trajectory_step", params)
+        return result  # type: ignore[no-any-return]
+
+    def ace_complete_trajectory(
+        self,
+        trajectory_id: str,
+        status: str,
+        success_score: float | None = None,
+        error_message: str | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Complete a trajectory with outcome.
+
+        Args:
+            trajectory_id: Trajectory ID
+            status: Status ('success', 'failure', 'partial')
+            success_score: Success score (0.0-1.0)
+            error_message: Error message if failed
+            context: Operation context
+
+        Returns:
+            Dict with trajectory_id
+        """
+        params: dict[str, Any] = {"trajectory_id": trajectory_id, "status": status}
+        if success_score is not None:
+            params["success_score"] = success_score
+        if error_message is not None:
+            params["error_message"] = error_message
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("ace_complete_trajectory", params)
+        return result  # type: ignore[no-any-return]
+
+    def ace_add_feedback(
+        self,
+        trajectory_id: str,
+        feedback_type: str,
+        score: float | None = None,
+        source: str | None = None,
+        message: str | None = None,
+        metrics: dict | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Add feedback to a completed trajectory.
+
+        Args:
+            trajectory_id: Trajectory ID
+            feedback_type: Type of feedback
+            score: Revised score (0.0-1.0)
+            source: Feedback source
+            message: Human-readable message
+            metrics: Additional metrics
+            context: Operation context
+
+        Returns:
+            Dict with feedback_id
+        """
+        params: dict[str, Any] = {"trajectory_id": trajectory_id, "feedback_type": feedback_type}
+        if score is not None:
+            params["score"] = score
+        if source is not None:
+            params["source"] = source
+        if message is not None:
+            params["message"] = message
+        if metrics is not None:
+            params["metrics"] = metrics
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("ace_add_feedback", params)
+        return result  # type: ignore[no-any-return]
+
+    def ace_get_trajectory_feedback(
+        self, trajectory_id: str, context: dict | None = None
+    ) -> builtins.list[dict]:
+        """Get all feedback for a trajectory.
+
+        Args:
+            trajectory_id: Trajectory ID
+            context: Operation context
+
+        Returns:
+            List of feedback dicts
+        """
+        params: dict[str, Any] = {"trajectory_id": trajectory_id}
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("ace_get_trajectory_feedback", params)
+        return result  # type: ignore[no-any-return]
+
+    def ace_get_effective_score(
+        self,
+        trajectory_id: str,
+        strategy: str = "latest",
+        context: dict | None = None,
+    ) -> dict:
+        """Get effective score for a trajectory.
+
+        Args:
+            trajectory_id: Trajectory ID
+            strategy: Scoring strategy ('latest', 'average', 'weighted')
+            context: Operation context
+
+        Returns:
+            Dict with effective_score
+        """
+        params: dict[str, Any] = {"trajectory_id": trajectory_id, "strategy": strategy}
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("ace_get_effective_score", params)
+        return result  # type: ignore[no-any-return]
+
+    def ace_mark_for_relearning(
+        self,
+        trajectory_id: str,
+        reason: str,
+        priority: int = 5,
+        context: dict | None = None,
+    ) -> dict:
+        """Mark trajectory for re-learning.
+
+        Args:
+            trajectory_id: Trajectory ID
+            reason: Reason for re-learning
+            priority: Priority (1-10)
+            context: Operation context
+
+        Returns:
+            Success status
+        """
+        params: dict[str, Any] = {
+            "trajectory_id": trajectory_id,
+            "reason": reason,
+            "priority": priority,
+        }
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("ace_mark_for_relearning", params)
+        return result  # type: ignore[no-any-return]
+
+    def ace_query_trajectories(
+        self,
+        task_type: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        context: dict | None = None,
+    ) -> builtins.list[dict]:
+        """Query execution trajectories.
+
+        Args:
+            task_type: Filter by task type
+            status: Filter by status
+            limit: Maximum results
+            context: Operation context
+
+        Returns:
+            List of trajectory summaries
+        """
+        params: dict[str, Any] = {"limit": limit}
+        if task_type is not None:
+            params["task_type"] = task_type
+        if status is not None:
+            params["status"] = status
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("ace_query_trajectories", params)
+        return result  # type: ignore[no-any-return]
+
+    def ace_create_playbook(
+        self,
+        name: str,
+        description: str | None = None,
+        scope: str = "agent",
+        context: dict | None = None,
+    ) -> dict:
+        """Create a new playbook.
+
+        Args:
+            name: Playbook name
+            description: Optional description
+            scope: Scope level ('agent', 'user', 'tenant', 'global')
+            context: Operation context
+
+        Returns:
+            Dict with playbook_id
+        """
+        params: dict[str, Any] = {"name": name, "scope": scope}
+        if description is not None:
+            params["description"] = description
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("ace_create_playbook", params)
+        return result  # type: ignore[no-any-return]
+
+    def ace_get_playbook(self, playbook_id: str, context: dict | None = None) -> dict | None:
+        """Get playbook details.
+
+        Args:
+            playbook_id: Playbook ID
+            context: Operation context
+
+        Returns:
+            Playbook dict or None
+        """
+        params: dict[str, Any] = {"playbook_id": playbook_id}
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("ace_get_playbook", params)
+        return result  # type: ignore[no-any-return]
+
+    def ace_query_playbooks(
+        self,
+        scope: str | None = None,
+        limit: int = 50,
+        context: dict | None = None,
+    ) -> builtins.list[dict]:
+        """Query playbooks.
+
+        Args:
+            scope: Filter by scope
+            limit: Maximum results
+            context: Operation context
+
+        Returns:
+            List of playbook summaries
+        """
+        params: dict[str, Any] = {"limit": limit}
+        if scope is not None:
+            params["scope"] = scope
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("ace_query_playbooks", params)
+        return result  # type: ignore[no-any-return]
+
+    @property
+    def memory(self) -> RemoteMemory:
+        """Get Memory API instance for agent memory management.
+
+        Lazy initialization on first access.
+
+        Returns:
+            RemoteMemory API instance for RPC-based memory operations.
+
+        Example:
+            >>> nx = RemoteNexusFS("http://localhost:8080", api_key="...")
+            >>> traj_id = nx.memory.start_trajectory("Process data", task_type="data_processing")
+            >>> nx.memory.log_step(traj_id, "action", "Loaded 1000 records")
+            >>> nx.memory.complete_trajectory(traj_id, "success", success_score=0.95)
+        """
+        if self._memory_api is None:
+            self._memory_api = RemoteMemory(self)
+        return self._memory_api
 
     def shutdown_parser_threads(self, timeout: float = 10.0) -> dict[str, Any]:
         """Shutdown background parser threads on remote server.

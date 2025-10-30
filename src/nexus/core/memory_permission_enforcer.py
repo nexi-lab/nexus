@@ -92,10 +92,11 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
         """Check ReBAC with identity relationships.
 
         Identity-based permission checks:
-        1. Direct creator access (agent created the memory)
-        2. User ownership inheritance (agent owned by memory owner)
-        3. Tenant-scoped sharing (same tenant, scope='tenant')
-        4. Explicit ReBAC relations (if rebac_manager available)
+        1. Legacy/system memories without owner (empty user_id and agent_id) - read-only access
+        2. Direct creator access (agent created the memory)
+        3. User ownership inheritance (agent owned by memory owner)
+        4. Tenant-scoped sharing (same tenant, scope='tenant')
+        5. Explicit ReBAC relations (if rebac_manager available)
 
         Args:
             memory: Memory instance.
@@ -105,11 +106,18 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
         Returns:
             True if ReBAC grants permission.
         """
-        # 1. Direct creator access
+        # 1. Legacy/system memories without owner
+        # If memory has no user_id and no agent_id (empty string or None), treat as public read-only
+        if not memory.user_id and not memory.agent_id:
+            # Allow READ for everyone, but WRITE/EXECUTE requires explicit ownership
+            # For WRITE/EXECUTE on ownerless memories, only admins/system can modify
+            return permission == Permission.READ
+
+        # 2. Direct creator access
         if context.user == memory.agent_id:
             return True
 
-        # 2. User ownership inheritance
+        # 3. User ownership inheritance
         # Check if the requesting agent is owned by the same user as the memory
         # BUT only for user/tenant/global scoped memories (not agent-scoped)
         if memory.user_id and self.entity_registry and memory.scope in ["user", "tenant", "global"]:
@@ -126,7 +134,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
                 if entity.entity_type == "user" and entity.entity_id == memory.user_id:
                     return True
 
-        # 3. Tenant-scoped sharing
+        # 4. Tenant-scoped sharing
         if memory.scope == "tenant" and memory.tenant_id and self.entity_registry:
             # Check if requesting agent belongs to same tenant
             requesting_entities = self.entity_registry.lookup_entity_by_id(context.user)
@@ -153,7 +161,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
                 ):
                     return True
 
-        # 4. Explicit ReBAC relations (fallback to base implementation)
+        # 5. Explicit ReBAC relations (fallback to base implementation)
         if self.rebac_manager:
             permission_name: str
             if permission & Permission.READ:
@@ -168,7 +176,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
             # P0-4: Pass tenant_id for multi-tenant isolation
             tenant_id = context.tenant_id or "default"
 
-            # 4a. Direct permission check
+            # 5a. Direct permission check
             if self.rebac_manager.rebac_check(
                 subject=context.get_subject(),  # P0-2: Use typed subject
                 permission=permission_name,
@@ -177,7 +185,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
             ):
                 return True
 
-            # 4b. v0.5.0 ACE: Agent inheritance from user
+            # 5b. v0.5.0 ACE: Agent inheritance from user
             # If subject is an agent, check if the agent's owner (user) has permission
             if context.subject_type == "agent" and context.agent_id and self.entity_registry:
                 # Look up agent's owner

@@ -689,7 +689,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         )
 
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # FIX: For tupleToUserset, we need to find tuples where obj is the SUBJECT
             # Example: To find parent of file X, look for (X, parent, Y) and return Y
@@ -716,10 +716,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             results = []
             for row in cursor.fetchall():
-                if hasattr(row, "keys"):
-                    results.append(Entity(row["object_type"], row["object_id"]))
-                else:
-                    results.append(Entity(row[0], row[1]))
+                results.append(Entity(row["object_type"], row["object_id"]))
 
             logger.info(
                 f"_find_related_objects_tenant_aware: Found {len(results)} objects for {obj} via '{relation}': {[str(r) for r in results]}"
@@ -747,7 +744,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             True if direct relation exists within the tenant
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # Check for direct concrete subject tuple (with ABAC conditions support)
             cursor.execute(
@@ -776,7 +773,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             row = cursor.fetchone()
             if row:
                 # Tuple exists - check conditions if context provided
-                conditions_json = row["conditions"] if hasattr(row, "keys") else row[1]
+                conditions_json = row["conditions"]
 
                 if conditions_json:
                     try:
@@ -827,14 +824,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             # For each userset (e.g., group:eng#member), recursively check if subject
             # has the userset_relation (e.g., "member") on the userset entity (e.g., group:eng)
             for row in cursor.fetchall():
-                if hasattr(row, "keys"):
-                    userset_type = row["subject_type"]
-                    userset_id = row["subject_id"]
-                    userset_relation = row["subject_relation"]
-                else:
-                    userset_type = row[0]
-                    userset_id = row[1]
-                    userset_relation = row[2]
+                userset_type = row["subject_type"]
+                userset_id = row["subject_id"]
+                userset_relation = row["subject_relation"]
 
                 # Recursive check: Does subject have userset_relation on the userset entity?
                 # This handles nested groups, union expansion, etc.
@@ -888,7 +880,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             Monotonic version token string (e.g., "v123")
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # PostgreSQL: Use atomic UPDATE ... RETURNING for increment-and-fetch
             # SQLite: Use SELECT + UPDATE (less efficient but works)
@@ -961,7 +953,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         Returns None if cache entry is older than max_age_seconds.
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             min_computed_at = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
 
@@ -992,6 +984,6 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             row = cursor.fetchone()
             if row:
-                result = row["result"] if hasattr(row, "keys") else row[0]
+                result = row["result"]
                 return bool(result)
             return None

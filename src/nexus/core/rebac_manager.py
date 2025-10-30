@@ -93,7 +93,7 @@ class ReBACManager:
 
         Usage:
             with self._connection() as conn:
-                cursor = conn.cursor()
+                cursor = self._create_cursor(conn)
                 cursor.execute(...)
                 conn.commit()
         """
@@ -102,6 +102,42 @@ class ReBACManager:
             yield conn
         finally:
             conn.close()
+
+    def _create_cursor(self, conn: Any) -> Any:
+        """Create a cursor with appropriate cursor factory for the database type.
+
+        For PostgreSQL: Uses RealDictCursor to return dict-like rows
+        For SQLite: Ensures Row factory is set for dict-like access
+
+        Args:
+            conn: DB-API connection object
+
+        Returns:
+            Database cursor
+        """
+        # Detect database type based on underlying DBAPI connection
+        # SQLAlchemy wraps connections in _ConnectionFairy, need to check dbapi_connection
+        actual_conn = conn.dbapi_connection if hasattr(conn, "dbapi_connection") else conn
+        conn_module = type(actual_conn).__module__
+
+        # Check if this is a PostgreSQL connection (psycopg2)
+        if "psycopg2" in conn_module:
+            try:
+                import psycopg2.extras
+
+                return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            except (ImportError, AttributeError):
+                return conn.cursor()
+        elif "sqlite3" in conn_module:
+            # SQLite: Ensure Row factory is set for dict-like access
+            import sqlite3
+
+            if not hasattr(actual_conn, "row_factory") or actual_conn.row_factory is None:
+                actual_conn.row_factory = sqlite3.Row
+            return conn.cursor()
+        else:
+            # Other database - use default cursor
+            return conn.cursor()
 
     def _ensure_namespaces_initialized(self) -> None:
         """Ensure default namespaces are initialized (called before first ReBAC operation)."""
@@ -166,7 +202,7 @@ class ReBACManager:
         visited = set()
         to_visit = [(object_entity.entity_type, object_entity.entity_id)]
 
-        cursor = conn.cursor()
+        cursor = self._create_cursor(conn)
 
         while to_visit:
             current_type, current_id = to_visit.pop()
@@ -222,7 +258,7 @@ class ReBACManager:
     def _initialize_default_namespaces_with_conn(self, conn: Any) -> None:
         """Initialize default namespace configurations with given connection."""
         try:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # Check if rebac_namespaces table exists
             if self.engine.dialect.name == "sqlite":
@@ -286,7 +322,7 @@ class ReBACManager:
             namespace: Namespace configuration to create
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # Check if namespace exists
             cursor.execute(
@@ -347,7 +383,7 @@ class ReBACManager:
             NamespaceConfig or None if not found
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             cursor.execute(
                 self._fix_sql_placeholders(
@@ -364,41 +400,24 @@ class ReBACManager:
             if not row:
                 return None
 
-            # Handle both dict-like (sqlite3.Row) and tuple access
-            if hasattr(row, "keys"):
-                created_at = row["created_at"]
-                updated_at = row["updated_at"]
-                # SQLite returns ISO strings, PostgreSQL returns datetime objects
-                if isinstance(created_at, str):
-                    created_at = datetime.fromisoformat(created_at)
-                if isinstance(updated_at, str):
-                    updated_at = datetime.fromisoformat(updated_at)
+            # Both SQLite and PostgreSQL now return dict-like rows
+            created_at = row["created_at"]
+            updated_at = row["updated_at"]
+            # SQLite returns ISO strings, PostgreSQL returns datetime objects
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at)
+            if isinstance(updated_at, str):
+                updated_at = datetime.fromisoformat(updated_at)
 
-                return NamespaceConfig(
-                    namespace_id=row["namespace_id"],
-                    object_type=row["object_type"],
-                    config=json.loads(row["config"])
-                    if isinstance(row["config"], str)
-                    else row["config"],
-                    created_at=created_at,
-                    updated_at=updated_at,
-                )
-            else:
-                # PostgreSQL returns tuples
-                created_at = row[3]
-                updated_at = row[4]
-                if isinstance(created_at, str):
-                    created_at = datetime.fromisoformat(created_at)
-                if isinstance(updated_at, str):
-                    updated_at = datetime.fromisoformat(updated_at)
-
-                return NamespaceConfig(
-                    namespace_id=row[0],
-                    object_type=row[1],
-                    config=json.loads(row[2]) if isinstance(row[2], str) else row[2],
-                    created_at=created_at,
-                    updated_at=updated_at,
-                )
+            return NamespaceConfig(
+                namespace_id=row["namespace_id"],
+                object_type=row["object_type"],
+                config=json.loads(row["config"])
+                if isinstance(row["config"], str)
+                else row["config"],
+                created_at=created_at,
+                updated_at=updated_at,
+            )
 
     def rebac_write(
         self,
@@ -500,7 +519,7 @@ class ReBACManager:
                     f"{subject_entity.entity_type}:{subject_entity.entity_id} to "
                     f"{object_entity.entity_type}:{object_entity.entity_id} would create a cycle"
                 )
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # Check if tuple already exists (idempotency fix)
             cursor.execute(
@@ -605,7 +624,7 @@ class ReBACManager:
             True if tuple was deleted, False if not found
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # Get tuple details before deleting (for changelog and cache invalidation)
             # P0-5: Filter expired tuples at read-time (prevent deleted/expired access leak)
@@ -626,19 +645,12 @@ class ReBACManager:
             if not row:
                 return False
 
-            # Handle both dict-like (SQLite) and tuple (PostgreSQL) access
-            if hasattr(row, "keys"):
-                subject = Entity(row["subject_type"], row["subject_id"])
-                subject_relation = row["subject_relation"]
-                relation = row["relation"]
-                obj = Entity(row["object_type"], row["object_id"])
-                tenant_id = row["tenant_id"]
-            else:
-                subject = Entity(row[0], row[1])
-                subject_relation = row[2]
-                relation = row[3]
-                obj = Entity(row[4], row[5])
-                tenant_id = row[6]
+            # Both SQLite and PostgreSQL now return dict-like rows
+            subject = Entity(row["subject_type"], row["subject_id"])
+            subject_relation = row["subject_relation"]
+            relation = row["relation"]
+            obj = Entity(row["object_type"], row["object_id"])
+            tenant_id = row["tenant_id"]
 
             # Delete tuple
             cursor.execute(
@@ -1467,7 +1479,7 @@ class ReBACManager:
         )
 
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # BUGFIX: Use >= instead of > for exact expiration boundary
             # Check 1: Direct concrete subject (subject_relation IS NULL)
@@ -1529,7 +1541,7 @@ class ReBACManager:
             if row:
                 logger.debug(f"    ✅ Found direct tuple for {subject} -> {relation} -> {obj}")
                 # Tuple exists - now check conditions if context provided
-                conditions_json = row["conditions"] if hasattr(row, "keys") else row[8]
+                conditions_json = row["conditions"]
 
                 if conditions_json:
                     try:
@@ -1549,20 +1561,7 @@ class ReBACManager:
                         # On parse error, treat as no conditions (allow)
 
                 # Return tuple details
-                if hasattr(row, "keys"):
-                    return dict(row)
-                else:
-                    return {
-                        "tuple_id": row[0],
-                        "subject_type": row[1],
-                        "subject_id": row[2],
-                        "subject_relation": row[3],
-                        "relation": row[4],
-                        "object_type": row[5],
-                        "object_id": row[6],
-                        "conditions": row[7],
-                        "expires_at": row[8],
-                    }
+                return dict(row)
             else:
                 logger.debug(f"    ❌ No direct tuple found for {subject} -> {relation} -> {obj}")
 
@@ -1625,20 +1624,7 @@ class ReBACManager:
                     )
                 row = cursor.fetchone()
                 if row:
-                    if hasattr(row, "keys"):
-                        return dict(row)
-                    else:
-                        return {
-                            "tuple_id": row[0],
-                            "subject_type": row[1],
-                            "subject_id": row[2],
-                            "subject_relation": row[3],
-                            "relation": row[4],
-                            "object_type": row[5],
-                            "object_id": row[6],
-                            "conditions": row[7],
-                            "expires_at": row[8],
-                        }
+                    return dict(row)
 
             # Check 3: Userset-as-subject grants
             # Find tuples like (group:eng#member, editor-of, file:readme)
@@ -1667,20 +1653,7 @@ class ReBACManager:
                     )
                     row = cursor.fetchone()
                     if row:
-                        if hasattr(row, "keys"):
-                            return dict(row)
-                        else:
-                            return {
-                                "tuple_id": row[0],
-                                "subject_type": row[1],
-                                "subject_id": row[2],
-                                "subject_relation": row[3],
-                                "relation": row[4],
-                                "object_type": row[5],
-                                "object_id": row[6],
-                                "conditions": row[7],
-                                "expires_at": row[8],
-                            }
+                        return dict(row)
 
             return None
 
@@ -1706,7 +1679,7 @@ class ReBACManager:
             List of (subject_type, subject_id, subject_relation) tuples
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # P0 SECURITY FIX: ALWAYS filter by tenant_id to prevent cross-tenant group membership leaks
             # When tenant_id is None, match NULL tenant_id (single-tenant mode)
@@ -1754,12 +1727,7 @@ class ReBACManager:
 
             results = []
             for row in cursor.fetchall():
-                if hasattr(row, "keys"):
-                    results.append(
-                        (row["subject_type"], row["subject_id"], row["subject_relation"])
-                    )
-                else:
-                    results.append((row[0], row[1], row[2]))
+                results.append((row["subject_type"], row["subject_id"], row["subject_relation"]))
             return results
 
     def _find_related_objects(self, obj: Entity, relation: str) -> list[Entity]:
@@ -1779,7 +1747,7 @@ class ReBACManager:
             List of related object entities (the objects from matching tuples)
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # FIXED: Query for tuples where obj is the SUBJECT (not object)
             # This correctly handles parent relations: (child, "parent", parent)
@@ -1803,10 +1771,7 @@ class ReBACManager:
 
             results = []
             for row in cursor.fetchall():
-                if hasattr(row, "keys"):
-                    results.append(Entity(row["object_type"], row["object_id"]))
-                else:
-                    results.append(Entity(row[0], row[1]))
+                results.append(Entity(row["object_type"], row["object_id"]))
             return results
 
     def _evaluate_conditions(
@@ -2092,7 +2057,7 @@ class ReBACManager:
             List of (subject_type, subject_id) tuples
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # BUGFIX: Use >= instead of > for exact expiration boundary
             cursor.execute(
@@ -2115,10 +2080,7 @@ class ReBACManager:
 
             results = []
             for row in cursor.fetchall():
-                if hasattr(row, "keys"):
-                    results.append((row["subject_type"], row["subject_id"]))
-                else:
-                    results.append((row[0], row[1]))
+                results.append((row["subject_type"], row["subject_id"]))
             return results
 
     def _get_cached_check(self, subject: Entity, permission: str, obj: Entity) -> bool | None:
@@ -2133,7 +2095,7 @@ class ReBACManager:
             Cached result or None if not cached or expired
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             cursor.execute(
                 self._fix_sql_placeholders(
@@ -2158,7 +2120,7 @@ class ReBACManager:
 
             row = cursor.fetchone()
             if row:
-                result = row["result"] if hasattr(row, "keys") else row[0]
+                result = row["result"]
                 return bool(result)
             return None
 
@@ -2187,7 +2149,7 @@ class ReBACManager:
         effective_tenant_id = tenant_id if tenant_id is not None else "default"
 
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # Delete existing cache entry if present
             cursor.execute(
@@ -2268,7 +2230,7 @@ class ReBACManager:
         effective_tenant_id = tenant_id if tenant_id is not None else "default"
 
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # 1. DIRECT: Invalidate cache entries for this specific subject-object pair
             #    This handles direct permission checks like "can alice read doc1"
@@ -2312,9 +2274,7 @@ class ReBACManager:
                 (subject.entity_type, subject.entity_id, relation, obj.entity_type, obj.entity_id),
             )
             row = cursor.fetchone()
-            has_subject_relation = row and (
-                row["subject_relation"] if hasattr(row, "keys") else row[0]
-            )
+            has_subject_relation = row and row["subject_relation"]
 
             if has_subject_relation:
                 # This is a group-based permission - invalidate all cache for this object
@@ -2407,7 +2367,7 @@ class ReBACManager:
             object_type: Type of object whose namespace was updated
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # Invalidate all cache entries for this object type
             cursor.execute(
@@ -2453,7 +2413,7 @@ class ReBACManager:
             Number of cache entries removed
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             cursor.execute(
                 self._fix_sql_placeholders("DELETE FROM rebac_check_cache WHERE expires_at <= ?"),
@@ -2470,7 +2430,7 @@ class ReBACManager:
             Number of tuples removed
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # Get expired tuples for changelog
             cursor.execute(
@@ -2499,25 +2459,15 @@ class ReBACManager:
 
             # Log to changelog and invalidate caches for expired tuples
             for row in expired_tuples:
-                # Handle both dict-like and tuple access
-                if hasattr(row, "keys"):
-                    tuple_id = row["tuple_id"]
-                    subject_type = row["subject_type"]
-                    subject_id = row["subject_id"]
-                    subject_relation = row["subject_relation"]
-                    relation = row["relation"]
-                    object_type = row["object_type"]
-                    object_id = row["object_id"]
-                    tenant_id = row["tenant_id"]
-                else:
-                    tuple_id = row[0]
-                    subject_type = row[1]
-                    subject_id = row[2]
-                    subject_relation = row[3]
-                    relation = row[4]
-                    object_type = row[5]
-                    object_id = row[6]
-                    tenant_id = row[7]
+                # Both SQLite and PostgreSQL now return dict-like rows
+                tuple_id = row["tuple_id"]
+                subject_type = row["subject_type"]
+                subject_id = row["subject_id"]
+                subject_relation = row["subject_relation"]
+                relation = row["relation"]
+                object_type = row["object_type"]
+                object_id = row["object_id"]
+                tenant_id = row["tenant_id"]
 
                 cursor.execute(
                     self._fix_sql_placeholders(

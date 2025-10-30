@@ -240,6 +240,42 @@ class AuditStore:
             return sql.replace("?", "%s")
         return sql
 
+    def _create_cursor(self, conn: Any) -> Any:
+        """Create a cursor with appropriate cursor factory for the database type.
+
+        For PostgreSQL: Uses RealDictCursor to return dict-like rows
+        For SQLite: Ensures Row factory is set for dict-like access
+
+        Args:
+            conn: DB-API connection object
+
+        Returns:
+            Database cursor
+        """
+        # Detect database type based on underlying DBAPI connection
+        # SQLAlchemy wraps connections in _ConnectionFairy, need to check dbapi_connection
+        actual_conn = conn.dbapi_connection if hasattr(conn, "dbapi_connection") else conn
+        conn_module = type(actual_conn).__module__
+
+        # Check if this is a PostgreSQL connection (psycopg2)
+        if "psycopg2" in conn_module:
+            try:
+                import psycopg2.extras
+
+                return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            except (ImportError, AttributeError):
+                return conn.cursor()
+        elif "sqlite3" in conn_module:
+            # SQLite: Ensure Row factory is set for dict-like access
+            import sqlite3
+
+            if not hasattr(actual_conn, "row_factory") or actual_conn.row_factory is None:
+                actual_conn.row_factory = sqlite3.Row
+            return conn.cursor()
+        else:
+            # Other database - use default cursor
+            return conn.cursor()
+
     def log_bypass(self, entry: AuditLogEntry) -> None:
         """Log admin/system bypass to immutable audit table.
 
@@ -247,7 +283,7 @@ class AuditStore:
             entry: Audit log entry to record
         """
         conn = self._get_connection()
-        cursor = conn.cursor()
+        cursor = self._create_cursor(conn)
 
         cursor.execute(
             self._fix_sql_placeholders(
@@ -297,7 +333,7 @@ class AuditStore:
             List of audit log entries as dictionaries
         """
         conn = self._get_connection()
-        cursor = conn.cursor()
+        cursor = self._create_cursor(conn)
 
         where_clauses = []
         params = []
@@ -336,24 +372,21 @@ class AuditStore:
 
         results = []
         for row in cursor.fetchall():
-            if hasattr(row, "keys"):
-                results.append(dict(row))
-            else:
-                results.append(
-                    {
-                        "id": row[0],
-                        "timestamp": row[1],
-                        "request_id": row[2],
-                        "user_id": row[3],
-                        "tenant_id": row[4],
-                        "path": row[5],
-                        "permission": row[6],
-                        "bypass_type": row[7],
-                        "allowed": bool(row[8]),
-                        "capabilities": json.loads(row[9]) if row[9] else [],
-                        "denial_reason": row[10],
-                    }
-                )
+            results.append(
+                {
+                    "id": row["id"],
+                    "timestamp": row["timestamp"],
+                    "request_id": row["request_id"],
+                    "user_id": row["user_id"],
+                    "tenant_id": row["tenant_id"],
+                    "path": row["path"],
+                    "permission": row["permission"],
+                    "bypass_type": row["bypass_type"],
+                    "allowed": bool(row["allowed"]),
+                    "capabilities": json.loads(row["capabilities"]) if row["capabilities"] else [],
+                    "denial_reason": row["denial_reason"],
+                }
+            )
 
         return results
 

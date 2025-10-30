@@ -202,7 +202,7 @@ class TenantAwareReBACManager(ReBACManager):
                     f"{object_entity.entity_type}:{object_entity.entity_id} would create a cycle"
                 )
 
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # Check if tuple already exists (idempotency fix)
             cursor.execute(
@@ -526,7 +526,7 @@ class TenantAwareReBACManager(ReBACManager):
            where subject has 'member' relation to 'group:eng' (WITHIN SAME TENANT)
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # Check 1: Direct concrete subject (subject_relation IS NULL)
             cursor.execute(
@@ -554,7 +554,7 @@ class TenantAwareReBACManager(ReBACManager):
             )
 
             row = cursor.fetchone()
-            count = row["count"] if hasattr(row, "keys") else row[0]
+            count = row["count"]
             if count > 0:
                 return True
 
@@ -588,7 +588,7 @@ class TenantAwareReBACManager(ReBACManager):
                     ),
                 )
                 row = cursor.fetchone()
-                count = row["count"] if hasattr(row, "keys") else row[0]
+                count = row["count"]
                 if count > 0:
                     return True
 
@@ -629,7 +629,7 @@ class TenantAwareReBACManager(ReBACManager):
             List of (subject_type, subject_id, subject_relation) tuples
         """
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             cursor.execute(
                 self._fix_sql_placeholders(
@@ -654,12 +654,7 @@ class TenantAwareReBACManager(ReBACManager):
 
             results = []
             for row in cursor.fetchall():
-                if hasattr(row, "keys"):
-                    results.append(
-                        (row["subject_type"], row["subject_id"], row["subject_relation"])
-                    )
-                else:
-                    results.append((row[0], row[1], row[2]))
+                results.append((row["subject_type"], row["subject_id"], row["subject_relation"]))
             return results
 
     def _find_related_objects_tenant_aware(
@@ -667,7 +662,7 @@ class TenantAwareReBACManager(ReBACManager):
     ) -> list[Entity]:
         """Find all objects related to obj via relation (tenant-scoped)."""
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # FIX: For tupleToUserset, we need to find tuples where obj is the SUBJECT
             # Example: To find parent of file X, look for (X, parent, Y) and return Y
@@ -694,10 +689,7 @@ class TenantAwareReBACManager(ReBACManager):
 
             results = []
             for row in cursor.fetchall():
-                if hasattr(row, "keys"):
-                    results.append(Entity(row["object_type"], row["object_id"]))
-                else:
-                    results.append(Entity(row[0], row[1]))
+                results.append(Entity(row["object_type"], row["object_id"]))
             return results
 
     def _get_direct_subjects_tenant_aware(
@@ -705,7 +697,7 @@ class TenantAwareReBACManager(ReBACManager):
     ) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object (tenant-scoped)."""
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             cursor.execute(
                 self._fix_sql_placeholders(
@@ -729,10 +721,7 @@ class TenantAwareReBACManager(ReBACManager):
 
             results = []
             for row in cursor.fetchall():
-                if hasattr(row, "keys"):
-                    results.append((row["subject_type"], row["subject_id"]))
-                else:
-                    results.append((row[0], row[1]))
+                results.append((row["subject_type"], row["subject_id"]))
             return results
 
     def _expand_permission_tenant_aware(
@@ -811,7 +800,7 @@ class TenantAwareReBACManager(ReBACManager):
     ) -> bool | None:
         """Get cached permission check result (tenant-aware cache key)."""
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             cursor.execute(
                 self._fix_sql_placeholders(
@@ -838,7 +827,7 @@ class TenantAwareReBACManager(ReBACManager):
 
             row = cursor.fetchone()
             if row:
-                result = row["result"] if hasattr(row, "keys") else row[0]
+                result = row["result"]
                 return bool(result)
             return None
 
@@ -851,7 +840,7 @@ class TenantAwareReBACManager(ReBACManager):
         expires_at = computed_at + timedelta(seconds=self.cache_ttl_seconds)
 
         with self._connection() as conn:
-            cursor = conn.cursor()
+            cursor = self._create_cursor(conn)
 
             # Delete existing cache entry if present
             cursor.execute(

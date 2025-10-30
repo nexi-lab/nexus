@@ -22,6 +22,11 @@ from typing import Any
 from sqlalchemy import create_engine, pool, select, text, update
 from sqlalchemy.orm import sessionmaker
 
+try:
+    import psycopg2.extras
+except ImportError:
+    psycopg2 = None
+
 from nexus.core.exceptions import MetadataError
 from nexus.core.metadata import FileMetadata, MetadataStore
 from nexus.storage.cache import _CACHE_MISS, MetadataCache

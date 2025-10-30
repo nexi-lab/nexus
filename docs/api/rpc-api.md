@@ -1811,6 +1811,72 @@ Update API key properties (admin only).
 
 Relationship-Based Access Control (ReBAC) operations.
 
+### Available Relations
+
+ReBAC supports the following relation types for creating relationship tuples:
+
+#### Direct Relations (Concrete)
+
+These are concrete relations that grant specific permissions. **Always use these when creating tuples:**
+
+- **`direct_owner`** - Full ownership (read, write, delete, share) - **Use this for granting ownership**
+- **`direct_editor`** - Editor access (read, write) - **Use this for granting edit permissions**
+- **`direct_viewer`** - Viewer access (read-only) - **Use this for granting read permissions**
+- `parent` - Hierarchical parent relationship (for directory inheritance)
+- `member` - Group membership
+
+#### Computed Relations (Union/Intersection)
+
+These relations are computed from direct relations during permission checks. **Do NOT use these when creating tuples:**
+
+- `owner` - Computed union of direct_owner (used in permission checks only)
+- `editor` - Computed union of direct_editor and direct_owner (used in permission checks only)
+- `viewer` - Computed union of direct_viewer, direct_editor, and direct_owner (used in permission checks only)
+
+#### Legacy Relations (Deprecated)
+
+- `member-of` - Legacy group membership (use `member` instead)
+- `owner-of` - Legacy ownership (use `direct_owner` instead)
+- `viewer-of` - Legacy viewer (use `direct_viewer` instead)
+- `editor-of` - Legacy editor (use `direct_editor` instead)
+
+**Important:** When creating tuples with `rebac_create`, always use the **direct** relations (`direct_owner`, `direct_editor`, `direct_viewer`). The computed relations (`owner`, `editor`, `viewer`) are automatically expanded during permission checks via `rebac_check`.
+
+### Available Object Types
+
+- `file` - Files and directories (including workspaces)
+- `workspace` - Registered workspaces (alias for file)
+- `memory` - Agent memory storage
+- `agent` - AI agents
+- `user` - Human users
+- `group` - User groups
+- `tenant` - Multi-tenant organizations
+
+### File Path Format Requirements
+
+**Important:** When creating ReBAC tuples for file objects, the `object_id` MUST have a leading slash.
+
+**Correct Format:**
+```json
+{
+  "object": ["file", "/workspace/alice"]  // ✅ Correct - has leading slash
+}
+```
+
+**Automatic Normalization:**
+The system automatically normalizes paths during permission checks. If you create a tuple without a leading slash, it will still work due to automatic normalization, but it's recommended to always include the leading slash for consistency:
+
+```json
+{
+  "object": ["file", "workspace/alice"]  // ⚠️ Will be normalized to "/workspace/alice"
+}
+```
+
+**Why This Matters:**
+- The router strips leading slashes from backend paths for relative path handling
+- ReBAC tuples should use absolute paths (with leading slash) for consistency
+- The permission enforcer automatically adds the leading slash if missing during checks
+
 ### rebac_create
 
 Create a relationship tuple.
@@ -1819,22 +1885,52 @@ Create a relationship tuple.
 
 **Parameters:**
 - `subject` (tuple[string, string], required): Subject (type, id)
-- `relation` (string, required): Relation name
+- `relation` (string, required): Relation name (see Available Relations above)
 - `object` (tuple[string, string], required): Object (type, id)
 - `expires_at` (string, optional): Expiration timestamp (ISO)
 - `tenant_id` (string, optional): Tenant identifier
 
-**Example Request:**
+**Example Request (Grant ownership):**
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 32,
+  "id": 1,
   "method": "rebac_create",
   "params": {
     "subject": ["user", "alice"],
-    "relation": "owner",
-    "object": ["file", "/documents/report.pdf"],
-    "tenant_id": "tenant-123"
+    "relation": "direct_owner",
+    "object": ["file", "/workspace"],
+    "tenant_id": "default"
+  }
+}
+```
+
+**Example Request (Grant editor access):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "rebac_create",
+  "params": {
+    "subject": ["user", "bob"],
+    "relation": "direct_editor",
+    "object": ["file", "/workspace/project"],
+    "tenant_id": "default"
+  }
+}
+```
+
+**Example Request (Grant viewer access):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "rebac_create",
+  "params": {
+    "subject": ["user", "charlie"],
+    "relation": "direct_viewer",
+    "object": ["file", "/workspace/docs"],
+    "tenant_id": "default"
   }
 }
 ```
@@ -1843,15 +1939,45 @@ Create a relationship tuple.
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 32,
-  "result": {
-    "tuple_id": "tuple-abc123",
-    "subject": ["user", "alice"],
-    "relation": "owner",
-    "object": ["file", "/documents/report.pdf"],
-    "created_at": "2025-01-15T10:00:00Z"
-  }
+  "id": 1,
+  "result": "4594a9be-7a75-44c6-b96d-605c399ce8f7"
 }
+```
+
+Note: The result is the tuple_id (string) of the created relationship.
+
+**cURL Examples:**
+
+```bash
+# Grant admin user ownership of /workspace
+curl -X POST http://localhost:8080/api/nfs/rebac_create \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "rebac_create",
+    "params": {
+      "subject": ["user", "admin"],
+      "relation": "direct_owner",
+      "object": ["file", "/workspace"]
+    }
+  }'
+
+# Grant agent editor access to a file
+curl -X POST http://localhost:8080/api/nfs/rebac_create \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "rebac_create",
+    "params": {
+      "subject": ["agent", "my_agent"],
+      "relation": "direct_editor",
+      "object": ["file", "/workspace/data.json"]
+    }
+  }'
 ```
 
 ---

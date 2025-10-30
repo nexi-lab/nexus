@@ -263,3 +263,52 @@ class TestPermissionEnforcer:
 
         enforcer.check("/file.txt", Permission.READ, ctx)
         assert rebac.last_subject == ("agent", "claude_001")
+
+    def test_path_normalization_adds_leading_slash(self):
+        """Test that paths without leading slash are normalized during permission checks.
+
+        This tests the fix for the bug where router strips leading slashes from backend_path,
+        but ReBAC tuples are created with leading slashes, causing permission checks to fail.
+        """
+
+        class MockRouter:
+            """Mock router that returns backend_path without leading slash (as the real router does)."""
+
+            def route(self, path, tenant_id=None, is_admin=False, check_write=False):
+                class MockBackend:
+                    def get_object_type(self, backend_path):
+                        return "file"
+
+                    def get_object_id(self, backend_path):
+                        # Router returns path without leading slash (relative to backend root)
+                        return backend_path.lstrip("/")
+
+                class MockRoute:
+                    def __init__(self):
+                        self.backend = MockBackend()
+                        # Simulate router stripping leading slash
+                        self.backend_path = path.lstrip("/")
+
+                return MockRoute()
+
+        class MockReBACManager:
+            def __init__(self):
+                self.last_object_id = None
+
+            def rebac_check(self, subject, permission, object, tenant_id):
+                _, object_id = object
+                self.last_object_id = object_id
+                # Check that object_id has leading slash (normalized)
+                return object_id.startswith("/")
+
+        rebac = MockReBACManager()
+        enforcer = PermissionEnforcer(rebac_manager=rebac, router=MockRouter())
+        ctx = OperationContext(user="alice", groups=["developers"])
+
+        # Test that permission check normalizes path to have leading slash
+        result = enforcer.check("/workspace/alice", Permission.WRITE, ctx)
+
+        # Should succeed because path was normalized to have leading slash
+        assert result is True
+        # Verify the normalized path was passed to ReBAC
+        assert rebac.last_object_id == "/workspace/alice"

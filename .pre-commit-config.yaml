@@ -34,3 +34,10 @@ repos:
         language: system
         pass_filenames: false
         files: ^src/nexus/core/nexus_fs.*\.py$
+
+      - id: version-consistency
+        name: Version Consistency Check
+        entry: bash -c '.venv/bin/python -m pytest tests/unit/test_version_consistency.py::test_version_consistency -v --tb=short'
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|src/nexus/__init__\.py)$

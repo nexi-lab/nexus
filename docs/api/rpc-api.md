@@ -525,6 +525,8 @@ Get file metadata without content.
 }
 ```
 
+**Note:** Returns `null` if workspace not found.
+
 ---
 
 ## Directory Operations

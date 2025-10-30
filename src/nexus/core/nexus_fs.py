@@ -297,9 +297,9 @@ class NexusFS(
         self.workflow_engine = workflow_engine
 
         if enable_workflows and workflow_engine is None:
-            # Auto-create workflow engine with persistent storage
+            # Auto-create workflow engine with persistent storage using global engine
             try:
-                from nexus.workflows import WorkflowEngine
+                from nexus.workflows.engine import init_engine
                 from nexus.workflows.storage import WorkflowStore
 
                 workflow_store = WorkflowStore(
@@ -307,7 +307,8 @@ class NexusFS(
                     tenant_id=tenant_id or "default",
                 )
 
-                self.workflow_engine = WorkflowEngine(
+                # Use init_engine to set the global engine so WorkflowAPI uses the same instance
+                self.workflow_engine = init_engine(
                     metadata_store=self.metadata,
                     plugin_registry=None,  # TODO: Hook up plugin registry if available
                     workflow_store=workflow_store,

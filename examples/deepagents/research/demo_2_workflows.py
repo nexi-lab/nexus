@@ -115,8 +115,7 @@ async def main_async():
             {
                 "name": "store-insight",
                 "type": "python",
-                "config": {
-                    "code": """
+                "code": """
 import nexus
 
 # Connect to Nexus to access memory API
@@ -153,8 +152,7 @@ try:
     result = f"✓ Stored: {insight}"
 except Exception as e:
     result = f"Error: {str(e)}"
-                    """
-                },
+                    """,
             }
         ],
     }
@@ -210,7 +208,7 @@ Keep it concise (2-3 paragraphs)."""
     # Give workflow time to process
     print()
     print("⏳ Waiting for workflow to process...")
-    await asyncio.sleep(2)
+    await asyncio.sleep(10)  # Increased wait time for background thread
 
     # ===== Show Results =====
     print()

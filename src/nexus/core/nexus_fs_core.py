@@ -470,13 +470,56 @@ class NexusFSCoreMixin:
             }
 
             # Fire event asynchronously (don't block file write)
-            # No event loop running, skip workflow triggering
-            # This can happen in synchronous contexts
-            with contextlib.suppress(RuntimeError):
+            import sys
+
+            print(
+                f"[DEBUG] About to fire workflow for: {event_context.get('file_path')}",
+                file=sys.stderr,
+            )
+            print(
+                f"[DEBUG] Has workflow_engine: {hasattr(self, 'workflow_engine')}", file=sys.stderr
+            )
+
+            try:
+                # Try to get the running event loop and create task
+                asyncio.get_running_loop()
+                print("[DEBUG] Event loop found, creating task", file=sys.stderr)
                 asyncio.create_task(
                     self.workflow_engine.fire_event(  # type: ignore[attr-defined]
                         TriggerType.FILE_WRITE, event_context
                     )
+                )
+            except RuntimeError as e:
+                print(f"[DEBUG] No event loop, using thread. Error was: {e}", file=sys.stderr)
+                # No event loop running - run workflow synchronously in background thread
+                # This happens in synchronous contexts (like DeepAgents)
+                import logging
+                import threading
+
+                logger = logging.getLogger(__name__)
+
+                def run_workflow() -> None:
+                    try:
+                        print(
+                            f"[WORKFLOW THREAD] Starting for {event_context.get('file_path')}",
+                            file=sys.stderr,
+                        )
+                        asyncio.run(
+                            self.workflow_engine.fire_event(  # type: ignore[attr-defined]
+                                TriggerType.FILE_WRITE, event_context
+                            )
+                        )
+                        print("[WORKFLOW THREAD] Completed successfully", file=sys.stderr)
+                    except Exception as e:
+                        print(f"[WORKFLOW THREAD] Error: {e}", file=sys.stderr)
+                        import traceback
+
+                        traceback.print_exc(file=sys.stderr)
+
+                thread = threading.Thread(target=run_workflow, daemon=True)
+                thread.start()
+                logger.info(
+                    f"[WORKFLOW] Started background thread for {event_context.get('file_path')}"
                 )
 
         # Return metadata for optimistic concurrency control

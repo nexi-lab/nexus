@@ -7,7 +7,7 @@ to answer questions about documents.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from nexus.llm.citation import Citation, CitationExtractor, DocumentReadResult
 from nexus.llm.context_builder import ContextBuilder
@@ -17,6 +17,17 @@ if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
     from nexus.llm.provider import LLMProvider
     from nexus.search.semantic import SemanticSearch
+
+
+class ChunkDict(TypedDict):
+    """Type for chunk dictionaries used internally."""
+
+    path: str
+    chunk_index: int | None
+    chunk_text: str
+    score: float | None
+    start_offset: int | None
+    end_offset: int | None
 
 
 class LLMDocumentReader:
@@ -170,14 +181,14 @@ class LLMDocumentReader:
 
         search_result_objects = [
             SemanticSearchResult(
-                path=str(c["path"]),
-                chunk_index=int(c["chunk_index"]) if c["chunk_index"] is not None else 0,  # type: ignore[call-overload]
-                chunk_text=str(c["chunk_text"]),
-                score=float(c["score"]) if c["score"] is not None else 0.0,  # type: ignore[arg-type]
-                start_offset=int(c["start_offset"]) if c["start_offset"] is not None else None,  # type: ignore[call-overload]
-                end_offset=int(c["end_offset"]) if c["end_offset"] is not None else None,  # type: ignore[call-overload]
+                path=c["path"],
+                chunk_index=c["chunk_index"] if c["chunk_index"] is not None else 0,
+                chunk_text=c["chunk_text"],
+                score=c["score"] if c["score"] is not None else 0.0,
+                start_offset=c["start_offset"],
+                end_offset=c["end_offset"],
             )
-            for c in chunks
+            for c in cast(list[ChunkDict], chunks)
         ]
 
         context = self.context_builder.build_context(search_result_objects)
@@ -326,14 +337,14 @@ class LLMDocumentReader:
 
         search_result_objects = [
             SemanticSearchResult(
-                path=str(c["path"]),
-                chunk_index=int(c["chunk_index"]) if c["chunk_index"] is not None else 0,  # type: ignore[call-overload]
-                chunk_text=str(c["chunk_text"]),
-                score=float(c["score"]) if c["score"] is not None else 0.0,  # type: ignore[arg-type]
-                start_offset=int(c["start_offset"]) if c["start_offset"] is not None else None,  # type: ignore[call-overload]
-                end_offset=int(c["end_offset"]) if c["end_offset"] is not None else None,  # type: ignore[call-overload]
+                path=c["path"],
+                chunk_index=c["chunk_index"] if c["chunk_index"] is not None else 0,
+                chunk_text=c["chunk_text"],
+                score=c["score"] if c["score"] is not None else 0.0,
+                start_offset=c["start_offset"],
+                end_offset=c["end_offset"],
             )
-            for c in chunks
+            for c in cast(list[ChunkDict], chunks)
         ]
 
         context = self.context_builder.build_context(search_result_objects)

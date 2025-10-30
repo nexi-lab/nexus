@@ -351,13 +351,21 @@ class PythonAction(BaseAction):
             if stderr_value:
                 print(f"[PYTHON ACTION STDERR]\n{stderr_value}", file=sys.stderr, end="")
 
+            # Check if there was an error during execution
+            if stderr_value:
+                return ActionResult(
+                    action_name=self.name,
+                    success=False,
+                    error=stderr_value,
+                )
+
             # Get result if 'result' variable was set
             result = exec_globals.get("result")
 
             return ActionResult(
                 action_name=self.name,
                 success=True,
-                output={"result": result, "stdout": stdout_value, "stderr": stderr_value},
+                output=result,
             )
         except Exception as e:
             import traceback

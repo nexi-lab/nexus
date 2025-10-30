@@ -954,7 +954,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return {"namespaces": self.nexus_fs.get_available_namespaces()}
 
         elif method == "get_metadata":
-            # Get file metadata (permissions, ownership, etc.)
+            # Get file metadata
             # Only available for local filesystems with metadata store
             if not hasattr(self.nexus_fs, "metadata"):
                 # Return None for remote filesystems or those without metadata
@@ -968,12 +968,20 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             is_dir = self.nexus_fs.is_directory(params.path)
 
             # Serialize metadata object to dict
+            # Note: UNIX-style permissions (owner/group/mode) have been removed
+            # All permissions are now managed through ReBAC relationships
             return {
                 "metadata": {
                     "path": metadata.path,
-                    "owner": metadata.owner,
-                    "group": metadata.group,
-                    "mode": metadata.mode,
+                    "backend_name": metadata.backend_name,
+                    "physical_path": metadata.physical_path,
+                    "size": metadata.size,
+                    "etag": metadata.etag,
+                    "mime_type": metadata.mime_type,
+                    "created_at": metadata.created_at,
+                    "modified_at": metadata.modified_at,
+                    "version": metadata.version,
+                    "tenant_id": metadata.tenant_id,
                     "is_directory": is_dir,
                 }
             }

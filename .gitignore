@@ -94,9 +94,11 @@ nexus-consent-*/
 test-nexus-data/
 test-server-data/
 demo-data*/
+*-demo-data/
 test-fix-data/
 *-examples-data/
 *-examples-workspace/
+*-server-data/
 my-data/
 
 # Nexus plugins (development)

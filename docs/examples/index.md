@@ -30,6 +30,14 @@ Explore Nexus through hands-on examples that demonstrate key features and real-w
 
     [:octicons-arrow-right-24: View Example](ace.md)
 
+-   :material-robot:{ .lg .middle } __LangGraph Integration__
+
+    ---
+
+    Build ReAct agents with LangGraph using Nexus as persistent filesystem infrastructure.
+
+    [:octicons-arrow-right-24: View Example](langgraph.md)
+
 -   :material-shield-lock:{ .lg .middle } __Permission Management__
 
     ---
@@ -45,6 +53,14 @@ Explore Nexus through hands-on examples that demonstrate key features and real-w
     Build multi-tenant applications with workspace isolation and session tracking.
 
     [:octicons-arrow-right-24: View Example](workspace-session.md)
+
+-   :material-file-search:{ .lg .middle } __Skill Seekers__
+
+    ---
+
+    Auto-generate Claude skills from any documentation URL with AI enhancement and llms.txt support.
+
+    [:octicons-arrow-right-24: View Example](skill-seekers.md)
 
 </div>
 
@@ -167,6 +183,8 @@ All examples include runnable shell scripts that demonstrate the full workflow:
 | Workspace & Sessions | `examples/cli/workspace_session_demo.sh` | Multi-tenant isolation and session tracking |
 | Advanced Usage | `examples/cli/advanced_usage_demo.sh` | Mounts, versioning, and advanced features |
 | ACE Learning Agent | `examples/ace/demo_3_data_validator.py` | Agent learns validation rules from experience |
+| LangGraph ReAct Agent | `examples/langgraph/langgraph_react_demo.py` | ReAct agent with file operations for code analysis |
+| Skill Seekers | `nexus-plugin-skill-seekers/examples/skill_seekers_demo.sh` | Auto-generate skills from documentation with AI |
 
 ## 🎯 What's Next?
 

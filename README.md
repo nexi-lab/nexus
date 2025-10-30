@@ -68,6 +68,12 @@ nx.memory.store("Python best practices learned from code review")
 memories = nx.memory.query(user_id="alice", scope="project")
 # Returns: [Memory(content="Python best practices...", timestamp=...)]
 
+# Workflow automation - events trigger automatically!
+from nexus.workflows import WorkflowAPI, WorkflowLoader
+workflows = WorkflowAPI()
+workflows.load("invoice-processor.yaml", enabled=True)
+nx.write("/uploads/invoice.pdf", pdf_data)  # Workflow fires automatically!
+
 # Semantic search
 results = nx.semantic_search("/docs/**/*.md", query="authentication setup")
 # Returns: [
@@ -231,6 +237,7 @@ Nexus combines files, memory, and access control into a single programmable laye
 - **LLM Document Reading**: Ask questions about documents with AI-powered answers, citations, and cost tracking
 - **Memory API**: Store, query, and consolidate agent memories with automatic knowledge extraction
 - **Semantic Search**: Vector-based search across files and memories using natural language
+- **Workflow Automation**: Event-driven workflows trigger automatically on file operations - no manual event firing needed
 - **Workspace Snapshots**: Save and restore entire agent workspaces for debugging and reproducibility
 - **Time-Travel**: Access any file at any historical point with content diffs
 

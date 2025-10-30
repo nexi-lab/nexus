@@ -11,6 +11,7 @@ This module contains the fundamental file operations:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 import threading
@@ -385,10 +386,10 @@ class NexusFSCoreMixin:
             try:
                 ctx = context if context is not None else self._default_context
                 logger.info(
-                    f"write: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id}"
+                    f"write: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id or 'default'}"
                 )
                 created_count = self._hierarchy_manager.ensure_parent_tuples(
-                    path, tenant_id=ctx.tenant_id
+                    path, tenant_id=ctx.tenant_id or "default"
                 )
                 logger.info(f"write: Created {created_count} parent tuples for {path}")
             except Exception as e:
@@ -446,6 +447,37 @@ class NexusFSCoreMixin:
                     f"Enable audit_strict_mode=True to prevent this."
                 )
                 # Continue execution - write succeeded but audit log failed
+
+        # v0.7.0: Fire workflow event for automatic trigger execution
+        if self.enable_workflows and self.workflow_engine:  # type: ignore[attr-defined]
+            import asyncio
+
+            from nexus.workflows.types import TriggerType
+
+            # Determine if this is a new file or update
+            is_new_file = meta is None or meta.etag is None
+
+            event_context = {
+                "file_path": path,
+                "size": len(content),
+                "etag": content_hash,
+                "version": new_version,
+                "tenant_id": self.tenant_id or "default",
+                "agent_id": self.agent_id,
+                "user_id": context.user_id if context and hasattr(context, "user_id") else None,
+                "created": is_new_file,
+                "timestamp": now.isoformat(),
+            }
+
+            # Fire event asynchronously (don't block file write)
+            # No event loop running, skip workflow triggering
+            # This can happen in synchronous contexts
+            with contextlib.suppress(RuntimeError):
+                asyncio.create_task(
+                    self.workflow_engine.fire_event(  # type: ignore[attr-defined]
+                        TriggerType.FILE_WRITE, event_context
+                    )
+                )
 
         # Return metadata for optimistic concurrency control
         return {
@@ -742,8 +774,34 @@ class NexusFSCoreMixin:
         # Remove from metadata
         self.metadata.delete(path)
 
+        # v0.7.0: Fire workflow event for automatic trigger execution
+        if self.enable_workflows and self.workflow_engine:  # type: ignore[attr-defined]
+            import asyncio
+            from datetime import UTC
+
+            from nexus.workflows.types import TriggerType
+
+            event_context = {
+                "file_path": path,
+                "size": meta.size,
+                "etag": meta.etag,
+                "tenant_id": self.tenant_id or "default",
+                "agent_id": self.agent_id,
+                "user_id": context.user_id if context and hasattr(context, "user_id") else None,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+
+            # Fire event asynchronously (don't block file delete)
+            # No event loop running, skip workflow triggering
+            with contextlib.suppress(RuntimeError):
+                asyncio.create_task(
+                    self.workflow_engine.fire_event(  # type: ignore[attr-defined]
+                        TriggerType.FILE_DELETE, event_context
+                    )
+                )
+
     @rpc_expose(description="Rename/move file")
-    def rename(self, old_path: str, new_path: str) -> None:
+    def rename(self, old_path: str, new_path: str, context: OperationContext | None = None) -> None:
         """
         Rename/move a file by updating its path in metadata.
 
@@ -756,6 +814,7 @@ class NexusFSCoreMixin:
         Args:
             old_path: Current virtual path
             new_path: New virtual path
+            context: Optional operation context for permission checks (uses default if not provided)
 
         Raises:
             NexusFileNotFoundError: If source file doesn't exist
@@ -835,6 +894,33 @@ class NexusFSCoreMixin:
         except Exception:
             # Don't fail the rename operation if logging fails
             pass
+
+        # v0.7.0: Fire workflow event for automatic trigger execution
+        if self.enable_workflows and self.workflow_engine:  # type: ignore[attr-defined]
+            import asyncio
+            from datetime import UTC
+
+            from nexus.workflows.types import TriggerType
+
+            event_context = {
+                "old_path": old_path,
+                "new_path": new_path,
+                "size": meta.size if meta else 0,
+                "etag": meta.etag if meta else None,
+                "tenant_id": self.tenant_id or "default",
+                "agent_id": self.agent_id,
+                "user_id": context.user_id if context and hasattr(context, "user_id") else None,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+
+            # Fire event asynchronously (don't block file rename)
+            # No event loop running, skip workflow triggering
+            with contextlib.suppress(RuntimeError):
+                asyncio.create_task(
+                    self.workflow_engine.fire_event(  # type: ignore[attr-defined]
+                        TriggerType.FILE_RENAME, event_context
+                    )
+                )
 
     @rpc_expose(description="Check if file exists")
     def exists(self, path: str, context: OperationContext | None = None) -> bool:

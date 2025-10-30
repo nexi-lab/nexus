@@ -23,6 +23,7 @@ from nexus.core.rebac import (
     DEFAULT_GROUP_NAMESPACE,
     DEFAULT_MEMORY_NAMESPACE,
     DEFAULT_PLAYBOOK_NAMESPACE,
+    DEFAULT_SKILL_NAMESPACE,
     DEFAULT_TRAJECTORY_NAMESPACE,
     WILDCARD_SUBJECT,
     Entity,
@@ -242,6 +243,7 @@ class ReBACManager:
                 DEFAULT_MEMORY_NAMESPACE,
                 DEFAULT_PLAYBOOK_NAMESPACE,
                 DEFAULT_TRAJECTORY_NAMESPACE,
+                DEFAULT_SKILL_NAMESPACE,
             ]:
                 cursor.execute(
                     self._fix_sql_placeholders(

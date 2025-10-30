@@ -345,6 +345,59 @@ Key features:
 - **Playbook curation** - Stores and evolves proven strategies
 - **Measurable ROI** - Quantified performance improvements
 
+## LangGraph + Nexus Integration
+
+Build powerful ReAct (Reasoning + Acting) agents with LangGraph that interact with Nexus filesystem. Perfect for code analysis, documentation generation, and autonomous file operations.
+
+This example demonstrates:
+- ReAct agent architecture for multi-step reasoning
+- Familiar file operation tools (grep, glob, cat/less, write)
+- Remote Nexus filesystem for persistent storage
+- Multi-LLM support (Claude, GPT-4, OpenRouter)
+- Multi-tenancy for team collaboration
+
+```python
+import nexus
+from langgraph_react_demo import create_react_agent
+
+# Connect to remote Nexus server
+nx = nexus.connect(
+    remote_url="http://nexus-server:8080",
+    config={"tenant_id": "team-dev", "agent_id": "code-analyzer"}
+)
+
+# Create ReAct agent with file operation tools
+agent = create_react_agent(nx)
+
+# Agent autonomously searches, reads, and writes files
+result = agent.invoke({
+    "messages": [{
+        "role": "user",
+        "content": "Find all async/await patterns, analyze them, and create a summary report"
+    }]
+})
+
+# Agent automatically:
+# 1. grep_files("async def /workspace") - Search for patterns
+# 2. read_file("cat /workspace/api.py") - Read relevant files
+# 3. write_file("/reports/analysis.md", "...") - Save analysis
+```
+
+**Real-world use cases:**
+- **Code Analysis** - Find patterns, security issues, performance bottlenecks
+- **Documentation** - Auto-generate API docs, onboarding guides
+- **Code Review** - Analyze PRs, suggest improvements
+- **Migration** - Find and update deprecated patterns
+
+**Full working demo:** See [`examples/langgraph/`](../examples/langgraph/) for complete implementation with sample tasks, multi-LLM support, and ReAct loop visualization.
+
+Key features:
+- **ReAct Architecture** - Agents reason, act, and observe in a loop
+- **File Operations** - grep, glob, read, write with Nexus
+- **Remote Execution** - Work with shared Nexus servers
+- **Multi-Tenancy** - Isolated workspaces for teams
+- **Framework Integration** - Shows Nexus as infrastructure for LangGraph
+
 ---
 
 ## Next Steps

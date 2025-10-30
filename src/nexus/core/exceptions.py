@@ -32,6 +32,21 @@ class NexusPermissionError(NexusError):
         super().__init__(msg, path)
 
 
+class PermissionDeniedError(NexusError):
+    """Raised when ReBAC permission check fails.
+
+    This is used by ReBAC-enabled operations (skills, memory, etc.) when
+    a subject lacks the required permission on an object.
+
+    Examples:
+        >>> raise PermissionDeniedError("No permission to read skill 'my-skill'")
+        >>> raise PermissionDeniedError("User lacks 'approve' permission", path="/skills/my-skill")
+    """
+
+    def __init__(self, message: str, path: str | None = None):
+        super().__init__(message, path)
+
+
 class BackendError(NexusError):
     """Raised when a backend operation fails."""
 

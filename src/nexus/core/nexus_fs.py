@@ -88,6 +88,9 @@ class NexusFS(
         inherit_permissions: bool = True,  # P0-3: Enable automatic parent tuple creation for directory inheritance
         allow_admin_bypass: bool = False,  # P0-4: Allow admin bypass (DEFAULT OFF for production security)
         audit_strict_mode: bool = True,  # P0 COMPLIANCE: Fail writes if audit logging fails (DEFAULT ON)
+        enable_workflows: bool = True,  # v0.7.0: Enable automatic workflow triggering (DEFAULT ON)
+        workflow_engine: Any
+        | None = None,  # v0.7.0: Optional workflow engine (auto-created if None)
     ):
         """
         Initialize filesystem.
@@ -112,6 +115,8 @@ class NexusFS(
             enforce_permissions: Enable permission enforcement on file operations (default: True)
             inherit_permissions: Enable automatic parent tuple creation for directory inheritance (default: True, P0-3)
             allow_admin_bypass: Allow admin users to bypass permission checks (default: False for security, P0-4)
+            enable_workflows: Enable automatic workflow triggering on file operations (default: True, v0.7.0)
+            workflow_engine: Optional workflow engine instance. If None and enable_workflows=True, auto-creates engine (v0.7.0)
 
         Note:
             When tenant_id or agent_id are provided, they set the default context for all operations.
@@ -286,6 +291,31 @@ class NexusFS(
             "user_id": None,
             "agent_id": None,
         }
+
+        # v0.7.0: Initialize workflow engine for automatic event triggering
+        self.enable_workflows = enable_workflows
+        self.workflow_engine = workflow_engine
+
+        if enable_workflows and workflow_engine is None:
+            # Auto-create workflow engine with persistent storage
+            try:
+                from nexus.workflows import WorkflowEngine
+                from nexus.workflows.storage import WorkflowStore
+
+                workflow_store = WorkflowStore(
+                    session_factory=self.metadata.SessionLocal,
+                    tenant_id=tenant_id or "default",
+                )
+
+                self.workflow_engine = WorkflowEngine(
+                    metadata_store=self.metadata,
+                    plugin_registry=None,  # TODO: Hook up plugin registry if available
+                    workflow_store=workflow_store,
+                )
+            except ImportError:
+                # Workflow system not available, disable workflows
+                self.enable_workflows = False
+                self.workflow_engine = None
 
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
         """
@@ -736,7 +766,7 @@ class NexusFS(
                             f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
                         )
                         self._hierarchy_manager.ensure_parent_tuples(
-                            parent_dir, tenant_id=ctx_inner.tenant_id
+                            parent_dir, tenant_id=ctx_inner.tenant_id or "default"
                         )
                     except Exception as e:
                         # Don't fail mkdir if parent tuple creation fails
@@ -762,10 +792,10 @@ class NexusFS(
             try:
                 ctx = context or self._default_context
                 logger.info(
-                    f"mkdir: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id}"
+                    f"mkdir: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id or 'default'}"
                 )
                 created_count = self._hierarchy_manager.ensure_parent_tuples(
-                    path, tenant_id=ctx.tenant_id
+                    path, tenant_id=ctx.tenant_id or "default"
                 )
                 logger.info(f"mkdir: Created {created_count} parent tuples for {path}")
                 if created_count > 0:

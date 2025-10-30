@@ -642,7 +642,19 @@ class EnhancedPermissionEnforcer:
                 )
                 # Ask backend for its object type
                 object_type = route.backend.get_object_type(route.backend_path)
-                object_id = route.backend.get_object_id(route.backend_path)
+                # IMPORTANT: For file objects, use the original path (with leading slash) to match
+                # how parent tuples are created. The backend's get_object_id strips the leading slash,
+                # which breaks parent tuple lookups.
+                if object_type == "file":
+                    object_id = path  # Use original path for file objects
+                else:
+                    object_id = route.backend.get_object_id(route.backend_path)
+                logger.info(
+                    f"  -> router used: backend_path='{route.backend_path}', object_type='{object_type}', object_id='{object_id}'"
+                )
+                logger.info(
+                    f"  -> CRITICAL: original path='{path}' transformed to object_id='{object_id}'"
+                )
             except Exception as e:
                 # If routing fails, fall back to default "file" type
                 logger.warning(

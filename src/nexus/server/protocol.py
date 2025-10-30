@@ -461,7 +461,9 @@ class ListWorkspacesParams:
 class ListMemoriesParams:
     """Parameters for list_memories() method (v0.5.0)."""
 
-    pass
+    limit: int = 50
+    scope: str | None = None
+    memory_type: str | None = None
 
 
 @dataclass
@@ -567,6 +569,108 @@ class DeleteAgentParams:
     agent_id: str
 
 
+# ========== Memory API Parameters (v0.5.0) ==========
+
+
+@dataclass
+class StartTrajectoryParams:
+    """Parameters for start_trajectory() method (v0.5.0)."""
+
+    task_description: str
+    task_type: str | None = None
+
+
+@dataclass
+class LogTrajectoryStepParams:
+    """Parameters for log_trajectory_step() method (v0.5.0)."""
+
+    trajectory_id: str
+    step_type: str
+    description: str
+    result: Any = None
+
+
+@dataclass
+class CompleteTrajectoryParams:
+    """Parameters for complete_trajectory() method (v0.5.0)."""
+
+    trajectory_id: str
+    status: str
+    success_score: float | None = None
+    error_message: str | None = None
+
+
+@dataclass
+class GetPlaybookParams:
+    """Parameters for get_playbook() method (v0.5.0)."""
+
+    playbook_name: str = "default"
+
+
+@dataclass
+class CuratePlaybookParams:
+    """Parameters for curate_playbook() method (v0.5.0)."""
+
+    reflection_memory_ids: list[str]
+    playbook_name: str = "default"
+    merge_threshold: float = 0.7
+
+
+@dataclass
+class BatchReflectParams:
+    """Parameters for batch_reflect() method (v0.5.0)."""
+
+    agent_id: str | None = None
+    since: str | None = None
+    min_trajectories: int = 10
+    task_type: str | None = None
+
+
+@dataclass
+class StoreMemoryParams:
+    """Parameters for store_memory() method (v0.5.0)."""
+
+    content: str
+    memory_type: str = "fact"
+    scope: str = "agent"
+    importance: float = 0.5
+    tags: list[str] | None = None
+
+
+@dataclass
+class QueryMemoriesParams:
+    """Parameters for query_memories() method (v0.5.0)."""
+
+    memory_type: str | None = None
+    scope: str | None = None
+    limit: int = 50
+
+
+@dataclass
+class QueryTrajectoriesParams:
+    """Parameters for query_trajectories() method (v0.5.0)."""
+
+    agent_id: str | None = None
+    status: str | None = None
+    limit: int = 50
+
+
+@dataclass
+class QueryPlaybooksParams:
+    """Parameters for query_playbooks() method (v0.5.0)."""
+
+    agent_id: str | None = None
+    scope: str | None = None
+    limit: int = 50
+
+
+@dataclass
+class ProcessRelearningParams:
+    """Parameters for process_relearning() method (v0.5.0)."""
+
+    limit: int = 10
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -608,6 +712,18 @@ METHOD_PARAMS = {
     "list_agents": ListAgentsParams,  # v0.5.0
     "get_agent": GetAgentParams,  # v0.5.0
     "delete_agent": DeleteAgentParams,  # v0.5.0
+    # Memory API methods (v0.5.0)
+    "start_trajectory": StartTrajectoryParams,
+    "log_trajectory_step": LogTrajectoryStepParams,
+    "complete_trajectory": CompleteTrajectoryParams,
+    "query_trajectories": QueryTrajectoriesParams,
+    "get_playbook": GetPlaybookParams,
+    "curate_playbook": CuratePlaybookParams,
+    "query_playbooks": QueryPlaybooksParams,
+    "process_relearning": ProcessRelearningParams,
+    "batch_reflect": BatchReflectParams,
+    "store_memory": StoreMemoryParams,
+    "query_memories": QueryMemoriesParams,
     # Versioning methods
     "get_version": GetVersionParams,
     "list_versions": ListVersionsParams,

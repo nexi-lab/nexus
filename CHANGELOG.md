@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2025-10-29
+
+### Added
+
+#### Database Schema + Agent Identity System
+- **Enhanced Database Schema**: Improved database structure for better scalability
+  - Optimized indexes for faster queries
+  - Better support for multi-tenant operations
+  - Schema migrations for production deployments
+
+#### ReBAC (Relationship-Based Access Control) Enhancements
+- **Complete ReBAC Implementation**: Full Zanzibar-style authorization system
+  - Enhanced tuple storage and querying
+  - Improved relationship resolution
+  - Better tenant isolation in ReBAC checks
+  - Authentication support with OIDC and local auth
+  - `authlib` dependency for OAuth/OIDC integration
+  - `bcrypt` for secure password hashing
+
+#### Test Infrastructure Improvements
+- **Reorganized Test Suite**: Better test organization and maintainability
+  - Tests reorganized into logical subdirectories
+  - Improved test isolation for parallel execution
+  - Comprehensive test coverage for workflows module
+  - Fixed flaky macOS RPC server tests
+
+### Fixed
+- **RPC Parity Test**: Fixed test path in GitHub Actions workflow
+- **Linting and Type Errors**: Resolved all linting and type checking issues
+- **Test Fixtures**: Improved tenant isolation and session management in tests
+- **Permission System**: Updated permission check expectations in workspace manager
+
+### Changed
+- **Coverage Threshold**: Lowered to 60% for v0.5.0 to accommodate new features
+- **Test Organization**: Tests now organized in subdirectories for better maintainability
+
 ## [0.3.9] - 2025-10-23
 
 ### Added

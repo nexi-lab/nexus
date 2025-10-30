@@ -5,7 +5,11 @@ combining content-addressable storage (CAS) with directory operations.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.core.permissions import OperationContext
+    from nexus.core.permissions_enhanced import EnhancedOperationContext
 
 
 class Backend(ABC):
@@ -38,10 +42,37 @@ class Backend(ABC):
         """
         pass
 
+    @property
+    def user_scoped(self) -> bool:
+        """
+        Whether this backend requires per-user credentials (OAuth-based).
+
+        User-scoped backends (e.g., Google Drive, OneDrive) use different
+        credentials for each user. The backend will receive OperationContext
+        to determine which user's credentials to use.
+
+        Non-user-scoped backends (e.g., GCS, S3) use shared service account
+        credentials and ignore the context parameter.
+
+        Returns:
+            True if backend requires per-user credentials, False otherwise
+            Default: False (shared credentials)
+
+        Examples:
+            >>> # Shared credentials (GCS, S3)
+            >>> gcs_backend.user_scoped
+            False
+
+            >>> # Per-user OAuth (Google Drive, OneDrive)
+            >>> gdrive_backend.user_scoped
+            True
+        """
+        return False
+
     # === Content Operations (CAS) ===
 
     @abstractmethod
-    def write_content(self, content: bytes) -> str:
+    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
         """
         Write content to storage and return its content hash.
 
@@ -50,22 +81,28 @@ class Backend(ABC):
 
         Args:
             content: File content as bytes
+            context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Returns:
             Content hash (SHA-256 as hex string)
 
         Raises:
             BackendError: If write operation fails
+
+        Note:
+            For user_scoped backends, context.user_id determines which user's
+            credentials to use. Non-user-scoped backends ignore this parameter.
         """
         pass
 
     @abstractmethod
-    def read_content(self, content_hash: str) -> bytes:
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
         """
         Read content by its hash.
 
         Args:
             content_hash: SHA-256 hash as hex string
+            context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Returns:
             File content as bytes
@@ -73,10 +110,16 @@ class Backend(ABC):
         Raises:
             NexusFileNotFoundError: If content doesn't exist
             BackendError: If read operation fails
+
+        Note:
+            For user_scoped backends, context.user_id determines which user's
+            credentials to use. Non-user-scoped backends ignore this parameter.
         """
         pass
 
-    def batch_read_content(self, content_hashes: list[str]) -> dict[str, bytes | None]:
+    def batch_read_content(
+        self, content_hashes: list[str], context: "OperationContext | None" = None
+    ) -> dict[str, bytes | None]:
         """
         Read multiple content items by their hashes (batch operation).
 
@@ -86,6 +129,7 @@ class Backend(ABC):
 
         Args:
             content_hashes: List of SHA-256 hashes as hex strings
+            context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Returns:
             Dictionary mapping content_hash -> content bytes
@@ -98,13 +142,15 @@ class Backend(ABC):
         result: dict[str, bytes | None] = {}
         for content_hash in content_hashes:
             try:
-                result[content_hash] = self.read_content(content_hash)
+                result[content_hash] = self.read_content(content_hash, context=context)
             except Exception:
                 # Return None for missing/errored content
                 result[content_hash] = None
         return result
 
-    def stream_content(self, content_hash: str, chunk_size: int = 8192) -> Any:
+    def stream_content(
+        self, content_hash: str, chunk_size: int = 8192, context: "OperationContext | None" = None
+    ) -> Any:
         """
         Stream content by its hash in chunks (generator).
 
@@ -114,6 +160,7 @@ class Backend(ABC):
         Args:
             content_hash: SHA-256 hash as hex string
             chunk_size: Size of each chunk in bytes (default: 8KB)
+            context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Yields:
             bytes: Chunks of file content
@@ -129,12 +176,12 @@ class Backend(ABC):
         """
         # Default implementation: read entire file and yield in chunks
         # Backends can override for true streaming from storage
-        content = self.read_content(content_hash)
+        content = self.read_content(content_hash, context=context)
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
 
     @abstractmethod
-    def delete_content(self, content_hash: str) -> None:
+    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         """
         Delete content by hash.
 
@@ -143,33 +190,44 @@ class Backend(ABC):
 
         Args:
             content_hash: SHA-256 hash as hex string
+            context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Raises:
             NexusFileNotFoundError: If content doesn't exist
             BackendError: If delete operation fails
+
+        Note:
+            For user_scoped backends, context.user_id determines which user's
+            credentials to use. Non-user-scoped backends ignore this parameter.
         """
         pass
 
     @abstractmethod
-    def content_exists(self, content_hash: str) -> bool:
+    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
         """
         Check if content exists.
 
         Args:
             content_hash: SHA-256 hash as hex string
+            context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Returns:
             True if content exists, False otherwise
+
+        Note:
+            For user_scoped backends, context.user_id determines which user's
+            credentials to use. Non-user-scoped backends ignore this parameter.
         """
         pass
 
     @abstractmethod
-    def get_content_size(self, content_hash: str) -> int:
+    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         """
         Get content size in bytes.
 
         Args:
             content_hash: SHA-256 hash as hex string
+            context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Returns:
             Content size in bytes
@@ -177,29 +235,44 @@ class Backend(ABC):
         Raises:
             NexusFileNotFoundError: If content doesn't exist
             BackendError: If operation fails
+
+        Note:
+            For user_scoped backends, context.user_id determines which user's
+            credentials to use. Non-user-scoped backends ignore this parameter.
         """
         pass
 
     @abstractmethod
-    def get_ref_count(self, content_hash: str) -> int:
+    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         """
         Get reference count for content.
 
         Args:
             content_hash: SHA-256 hash as hex string
+            context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Returns:
             Number of references to this content
 
         Raises:
             NexusFileNotFoundError: If content doesn't exist
+
+        Note:
+            For user_scoped backends, context.user_id determines which user's
+            credentials to use. Non-user-scoped backends ignore this parameter.
         """
         pass
 
     # === Directory Operations ===
 
     @abstractmethod
-    def mkdir(self, path: str, parents: bool = False, exist_ok: bool = False) -> None:
+    def mkdir(
+        self,
+        path: str,
+        parents: bool = False,
+        exist_ok: bool = False,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
+    ) -> None:
         """
         Create a directory.
 
@@ -210,11 +283,16 @@ class Backend(ABC):
             path: Directory path (relative to backend root)
             parents: Create parent directories if needed (like mkdir -p)
             exist_ok: Don't raise error if directory exists
+            context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Raises:
             FileExistsError: If directory exists and exist_ok=False
             FileNotFoundError: If parent doesn't exist and parents=False
             BackendError: If operation fails
+
+        Note:
+            For user_scoped backends, context.user_id determines which user's
+            credentials to use. Non-user-scoped backends ignore this parameter.
         """
         pass
 
@@ -275,3 +353,54 @@ class Backend(ABC):
             Backends that support efficient directory listing should override this.
         """
         raise NotImplementedError(f"Backend '{self.name}' does not support directory listing")
+
+    # === ReBAC Object Type Mapping ===
+
+    def get_object_type(self, _backend_path: str) -> str:
+        """
+        Map backend path to ReBAC object type.
+
+        Used by the permission enforcer to determine what type of object
+        is being accessed for ReBAC permission checks. This allows different
+        backends to have different permission models.
+
+        Args:
+            _backend_path: Path relative to backend (no mount point prefix)
+
+        Returns:
+            ReBAC object type string
+
+        Examples:
+            LocalBackend: "file"
+            PostgresBackend: "postgres:table" or "postgres:row"
+            RedisBackend: "redis:instance" or "redis:key"
+
+        Note:
+            Default implementation returns "file" for file storage backends.
+            Database/API backends should override to return appropriate types.
+        """
+        return "file"
+
+    def get_object_id(self, backend_path: str) -> str:
+        """
+        Map backend path to ReBAC object identifier.
+
+        Used by the permission enforcer to identify the specific object
+        being accessed in ReBAC permission checks.
+
+        Args:
+            backend_path: Path relative to backend
+
+        Returns:
+            Object identifier for ReBAC
+
+        Examples:
+            LocalBackend: backend_path (full relative path)
+            PostgresBackend: "public/users" (schema/table)
+            RedisBackend: "prod-cache" (instance name)
+
+        Note:
+            Default implementation returns the path as-is.
+            Backends can override to return more appropriate identifiers.
+        """
+        return backend_path

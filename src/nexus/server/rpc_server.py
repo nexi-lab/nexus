@@ -707,6 +707,104 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 }
             }
 
+        # ========== Memory API (v0.5.0) ==========
+        # Trajectory operations
+        elif method == "start_trajectory":
+            trajectory_id = self.nexus_fs.memory.start_trajectory(  # type: ignore[attr-defined]
+                task_description=params.task_description,
+                task_type=params.task_type,
+            )
+            return {"trajectory_id": trajectory_id}
+
+        elif method == "log_trajectory_step":
+            self.nexus_fs.memory.log_step(  # type: ignore[attr-defined]
+                trajectory_id=params.trajectory_id,
+                step_type=params.step_type,
+                description=params.description,
+                result=params.result,
+            )
+            return {"success": True}
+
+        elif method == "complete_trajectory":
+            trajectory_id = self.nexus_fs.memory.complete_trajectory(  # type: ignore[attr-defined]
+                trajectory_id=params.trajectory_id,
+                status=params.status,
+                success_score=params.success_score,
+                error_message=params.error_message,
+            )
+            return {"trajectory_id": trajectory_id}
+
+        elif method == "query_trajectories":
+            trajectories = self.nexus_fs.memory.query_trajectories(  # type: ignore[attr-defined]
+                agent_id=params.agent_id,
+                status=params.status,
+                limit=params.limit,
+            )
+            return {"trajectories": trajectories}
+
+        # Playbook operations
+        elif method == "get_playbook":
+            playbook = self.nexus_fs.memory.get_playbook(playbook_name=params.playbook_name)  # type: ignore[attr-defined]
+            return playbook
+
+        elif method == "curate_playbook":
+            result = self.nexus_fs.memory.curate_playbook(  # type: ignore[attr-defined]
+                reflections=params.reflection_memory_ids,  # Map RPC param to API param
+                playbook_name=params.playbook_name,
+            )
+            return result
+
+        elif method == "query_playbooks":
+            playbooks = self.nexus_fs.memory.query_playbooks(  # type: ignore[attr-defined]
+                agent_id=params.agent_id,
+                scope=params.scope,
+                limit=params.limit,
+            )
+            return {"playbooks": playbooks}
+
+        elif method == "process_relearning":
+            results = self.nexus_fs.memory.process_relearning(  # type: ignore[attr-defined]
+                limit=params.limit,
+            )
+            return {"results": results}
+
+        # Reflection operations
+        elif method == "batch_reflect":
+            result = self.nexus_fs.memory.batch_reflect(  # type: ignore[attr-defined]
+                agent_id=params.agent_id,
+                since=params.since,
+                min_trajectories=params.min_trajectories,
+                task_type=params.task_type,
+            )
+            return result
+
+        # Memory storage operations
+        elif method == "store_memory":
+            memory_id = self.nexus_fs.memory.store(  # type: ignore[attr-defined]
+                content=params.content,
+                memory_type=params.memory_type,
+                scope=params.scope,
+                importance=params.importance,
+                # Note: tags param in RPC but not in Memory.store() - ignore it
+            )
+            return {"memory_id": memory_id}
+
+        elif method == "list_memories":
+            memories = self.nexus_fs.memory.list(  # type: ignore[attr-defined]
+                scope=params.scope,
+                memory_type=params.memory_type,
+                limit=params.limit,
+            )
+            return {"memories": memories}
+
+        elif method == "query_memories":
+            memories = self.nexus_fs.memory.query(  # type: ignore[attr-defined]
+                memory_type=params.memory_type,
+                scope=params.scope,
+                limit=params.limit,
+            )
+            return {"memories": memories}
+
         else:
             raise ValueError(f"Unknown method: {method}")
 

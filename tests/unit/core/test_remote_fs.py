@@ -144,11 +144,21 @@ class TestWriteAndRead:
         content_hash = "abc123def456"
         remote_fs.backend.write_content.return_value = content_hash
 
+        # Mock router.route to return the backend
+        from unittest.mock import Mock
+
+        mock_route = Mock()
+        mock_route.backend = remote_fs.backend
+        mock_route.readonly = False
+        remote_fs.router.route = Mock(return_value=mock_route)
+
         # Write file
         remote_fs.write(path, content)
 
-        # Verify backend was called
-        remote_fs.backend.write_content.assert_called_once_with(content)
+        # Verify backend was called with context parameter
+        assert remote_fs.backend.write_content.call_count == 1
+        call_args = remote_fs.backend.write_content.call_args
+        assert call_args[0][0] == content  # First positional arg
 
         # Mock backend read_content
         remote_fs.backend.read_content.return_value = content
@@ -157,8 +167,10 @@ class TestWriteAndRead:
         result = remote_fs.read(path)
         assert result == content
 
-        # Verify backend was called with correct hash
-        remote_fs.backend.read_content.assert_called_once_with(content_hash)
+        # Verify backend was called with correct hash and context
+        assert remote_fs.backend.read_content.call_count == 1
+        call_args = remote_fs.backend.read_content.call_args
+        assert call_args[0][0] == content_hash  # First positional arg
 
     def test_write_creates_metadata(self, remote_fs: NexusFS) -> None:
         """Test that writing creates metadata."""
@@ -255,6 +267,14 @@ class TestDelete:
         content = b"test"
         content_hash = "hash123"
 
+        # Mock router.route to return the backend
+        from unittest.mock import Mock
+
+        mock_route = Mock()
+        mock_route.backend = remote_fs.backend
+        mock_route.readonly = False
+        remote_fs.router.route = Mock(return_value=mock_route)
+
         # Create file
         remote_fs.backend.write_content.return_value = content_hash
         remote_fs.write(path, content)
@@ -264,8 +284,10 @@ class TestDelete:
         # Delete file
         remote_fs.delete(path)
 
-        # Verify backend delete was called
-        remote_fs.backend.delete_content.assert_called_with(content_hash)
+        # Verify backend delete was called with context parameter
+        assert remote_fs.backend.delete_content.call_count == 1
+        call_args = remote_fs.backend.delete_content.call_args
+        assert call_args[0][0] == content_hash  # First positional arg
 
         # Verify metadata is gone
         assert not remote_fs.exists(path)
@@ -434,6 +456,14 @@ class TestGrep:
         # Store content for mocking reads
         content_store = {}
 
+        # Mock router.route to return the backend
+        from unittest.mock import Mock
+
+        mock_route = Mock()
+        mock_route.backend = remote_fs.backend
+        mock_route.readonly = False
+        remote_fs.router.route = Mock(return_value=mock_route)
+
         for path, content in files.items():
             content_hash = f"hash_{path}"
             content_store[content_hash] = content
@@ -441,7 +471,7 @@ class TestGrep:
             remote_fs.write(path, content)
 
         # Mock read_content to return correct content based on hash
-        def mock_read_content(content_hash):
+        def mock_read_content(content_hash, context=None):
             return content_store.get(content_hash, b"")
 
         remote_fs.backend.read_content.side_effect = mock_read_content

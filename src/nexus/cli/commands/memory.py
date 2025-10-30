@@ -81,13 +81,21 @@ def query(
     nx = get_default_filesystem()
 
     try:
+        # Note: user_id and agent_id filtering not supported in remote mode yet
         results = nx.memory.query(  # type: ignore[attr-defined]
-            user_id=user_id,
-            agent_id=agent_id,
             scope=scope,
             memory_type=memory_type,
             limit=limit,
         )
+
+        # Client-side filtering if user_id or agent_id specified
+        if user_id or agent_id:
+            results = [
+                r
+                for r in results
+                if (not user_id or r.get("user_id") == user_id)
+                and (not agent_id or r.get("agent_id") == agent_id)
+            ]
 
         if output_json:
             click.echo(json.dumps(results, indent=2))
@@ -524,3 +532,496 @@ def _parse_ttl(ttl_str: str) -> timedelta:
         return timedelta(weeks=value)
     else:
         raise ValueError(f"Invalid time unit: '{unit}'")
+
+
+# ========== ACE (Agentic Context Engineering) Commands (v0.5.0) ==========
+
+
+@memory.group(name="trajectory")
+def trajectory_group() -> None:
+    """Manage execution trajectories for learning."""
+    pass
+
+
+@trajectory_group.command("start")
+@click.argument("task_description")
+@click.option("--type", "task_type", help="Task type (e.g., 'api_call', 'data_processing')")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def trajectory_start(task_description: str, task_type: str | None, output_json: bool) -> None:
+    """Start tracking a new execution trajectory.
+
+    Example:
+        nexus memory trajectory start "Process customer data" --type data_processing
+    """
+    nx = get_default_filesystem()
+    try:
+        traj_id = nx.memory.start_trajectory(task_description, task_type)  # type: ignore[attr-defined]
+        if output_json:
+            click.echo(json.dumps({"trajectory_id": traj_id}))
+        else:
+            console.print(f"[green]✓[/green] Started trajectory: {traj_id}")
+        nx.close()
+    except Exception as e:
+        nx.close()
+        handle_error(e)
+
+
+@trajectory_group.command("log")
+@click.argument("trajectory_id")
+@click.argument("description")
+@click.option(
+    "--type", "step_type", default="action", help="Step type (action/decision/observation)"
+)
+def trajectory_log(trajectory_id: str, description: str, step_type: str) -> None:
+    """Log a step in the trajectory.
+
+    Example:
+        nexus memory trajectory log traj_123 "Parsed 100 records" --type action
+    """
+    nx = get_default_filesystem()
+    try:
+        nx.memory.log_trajectory_step(trajectory_id, step_type, description)  # type: ignore[attr-defined]
+        console.print(f"[green]✓[/green] Logged step to {trajectory_id}")
+        nx.close()
+    except Exception as e:
+        nx.close()
+        handle_error(e)
+
+
+@trajectory_group.command("complete")
+@click.argument("trajectory_id")
+@click.option("--status", type=click.Choice(["success", "failure", "partial"]), required=True)
+@click.option("--score", type=float, help="Success score (0.0-1.0)")
+def trajectory_complete(trajectory_id: str, status: str, score: float | None) -> None:
+    """Complete a trajectory with outcome.
+
+    Example:
+        nexus memory trajectory complete traj_123 --status success --score 0.95
+    """
+    nx = get_default_filesystem()
+    try:
+        nx.memory.complete_trajectory(trajectory_id, status, score)  # type: ignore[attr-defined]
+        console.print(f"[green]✓[/green] Completed trajectory {trajectory_id} [{status}]")
+        nx.close()
+    except Exception as e:
+        nx.close()
+        handle_error(e)
+
+
+@trajectory_group.command("list")
+@click.option("--agent-id", help="Filter by agent ID")
+@click.option("--status", help="Filter by status")
+@click.option("--limit", type=int, default=50, help="Maximum results")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def trajectory_list(
+    agent_id: str | None,
+    status: str | None,
+    limit: int,
+    output_json: bool,
+) -> None:
+    """List execution trajectories.
+
+    Example:
+        nexus memory trajectory list --agent-id agent_a --status success
+    """
+    nx = get_default_filesystem()
+    try:
+        # Use Memory API instead of direct metadata access (supports both local and remote)
+        trajectories = nx.memory.query_trajectories(  # type: ignore[attr-defined]
+            agent_id=agent_id,
+            status=status,
+            limit=limit,
+        )
+
+        if output_json:
+            click.echo(json.dumps(trajectories, indent=2))
+        else:
+            if not trajectories:
+                console.print("[yellow]No trajectories found[/yellow]")
+            else:
+                table = Table(title="Execution Trajectories")
+                table.add_column("ID", style="cyan")
+                table.add_column("Task", style="white")
+                table.add_column("Status", style="green")
+                table.add_column("Score", style="yellow")
+
+                for traj in trajectories:
+                    score_str = (
+                        f"{traj.get('success_score', 0.0):.2f}"
+                        if traj.get("success_score")
+                        else "N/A"
+                    )
+                    table.add_row(
+                        traj["trajectory_id"][:12],
+                        traj["task_description"][:50],
+                        traj["status"],
+                        score_str,
+                    )
+
+                console.print(table)
+
+        nx.close()
+    except Exception as e:
+        nx.close()
+        handle_error(e)
+
+
+@memory.command("reflect")
+@click.argument("trajectory_id", required=False)
+@click.option("--batch", is_flag=True, help="Batch reflection mode")
+@click.option("--since", help="ISO timestamp for batch reflection (e.g., 2025-10-01T00:00:00Z)")
+@click.option("--min-count", type=int, default=10, help="Minimum trajectories for batch")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def reflect_cmd(
+    trajectory_id: str | None,
+    batch: bool,
+    since: str | None,
+    min_count: int,
+    output_json: bool,
+) -> None:
+    """Reflect on trajectories to extract learnings.
+
+    \b
+    Single reflection:
+        nexus memory reflect traj_123
+
+    \b
+    Batch reflection:
+        nexus memory reflect --batch --since 2025-10-01 --min-count 10
+    """
+    nx = get_default_filesystem()
+    try:
+        if batch:
+            # Batch reflection
+            result = nx.memory.batch_reflect(since=since, min_trajectories=min_count)  # type: ignore[attr-defined]
+
+            if output_json:
+                click.echo(json.dumps(result, indent=2))
+            else:
+                console.print("\n[bold]Batch Reflection Results[/bold]")
+                console.print(f"Trajectories analyzed: {result['trajectories_analyzed']}")
+
+                if result.get("common_patterns"):
+                    console.print("\n[green]✓ Common Successful Patterns:[/green]")
+                    for pattern in result["common_patterns"][:5]:
+                        console.print(
+                            f"  • {pattern['description']} (freq: {pattern['frequency']})"
+                        )
+
+                if result.get("common_failures"):
+                    console.print("\n[red]✗ Common Failure Patterns:[/red]")
+                    for pattern in result["common_failures"][:5]:
+                        console.print(
+                            f"  • {pattern['description']} (freq: {pattern['frequency']})"
+                        )
+        else:
+            # Single trajectory reflection
+            if not trajectory_id:
+                console.print("[red]Error:[/red] trajectory_id required for single reflection")
+                nx.close()
+                return
+
+            reflection = nx.memory.reflect(trajectory_id)  # type: ignore[attr-defined]
+
+            if output_json:
+                click.echo(json.dumps(reflection, indent=2))
+            else:
+                console.print(f"\n[bold]Reflection for {trajectory_id}[/bold]")
+
+                if reflection.get("helpful_strategies"):
+                    console.print("\n[green]✓ Helpful Strategies:[/green]")
+                    for s in reflection["helpful_strategies"]:
+                        console.print(f"  • {s['description']}")
+
+                if reflection.get("harmful_patterns"):
+                    console.print("\n[red]✗ Harmful Patterns:[/red]")
+                    for s in reflection["harmful_patterns"]:
+                        console.print(f"  • {s['description']}")
+
+                console.print(f"\nReflection memory ID: {reflection.get('memory_id')}")
+
+        nx.close()
+    except Exception as e:
+        nx.close()
+        handle_error(e)
+
+
+@memory.group(name="playbook")
+def playbook_group() -> None:
+    """Manage agent playbooks with learned strategies."""
+    pass
+
+
+@playbook_group.command("get")
+@click.argument("name", default="default")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def playbook_get(name: str, output_json: bool) -> None:
+    """View playbook strategies.
+
+    Example:
+        nexus memory playbook get default
+    """
+    nx = get_default_filesystem()
+    try:
+        playbook = nx.memory.get_playbook(name)  # type: ignore[attr-defined]
+
+        if not playbook:
+            console.print(f"[yellow]Playbook '{name}' not found[/yellow]")
+            nx.close()
+            return
+
+        if output_json:
+            click.echo(json.dumps(playbook, indent=2))
+        else:
+            console.print(f"\n[bold]{playbook['name']}[/bold] (v{playbook['version']})")
+            console.print(f"Scope: {playbook['scope']}")
+            console.print(f"Usage: {playbook['usage_count']} times")
+            console.print(f"Success Rate: {playbook['success_rate']:.1%}")
+
+            strategies = playbook.get("content", {}).get("strategies", [])
+            if strategies:
+                console.print("\n[bold]Strategies:[/bold]")
+                for s in strategies:
+                    marker = {
+                        "helpful": "[green]✓[/green]",
+                        "harmful": "[red]✗[/red]",
+                        "neutral": "[yellow]○[/yellow]",
+                    }.get(s.get("type", "neutral"), "○")
+                    console.print(f"  {marker} {s.get('description', 'N/A')}")
+
+        nx.close()
+    except Exception as e:
+        nx.close()
+        handle_error(e)
+
+
+@playbook_group.command("update")
+@click.argument("name", default="default")
+@click.option("--strategies", required=True, help="Path to strategies JSON file")
+def playbook_update(name: str, strategies: str) -> None:
+    """Update playbook with new strategies.
+
+    \b
+    Strategies JSON format:
+    [
+      {
+        "category": "helpful",
+        "pattern": "Always validate input before processing",
+        "context": "Data processing tasks",
+        "confidence": 0.9
+      }
+    ]
+
+    Example:
+        nexus memory playbook update default --strategies strategies.json
+    """
+    nx = get_default_filesystem()
+    try:
+        with open(strategies) as f:
+            strategies_data = json.load(f)
+
+        result = nx.memory.update_playbook(strategies_data, name)  # type: ignore[attr-defined]
+
+        console.print(f"[green]✓[/green] Updated playbook '{name}'")
+        console.print(f"  Added {result['strategies_added']} strategies")
+
+        nx.close()
+    except Exception as e:
+        nx.close()
+        handle_error(e)
+
+
+@playbook_group.command("curate")
+@click.option("--reflections", required=True, help="Comma-separated reflection memory IDs")
+@click.option("--name", default="default", help="Playbook name")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def playbook_curate(reflections: str, name: str, output_json: bool) -> None:
+    """Auto-curate playbook from reflections.
+
+    Example:
+        nexus memory playbook curate --reflections mem_1,mem_2,mem_3
+    """
+    nx = get_default_filesystem()
+    try:
+        reflection_ids = [rid.strip() for rid in reflections.split(",")]
+        result = nx.memory.curate_playbook(reflection_ids, name)  # type: ignore[attr-defined]
+
+        if output_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            console.print(f"[green]✓[/green] Curated playbook '{name}'")
+            console.print(f"  Strategies added: {result.get('strategies_added', 0)}")
+            console.print(f"  Strategies merged: {result.get('strategies_merged', 0)}")
+
+        nx.close()
+    except Exception as e:
+        nx.close()
+        handle_error(e)
+
+
+@playbook_group.command("list")
+@click.option("--scope", help="Filter by scope")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def playbook_list(scope: str | None, output_json: bool) -> None:
+    """List playbooks.
+
+    Example:
+        nexus memory playbook list --scope agent
+    """
+    nx = get_default_filesystem()
+    try:
+        # Use Memory API instead of direct metadata access (supports both local and remote)
+        playbooks = nx.memory.query_playbooks(agent_id=None, scope=scope, limit=50)  # type: ignore[attr-defined]
+
+        if output_json:
+            click.echo(json.dumps(playbooks, indent=2))
+        else:
+            if not playbooks:
+                console.print("[yellow]No playbooks found[/yellow]")
+            else:
+                table = Table(title="Playbooks")
+                table.add_column("Name", style="cyan")
+                table.add_column("Version", style="white")
+                table.add_column("Usage", style="yellow")
+                table.add_column("Success Rate", style="green")
+
+                for pb in playbooks:
+                    table.add_row(
+                        pb["name"],
+                        str(pb["version"]),
+                        str(pb["usage_count"]),
+                        f"{pb['success_rate']:.1%}",
+                    )
+
+                console.print(table)
+
+        nx.close()
+    except Exception as e:
+        nx.close()
+        handle_error(e)
+
+
+@memory.command("consolidate")
+@click.option("--type", "memory_type", help="Filter by memory type")
+@click.option("--threshold", type=float, default=0.8, help="Importance threshold")
+@click.option("--dry-run", is_flag=True, help="Show what would be consolidated")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def consolidate_cmd(
+    memory_type: str | None,
+    threshold: float,
+    dry_run: bool,
+    output_json: bool,
+) -> None:
+    """Consolidate memories to prevent context collapse.
+
+    Example:
+        nexus memory consolidate --type experience --threshold 0.8
+        nexus memory consolidate --dry-run --type all
+    """
+    nx = get_default_filesystem()
+    try:
+        if dry_run:
+            console.print("[yellow]Dry run mode - no changes will be made[/yellow]")
+            # TODO: Implement dry-run mode
+            nx.close()
+            return
+
+        report = nx.memory.consolidate(  # type: ignore[attr-defined]
+            memory_type=memory_type,
+            importance_threshold=threshold,
+        )
+
+        if output_json:
+            click.echo(json.dumps(report, indent=2))
+        else:
+            console.print("\n[bold]Consolidation Report[/bold]")
+            console.print(f"Memories consolidated: {report['memories_consolidated']}")
+            console.print(f"Consolidations created: {report['consolidations_created']}")
+            console.print(f"Space saved: ~{report['space_saved']} memories")
+
+        nx.close()
+    except Exception as e:
+        nx.close()
+        handle_error(e)
+
+
+@memory.command("process-relearning")
+@click.option("--limit", type=int, default=10, help="Maximum trajectories to process")
+@click.option("--min-priority", type=int, default=0, help="Minimum priority (1-10)")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def process_relearning_cmd(
+    limit: int,
+    min_priority: int,
+    output_json: bool,
+) -> None:
+    """Process trajectories flagged for re-learning.
+
+    This command processes trajectories that have received feedback after completion,
+    re-reflecting on them with updated scores to improve agent learning.
+
+    Useful for:
+    - Processing production feedback
+    - Incorporating human ratings
+    - Updating learning from A/B test results
+    - Running as a scheduled job (cron/systemd)
+
+    \b
+    Examples:
+        # Process up to 10 trajectories
+        nexus memory process-relearning
+
+        # Process high-priority items only
+        nexus memory process-relearning --min-priority 7 --limit 5
+
+        # Run as cron job (every 5 minutes)
+        */5 * * * * nexus memory process-relearning --limit 10
+
+        # JSON output for automation
+        nexus memory process-relearning --json
+    """
+    nx = get_default_filesystem()
+    try:
+        # Note: min_priority filtering is not yet supported in the Memory API
+        if min_priority > 0 and not output_json:
+            console.print(
+                "[yellow]Note: Priority filtering is not yet supported. Processing all pending trajectories.[/yellow]\n"
+            )
+
+        if not output_json:
+            console.print(f"\n[bold]Processing re-learning queue (limit: {limit})...[/bold]\n")
+
+        # Use Memory API (works in both local and remote modes)
+        results = nx.memory.process_relearning(limit=limit)  # type: ignore[attr-defined]
+
+        if not results:
+            if output_json:
+                click.echo(json.dumps({"processed": 0, "results": []}))
+            else:
+                console.print("[yellow]No trajectories need re-learning[/yellow]")
+            nx.close()
+            return
+
+        # Output results
+        if output_json:
+            click.echo(json.dumps({"processed": len(results), "results": results}, indent=2))
+        else:
+            successful = sum(1 for r in results if r.get("success"))
+            failed = len(results) - successful
+
+            console.print("\n[bold]Re-learning Complete[/bold]")
+            console.print(f"  [green]✓[/green] Successful: {successful}")
+            if failed > 0:
+                console.print(f"  [red]✗[/red] Failed: {failed}")
+
+            if failed > 0:
+                console.print("\n[bold]Failed Trajectories:[/bold]")
+                for r in results:
+                    if not r.get("success"):
+                        console.print(
+                            f"  [red]✗[/red] {r['trajectory_id']}: {r.get('error', 'Unknown error')}"
+                        )
+
+        nx.close()
+    except Exception as e:
+        nx.close()
+        handle_error(e)

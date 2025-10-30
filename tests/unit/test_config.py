@@ -101,6 +101,21 @@ class TestNexusConfig:
         assert config.mode == "monolithic"
         assert config.url == "http://localhost:8000"
 
+    def test_backend_validation_local(self) -> None:
+        """Test backend validation for local backend."""
+        config = NexusConfig(backend="local")
+        assert config.backend == "local"
+
+    def test_backend_validation_gcs(self) -> None:
+        """Test backend validation for GCS backend."""
+        config = NexusConfig(backend="gcs", gcs_bucket_name="my-bucket")
+        assert config.backend == "gcs"
+
+    def test_backend_validation_invalid(self) -> None:
+        """Test that invalid backend raises ValueError."""
+        with pytest.raises(ValueError, match="backend must be one of"):
+            NexusConfig(backend="invalid")
+
 
 class TestLoadConfig:
     """Tests for load_config function."""

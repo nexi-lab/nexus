@@ -75,6 +75,15 @@ results = nx.semantic_search("/docs/**/*.md", query="authentication setup")
 #   SearchResult(path="/docs/security.md", score=0.82, snippet="...API keys...")
 # ]
 
+# LLM-powered document reading (async)
+import asyncio
+answer = asyncio.run(nx.llm_read(
+    "/docs/**/*.md",
+    "How does authentication work?",
+    model="claude-sonnet-4"
+))
+# Returns: "The system uses JWT tokens with refresh token rotation..."
+
 nx.close()
 ```
 
@@ -161,12 +170,14 @@ nexus rebac explain user bob write file /workspace/project1 --remote-url $NEXUS_
 
 ## Why Nexus?
 
-Nexus extends traditional storage into the AI era—combining files, memory, and access control into a single programmable layer. Build agents that persist knowledge, collaborate securely, and scale from local experiments to distributed systems.
+Nexus combines files, memory, and access control into a single programmable layer. Build agents that persist knowledge, collaborate securely, and scale from local experiments to distributed systems.
 
 **Key Capabilities:**
-- **AI Memory** - Store contextual embeddings alongside data, not just bytes
-- **Unified Fabric** - Files, vectors, and permissions in one system
-- **Agent-Native Design** - Built for LLM agents and automation frameworks
+- **AI Memory with Learning Loops** - ACE system automatically consolidates agent experiences into reusable knowledge
+- **Database as Files** - Access PostgreSQL, Redis, MongoDB through unified file interface with backend-aware permissions
+- **LLM-Powered Reading** - Query documents with natural language, get answers with citations and cost tracking
+- **Unified Fabric** - Files, databases, vectors, and permissions in one programmable layer
+- **Agent-Native Design** - Built for LLM agents and automation frameworks with event-driven orchestration
 
 **For AI Agent Developers:**
 - **Self-Evolving Memory**: Agents store and retrieve context across sessions with automatic consolidation
@@ -174,8 +185,8 @@ Nexus extends traditional storage into the AI era—combining files, memory, and
 - **Semantic Search**: Find relevant files and memories using natural language queries
 
 **For Enterprise Teams:**
-- **Fine-Grained Permissions**: [ReBAC](https://research.google/pubs/pub48190/) (Relationship-Based Access Control, inspired by Google Zanzibar) with inheritance and multi-tenancy
-- **Multi-Backend Storage**: Unified API for S3, GCS, SharePoint, Google Drive, and local filesystem
+- **Fine-Grained Permissions**: [ReBAC](https://research.google/pubs/pub48190/) with backend-aware object types (file, table, row-level access) and multi-tenancy
+- **Multi-Backend Abstraction**: Unified file API for storage (S3, GCS, local) and data sources (PostgreSQL, Redis, MongoDB)
 - **Content Deduplication**: Save 30-50% storage costs with content-addressable architecture
 
 **For Platform Engineers:**
@@ -189,7 +200,7 @@ Nexus extends traditional storage into the AI era—combining files, memory, and
 |----------|-----------|
 | **Storage** | Multi-backend (S3, GCS, local), versioning, 30-50% deduplication savings |
 | **Access Control** | ReBAC (Zanzibar-style), multi-tenancy, permission inheritance |
-| **AI Intelligence** | Memory API, semantic search, workspace snapshots, time-travel debugging |
+| **AI Intelligence** | LLM document Q&A, memory API, semantic search, workspace snapshots, time-travel debugging |
 | **Developer UX** | Embedded/remote parity, full-featured CLI + SDK, 100% feature compatibility |
 | **Extensibility** | Plugin system with lifecycle hooks, custom CLI commands, auto-discovery |
 
@@ -203,7 +214,8 @@ Nexus extends traditional storage into the AI era—combining files, memory, and
 ## Key Features
 
 ### Storage & Operations
-- **Multi-Backend**: S3, GCS, SharePoint, Google Drive, local filesystem with unified API
+- **Multi-Backend Abstraction**: Storage backends (S3, GCS, local) and data backends (PostgreSQL, Redis, MongoDB) through unified file API
+- **Backend-Aware Permissions**: Different object types per backend (file vs. database table vs. row-level access)
 - **Content Deduplication**: 30-50% storage savings via content-addressable architecture
 - **Versioning**: Complete history tracking with rollback and diff capabilities
 - **Batch Operations**: 4x faster bulk uploads for checkpoints and large datasets
@@ -215,9 +227,11 @@ Nexus extends traditional storage into the AI era—combining files, memory, and
 - **API Key Authentication**: Database-backed keys with expiration and rotation
 
 ### Agent Intelligence
-- **Memory API**: Store, query, and consolidate agent memories automatically
-- **Semantic Search**: Vector-based search across files and memories
-- **Workspace Snapshots**: Save and restore entire agent workspaces for debugging
+- **ACE Learning Loops**: Autonomous Cognitive Entity system with trajectories, reflection, and automatic consolidation
+- **LLM Document Reading**: Ask questions about documents with AI-powered answers, citations, and cost tracking
+- **Memory API**: Store, query, and consolidate agent memories with automatic knowledge extraction
+- **Semantic Search**: Vector-based search across files and memories using natural language
+- **Workspace Snapshots**: Save and restore entire agent workspaces for debugging and reproducibility
 - **Time-Travel**: Access any file at any historical point with content diffs
 
 ### Developer Experience
@@ -261,38 +275,59 @@ graph TB
     subgraph vfs[" 📁 Nexus Virtual File System "]
         api["Unified VFS API<br/>read() write() list() search()"]
         memory["💾 Memory API<br/>Persistent learning & context"]
-        rebac["🔒 ReBAC Permissions<br/>Automatic access control"]
+        rebac["🔒 ReBAC Permissions<br/>Backend-aware object types"]
         version["📦 Versioning<br/>Snapshots & time-travel"]
-        router["Smart Router<br/>Backend abstraction"]
+        router["Smart Router<br/>Path → Backend + Object Type"]
     end
 
-    subgraph backends[" 💾 Storage Backends "]
-        local["Local Filesystem"]
-        gcs["Google Cloud Storage"]
-        s3["AWS S3"]
+    subgraph backends[" 💾 Storage & Data Backends "]
+        subgraph storage[" File Storage "]
+            local["Local Filesystem<br/>object: file"]
+            gcs["Cloud Storage<br/>object: file"]
+        end
+        subgraph data[" Data Sources "]
+            postgres["PostgreSQL<br/>object: postgres:table/row"]
+            redis["Redis<br/>object: redis:instance/key"]
+            mongo["MongoDB<br/>object: mongo:collection/doc"]
+        end
     end
 
     agent1 -.->|"write('/workspace/data.json')"| api
-    agent2 -.->|"read('/shared/model.pkl')"| api
+    agent2 -.->|"read('/db/public/users')"| api
     agent3 -.->|"memory.store('learned_fact')"| memory
 
     api --> rebac
     memory --> rebac
+    rebac <-->|"Check with object type"| router
     rebac -->|"✓ Allowed"| version
     version --> router
-    router -->|"Transparent"| local
-    router -->|"Same API"| gcs
-    router -->|"Same API"| s3
+
+    router -->|"File operations"| local
+    router -->|"File operations"| gcs
+    router -->|"Queries as files"| postgres
+    router -->|"KV as files"| redis
+    router -->|"Documents as files"| mongo
 
     style agents fill:#e3f2fd,stroke:#5C6BC0,stroke-width:2px,color:#1a237e
     style vfs fill:#f3e5f5,stroke:#AB47BC,stroke-width:2px,color:#4a148c
     style backends fill:#fff3e0,stroke:#FF7043,stroke-width:2px,color:#e65100
+    style storage fill:#e8f5e9,stroke:#4CAF50,stroke-width:1px
+    style data fill:#e1f5fe,stroke:#0288D1,stroke-width:1px
     style api fill:#5C6BC0,stroke:#3949AB,stroke-width:2px,color:#fff
     style memory fill:#AB47BC,stroke:#7B1FA2,stroke-width:2px,color:#fff
     style rebac fill:#EC407A,stroke:#C2185B,stroke-width:2px,color:#fff
     style version fill:#66BB6A,stroke:#388E3C,stroke-width:2px,color:#fff
     style router fill:#42A5F5,stroke:#1976D2,stroke-width:2px,color:#fff
 ```
+
+**Backend Abstraction:**
+
+Nexus presents everything as files to users, while backends provide appropriate object types for permission control:
+
+- **File Storage** (Local, GCS, S3): Standard file objects
+- **Databases** (PostgreSQL, Redis, MongoDB): Backend-specific objects (tables, keys, documents)
+- **Unified Interface**: All accessed through the same VFS API (read/write/list)
+- **Fine-Grained Permissions**: ReBAC uses backend-appropriate object types (e.g., grant access to a PostgreSQL schema vs. individual rows)
 
 ### Deployment Modes
 

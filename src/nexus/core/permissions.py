@@ -303,6 +303,15 @@ class PermissionEnforcer:
                 # Ask backend for its object type
                 object_type = route.backend.get_object_type(route.backend_path)
                 object_id = route.backend.get_object_id(route.backend_path)
+
+                # FIX: Normalize file paths to always have leading slash for ReBAC consistency
+                # Router strips leading slash by design (backend_path is relative)
+                # But ReBAC tuples are created with leading slash ("/workspace/alice")
+                if object_type == "file" and object_id and not object_id.startswith("/"):
+                    object_id = "/" + object_id
+                    logger.info(
+                        f"[PermissionEnforcer] Normalized path: '{route.backend_path}' → '{object_id}'"
+                    )
             except Exception as e:
                 # If routing fails, fall back to default "file" type
                 logger.warning(

@@ -202,6 +202,7 @@ nav:
     - Permission Management: examples/permissions.md
     - Workspace & Sessions: examples/workspace-session.md
     - Agentic Context Engineering (ACE): examples/ace.md
+    - DeepAgents Integration: examples/deepagents.md
     - LangGraph Integration: examples/langgraph.md
     - Skill Seekers: examples/skill-seekers.md
 

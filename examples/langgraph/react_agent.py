@@ -20,9 +20,9 @@ import os
 
 from langchain_anthropic import ChatAnthropic
 from langgraph.prebuilt import create_react_agent
+from nexus_tools import get_nexus_tools
 
 from nexus.remote import RemoteNexusFS
-from nexus_tools import get_nexus_tools
 
 print(os.getenv("NEXUS_API_KEY"))
 print(os.getenv("NEXUS_SERVER_URL"))
@@ -56,7 +56,7 @@ agent = create_react_agent(
 if __name__ == "__main__":
     # Example usage
     print("Testing ReAct agent...")
-    result = agent.invoke({
-        "messages": [{"role": "user", "content": "Find all Python files and count them"}]
-    })
+    result = agent.invoke(
+        {"messages": [{"role": "user", "content": "Find all Python files and count them"}]}
+    )
     print(result)

@@ -203,6 +203,7 @@ class NexusFilesystem(ABC):
         details: bool = False,
         prefix: str | None = None,
         show_parsed: bool = True,
+        context: Any = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """
         List files in a directory.

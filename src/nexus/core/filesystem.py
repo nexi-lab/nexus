@@ -233,7 +233,7 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
-    def glob(self, pattern: str, path: str = "/") -> builtins.list[str]:
+    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
         """
         Find files matching a glob pattern.
 
@@ -246,6 +246,7 @@ class NexusFilesystem(ABC):
         Args:
             pattern: Glob pattern to match (e.g., "**/*.py", "data/*.csv", "test_*.py")
             path: Base path to search from (default: "/")
+            context: Optional operation context for permission filtering (default: None)
 
         Returns:
             List of matching file paths, sorted by name
@@ -271,6 +272,7 @@ class NexusFilesystem(ABC):
         ignore_case: bool = False,
         max_results: int = 1000,
         search_mode: str = "auto",
+        context: Any = None,
     ) -> builtins.list[dict[str, Any]]:
         """
         Search file contents using regex patterns.
@@ -283,6 +285,7 @@ class NexusFilesystem(ABC):
             max_results: Maximum number of results to return (default: 1000)
             search_mode: Content search mode (default: "auto")
                 - "auto": Try parsed text first, fallback to raw
+            context: Optional operation context for permission filtering (default: None)
                 - "parsed": Only search parsed text
                 - "raw": Only search raw file content
 

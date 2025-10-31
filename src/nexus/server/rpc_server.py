@@ -908,7 +908,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return {"files": serializable_files}
 
         elif method == "glob":
-            matches = self.nexus_fs.glob(params.pattern, params.path)
+            matches = self.nexus_fs.glob(params.pattern, params.path, context=context)
             return {"matches": matches}
 
         elif method == "grep":
@@ -918,6 +918,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 file_pattern=params.file_pattern,
                 ignore_case=params.ignore_case,
                 max_results=params.max_results,
+                context=context,
             )
             # Convert to serializable format
             serializable_results = []

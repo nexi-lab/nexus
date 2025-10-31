@@ -858,7 +858,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         # Discovery operations
         elif method == "list":
-            files = self.nexus_fs.list(  # type: ignore[call-arg]
+            files = self.nexus_fs.list(
                 params.path,
                 recursive=params.recursive,
                 details=params.details,

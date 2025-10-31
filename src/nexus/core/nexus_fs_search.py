@@ -262,7 +262,9 @@ class NexusFSSearchMixin:
 
         # SECURITY: Filter files by ReBAC permissions FIRST
         # This ensures users only see files they have access to
-        accessible_files: list[str] = cast(list[str], self.list(path, recursive=True, context=context))
+        accessible_files: list[str] = cast(
+            list[str], self.list(path, recursive=True, context=context)
+        )
 
         # Build full pattern
         if not path.endswith("/"):
@@ -312,13 +314,13 @@ class NexusFSSearchMixin:
 
             regex_pattern = "^/" + "".join(regex_parts) + "$"
 
-            matches: list[str] = []
+            matches = []
             for file_path in accessible_files:
                 if re.match(regex_pattern, file_path):
                     matches.append(file_path)
         else:
             # Use fnmatch for simpler patterns
-            matches: list[str] = []
+            matches = []
             for file_path in accessible_files:
                 # Remove leading / for matching
                 path_for_match = file_path[1:] if file_path.startswith("/") else file_path
@@ -396,10 +398,10 @@ class NexusFSSearchMixin:
 
         # Get files to search
         if file_pattern:
-            files: list[str] = self.glob(file_pattern, path, context=context)
+            files = self.glob(file_pattern, path, context=context)
         else:
             # Get all files under path (with ReBAC filtering)
-            files: list[str] = cast(list[str], self.list(path, recursive=True, context=context))
+            files = cast(list[str], self.list(path, recursive=True, context=context))
 
         # Search through files
         results: list[dict[str, Any]] = []

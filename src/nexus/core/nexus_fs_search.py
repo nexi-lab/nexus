@@ -179,8 +179,13 @@ class NexusFSSearchMixin:
 
             # Check backend for empty directories (directories with no files)
             # This catches newly created directories using the helper method
-            backend_dirs = self._get_backend_directory_entries(path)
-            directories.update(backend_dirs)
+            # Only add backend directories if permissions are not enforced,
+            # or if we can't determine if the directory contains readable files
+            if not self._enforce_permissions:
+                backend_dirs = self._get_backend_directory_entries(path)
+                directories.update(backend_dirs)
+            # When permissions are enforced, only show directories with readable files
+            # (already added above from file paths)
 
         if details:
             # Filter out directory metadata markers to avoid duplicates

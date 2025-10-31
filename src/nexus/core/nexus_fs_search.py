@@ -12,7 +12,7 @@ from __future__ import annotations
 import builtins
 import fnmatch
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.rpc_decorator import rpc_expose
 
@@ -230,7 +230,7 @@ class NexusFSSearchMixin:
             return all_paths
 
     @rpc_expose(description="Find files by glob pattern")
-    def glob(self, pattern: str, path: str = "/") -> builtins.list[str]:
+    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
         """
         Find files matching a glob pattern.
 
@@ -260,8 +260,11 @@ class NexusFSSearchMixin:
         if path and path != "/":
             path = self._validate_path(path)
 
-        # Get all files
-        all_files = self.metadata.list("")
+        # SECURITY: Filter files by ReBAC permissions FIRST
+        # This ensures users only see files they have access to
+        accessible_files: list[str] = cast(
+            list[str], self.list(path, recursive=True, context=context)
+        )
 
         # Build full pattern
         if not path.endswith("/"):
@@ -282,7 +285,7 @@ class NexusFSSearchMixin:
             base_path = path[1:] if path.startswith("/") else path
             full_pattern = base_path + pattern
 
-        # Match files against pattern
+        # Match accessible files against pattern
         # Handle ** for recursive matching
         if "**" in full_pattern:
             # Convert glob pattern to regex
@@ -312,17 +315,17 @@ class NexusFSSearchMixin:
             regex_pattern = "^/" + "".join(regex_parts) + "$"
 
             matches = []
-            for meta in all_files:
-                if re.match(regex_pattern, meta.path):
-                    matches.append(meta.path)
+            for file_path in accessible_files:
+                if re.match(regex_pattern, file_path):
+                    matches.append(file_path)
         else:
             # Use fnmatch for simpler patterns
             matches = []
-            for meta in all_files:
+            for file_path in accessible_files:
                 # Remove leading / for matching
-                file_path = meta.path[1:] if meta.path.startswith("/") else meta.path
-                if fnmatch.fnmatch(file_path, full_pattern):
-                    matches.append(meta.path)
+                path_for_match = file_path[1:] if file_path.startswith("/") else file_path
+                if fnmatch.fnmatch(path_for_match, full_pattern):
+                    matches.append(file_path)
 
         return sorted(matches)
 
@@ -335,6 +338,7 @@ class NexusFSSearchMixin:
         ignore_case: bool = False,
         max_results: int = 1000,
         search_mode: str = "auto",
+        context: Any = None,
     ) -> builtins.list[dict[str, Any]]:
         r"""
         Search file contents using regex patterns.
@@ -393,16 +397,11 @@ class NexusFSSearchMixin:
             raise ValueError(f"Invalid regex pattern: {e}") from e
 
         # Get files to search
-        files: list[str]
         if file_pattern:
-            files = self.glob(file_pattern, path)
+            files = self.glob(file_pattern, path, context=context)
         else:
-            # Get all files under path
-            if not path.endswith("/"):
-                path = path + "/"
-            prefix = path if path != "/" else ""
-            all_files = self.metadata.list(prefix)
-            files = [meta.path for meta in all_files]
+            # Get all files under path (with ReBAC filtering)
+            files = cast(list[str], self.list(path, recursive=True, context=context))
 
         # Search through files
         results: list[dict[str, Any]] = []

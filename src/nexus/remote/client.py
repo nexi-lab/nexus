@@ -833,8 +833,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         details: bool = False,
         prefix: str | None = None,
         show_parsed: bool = True,
+        context: Any = None,  # noqa: ARG002
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """List files in a directory."""
+        # Note: context is provided via authentication headers, not RPC params
         result = self._call_rpc(
             "list",
             {
@@ -847,20 +849,24 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         )
         return result["files"]  # type: ignore[no-any-return]
 
-    def glob(self, pattern: str, path: str = "/") -> builtins.list[str]:
+    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:  # noqa: ARG002
         """Find files matching a glob pattern."""
+        # Note: context is provided via authentication headers, not RPC params
         result = self._call_rpc("glob", {"pattern": pattern, "path": path})
         return result["matches"]  # type: ignore[no-any-return]
 
-    def grep(  # type: ignore[override]
+    def grep(
         self,
         pattern: str,
         path: str = "/",
         file_pattern: str | None = None,
         ignore_case: bool = False,
         max_results: int = 1000,
+        search_mode: str = "auto",  # noqa: ARG002
+        context: Any = None,  # noqa: ARG002
     ) -> builtins.list[dict[str, Any]]:
         """Search file contents using regex patterns."""
+        # Note: context is provided via authentication headers, not RPC params
         result = self._call_rpc(
             "grep",
             {

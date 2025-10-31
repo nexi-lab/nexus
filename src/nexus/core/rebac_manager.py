@@ -270,7 +270,7 @@ class ReBACManager:
             if not cursor.fetchone():
                 return  # Table doesn't exist yet
 
-            # Check and create namespaces
+            # Check and create/update namespaces
             for ns_config in [
                 DEFAULT_FILE_NAMESPACE,
                 DEFAULT_GROUP_NAMESPACE,
@@ -297,6 +297,19 @@ class ReBACManager:
                             json.dumps(ns_config.config),
                             datetime.now(UTC),
                             datetime.now(UTC),
+                        ),
+                    )
+                else:
+                    # BUGFIX for issue #338: Update existing namespace to pick up config changes
+                    # This is needed when the DEFAULT_FILE_NAMESPACE config is updated in code
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            "UPDATE rebac_namespaces SET config = ?, updated_at = ? WHERE object_type = ?"
+                        ),
+                        (
+                            json.dumps(ns_config.config),
+                            datetime.now(UTC),
+                            ns_config.object_type,
                         ),
                     )
             conn.commit()
@@ -1290,12 +1303,18 @@ class ReBACManager:
         namespace = self.get_namespace(obj.entity_type)
         if not namespace:
             # No namespace config - check for direct relation only
-            logger.debug(
-                f"  [depth={depth}] No namespace for {obj.entity_type}, checking direct relation"
+            logger.info(
+                f"  [depth={depth}] ⚠️ No namespace for {obj.entity_type}, checking direct relation"
             )
             return self._has_direct_relation(subject, permission, obj, context, tenant_id)
 
-        logger.debug(f"  [depth={depth}] Found namespace for {obj.entity_type}")
+        logger.info(f"  [depth={depth}] ✅ Found namespace for {obj.entity_type}")
+        logger.info(
+            f"  [depth={depth}] 📊 ALL Relations in namespace: {list(namespace.config.get('relations', {}).keys())}"
+        )
+        logger.info(
+            f"  [depth={depth}] 📊 ALL Permissions in namespace: {list(namespace.config.get('permissions', {}).keys())}"
+        )
 
         # P0-1: Use explicit permission-to-userset mapping (Zanzibar-style)
         # Check if permission is defined via "permissions" config (new way)
@@ -1310,6 +1329,9 @@ class ReBACManager:
             )
             logger.info(
                 f"  [depth={depth}] 🧪 Checking {len(usersets)} usersets for {subject} on {obj}"
+            )
+            logger.info(
+                f"  [depth={depth}] 📊 NAMESPACE CONFIG for '{obj.entity_type}': relations={list(namespace.config.get('relations', {}).keys())}"
             )
 
             for i, userset in enumerate(usersets):
@@ -1336,8 +1358,14 @@ class ReBACManager:
 
         # Fallback: Check if permission is defined as a relation (legacy)
         rel_config = namespace.get_relation_config(permission)
+        logger.info(
+            f"  [depth={depth}] 🔍 Checking relation config for '{permission}': {rel_config}"
+        )
         if not rel_config:
             # Permission not defined in namespace - check for direct relation
+            logger.info(
+                f"  [depth={depth}] ⚠️ No relation config for '{permission}', checking direct relation"
+            )
             return self._has_direct_relation(subject, permission, obj, context, tenant_id)
 
         # Handle union (OR of multiple relations)
@@ -1345,6 +1373,9 @@ class ReBACManager:
             union_relations = namespace.get_union_relations(permission)
             logger.info(
                 f"  [depth={depth}] 🔗 Relation '{permission}' is UNION of: {union_relations}"
+            )
+            logger.info(
+                f"  [depth={depth}] 📋 Relation config for '{permission}': {namespace.get_relation_config(permission)}"
             )
             for i, rel in enumerate(union_relations):
                 logger.info(
@@ -1389,15 +1420,22 @@ class ReBACManager:
         # Handle tupleToUserset (indirect relation via another object)
         if namespace.has_tuple_to_userset(permission):
             ttu = namespace.get_tuple_to_userset(permission)
+            logger.info(f"  [depth={depth}] 🔄 tupleToUserset for '{permission}': {ttu}")
             if ttu:
                 tupleset_relation = ttu["tupleset"]
                 computed_userset = ttu["computedUserset"]
 
                 # Find all objects related via tupleset
                 related_objects = self._find_related_objects(obj, tupleset_relation)
+                logger.info(
+                    f"  [depth={depth}] 🔍 Found {len(related_objects)} related objects via tupleset '{tupleset_relation}': {[(o.entity_type, o.entity_id) for o in related_objects]}"
+                )
 
                 # Check if subject has computed_userset on any related object
-                for related_obj in related_objects:
+                for i, related_obj in enumerate(related_objects):
+                    logger.info(
+                        f"  [depth={depth}] 🔍 [{i + 1}/{len(related_objects)}] Checking if {subject} has '{computed_userset}' on {related_obj}..."
+                    )
                     if self._compute_permission(
                         subject,
                         computed_userset,
@@ -1407,7 +1445,16 @@ class ReBACManager:
                         context,
                         tenant_id,
                     ):
+                        logger.info(
+                            f"  [depth={depth}] ✅ GRANTED via tupleToUserset through {related_obj}"
+                        )
                         return True
+                    else:
+                        logger.info(f"  [depth={depth}] ❌ DENIED for {related_obj}")
+
+                logger.info(
+                    f"  [depth={depth}] 🚫 tupleToUserset: No related objects granted permission"
+                )
 
             return False
 
@@ -1746,6 +1793,10 @@ class ReBACManager:
         Returns:
             List of related object entities (the objects from matching tuples)
         """
+        logger.info(
+            f"      🔎 _find_related_objects: Looking for tuples where subject={obj}, relation='{relation}'"
+        )
+
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
@@ -1771,7 +1822,15 @@ class ReBACManager:
 
             results = []
             for row in cursor.fetchall():
-                results.append(Entity(row["object_type"], row["object_id"]))
+                entity = Entity(row["object_type"], row["object_id"])
+                results.append(entity)
+                logger.info(f"      ✅ Found related object: {entity}")
+
+            if not results:
+                logger.info(f"      ❌ No related objects found for ({obj}, '{relation}', ?)")
+            else:
+                logger.info(f"      📊 Total related objects found: {len(results)}")
+
             return results
 
     def _evaluate_conditions(

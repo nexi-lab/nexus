@@ -281,11 +281,12 @@ class ReBACManager:
             ]:
                 cursor.execute(
                     self._fix_sql_placeholders(
-                        "SELECT object_type FROM rebac_namespaces WHERE object_type = ?"
+                        "SELECT namespace_id FROM rebac_namespaces WHERE object_type = ?"
                     ),
                     (ns_config.object_type,),
                 )
-                if not cursor.fetchone():
+                existing = cursor.fetchone()
+                if not existing:
                     # Create namespace
                     cursor.execute(
                         self._fix_sql_placeholders(
@@ -300,18 +301,21 @@ class ReBACManager:
                         ),
                     )
                 else:
-                    # BUGFIX for issue #338: Update existing namespace to pick up config changes
-                    # This is needed when the DEFAULT_FILE_NAMESPACE config is updated in code
-                    cursor.execute(
-                        self._fix_sql_placeholders(
-                            "UPDATE rebac_namespaces SET config = ?, updated_at = ? WHERE object_type = ?"
-                        ),
-                        (
-                            json.dumps(ns_config.config),
-                            datetime.now(UTC),
-                            ns_config.object_type,
-                        ),
-                    )
+                    # BUGFIX for issue #338: Update existing namespace ONLY if it matches our default namespace_id
+                    # This prevents overwriting custom namespaces created by tests or users
+                    existing_namespace_id = existing["namespace_id"]
+                    if existing_namespace_id == ns_config.namespace_id:
+                        # This is our default namespace, update it to pick up config changes
+                        cursor.execute(
+                            self._fix_sql_placeholders(
+                                "UPDATE rebac_namespaces SET config = ?, updated_at = ? WHERE namespace_id = ?"
+                            ),
+                            (
+                                json.dumps(ns_config.config),
+                                datetime.now(UTC),
+                                ns_config.namespace_id,
+                            ),
+                        )
             conn.commit()
         except Exception as e:
             # If tables don't exist yet or other error, skip initialization

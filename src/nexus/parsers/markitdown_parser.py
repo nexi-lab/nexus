@@ -122,10 +122,14 @@ class MarkItDownParser(Parser):
             # Get file extension for MarkItDown to detect format
             ext = Path(str(file_path)).suffix.lower()
 
-            # Skip if no extension or not in supported formats
-            if not ext or ext not in self._SUPPORTED_FORMATS:
+            # Default to .txt for unknown/missing extensions
+            if not ext:
+                ext = ".txt"
+
+            # Check if extension is supported
+            if ext not in self._SUPPORTED_FORMATS:
                 raise ParserError(
-                    f"Unsupported or missing file extension: '{ext}'",
+                    f"Unsupported file extension: '{ext}'",
                     path=str(file_path),
                     parser=self.name,
                 )

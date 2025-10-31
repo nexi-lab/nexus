@@ -1,11 +1,21 @@
 #!/bin/bash
-# init-nexus-with-auth.sh - Initialize Nexus server with authentication
+# init-nexus-with-auth.sh - Restart or initialize Nexus server with authentication
 #
 # Usage:
-#   ./init-nexus-with-auth.sh                    # Use default admin user
-#   NEXUS_ADMIN_USER=alice ./init-nexus-with-auth.sh  # Custom admin user
+#   ./init-nexus-with-auth.sh                    # Restart server (default)
+#   ./init-nexus-with-auth.sh --init             # Full initialization (clean DB, create admin key)
+#   NEXUS_ADMIN_USER=alice ./init-nexus-with-auth.sh --init  # Custom admin user for init
 
 set -e  # Exit on error
+
+# ============================================
+# Parse Arguments
+# ============================================
+
+INIT_MODE=false
+if [ "$1" == "--init" ]; then
+    INIT_MODE=true
+fi
 
 # ============================================
 # Configuration
@@ -21,20 +31,62 @@ HOST="${NEXUS_HOST:-0.0.0.0}"
 # Banner
 # ============================================
 
-cat << 'EOF'
+if [ "$INIT_MODE" = true ]; then
+    cat << 'EOF'
 ╔═══════════════════════════════════════╗
-║   Nexus Server Setup (With Auth)     ║
+║   Nexus Server Init (With Auth)      ║
 ╚═══════════════════════════════════════╝
 EOF
+    echo ""
+    echo "Mode: INITIALIZATION (full setup)"
+    echo ""
+    echo "⚠️  WARNING: This will DELETE ALL existing data!"
+    echo ""
+    echo "The following will be cleared:"
+    echo "  • All users and API keys"
+    echo "  • All files and metadata"
+    echo "  • All permissions and relationships"
+    echo "  • All workspaces and configurations"
+    echo "  • All operation logs and caches"
+    echo ""
+    echo "Configuration:"
+    echo "  Admin user:  $ADMIN_USER"
+    echo "  Database:    $NEXUS_DATABASE_URL"
+    echo "  Data dir:    $NEXUS_DATA_DIR"
+    echo "  Server:      http://$HOST:$PORT"
+    echo "  Auth:        Database-backed API keys"
+    echo ""
 
-echo ""
-echo "Configuration:"
-echo "  Admin user:  $ADMIN_USER"
-echo "  Database:    $NEXUS_DATABASE_URL"
-echo "  Data dir:    $NEXUS_DATA_DIR"
-echo "  Server:      http://$HOST:$PORT"
-echo "  Auth:        Database-backed API keys"
-echo ""
+    # Confirmation prompt
+    read -p "Are you sure you want to continue? (yes/no): " CONFIRM
+    if [ "$CONFIRM" != "yes" ]; then
+        echo ""
+        echo "❌ Initialization cancelled"
+        echo ""
+        echo "To restart without initialization, run:"
+        echo "  ./scripts/init-nexus-with-auth.sh"
+        echo ""
+        exit 0
+    fi
+    echo ""
+    echo "✓ Confirmed - proceeding with initialization..."
+    echo ""
+else
+    cat << 'EOF'
+╔═══════════════════════════════════════╗
+║   Nexus Server Restart (With Auth)   ║
+╚═══════════════════════════════════════╝
+EOF
+    echo ""
+    echo "Mode: RESTART (skip initialization)"
+    echo ""
+    echo "Configuration:"
+    echo "  Server:      http://$HOST:$PORT"
+    echo "  Auth:        Database-backed API keys"
+    echo ""
+    echo "Use --init flag for full initialization"
+    echo ""
+fi
 
 # ============================================
 # Prerequisites Check
@@ -46,10 +98,16 @@ if ! command -v nexus &> /dev/null; then
     exit 1
 fi
 
-if ! command -v python3 &> /dev/null; then
+if [ "$INIT_MODE" = true ] && ! command -v python3 &> /dev/null; then
     echo "❌ Error: 'python3' not found (needed for API key creation)"
     exit 1
 fi
+
+# ============================================
+# Initialization Steps (Only in --init mode)
+# ============================================
+
+if [ "$INIT_MODE" = true ]; then
 
 # ============================================
 # Database Setup
@@ -126,6 +184,14 @@ echo "✓ Database schema created"
 
 echo ""
 echo "🧹 Clearing all existing data for fresh start..."
+echo ""
+echo "This will remove:"
+echo "  • All users and their API keys"
+echo "  • All files, directories, and metadata"
+echo "  • All permissions and access control relationships"
+echo "  • All workspaces, memories, and workflows"
+echo "  • All operation logs and audit trails"
+echo ""
 
 # Clear filesystem data (to stay in sync with database)
 if [ -d "$NEXUS_DATA_DIR" ]; then
@@ -146,67 +212,87 @@ if not db_url:
     sys.exit(1)
 
 engine = create_engine(db_url)
-with engine.connect() as conn:
-    # Clear in order to respect foreign key constraints
-    # Start with caches and dependent tables
-    # Track what was deleted for verification
-    deleted_counts = {}
+deleted_counts = {}
 
-    # Helper to delete with error reporting
-    def delete_table(table_name):
-        try:
-            result = conn.execute(text(f"DELETE FROM {table_name}"))
-            count = result.rowcount
-            deleted_counts[table_name] = count
-            if count > 0:
-                print(f"  Deleted {count} rows from {table_name}")
-            return True
-        except Exception as e:
-            # Only ignore "table doesn't exist" errors
-            if "does not exist" in str(e):
+# Helper to delete with proper transaction handling
+def delete_table(table_name):
+    """Delete all rows from a table, with proper error handling."""
+    try:
+        with engine.connect() as conn:
+            # Start a new transaction for each delete
+            trans = conn.begin()
+            try:
+                result = conn.execute(text(f"DELETE FROM {table_name}"))
+                count = result.rowcount
+                trans.commit()
+                deleted_counts[table_name] = count
+                if count > 0:
+                    print(f"  Deleted {count} rows from {table_name}")
+                return True
+            except Exception as e:
+                trans.rollback()
+                # Only ignore "table doesn't exist" errors
+                if "does not exist" in str(e).lower():
+                    return False
+                print(f"  WARNING: Failed to clear {table_name}: {e}", file=sys.stderr)
                 return False
-            print(f"  WARNING: Failed to clear {table_name}: {e}", file=sys.stderr)
-            return False
+    except Exception as e:
+        print(f"  ERROR: Cannot connect to delete from {table_name}: {e}", file=sys.stderr)
+        return False
 
-    # Clear in dependency order
-    print("Clearing database tables:")
-    delete_table("rebac_check_cache")
-    delete_table("rebac_changelog")
-    delete_table("admin_bypass_audit")
-    delete_table("operation_log")
-    delete_table("rebac_tuples")
+# Clear in dependency order
+print("Clearing database tables:")
 
-    # Clear file-related tables (dependencies: content_chunks -> file_metadata -> file_paths)
-    delete_table("content_chunks")
-    delete_table("document_chunks")
-    delete_table("version_history")
-    delete_table("file_metadata")
-    delete_table("file_paths")
+# Clear auth-related tables first (due to foreign keys)
+print("\n🔑 Clearing authentication data...")
+delete_table("refresh_tokens")
+delete_table("api_keys")
+delete_table("users")  # Clear all users
 
-    # Clear auth tables
-    delete_table("refresh_tokens")
-    delete_table("api_keys")
+# Clear ReBAC and audit tables
+print("\n🔐 Clearing permissions and audit logs...")
+delete_table("rebac_check_cache")
+delete_table("rebac_changelog")
+delete_table("admin_bypass_audit")
+delete_table("operation_log")
+delete_table("rebac_tuples")
 
-    # Clear memory and workspace tables
-    delete_table("memories")
-    delete_table("memory_configs")
-    delete_table("workspace_snapshots")
-    delete_table("workspace_configs")
+# Clear file-related tables (dependencies: content_chunks -> file_metadata -> file_paths)
+print("\n📁 Clearing file system data...")
+delete_table("content_chunks")
+delete_table("document_chunks")
+delete_table("version_history")
+delete_table("file_metadata")
+delete_table("file_paths")
 
-    # Clear workflow tables
-    delete_table("workflow_executions")
-    delete_table("workflows")
+# Clear memory and workspace tables
+print("\n🧠 Clearing workspaces and memories...")
+delete_table("memories")
+delete_table("memory_configs")
+delete_table("workspace_snapshots")
+delete_table("workspace_configs")
 
-    # Clear mount configs
-    delete_table("mount_configs")
+# Clear workflow tables
+print("\n⚙️  Clearing workflows...")
+delete_table("workflow_executions")
+delete_table("workflows")
 
-    conn.commit()
+# Clear mount configs
+print("\n🔌 Clearing mount configurations...")
+delete_table("mount_configs")
 
-    total = sum(deleted_counts.values())
-    if total > 0:
-        print(f"✓ Cleared {total} total rows from {len(deleted_counts)} tables")
-    else:
-        print("✓ Database already empty")
+# Now outside the function, print summary
+total = sum(deleted_counts.values())
+print("\n" + "="*50)
+if total > 0:
+    print(f"✅ Successfully cleared {total} total rows from {len(deleted_counts)} tables")
+    print("\nDeleted data:")
+    for table, count in sorted(deleted_counts.items()):
+        if count > 0:
+            print(f"  • {table}: {count} rows")
+else:
+    print("✅ Database was already empty")
+print("="*50 + "\n")
 
 PYTHON_CLEANUP
 
@@ -297,6 +383,8 @@ echo "✓ Granted '$ADMIN_USER' ownership of /workspace"
 # Re-enable permissions for server
 export NEXUS_ENFORCE_PERMISSIONS=true
 
+fi  # End of INIT_MODE
+
 # ============================================
 # Port Cleanup (Kill existing processes)
 # ============================================
@@ -329,27 +417,47 @@ fi
 # ============================================
 
 echo ""
-echo "╔═══════════════════════════════════════╗"
-echo "║   ✅ Setup Complete!                  ║"
-echo "╚═══════════════════════════════════════╝"
-echo ""
-echo "Starting Nexus server with authentication..."
-echo ""
-echo "Server URL: http://$HOST:$PORT"
-echo "Admin user: $ADMIN_USER"
-echo "Auth type:  Database-backed API keys"
-echo ""
-echo "Quick start:"
-echo "  source .nexus-admin-env"
-echo "  nexus ls /workspace"
-echo ""
-echo "Create more users with:"
-echo "  python3 scripts/create-api-key.py alice \"Alice's key\" --days 90"
-echo ""
-echo "Press Ctrl+C to stop server"
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
+if [ "$INIT_MODE" = true ]; then
+    echo "╔═══════════════════════════════════════╗"
+    echo "║   ✅ Setup Complete!                  ║"
+    echo "╚═══════════════════════════════════════╝"
+    echo ""
+    echo "Starting Nexus server with authentication..."
+    echo ""
+    echo "Server URL: http://$HOST:$PORT"
+    echo "Admin user: $ADMIN_USER"
+    echo "Auth type:  Database-backed API keys"
+    echo ""
+    echo "Quick start:"
+    echo "  source .nexus-admin-env"
+    echo "  nexus ls /workspace"
+    echo ""
+    echo "Create more users with:"
+    echo "  python3 scripts/create-api-key.py alice \"Alice's key\" --days 90"
+    echo ""
+    echo "Press Ctrl+C to stop server"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+else
+    echo "╔═══════════════════════════════════════╗"
+    echo "║   ✅ Restart Complete!                ║"
+    echo "╚═══════════════════════════════════════╝"
+    echo ""
+    echo "Starting Nexus server with authentication..."
+    echo ""
+    echo "Server URL: http://$HOST:$PORT"
+    echo "Auth type:  Database-backed API keys"
+    echo ""
+    echo "Quick start:"
+    echo "  source .nexus-admin-env  # If you have it"
+    echo "  nexus ls /workspace"
+    echo ""
+    echo "Press Ctrl+C to stop server"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+fi
 
 # Start server with database auth
 nexus serve --host $HOST --port $PORT --auth-type database

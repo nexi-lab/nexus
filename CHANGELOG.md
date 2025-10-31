@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2025-10-31
+
+### Added
+
+#### MCP (Model Context Protocol) Integration
+- **MCP Server Implementation**: Expose Nexus filesystem via MCP protocol
+  - Full MCP server in `src/nexus/mcp/server.py`
+  - Supports stdio and SSE transport
+  - 15+ filesystem tools exposed via MCP
+  - Authentication support with API keys
+- **CLI Command**: `nexus mcp serve`
+  - Start MCP server for Claude Desktop integration
+  - Support for both stdio and SSE transports
+  - Optional API key authentication
+- **Documentation**:
+  - Complete MCP integration guide in `docs/integrations/mcp.md`
+  - CLI reference in `docs/api/cli/mcp.md`
+  - Examples with Claude Desktop configuration
+
+#### Agent Framework Integration Examples
+- **CrewAI Integration**: Complete integration example with Nexus MCP
+  - Multi-agent collaboration via Nexus filesystem
+  - Example in `examples/crewai/crewai_nexus_demo.py`
+  - Documentation in `docs/examples/crewai.md`
+- **Claude Agent SDK**: Integration example with Anthropic's Agent SDK
+  - Memory-enabled agent with Nexus backend
+  - Examples in `examples/claude_agent_sdk/`
+  - Documentation in `docs/examples/claude-agent-sdk.md`
+- **OpenAI Agents SDK**: Integration with OpenAI's Agents framework
+  - ReAct agent with Nexus tools
+  - Examples in `examples/openai_agents/`
+  - Documentation in `docs/examples/openai-agents.md`
+- **Google ADK Integration**: Integration with Google's Agent Development Kit
+  - Multi-agent demo with Nexus filesystem
+  - Examples in `examples/google_adk/`
+  - Documentation in `docs/examples/google-adk.md`
+
+#### Documentation Improvements
+- **Complete API Documentation Navigation**: Added 30+ missing documentation pages
+  - ACE (Agentic Context Engineering) subsection
+  - Plugins subsection (9 pages)
+  - Skills API subsection
+  - All API reference pages properly linked
+- **Integrations Section**: New documentation section for third-party integrations
+  - LLM integration guide
+  - MCP integration guide
+- **Fixed Documentation URLs**: Corrected all CLI reference paths
+  - Fixed paths from `cli/` to `api/cli/`
+  - All documentation now properly accessible
+
+### Fixed
+
+#### Code Quality
+- **Linting Errors**: Fixed 14 ruff linting errors across codebase
+  - `examples/claude_agent_sdk/memory_agent_demo.py`: Bare except, unused arguments, nested if statements
+  - `examples/crewai/crewai_nexus_demo.py`: Unused variables, contextlib.suppress usage
+  - `examples/google_adk/basic_adk_agent.py`: Dict iteration, f-string formatting, unused imports/variables
+  - `examples/google_adk/multi_agent_demo.py`: Python 3.11 f-string compatibility
+  - `test_adk_api.py`: Import organization
+- **All Ruff Checks Passing**: Zero linting errors remaining
+- **Code Formatting**: All files properly formatted with ruff
+
+#### Test Fixes
+- **MarkItDownParser Test**: Fixed `test_parse_with_minimal_metadata` failure
+  - Parser now defaults to `.txt` extension for files without extensions
+  - Handles edge case of missing file path metadata
+  - All 17 MarkItDownParser tests now passing
+
+#### Documentation Structure
+- **MkDocs Navigation**: Fixed broken documentation links
+  - Corrected CLI reference paths (added `api/` prefix)
+  - Added Google ADK integration to examples
+  - Added missing API sections (Plugins, Skills, ACE, Integrations)
+  - Removed conflicting `api/README.md` reference
+- **Documentation Build**: All docs build without errors
+  - Zero build errors
+  - 27 API directories generated
+  - All framework examples properly built
+
+### Technical Details
+- **Modified Files**:
+  - `pyproject.toml` - Version bump to 0.5.2
+  - `src/nexus/__init__.py` - Version bump to 0.5.2
+  - `src/nexus/mcp/server.py` - MCP server implementation
+  - `src/nexus/cli/commands/mcp.py` - MCP CLI commands
+  - `src/nexus/parsers/markitdown_parser.py` - Handle missing file extensions
+  - `mkdocs.yml` - Comprehensive navigation fixes
+  - Multiple example files - Linting fixes
+- **Test Coverage**: 1522 tests passing (1 previously failing test fixed)
+- **Documentation Pages Added**: 30+ pages properly linked in navigation
+
 ## [0.5.1] - 2025-10-30
 
 ### Added
@@ -958,7 +1049,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/nexi-lab/nexus/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/nexi-lab/nexus/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/nexi-lab/nexus/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/nexi-lab/nexus/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/nexi-lab/nexus/compare/v0.3.9...v0.5.0
 [0.3.9]: https://github.com/nexi-lab/nexus/compare/v0.3.0...v0.3.9

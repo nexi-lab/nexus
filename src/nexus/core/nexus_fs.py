@@ -404,6 +404,15 @@ class NexusFS(
 
         return self._memory_api
 
+    def _get_created_by(self) -> str | None:
+        """Get the created_by value for version history tracking.
+
+        Returns:
+            Agent ID if set, else user ID if set, else None.
+            Format: 'alice,data_analyst' for agents or 'alice' for users.
+        """
+        return self.agent_id or self.user_id
+
     def _get_memory_api(self, context: dict | None = None) -> Memory:
         """Get Memory API instance with context-specific configuration.
 
@@ -628,8 +637,26 @@ class NexusFS(
             f"_check_permission: path={path}, permission={permission.name}, user={ctx.user}, tenant={getattr(ctx, 'tenant_id', None)}"
         )
 
+        # Fix #332: Virtual parsed views (e.g., report_parsed.pdf.md) should inherit
+        # permissions from their original files (e.g., report.pdf)
+        from nexus.core.virtual_views import parse_virtual_path
+
+        # Use metadata.exists to avoid circular dependency with self.exists()
+        def metadata_exists(check_path: str) -> bool:
+            return self.metadata.exists(check_path)
+
+        original_path, view_type = parse_virtual_path(path, metadata_exists)
+        if view_type == "md":
+            # This is a virtual view - check permissions on the original file instead
+            logger.info(
+                f"  -> Virtual view detected: checking permissions on original file {original_path}"
+            )
+            permission_path = original_path
+        else:
+            permission_path = path
+
         # Check permission using enforcer
-        result = self._permission_enforcer.check(path, permission, ctx)
+        result = self._permission_enforcer.check(permission_path, permission, ctx)
         logger.info(f"  -> permission_enforcer.check returned: {result}")
 
         if not result:
@@ -665,6 +692,7 @@ class NexusFS(
             created_at=now,
             modified_at=now,
             version=1,
+            created_by=self._get_created_by(),  # Track who created this directory
         )
 
         self.metadata.put(metadata)
@@ -1351,6 +1379,7 @@ class NexusFS(
                                 created_at=created_at or existing.created_at,
                                 modified_at=modified_at or existing.modified_at,
                                 version=metadata_dict.get("version", existing.version),
+                                created_by=self._get_created_by(),  # Track who imported this version
                             )
                             self.metadata.put(file_meta)
                             self._import_custom_metadata(path, metadata_dict)
@@ -1396,6 +1425,7 @@ class NexusFS(
                                 created_at=created_at or existing.created_at,
                                 modified_at=modified_at,
                                 version=metadata_dict.get("version", existing.version + 1),
+                                created_by=self._get_created_by(),  # Track who imported this version
                             )
                             self.metadata.put(file_meta)
                             self._import_custom_metadata(path, metadata_dict)
@@ -1442,6 +1472,7 @@ class NexusFS(
                                 created_at=created_at,
                                 modified_at=modified_at,
                                 version=metadata_dict.get("version", 1),
+                                created_by=self._get_created_by(),  # Track who imported this version
                             )
                             self.metadata.put(file_meta)
                             self._import_custom_metadata(path, metadata_dict)
@@ -1493,6 +1524,7 @@ class NexusFS(
                                     created_at=created_at or existing.created_at,
                                     modified_at=modified_at,
                                     version=metadata_dict.get("version", existing.version + 1),
+                                    created_by=self._get_created_by(),  # Track who imported this version
                                 )
                                 self.metadata.put(file_meta)
                                 self._import_custom_metadata(path, metadata_dict)
@@ -1536,6 +1568,7 @@ class NexusFS(
                         created_at=created_at,
                         modified_at=modified_at,
                         version=metadata_dict.get("version", 1),
+                        created_by=self._get_created_by(),  # Track who imported this version
                     )
 
                     # Store metadata

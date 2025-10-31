@@ -1,0 +1,14 @@
+# Google ADK + Nexus Integration Requirements
+
+# Google Agent Development Kit
+google-adk>=0.2.0
+
+# Nexus AI Filesystem
+nexus-ai-fs>=0.5.0
+
+# Note: google-adk automatically installs:
+# - google-generativeai (for Gemini models)
+# - other required dependencies
+
+# Optional: For remote Nexus server
+# requests>=2.31.0

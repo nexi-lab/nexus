@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "nexus": {
+      "command": "nexus",
+      "args": ["mcp", "serve", "--transport", "stdio"],
+      "env": {
+        "NEXUS_DATA_DIR": "/path/to/your/nexus-data"
+      }
+    },
+    "nexus-remote": {
+      "command": "nexus",
+      "args": ["mcp", "serve", "--transport", "stdio"],
+      "env": {
+        "NEXUS_URL": "http://localhost:8080",
+        "NEXUS_API_KEY": "your-api-key-if-needed"
+      }
+    }
+  }
+}

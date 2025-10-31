@@ -204,6 +204,9 @@ nav:
     - Agentic Context Engineering (ACE): examples/ace.md
     - DeepAgents Integration: examples/deepagents.md
     - LangGraph Integration: examples/langgraph.md
+    - CrewAI Integration: examples/crewai.md
+    - Claude Agent SDK: examples/claude-agent-sdk.md
+    - OpenAI Agents SDK: examples/openai-agents.md
     - Skill Seekers: examples/skill-seekers.md
 
   - Core Concepts:

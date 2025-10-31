@@ -128,6 +128,13 @@ Commands for server management and FUSE mounting.
 
 [**→ Full Server Reference**](server.md)
 
+### Model Context Protocol (MCP)
+Commands for MCP server to integrate with AI agents and tools.
+
+- [`mcp serve`](mcp.md#mcp-serve---start-mcp-server) - Start MCP server for Claude Desktop and other MCP clients
+
+[**→ Full MCP Reference**](mcp.md)
+
 ### Advanced Operations
 Advanced commands for operation tracking, analysis, and sync.
 

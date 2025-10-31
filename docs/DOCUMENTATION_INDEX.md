@@ -121,6 +121,7 @@ Complete guide to Nexus documentation organized by topic.
 
 | Document | Description |
 |----------|-------------|
+| [Model Context Protocol (MCP)](integrations/mcp.md) | MCP server for AI agents (Claude Desktop, etc.) |
 | [LLM Provider](integrations/llm.md) | LLM integration |
 
 ---
@@ -186,6 +187,17 @@ See [Authentication Guide](authentication.md) for complete documentation.
 1. [Core Tenets](CORE_TENETS.md)
 2. [Development Guide](development/development.md)
 3. [RPC Parity](development/rpc-parity.md)
+
+### "I want to integrate with AI agents"
+1. [MCP Integration Guide](integrations/mcp.md)
+2. [MCP CLI Reference](api/cli/mcp.md)
+3. [Agent Framework Examples](examples/index.md):
+   - [CrewAI](examples/crewai.md) - Multi-agent teams with memory
+   - [LangGraph](examples/langgraph.md) - ReAct agents
+   - [ACE Learning](examples/ace.md) - Learning from experience
+   - [Claude SDK](examples/claude-agent-sdk.md) - Anthropic agents
+   - [OpenAI SDK](examples/openai-agents.md) - OpenAI agents
+4. Try: `examples/mcp/`, `examples/crewai/`, `examples/langgraph/`
 
 ---
 

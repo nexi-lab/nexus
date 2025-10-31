@@ -119,11 +119,42 @@ class MarkItDownParser(Parser):
         file_path = metadata.get("path", metadata.get("filename", "unknown"))
 
         try:
-            # Create a BytesIO stream for MarkItDown
-            file_stream = io.BytesIO(content)
-
             # Get file extension for MarkItDown to detect format
             ext = Path(str(file_path)).suffix.lower()
+
+            # Default to .txt for unknown/missing extensions
+            if not ext:
+                ext = ".txt"
+
+            # Check if extension is supported
+            if ext not in self._SUPPORTED_FORMATS:
+                raise ParserError(
+                    f"Unsupported file extension: '{ext}'",
+                    path=str(file_path),
+                    parser=self.name,
+                )
+
+            # For markdown files, just return them as-is (no conversion needed)
+            if ext in [".md", ".markdown"]:
+                text_content = content.decode("utf-8", errors="replace")
+                chunks = self._create_chunks(text_content)
+                structure = self._extract_structure(text_content)
+
+                return ParseResult(
+                    text=text_content,
+                    metadata={
+                        "parser": self.name,
+                        "format": ext,
+                        "original_path": file_path,
+                        **metadata,
+                    },
+                    structure=structure,
+                    chunks=chunks,
+                    raw_content=text_content,
+                )
+
+            # Create a BytesIO stream for MarkItDown
+            file_stream = io.BytesIO(content)
 
             # MarkItDown expects a file-like object with a name attribute
             file_stream.name = f"temp{ext}"

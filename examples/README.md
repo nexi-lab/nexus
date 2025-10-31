@@ -241,12 +241,96 @@ To stop the server:
 # In terminal 1, press Ctrl+C
 ```
 
+## AI Agent Framework Examples
+
+Nexus integrates seamlessly with popular AI agent frameworks, providing persistent storage, memory, and collaboration capabilities.
+
+### CrewAI + Nexus
+
+**Directory**: [`crewai/`](crewai/)
+
+Multi-agent AI systems with Nexus filesystem integration. Demonstrates:
+- CrewAI agents with Nexus tools (file operations, search, memory)
+- Long-term memory persistence across sessions
+- Multi-agent collaboration via shared storage
+- 3 demo scenarios: file analysis, research with memory, agent collaboration
+
+**Features**:
+- 8 Nexus tools: read, write, glob, grep, semantic search, memory operations
+- Remote server mode with MCP-like architecture
+- Memory API for agent learning
+- Production-ready patterns
+
+**Quick Start**:
+```bash
+cd examples/crewai
+
+# Terminal 1: Start Nexus server
+./start_nexus_server.sh
+
+# Terminal 2: Run demo (requires ANTHROPIC_API_KEY or OPENAI_API_KEY)
+export ANTHROPIC_API_KEY="your-key"
+./run_demo.sh
+```
+
+See [crewai/README.md](crewai/README.md) for detailed documentation.
+
+### LangGraph + Nexus
+
+**Directory**: [`langgraph/`](langgraph/)
+
+ReAct (Reasoning + Acting) agents with Nexus filesystem. Demonstrates:
+- LangGraph state management with Nexus tools
+- File search, read, and write operations
+- Code analysis and documentation generation
+- Educational ReAct pattern implementation
+
+**Features**:
+- 4 core tools: grep, glob, read, write
+- Multi-LLM support (Claude, GPT-4, OpenRouter)
+- Remote Nexus server connection
+- Clear, commented code for learning
+
+**Quick Start**:
+```bash
+cd examples/langgraph
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Set API key
+export ANTHROPIC_API_KEY="your-key"
+
+# Setup test data (optional)
+python setup_test_data.py
+
+# Run demo
+python langgraph_react_demo.py
+```
+
+See [langgraph/README.md](langgraph/README.md) for detailed documentation.
+
+### Framework Comparison
+
+| Framework | Best For | Complexity | Key Features |
+|-----------|----------|------------|--------------|
+| **CrewAI** | Business workflows, multi-agent teams | Higher level | Role-based agents, task delegation |
+| **LangGraph** | Custom control flows, research | Lower level | State graphs, fine control |
+
+Both support:
+- ✅ Remote Nexus server
+- ✅ Persistent storage
+- ✅ Memory/context retention
+- ✅ Multi-agent collaboration
+- ✅ Production deployment
+
 ## Next Steps
 
 - **Advanced Usage**: See [`docs/api/advanced-usage.md`](../docs/api/advanced-usage.md)
 - **API Reference**: See [`docs/api/`](../docs/api/)
 - **Permission System**: See [`docs/api/permissions.md`](../docs/api/permissions.md)
 - **Multi-backend Setup**: See [`docs/api/configuration.md`](../docs/api/configuration.md)
+- **Agent Examples**: See [crewai/](crewai/) and [langgraph/](langgraph/)
 
 ## Troubleshooting
 

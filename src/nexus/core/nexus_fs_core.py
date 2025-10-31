@@ -114,10 +114,49 @@ class NexusFSCoreMixin:
         if MemoryViewRouter.is_memory_path(path):
             return self._read_memory_path(path, return_metadata, context=context)
 
-        # Check read permission
+        # Check read permission (handles virtual views by checking original file)
         self._check_permission(path, Permission.READ, context)
 
-        # Route to backend with access control
+        # Fix #332: Handle virtual parsed views (e.g., report_parsed.pdf.md)
+        from nexus.core.virtual_views import get_parsed_content, parse_virtual_path
+
+        def metadata_exists(check_path: str) -> bool:
+            return self.metadata.exists(check_path)
+
+        original_path, view_type = parse_virtual_path(path, metadata_exists)
+        if view_type == "md":
+            # This is a virtual view - read and parse the original file
+            logger.info(f"read: Virtual view detected, reading original file: {original_path}")
+
+            # Read the original file
+            route = self.router.route(
+                original_path,
+                tenant_id=self.tenant_id,
+                agent_id=self.agent_id,
+                is_admin=self.is_admin,
+                check_write=False,
+            )
+            meta = self.metadata.get(original_path)
+            if meta is None or meta.etag is None:
+                raise NexusFileNotFoundError(original_path)
+
+            original_content = route.backend.read_content(meta.etag, context=context)
+
+            # Parse the content
+            content = get_parsed_content(original_content, original_path, view_type)
+
+            # Return parsed content with simulated metadata
+            if return_metadata:
+                return {
+                    "content": content,
+                    "etag": meta.etag + ".md",  # Synthetic etag for virtual view
+                    "version": meta.version,
+                    "modified_at": meta.modified_at,
+                    "size": len(content),
+                }
+            return content
+
+        # Normal file path - proceed with regular read
         route = self.router.route(
             path,
             tenant_id=self.tenant_id,
@@ -372,6 +411,8 @@ class NexusFSCoreMixin:
             created_at=meta.created_at if meta else now,
             modified_at=now,
             version=new_version,
+            created_by=getattr(self, "agent_id", None)
+            or getattr(self, "user_id", None),  # Track who created/modified this version
         )
 
         self.metadata.put(metadata)
@@ -634,6 +675,8 @@ class NexusFSCoreMixin:
                 created_at=meta.created_at if meta else now,
                 modified_at=now,
                 version=new_version,
+                created_by=getattr(self, "agent_id", None)
+                or getattr(self, "user_id", None),  # Track who created/modified this version
             )
             metadata_list.append(metadata)
 
@@ -720,6 +763,13 @@ class NexusFSCoreMixin:
                 logger.warning(
                     f"Auto-parse FAILED for {path}: Permission/OS error - {error_type}: {error_msg}"
                 )
+            elif (
+                "unsupported" in error_msg.lower()
+                or "not supported" in error_msg.lower()
+                or error_type == "UnsupportedFormatException"
+            ):
+                # Expected for files that don't need parsing - log at debug level
+                logger.debug(f"Auto-parse skipped for {path}: Unsupported format - {error_msg}")
             else:
                 # Unknown error - log with stack trace for debugging
                 logger.warning(

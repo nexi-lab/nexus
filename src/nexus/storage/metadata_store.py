@@ -466,6 +466,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                                 parent_version_id=prev_version.version_id if prev_version else None,
                                 source_type="original",
                                 created_at=datetime.now(UTC),
+                                created_by=metadata.created_by,  # Track who created this version
                             )
                             version_entry.validate()
                             session.add(version_entry)
@@ -503,6 +504,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                                 parent_version_id=None,
                                 source_type="original",
                                 created_at=file_path.created_at,
+                                created_by=metadata.created_by,  # Track who created this version
                             )
                             version_entry.validate()
                             session.add(version_entry)
@@ -1196,6 +1198,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             parent_version_id=prev_version.version_id if prev_version else None,
                             source_type="original",
                             created_at=datetime.now(UTC),
+                            created_by=metadata.created_by,  # Track who created this version
                         )
                         version_entry.validate()
                         session.add(version_entry)

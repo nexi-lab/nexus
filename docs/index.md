@@ -251,6 +251,14 @@ Event-driven workflows fire automatically on file operations. No manual triggeri
 
     [:octicons-arrow-right-24: View Example](examples/ace.md)
 
+-   :material-chat:{ .lg .middle } __Claude Desktop (MCP)__
+
+    ---
+
+    Expose Nexus to Claude Desktop via Model Context Protocol. 14 tools for files, search, memory, and workflows.
+
+    [:octicons-arrow-right-24: View Integration](integrations/mcp.md)
+
 </div>
 
 <div class="cta-section">

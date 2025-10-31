@@ -402,6 +402,7 @@ class WorkspaceManager:
                     mime_type=file_info.get("mime_type"),
                     modified_at=datetime.now(UTC),
                     version=1,  # Will be updated by metadata store
+                    created_by=self.agent_id,  # Track who restored this version
                 )
                 self.metadata.put(file_meta)
                 files_restored += 1

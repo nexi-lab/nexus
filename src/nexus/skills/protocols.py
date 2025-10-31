@@ -205,6 +205,7 @@ class NexusFilesystem(Protocol):
         details: bool = False,
         prefix: str | None = None,
         show_parsed: bool = True,
+        context: Any = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """
         List files in a directory.
@@ -234,7 +235,7 @@ class NexusFilesystem(Protocol):
         """
         ...
 
-    def glob(self, pattern: str, path: str = "/") -> builtins.list[str]:
+    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
         """
         Find files matching a glob pattern.
 
@@ -271,6 +272,7 @@ class NexusFilesystem(Protocol):
         ignore_case: bool = False,
         max_results: int = 1000,
         search_mode: str = "auto",
+        context: Any = None,
     ) -> builtins.list[dict[str, Any]]:
         """
         Search file contents using regex patterns.

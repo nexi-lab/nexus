@@ -1,0 +1,20 @@
+[project]
+name = "nexus-langgraph-examples"
+version = "0.1.0"
+description = "LangGraph ReAct Agent Examples with Nexus Filesystem Integration"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "langchain-anthropic>=0.2.0",
+    "langchain-openai>=0.2.0",
+    "nexus-ai-fs>=0.3.0",
+    "langgraph-cli[inmem]>=0.4.4",
+]
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["react_agent", "nexus_tools"]

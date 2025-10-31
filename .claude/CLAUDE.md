@@ -48,3 +48,19 @@ gcloud compute ssh nexus-server --zone=us-west1-a --command="sudo -u nexus /opt/
 - Domain: `nexus.sudorouter.ai` (Caddy HTTPS reverse proxy)
 - Location: `/opt/nexus/repo` (user: `nexus`)
 - Python: `python3.11` in `.venv`
+
+---
+
+## AI Development Guidelines
+
+**Role**: Senior Developer (AI). Human is PM, makes all decisions.
+
+**Workflow**: Propose (2-3 options) → Approve → Implement → Show diff → Get commit approval
+
+**Critical rules**:
+- Issues must complete in single session (<6h work, 200K context limit)
+- If issue >6h: Stop, alert PM, propose split
+- Session startup: git pull → check handoffs (NEXT_SESSION_START.md) → check issues → wait for PM
+- Quality checklist before closing: tests pass, docs updated, diff reviewed, commit approved
+
+**Mobile collaboration**: Check `[MOBILE]` issues if using Github Mobile.

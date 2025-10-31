@@ -563,13 +563,26 @@ DEFAULT_FILE_NAMESPACE = NamespaceConfig(
             "parent_viewer": {
                 "tupleToUserset": {"tupleset": "parent", "computedUserset": "viewer"}
             },
-            # Computed relations (union of direct + parent inheritance)
-            "owner": {"union": ["direct_owner", "parent_owner"]},
-            "editor": {"union": ["direct_editor", "parent_editor", "owner"]},
+            # Group-based permissions via tupleToUserset
+            # Allows permissions to be granted to groups, then inherited by group members
+            # Example: [user, joe] --[member]--> [group, team] AND [group, team] --[direct_editor]--> [file, doc]
+            #          => joe inherits editor permission on doc
+            "group_owner": {
+                "tupleToUserset": {"tupleset": "direct_owner", "computedUserset": "member"}
+            },
+            "group_editor": {
+                "tupleToUserset": {"tupleset": "direct_editor", "computedUserset": "member"}
+            },
+            "group_viewer": {
+                "tupleToUserset": {"tupleset": "direct_viewer", "computedUserset": "member"}
+            },
+            # Computed relations (union of direct + parent inheritance + group inheritance)
+            "owner": {"union": ["direct_owner", "parent_owner", "group_owner"]},
+            "editor": {"union": ["direct_editor", "parent_editor", "group_editor", "owner"]},
             # FIX: viewer should NOT include editor to prevent circular dependency
             # The "read" permission explicitly lists [viewer, editor, owner], so having
             # editor grants read access. Including editor in viewer causes recursion issues.
-            "viewer": {"union": ["direct_viewer", "parent_viewer"]},
+            "viewer": {"union": ["direct_viewer", "parent_viewer", "group_viewer"]},
         },
         # P0-1: Explicit permission-to-userset mapping (Zanzibar-style)
         # Prevents ambiguous check("write") bugs by defining exact semantics

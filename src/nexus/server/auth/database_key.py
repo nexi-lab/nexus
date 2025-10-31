@@ -319,7 +319,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
         if not api_key:
             return False
 
-        api_key.revoked = True
+        api_key.revoked = 1  # Integer (0/1) for SQLite/PostgreSQL compatibility
         api_key.revoked_at = datetime.now(UTC)
         session.flush()  # Flush to persist changes before returning
         # Don't commit here - let caller handle transaction

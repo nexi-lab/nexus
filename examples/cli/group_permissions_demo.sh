@@ -284,9 +284,11 @@ print_subsection "Creating group 'engineering-team'"
 # Create group membership using ReBAC
 # [user, joe] --[member]--> [group, engineering-team]
 # Syntax: nexus rebac create subject_type subject_id relation object_type object_id
-nexus rebac create user joe member group engineering-team
+JOE_MEMBERSHIP_OUTPUT=$(nexus rebac create user joe member group engineering-team)
+JOE_MEMBERSHIP_ID=$(echo "$JOE_MEMBERSHIP_OUTPUT" | grep "Tuple ID:" | awk '{print $NF}')
 
 print_success "Added joe to engineering-team group"
+print_info "Joe's membership tuple ID: ${JOE_MEMBERSHIP_ID:0:36}..."
 
 # Add alice too
 nexus rebac create user alice member group engineering-team
@@ -468,52 +470,26 @@ print_section "7. Testing Permission Revocation"
 print_subsection "Test: Removing group membership should revoke permissions"
 
 print_info "Currently joe has write permission on /workspace/shared/team_doc.md"
+print_info "Joe's membership tuple ID: ${JOE_MEMBERSHIP_ID:0:36}..."
 
-# Get the tuple ID for joe's membership
-print_info "Finding joe's membership tuple..."
-JOE_MEMBER_TUPLE=$(python3 << 'PYEOF'
-import os
-import json
-from nexus.remote.client import RemoteNexusFS
+# Delete joe's group membership using the API
+print_info "Removing joe from engineering-team group..."
+DELETE_RESPONSE=$(curl -s -X POST "$NEXUS_URL/api/nfs/rebac_delete" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $NEXUS_API_KEY" \
+    -d "{
+        \"jsonrpc\": \"2.0\",
+        \"id\": 1,
+        \"params\": {
+            \"tuple_id\": \"$JOE_MEMBERSHIP_ID\"
+        }
+    }")
 
-server_url = os.environ['NEXUS_URL']
-api_key = os.environ['NEXUS_API_KEY']
-client = RemoteNexusFS(server_url=server_url, api_key=api_key)
-
-# Find the tuple
-result = client._rpc_call("rebac_expand", {
-    "permission": "member",
-    "object": ("group", "engineering-team"),
-})
-
-# Find joe's tuple ID
-for subject in result.get("subjects", []):
-    if subject.get("subject_type") == "user" and subject.get("subject_id") == "joe":
-        print(subject.get("tuple_id", ""))
-        break
-PYEOF
-)
-
-if [ -z "$JOE_MEMBER_TUPLE" ]; then
-    print_error "Could not find joe's membership tuple"
+if echo "$DELETE_RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
+    print_error "Failed to delete joe's membership"
+    echo "$DELETE_RESPONSE" | jq '.error'
     exit 1
 fi
-
-print_info "Found tuple ID: ${JOE_MEMBER_TUPLE:0:20}..."
-
-# Delete joe's group membership
-print_info "Removing joe from engineering-team group..."
-python3 << PYEOF
-import os
-from nexus.remote.client import RemoteNexusFS
-
-server_url = os.environ['NEXUS_URL']
-api_key = os.environ['NEXUS_API_KEY']
-client = RemoteNexusFS(server_url=server_url, api_key=api_key)
-
-result = client._rpc_call("rebac_delete", {"tuple_id": "$JOE_MEMBER_TUPLE"})
-print(f"Deleted: {result}")
-PYEOF
 
 print_success "Removed joe from engineering-team group"
 

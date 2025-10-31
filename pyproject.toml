@@ -1,6 +1,6 @@
 [project]
 name = "nexus-ai-fs"
-version = "0.5.1"
+version = "0.5.2"
 description = "AI-Native Distributed Filesystem Architecture"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -64,6 +64,8 @@ dependencies = [
     "tiktoken>=0.5",  # Token counting for OpenAI models and chunking
     "anthropic>=0.40",  # Native Anthropic SDK for better Claude support
     "dotenv>=0.9.9",
+    # MCP Server (v0.7.0)
+    "fastmcp>=0.2.0",  # Model Context Protocol server
 ]
 
 [project.optional-dependencies]

@@ -46,6 +46,38 @@ Explore Nexus through hands-on examples that demonstrate key features and real-w
 
     [:octicons-arrow-right-24: View Example](langgraph.md)
 
+-   :material-account-group:{ .lg .middle } __CrewAI Integration__
+
+    ---
+
+    Build collaborative multi-agent teams with CrewAI using Nexus for memory, storage, and coordination.
+
+    [:octicons-arrow-right-24: View Example](crewai.md)
+
+-   :material-chat-processing:{ .lg .middle } __Claude Agent SDK__
+
+    ---
+
+    Build intelligent agents with Anthropic's Claude Agent SDK - Built-in ReAct loop with persistent memory.
+
+    [:octicons-arrow-right-24: View Example](claude-agent-sdk.md)
+
+-   :material-robot-happy:{ .lg .middle } __OpenAI Agents SDK Integration__
+
+    ---
+
+    Build production-ready ReAct agents with OpenAI Agents SDK - 70% less code than manual ReAct loops.
+
+    [:octicons-arrow-right-24: View Example](openai-agents.md)
+
+-   :material-google:{ .lg .middle } __Google ADK Integration__
+
+    ---
+
+    Build production agents with Google's Agent Development Kit - Multi-agent coordination with session management.
+
+    [:octicons-arrow-right-24: View Example](google-adk.md)
+
 -   :material-shield-lock:{ .lg .middle } __Permission Management__
 
     ---
@@ -193,6 +225,10 @@ All examples include runnable shell scripts that demonstrate the full workflow:
 | ACE Learning Agent | `examples/ace/demo_3_data_validator.py` | Agent learns validation rules from experience |
 | DeepAgents Workflows | `examples/deepagents/research/demo_2_workflows.py` | Autonomous agents with event-driven memory consolidation |
 | LangGraph ReAct Agent | `examples/langgraph/langgraph_react_demo.py` | ReAct agent with file operations for code analysis |
+| CrewAI Multi-Agent Teams | `examples/crewai/crewai_nexus_demo.py` | Collaborative agent teams with persistent memory and coordination |
+| Claude Agent SDK | `examples/claude_agent_sdk/claude_agent_react_demo.py` | Intelligent agents with built-in ReAct loop and Nexus tools |
+| OpenAI Agents SDK | `examples/openai_agents/openai_agent_react_demo.py` | Production ReAct agents with automatic loop and memory |
+| Google ADK Agent | `examples/google_adk/basic_adk_agent.py` | Production agents with session management and multi-agent coordination |
 | Skill Seekers | `nexus-plugin-skill-seekers/examples/skill_seekers_demo.sh` | Auto-generate skills from documentation with AI |
 
 ## 🎯 What's Next?

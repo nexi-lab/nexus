@@ -630,3 +630,157 @@ def test_same_tenant_relationships_allowed(rebac_manager):
         tenant_id="tenant_a",
     )
     assert result is True
+
+
+def test_group_based_file_permissions_issue_338(rebac_manager):
+    """Test group-based file permissions (Issue #338).
+
+    This test verifies that permissions granted to groups are correctly
+    inherited by group members through tupleToUserset traversal.
+
+    Scenario (from Issue #338):
+    - user 'joe' is a member of group 'tenant_users'
+    - file '/workspace/shared' has group 'tenant_users' as direct_editor
+    - user 'joe' should inherit write permission on the file
+
+    This tests the fix for Issue #338 where group membership was not being
+    traversed during permission checks.
+
+    Note: For tupleToUserset to work, the tuple direction must be:
+    [file] --[direct_editor]--> [group], not [group] --[direct_editor]--> [file]
+    This allows _find_related_objects to find groups that have editor permission.
+    """
+    # Step 1: Create group membership relationships
+    # [user, joe] --[member]--> [group, tenant_users]
+    joe_membership_id = rebac_manager.rebac_write(
+        subject=("user", "joe"),
+        relation="member",
+        object=("group", "tenant_users"),
+    )
+
+    # Also add alice to the group for later testing
+    rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="member",
+        object=("group", "tenant_users"),
+    )
+
+    # Step 2: Grant group permission on file
+    # For tupleToUserset to work correctly, we need:
+    # [file, /workspace/shared] --[direct_editor]--> [group, tenant_users]
+    # This way, _find_related_objects(file, "direct_editor") will find the group
+    rebac_manager.rebac_write(
+        subject=("file", "/workspace/shared"),
+        relation="direct_editor",
+        object=("group", "tenant_users"),
+    )
+
+    # Step 3: Verify user inherits write permission via group membership
+    result = rebac_manager.rebac_check(
+        subject=("user", "joe"),
+        permission="write",
+        object=("file", "/workspace/shared"),
+    )
+    assert result is True, "User should inherit write permission via group membership"
+
+    # Step 4: Verify user also inherits read permission (since editor can read)
+    result = rebac_manager.rebac_check(
+        subject=("user", "joe"),
+        permission="read",
+        object=("file", "/workspace/shared"),
+    )
+    assert result is True, "User should inherit read permission via group membership"
+
+    # Step 5: Verify user does NOT have execute permission (only owner has execute)
+    result = rebac_manager.rebac_check(
+        subject=("user", "joe"),
+        permission="execute",
+        object=("file", "/workspace/shared"),
+    )
+    assert result is False, "User should not have execute permission (editor != owner)"
+
+    # Step 6: Test with direct_viewer permission
+    rebac_manager.rebac_write(
+        subject=("file", "/workspace/public"),
+        relation="direct_viewer",
+        object=("group", "tenant_users"),
+    )
+
+    result = rebac_manager.rebac_check(
+        subject=("user", "joe"),
+        permission="read",
+        object=("file", "/workspace/public"),
+    )
+    assert result is True, "User should inherit read permission via group viewer role"
+
+    # Viewer should not have write permission
+    result = rebac_manager.rebac_check(
+        subject=("user", "joe"),
+        permission="write",
+        object=("file", "/workspace/public"),
+    )
+    assert result is False, "User should not have write permission (viewer != editor)"
+
+    # Step 7: Test with direct_owner permission
+    rebac_manager.rebac_write(
+        subject=("file", "/workspace/owned"),
+        relation="direct_owner",
+        object=("group", "tenant_users"),
+    )
+
+    # Owner should have all permissions
+    result = rebac_manager.rebac_check(
+        subject=("user", "joe"),
+        permission="execute",
+        object=("file", "/workspace/owned"),
+    )
+    assert result is True, "User should inherit execute permission via group owner role"
+
+    result = rebac_manager.rebac_check(
+        subject=("user", "joe"),
+        permission="write",
+        object=("file", "/workspace/owned"),
+    )
+    assert result is True, "User should inherit write permission via group owner role"
+
+    result = rebac_manager.rebac_check(
+        subject=("user", "joe"),
+        permission="read",
+        object=("file", "/workspace/owned"),
+    )
+    assert result is True, "User should inherit read permission via group owner role"
+
+    # Step 8: Test permission revocation when removing group membership
+    # Remove joe from the tenant_users group
+    result = rebac_manager.rebac_delete(joe_membership_id)
+    assert result is True, "Should successfully delete joe's group membership"
+
+    # Verify joe no longer has permissions that were granted via group membership
+    result = rebac_manager.rebac_check(
+        subject=("user", "joe"),
+        permission="write",
+        object=("file", "/workspace/shared"),
+    )
+    assert result is False, "User should lose write permission after group membership removal"
+
+    result = rebac_manager.rebac_check(
+        subject=("user", "joe"),
+        permission="read",
+        object=("file", "/workspace/public"),
+    )
+    assert result is False, "User should lose read permission after group membership removal"
+
+    result = rebac_manager.rebac_check(
+        subject=("user", "joe"),
+        permission="execute",
+        object=("file", "/workspace/owned"),
+    )
+    assert result is False, "User should lose execute permission after group membership removal"
+
+    # Verify alice still has permissions (she's still in the group)
+    result = rebac_manager.rebac_check(
+        subject=("user", "alice"),
+        permission="write",
+        object=("file", "/workspace/shared"),
+    )
+    assert result is True, "Alice should still have write permission (still in group)"

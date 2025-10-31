@@ -28,6 +28,7 @@ class FileMetadata:
     modified_at: datetime | None = None
     version: int = 1
     tenant_id: str | None = None  # P0 SECURITY: Defense-in-depth tenant isolation
+    created_by: str | None = None  # User or agent ID who created/modified this version
 
     def validate(self) -> None:
         """Validate file metadata before database operations.

@@ -39,7 +39,37 @@ KEEP=1 ./examples/cli/ace_demo.sh
 
 ---
 
-### 2. ReBAC Permissions Demo (`permissions_demo_enhanced.sh`)
+### 2. Virtual View Permission Inheritance Demo (`virtual_view_permissions_demo.sh`)
+
+Demonstrates **automatic permission inheritance for virtual parsed views**:
+- 📄 Virtual parsed views (`.md` files) inherit permissions from original files
+- 🔐 Users with read permission on a file can access its parsed view automatically
+- ♻️ Permission changes propagate to virtual views
+- ✨ No separate permission management needed for virtual views
+
+**Prerequisites:**
+```bash
+# 1. Start Nexus server with authentication
+./scripts/init-nexus-with-auth.sh
+
+# 2. Load admin credentials
+source .nexus-admin-env
+```
+
+**Run:**
+```bash
+./examples/cli/virtual_view_permissions_demo.sh
+```
+
+**What it demonstrates:**
+- Creates a PDF file and grants viewer permission to user 'alice'
+- Shows alice can read both the original file and its virtual parsed view
+- Demonstrates that revoking permission removes access to both files
+- Validates issue #332 fix: virtual views inherit permissions
+
+---
+
+### 3. ReBAC Permissions Demo (`permissions_demo_enhanced.sh`)
 
 Demonstrates **Relationship-Based Access Control (ReBAC)**:
 - 👥 Multiple permission levels (owner/editor/viewer)
@@ -87,6 +117,7 @@ source .nexus-admin-env
 
 # Run demos
 ./examples/cli/ace_demo.sh
+./examples/cli/virtual_view_permissions_demo.sh
 ./examples/cli/permissions_demo_enhanced.sh
 ```
 

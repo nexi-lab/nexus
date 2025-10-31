@@ -1,0 +1,15 @@
+# OpenAI Agents SDK Integration with Nexus
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+nexus-ai-fs>=0.5.0      # Nexus filesystem with memory and workflows
+openai-agents>=0.1.0    # OpenAI Agents SDK
+
+# Required by OpenAI Agents SDK
+openai>=1.0.0          # OpenAI API client
+pydantic>=2.0.0        # Data validation
+httpx>=0.24.0          # HTTP client
+
+# Optional: For enhanced functionality
+# tiktoken>=0.5.0      # Token counting
+# numpy>=1.24.0        # Numerical operations for embeddings

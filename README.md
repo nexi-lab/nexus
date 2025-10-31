@@ -209,6 +209,7 @@ Nexus combines files, memory, and access control into a single programmable laye
 | **AI Intelligence** | LLM document Q&A, memory API, semantic search, workspace snapshots, time-travel debugging |
 | **Developer UX** | Embedded/remote parity, full-featured CLI + SDK, 100% feature compatibility |
 | **Extensibility** | Plugin system with lifecycle hooks, custom CLI commands, auto-discovery |
+| **AI Tool Integration** | MCP server for Claude Desktop and other AI agents (14 tools) |
 
 ## Performance Highlights
 
@@ -253,6 +254,13 @@ Nexus combines files, memory, and access control into a single programmable laye
 - **Custom CLI Commands**: Add plugin-specific commands to the `nexus` CLI
 - **Auto-Discovery**: Install plugins with `pip`, no manual registration needed
 - **Official Plugins**: Anthropic integration, Firecrawl web scraping, and more
+
+### AI Tool Integration
+- **Model Context Protocol (MCP)**: Expose Nexus to AI agents via [MCP server](examples/mcp/)
+  - 14 tools for files, search, memory, and workflows
+  - Claude Desktop integration with authenticated remote access
+  - Run `./examples/mcp/quick_test.sh` for 2-minute demo
+  - See [MCP docs](docs/integrations/mcp.md) for setup guide
 
 ## Use Cases
 

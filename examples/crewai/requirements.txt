@@ -1,0 +1,13 @@
+# CrewAI Core
+crewai>=0.80.0
+crewai-tools>=0.15.0
+
+# LLM Providers (choose at least one)
+anthropic>=0.40.0      # For Claude models
+openai>=1.0.0          # For OpenAI models
+
+# Nexus AI Filesystem
+nexus-ai-fs>=0.5.0
+
+# Optional: OpenRouter for multi-model access
+httpx>=0.27.0

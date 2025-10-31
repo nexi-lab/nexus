@@ -862,7 +862,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         file_pattern: str | None = None,
         ignore_case: bool = False,
         max_results: int = 1000,
-        search_mode: str = "auto",
+        search_mode: str = "auto",  # noqa: ARG002
         context: Any = None,  # noqa: ARG002
     ) -> builtins.list[dict[str, Any]]:
         """Search file contents using regex patterns."""

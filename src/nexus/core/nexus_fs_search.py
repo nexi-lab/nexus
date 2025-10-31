@@ -152,8 +152,21 @@ class NexusFSSearchMixin:
             # For non-recursive listings, infer immediate subdirectories from file paths
             base_path = path if path != "/" else ""
 
-            # Get all files to infer directories
+            # Get all files to infer directories (only from files user can read)
             all_files_for_dirs = self.metadata.list(base_path)
+
+            # Filter files by permission before inferring directories
+            if self._enforce_permissions:
+                ctx = context or self._default_context
+                all_paths_for_dirs = [meta.path for meta in all_files_for_dirs]
+                allowed_paths_for_dirs = self._permission_enforcer.filter_list(
+                    all_paths_for_dirs, ctx
+                )
+                # Only infer directories from files user has permission to read
+                all_files_for_dirs = [
+                    meta for meta in all_files_for_dirs if meta.path in allowed_paths_for_dirs
+                ]
+
             for meta in all_files_for_dirs:
                 # Get relative path
                 rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]

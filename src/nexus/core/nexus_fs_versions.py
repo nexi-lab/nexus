@@ -182,13 +182,14 @@ class NexusFSVersionsMixin:
         self._check_permission(path, Permission.WRITE, context)
         logger.info("[ROLLBACK] Permission check passed")
 
-        # Route to backend
+        # Route to backend using context
         logger.info(f"[ROLLBACK] Routing to backend for path={path}")
+        tenant_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            tenant_id=self.tenant_id,
-            agent_id=self.agent_id,
-            is_admin=self.is_admin,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            is_admin=is_admin,
             check_write=True,
         )
         logger.info(f"[ROLLBACK] Route: backend={route.backend}, readonly={route.readonly}")

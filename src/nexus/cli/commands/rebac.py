@@ -164,6 +164,130 @@ def rebac_create(
         handle_error(e)
 
 
+@rebac.command(name="list")
+@click.option("--subject-type", type=str, help="Filter by subject type")
+@click.option("--subject-id", type=str, help="Filter by subject ID")
+@click.option("--object-type", type=str, help="Filter by object type")
+@click.option("--object-id", type=str, help="Filter by object ID")
+@click.option("--relation", type=str, help="Filter by relation")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json", "compact"]),
+    default="table",
+    help="Output format",
+)
+@click.option("--limit", type=int, help="Limit number of results")
+@add_backend_options
+def rebac_list_cmd(
+    subject_type: str | None,
+    subject_id: str | None,
+    object_type: str | None,
+    object_id: str | None,
+    relation: str | None,
+    output_format: str,
+    limit: int | None,
+    backend_config: BackendConfig,
+) -> None:
+    """List relationship tuples with optional filters.
+
+    Examples:
+        # List all tuples
+        nexus rebac list
+
+        # List tuples for a specific file
+        nexus rebac list --object-type file --object-id /workspace/test.txt
+
+        # List all tuples for user alice
+        nexus rebac list --subject-type user --subject-id alice
+
+        # List all editor relations
+        nexus rebac list --relation direct_editor
+
+        # Compact format
+        nexus rebac list --format compact
+
+        # JSON output
+        nexus rebac list --format json
+    """
+    try:
+        import json
+
+        nx = get_filesystem(backend_config)
+
+        # Build filters
+        subject = None
+        if subject_type and subject_id:
+            subject = (subject_type, subject_id)
+
+        obj = None
+        if object_type and object_id:
+            obj = (object_type, object_id)
+
+        # List tuples
+        tuples = nx.rebac_list_tuples(  # type: ignore[attr-defined]
+            subject=subject,
+            object=obj,
+            relation=relation,
+        )
+
+        nx.close()
+
+        # Apply limit if specified
+        if limit and limit > 0:
+            tuples = tuples[:limit]
+
+        # Display results
+        if not tuples:
+            console.print("[yellow]No tuples found[/yellow]")
+            return
+
+        if output_format == "json":
+            console.print(json.dumps(tuples, indent=2, default=str))
+        elif output_format == "compact":
+            for t in tuples:
+                subj = f"{t['subject_type']}:{t['subject_id']}"
+                if t.get("subject_relation"):
+                    subj += f"#{t['subject_relation']}"
+                obj_str = f"{t['object_type']}:{t['object_id']}"
+                console.print(f"{subj} → {t['relation']} → {obj_str}")
+        else:
+            # Table format
+            table = Table(title=f"ReBAC Tuples ({len(tuples)} found)")
+            table.add_column("Tuple ID", style="dim", no_wrap=True)
+            table.add_column("Subject", style="yellow")
+            table.add_column("Relation", style="magenta")
+            table.add_column("Object", style="cyan")
+            table.add_column("Tenant", style="blue")
+
+            for t in tuples:
+                # Format subject
+                subj = f"{t['subject_type']}:{t['subject_id']}"
+                if t.get("subject_relation"):
+                    subj += f"#{t['subject_relation']}"
+
+                # Format object
+                obj_str = f"{t['object_type']}:{t['object_id']}"
+
+                # Truncate IDs for display
+                tuple_id = t["tuple_id"]
+                if len(tuple_id) > 36:
+                    tuple_id = tuple_id[:8] + "..." + tuple_id[-8:]
+
+                table.add_row(
+                    tuple_id,
+                    subj,
+                    t["relation"],
+                    obj_str,
+                    t.get("tenant_id") or "-",
+                )
+
+            console.print(table)
+
+    except Exception as e:
+        handle_error(e)
+
+
 @rebac.command(name="delete")
 @click.argument("tuple_id", type=str)
 @add_backend_options

@@ -88,6 +88,12 @@ def connect(
     This is the main entry point for using Nexus. It auto-detects the deployment
     mode from configuration and returns the appropriate client.
 
+    **Connection Priority**:
+    1. If `url` is set in config or `NEXUS_URL` environment variable → Remote mode (RemoteNexusFS)
+    2. Otherwise → Embedded mode (NexusFS with local backend)
+
+    **Recommended**: Use server mode for production, embedded mode for development/testing only.
+
     Args:
         config: Configuration source:
             - None: Auto-discover from environment/files (default)
@@ -97,9 +103,8 @@ def connect(
 
     Returns:
         NexusFilesystem instance (mode-dependent):
+            - Remote/Server mode: Returns RemoteNexusFS (thin HTTP client)
             - Embedded mode: Returns NexusFS with LocalBackend
-            - Server mode: Returns NexusFS with GCSBackend
-            - Cloud mode: Returns CloudClient (not yet implemented)
 
         All modes implement the NexusFilesystem interface, ensuring consistent
         API across deployment modes.
@@ -109,28 +114,73 @@ def connect(
         NotImplementedError: If mode is not yet implemented
 
     Examples:
-        Use local backend (default):
+        Server mode (recommended for production):
             >>> import nexus
+            >>> # Requires nexus server running (nexus serve)
+            >>> # export NEXUS_URL=http://localhost:8080
+            >>> # export NEXUS_API_KEY=your-api-key
             >>> nx = nexus.connect()
             >>> nx.write("/workspace/file.txt", b"Hello World")
-            >>> content = nx.read("/workspace/file.txt")
 
-        Use GCS backend via config:
+        Server mode with explicit config:
             >>> nx = nexus.connect(config={
-            ...     "backend": "gcs",
-            ...     "gcs_bucket_name": "my-bucket",
+            ...     "url": "http://localhost:8080",
+            ...     "api_key": "your-api-key"
             ... })
 
-        Use GCS backend via environment variables:
-            >>> # export NEXUS_BACKEND=gcs
-            >>> # export NEXUS_GCS_BUCKET_NAME=my-bucket
+        Embedded mode (development/testing only):
+            >>> # No NEXUS_URL set
             >>> nx = nexus.connect()
+            >>> nx.write("/workspace/file.txt", b"Hello World")
+
+        Explicit embedded mode:
+            >>> nx = nexus.connect(config={
+            ...     "mode": "embedded",
+            ...     "data_dir": "./nexus-data"
+            ... })
     """
+    import os
+    import warnings
+
     # Load configuration
     cfg = load_config(config)
 
+    # PRIORITY 1: Check for server URL (remote mode)
+    # If url is explicitly set in config or NEXUS_URL env var, use RemoteNexusFS
+    server_url = cfg.url or os.getenv("NEXUS_URL")
+    if server_url:
+        # Remote/Server mode: thin HTTP client
+        api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
+
+        # Connection parameters with sensible defaults
+        timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
+        connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
+
+        return RemoteNexusFS(
+            server_url=server_url,
+            api_key=api_key,
+            timeout=timeout,
+            connect_timeout=connect_timeout,
+        )
+
+    # PRIORITY 2: Embedded mode (local backend)
+    # Only used if no URL is configured
     # Return appropriate client based on mode
     if cfg.mode == "embedded":
+        # Warn if embedded mode is being used without explicit intent
+        # (i.e., user didn't explicitly set mode="embedded")
+        if config is None or (isinstance(config, dict) and "mode" not in config):
+            warnings.warn(
+                "Embedded mode is intended for development and testing only. "
+                "For production deployments, use server mode:\n"
+                "  1. Start server: nexus serve --host 0.0.0.0 --port 8080\n"
+                "  2. Set environment: export NEXUS_URL=http://localhost:8080\n"
+                "  3. Connect: nx = nexus.connect()\n"
+                "To silence this warning, explicitly set mode='embedded' in your config.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         # Parse custom namespaces from config
         custom_namespaces = None
         if cfg.namespaces:

@@ -448,6 +448,14 @@ class EnhancedOperationContext:
         """
         return (self.subject_type, self.subject_id or self.user)
 
+    @property
+    def user_id(self) -> str:
+        """Get user ID for backward compatibility.
+
+        Returns the user field for compatibility with code expecting user_id.
+        """
+        return self.user
+
 
 # ============================================================================
 # Enhanced Permission Enforcer with P0-4 Fix
@@ -473,6 +481,7 @@ class EnhancedPermissionEnforcer:
         audit_store: AuditStore | None = None,  # P0-4: Audit logging
         admin_bypass_paths: list[str] | None = None,  # P0-4: Scoped bypass (allowlist)
         router: Any = None,  # PathRouter for backend object type resolution
+        entity_registry: Any = None,  # v0.5.0 ACE: For agent inheritance
     ):
         """Initialize enhanced permission enforcer.
 
@@ -484,6 +493,7 @@ class EnhancedPermissionEnforcer:
             audit_store: Audit store for bypass logging
             admin_bypass_paths: Optional path allowlist for admin bypass (e.g., ["/admin/*"])
             router: PathRouter for resolving backend object types (v0.5.0+)
+            entity_registry: Entity registry for agent→user inheritance (v0.5.0)
         """
         self.metadata_store = metadata_store
         self.rebac_manager = rebac_manager
@@ -492,6 +502,7 @@ class EnhancedPermissionEnforcer:
         self.audit_store = audit_store  # P0-4
         self.admin_bypass_paths = admin_bypass_paths or []  # P0-4: Scoped bypass
         self.router = router  # For backend object type resolution
+        self.entity_registry = entity_registry  # v0.5.0 ACE
 
     def check(
         self,
@@ -509,8 +520,17 @@ class EnhancedPermissionEnforcer:
         Returns:
             True if permission is granted, False otherwise
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         # Map Permission enum to string
         permission_str = self._permission_to_string(permission)
+
+        logger.warning(f"[PERM-CHECK] check() called: path={path}, permission={permission_str}")
+        logger.warning(
+            f"[PERM-CHECK] context: user={context.user}, subject_type={context.subject_type}, subject_id={context.subject_id}, agent_id={context.agent_id}"
+        )
 
         # P0-4: System bypass (limited scope)
         if context.is_system:
@@ -713,6 +733,54 @@ class EnhancedPermissionEnforcer:
         )
 
         logger.info(f"  -> rebac_manager.rebac_check returned: {result}")
+
+        # v0.5.0 ACE: Agent inheritance from user (if direct check failed)
+        # If subject is an agent, check if the agent's owner (user) has permission
+        if (
+            not result
+            and context.subject_type == "agent"
+            and context.agent_id
+            and self.entity_registry
+        ):
+            logger.warning(
+                f"[AGENT-INHERIT] Direct check FAILED for agent={context.agent_id}, checking inheritance"
+            )
+            logger.warning(
+                f"[AGENT-INHERIT] Permission: {permission_name}, Object: {object_type}:{object_id}"
+            )
+
+            # Look up agent's owner
+            parent = self.entity_registry.get_parent(
+                entity_type="agent", entity_id=context.agent_id
+            )
+
+            if parent and parent.entity_type == "user":
+                logger.warning(
+                    f"[AGENT-INHERIT] Agent {context.agent_id} owned by user {parent.entity_id}, checking user permission"
+                )
+                # Check if user has permission (using same object type as direct check)
+                user_result = self.rebac_manager.rebac_check(
+                    subject=("user", parent.entity_id),
+                    permission=permission_name,
+                    object=(object_type, object_id),
+                    tenant_id=tenant_id,
+                )
+                logger.warning(
+                    f"[AGENT-INHERIT] User {parent.entity_id} permission check returned: {user_result}"
+                )
+                if user_result:
+                    # ✅ Agent inherits user's permission
+                    logger.warning(
+                        f"[AGENT-INHERIT] ✅ ALLOW (agent {context.agent_id} inherits from user {parent.entity_id})"
+                    )
+                    return True
+                else:
+                    logger.warning(
+                        f"[AGENT-INHERIT] ❌ DENY (user {parent.entity_id} also lacks permission)"
+                    )
+            else:
+                logger.warning(f"[AGENT-INHERIT] No parent user found for agent {context.agent_id}")
+
         return result
 
     def _permission_to_string(self, permission: Permission) -> str:

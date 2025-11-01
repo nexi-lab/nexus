@@ -17,6 +17,11 @@ if [ "$1" == "--init" ]; then
     INIT_MODE=true
 fi
 
+# If SKIP_CONFIRM is set, automatically enable INIT mode for clean database
+if [ "$SKIP_CONFIRM" == "1" ]; then
+    INIT_MODE=true
+fi
+
 # ============================================
 # Configuration
 # ============================================

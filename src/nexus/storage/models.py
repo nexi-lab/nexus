@@ -883,6 +883,14 @@ class MemoryModel(Base):
         Float, nullable=True
     )  # 0.0-1.0 importance score
 
+    # Namespace organization (v0.8.0 - #350)
+    namespace: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )  # Hierarchical namespace for organization (e.g., "knowledge/geography/facts")
+    path_key: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )  # Optional unique key within namespace for upsert mode
+
     # ACE (Agentic Context Engineering) relationships
     trajectory_id: Mapped[str | None] = mapped_column(
         String(36), nullable=True
@@ -916,6 +924,16 @@ class MemoryModel(Base):
         Index("idx_memory_created_at", "created_at"),
         Index("idx_memory_session", "session_id"),
         Index("idx_memory_expires", "expires_at"),
+        Index("idx_memory_namespace", "namespace"),  # v0.8.0
+        # Unique constraint on (namespace, path_key) for upsert mode
+        # Note: Only enforced when both are NOT NULL (partial index for SQLite/Postgres)
+        Index(
+            "idx_memory_namespace_key",
+            "namespace",
+            "path_key",
+            unique=True,
+            sqlite_where=text("path_key IS NOT NULL"),
+        ),
     )
 
     def __repr__(self) -> str:

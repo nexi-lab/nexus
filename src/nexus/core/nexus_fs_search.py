@@ -14,6 +14,7 @@ import fnmatch
 import re
 from typing import TYPE_CHECKING, Any, cast
 
+from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
@@ -179,13 +180,20 @@ class NexusFSSearchMixin:
 
             # Check backend for empty directories (directories with no files)
             # This catches newly created directories using the helper method
-            # Only add backend directories if permissions are not enforced,
-            # or if we can't determine if the directory contains readable files
             if not self._enforce_permissions:
+                # No permissions: add all backend directories
                 backend_dirs = self._get_backend_directory_entries(path)
                 directories.update(backend_dirs)
-            # When permissions are enforced, only show directories with readable files
-            # (already added above from file paths)
+            else:
+                # With permissions: only show directories if user has access to them OR any descendant
+                backend_dirs = self._get_backend_directory_entries(path)
+                ctx = context or self._default_context
+
+                # Use hierarchical access check for each backend directory
+                for dir_path in backend_dirs:
+                    # Check if user has access to this directory or any of its descendants
+                    if self._has_descendant_access(dir_path, Permission.READ, ctx):  # type: ignore[attr-defined]
+                        directories.add(dir_path)
 
         if details:
             # Filter out directory metadata markers to avoid duplicates

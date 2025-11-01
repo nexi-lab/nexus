@@ -26,8 +26,11 @@ import logging
 import time
 import uuid
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
+
+if TYPE_CHECKING:
+    from nexus.core.permissions import OperationContext
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -988,8 +991,13 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         """Remove a directory."""
         self._call_rpc("rmdir", {"path": path, "recursive": recursive})
 
-    def is_directory(self, path: str) -> bool:
-        """Check if path is a directory."""
+    def is_directory(self, path: str, context: OperationContext | None = None) -> bool:  # noqa: ARG002
+        """Check if path is a directory.
+
+        Args:
+            path: Path to check
+            context: Operation context (handled server-side, not used by remote client)
+        """
         result = self._call_rpc("is_directory", {"path": path})
         return result["is_directory"]  # type: ignore[no-any-return]
 
@@ -2484,6 +2492,23 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             RemoteFilesystemError: If listing fails
         """
         result = self._call_rpc("list_memories", {})
+        return result  # type: ignore[no-any-return]
+
+    def list_registered_memories(self) -> builtins.list[dict]:
+        """List all registered memory paths.
+
+        Returns:
+            List of memory configuration dicts
+
+        Raises:
+            RemoteFilesystemError: If listing fails
+
+        Example:
+            >>> memories = nx.list_registered_memories()
+            >>> for mem in memories:
+            ...     print(f"{mem['path']}: {mem['name']}")
+        """
+        result = self._call_rpc("list_registered_memories", {})
         return result  # type: ignore[no-any-return]
 
     def get_memory_info(self, path: str) -> dict | None:

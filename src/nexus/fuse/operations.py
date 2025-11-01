@@ -105,16 +105,6 @@ class NexusFUSEOperations(Operations):
             if path == "/.raw":
                 return self._dir_attrs()
 
-            # Check if it's a namespace directory (e.g., /workspace, /shared, /archives, /external, /system)
-            if path.startswith("/") and "/" not in path[1:]:  # Top-level directory
-                try:
-                    namespaces = self.nexus_fs.get_available_namespaces()
-                    namespace_name = path[1:]  # Remove leading /
-                    if namespace_name in namespaces:
-                        return self._dir_attrs()
-                except (AttributeError, Exception):
-                    pass
-
             # Check if it's a directory
             if self.nexus_fs.is_directory(original_path):
                 # Get directory metadata for permissions
@@ -219,29 +209,24 @@ class NexusFUSEOperations(Operations):
             # Standard directory entries
             entries = [".", ".."]
 
-            # At root level, add built-in namespace directories and .raw
+            # At root level, add .raw directory
             if path == "/":
                 entries.append(".raw")
 
-                # Add namespace directories (workspace, shared, external, etc.)
-                try:
-                    namespaces = self.nexus_fs.get_available_namespaces()
-                    entries.extend(namespaces)
-                except (AttributeError, Exception):
-                    # Fallback if method doesn't exist or fails
-                    pass
-
-            # List files in directory (non-recursive) - returns list[str]
-            files_raw = self.nexus_fs.list(path, recursive=False, details=False)
+            # List files in directory (non-recursive) - returns list[dict] with details
+            # Using details=True gets directory status in bulk, avoiding individual is_directory() calls
+            files_raw = self.nexus_fs.list(path, recursive=False, details=True)
             files = files_raw if isinstance(files_raw, list) else []
 
-            for file_path_or_dict in files:
+            for file_info in files:
                 # Handle both string paths and dict entries
-                file_path = (
-                    file_path_or_dict
-                    if isinstance(file_path_or_dict, str)
-                    else str(file_path_or_dict.get("path", ""))
-                )
+                if isinstance(file_info, str):
+                    # Fallback for backends that don't support details
+                    file_path = file_info
+                    is_dir = self.nexus_fs.is_directory(file_path)
+                else:
+                    file_path = str(file_info.get("path", ""))
+                    is_dir = file_info.get("is_directory", False)
 
                 # Extract just the filename/dirname
                 name = file_path.rstrip("/").split("/")[-1]
@@ -252,11 +237,11 @@ class NexusFUSEOperations(Operations):
 
                     entries.append(name)
 
-                    # In smart/text mode, add virtual views for non-text files
+                    # In smart/text mode, add virtual views for non-text files (not directories)
                     if (
                         self.mode.value != "binary"
                         and should_add_virtual_views(name)
-                        and not self.nexus_fs.is_directory(file_path)
+                        and not is_dir
                     ):
                         # Add _parsed.{ext}.md virtual view
                         # e.g., "file.xlsx" → "file_parsed.xlsx.md"

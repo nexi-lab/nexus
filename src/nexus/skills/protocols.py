@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import builtins
 from datetime import timedelta
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from nexus.core.permissions import OperationContext
 
 
 @runtime_checkable
@@ -357,12 +360,13 @@ class NexusFilesystem(Protocol):
         """
         ...
 
-    def is_directory(self, path: str) -> bool:
+    def is_directory(self, path: str, context: OperationContext | None = None) -> bool:
         """
         Check if path is a directory.
 
         Args:
             path: Virtual path to check
+            context: Optional operation context for permission checking
 
         Returns:
             True if path is a directory, False otherwise

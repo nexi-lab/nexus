@@ -41,9 +41,16 @@ class NexusFilesystem(Protocol):
     - Lifecycle management (close, context manager)
     """
 
-    # Instance attributes (set by implementations)
-    agent_id: str | None
-    tenant_id: str | None
+    # Instance attributes (implemented as properties by concrete classes)
+    @property
+    def agent_id(self) -> str | None:
+        """Agent ID for this filesystem instance."""
+        ...
+
+    @property
+    def tenant_id(self) -> str | None:
+        """Tenant ID for this filesystem instance."""
+        ...
 
     # ============================================================
     # Core File Operations

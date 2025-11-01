@@ -482,8 +482,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         self.max_retries = max_retries
 
         # Set agent_id and tenant_id (required by NexusFilesystem protocol)
-        self.agent_id: str | None = None
-        self.tenant_id: str | None = None
+        self._agent_id: str | None = None
+        self._tenant_id: str | None = None
 
         # Initialize semantic search as None (remote clients don't have local search)
         # LLM mixin will check this and fall back to direct file reading
@@ -523,6 +523,26 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             except Exception as e:
                 logger.warning(f"Failed to fetch auth info: {e}")
                 # Don't fail initialization, just log warning
+
+    @property
+    def agent_id(self) -> str | None:
+        """Agent ID for this filesystem instance."""
+        return self._agent_id
+
+    @agent_id.setter
+    def agent_id(self, value: str | None) -> None:
+        """Set agent ID for this filesystem instance."""
+        self._agent_id = value
+
+    @property
+    def tenant_id(self) -> str | None:
+        """Tenant ID for this filesystem instance."""
+        return self._tenant_id
+
+    @tenant_id.setter
+    def tenant_id(self, value: str | None) -> None:
+        """Set tenant ID for this filesystem instance."""
+        self._tenant_id = value
 
     def _fetch_auth_info(self) -> None:
         """Fetch authenticated user info from server.
@@ -598,11 +618,22 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         logger.debug(f"API call: {method} with params: {params}")
 
         try:
+            # Build headers
+            headers = {"Content-Type": "application/json"}
+
+            # Add agent identity header if set (for permission checks)
+            if self.agent_id:
+                headers["X-Agent-ID"] = self.agent_id
+
+            # Add tenant identity header if set
+            if self.tenant_id:
+                headers["X-Tenant-ID"] = self.tenant_id
+
             # Use tuple for timeout: (connect_timeout, read_timeout)
             response = self.session.post(
                 url,
                 data=body,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 timeout=(self.connect_timeout, self.timeout),
             )
 
@@ -753,7 +784,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
     def write(
         self,
         path: str,
-        content: bytes,
+        content: bytes | str,
         context: Any = None,  # noqa: ARG002
         if_match: str | None = None,
         if_none_match: bool = False,
@@ -763,7 +794,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         Args:
             path: Virtual path to write
-            content: File content as bytes
+            content: File content as bytes or str (str will be UTF-8 encoded)
             context: Unused in remote client (handled server-side)
             if_match: Optional etag for optimistic concurrency control
             if_none_match: If True, create-only mode
@@ -775,6 +806,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Raises:
             ConflictError: If if_match doesn't match current etag
         """
+        # Auto-convert str to bytes for convenience
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+
         result = self._call_rpc(
             "write",
             {

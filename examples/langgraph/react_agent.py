@@ -4,16 +4,29 @@
 This example demonstrates how to use LangGraph's prebuilt create_react_agent
 function to quickly build a ReAct agent with Nexus filesystem integration.
 
+Authentication:
+    API keys are REQUIRED via metadata.x_auth: "Bearer <token>"
+    Frontend automatically passes the authenticated user's API key in request metadata.
+    Each tool extracts and uses the token to create an authenticated RemoteNexusFS instance.
+
 Requirements:
     pip install langgraph langchain-anthropic
 
-Usage:
-    from nexus.remote import RemoteNexusFS
-    from nexus_tools import get_nexus_tools
-    from react_agent import agent
+Usage from Frontend (HTTP):
+    POST http://localhost:2024/runs/stream
+    {
+        "assistant_id": "agent",
+        "input": {
+            "messages": [{"role": "user", "content": "Find all Python files"}]
+        },
+        "metadata": {
+            "x_auth": "Bearer sk-your-api-key-here",
+            "user_id": "user-123",
+            "tenant_id": "tenant-123"
+        }
+    }
 
-    # Use the agent
-    result = agent.invoke({"messages": [{"role": "user", "content": "Find all Python files"}]})
+    Note: The frontend automatically includes x_auth in metadata when user is logged in.
 """
 
 import os
@@ -22,24 +35,14 @@ from langchain_anthropic import ChatAnthropic
 from langgraph.prebuilt import create_react_agent
 from nexus_tools import get_nexus_tools
 
-from nexus.remote import RemoteNexusFS
+# Get configuration from environment variables
+NEXUS_SERVER_URL = os.getenv("NEXUS_SERVER_URL", "http://localhost:8080")
 
-print(os.getenv("NEXUS_API_KEY"))
-print(os.getenv("NEXUS_SERVER_URL"))
-print(os.getenv("NEXUS_TENANT_ID"))
-print(os.getenv("NEXUS_AGENT_ID"))
+print(f"Nexus server configured at: {NEXUS_SERVER_URL}")
+print("API key will be provided per-request via config.configurable.nexus_api_key")
 
-# Connect to Nexus server
-nx = RemoteNexusFS(
-    server_url=os.getenv("NEXUS_SERVER_URL", "http://localhost:8080"),
-    # api_key=os.getenv("NEXUS_API_KEY", "sk-default_joe_9846f79b_6dd5743425680ea7221da8007423c4d9"),
-    # api_key="sk-alice,alice__ef5849ee_3d96d4b4ded670b3f50537fa1a4ce24e",
-    api_key="sk-default_alice_4e0e11f4_73fefbce9cb49fddbe5bfc6d98b5593c",
-)
-
-
-# Create tools
-tools = get_nexus_tools(nx)
+# Create tools (no API key needed - will be passed per-request)
+tools = get_nexus_tools(server_url=NEXUS_SERVER_URL)
 
 # Create LLM
 llm = ChatAnthropic(
@@ -54,9 +57,18 @@ agent = create_react_agent(
 
 
 if __name__ == "__main__":
-    # Example usage
+    # Example usage - Note: requires NEXUS_API_KEY to be set for testing
+    import sys
+
+    api_key = os.getenv("NEXUS_API_KEY")
+    if not api_key:
+        print("Error: NEXUS_API_KEY environment variable is required for testing")
+        print("Usage: NEXUS_API_KEY=your-key python react_agent.py")
+        sys.exit(1)
+
     print("Testing ReAct agent...")
     result = agent.invoke(
-        {"messages": [{"role": "user", "content": "Find all Python files and count them"}]}
+        {"messages": [{"role": "user", "content": "Find all Python files and count them"}]},
+        config={"metadata": {"x_auth": f"Bearer {api_key}"}},
     )
     print(result)

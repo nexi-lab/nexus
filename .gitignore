@@ -29,6 +29,7 @@ ENV/
 env/
 .env
 .nexus-admin-env
+.demo-env
 
 # PyCharm
 .idea/

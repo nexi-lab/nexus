@@ -159,6 +159,8 @@ class MemoryViewRouter:
         agent_id: str | None = None,
         scope: str | None = None,
         memory_type: str | None = None,
+        namespace: str | None = None,  # v0.8.0: Exact namespace match
+        namespace_prefix: str | None = None,  # v0.8.0: Prefix match for hierarchical queries
         limit: int | None = None,
     ) -> list[MemoryModel]:
         """Query memories by relationships and metadata.
@@ -169,6 +171,8 @@ class MemoryViewRouter:
             agent_id: Filter by agent.
             scope: Filter by scope ('agent', 'user', 'tenant', 'global').
             memory_type: Filter by memory type.
+            namespace: Filter by exact namespace match. v0.8.0
+            namespace_prefix: Filter by namespace prefix (hierarchical). v0.8.0
             limit: Maximum number of results.
 
         Returns:
@@ -191,6 +195,13 @@ class MemoryViewRouter:
         if memory_type:
             stmt = stmt.where(MemoryModel.memory_type == memory_type)
 
+        # v0.8.0: Namespace filtering
+        if namespace:
+            stmt = stmt.where(MemoryModel.namespace == namespace)
+        elif namespace_prefix:
+            # Prefix match for hierarchical queries
+            stmt = stmt.where(MemoryModel.namespace.like(f"{namespace_prefix}%"))
+
         if limit:
             stmt = stmt.limit(limit)
 
@@ -206,8 +217,10 @@ class MemoryViewRouter:
         visibility: str = "private",
         memory_type: str | None = None,
         importance: float | None = None,
+        namespace: str | None = None,  # v0.8.0: Hierarchical namespace
+        path_key: str | None = None,  # v0.8.0: Optional key for upsert mode
     ) -> MemoryModel:
-        """Create a new memory.
+        """Create a new memory (or update if path_key exists).
 
         Args:
             content_hash: SHA-256 hash of content (CAS reference).
@@ -218,52 +231,89 @@ class MemoryViewRouter:
             visibility: Visibility ('private', 'shared', 'public').
             memory_type: Type of memory ('fact', 'preference', 'experience').
             importance: Importance score (0.0-1.0).
+            namespace: Hierarchical namespace (e.g., "knowledge/geography/facts"). v0.8.0
+            path_key: Optional unique key within namespace for upsert mode. v0.8.0
 
         Returns:
-            MemoryModel: Created memory.
+            MemoryModel: Created or updated memory.
         """
         # v0.4.0: Fallback for backward compatibility
         # If user_id is not provided, use agent_id as user_id
         if user_id is None and agent_id is not None:
             user_id = agent_id
 
-        memory = MemoryModel(
-            content_hash=content_hash,
-            tenant_id=tenant_id,
-            user_id=user_id,
-            agent_id=agent_id,
-            scope=scope,
-            visibility=visibility,
-            memory_type=memory_type,
-            importance=importance,
-        )
+        # v0.8.0: Upsert logic - check if memory with namespace+path_key exists
+        existing_memory = None
+        if namespace and path_key:
+            stmt = select(MemoryModel).where(
+                MemoryModel.namespace == namespace,
+                MemoryModel.path_key == path_key,
+                MemoryModel.user_id == user_id,  # Scope to same user
+            )
+            # Filter by tenant if provided
+            if tenant_id:
+                stmt = stmt.where(MemoryModel.tenant_id == tenant_id)
+            existing_memory = self.session.execute(stmt).scalar_one_or_none()
 
-        # Validate before adding
-        memory.validate()
+        if existing_memory:
+            # Update existing memory
+            existing_memory.content_hash = content_hash
+            existing_memory.scope = scope
+            existing_memory.visibility = visibility
+            existing_memory.memory_type = memory_type
+            existing_memory.importance = importance
+            # Update other fields if provided
+            if tenant_id is not None:
+                existing_memory.tenant_id = tenant_id
+            if user_id is not None:
+                existing_memory.user_id = user_id
+            if agent_id is not None:
+                existing_memory.agent_id = agent_id
 
-        self.session.add(memory)
-        self.session.commit()
-
-        # Create ReBAC tuple for memory owner (v0.6.0 pure ReBAC)
-        # Grant owner full access to their memory
-        if user_id:
-            from sqlalchemy import Engine
-
-            from nexus.core.rebac_manager import ReBACManager
-
-            bind = self.session.get_bind()
-            assert isinstance(bind, Engine), "Expected Engine, got Connection"
-            rebac = ReBACManager(bind)
-
-            # Grant owner permission to the memory
-            rebac.rebac_write(
-                subject=("user", user_id),
-                relation="owner",
-                object=("memory", memory.memory_id),
+            existing_memory.validate()
+            self.session.commit()
+            return existing_memory
+        else:
+            # Create new memory
+            memory = MemoryModel(
+                content_hash=content_hash,
                 tenant_id=tenant_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                scope=scope,
+                visibility=visibility,
+                memory_type=memory_type,
+                importance=importance,
+                namespace=namespace,
+                path_key=path_key,
             )
 
-        return memory
+            # Validate before adding
+            memory.validate()
+
+            self.session.add(memory)
+            self.session.commit()
+
+            # Create ReBAC tuple for memory owner (v0.6.0 pure ReBAC)
+            # Grant owner full access to their memory
+            if user_id:
+                from sqlalchemy import Engine
+
+                from nexus.core.rebac_manager import ReBACManager
+
+                bind = self.session.get_bind()
+                assert isinstance(bind, Engine), "Expected Engine, got Connection"
+                rebac = ReBACManager(bind)
+
+                # Grant owner permission to the memory
+                rebac.rebac_write(
+                    subject=("user", user_id),
+                    relation="owner",
+                    object=("memory", memory.memory_id),
+                    tenant_id=tenant_id,
+                )
+
+            return memory
 
     def update_memory(
         self,

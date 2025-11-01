@@ -255,10 +255,10 @@ print_subsection "1.2 Verify EXECUTE enforcement (editor cannot manage permissio
 
 export NEXUS_API_KEY="$BOB_KEY"
 print_test "Bob (editor) should NOT be able to create permissions"
-if nexus rebac create user bob direct_editor file $DEMO_BASE/bob-attempt.txt 2>&1 | grep -qiE "denied|forbidden|permission"; then
+if nexus rebac create user bob direct_editor file $DEMO_BASE/bob-attempt.txt 2>&1 | grep -qiE "denied|forbidden|permission|execute"; then
     print_success "✅ Execute properly enforced - editor cannot manage permissions"
 else
-    print_warning "Editor could create permissions (check execute policy)"
+    print_error "❌ Editor could create permissions (execute policy NOT enforced!)"
 fi
 
 export NEXUS_API_KEY="$ADMIN_KEY"
@@ -410,31 +410,24 @@ print_subsection "4.2 Rename/move the file"
 # (admin should inherit via parent_owner, but cache may be stale after previous sections)
 nexus rebac create user admin direct_editor file $DEMO_BASE/original-name.txt 2>/dev/null || true
 
-nexus mv $DEMO_BASE/original-name.txt $DEMO_BASE/renamed-file.txt 2>/dev/null || {
-    print_warning "mv not available, using read+write+delete"
-    CONTENT=$(nexus cat $DEMO_BASE/original-name.txt)
-    echo "$CONTENT" | nexus write $DEMO_BASE/renamed-file.txt -
-    nexus rm $DEMO_BASE/original-name.txt
-}
+nexus move $DEMO_BASE/original-name.txt $DEMO_BASE/renamed-file.txt --force
 print_success "File renamed: /original-name.txt → /renamed-file.txt"
 
 print_subsection "4.3 Verify permission behavior after rename"
-print_info "Note: ReBAC keys on object_id. Behavior depends on whether object_id is path-based or identity-based"
+print_info "Testing that 'nexus move' updates ReBAC permissions to follow the file"
 
-print_test "Check if Alice still has permission on OLD path"
+print_test "Check that permission was removed from OLD path"
 if nexus rebac check user alice write file $DEMO_BASE/original-name.txt 2>&1 | grep -q "GRANTED"; then
-    print_warning "Permission still on old path (path-based identity)"
+    print_error "❌ Permission still on old path (should have been moved)"
 else
-    print_info "Permission removed from old path (expected if path is identity)"
+    print_success "✅ Permission removed from old path"
 fi
 
-print_test "Check if permissions need to be recreated for NEW path"
+print_test "Check that permission followed to NEW path"
 if nexus rebac check user alice write file $DEMO_BASE/renamed-file.txt 2>&1 | grep -q "GRANTED"; then
-    print_success "Permission followed object (identity-based)"
+    print_success "✅ Permission followed to new path (BUG #341 FIXED)"
 else
-    print_warning "Permission did NOT follow - need to re-grant on new path"
-    nexus rebac create user alice direct_owner file $DEMO_BASE/renamed-file.txt
-    print_info "Re-granted permission on new path"
+    print_error "❌ Permission did NOT follow - BUG #341 still exists!"
 fi
 
 # ════════════════════════════════════════════════════════════
@@ -538,18 +531,21 @@ else
 fi
 export NEXUS_API_KEY="$ADMIN_KEY"
 
-print_subsection "6.6 Explicit deny precedence (if supported)"
-print_test "Testing if explicit deny overrides allow"
-# Note: Many ReBAC systems don't support explicit denies, only implicit deny (absence of allow)
+print_subsection "6.6 Explicit deny precedence (not supported)"
+print_info "Note: Nexus ReBAC uses implicit deny (Zanzibar-style)"
+print_info "Absence of permission = deny. No explicit 'deny' tuples needed."
+print_test "Attempting to create explicit deny relation (should succeed but have no effect)"
 if nexus rebac create user bob direct_deny_write file $DEMO_BASE/test-file.txt 2>/dev/null; then
-    if nexus rebac check user bob write file $DEMO_BASE/test-file.txt 2>&1 | grep -q "DENIED"; then
-        print_success "✅ Explicit deny overrides allow"
+    print_info "✓ Created direct_deny_write tuple (but it has no semantic meaning)"
+    if nexus rebac check user bob write file $DEMO_BASE/test-file.txt 2>&1 | grep -q "GRANTED"; then
+        print_success "✅ Explicit deny ignored (expected - using implicit deny model)"
     else
-        print_warning "Deny did not override (check precedence rules)"
+        print_warning "Deny seems to work (unexpected - should use implicit deny)"
     fi
 else
-    print_info "Explicit denies not supported (most ReBAC systems use implicit deny)"
+    print_info "Could not create deny tuple (may not be in namespace)"
 fi
+print_info "Best practice: Remove permissions instead of adding explicit denies"
 
 # ════════════════════════════════════════════════════════════
 # Section 7: Shared Resources - Universal Denial Test
@@ -566,11 +562,14 @@ echo "Shared data" | nexus write $SHARED_DIR/readme.txt -
 # Grant admin permission on shared dir
 nexus rebac create user admin direct_owner file $SHARED_DIR
 
-# Grant READ ONLY to everyone
+# Grant READ ONLY to everyone (on both directory and file)
 for user in alice bob charlie; do
+    # Grant read on directory so they can access files within it
+    nexus rebac create user $user direct_viewer file $SHARED_DIR
+    # Grant read on the file itself
     nexus rebac create user $user direct_viewer file $SHARED_DIR/readme.txt
 done
-print_success "Granted read-only access to alice, bob, charlie"
+print_success "Granted read-only access to alice, bob, charlie (directory + file)"
 print_info "Note: Shared dir is OUTSIDE demo base to avoid group inheritance"
 
 print_subsection "7.1 Verify ALL users can read"

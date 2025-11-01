@@ -32,13 +32,25 @@ def memory() -> None:
     "--type", "memory_type", default=None, help="Memory type (fact/preference/experience)"
 )
 @click.option("--importance", type=float, default=None, help="Importance score (0.0-1.0)")
-def store(content: str, scope: str, memory_type: str | None, importance: float | None) -> None:
+@click.option(
+    "--namespace", default=None, help="Hierarchical namespace (e.g., 'knowledge/geography/facts')"
+)
+@click.option("--path-key", default=None, help="Optional unique key for upsert mode")
+def store(
+    content: str,
+    scope: str,
+    memory_type: str | None,
+    importance: float | None,
+    namespace: str | None,
+    path_key: str | None,
+) -> None:
     """Store a new memory.
 
     \b
     Examples:
         nexus memory store "User prefers Python" --scope user --type preference
-        nexus memory store "API key is abc123" --scope agent --importance 0.9
+        nexus memory store "Paris is capital of France" --namespace "knowledge/geography/facts"
+        nexus memory store "theme:dark" --namespace "user/preferences/ui" --path-key settings
     """
     nx = get_default_filesystem()
 
@@ -48,6 +60,8 @@ def store(content: str, scope: str, memory_type: str | None, importance: float |
             scope=scope,
             memory_type=memory_type,
             importance=importance,
+            namespace=namespace,
+            path_key=path_key,
         )
         click.echo(f"Memory stored: {memory_id}")
     except Exception as e:
@@ -180,15 +194,25 @@ def search(
 @memory.command()
 @click.option("--scope", default=None, help="Filter by scope")
 @click.option("--type", "memory_type", default=None, help="Filter by memory type")
+@click.option("--namespace", default=None, help="Filter by exact namespace")
+@click.option("--namespace-prefix", default=None, help="Filter by namespace prefix (hierarchical)")
 @click.option("--limit", type=int, default=100, help="Maximum number of results")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def list(scope: str | None, memory_type: str | None, limit: int, output_json: bool) -> None:
+def list(
+    scope: str | None,
+    memory_type: str | None,
+    namespace: str | None,
+    namespace_prefix: str | None,
+    limit: int,
+    output_json: bool,
+) -> None:
     """List memories for current user/agent.
 
     \b
     Examples:
         nexus memory list
-        nexus memory list --scope user --type preference
+        nexus memory list --namespace "knowledge/geography/facts"
+        nexus memory list --namespace-prefix "knowledge/"
         nexus memory list --json
     """
     nx = get_default_filesystem()
@@ -197,6 +221,8 @@ def list(scope: str | None, memory_type: str | None, limit: int, output_json: bo
         results = nx.memory.list(  # type: ignore[attr-defined]
             scope=scope,
             memory_type=memory_type,
+            namespace=namespace,
+            namespace_prefix=namespace_prefix,
             limit=limit,
         )
 
@@ -210,6 +236,10 @@ def list(scope: str | None, memory_type: str | None, limit: int, output_json: bo
             click.echo(f"Found {len(results)} memories:\n")
             for mem in results:
                 click.echo(f"ID: {mem['memory_id']}")
+                if mem.get("namespace"):
+                    click.echo(f"  Namespace: {mem['namespace']}")
+                    if mem.get("path_key"):
+                        click.echo(f"  Path Key: {mem['path_key']}")
                 click.echo(f"  User: {mem['user_id']}, Agent: {mem['agent_id']}")
                 click.echo(f"  Scope: {mem['scope']}")
                 if mem["memory_type"]:
@@ -260,6 +290,47 @@ def get(memory_id: str, output_json: bool) -> None:
 
     except Exception as e:
         click.echo(f"Error getting memory: {e}", err=True)
+        raise click.Abort() from e
+
+
+@memory.command()
+@click.argument("path")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def retrieve(path: str, output_json: bool) -> None:
+    """Retrieve a memory by namespace path (namespace/path_key).
+
+    \b
+    Examples:
+        nexus memory retrieve "user/preferences/ui/settings"
+        nexus memory retrieve "knowledge/geography/facts/paris" --json
+    """
+    nx = get_default_filesystem()
+
+    try:
+        result = nx.memory.retrieve(path=path)  # type: ignore[attr-defined]
+
+        if not result:
+            click.echo(f"Memory not found at path: {path}", err=True)
+            raise click.Abort()
+
+        if output_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            click.echo(f"Memory ID: {result['memory_id']}")
+            click.echo(f"Namespace: {result.get('namespace', 'N/A')}")
+            click.echo(f"Path Key: {result.get('path_key', 'N/A')}")
+            click.echo(f"Content: {result['content']}")
+            click.echo(f"User: {result['user_id']}, Agent: {result['agent_id']}")
+            click.echo(f"Scope: {result['scope']}, Visibility: {result['visibility']}")
+            if result.get("memory_type"):
+                click.echo(f"Type: {result['memory_type']}")
+            if result.get("importance"):
+                click.echo(f"Importance: {result['importance']}")
+            click.echo(f"Created: {result['created_at']}")
+            click.echo(f"Updated: {result['updated_at']}")
+
+    except Exception as e:
+        click.echo(f"Error retrieving memory: {e}", err=True)
         raise click.Abort() from e
 
 

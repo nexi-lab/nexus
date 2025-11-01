@@ -24,6 +24,9 @@ class TestNexusFSVersions:
         fs.is_admin = False
         fs._validate_path = Mock(side_effect=lambda p, allow_root=False: p)
         fs._check_permission = Mock()
+        fs._get_routing_params = Mock(
+            return_value=(None, None, False)
+        )  # Returns (tenant_id, agent_id, is_admin)
         fs._default_context = EnhancedOperationContext(
             user="test",
             groups=[],

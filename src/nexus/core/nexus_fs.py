@@ -121,7 +121,29 @@ class NexusFS(
         Note:
             When tenant_id or agent_id are provided, they set the default context for all operations.
             Individual operations can still override context by passing context parameter.
+
+        Warning:
+            Using tenant_id/agent_id in __init__ is DEPRECATED and unsafe for server mode!
+            In server/multi-tenant mode, these should ALWAYS be None and passed via context parameter.
+
+            IMPORTANT: These parameters should ONLY be used in embedded/CLI mode where a single
+            NexusFS instance serves one user. In server mode, a shared NexusFS instance serves
+            multiple users/tenants, so instance-level tenant_id/agent_id creates security risks!
         """
+        # Warn about deprecated parameters
+        if tenant_id is not None or agent_id is not None:
+            import warnings
+
+            warnings.warn(
+                "tenant_id and agent_id parameters in NexusFS.__init__() are DEPRECATED. "
+                "They should only be used in embedded/CLI mode where a single NexusFS instance "
+                "serves one user. For server mode (shared NexusFS instance serving multiple users), "
+                "these MUST be None and context must be passed to each method call instead. "
+                "Using instance-level tenant_id/agent_id in server mode creates SECURITY RISKS!",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Initialize content cache if enabled and backend supports it
         if enable_content_cache:
             # Import here to avoid circular import
@@ -507,30 +529,32 @@ class NexusFS(
         # Create a session
         session = self.metadata.SessionLocal()
 
-        # Extract context values or use defaults
-        tenant_id = context.get("tenant_id") if context else self._memory_config.get("tenant_id")
-        user_id = context.get("user_id") if context else self._memory_config.get("user_id")
-        agent_id = context.get("agent_id") if context else self._memory_config.get("agent_id")
+        # Parse context properly
+        ctx = self._parse_context(context)
 
         return Memory(
             session=session,
             backend=self.backend,
-            tenant_id=tenant_id,
-            user_id=user_id,
-            agent_id=agent_id,
+            tenant_id=ctx.tenant_id or self._default_context.tenant_id,
+            user_id=ctx.user or self._default_context.user,
+            agent_id=ctx.agent_id or self._default_context.agent_id,
             entity_registry=self._entity_registry,
         )
 
-    def _parse_context(self, context: dict | None = None) -> OperationContext:
-        """Parse context dict into OperationContext.
+    def _parse_context(self, context: OperationContext | dict | None = None) -> OperationContext:
+        """Parse context dict or OperationContext into OperationContext.
 
         Args:
-            context: Optional context dict with user, groups, tenant_id, etc.
+            context: Optional context dict or OperationContext with user, groups, tenant_id, etc.
 
         Returns:
             OperationContext instance
         """
         from nexus.core.permissions import OperationContext
+
+        # If already an OperationContext, return as-is
+        if isinstance(context, OperationContext):
+            return context
 
         if context is None:
             context = {}
@@ -1126,7 +1150,9 @@ class NexusFS(
 
         return sorted(namespaces)
 
-    def _get_backend_directory_entries(self, path: str) -> set[str]:
+    def _get_backend_directory_entries(
+        self, path: str, context: OperationContext | None = None
+    ) -> set[str]:
         """
         Get directory entries from backend for empty directory detection.
 
@@ -1136,6 +1162,7 @@ class NexusFS(
 
         Args:
             path: Virtual path to list (e.g., "/", "/workspace")
+            context: Optional operation context for routing (uses default if not provided)
 
         Returns:
             Set of directory paths that exist in the backend
@@ -1159,12 +1186,13 @@ class NexusFS(
                     # I/O, permission, or type errors - skip silently (best-effort directory listing)
                     pass
             else:
-                # Non-root path - use router
+                # Non-root path - use router with context
+                tenant_id, agent_id, is_admin = self._get_routing_params(context)
                 route = self.router.route(
                     path.rstrip("/"),
-                    tenant_id=self.tenant_id,
-                    agent_id=self.agent_id,
-                    is_admin=self.is_admin,
+                    tenant_id=tenant_id,
+                    agent_id=agent_id,
+                    is_admin=is_admin,
                     check_write=False,
                 )
                 backend_path = route.backend_path
@@ -1841,28 +1869,19 @@ class NexusFS(
                 f"Workspace not registered: {workspace_path}. Use register_workspace() first."
             )
 
-        # v0.5.0: Extract user_id and tenant_id from context (set by RPC authentication)
-        user_id_from_context = None
-        tenant_id_from_context = None
-        if context:
-            if isinstance(context, dict):
-                user_id_from_context = context.get("user_id") or context.get("user")
-                tenant_id_from_context = context.get("tenant_id") or context.get("tenant")
-            else:
-                user_id_from_context = getattr(context, "user_id", None) or getattr(
-                    context, "user", None
-                )
-                tenant_id_from_context = getattr(context, "tenant_id", None)
+        # v0.5.0: Extract user_id, agent_id, and tenant_id from context (set by RPC authentication)
+        ctx = self._parse_context(context)
 
         return self._workspace_manager.create_snapshot(
             workspace_path=workspace_path,
             description=description,
             tags=tags,
             created_by=created_by,
-            user_id=user_id_from_context
-            or self.user_id,  # v0.5.0: Pass user_id for permission check
-            agent_id=self.agent_id,
-            tenant_id=tenant_id_from_context or self.tenant_id,  # v0.5.0: Use context tenant_id
+            user_id=ctx.user
+            or self._default_context.user,  # v0.5.0: Pass user_id for permission check
+            agent_id=ctx.agent_id or self._default_context.agent_id,
+            tenant_id=ctx.tenant_id
+            or self._default_context.tenant_id,  # v0.5.0: Use context tenant_id
         )
 
     @rpc_expose(description="Restore workspace snapshot")
@@ -1907,8 +1926,11 @@ class NexusFS(
             )
             workspace_path = f"/workspace/{agent_id}"
 
-        if workspace_path is None and self.agent_id:
-            workspace_path = f"/workspace/{self.agent_id}"
+        if workspace_path is None:
+            # Fallback to context agent_id, then default context
+            fallback_agent_id = ctx.agent_id or self._default_context.agent_id
+            if fallback_agent_id:
+                workspace_path = f"/workspace/{fallback_agent_id}"
 
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
@@ -1921,8 +1943,8 @@ class NexusFS(
             workspace_path=workspace_path,
             snapshot_number=snapshot_number,
             user_id=ctx.user,  # v0.5.0: Pass user_id from context
-            agent_id=ctx.agent_id,
-            tenant_id=ctx.tenant_id,
+            agent_id=ctx.agent_id or self._default_context.agent_id,
+            tenant_id=ctx.tenant_id or self._default_context.tenant_id,
         )
 
     @rpc_expose(description="List workspace snapshots")
@@ -1953,8 +1975,8 @@ class NexusFS(
             >>> for snap in snapshots:
             >>>     print(f"#{snap['snapshot_number']}: {snap['description']}")
         """
-        # Use provided context or default
-        ctx = context if context is not None else self._default_context
+        # Parse context properly
+        ctx = self._parse_context(context)
 
         # Backward compatibility: support old agent_id parameter
         if workspace_path is None and agent_id:
@@ -1967,8 +1989,11 @@ class NexusFS(
             )
             workspace_path = f"/workspace/{agent_id}"
 
-        if workspace_path is None and self.agent_id:
-            workspace_path = f"/workspace/{self.agent_id}"
+        if workspace_path is None:
+            # Fallback to context agent_id, then default context
+            fallback_agent_id = ctx.agent_id or self._default_context.agent_id
+            if fallback_agent_id:
+                workspace_path = f"/workspace/{fallback_agent_id}"
 
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
@@ -1980,9 +2005,9 @@ class NexusFS(
         return self._workspace_manager.list_snapshots(
             workspace_path=workspace_path,
             limit=limit,
-            user_id=ctx.user,  # v0.5.0: Pass user_id from context
-            agent_id=ctx.agent_id,
-            tenant_id=ctx.tenant_id,
+            user_id=ctx.user or self._default_context.user,  # v0.5.0: Pass user_id from context
+            agent_id=ctx.agent_id or self._default_context.agent_id,
+            tenant_id=ctx.tenant_id or self._default_context.tenant_id,
         )
 
     @rpc_expose(description="Compare workspace snapshots")
@@ -2015,8 +2040,8 @@ class NexusFS(
             >>> diff = nx.workspace_diff(snapshot_1=5, snapshot_2=10, workspace_path="/my-workspace")
             >>> print(f"Added: {len(diff['added'])}, Modified: {len(diff['modified'])}")
         """
-        # Use provided context or default
-        ctx = context if context is not None else self._default_context
+        # Parse context properly
+        ctx = self._parse_context(context)
 
         # Backward compatibility: support old agent_id parameter
         if workspace_path is None and agent_id:
@@ -2029,8 +2054,11 @@ class NexusFS(
             )
             workspace_path = f"/workspace/{agent_id}"
 
-        if workspace_path is None and self.agent_id:
-            workspace_path = f"/workspace/{self.agent_id}"
+        if workspace_path is None:
+            # Fallback to context agent_id, then default context
+            fallback_agent_id = ctx.agent_id or self._default_context.agent_id
+            if fallback_agent_id:
+                workspace_path = f"/workspace/{fallback_agent_id}"
 
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
@@ -2045,9 +2073,9 @@ class NexusFS(
         snapshots = self._workspace_manager.list_snapshots(
             workspace_path=workspace_path,
             limit=1000,
-            user_id=ctx.user,  # v0.5.0: Pass user_id from context
-            agent_id=ctx.agent_id,
-            tenant_id=ctx.tenant_id,
+            user_id=ctx.user or self._default_context.user,  # v0.5.0: Pass user_id from context
+            agent_id=ctx.agent_id or self._default_context.agent_id,
+            tenant_id=ctx.tenant_id or self._default_context.tenant_id,
         )
 
         snap_1_id = None
@@ -2072,9 +2100,9 @@ class NexusFS(
         return self._workspace_manager.diff_snapshots(
             snap_1_id,
             snap_2_id,
-            user_id=ctx.user,  # v0.5.0: Pass user_id from context
-            agent_id=ctx.agent_id,
-            tenant_id=ctx.tenant_id,
+            user_id=ctx.user or self._default_context.user,  # v0.5.0: Pass user_id from context
+            agent_id=ctx.agent_id or self._default_context.agent_id,
+            tenant_id=ctx.tenant_id or self._default_context.tenant_id,
         )
 
     # ===== Workspace Registry Management =====
@@ -2437,11 +2465,13 @@ class NexusFS(
         from nexus.core.agents import register_agent
 
         # Extract user_id from context
+        # Context can be either dict (from params) or OperationContext (from RPC auth)
         user_id = None
         if context:
             if isinstance(context, dict):
                 user_id = context.get("user_id") or context.get("user")
             else:
+                # OperationContext object from RPC authentication
                 user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
 
         if not user_id:
@@ -2784,11 +2814,11 @@ class NexusFS(
                 session,
                 self.backend,
                 ctx.user or "system",
-                self.agent_id,
-                self.tenant_id,
+                ctx.agent_id or self._default_context.agent_id,
+                ctx.tenant_id or self._default_context.tenant_id,
             )
             return traj_mgr.query_trajectories(
-                agent_id=self.agent_id,
+                agent_id=ctx.agent_id or self._default_context.agent_id,
                 task_type=task_type,
                 status=status,
                 limit=limit,
@@ -2824,8 +2854,8 @@ class NexusFS(
                 session,
                 self.backend,
                 ctx.user or "system",
-                self.agent_id,
-                self.tenant_id,
+                ctx.agent_id or self._default_context.agent_id,
+                ctx.tenant_id or self._default_context.tenant_id,
             )
             playbook_id = playbook_mgr.create_playbook(name, description, scope)  # type: ignore
             return {"playbook_id": playbook_id}
@@ -2852,8 +2882,8 @@ class NexusFS(
                 session,
                 self.backend,
                 ctx.user or "system",
-                self.agent_id,
-                self.tenant_id,
+                ctx.agent_id or self._default_context.agent_id,
+                ctx.tenant_id or self._default_context.tenant_id,
             )
             return playbook_mgr.get_playbook(playbook_id)
         finally:
@@ -2885,11 +2915,11 @@ class NexusFS(
                 session,
                 self.backend,
                 ctx.user or "system",
-                self.agent_id,
-                self.tenant_id,
+                ctx.agent_id or self._default_context.agent_id,
+                ctx.tenant_id or self._default_context.tenant_id,
             )
             return playbook_mgr.query_playbooks(
-                agent_id=self.agent_id,
+                agent_id=ctx.agent_id or self._default_context.agent_id,
                 scope=scope,
                 limit=limit,
             )

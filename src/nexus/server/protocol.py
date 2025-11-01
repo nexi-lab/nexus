@@ -464,6 +464,8 @@ class ListMemoriesParams:
     limit: int = 50
     scope: str | None = None
     memory_type: str | None = None
+    namespace: str | None = None  # v0.8.0
+    namespace_prefix: str | None = None  # v0.8.0
 
 
 @dataclass
@@ -641,7 +643,25 @@ class StoreMemoryParams:
     memory_type: str = "fact"
     scope: str = "agent"
     importance: float = 0.5
+    namespace: str | None = None  # v0.8.0
+    path_key: str | None = None  # v0.8.0
     tags: list[str] | None = None
+
+
+@dataclass
+class RetrieveMemoryParams:
+    """Parameters for retrieve_memory() method (v0.8.0)."""
+
+    namespace: str | None = None
+    path_key: str | None = None
+    path: str | None = None
+
+
+@dataclass
+class DeleteMemoryParams:
+    """Parameters for delete_memory() method (v0.8.0)."""
+
+    memory_id: str
 
 
 @dataclass
@@ -801,6 +821,8 @@ METHOD_PARAMS = {
     "process_relearning": ProcessRelearningParams,
     "batch_reflect": BatchReflectParams,
     "store_memory": StoreMemoryParams,
+    "retrieve_memory": RetrieveMemoryParams,  # v0.8.0
+    "delete_memory": DeleteMemoryParams,  # v0.8.0
     "query_memories": QueryMemoriesParams,
     # Versioning methods
     "get_version": GetVersionParams,

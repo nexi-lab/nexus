@@ -32,6 +32,7 @@ from nexus.core.exceptions import (
     ValidationError,
 )
 from nexus.core.filters import is_os_metadata_file
+from nexus.core.nexus_fs import NexusFS
 from nexus.core.virtual_views import (
     add_virtual_views_to_listing,
     get_parsed_content,
@@ -56,7 +57,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
     """
 
     # Class-level attributes set by server
-    nexus_fs: NexusFilesystem
+    nexus_fs: NexusFilesystem | NexusFS
     api_key: str | None = None
     auth_provider: Any = None
     exposed_methods: dict[str, Any] = {}
@@ -356,6 +357,27 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         # No authentication - return None to use default context
         return None
+
+    def _get_memory_api_with_context(self) -> Any:
+        """Get Memory API instance with authenticated context.
+
+        Returns:
+            Memory API instance with user/agent/tenant from authentication
+        """
+        context = self._get_operation_context()
+
+        # Convert OperationContext to dict format needed by _get_memory_api
+        context_dict = {}
+        if context:
+            if hasattr(context, "tenant_id") and context.tenant_id:
+                context_dict["tenant_id"] = context.tenant_id
+            if hasattr(context, "user_id") and context.user_id:
+                context_dict["user_id"] = context.user_id
+            if hasattr(context, "agent_id") and context.agent_id:
+                context_dict["agent_id"] = context.agent_id
+
+        # Cast to NexusFS since _get_memory_api is only available on NexusFS, not base NexusFilesystem
+        return cast(NexusFS, self.nexus_fs)._get_memory_api(context_dict if context_dict else None)
 
     def _require_admin(self) -> bool:
         """Check if the current request has admin privileges.
@@ -1083,34 +1105,52 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         # Memory storage operations
         elif method == "store_memory":
-            # v0.7.1: Pass context to memory operations for proper identity tracking
-            memory_id = self.nexus_fs.memory.store(  # type: ignore[attr-defined]
+            # v0.7.1+v0.8.0: Use memory API with authenticated context
+            memory_api = self._get_memory_api_with_context()
+            memory_id = memory_api.store(
                 content=params.content,
                 memory_type=params.memory_type,
                 scope=params.scope,
                 importance=params.importance,
-                context=context,
+                namespace=params.namespace,  # v0.8.0
+                path_key=params.path_key,  # v0.8.0
                 # Note: tags param in RPC but not in Memory.store() - ignore it
             )
             return {"memory_id": memory_id}
 
         elif method == "list_memories":
-            # v0.7.1: Pass context to memory operations for proper identity tracking
-            memories = self.nexus_fs.memory.list(  # type: ignore[attr-defined]
+            # v0.7.1+v0.8.0: Use memory API with authenticated context
+            memory_api = self._get_memory_api_with_context()
+            memories = memory_api.list(
                 scope=params.scope,
                 memory_type=params.memory_type,
+                namespace=params.namespace,  # v0.8.0
+                namespace_prefix=params.namespace_prefix,  # v0.8.0
                 limit=params.limit,
-                context=context,
             )
             return {"memories": memories}
 
+        elif method == "retrieve_memory":  # v0.8.0
+            memory_api = self._get_memory_api_with_context()
+            memory = memory_api.retrieve(
+                namespace=params.namespace,
+                path_key=params.path_key,
+                path=params.path,
+            )
+            return {"memory": memory}
+
+        elif method == "delete_memory":  # v0.8.0
+            memory_api = self._get_memory_api_with_context()
+            deleted = memory_api.delete(params.memory_id)
+            return {"deleted": deleted}
+
         elif method == "query_memories":
-            # v0.7.1: Pass context to memory operations for proper identity tracking
-            memories = self.nexus_fs.memory.query(  # type: ignore[attr-defined]
+            # v0.7.1+v0.8.0: Use memory API with authenticated context
+            memory_api = self._get_memory_api_with_context()
+            memories = memory_api.query(
                 memory_type=params.memory_type,
                 scope=params.scope,
                 limit=params.limit,
-                context=context,
             )
             return {"memories": memories}
 

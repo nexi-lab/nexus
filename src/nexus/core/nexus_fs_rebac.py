@@ -24,6 +24,7 @@ class NexusFSReBACMixin:
     # Type hints for attributes that will be provided by NexusFS parent class
     if TYPE_CHECKING:
         _rebac_manager: EnhancedReBACManager
+        _enforce_permissions: bool
 
         def _validate_path(self, path: str) -> str: ...
 
@@ -103,6 +104,46 @@ class NexusFSReBACMixin:
                 effective_tenant_id = context.get("tenant")
             elif hasattr(context, "tenant_id"):
                 effective_tenant_id = context.tenant_id
+
+        # SECURITY: Check execute permission before allowing permission management
+        # Only owners (those with execute permission) can grant/manage permissions on resources
+        # Exception: Allow permission management on non-file objects (groups, etc.) for now
+        if object[0] == "file" and context:
+            from nexus.core.permissions import OperationContext, Permission
+
+            # Extract OperationContext from context parameter
+            op_context: OperationContext | None = None
+            if isinstance(context, OperationContext):
+                op_context = context
+            elif isinstance(context, dict):
+                # Create OperationContext from dict
+                op_context = OperationContext(
+                    user=context.get("user", "unknown"),
+                    groups=context.get("groups", []),
+                    tenant_id=context.get("tenant_id"),
+                    is_admin=context.get("is_admin", False),
+                    is_system=context.get("is_system", False),
+                )
+
+            # Check if caller has execute permission on the file object
+            if (
+                op_context
+                and self._enforce_permissions
+                and not op_context.is_admin
+                and not op_context.is_system
+            ):
+                file_path = object[1]  # Extract file path from object tuple
+
+                # Use permission enforcer to check execute permission
+                if hasattr(self, "_permission_enforcer"):
+                    has_execute = self._permission_enforcer.check(
+                        file_path, Permission.EXECUTE, op_context
+                    )
+                    if not has_execute:
+                        raise PermissionError(
+                            f"Access denied: User '{op_context.user}' does not have EXECUTE "
+                            f"permission to manage permissions on '{file_path}'"
+                        )
 
         # Create relationship
         return self._rebac_manager.rebac_write(

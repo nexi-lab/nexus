@@ -321,6 +321,8 @@ class RemoteMemory:
         memory_type: str = "fact",
         scope: str = "agent",
         importance: float = 0.5,
+        namespace: str | None = None,
+        path_key: str | None = None,
         tags: list[str] | None = None,
     ) -> str:
         """Store a memory.
@@ -330,6 +332,8 @@ class RemoteMemory:
             memory_type: Type of memory
             scope: Memory scope
             importance: Importance score
+            namespace: Hierarchical namespace (v0.8.0)
+            path_key: Optional key for upsert mode (v0.8.0)
             tags: Optional tags
 
         Returns:
@@ -341,6 +345,10 @@ class RemoteMemory:
             "scope": scope,
             "importance": importance,
         }
+        if namespace is not None:
+            params["namespace"] = namespace
+        if path_key is not None:
+            params["path_key"] = path_key
         if tags is not None:
             params["tags"] = tags
         result = self.remote_fs._call_rpc("store_memory", params)
@@ -350,6 +358,8 @@ class RemoteMemory:
         self,
         scope: str | None = None,
         memory_type: str | None = None,
+        namespace: str | None = None,
+        namespace_prefix: str | None = None,
         limit: int = 50,
     ) -> builtins.list[dict[str, Any]]:
         """List memories.
@@ -357,6 +367,8 @@ class RemoteMemory:
         Args:
             scope: Filter by scope
             memory_type: Filter by type
+            namespace: Filter by exact namespace (v0.8.0)
+            namespace_prefix: Filter by namespace prefix (v0.8.0)
             limit: Maximum results
 
         Returns:
@@ -365,10 +377,41 @@ class RemoteMemory:
         params: dict[str, Any] = {"limit": limit}
         if scope is not None:
             params["scope"] = scope
+        if namespace is not None:
+            params["namespace"] = namespace
+        if namespace_prefix is not None:
+            params["namespace_prefix"] = namespace_prefix
         if memory_type is not None:
             params["memory_type"] = memory_type
         result = self.remote_fs._call_rpc("list_memories", params)
         return result["memories"]  # type: ignore[no-any-return]
+
+    def retrieve(
+        self,
+        namespace: str | None = None,
+        path_key: str | None = None,
+        path: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Retrieve a memory by namespace path.
+
+        Args:
+            namespace: Memory namespace
+            path_key: Path key within namespace
+            path: Combined path (alternative to namespace+path_key)
+
+        Returns:
+            Memory dict or None if not found
+        """
+        params: dict[str, Any] = {}
+        if path is not None:
+            params["path"] = path
+        else:
+            if namespace is not None:
+                params["namespace"] = namespace
+            if path_key is not None:
+                params["path_key"] = path_key
+        result = self.remote_fs._call_rpc("retrieve_memory", params)
+        return result.get("memory")  # type: ignore[no-any-return]
 
     def query(
         self,
@@ -393,6 +436,19 @@ class RemoteMemory:
             params["scope"] = scope
         result = self.remote_fs._call_rpc("query_memories", params)
         return result["memories"]  # type: ignore[no-any-return]
+
+    def delete(self, memory_id: str) -> bool:
+        """Delete a memory.
+
+        Args:
+            memory_id: Memory ID to delete
+
+        Returns:
+            True if deleted, False if not found or no permission
+        """
+        params: dict[str, Any] = {"memory_id": memory_id}
+        result = self.remote_fs._call_rpc("delete_memory", params)
+        return result["deleted"]  # type: ignore[no-any-return]
 
 
 class RemoteFilesystemError(NexusError):
@@ -559,9 +615,15 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 auth_info = response.json()
                 if auth_info.get("authenticated"):
                     self.tenant_id = auth_info.get("tenant_id")
-                    self.agent_id = auth_info.get("subject_id")
+                    # BUGFIX: Only set agent_id if subject_type is "agent"
+                    # For users, agent_id should remain None
+                    subject_type = auth_info.get("subject_type")
+                    if subject_type == "agent":
+                        self.agent_id = auth_info.get("subject_id")
+                    else:
+                        self.agent_id = None
                     logger.info(
-                        f"Authenticated as {auth_info.get('subject_type')}:{auth_info.get('subject_id')} "
+                        f"Authenticated as {subject_type}:{auth_info.get('subject_id')} "
                         f"(tenant: {self.tenant_id})"
                     )
                 else:

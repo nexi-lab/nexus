@@ -99,8 +99,8 @@ class NexusFS(
             backend: Backend instance for storing file content (LocalBackend, GCSBackend, etc.)
             db_path: Path to SQLite metadata database (auto-generated if None)
             is_admin: Whether this instance has admin privileges (default: False)
-            tenant_id: Default tenant ID for all operations (optional, for multi-tenancy)
-            agent_id: Default agent ID for all operations (optional, for agent isolation)
+            tenant_id: DEPRECATED - Default tenant ID (for embedded mode only). Server mode should pass via context parameter.
+            agent_id: DEPRECATED - Default agent ID (for embedded mode only). Server mode should pass via context parameter.
             custom_namespaces: Additional custom namespace configurations (optional)
             enable_metadata_cache: Enable in-memory metadata caching (default: True)
             cache_path_size: Max entries for path metadata cache (default: 512)
@@ -138,11 +138,6 @@ class NexusFS(
         # Store admin flag and auto-parse setting
         self.is_admin = is_admin
         self.auto_parse = auto_parse
-
-        # Store default tenant/agent IDs for all operations
-        self.tenant_id: str | None = tenant_id
-        self.agent_id: str | None = agent_id
-        self.user_id: str | None = None
 
         # Store allow_admin_bypass flag as public attribute for backward compatibility
         self.allow_admin_bypass = allow_admin_bypass
@@ -223,6 +218,11 @@ class NexusFS(
 
         self._audit_store = AuditStore(engine=self.metadata.engine)
 
+        # v0.5.0 ACE: Initialize EntityRegistry early for agent permission inheritance
+        from nexus.core.entity_registry import EntityRegistry
+
+        self._entity_registry: EntityRegistry | None = EntityRegistry(self.metadata.SessionLocal)
+
         # P0 Fixes: Initialize EnhancedPermissionEnforcer with audit logging
         from nexus.core.permissions_enhanced import EnhancedPermissionEnforcer
 
@@ -234,6 +234,7 @@ class NexusFS(
             audit_store=self._audit_store,  # P0-4: Immutable audit log
             admin_bypass_paths=[],  # P0-4: Scoped bypass (empty = no bypass paths)
             router=self.router,  # For backend object type resolution
+            entity_registry=self._entity_registry,  # v0.5.0 ACE: For agent inheritance
         )
 
         # Permission enforcement is opt-in for backward compatibility
@@ -284,7 +285,7 @@ class NexusFS(
         # Initialize Memory API
         # Memory operations should use subject parameter
         self._memory_api: Memory | None = None  # Lazy initialization
-        self._entity_registry: EntityRegistry | None = None
+        # Note: _entity_registry initialized earlier for agent permission inheritance
         # Store config for lazy init
         self._memory_config: dict[str, str | None] = {
             "tenant_id": None,
@@ -404,14 +405,88 @@ class NexusFS(
 
         return self._memory_api
 
-    def _get_created_by(self) -> str | None:
+    def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
         """Get the created_by value for version history tracking.
+
+        Args:
+            context: Operation context with per-request values
 
         Returns:
             Agent ID if set, else user ID if set, else None.
             Format: 'alice,data_analyst' for agents or 'alice' for users.
         """
-        return self.agent_id or self.user_id
+        # Extract from context or use defaults
+        if context is None:
+            return self._default_context.agent_id or getattr(self._default_context, "user", None)
+
+        if hasattr(context, "agent_id"):
+            return (
+                context.agent_id
+                or getattr(context, "user", None)
+                or getattr(context, "user_id", None)
+            )
+
+        if isinstance(context, dict):
+            return context.get("agent_id") or context.get("user_id") or context.get("user")
+
+        return self._default_context.agent_id or getattr(self._default_context, "user", None)
+
+    def _get_routing_params(
+        self, context: OperationContext | dict | None = None
+    ) -> tuple[str | None, str | None, bool]:
+        """Extract tenant_id, agent_id, and is_admin from context for router.route().
+
+        This is the critical fix for multi-tenancy: extract values from per-request context
+        instead of using instance fields (which are shared across all requests in server mode).
+
+        Args:
+            context: Operation context with per-request values
+
+        Returns:
+            Tuple of (tenant_id, agent_id, is_admin)
+        """
+        if context is None:
+            # Use default context values for embedded mode
+            return (
+                self._default_context.tenant_id,
+                self._default_context.agent_id,
+                self._default_context.is_admin,
+            )
+
+        # Extract from OperationContext object
+        if not isinstance(context, dict):
+            return context.tenant_id, context.agent_id, getattr(context, "is_admin", self.is_admin)
+
+        # Extract from dict (legacy)
+        if isinstance(context, dict):
+            return (
+                context.get("tenant_id", self._default_context.tenant_id),
+                context.get("agent_id", self._default_context.agent_id),
+                context.get("is_admin", self.is_admin),
+            )
+
+        # Fallback to default context
+        return (
+            self._default_context.tenant_id,
+            self._default_context.agent_id,
+            self._default_context.is_admin,
+        )
+
+    # Backward compatibility properties for deprecated instance fields
+    @property
+    def tenant_id(self) -> str | None:
+        """DEPRECATED: Access via context parameter instead. Returns default tenant_id for embedded mode."""
+        return self._default_context.tenant_id
+
+    @property
+    def agent_id(self) -> str | None:
+        """DEPRECATED: Access via context parameter instead. Returns default agent_id for embedded mode."""
+        return self._default_context.agent_id
+
+    @property
+    def user_id(self) -> str | None:
+        """DEPRECATED: Access via context parameter instead. Returns default user_id for embedded mode."""
+        return getattr(self._default_context, "user", None)
 
     def _get_memory_api(self, context: dict | None = None) -> Memory:
         """Get Memory API instance with context-specific configuration.

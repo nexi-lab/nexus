@@ -590,10 +590,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
     def rename_path(self, old_path: str, new_path: str) -> None:
         """
-        Rename/move a file by updating its virtual path in metadata.
+        Rename/move a file or directory by updating virtual paths in metadata.
 
         This is a metadata-only operation that does NOT touch the actual
         file content in CAS storage. Only the virtual_path is updated.
+
+        For directories, this recursively updates all child file paths.
 
         Args:
             old_path: Current virtual path
@@ -604,13 +606,17 @@ class SQLAlchemyMetadataStore(MetadataStore):
         """
         try:
             with self.SessionLocal() as session:
-                # Check if source exists
+                # Check if source exists (as a file)
                 stmt_old = select(FilePathModel).where(
                     FilePathModel.virtual_path == old_path, FilePathModel.deleted_at.is_(None)
                 )
                 file_path = session.scalar(stmt_old)
 
-                if not file_path:
+                # Check if this is a directory (has children)
+                is_directory = self.is_implicit_directory(old_path)
+
+                # If not a file and not a directory, error
+                if not file_path and not is_directory:
                     raise MetadataError(f"Source path not found: {old_path}", path=old_path)
 
                 # Check if destination already exists
@@ -624,9 +630,28 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         f"Destination path already exists: {new_path}", path=new_path
                     )
 
-                # Update the virtual path (metadata-only, no CAS I/O!)
-                file_path.virtual_path = new_path
-                file_path.updated_at = datetime.now(UTC)
+                # If it's a file, update it
+                if file_path:
+                    file_path.virtual_path = new_path
+                    file_path.updated_at = datetime.now(UTC)
+
+                # If it's a directory, update all child paths
+                if is_directory:
+                    # Find all children (files with paths starting with old_path/)
+                    dir_prefix = old_path.rstrip("/") + "/"
+                    stmt_children = select(FilePathModel).where(
+                        FilePathModel.virtual_path.startswith(dir_prefix),
+                        FilePathModel.deleted_at.is_(None),
+                    )
+                    children = session.scalars(stmt_children).all()
+
+                    # Update each child's path
+                    for child in children:
+                        # Replace old_path prefix with new_path
+                        relative_path = child.virtual_path[len(old_path) :]
+                        child.virtual_path = new_path + relative_path
+                        child.updated_at = datetime.now(UTC)
+
                 session.commit()
 
             # Invalidate cache for both paths
@@ -639,6 +664,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 self._cache.invalidate_path(old_parent)
                 if old_parent != new_parent:
                     self._cache.invalidate_path(new_parent)
+
+                # If directory, invalidate all children too
+                if is_directory:
+                    # Invalidate the directory itself in cache
+                    self._cache.invalidate_path(old_path + "/")
+                    self._cache.invalidate_path(new_path + "/")
 
         except MetadataError:
             raise

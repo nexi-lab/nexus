@@ -46,16 +46,31 @@ if [ "$INIT_MODE" = true ]; then
 ╚═══════════════════════════════════════╝
 EOF
     echo ""
-    echo "Mode: INITIALIZATION (full setup)"
+    echo "Mode: INITIALIZATION"
     echo ""
-    echo "⚠️  WARNING: This will DELETE ALL existing data!"
-    echo ""
-    echo "The following will be cleared:"
-    echo "  • All users and API keys"
-    echo "  • All files and metadata"
-    echo "  • All permissions and relationships"
-    echo "  • All workspaces and configurations"
-    echo "  • All operation logs and caches"
+
+    # Show what will be deleted
+    if [ "$CLEAN_CREDENTIALS" == "1" ]; then
+        echo "⚠️  WARNING: This will DELETE ALL existing data AND credentials!"
+        echo ""
+        echo "The following will be cleared:"
+        echo "  • All users and API keys (CREDENTIALS)"
+        echo "  • All files and metadata"
+        echo "  • All permissions and relationships"
+        echo "  • All workspaces and configurations"
+        echo "  • All operation logs and caches"
+    else
+        echo "⚠️  WARNING: This will DELETE data but PRESERVE credentials!"
+        echo ""
+        echo "The following will be cleared:"
+        echo "  • All files and metadata"
+        echo "  • All permissions and relationships"
+        echo "  • All workspaces and configurations"
+        echo "  • All operation logs and caches"
+        echo ""
+        echo "The following will be PRESERVED:"
+        echo "  ✓ All users and API keys (existing credentials still work)"
+    fi
     echo ""
     echo "Configuration:"
     echo "  Admin user:  $ADMIN_USER"
@@ -65,18 +80,20 @@ EOF
     echo "  Auth:        Database-backed API keys"
     echo ""
 
-    # Confirmation prompt
-    read -p "Are you sure you want to continue? (yes/no): " CONFIRM
-    if [ "$CONFIRM" != "yes" ]; then
+    # Confirmation prompt (skip if AUTO_CONFIRM is set)
+    if [ "$AUTO_CONFIRM" != "1" ]; then
+        read -p "Are you sure you want to continue? (yes/no): " CONFIRM
+        if [ "$CONFIRM" != "yes" ]; then
+            echo ""
+            echo "❌ Initialization cancelled"
+            echo ""
+            echo "To restart without initialization, run:"
+            echo "  ./scripts/init-nexus-with-auth.sh"
+            echo ""
+            exit 0
+        fi
         echo ""
-        echo "❌ Initialization cancelled"
-        echo ""
-        echo "To restart without initialization, run:"
-        echo "  ./scripts/init-nexus-with-auth.sh"
-        echo ""
-        exit 0
     fi
-    echo ""
     echo "✓ Confirmed - proceeding with initialization..."
     echo ""
 else
@@ -193,14 +210,25 @@ echo "✓ Database schema created"
 # ============================================
 
 echo ""
-echo "🧹 Clearing all existing data for fresh start..."
+echo "🧹 Clearing existing data for fresh start..."
 echo ""
-echo "This will remove:"
-echo "  • All users and their API keys"
-echo "  • All files, directories, and metadata"
-echo "  • All permissions and access control relationships"
-echo "  • All workspaces, memories, and workflows"
-echo "  • All operation logs and audit trails"
+if [ "$CLEAN_CREDENTIALS" == "1" ]; then
+    echo "This will remove:"
+    echo "  • All users and their API keys"
+    echo "  • All files, directories, and metadata"
+    echo "  • All permissions and access control relationships"
+    echo "  • All workspaces, memories, and workflows"
+    echo "  • All operation logs and audit trails"
+else
+    echo "This will remove:"
+    echo "  • All files, directories, and metadata"
+    echo "  • All permissions and access control relationships"
+    echo "  • All workspaces, memories, and workflows"
+    echo "  • All operation logs and audit trails"
+    echo ""
+    echo "This will preserve:"
+    echo "  ✓ All users and their API keys (credentials)"
+fi
 echo ""
 
 # Clear filesystem data (to stay in sync with database)
@@ -253,11 +281,15 @@ def delete_table(table_name):
 # Clear in dependency order
 print("Clearing database tables:")
 
-# Clear auth-related tables first (due to foreign keys)
-print("\n🔑 Clearing authentication data...")
-delete_table("refresh_tokens")
-delete_table("api_keys")
-delete_table("users")  # Clear all users
+# Clear auth-related tables first (due to foreign keys) - only if CLEAN_CREDENTIALS is set
+clean_credentials = os.environ.get('CLEAN_CREDENTIALS') == '1'
+if clean_credentials:
+    print("\n🔑 Clearing authentication data...")
+    delete_table("refresh_tokens")
+    delete_table("api_keys")
+    delete_table("users")  # Clear all users
+else:
+    print("\n🔑 Preserving authentication data (users and API keys)...")
 
 # Clear ReBAC and audit tables
 print("\n🔐 Clearing permissions and audit logs...")
@@ -319,49 +351,50 @@ echo ""
 echo "🔧 Bootstrapping server..."
 
 # ============================================
-# Create Admin API Key
+# Create Admin API Key (Only if credentials were cleaned)
 # ============================================
 
-echo ""
-echo "🔑 Creating admin API key..."
+if [ "$CLEAN_CREDENTIALS" == "1" ]; then
+    echo ""
+    echo "🔑 Creating admin API key..."
 
-# Get script directory
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    # Get script directory
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Create admin API key (90 day expiry)
-ADMIN_KEY_OUTPUT=$(python3 "$SCRIPT_DIR/create-api-key.py" \
-    "$ADMIN_USER" \
-    "Admin key (created by init script)" \
-    --admin \
-    --days 90 \
-    2>&1)
+    # Create admin API key (90 day expiry)
+    ADMIN_KEY_OUTPUT=$(python3 "$SCRIPT_DIR/create-api-key.py" \
+        "$ADMIN_USER" \
+        "Admin key (created by init script)" \
+        --admin \
+        --days 90 \
+        2>&1)
 
-# Extract the API key from output
-ADMIN_API_KEY=$(echo "$ADMIN_KEY_OUTPUT" | grep "API Key:" | awk '{print $3}')
+    # Extract the API key from output
+    ADMIN_API_KEY=$(echo "$ADMIN_KEY_OUTPUT" | grep "API Key:" | awk '{print $3}')
 
-if [ -z "$ADMIN_API_KEY" ]; then
-    echo "❌ Failed to create admin API key"
-    echo "$ADMIN_KEY_OUTPUT"
-    exit 1
-fi
+    if [ -z "$ADMIN_API_KEY" ]; then
+        echo "❌ Failed to create admin API key"
+        echo "$ADMIN_KEY_OUTPUT"
+        exit 1
+    fi
 
-echo "✓ Created admin API key"
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "IMPORTANT: Save this API key securely!"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "Admin API Key: $ADMIN_API_KEY"
-echo ""
-echo "Add to your ~/.bashrc or ~/.zshrc:"
-echo "  export NEXUS_API_KEY='$ADMIN_API_KEY'"
-echo "  export NEXUS_URL='http://localhost:$PORT'"
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
+    echo "✓ Created admin API key"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "IMPORTANT: Save this API key securely!"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Admin API Key: $ADMIN_API_KEY"
+    echo ""
+    echo "Add to your ~/.bashrc or ~/.zshrc:"
+    echo "  export NEXUS_API_KEY='$ADMIN_API_KEY'"
+    echo "  export NEXUS_URL='http://localhost:$PORT'"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
 
-# Save to env file for this session
-cat > .nexus-admin-env << EOF
+    # Save to env file for this session
+    cat > .nexus-admin-env << EOF
 # Nexus Admin Environment
 # Created: $(date)
 # User: $ADMIN_USER
@@ -370,8 +403,20 @@ export NEXUS_URL='http://localhost:$PORT'
 export NEXUS_DATABASE_URL='$NEXUS_DATABASE_URL'
 EOF
 
-echo "✓ Saved to .nexus-admin-env (source this file to use the API key)"
-echo ""
+    echo "✓ Saved to .nexus-admin-env (source this file to use the API key)"
+    echo ""
+else
+    echo ""
+    echo "🔑 Preserving existing credentials..."
+    echo ""
+    echo "ℹ️  Existing users and API keys were preserved."
+    echo "   Use your existing API key or create new keys with:"
+    echo "     python3 scripts/create-api-key.py <username> \"Description\" --days 90"
+    echo ""
+    echo "   If you have .nexus-admin-env from before, source it:"
+    echo "     source .nexus-admin-env"
+    echo ""
+fi
 
 # ============================================
 # Setup Workspace (Direct Database Access)
@@ -386,9 +431,14 @@ export NEXUS_ENFORCE_PERMISSIONS=false
 # Create workspace directory
 nexus mkdir /workspace 2>/dev/null && echo "✓ Created /workspace" || echo "✓ /workspace exists"
 
-# Grant admin user full ownership
-nexus rebac create user $ADMIN_USER direct_owner file /workspace --tenant-id default >/dev/null 2>&1
-echo "✓ Granted '$ADMIN_USER' ownership of /workspace"
+# Only grant ownership if we just created the admin user (credentials were cleaned)
+if [ "$CLEAN_CREDENTIALS" == "1" ]; then
+    # Grant admin user full ownership
+    nexus rebac create user $ADMIN_USER direct_owner file /workspace --tenant-id default >/dev/null 2>&1
+    echo "✓ Granted '$ADMIN_USER' ownership of /workspace"
+else
+    echo "✓ Workspace permissions preserved (existing user permissions maintained)"
+fi
 
 # Re-enable permissions for server
 export NEXUS_ENFORCE_PERMISSIONS=true

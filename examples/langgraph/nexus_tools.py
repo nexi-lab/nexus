@@ -11,26 +11,67 @@ to make them intuitive for agents to use.
 
 These tools enable agents to interact with a remote Nexus filesystem, allowing them
 to search, read, analyze, and persist data across agent runs.
+
+Authentication:
+    API key is REQUIRED via metadata.x_auth: "Bearer <token>"
+    Frontend automatically passes the authenticated user's API key in request metadata.
+    Each tool creates an authenticated RemoteNexusFS instance using the extracted token.
 """
 
 import shlex
 
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
+from nexus.remote import RemoteNexusFS
 
-def get_nexus_tools(nx):
+
+def get_nexus_tools(server_url: str):
     """
-    Create LangGraph tools from a Nexus filesystem instance.
+    Create LangGraph tools that connect to Nexus server with per-request authentication.
 
     Args:
-        nx: NexusFilesystem instance (local or remote)
+        server_url: Nexus server URL (e.g., "http://localhost:8080" or ngrok URL)
 
     Returns:
-        List of LangGraph tool functions
+        List of LangGraph tool functions that require x_auth in metadata
+
+    Usage:
+        tools = get_nexus_tools("http://localhost:8080")
+        agent = create_react_agent(model=llm, tools=tools)
+
+        # Frontend passes API key in metadata:
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": "Find Python files"}]},
+            metadata={"x_auth": "Bearer sk-your-api-key"}
+        )
     """
 
+    def _get_nexus_client(config: RunnableConfig) -> RemoteNexusFS:
+        """Create authenticated RemoteNexusFS from config.
+
+        Requires authentication via metadata.x_auth: "Bearer <token>"
+        """
+        # Get API key from metadata.x_auth (required)
+        metadata = config.get("metadata", {})
+        x_auth = metadata.get("x_auth", "")
+
+        if not x_auth:
+            raise ValueError(
+                "Missing x_auth in metadata. "
+                "Frontend must pass API key via metadata: {'x_auth': 'Bearer <token>'}"
+            )
+
+        # Strip "Bearer " prefix if present
+        api_key = x_auth.removeprefix("Bearer ").strip()
+
+        if not api_key:
+            raise ValueError("Invalid x_auth format. Expected 'Bearer <token>', got: " + x_auth)
+
+        return RemoteNexusFS(server_url=server_url, api_key=api_key)
+
     @tool
-    def grep_files(grep_cmd: str) -> str:
+    def grep_files(grep_cmd: str, config: RunnableConfig) -> str:
         """Search file content using grep-style commands.
 
         Use this tool to find files containing specific text or code patterns.
@@ -58,6 +99,9 @@ def get_nexus_tools(nx):
             - grep_files("'import pandas' /scripts -i") → Case-insensitive pandas imports
         """
         try:
+            # Get authenticated client
+            nx = _get_nexus_client(config)
+
             # Parse grep command
             parts = shlex.split(grep_cmd)
             if not parts:
@@ -109,7 +153,7 @@ def get_nexus_tools(nx):
             return f"Error executing grep: {str(e)}\nUsage: grep_files('pattern [path] [options]')"
 
     @tool
-    def glob_files(pattern: str, path: str = "/") -> str:
+    def glob_files(pattern: str, config: RunnableConfig, path: str = "/") -> str:
         """Find files by name pattern using glob syntax.
 
         Use this tool to find files matching a specific naming pattern.
@@ -129,6 +173,9 @@ def get_nexus_tools(nx):
             - glob_files("test_*.py", "/tests") → Find all test files
         """
         try:
+            # Get authenticated client
+            nx = _get_nexus_client(config)
+
             files = nx.glob(pattern, path)
 
             if not files:
@@ -147,7 +194,7 @@ def get_nexus_tools(nx):
             return f"Error finding files: {str(e)}"
 
     @tool
-    def read_file(read_cmd: str) -> str:
+    def read_file(read_cmd: str, config: RunnableConfig) -> str:
         """Read file content using cat/less-style commands.
 
         Use this tool to read and analyze file contents.
@@ -174,6 +221,9 @@ def get_nexus_tools(nx):
             - read_file("/data/results.json") → Read JSON file (defaults to cat)
         """
         try:
+            # Get authenticated client
+            nx = _get_nexus_client(config)
+
             # Parse read command
             parts = shlex.split(read_cmd.strip())
             if not parts:
@@ -221,7 +271,7 @@ def get_nexus_tools(nx):
             return f"Error reading file: {str(e)}\nUsage: read_file('[cat|less] path')"
 
     @tool
-    def write_file(path: str, content: str) -> str:
+    def write_file(path: str, content: str, config: RunnableConfig) -> str:
         """Write content to Nexus filesystem.
 
         Use this tool to save analysis results, reports, or generated content.
@@ -241,6 +291,9 @@ def get_nexus_tools(nx):
             - write_file("/data/results.txt", "Results:\\n...") → Save results
         """
         try:
+            # Get authenticated client
+            nx = _get_nexus_client(config)
+
             # Convert string to bytes for Nexus
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
 

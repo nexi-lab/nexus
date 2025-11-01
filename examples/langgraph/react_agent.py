@@ -69,6 +69,6 @@ if __name__ == "__main__":
     print("Testing ReAct agent...")
     result = agent.invoke(
         {"messages": [{"role": "user", "content": "Find all Python files and count them"}]},
-        config={"configurable": {"nexus_api_key": api_key}},
+        config={"metadata": {"x_auth": f"Bearer {api_key}"}},
     )
     print(result)

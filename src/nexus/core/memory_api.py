@@ -85,6 +85,7 @@ class Memory:
         memory_type: str | None = None,
         importance: float | None = None,
         _metadata: dict[str, Any] | None = None,
+        context: OperationContext | None = None,
     ) -> str:
         """Store a memory.
 
@@ -94,6 +95,7 @@ class Memory:
             memory_type: Type of memory ('fact', 'preference', 'experience').
             importance: Importance score (0.0-1.0).
             metadata: Additional metadata.
+            context: Optional operation context to override identity (v0.7.1+).
 
         Returns:
             memory_id: The created memory ID.
@@ -110,10 +112,15 @@ class Memory:
         # Convert content to bytes
         content_bytes = content.encode("utf-8") if isinstance(content, str) else content
 
+        # v0.7.1: Use context identity if provided, otherwise fall back to instance identity
+        tenant_id = context.tenant_id if context else self.tenant_id
+        user_id = context.user_id if context else self.user_id
+        agent_id = context.agent_id if context else self.agent_id
         # Store content in backend (CAS)
         # LocalBackend.write_content() handles hashing and storage
         try:
-            content_hash = self.backend.write_content(content_bytes, context=self.context)
+            backend_context = context if context else self.context
+            content_hash = self.backend.write_content(content_bytes, context=backend_context)
         except Exception as e:
             # If backend write fails, we can't proceed
             raise RuntimeError(f"Failed to store content in backend: {e}") from e
@@ -121,9 +128,9 @@ class Memory:
         # Create memory record
         memory = self.memory_router.create_memory(
             content_hash=content_hash,
-            tenant_id=self.tenant_id,
-            user_id=self.user_id,
-            agent_id=self.agent_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            agent_id=agent_id,
             scope=scope,
             memory_type=memory_type,
             importance=importance,
@@ -139,6 +146,7 @@ class Memory:
         scope: str | None = None,
         memory_type: str | None = None,
         limit: int | None = None,
+        context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """Query memories by relationships and metadata.
 
@@ -149,6 +157,7 @@ class Memory:
             scope: Filter by scope.
             memory_type: Filter by memory type.
             limit: Maximum number of results.
+            context: Optional operation context to override identity (v0.7.1+).
 
         Returns:
             List of memory dictionaries with metadata.
@@ -158,11 +167,11 @@ class Memory:
             >>> for mem in memories:
             ...     print(f"{mem['memory_id']}: {mem['content']}")
         """
-        # Use current context if not specified
+        # v0.7.1: Use context identity if provided, otherwise fall back to instance identity or explicit params
         if user_id is None:
-            user_id = self.user_id
+            user_id = context.user_id if context else self.user_id
         if tenant_id is None:
-            tenant_id = self.tenant_id
+            tenant_id = context.tenant_id if context else self.tenant_id
 
         # Query memories
         memories = self.memory_router.query_memories(
@@ -359,6 +368,7 @@ class Memory:
         scope: str | None = None,
         memory_type: str | None = None,
         limit: int | None = 100,
+        context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """List memories for current user/agent.
 
@@ -366,6 +376,7 @@ class Memory:
             scope: Filter by scope.
             memory_type: Filter by memory type.
             limit: Maximum number of results.
+            context: Optional operation context to override identity (v0.7.1+).
 
         Returns:
             List of memory dictionaries (without full content for efficiency).
@@ -374,10 +385,15 @@ class Memory:
             >>> memories = memory.list(scope="user")
             >>> print(f"Found {len(memories)} memories")
         """
+        # v0.7.1: Use context identity if provided, otherwise fall back to instance identity
+        tenant_id = context.tenant_id if context else self.tenant_id
+        user_id = context.user_id if context else self.user_id
+        agent_id = context.agent_id if context else self.agent_id
+
         memories = self.memory_router.query_memories(
-            tenant_id=self.tenant_id,
-            user_id=self.user_id,
-            agent_id=self.agent_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            agent_id=agent_id,
             scope=scope,
             memory_type=memory_type,
             limit=limit,

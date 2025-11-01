@@ -33,7 +33,7 @@ class NexusFilesystem(ABC):
     """
 
     # Instance attributes (set by implementations)
-    # Note: These may be implemented as properties (read-only) by subclasses
+    # Note: These are implemented as read-only properties by subclasses
     @property
     @abstractmethod
     def agent_id(self) -> str | None:

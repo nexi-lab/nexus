@@ -145,6 +145,14 @@ def connect(
     # Load configuration
     cfg = load_config(config)
 
+    # Check for unimplemented modes first
+    if cfg.mode in ["monolithic", "distributed"]:
+        raise NotImplementedError(
+            f"{cfg.mode} mode is not yet implemented. "
+            f"Currently only 'embedded' mode is supported. "
+            f"For multi-tenant deployments, use server mode instead."
+        )
+
     # PRIORITY 1: Check for server URL (remote mode)
     # If url is explicitly set in config or NEXUS_URL env var, use RemoteNexusFS
     server_url = cfg.url or os.getenv("NEXUS_URL")
@@ -266,13 +274,8 @@ def connect(
             }
 
         return nx_fs
-    elif cfg.mode in ["monolithic", "distributed"]:
-        raise NotImplementedError(
-            f"{cfg.mode} mode is not yet implemented. "
-            f"Currently only 'embedded' mode is supported. "
-            f"Set mode='embedded' in your config or NEXUS_MODE environment variable."
-        )
     else:
+        # This should never be reached as unimplemented modes are checked at the top
         raise ValueError(f"Unknown mode: {cfg.mode}")
 
 

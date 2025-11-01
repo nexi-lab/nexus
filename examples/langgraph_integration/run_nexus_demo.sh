@@ -74,9 +74,9 @@ if [ "$SERVER_RUNNING" = false ]; then
         print_info "Starting Nexus server (press Ctrl+C to stop when done)..."
         echo ""
 
-        # Start server in background
+        # Start server in background (quiet mode, fully detached)
         cd "$REPO_ROOT"
-        "$REPO_ROOT/scripts/init-nexus-with-auth.sh" &
+        QUIET=1 nohup "$REPO_ROOT/scripts/init-nexus-with-auth.sh" > /dev/null 2>&1 &
         SERVER_PID=$!
 
         # Give server time to start

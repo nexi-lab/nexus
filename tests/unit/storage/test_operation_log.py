@@ -137,13 +137,15 @@ def test_rename_operation_logged(nx: NexusFS) -> None:
 
 
 def test_operation_log_filtering_by_agent(nx: NexusFS) -> None:
-    """Test filtering operations by agent ID."""
-    # Create NexusFS instances with different agent IDs
-    nx.agent_id = "agent-1"
-    nx.write("/file1.txt", b"Content 1")
+    """Test filtering operations by agent ID using context parameter."""
+    from nexus.core.permissions_enhanced import EnhancedOperationContext
 
-    nx.agent_id = "agent-2"
-    nx.write("/file2.txt", b"Content 2")
+    # Use context parameter with different agent IDs
+    context1 = EnhancedOperationContext(user="test", groups=[], agent_id="agent-1")
+    nx.write("/file1.txt", b"Content 1", context=context1)
+
+    context2 = EnhancedOperationContext(user="test", groups=[], agent_id="agent-2")
+    nx.write("/file2.txt", b"Content 2", context=context2)
 
     # Check operation log filtering
     with nx.metadata.SessionLocal() as session:

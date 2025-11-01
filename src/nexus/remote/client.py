@@ -2389,6 +2389,23 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("list_memories", {})
         return result  # type: ignore[no-any-return]
 
+    def list_registered_memories(self) -> builtins.list[dict]:
+        """List all registered memory paths.
+
+        Returns:
+            List of memory configuration dicts
+
+        Raises:
+            RemoteFilesystemError: If listing fails
+
+        Example:
+            >>> memories = nx.list_registered_memories()
+            >>> for mem in memories:
+            ...     print(f"{mem['path']}: {mem['name']}")
+        """
+        result = self._call_rpc("list_registered_memories", {})
+        return result  # type: ignore[no-any-return]
+
     def get_memory_info(self, path: str) -> dict | None:
         """Get information about a registered memory.
 

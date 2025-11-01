@@ -1,6 +1,6 @@
 """Nexus File Operation Tools for LangGraph ReAct Agent.
 
-This module provides six practical file operation tools that wrap Nexus filesystem
+This module provides four practical file operation tools that wrap Nexus filesystem
 capabilities for use with LangGraph agents. Tools use familiar command-line syntax
 to make them intuitive for agents to use.
 
@@ -8,113 +8,14 @@ to make them intuitive for agents to use.
 2. glob_files: Find files by name pattern using glob syntax
 3. read_file: Read file content using cat/less-style commands
 4. write_file: Write content to Nexus filesystem
-5. execute_python: Execute Python code in an isolated E2B sandbox
-6. execute_bash: Execute bash commands in an isolated E2B sandbox
 
 These tools enable agents to interact with a remote Nexus filesystem, allowing them
 to search, read, analyze, and persist data across agent runs.
 """
 
 import shlex
-import logging
-import asyncio
-from typing import Annotated, Any, Tuple, TYPE_CHECKING
 
 from langchain_core.tools import tool
-from langchain_core.runnables import RunnableConfig
-from langgraph.prebuilt import InjectedStore
-
-
-
-if TYPE_CHECKING:
-    from e2b import Sandbox
-
-try:
-    from e2b import Sandbox
-    E2B_AVAILABLE = True
-except ImportError:
-    E2B_AVAILABLE = False
-    AsyncSandbox = Any  # type: ignore
-    Execution = Any  # type: ignore
-    logging.warning("e2b_code_interpreter not available. execute_python and execute_bash tools will not work.")
-
-
-# E2B Sandbox Configuration
-# _TEMPLATE_ID = "dmyd7e9m4ukc19m397jm"  # Default E2B template with common data science libraries
-_TEMPLATE_ID = "7ebpm01g5wtzdvlf75lx"  # Default E2B template with common data science libraries
-
-
-# Helper functions for execute_python tool
-def _get_executor_id_from_config(config: RunnableConfig) -> str:
-    """Get executor ID from thread_id in config."""
-    # Try metadata first (custom thread_id), fallback to config thread_id
-    thread_id = config.get("metadata", {}).get("thread_id") or config.get("thread_id")
-    if not thread_id:
-        raise ValueError("No thread_id found in config")
-    return str(thread_id)
-
-
-async def _wait_for_sandbox_ready(sandbox: Any, max_retries: int = 5, delay: float = 2.0) -> bool:
-    """Wait for sandbox to be fully ready by attempting a simple execution with retries."""
-    for attempt in range(max_retries):
-        try:
-            # Try a simple no-op command to check if Jupyter kernel is ready
-            await sandbox.run_code("print('ready')")
-            logging.info(f"Sandbox is ready after {attempt + 1} attempt(s)")
-            return True
-        except Exception as e:
-            if "port is not open" in str(e) or "502" in str(e):
-                if attempt < max_retries - 1:
-                    logging.info(f"Sandbox not ready yet (attempt {attempt + 1}/{max_retries}), waiting {delay}s...")
-                    await asyncio.sleep(delay)
-                else:
-                    logging.error(f"Sandbox failed to become ready after {max_retries} attempts: {e}")
-                    return False
-            else:
-                # Different error, re-raise
-                raise
-    return False
-
-
-async def _get_or_create_sandbox(
-    store: Any,
-    executor_id: str,
-    timeout: int = 3000,
-) -> Tuple[AsyncSandbox, bool]:
-    """Get existing sandbox or create new one. Returns (sandbox, is_new)."""
-    # Hardcoded sandbox for testing
-    sandbox = await AsyncSandbox.connect(sandbox_id="iqa2iva7uwncrr9ufaqe4")
-
-    create_new = False
-    return sandbox, create_new
-
-
-def _build_execution_response(execution: Execution) -> str:
-    """Build formatted response from execution result."""
-    response = "Code execution result:\n"
-
-    if execution.logs.stdout:
-        response += f"Stdout:\n{execution.logs.stdout}\n"
-    if execution.logs.stderr:
-        response += f"Stderr:\n{execution.logs.stderr}\n"
-    if execution.error:
-        response += f"Error:\n{execution.error}"
-
-    return response
-
-
-def _build_bash_response(exit_code: int, stdout: str, stderr: str) -> str:
-    """Build formatted response from bash execution result."""
-    response = f"Bash execution result (exit code: {exit_code}):\n"
-
-    if stdout:
-        response += f"Stdout:\n{stdout}\n"
-    if stderr:
-        response += f"Stderr:\n{stderr}\n"
-    if exit_code != 0:
-        response += f"\nCommand failed with exit code {exit_code}"
-
-    return response
 
 
 def get_nexus_tools(nx):
@@ -356,120 +257,5 @@ def get_nexus_tools(nx):
         except Exception as e:
             return f"Error writing file {path}: {str(e)}"
 
-    @tool
-    async def execute_python(
-        code: str,
-        config: RunnableConfig,
-        store: Annotated[Any, InjectedStore]
-    ) -> str:
-        """Execute Python code in an isolated E2B sandbox environment.
-
-        Use this tool to run Python code for data analysis, calculations, or testing.
-        The sandbox has common data science libraries pre-installed (pandas, numpy,
-        matplotlib, openpyxl, etc.). Working directory: /home/user
-
-        Important notes:
-        - Previous code execution state is preserved in the same sandbox (incremental work)
-        - For plots: Always save to file (plt.savefig), don't use plt.show()
-        - The sandbox persists across multiple tool calls in the same conversation thread
-
-        Args:
-            code: Python code to execute (as a string)
-            config: RunnableConfig (automatically injected by LangGraph)
-            store: Store for persisting sandbox state (automatically injected by LangGraph)
-
-        Returns:
-            String containing stdout, stderr, and any error messages from code execution.
-
-        Examples:
-            - execute_python("print('Hello, world!')") → Simple print statement
-            - execute_python("import pandas as pd\\ndf = pd.DataFrame({'a': [1,2,3]})\\nprint(df)") → Use pandas
-            - execute_python("import matplotlib.pyplot as plt\\nplt.plot([1,2,3])\\nplt.savefig('plot.png')") → Create plot
-        """
-        if not E2B_AVAILABLE:
-            return "Error: e2b_code_interpreter is not installed. Install with: pip install e2b-code-interpreter"
-
-        try:
-            # Get executor ID from config
-            executor_id = _get_executor_id_from_config(config)
-            logging.info(f"Executor ID: {executor_id}")
-
-            # Get or create sandbox
-            sandbox, is_new_sandbox = await _get_or_create_sandbox(store, executor_id)
-
-            # Execute code
-            execution = await sandbox.run_code(code)
-
-            # Build response from execution result
-            response = _build_execution_response(execution)
-
-            return response
-
-        except Exception as e:
-            logging.error(f"Error executing Python code: {e}")
-            return f"Error executing Python code: {str(e)}"
-
-    @tool
-    async def execute_bash(
-        command: str,
-        config: RunnableConfig,
-        store: Annotated[Any, InjectedStore]
-    ) -> str:
-        """Execute bash commands in an isolated E2B sandbox environment.
-
-        Use this tool to run shell commands for file operations, system tasks, or
-        command-line tools. The sandbox provides a full Linux environment with
-        common utilities installed. Working directory: /home/user
-
-        Important notes:
-        - Uses the SAME sandbox as execute_python (state is shared)
-        - Previous commands and Python code state are preserved
-        - Commands run in /home/user directory
-        - Common Linux utilities are available (git, curl, wget, etc.)
-
-        Args:
-            command: Bash command to execute (as a string)
-            config: RunnableConfig (automatically injected by LangGraph)
-            store: Store for persisting sandbox state (automatically injected by LangGraph)
-
-        Returns:
-            String containing stdout, stderr, exit code from command execution.
-
-        Examples:
-            - execute_bash("ls -la") → List files in current directory
-            - execute_bash("cat myfile.txt") → Read file contents
-            - execute_bash("wget https://example.com/data.csv") → Download file
-            - execute_bash("git clone https://github.com/user/repo.git") → Clone repository
-        """
-        if not E2B_AVAILABLE:
-            return "Error: e2b_code_interpreter is not installed. Install with: pip install e2b-code-interpreter"
-
-        try:
-            # Get executor ID from config
-            executor_id = _get_executor_id_from_config(config)
-            logging.info(f"Executor ID: {executor_id}")
-
-            # Get or create sandbox (same one used by execute_python)
-            sandbox, is_new_sandbox = await _get_or_create_sandbox(store, executor_id)
-            logging.info(f"Sandbox: {sandbox}")
-            logging.info(f"Is running: {await sandbox.is_running()}")
-
-            
-            # Execute bash command using process API
-            execution = await sandbox.run_code(
-                code=f"bash -c {shlex.quote(command)}",
-                language="bash",
-            )
-            import pdb; pdb.set_trace()
-
-            # Get execution result
-            response = execution.text
-
-            return response
-
-        except Exception as e:
-            logging.error(f"Error executing bash command: {e}")
-            return f"Error executing bash command: {str(e)}"
-
     # Return all tools
-    return [grep_files, glob_files, read_file, write_file, execute_python, execute_bash]
+    return [grep_files, glob_files, read_file, write_file]

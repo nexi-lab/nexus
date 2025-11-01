@@ -427,6 +427,78 @@ def get_user(
         sys.exit(1)
 
 
+@admin.command("create-agent-key")
+@click.argument("user_id")
+@click.argument("agent_id")
+@click.option("--name", help="Human-readable name for the API key (default: 'Agent: <agent_id>')")
+@click.option("--expires-days", type=int, help="API key expiry in days")
+@click.option("--json-output", is_flag=True, help="Output as JSON")
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+def create_agent_key(
+    user_id: str,
+    agent_id: str,
+    name: str | None,
+    expires_days: int | None,
+    json_output: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Create API key for an existing agent.
+
+    This creates an independent API key for an agent to authenticate without
+    using the user's credentials. This is optional - most agents should use
+    the user's auth + X-Agent-ID header instead.
+
+    \b
+    Examples:
+        # Create API key for alice's agent (1 day expiry)
+        nexus admin create-agent-key alice alice_agent --expires-days 1
+
+        # Create API key with custom name
+        nexus admin create-agent-key alice alice_agent --name "Production Agent" --expires-days 90
+    """
+    try:
+        nx = get_remote_client(remote_url, remote_api_key)
+
+        # Default name if not provided
+        if not name:
+            name = f"Agent: {agent_id}"
+
+        # Build parameters
+        params: dict[str, Any] = {
+            "user_id": user_id,
+            "name": name,
+            "subject_type": "agent",
+            "subject_id": agent_id,
+        }
+
+        if expires_days is not None:
+            params["expires_days"] = expires_days
+
+        # Call admin API
+        result = nx._call_rpc("admin_create_key", params)
+
+        if json_output:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            console.print("[green]✓[/green] Agent API key created successfully")
+            console.print("\n[yellow]⚠ Save this API key - it will only be shown once![/yellow]\n")
+            console.print(f"User ID:     {result['user_id']}")
+            console.print(f"Agent ID:    {agent_id}")
+            console.print(f"Key ID:      {result['key_id']}")
+            console.print(f"[bold]API Key:[/bold]     {result['api_key']}")
+            if result.get("expires_at"):
+                console.print(f"Expires:     {result['expires_at']}")
+
+            console.print("\n[cyan]ℹ Info:[/cyan] This agent can now authenticate independently.")
+            console.print("[cyan]ℹ[/cyan] Recommended: Use user auth + X-Agent-ID header instead.")
+
+    except Exception as e:
+        console.print(f"[red]Error creating agent key:[/red] {e}")
+        sys.exit(1)
+
+
 @admin.command("update-key")
 @click.argument("key_id")
 @click.option("--expires-days", type=int, help="Extend expiry by days from now")

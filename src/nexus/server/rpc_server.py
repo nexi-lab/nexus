@@ -320,12 +320,23 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         # Get user from metadata (owner of the agent key)
                         user_id = result.metadata.get("legacy_user_id", result.subject_id)
 
+                    # Determine the subject for permission checking
+                    # If X-Agent-ID header is provided and validated, use agent as subject
+                    if agent_id and result.subject_type == "user":
+                        # User authenticated with X-Agent-ID header - use agent as subject
+                        subject_type = "agent"
+                        subject_id = agent_id
+                    else:
+                        # Direct authentication (user or agent API key)
+                        subject_type = result.subject_type
+                        subject_id = result.subject_id
+
                     return OperationContext(
                         user=user_id,  # Owner (human user)
                         user_id=user_id,  # v0.5.0: Explicit owner tracking
                         agent_id=agent_id,  # v0.5.0: Agent identity (if present)
-                        subject_type=result.subject_type,
-                        subject_id=result.subject_id,
+                        subject_type=subject_type,  # Subject for permission checks
+                        subject_id=subject_id,  # Subject ID for permission checks
                         tenant_id=result.tenant_id,
                         is_admin=result.is_admin,
                         groups=[],  # TODO: Extract groups from auth result if available
@@ -373,10 +384,22 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         """
         from datetime import timedelta
 
+        from nexus.core.entity_registry import EntityRegistry
         from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
+
+        # Register user in entity registry (for agent permission inheritance)
+        # This is safe to call multiple times - it returns existing entity if already registered
+        if params.subject_type == "user" or not params.subject_type:
+            entity_registry = EntityRegistry(self.auth_provider.session_factory)
+            entity_registry.register_entity(
+                entity_type="user",
+                entity_id=params.user_id,
+                parent_type="tenant",
+                parent_id=params.tenant_id,
+            )
 
         # Calculate expiry if specified
         expires_at = None

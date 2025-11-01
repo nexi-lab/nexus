@@ -27,18 +27,24 @@ if TYPE_CHECKING:
 class NexusFSVersionsMixin:
     """Mixin providing version management operations for NexusFS."""
 
-    # Type hints for attributes that will be provided by NexusFS parent class
+    # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
         metadata: SQLAlchemyMetadataStore
         router: PathRouter
-        tenant_id: str | None
-        agent_id: str | None
         is_admin: bool
+
+        @property
+        def tenant_id(self) -> str | None: ...
+        @property
+        def agent_id(self) -> str | None: ...
 
         def _validate_path(self, path: str) -> str: ...
         def _check_permission(
             self, path: str, permission: Permission, context: OperationContext | None
         ) -> None: ...
+        def _get_routing_params(
+            self, context: OperationContext | dict[Any, Any] | None
+        ) -> tuple[str | None, str | None, bool]: ...
 
     @rpc_expose(description="Get specific file version")
     def get_version(

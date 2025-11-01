@@ -46,6 +46,14 @@ Explore Nexus through hands-on examples that demonstrate key features and real-w
 
     [:octicons-arrow-right-24: View Example](langgraph.md)
 
+-   :material-book-open-page-variant:{ .lg .middle } __LangGraph Migration Tutorial__
+
+    ---
+
+    **Step-by-step guide**: Migrate from standard file I/O to Nexus with permissions, cloud storage, and audit trails. See exact code changes needed!
+
+    [:octicons-arrow-right-24: View Tutorial](langgraph-migration.md)
+
 -   :material-account-group:{ .lg .middle } __CrewAI Integration__
 
     ---

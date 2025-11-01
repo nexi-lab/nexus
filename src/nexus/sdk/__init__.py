@@ -11,10 +11,13 @@ on top of Nexus, without any CLI dependencies. Use this SDK to build:
 
 The SDK interface is stable and semantic-versioned separately from CLI changes.
 
-Quick Start:
+Quick Start (Server Mode - Recommended):
     >>> from nexus.sdk import connect
     >>>
-    >>> # Connect to Nexus filesystem
+    >>> # Start server first: nexus serve --host 0.0.0.0 --port 8080
+    >>> # Set environment: export NEXUS_URL=http://localhost:8080
+    >>>
+    >>> # Connect to Nexus server (thin HTTP client)
     >>> nx = connect()
     >>>
     >>> # File operations
@@ -27,15 +30,26 @@ Quick Start:
     >>> python_files = nx.glob("**/*.py")
     >>> todos = nx.grep("TODO", file_pattern="**/*.py")
 
+Quick Start (Embedded Mode - Development Only):
+    >>> # No server required, but less suitable for production
+    >>> nx = connect(config={"mode": "embedded", "data_dir": "./nexus-data"})
+    >>> nx.write("/workspace/file.txt", b"Hello World")
+
 Configuration:
-    >>> # Auto-discover from nexus.yaml or environment
+    >>> # Server mode with auto-discovery (recommended)
+    >>> # Checks NEXUS_URL and NEXUS_API_KEY environment variables
     >>> nx = connect()
     >>>
-    >>> # Explicit configuration
+    >>> # Server mode with explicit config
     >>> nx = connect(config={
-    ...     "backend": "local",
-    ...     "data_dir": "./nexus-data",
-    ...     "enable_permissions": True
+    ...     "url": "http://localhost:8080",
+    ...     "api_key": "your-api-key"
+    ... })
+    >>>
+    >>> # Embedded mode (development/testing only)
+    >>> nx = connect(config={
+    ...     "mode": "embedded",
+    ...     "data_dir": "./nexus-data"
     ... })
     >>>
     >>> # From config file

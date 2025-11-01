@@ -17,6 +17,11 @@ if [ "$1" == "--init" ]; then
     INIT_MODE=true
 fi
 
+# If SKIP_CONFIRM is set, automatically enable INIT mode for clean database
+if [ "$SKIP_CONFIRM" == "1" ]; then
+    INIT_MODE=true
+fi
+
 # ============================================
 # Configuration
 # ============================================
@@ -30,6 +35,9 @@ HOST="${NEXUS_HOST:-0.0.0.0}"
 # ============================================
 # Banner
 # ============================================
+
+# Skip banner if QUIET mode is enabled
+if [ "$QUIET" != "1" ]; then
 
 if [ "$INIT_MODE" = true ]; then
     cat << 'EOF'
@@ -87,6 +95,8 @@ EOF
     echo "Use --init flag for full initialization"
     echo ""
 fi
+
+fi  # End QUIET check
 
 # ============================================
 # Prerequisites Check
@@ -440,24 +450,40 @@ if [ "$INIT_MODE" = true ]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
 else
-    echo "╔═══════════════════════════════════════╗"
-    echo "║   ✅ Restart Complete!                ║"
-    echo "╚═══════════════════════════════════════╝"
-    echo ""
-    echo "Starting Nexus server with authentication..."
-    echo ""
-    echo "Server URL: http://$HOST:$PORT"
-    echo "Auth type:  Database-backed API keys"
-    echo ""
-    echo "Quick start:"
-    echo "  source .nexus-admin-env  # If you have it"
-    echo "  nexus ls /workspace"
-    echo ""
-    echo "Press Ctrl+C to stop server"
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    if [ "$QUIET" != "1" ]; then
+        echo "╔═══════════════════════════════════════╗"
+        echo "║   ✅ Restart Complete!                ║"
+        echo "╚═══════════════════════════════════════╝"
+        echo ""
+        echo "Starting Nexus server with authentication..."
+        echo ""
+        echo "Server URL: http://$HOST:$PORT"
+        echo "Auth type:  Database-backed API keys"
+        echo ""
+        echo "Quick start:"
+        echo "  source .nexus-admin-env  # If you have it"
+        echo "  nexus ls /workspace"
+        echo ""
+        echo "Press Ctrl+C to stop server"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+    fi
+fi
+
+# Unset NEXUS_URL to prevent server from using RemoteNexusFS (circular dependency)
+unset NEXUS_URL
+
+# Start server with database auth (redirect logs to file)
+LOG_FILE="${NEXUS_DATA_DIR}/server.log"
+if [ "$QUIET" != "1" ]; then
+    echo "Server logs: $LOG_FILE"
     echo ""
 fi
 
-# Start server with database auth
-nexus serve --host $HOST --port $PORT --auth-type database
+# Set logging level to ERROR in quiet mode to suppress INFO/WARNING logs
+if [ "$QUIET" = "1" ]; then
+    export NEXUS_LOG_LEVEL=ERROR
+fi
+
+nexus serve --host $HOST --port $PORT --auth-type database > "$LOG_FILE" 2>&1

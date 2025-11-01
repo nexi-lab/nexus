@@ -33,8 +33,18 @@ class NexusFilesystem(ABC):
     """
 
     # Instance attributes (set by implementations)
-    agent_id: str | None
-    tenant_id: str | None
+    # Note: These are implemented as read-only properties by subclasses
+    @property
+    @abstractmethod
+    def agent_id(self) -> str | None:
+        """Agent ID for this filesystem instance."""
+        ...
+
+    @property
+    @abstractmethod
+    def tenant_id(self) -> str | None:
+        """Tenant ID for this filesystem instance."""
+        ...
 
     # ============================================================
     # Core File Operations

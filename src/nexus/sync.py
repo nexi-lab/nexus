@@ -341,14 +341,9 @@ def move_file(
             return True
 
         elif not is_source_local and not is_dest_local:
-            # Nexus to Nexus - can potentially optimize
-            # For now, copy then delete
-            raw_content = nx.read(source)
-            # Type narrowing: when return_metadata=False (default), result is bytes
-            assert isinstance(raw_content, bytes), "Expected bytes from read()"
-            content = raw_content
-            nx.write(dest, content)
-            nx.delete(source)
+            # Nexus to Nexus - use efficient rename API
+            # This is metadata-only, instant operation that preserves ReBAC permissions
+            nx.rename(source, dest)
             return True
 
         else:

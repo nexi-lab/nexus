@@ -260,15 +260,16 @@ class TestTimeTravelDebug:
             assert diff["size_diff"] == -len(b"Will be deleted")
 
     def test_time_travel_with_agent_id(self, nx):
-        """Test time-travel with agent-specific operations."""
+        """Test time-travel with agent-specific operations using context parameter."""
+        from nexus.core.permissions_enhanced import EnhancedOperationContext
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.time_travel import TimeTravelReader
 
-        # Set agent ID
-        nx.agent_id = "agent-1"
+        # Use context parameter with agent ID
+        context = EnhancedOperationContext(user="test", groups=[], agent_id="agent-1")
 
         path = "/workspace/agent_file.txt"
-        nx.write(path, b"Agent 1 content")
+        nx.write(path, b"Agent 1 content", context=context)
 
         with nx.metadata.SessionLocal() as session:
             logger = OperationLogger(session)

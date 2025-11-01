@@ -204,6 +204,7 @@ nav:
     - Agentic Context Engineering (ACE): examples/ace.md
     - DeepAgents Integration: examples/deepagents.md
     - LangGraph Integration: examples/langgraph.md
+    - "📘 LangGraph Migration Tutorial": examples/langgraph-migration.md
     - CrewAI Integration: examples/crewai.md
     - Claude Agent SDK: examples/claude-agent-sdk.md
     - OpenAI Agents SDK: examples/openai-agents.md

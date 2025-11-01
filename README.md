@@ -23,7 +23,7 @@ Nexus is an AI-native filesystem that unifies files, memory, and permissions int
 
 Nexus is a programmable filesystem for AI agents. It combines storage, memory, and permissions into one layer so agents can securely remember, collaborate, and evolve over time.
 
-**Jump to:** [Hello World](#hello-world-10-seconds) • [Server Setup](#server-mode-production) • [Permissions](#permission-system-example) • [Core Concepts](#core-concepts) • [Documentation](#documentation)
+**Jump to:** [Server Mode](#server-mode-recommended-for-production) • [Embedded Mode](#embedded-mode-development--testing-only) • [Permissions](#permission-system-example) • [Core Concepts](#core-concepts) • [Documentation](#documentation)
 
 ## Quick Start
 
@@ -33,69 +33,16 @@ Nexus is a programmable filesystem for AI agents. It combines storage, memory, a
 pip install nexus-ai-fs
 ```
 
-### Hello World (10 Seconds)
+### Server Mode (Recommended for Production)
 
-```python
-import nexus
+**Why Server Mode?**
+- ✅ Multi-user support with authentication
+- ✅ Centralized permissions and access control
+- ✅ Scalable architecture for production workloads
+- ✅ Thin SDK client (just HTTP calls)
 
-# Zero-config start - data stored in ./nexus-data by default
-nx = nexus.connect()
+**Step 1: Start the server**
 
-# Write and read a file
-nx.write("/workspace/hello.txt", b"Hello, Nexus!")
-content = nx.read("/workspace/hello.txt")
-print(content.decode())  # → Hello, Nexus!
-
-nx.close()
-```
-
-**✅ No configuration needed!** Data is stored locally in `./nexus-data/`. Mount S3, GCS, or other backends later via [configuration](docs/api/configuration.md).
-
-### Embedded Mode (Full Features)
-
-```python
-import nexus
-
-# Zero-config local filesystem with AI features
-nx = nexus.connect(config={"data_dir": "./nexus-data"})
-
-# File operations
-nx.write("/workspace/doc.txt", b"Hello Nexus")
-content = nx.read("/workspace/doc.txt")
-
-# Agent memory
-nx.memory.store("Python best practices learned from code review")
-memories = nx.memory.query(user_id="alice", scope="project")
-# Returns: [Memory(content="Python best practices...", timestamp=...)]
-
-# Workflow automation - events trigger automatically!
-from nexus.workflows import WorkflowAPI, WorkflowLoader
-workflows = WorkflowAPI()
-workflows.load("invoice-processor.yaml", enabled=True)
-nx.write("/uploads/invoice.pdf", pdf_data)  # Workflow fires automatically!
-
-# Semantic search
-results = nx.semantic_search("/docs/**/*.md", query="authentication setup")
-# Returns: [
-#   SearchResult(path="/docs/auth.md", score=0.89, snippet="...OAuth setup..."),
-#   SearchResult(path="/docs/security.md", score=0.82, snippet="...API keys...")
-# ]
-
-# LLM-powered document reading (async)
-import asyncio
-answer = asyncio.run(nx.llm_read(
-    "/docs/**/*.md",
-    "How does authentication work?",
-    model="claude-sonnet-4"
-))
-# Returns: "The system uses JWT tokens with refresh token rotation..."
-
-nx.close()
-```
-
-### Server Mode (Production)
-
-**Start the server:**
 ```bash
 # Configure PostgreSQL backend
 export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
@@ -106,14 +53,46 @@ export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
 # Server runs at http://localhost:8080
 ```
 
-**Use the CLI remotely:**
+**Step 2: Connect from Python**
+
+```python
+import nexus
+
+# Auto-detect server from environment
+# export NEXUS_URL=http://localhost:8080
+# export NEXUS_API_KEY=your-api-key
+nx = nexus.connect()
+
+# Or provide explicitly
+nx = nexus.connect(config={
+    "url": "http://localhost:8080",
+    "api_key": "your-api-key"
+})
+
+# Same API as embedded mode
+nx.write("/workspace/hello.txt", b"Hello, Nexus!")
+content = nx.read("/workspace/hello.txt")
+print(content.decode())  # → Hello, Nexus!
+
+# Agent memory
+nx.memory.store("Python best practices learned from code review")
+memories = nx.memory.query(user_id="alice", scope="project")
+
+# Workflow automation - events trigger automatically!
+from nexus.workflows import WorkflowAPI
+workflows = WorkflowAPI()
+workflows.load("invoice-processor.yaml", enabled=True)
+nx.write("/uploads/invoice.pdf", pdf_data)  # Workflow fires!
+
+# Semantic search
+results = nx.semantic_search("/docs/**/*.md", query="authentication setup")
+
+nx.close()
+```
+
+**Step 3: Manage users and permissions**
+
 ```bash
-# Load admin credentials
-source .nexus-admin-env
-
-# Create workspace
-nexus mkdir /workspace/project1 --remote-url $NEXUS_URL
-
 # Create users and grant permissions
 python3 scripts/create-api-key.py alice "Alice's API key" --days 90
 # Output: sk-alice_abc123_...
@@ -126,18 +105,63 @@ export NEXUS_API_KEY='sk-alice_abc123_...'
 nexus write /workspace/project1/data.txt "Alice's data" --remote-url $NEXUS_URL
 ```
 
-**Use the SDK remotely:**
+### Embedded Mode (Development & Testing Only)
+
+**⚠️ Warning:** Embedded mode is suitable for development and testing only. For production, use Server Mode.
+
+**Hello World (10 Seconds)**
+
 ```python
 import nexus
 
-# Same API, remote execution
+# Zero-config start - data stored in ./nexus-data by default
+nx = nexus.connect(config={"mode": "embedded"})
+
+# Write and read a file
+nx.write("/workspace/hello.txt", b"Hello, Nexus!")
+content = nx.read("/workspace/hello.txt")
+print(content.decode())  # → Hello, Nexus!
+
+nx.close()
+```
+
+**Full Features (Embedded)**
+
+```python
+import nexus
+
+# Explicit embedded mode configuration
 nx = nexus.connect(config={
-    "remote_url": "http://localhost:8080",
-    "api_key": "sk-alice_abc123_..."
+    "mode": "embedded",
+    "data_dir": "./nexus-data"
 })
 
-nx.write("/workspace/project1/data.txt", b"Remote write")
-content = nx.read("/workspace/project1/data.txt")
+# File operations
+nx.write("/workspace/doc.txt", b"Hello Nexus")
+content = nx.read("/workspace/doc.txt")
+
+# Agent memory
+nx.memory.store("Python best practices learned from code review")
+memories = nx.memory.query(user_id="alice", scope="project")
+
+# Workflow automation
+from nexus.workflows import WorkflowAPI
+workflows = WorkflowAPI()
+workflows.load("invoice-processor.yaml", enabled=True)
+nx.write("/uploads/invoice.pdf", pdf_data)  # Workflow fires automatically!
+
+# Semantic search
+results = nx.semantic_search("/docs/**/*.md", query="authentication setup")
+
+# LLM-powered document reading (async)
+import asyncio
+answer = asyncio.run(nx.llm_read(
+    "/docs/**/*.md",
+    "How does authentication work?",
+    model="claude-sonnet-4"
+))
+
+nx.close()
 ```
 
 ### Permission System Example

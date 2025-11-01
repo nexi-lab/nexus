@@ -8,6 +8,7 @@ This module contains server-related CLI commands for:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
 import time
@@ -290,12 +291,30 @@ def unmount(mount_point: str) -> None:
     default=None,
     help="Authentication type (static, database, local, oidc, multi-oidc)",
 )
+@click.option(
+    "--init",
+    is_flag=True,
+    help="Initialize server (create admin user, API key, and workspace)",
+)
+@click.option(
+    "--reset",
+    is_flag=True,
+    help="Reset database to clean state before initialization (DESTRUCTIVE)",
+)
+@click.option(
+    "--admin-user",
+    default="admin",
+    help="Admin username for initialization (default: admin)",
+)
 @add_backend_options
 def serve(
     host: str,
     port: int,
     api_key: str | None,
     auth_type: str | None,
+    init: bool,
+    reset: bool,
+    admin_user: str,
     backend_config: BackendConfig,
 ) -> None:
     """Start Nexus RPC server.
@@ -312,15 +331,21 @@ def serve(
         # Start server with local backend (no authentication)
         nexus serve
 
-        # Start server with API key authentication
-        nexus serve --api-key mysecretkey
+        # First-time setup with database auth (creates admin user & API key)
+        nexus serve --auth-type database --init
 
-        # Start server with GCS backend
-        nexus serve --backend=gcs --gcs-bucket=my-bucket --api-key mysecretkey
+        # Clean setup for testing/demos (reset DB + init)
+        nexus serve --auth-type database --init --reset
+
+        # Restart server (already initialized)
+        nexus serve --auth-type database
+
+        # Custom port and admin user
+        nexus serve --auth-type database --init --port 8080 --admin-user alice
 
         # Connect from Python
         from nexus.remote import RemoteNexusFS
-        nx = RemoteNexusFS("http://localhost:8080", api_key="mysecretkey")
+        nx = RemoteNexusFS("http://localhost:8080", api_key="<admin-key>")
         nx.write("/workspace/file.txt", b"Hello, World!")
 
         # Mount with FUSE
@@ -328,6 +353,8 @@ def serve(
         mount_nexus(nx, "/mnt/nexus")
     """
     import logging
+    import os
+    import subprocess
 
     # Set up logging
     logging.basicConfig(
@@ -336,6 +363,64 @@ def serve(
     )
 
     try:
+        # ============================================
+        # Validation
+        # ============================================
+        if reset and not init:
+            console.print("[red]Error:[/red] --reset requires --init flag")
+            console.print(
+                "[yellow]Hint:[/yellow] Use: nexus serve --auth-type database --init --reset"
+            )
+            sys.exit(1)
+
+        if init and auth_type != "database":
+            console.print("[red]Error:[/red] --init requires --auth-type database")
+            console.print("[yellow]Hint:[/yellow] Use: nexus serve --auth-type database --init")
+            sys.exit(1)
+
+        # ============================================
+        # Port Cleanup
+        # ============================================
+        console.print(f"[yellow]Checking port {port}...[/yellow]")
+
+        try:
+            # Try to find and kill any process using the port
+            import shutil
+
+            if shutil.which("lsof"):
+                result = subprocess.run(
+                    ["lsof", "-ti", f":{port}"],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.stdout.strip():
+                    pid = result.stdout.strip()
+                    console.print(f"[yellow]⚠️  Port {port} is in use by process {pid}[/yellow]")
+                    console.print("[yellow]   Killing process...[/yellow]")
+                    subprocess.run(["kill", "-9", pid], check=False)
+                    time.sleep(1)
+                    console.print(f"[green]✓[/green] Port {port} is now available")
+                else:
+                    console.print(f"[green]✓[/green] Port {port} is available")
+            else:
+                # Fallback for systems without lsof
+                result = subprocess.run(
+                    ["netstat", "-an"],
+                    capture_output=True,
+                    text=True,
+                )
+                if f":{port}" in result.stdout and "LISTEN" in result.stdout:
+                    console.print(f"[yellow]⚠️  Port {port} appears to be in use[/yellow]")
+                    console.print(
+                        f"[yellow]   Please manually stop the process using port {port}[/yellow]"
+                    )
+                else:
+                    console.print(f"[green]✓[/green] Port {port} is available")
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Could not check port status: {e}[/yellow]")
+
+        console.print()
+
         # Import server components
         from nexus.server.rpc_server import NexusRPCServer
 
@@ -388,6 +473,239 @@ def serve(
             # This is the old behavior - just pass api_key to server
             pass
         # Future: add support for other auth types (local, oidc, etc.)
+
+        # ============================================
+        # Database Reset (if requested)
+        # ============================================
+        if reset:
+            db_url = os.getenv("NEXUS_DATABASE_URL")
+            if not db_url:
+                console.print("[red]Error:[/red] NEXUS_DATABASE_URL environment variable not set")
+                sys.exit(1)
+
+            console.print("[bold red]⚠️  WARNING: Database Reset[/bold red]")
+            console.print("[yellow]This will DELETE ALL existing data:[/yellow]")
+            console.print("  • All users and API keys")
+            console.print("  • All files and metadata")
+            console.print("  • All permissions and relationships")
+            console.print()
+
+            from sqlalchemy import create_engine, text
+
+            engine = create_engine(db_url)
+
+            # List of tables to clear (in dependency order)
+            tables_to_clear = [
+                # Auth tables
+                "refresh_tokens",
+                "api_keys",
+                "users",
+                # ReBAC and audit
+                "rebac_check_cache",
+                "rebac_changelog",
+                "admin_bypass_audit",
+                "operation_log",
+                "rebac_tuples",
+                # File tables
+                "content_chunks",
+                "document_chunks",
+                "version_history",
+                "file_metadata",
+                "file_paths",
+                # Memory and workspace
+                "memories",
+                "memory_configs",
+                "workspace_snapshots",
+                "workspace_configs",
+                # Workflow tables
+                "workflow_executions",
+                "workflows",
+                # Mount configs
+                "mount_configs",
+            ]
+
+            deleted_counts = {}
+            console.print("[yellow]Clearing database tables...[/yellow]")
+
+            for table_name in tables_to_clear:
+                try:
+                    with engine.connect() as conn:
+                        trans = conn.begin()
+                        try:
+                            cursor_result = conn.execute(text(f"DELETE FROM {table_name}"))
+                            count = cursor_result.rowcount
+                            trans.commit()
+                            deleted_counts[table_name] = count
+                            if count > 0:
+                                console.print(
+                                    f"  [dim]Deleted {count} rows from {table_name}[/dim]"
+                                )
+                        except Exception:
+                            trans.rollback()
+                            # Ignore table doesn't exist errors
+                            pass
+                except Exception:
+                    pass
+
+            total = sum(deleted_counts.values())
+            if total > 0:
+                console.print(
+                    f"[green]✓[/green] Cleared {total} total rows from {len(deleted_counts)} tables"
+                )
+            else:
+                console.print("[green]✓[/green] Database was already empty")
+            console.print()
+
+            # Clear filesystem data
+            data_dir = backend_config.data_dir
+            if data_dir and Path(data_dir).exists():
+                console.print(f"[yellow]Clearing filesystem data: {data_dir}[/yellow]")
+                import shutil
+
+                for item in Path(data_dir).iterdir():
+                    if item.is_dir():
+                        shutil.rmtree(item)
+                    else:
+                        item.unlink()
+                console.print("[green]✓[/green] Cleared filesystem data")
+                console.print()
+
+        # ============================================
+        # Initialization (if requested)
+        # ============================================
+        if init:
+            console.print("[bold green]🔧 Initializing Nexus Server[/bold green]")
+            console.print()
+
+            # Get database URL
+            db_url = os.getenv("NEXUS_DATABASE_URL")
+            if not db_url:
+                console.print("[red]Error:[/red] NEXUS_DATABASE_URL environment variable not set")
+                sys.exit(1)
+
+            # Create admin user and API key
+            console.print("[yellow]Creating admin user and API key...[/yellow]")
+
+            from datetime import UTC, datetime, timedelta
+
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+
+            from nexus.core.entity_registry import EntityRegistry
+            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+
+            engine = create_engine(db_url)
+            Session = sessionmaker(bind=engine)
+
+            # Register user in entity registry (for agent permission inheritance)
+            entity_registry = EntityRegistry(Session)
+            tenant_id = "default"
+
+            # User might already exist, ignore errors
+            with contextlib.suppress(Exception):
+                entity_registry.register_entity(
+                    entity_type="user",
+                    entity_id=admin_user,
+                    parent_type="tenant",
+                    parent_id=tenant_id,
+                )
+
+            # Create API key using DatabaseAPIKeyAuth
+            try:
+                with Session() as session:
+                    # Calculate expiry (90 days)
+                    expires_at = datetime.now(UTC) + timedelta(days=90)
+
+                    key_id, admin_api_key = DatabaseAPIKeyAuth.create_key(
+                        session,
+                        user_id=admin_user,
+                        name="Admin key (created by init)",
+                        tenant_id=tenant_id,
+                        is_admin=True,
+                        expires_at=expires_at,
+                    )
+                    session.commit()
+
+                    console.print(f"[green]✓[/green] Created admin user: {admin_user}")
+                    console.print("[green]✓[/green] Created admin API key")
+
+                # Create workspace directory
+                console.print()
+                console.print("[yellow]Setting up workspace...[/yellow]")
+
+                # Create /workspace directory using direct filesystem access
+                # We need to bypass the nx object since permissions are enforced
+                # Instead, use the underlying backend directly
+                from nexus.backends.local import LocalBackend
+
+                data_dir = backend_config.data_dir
+                backend = LocalBackend(data_dir)
+
+                try:
+                    # Create /workspace directory directly via backend
+                    try:
+                        backend.mkdir("/workspace")
+                        console.print("[green]✓[/green] Created /workspace")
+                    except Exception as mkdir_err:
+                        # Directory might already exist, check and ignore
+                        if "already exists" in str(mkdir_err).lower():
+                            console.print("[green]✓[/green] /workspace already exists")
+                        else:
+                            raise
+
+                    # Grant admin user ownership
+                    from nexus.core.rebac_manager import ReBACManager
+
+                    rebac = ReBACManager(engine)
+                    rebac.rebac_write(
+                        subject=("user", admin_user),
+                        relation="direct_owner",
+                        object=("file", "/workspace"),
+                        tenant_id="default",
+                    )
+                    console.print(
+                        f"[green]✓[/green] Granted '{admin_user}' ownership of /workspace"
+                    )
+
+                except Exception as workspace_err:
+                    console.print(
+                        f"[yellow]⚠️  Warning: Could not setup workspace: {workspace_err}[/yellow]"
+                    )
+                    console.print("[yellow]   You may need to manually create /workspace[/yellow]")
+
+                # Display API key
+                console.print()
+                console.print("[bold cyan]" + "=" * 60 + "[/bold cyan]")
+                console.print("[bold green]✅ Initialization Complete![/bold green]")
+                console.print("[bold cyan]" + "=" * 60 + "[/bold cyan]")
+                console.print()
+                console.print("[bold yellow]IMPORTANT: Save this API key securely![/bold yellow]")
+                console.print()
+                console.print(f"[bold cyan]Admin API Key:[/bold cyan] {admin_api_key}")
+                console.print()
+                console.print("[yellow]Add to your ~/.bashrc or ~/.zshrc:[/yellow]")
+                console.print(f"  export NEXUS_API_KEY='{admin_api_key}'")
+                console.print(f"  export NEXUS_URL='http://localhost:{port}'")
+                console.print()
+
+                # Save to .nexus-admin-env file
+                env_file = Path(".nexus-admin-env")
+                env_file.write_text(
+                    f"# Nexus Admin Environment\n"
+                    f"# Created: {datetime.now()}\n"
+                    f"# User: {admin_user}\n"
+                    f"export NEXUS_API_KEY='{admin_api_key}'\n"
+                    f"export NEXUS_URL='http://localhost:{port}'\n"
+                    f"export NEXUS_DATABASE_URL='{db_url}'\n"
+                )
+                console.print("[green]✓[/green] Saved to .nexus-admin-env")
+                console.print()
+                console.print("[bold cyan]" + "=" * 60 + "[/bold cyan]")
+                console.print()
+
+            except Exception as e:
+                console.print(f"[red]Error during initialization:[/red] {e}")
+                raise
 
         # Create and start server
         console.print("[green]Starting Nexus RPC server...[/green]")

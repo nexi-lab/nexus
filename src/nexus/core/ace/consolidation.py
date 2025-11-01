@@ -120,6 +120,8 @@ class ConsolidationEngine:
         self,
         memory_type: str | None = None,
         scope: str | None = None,
+        namespace: str | None = None,  # v0.8.0: Exact namespace
+        namespace_prefix: str | None = None,  # v0.8.0: Namespace prefix
         importance_max: float = 0.5,
         batch_size: int = 10,
         limit: int = 100,
@@ -129,6 +131,8 @@ class ConsolidationEngine:
         Args:
             memory_type: Filter by memory type
             scope: Filter by scope
+            namespace: Filter by exact namespace match. v0.8.0
+            namespace_prefix: Filter by namespace prefix. v0.8.0
             importance_max: Only consolidate memories with importance <= this
             batch_size: Number of memories to consolidate per batch
             limit: Maximum total memories to process
@@ -149,6 +153,12 @@ class ConsolidationEngine:
             query = query.filter_by(memory_type=memory_type)
         if scope:
             query = query.filter_by(scope=scope)
+
+        # v0.8.0: Namespace filtering
+        if namespace:
+            query = query.filter_by(namespace=namespace)
+        elif namespace_prefix:
+            query = query.filter(MemoryModel.namespace.like(f"{namespace_prefix}%"))
 
         query = query.order_by(MemoryModel.created_at.desc()).limit(limit)
         memories = query.all()

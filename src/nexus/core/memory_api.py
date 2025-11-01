@@ -80,35 +80,52 @@ class Memory:
 
     def store(
         self,
-        content: str | bytes,
+        content: str | bytes | dict[str, Any],
         scope: str = "user",
         memory_type: str | None = None,
         importance: float | None = None,
+        namespace: str | None = None,  # v0.8.0: Hierarchical namespace
+        path_key: str | None = None,  # v0.8.0: Optional key for upsert mode
         _metadata: dict[str, Any] | None = None,
     ) -> str:
         """Store a memory.
 
         Args:
-            content: Memory content (text or bytes).
+            content: Memory content (text, bytes, or structured dict).
             scope: Memory scope ('agent', 'user', 'tenant', 'global').
-            memory_type: Type of memory ('fact', 'preference', 'experience').
+            memory_type: Type of memory ('fact', 'preference', 'experience'). Optional if using namespace structure.
             importance: Importance score (0.0-1.0).
-            metadata: Additional metadata.
+            namespace: Hierarchical namespace for organization (e.g., "knowledge/geography/facts"). v0.8.0
+            path_key: Optional unique key within namespace for upsert mode. v0.8.0
+            metadata: Additional metadata (deprecated, use structured content dict instead).
 
         Returns:
-            memory_id: The created memory ID.
+            memory_id: The created or updated memory ID.
 
-        Example:
-            >>> memory = nx.memory
+        Examples:
+            >>> # Append mode (no path_key)
             >>> memory_id = memory.store(
-            ...     "User prefers Python over JavaScript",
-            ...     scope="user",
-            ...     memory_type="preference",
-            ...     importance=0.9
+            ...     content={"fact": "Paris is capital of France"},
+            ...     namespace="knowledge/geography/facts"
+            ... )
+
+            >>> # Upsert mode (with path_key)
+            >>> memory_id = memory.store(
+            ...     content={"theme": "dark", "font_size": 14},
+            ...     namespace="user/preferences/ui",
+            ...     path_key="settings"  # Will update if exists
             ... )
         """
+        import json
+
         # Convert content to bytes
-        content_bytes = content.encode("utf-8") if isinstance(content, str) else content
+        if isinstance(content, dict):
+            # Structured content - serialize as JSON
+            content_bytes = json.dumps(content, indent=2).encode("utf-8")
+        elif isinstance(content, str):
+            content_bytes = content.encode("utf-8")
+        else:
+            content_bytes = content
 
         # Store content in backend (CAS)
         # LocalBackend.write_content() handles hashing and storage
@@ -118,7 +135,7 @@ class Memory:
             # If backend write fails, we can't proceed
             raise RuntimeError(f"Failed to store content in backend: {e}") from e
 
-        # Create memory record
+        # Create memory record (upserts if namespace+path_key exists)
         memory = self.memory_router.create_memory(
             content_hash=content_hash,
             tenant_id=self.tenant_id,
@@ -127,6 +144,8 @@ class Memory:
             scope=scope,
             memory_type=memory_type,
             importance=importance,
+            namespace=namespace,
+            path_key=path_key,
         )
 
         return memory.memory_id
@@ -327,6 +346,98 @@ class Memory:
             "visibility": memory.visibility,
             "memory_type": memory.memory_type,
             "importance": memory.importance,
+            "namespace": memory.namespace,
+            "path_key": memory.path_key,
+            "created_at": memory.created_at.isoformat() if memory.created_at else None,
+            "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
+        }
+
+    def retrieve(
+        self,
+        namespace: str | None = None,
+        path_key: str | None = None,
+        path: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Retrieve a memory by namespace and path_key.
+
+        Args:
+            namespace: Memory namespace.
+            path_key: Path key within namespace.
+            path: Combined path (alternative to namespace+path_key). Format: "namespace/path_key"
+
+        Returns:
+            Memory dictionary or None if not found or no permission.
+
+        Examples:
+            >>> # Retrieve by namespace + path_key
+            >>> mem = memory.retrieve(namespace="user/preferences/ui", path_key="settings")
+
+            >>> # Retrieve by combined path (sugar syntax)
+            >>> mem = memory.retrieve(path="user/preferences/ui/settings")
+
+        Note:
+            Only works for memories stored with path_key. Use get(memory_id) for append-mode memories.
+        """
+        # Parse combined path if provided
+        if path:
+            parts = path.rsplit("/", 1)
+            if len(parts) == 2:
+                namespace, path_key = parts
+            else:
+                # Path doesn't contain /, treat as path_key only
+                path_key = parts[0]
+
+        if not namespace or not path_key:
+            raise ValueError("Both namespace and path_key are required")
+
+        # Query by namespace + path_key
+        from sqlalchemy import select
+
+        from nexus.storage.models import MemoryModel
+
+        stmt = select(MemoryModel).where(
+            MemoryModel.namespace == namespace, MemoryModel.path_key == path_key
+        )
+        memory = self.session.execute(stmt).scalar_one_or_none()
+
+        if not memory:
+            return None
+
+        # Check permission
+        if not self.permission_enforcer.check_memory(memory, Permission.READ, self.context):
+            return None
+
+        # Read content
+        content = None
+        try:
+            content_bytes = self.backend.read_content(memory.content_hash, context=self.context)
+            try:
+                # Try to parse as JSON (structured content)
+                import json
+
+                content = json.loads(content_bytes.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                # Fall back to text or hex
+                try:
+                    content = content_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    content = content_bytes.hex()
+        except Exception:
+            content = f"<content not available: {memory.content_hash}>"
+
+        return {
+            "memory_id": memory.memory_id,
+            "content": content,
+            "content_hash": memory.content_hash,
+            "tenant_id": memory.tenant_id,
+            "user_id": memory.user_id,
+            "agent_id": memory.agent_id,
+            "scope": memory.scope,
+            "visibility": memory.visibility,
+            "memory_type": memory.memory_type,
+            "importance": memory.importance,
+            "namespace": memory.namespace,
+            "path_key": memory.path_key,
             "created_at": memory.created_at.isoformat() if memory.created_at else None,
             "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
         }
@@ -358,6 +469,8 @@ class Memory:
         self,
         scope: str | None = None,
         memory_type: str | None = None,
+        namespace: str | None = None,  # v0.8.0: Exact namespace match
+        namespace_prefix: str | None = None,  # v0.8.0: Prefix match for hierarchical queries
         limit: int | None = 100,
     ) -> list[dict[str, Any]]:
         """List memories for current user/agent.
@@ -365,14 +478,25 @@ class Memory:
         Args:
             scope: Filter by scope.
             memory_type: Filter by memory type.
+            namespace: Filter by exact namespace match. v0.8.0
+            namespace_prefix: Filter by namespace prefix for hierarchical queries. v0.8.0
             limit: Maximum number of results.
 
         Returns:
             List of memory dictionaries (without full content for efficiency).
 
-        Example:
-            >>> memories = memory.list(scope="user")
-            >>> print(f"Found {len(memories)} memories")
+        Examples:
+            >>> # List all memories
+            >>> memories = memory.list()
+
+            >>> # List memories in specific namespace
+            >>> prefs = memory.list(namespace="user/preferences/ui")
+
+            >>> # List all geography knowledge
+            >>> geo = memory.list(namespace_prefix="knowledge/geography/")
+
+            >>> # List all facts across all domains
+            >>> facts = memory.list(namespace_prefix="*/facts")
         """
         memories = self.memory_router.query_memories(
             tenant_id=self.tenant_id,
@@ -380,6 +504,8 @@ class Memory:
             agent_id=self.agent_id,
             scope=scope,
             memory_type=memory_type,
+            namespace=namespace,
+            namespace_prefix=namespace_prefix,
             limit=limit,
         )
 
@@ -400,6 +526,8 @@ class Memory:
                     "visibility": memory.visibility,
                     "memory_type": memory.memory_type,
                     "importance": memory.importance,
+                    "namespace": memory.namespace,
+                    "path_key": memory.path_key,
                     "created_at": memory.created_at.isoformat() if memory.created_at else None,
                     "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
                 }
@@ -1088,6 +1216,8 @@ class Memory:
         self,
         memory_type: str | None = None,
         scope: str | None = None,
+        namespace: str | None = None,  # v0.8.0: Exact namespace
+        namespace_prefix: str | None = None,  # v0.8.0: Namespace prefix
         preserve_high_importance: bool = True,
         importance_threshold: float = 0.8,
     ) -> dict[str, Any]:
@@ -1096,6 +1226,8 @@ class Memory:
         Args:
             memory_type: Filter by memory type (e.g., 'experience', 'reflection')
             scope: Filter by scope (e.g., 'agent', 'user')
+            namespace: Filter by exact namespace match. v0.8.0
+            namespace_prefix: Filter by namespace prefix. v0.8.0
             preserve_high_importance: Keep high-importance memories unconsolidated
             importance_threshold: Threshold for high importance (0.0-1.0)
 
@@ -1105,13 +1237,18 @@ class Memory:
                 - consolidations_created: Count
                 - space_saved: Approximate reduction
 
-        Example:
+        Examples:
+            >>> # Consolidate by namespace
             >>> report = await memory.consolidate_async(
-            ...     memory_type="experience",
-            ...     scope="agent",
+            ...     namespace="knowledge/geography/facts",
             ...     importance_threshold=0.8
             ... )
-            >>> print(f"Consolidated {report['memories_consolidated']} memories")
+
+            >>> # Consolidate all under prefix
+            >>> report = await memory.consolidate_async(
+            ...     namespace_prefix="knowledge/",
+            ...     importance_threshold=0.5
+            ... )
         """
         from nexus.core.ace.consolidation import ConsolidationEngine
 
@@ -1131,6 +1268,8 @@ class Memory:
         results = consolidation_engine.consolidate_by_criteria(
             memory_type=memory_type,
             scope=scope,
+            namespace=namespace,
+            namespace_prefix=namespace_prefix,
             importance_max=max_importance,
             batch_size=10,
             limit=100,
@@ -1150,6 +1289,8 @@ class Memory:
         self,
         memory_type: str | None = None,
         scope: str | None = None,
+        namespace: str | None = None,  # v0.8.0: Exact namespace
+        namespace_prefix: str | None = None,  # v0.8.0: Namespace prefix
         preserve_high_importance: bool = True,
         importance_threshold: float = 0.8,
     ) -> dict[str, Any]:
@@ -1158,6 +1299,8 @@ class Memory:
         Args:
             memory_type: Filter by memory type
             scope: Filter by scope
+            namespace: Filter by exact namespace match. v0.8.0
+            namespace_prefix: Filter by namespace prefix. v0.8.0
             preserve_high_importance: Keep high-importance memories
             importance_threshold: Threshold for high importance
 
@@ -1168,7 +1311,12 @@ class Memory:
 
         return asyncio.run(
             self.consolidate_async(
-                memory_type, scope, preserve_high_importance, importance_threshold
+                memory_type,
+                scope,
+                namespace,
+                namespace_prefix,
+                preserve_high_importance,
+                importance_threshold,
             )
         )
 

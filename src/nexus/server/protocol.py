@@ -476,6 +476,13 @@ class ListRegisteredMemoriesParams:
 
 
 @dataclass
+class ListRegisteredMemoriesParams:
+    """Parameters for list_registered_memories() method."""
+
+    pass
+
+
+@dataclass
 class WorkspaceSnapshotParams:
     """Parameters for workspace_snapshot() method (v0.5.0)."""
 

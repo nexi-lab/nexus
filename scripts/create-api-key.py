@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from nexus.core.entity_registry import EntityRegistry
 from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 
 
@@ -45,6 +46,15 @@ def main() -> None:
     expires_at = None
     if args.days:
         expires_at = datetime.now(UTC) + timedelta(days=args.days)
+
+    # Register user in entity registry (for agent permission inheritance)
+    entity_registry = EntityRegistry(SessionFactory)
+    entity_registry.register_entity(
+        entity_type="user",
+        entity_id=args.user_id,
+        parent_type="tenant",
+        parent_id=args.tenant_id,
+    )
 
     # Create API key
     with SessionFactory() as session:

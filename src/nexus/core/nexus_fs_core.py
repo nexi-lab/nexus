@@ -37,13 +37,11 @@ if TYPE_CHECKING:
 class NexusFSCoreMixin:
     """Mixin providing core file operations for NexusFS."""
 
-    # Type hints for attributes that will be provided by NexusFS parent class
+    # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
         metadata: SQLAlchemyMetadataStore
         backend: Backend
         router: PathRouter
-        tenant_id: str | None
-        agent_id: str | None
         is_admin: bool
         auto_parse: bool
         parser_registry: ParserRegistry
@@ -52,6 +50,11 @@ class NexusFSCoreMixin:
         _parser_threads: list[threading.Thread]
         _parser_threads_lock: threading.Lock
 
+        @property
+        def tenant_id(self) -> str | None: ...
+        @property
+        def agent_id(self) -> str | None: ...
+
         def _validate_path(self, path: str) -> str: ...
         def _check_permission(
             self, path: str, permission: Permission, context: OperationContext | None
@@ -59,6 +62,9 @@ class NexusFSCoreMixin:
         def _inherit_permissions_from_parent(
             self, path: str, is_directory: bool
         ) -> tuple[str | None, str | None, int | None]: ...
+        def _get_routing_params(
+            self, context: OperationContext | dict[Any, Any] | None
+        ) -> tuple[str | None, str | None, bool]: ...
         async def parse(self, path: str, store_result: bool = True) -> Any: ...
 
     @rpc_expose(description="Read file content")
@@ -129,11 +135,12 @@ class NexusFSCoreMixin:
             logger.info(f"read: Virtual view detected, reading original file: {original_path}")
 
             # Read the original file
+            tenant_id, agent_id, is_admin = self._get_routing_params(context)
             route = self.router.route(
                 original_path,
-                tenant_id=self.tenant_id,
-                agent_id=self.agent_id,
-                is_admin=self.is_admin,
+                tenant_id=tenant_id,
+                agent_id=agent_id,
+                is_admin=is_admin,
                 check_write=False,
             )
             meta = self.metadata.get(original_path)
@@ -157,11 +164,12 @@ class NexusFSCoreMixin:
             return content
 
         # Normal file path - proceed with regular read
+        tenant_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            tenant_id=self.tenant_id,
-            agent_id=self.agent_id,
-            is_admin=self.is_admin,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            is_admin=is_admin,
             check_write=False,
         )
 
@@ -226,11 +234,12 @@ class NexusFSCoreMixin:
         self._check_permission(path, Permission.READ, context)
 
         # Route to backend with access control
+        tenant_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            tenant_id=self.tenant_id,
-            agent_id=self.agent_id,
-            is_admin=self.is_admin,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            is_admin=is_admin,
             check_write=False,
         )
 
@@ -246,7 +255,7 @@ class NexusFSCoreMixin:
     def write(
         self,
         path: str,
-        content: bytes,
+        content: bytes | str,
         context: OperationContext | None = None,
         if_match: str | None = None,
         if_none_match: bool = False,
@@ -262,7 +271,7 @@ class NexusFSCoreMixin:
 
         Args:
             path: Virtual path to write
-            content: File content as bytes
+            content: File content as bytes or str (str will be UTF-8 encoded)
             context: Optional operation context for permission checks (uses default if not provided)
             if_match: Optional etag for optimistic concurrency control (v0.3.9).
                      If provided, write only succeeds if current file etag matches this value.
@@ -303,6 +312,10 @@ class NexusFSCoreMixin:
             >>> # Write memory via virtual path            >>> nx.write("/workspace/alice/agent1/memory/facts", b'Python is great')
             >>> nx.write("/memory/by-user/alice/facts", b'Update')  # Same memory!
         """
+        # Auto-convert str to bytes for convenience
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
@@ -313,11 +326,12 @@ class NexusFSCoreMixin:
 
         # Route to backend with write access check FIRST (to check tenant/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
+        tenant_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            tenant_id=self.tenant_id,
-            agent_id=self.agent_id,
-            is_admin=self.is_admin,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            is_admin=is_admin,
             check_write=True,
         )
 
@@ -452,8 +466,8 @@ class NexusFSCoreMixin:
                 op_logger.log_operation(
                     operation_type="write",
                     path=path,
-                    tenant_id=self.tenant_id,
-                    agent_id=self.agent_id,
+                    tenant_id=tenant_id,
+                    agent_id=agent_id,
                     snapshot_hash=snapshot_hash,
                     metadata_snapshot=metadata_snapshot,
                     status="success",
@@ -503,8 +517,8 @@ class NexusFSCoreMixin:
                 "size": len(content),
                 "etag": content_hash,
                 "version": new_version,
-                "tenant_id": self.tenant_id or "default",
-                "agent_id": self.agent_id,
+                "tenant_id": tenant_id or "default",
+                "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "created": is_new_file,
                 "timestamp": now.isoformat(),
@@ -622,13 +636,14 @@ class NexusFSCoreMixin:
             validated_files.append((validated_path, content))
 
         # Route all paths and check write access
+        tenant_id, agent_id, is_admin = self._get_routing_params(context)
         routes = []
         for path, _ in validated_files:
             route = self.router.route(
                 path,
-                tenant_id=self.tenant_id,
-                agent_id=self.agent_id,
-                is_admin=self.is_admin,
+                tenant_id=tenant_id,
+                agent_id=agent_id,
+                is_admin=is_admin,
                 check_write=True,
             )
             # Check if path is read-only
@@ -808,11 +823,12 @@ class NexusFSCoreMixin:
 
         # Route to backend with write access check FIRST (to check tenant/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
+        tenant_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            tenant_id=self.tenant_id,
-            agent_id=self.agent_id,
-            is_admin=self.is_admin,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            is_admin=is_admin,
             check_write=True,
         )
 
@@ -847,8 +863,8 @@ class NexusFSCoreMixin:
                 op_logger.log_operation(
                     operation_type="delete",
                     path=path,
-                    tenant_id=self.tenant_id,
-                    agent_id=self.agent_id,
+                    tenant_id=tenant_id,
+                    agent_id=agent_id,
                     snapshot_hash=snapshot_hash,
                     metadata_snapshot=metadata_snapshot,
                     status="success",
@@ -878,8 +894,8 @@ class NexusFSCoreMixin:
                 "file_path": path,
                 "size": meta.size,
                 "etag": meta.etag,
-                "tenant_id": self.tenant_id or "default",
-                "agent_id": self.agent_id,
+                "tenant_id": tenant_id or "default",
+                "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
             }
@@ -924,18 +940,19 @@ class NexusFSCoreMixin:
         new_path = self._validate_path(new_path)
 
         # Route both paths
+        tenant_id, agent_id, is_admin = self._get_routing_params(context)
         old_route = self.router.route(
             old_path,
-            tenant_id=self.tenant_id,
-            agent_id=self.agent_id,
-            is_admin=self.is_admin,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            is_admin=is_admin,
             check_write=True,  # Need write access to source
         )
         new_route = self.router.route(
             new_path,
-            tenant_id=self.tenant_id,
-            agent_id=self.agent_id,
-            is_admin=self.is_admin,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            is_admin=is_admin,
             check_write=True,  # Need write access to destination
         )
 
@@ -964,8 +981,46 @@ class NexusFSCoreMixin:
         if self.metadata.exists(new_path):
             raise FileExistsError(f"Destination path already exists: {new_path}")
 
+        # Check if this is a directory BEFORE renaming (important!)
+        # After rename, the old path won't have children anymore
+        is_directory = self.metadata.is_implicit_directory(old_path)
+
         # Perform metadata-only rename (no CAS I/O!)
         self.metadata.rename_path(old_path, new_path)
+
+        # Update ReBAC permissions to follow the renamed file/directory
+        # This ensures permissions are preserved when files are moved
+        if hasattr(self, "_rebac_manager") and self._rebac_manager:
+            try:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"Updating ReBAC permissions: {old_path} -> {new_path}, is_directory={is_directory}"
+                )
+
+                # Update all ReBAC tuples that reference this path
+                updated_count = self._rebac_manager.update_object_path(
+                    old_path=old_path,
+                    new_path=new_path,
+                    object_type="file",
+                    is_directory=is_directory,
+                )
+
+                # Log if any permissions were updated
+                logger.info(f"Updated {updated_count} ReBAC tuples")
+                if updated_count > 0:
+                    pass  # Successfully updated permissions silently
+            except Exception as e:
+                # Don't fail the rename operation if ReBAC update fails
+                # The file is already renamed in metadata, we just couldn't update permissions
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.error(
+                    f"Failed to update ReBAC permissions during rename: {e}", exc_info=True
+                )
+                pass
 
         # Log operation for audit trail and undo capability
         try:
@@ -977,8 +1032,8 @@ class NexusFSCoreMixin:
                     operation_type="rename",
                     path=old_path,
                     new_path=new_path,
-                    tenant_id=self.tenant_id,
-                    agent_id=self.agent_id,
+                    tenant_id=tenant_id,
+                    agent_id=agent_id,
                     snapshot_hash=snapshot_hash,
                     metadata_snapshot=metadata_snapshot,
                     status="success",
@@ -1000,8 +1055,8 @@ class NexusFSCoreMixin:
                 "new_path": new_path,
                 "size": meta.size if meta else 0,
                 "etag": meta.etag if meta else None,
-                "tenant_id": self.tenant_id or "default",
-                "agent_id": self.agent_id,
+                "tenant_id": tenant_id or "default",
+                "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
             }

@@ -22,6 +22,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -91,9 +92,14 @@ class FilePathModel(Base):
     # Indexes and constraints
     __table_args__ = (
         # P0 SECURITY: Restore tenant-scoped unique constraint for defense-in-depth
-        # Old uq_virtual_path (global uniqueness) kept for backward compatibility with NULL tenant_id
-        # New uq_tenant_virtual_path enforces uniqueness within tenant
-        UniqueConstraint("virtual_path", name="uq_virtual_path"),  # Legacy, for NULL tenant_id
+        # IMPORTANT: Partial unique index that excludes soft-deleted rows
+        # This prevents unique constraint violations when renaming files to paths of deleted files
+        Index(
+            "uq_virtual_path",
+            "virtual_path",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
         Index("idx_file_paths_tenant_path", "tenant_id", "virtual_path"),  # Tenant-scoped queries
         Index("idx_file_paths_backend_id", "backend_id"),
         Index("idx_file_paths_content_hash", "content_hash"),

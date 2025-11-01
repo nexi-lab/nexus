@@ -2509,6 +2509,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         name: str,
         description: str | None = None,
         generate_api_key: bool = False,
+        context: dict | None = None,
     ) -> dict:
         """Register an AI agent (v0.5.0).
 
@@ -2520,6 +2521,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             name: Human-readable name
             description: Optional description
             generate_api_key: If True, create API key for agent (not recommended)
+            context: Optional operation context (for compatibility with NexusFS)
 
         Returns:
             Agent info dict with agent_id, user_id, name, etc.
@@ -2532,15 +2534,18 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             >>> agent = nx.register_agent("data_analyst", "Data Analyst")
             >>> # Agent uses owner's credentials + X-Agent-ID header
         """
-        result = self._call_rpc(
-            "register_agent",
-            {
-                "agent_id": agent_id,
-                "name": name,
-                "description": description,
-                "generate_api_key": generate_api_key,
-            },
-        )
+        params: dict[str, Any] = {
+            "agent_id": agent_id,
+            "name": name,
+            "description": description,
+            "generate_api_key": generate_api_key,
+        }
+
+        # Add context if provided (for compatibility with NexusFS)
+        if context is not None:
+            params["context"] = context
+
+        result = self._call_rpc("register_agent", params)
         return result  # type: ignore[no-any-return]
 
     def list_agents(self) -> builtins.list[dict]:

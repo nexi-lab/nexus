@@ -2432,11 +2432,13 @@ class NexusFS(
         from nexus.core.agents import register_agent
 
         # Extract user_id from context
+        # Context can be either dict (from params) or OperationContext (from RPC auth)
         user_id = None
         if context:
             if isinstance(context, dict):
                 user_id = context.get("user_id") or context.get("user")
             else:
+                # OperationContext object from RPC authentication
                 user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
 
         if not user_id:

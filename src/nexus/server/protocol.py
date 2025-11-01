@@ -548,6 +548,7 @@ class RegisterAgentParams:
     name: str
     description: str | None = None
     generate_api_key: bool = False
+    context: dict | None = None  # For compatibility with NexusFS signature
 
 
 @dataclass

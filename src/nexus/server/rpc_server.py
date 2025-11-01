@@ -994,7 +994,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return {"success": True}
 
         elif method == "is_directory":
-            return {"is_directory": self.nexus_fs.is_directory(params.path)}
+            return {"is_directory": self.nexus_fs.is_directory(params.path, context=context)}
 
         elif method == "get_available_namespaces":
             return {"namespaces": self.nexus_fs.get_available_namespaces()}
@@ -1011,7 +1011,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 return {"metadata": None}
 
             # Check if it's a directory
-            is_dir = self.nexus_fs.is_directory(params.path)
+            is_dir = self.nexus_fs.is_directory(params.path, context=context)
 
             # Serialize metadata object to dict
             # Note: UNIX-style permissions (owner/group/mode) have been removed
@@ -1105,6 +1105,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         # Memory storage operations
         elif method == "store_memory":
+            # v0.7.1+v0.8.0: Use memory API with authenticated context
             memory_api = self._get_memory_api_with_context()
             memory_id = memory_api.store(
                 content=params.content,
@@ -1118,6 +1119,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return {"memory_id": memory_id}
 
         elif method == "list_memories":
+            # v0.7.1+v0.8.0: Use memory API with authenticated context
             memory_api = self._get_memory_api_with_context()
             memories = memory_api.list(
                 scope=params.scope,
@@ -1143,6 +1145,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return {"deleted": deleted}
 
         elif method == "query_memories":
+            # v0.7.1+v0.8.0: Use memory API with authenticated context
             memory_api = self._get_memory_api_with_context()
             memories = memory_api.query(
                 memory_type=params.memory_type,

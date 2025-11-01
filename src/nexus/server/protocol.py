@@ -469,6 +469,13 @@ class ListMemoriesParams:
 
 
 @dataclass
+class ListRegisteredMemoriesParams:
+    """Parameters for list_registered_memories() method."""
+
+    pass
+
+
+@dataclass
 class WorkspaceSnapshotParams:
     """Parameters for workspace_snapshot() method (v0.5.0)."""
 
@@ -799,6 +806,7 @@ METHOD_PARAMS = {
     "unregister_memory": UnregisterMemoryParams,  # v0.5.0
     "get_memory_info": GetMemoryInfoParams,  # v0.5.0
     "list_memories": ListMemoriesParams,  # v0.5.0
+    "list_registered_memories": ListRegisteredMemoriesParams,  # v0.5.0
     "register_agent": RegisterAgentParams,  # v0.5.0
     "list_agents": ListAgentsParams,  # v0.5.0
     "get_agent": GetAgentParams,  # v0.5.0

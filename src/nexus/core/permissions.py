@@ -22,6 +22,7 @@ from enum import IntFlag
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from nexus.core.permissions_enhanced import EnhancedOperationContext
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
@@ -211,7 +212,7 @@ class PermissionEnforcer:
         self,
         path: str,
         permission: Permission,
-        context: OperationContext,
+        context: OperationContext | EnhancedOperationContext,
     ) -> bool:
         """Check if user has permission to perform operation on file.
 
@@ -251,7 +252,7 @@ class PermissionEnforcer:
         self,
         path: str,
         permission: Permission,
-        context: OperationContext,
+        context: OperationContext | EnhancedOperationContext,
     ) -> bool:
         """Check ReBAC relationships for permission.
 

@@ -1060,28 +1060,34 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         # Memory storage operations
         elif method == "store_memory":
+            # v0.7.1: Pass context to memory operations for proper identity tracking
             memory_id = self.nexus_fs.memory.store(  # type: ignore[attr-defined]
                 content=params.content,
                 memory_type=params.memory_type,
                 scope=params.scope,
                 importance=params.importance,
+                context=context,
                 # Note: tags param in RPC but not in Memory.store() - ignore it
             )
             return {"memory_id": memory_id}
 
         elif method == "list_memories":
+            # v0.7.1: Pass context to memory operations for proper identity tracking
             memories = self.nexus_fs.memory.list(  # type: ignore[attr-defined]
                 scope=params.scope,
                 memory_type=params.memory_type,
                 limit=params.limit,
+                context=context,
             )
             return {"memories": memories}
 
         elif method == "query_memories":
+            # v0.7.1: Pass context to memory operations for proper identity tracking
             memories = self.nexus_fs.memory.query(  # type: ignore[attr-defined]
                 memory_type=params.memory_type,
                 scope=params.scope,
                 limit=params.limit,
+                context=context,
             )
             return {"memories": memories}
 

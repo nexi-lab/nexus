@@ -2287,23 +2287,28 @@ class NexusFS(
         """
         return self._workspace_registry.unregister_memory(path)
 
-    def list_memories(self) -> list[dict]:
-        """List all registered memories.
+    @rpc_expose()
+    def list_registered_memories(self) -> list[dict]:
+        """List all registered memory paths.
 
         Returns:
             List of memory configuration dicts
 
         Example:
-            >>> memories = nx.list_memories()
+            >>> memories = nx.list_registered_memories()
             >>> for mem in memories:
             ...     print(f"{mem['path']}: {mem['name']}")
 
         Note:
-            RPC: This method is NOT auto-exposed. The RPC endpoint "list_memories"
-            is handled manually by the dispatcher which calls memory.list() instead.
+            RPC: This method is exposed as "list_registered_memories".
+            The RPC endpoint "list_memories" calls memory.list() for memory records.
         """
         configs = self._workspace_registry.list_memories()
         return [c.to_dict() for c in configs]
+
+    def list_memories(self) -> list[dict]:
+        """Alias for list_registered_memories() for backward compatibility."""
+        return self.list_registered_memories()
 
     @rpc_expose()
     def get_memory_info(self, path: str) -> dict | None:

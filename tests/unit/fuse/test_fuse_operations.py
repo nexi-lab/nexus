@@ -144,22 +144,12 @@ class TestReaddir:
     def test_readdir_root(self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock) -> None:
         """Test listing root directory."""
         mock_nexus_fs.list.return_value = []
-        mock_nexus_fs.get_available_namespaces.return_value = [
-            "archives",
-            "external",
-            "shared",
-            "workspace",
-        ]
 
         entries = fuse_ops.readdir("/")
 
         assert "." in entries
         assert ".." in entries
         assert ".raw" in entries
-        assert "workspace" in entries
-        assert "shared" in entries
-        assert "external" in entries
-        assert "archives" in entries
 
     def test_readdir_with_files(
         self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock

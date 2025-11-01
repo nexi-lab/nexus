@@ -1072,6 +1072,109 @@ class NexusFS(
         with contextlib.suppress(Exception):
             self.metadata.delete(path)
 
+    def _has_descendant_access(
+        self,
+        path: str,
+        permission: Permission,
+        context: OperationContext | EnhancedOperationContext,
+    ) -> bool:
+        """
+        Check if user has access to a path OR any of its descendants.
+
+        This enables hierarchical directory navigation: users can see parent directories
+        if they have access to any child/descendant (even if deeply nested).
+
+        Workflow:
+        1. Check direct access on the path first (fast path)
+        2. If no direct access, query all descendants from metadata
+        3. Check ReBAC permissions on each descendant until one is accessible
+        4. Early exit on first accessible descendant (performance optimization)
+
+        Args:
+            path: Path to check (e.g., "/workspace")
+            permission: Permission to check (e.g., Permission.READ)
+            context: User context with subject info
+
+        Returns:
+            True if user has access to path OR any descendant, False otherwise
+
+        Performance Notes:
+            - Uses prefix query on metadata for efficiency
+            - Early exit after finding first accessible descendant
+            - Skips descendant check if no ReBAC manager available
+
+        Examples:
+            >>> # Joe has access to /workspace/joe/file.txt
+            >>> _has_descendant_access("/workspace", READ, joe_ctx)
+            True  # Can access /workspace because has access to descendant
+
+            >>> _has_descendant_access("/other", READ, joe_ctx)
+            False  # No access to /other or any descendants
+        """
+        # Admin/system bypass
+        if context.is_admin or context.is_system:
+            return True
+
+        # Check if ReBAC is available
+        has_rebac = hasattr(self, "_rebac_manager") and self._rebac_manager is not None
+
+        if not has_rebac:
+            # Fallback to permission enforcer if no ReBAC
+            return self._permission_enforcer.check(path, permission, context)
+
+        # Validate subject_id (required for ReBAC checks)
+        if context.subject_id is None:
+            return False
+
+        # Type narrowing - create local variables with explicit types
+        subject_id: str = context.subject_id  # Now guaranteed non-None after check
+        subject_tuple: tuple[str, str] = (context.subject_type, subject_id)
+
+        # Map permission to ReBAC permission name
+        permission_map = {
+            Permission.READ: "read",
+            Permission.WRITE: "write",
+            Permission.EXECUTE: "execute",
+        }
+        rebac_permission = permission_map.get(permission, "read")
+
+        # 1. Check direct access first (fast path)
+        direct_access = self.rebac_check(
+            subject=subject_tuple,
+            permission=rebac_permission,
+            object=("file", path),
+            tenant_id=context.tenant_id,
+        )
+        if direct_access:
+            return True
+
+        # 2. Check if user has access to ANY descendant
+        # Get all files/directories under this path (recursive)
+        prefix = path if path.endswith("/") else path + "/"
+        if path == "/":
+            prefix = ""
+
+        try:
+            all_descendants = self.metadata.list(prefix)
+        except Exception:
+            # If metadata query fails, return False
+            return False
+
+        # 3. Check ReBAC permissions on each descendant (with early exit)
+        for meta in all_descendants:
+            descendant_access = self.rebac_check(
+                subject=subject_tuple,
+                permission=rebac_permission,
+                object=("file", meta.path),
+                tenant_id=context.tenant_id,
+            )
+            if descendant_access:
+                # Found accessible descendant! User can see this parent
+                return True
+
+        # No accessible descendants found
+        return False
+
     @rpc_expose(description="Check if path is a directory")
     def is_directory(
         self,
@@ -1089,8 +1192,10 @@ class NexusFS(
             True if path is a directory, False otherwise
 
         Note:
-            This method requires READ permission on the path when enforce_permissions=True.
-            Returns False if path doesn't exist or user lacks permission.
+            This method requires READ permission on the path OR any descendant when
+            enforce_permissions=True. Returns True if user has access to the directory
+            or any child/descendant (enables hierarchical navigation).
+            Returns False if path doesn't exist or user lacks permission to path and all descendants.
         """
         try:
             path = self._validate_path(path)
@@ -1098,11 +1203,11 @@ class NexusFS(
             # Use provided context or default
             ctx = context if context is not None else self._default_context
 
-            # Check read permission
-            # Don't raise exception, just return False if no permission
-            try:
-                self._check_permission(path, Permission.READ, ctx)  # type: ignore[arg-type]
-            except PermissionError:
+            # Check read permission (with hierarchical descendant access)
+            # Use hierarchical access check: return True if user has access to path OR any descendant
+            if self._enforce_permissions and not self._has_descendant_access(
+                path, Permission.READ, ctx
+            ):
                 return False
 
             # Route with access control (read permission needed to check)

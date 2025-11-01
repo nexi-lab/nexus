@@ -994,7 +994,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return {"success": True}
 
         elif method == "is_directory":
-            return {"is_directory": self.nexus_fs.is_directory(params.path)}
+            return {"is_directory": self.nexus_fs.is_directory(params.path, context=context)}
 
         elif method == "get_available_namespaces":
             return {"namespaces": self.nexus_fs.get_available_namespaces()}
@@ -1011,7 +1011,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 return {"metadata": None}
 
             # Check if it's a directory
-            is_dir = self.nexus_fs.is_directory(params.path)
+            is_dir = self.nexus_fs.is_directory(params.path, context=context)
 
             # Serialize metadata object to dict
             # Note: UNIX-style permissions (owner/group/mode) have been removed

@@ -1080,18 +1080,24 @@ class NexusFSCoreMixin:
             context: Operation context for permission checks (uses default if None)
 
         Returns:
-            True if file or implicit directory exists, False otherwise
+            True if file or implicit directory exists AND user has read permission on it
+            OR any descendant (enables hierarchical navigation), False otherwise
+
+        Note:
+            With permissions enabled, directories are visible if user has access to ANY
+            descendant, even if they don't have direct access to the directory itself.
+            This enables hierarchical navigation (e.g., /workspace visible if user has
+            access to /workspace/joe/file.txt).
         """
         try:
             path = self._validate_path(path)
 
-            # Check read permission if enforcement enabled
+            # Check read permission if enforcement enabled (with hierarchical descendant access)
             if self._enforce_permissions:  # type: ignore[attr-defined]
                 ctx = context if context is not None else self._default_context
-                try:
-                    self._check_permission(path, Permission.READ, ctx)
-                except PermissionError:
-                    # No permission = treat as non-existent for security
+                # Use hierarchical access check: return True if user has access to path OR any descendant
+                if not self._has_descendant_access(path, Permission.READ, ctx):  # type: ignore[attr-defined]
+                    # No permission to path or any descendant = treat as non-existent for security
                     return False
 
             # Check if file exists explicitly

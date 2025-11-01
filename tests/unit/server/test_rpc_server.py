@@ -371,13 +371,15 @@ class TestRPCDispatchMethods:
 
     def test_dispatch_is_directory(self, mock_handler):
         """Test dispatching is_directory method."""
+        from unittest.mock import ANY
+
         from nexus.server.protocol import IsDirectoryParams
 
         params = IsDirectoryParams(path="/test")
         result = mock_handler._dispatch_method("is_directory", params)
 
         assert result == {"is_directory": False}
-        mock_handler.nexus_fs.is_directory.assert_called_once_with("/test")
+        mock_handler.nexus_fs.is_directory.assert_called_once_with("/test", context=ANY)
 
     def test_dispatch_glob(self, mock_handler):
         """Test dispatching glob method."""

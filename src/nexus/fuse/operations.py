@@ -209,7 +209,7 @@ class NexusFUSEOperations(Operations):
             # Standard directory entries
             entries = [".", ".."]
 
-            # At root level, add built-in namespace directories and .raw
+            # At root level, add .raw directory
             if path == "/":
                 entries.append(".raw")
 

@@ -434,24 +434,34 @@ class NexusFS(
             context: Operation context with per-request values
 
         Returns:
-            Agent ID if set, else user ID if set, else None.
-            Format: 'alice,data_analyst' for agents or 'alice' for users.
+            Combined user and agent info when both are available.
+            Format: 'user:alice,agent:data_analyst' or just 'user:alice' or 'agent:data_analyst'
         """
-        # Extract from context or use defaults
+        # Extract user and agent from context
+        user = None
+        agent = None
+
         if context is None:
-            return self._default_context.agent_id or getattr(self._default_context, "user", None)
+            user = getattr(self._default_context, "user", None)
+            agent = self._default_context.agent_id
+        elif hasattr(context, "agent_id"):
+            user = getattr(context, "user", None) or getattr(context, "user_id", None)
+            agent = context.agent_id
+        elif isinstance(context, dict):
+            user = context.get("user_id") or context.get("user")
+            agent = context.get("agent_id")
+        else:
+            user = getattr(self._default_context, "user", None)
+            agent = self._default_context.agent_id
 
-        if hasattr(context, "agent_id"):
-            return (
-                context.agent_id
-                or getattr(context, "user", None)
-                or getattr(context, "user_id", None)
-            )
+        # Build combined string showing both user and agent
+        parts = []
+        if user:
+            parts.append(f"user:{user}")
+        if agent:
+            parts.append(f"agent:{agent}")
 
-        if isinstance(context, dict):
-            return context.get("agent_id") or context.get("user_id") or context.get("user")
-
-        return self._default_context.agent_id or getattr(self._default_context, "user", None)
+        return ",".join(parts) if parts else None
 
     def _get_routing_params(
         self, context: OperationContext | dict | None = None

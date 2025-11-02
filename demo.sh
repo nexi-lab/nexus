@@ -6,7 +6,7 @@
 #   ./demo.sh --init                                 # Initialize (clean data, preserve credentials)
 #   ./demo.sh --init --clean-credentials             # Initialize (clean data AND credentials)
 #   ./demo.sh --start_agent                          # Start with LangGraph server
-#   ./demo.sh --start_sandbox                        # Start with ngrok (public access)
+#   ./demo.sh --start_sandbox                        # Start with E2B + ngrok (sandbox + public access)
 #   ./demo.sh --start_agent --start_sandbox --init   # All services + init
 
 set -e  # Exit on error
@@ -18,6 +18,7 @@ set -e  # Exit on error
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NEXUS_DIR="$SCRIPT_DIR"
 FRONTEND_DIR="$SCRIPT_DIR/../nexus-frontend"
+E2B_DIR="$SCRIPT_DIR/examples/e2b"
 
 # Nexus server configuration
 export NEXUS_DATABASE_URL="${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@localhost/nexus}"
@@ -34,8 +35,9 @@ LANGGRAPH_DIR="$SCRIPT_DIR/examples/langgraph"
 
 # Feature flags
 START_AGENT=false        # LangGraph server
-START_SANDBOX=false      # ngrok
+START_SANDBOX=false      # ngrok + e2b
 NGROK_URL=""
+E2B_TEMPLATE_ID=""
 
 # Parse arguments
 INIT_MODE=""
@@ -269,8 +271,60 @@ if ! command -v uv &> /dev/null; then
 fi
 echo "  ✅ uv ready ($(uv --version))"
 
-# Check ngrok if sandbox mode
+# Check E2B and ngrok if sandbox mode
 if [ "$START_SANDBOX" = true ]; then
+    echo "  Checking E2B (sandbox mode)..."
+
+    # Check if E2B CLI is installed
+    if ! command -v e2b &> /dev/null; then
+        echo "  ⚠️  E2B CLI not found. Installing..."
+        if [ "$OS_TYPE" == "macos" ]; then
+            if command -v brew &> /dev/null; then
+                brew install e2b
+                echo "  ✅ E2B installed via Homebrew"
+            else
+                echo "  ❌ Homebrew not found. Please install E2B CLI manually:"
+                echo "    https://e2b.dev/docs"
+                exit 1
+            fi
+        else
+            echo "  ⚠️  E2B CLI not found. Installing via npm..."
+            npm i -g @e2b/cli
+            echo "  ✅ E2B installed via npm"
+        fi
+    fi
+
+    # Check if authenticated with E2B
+    echo "  Checking E2B authentication..."
+    if ! e2b auth whoami &> /dev/null; then
+        echo "  ⚠️  Not authenticated with E2B"
+        echo ""
+        echo "  Starting E2B authentication..."
+        echo "  This will open your browser for login."
+        echo ""
+        e2b auth login
+        echo ""
+        echo "  ✅ E2B authentication successful!"
+    else
+        echo "  ✅ E2B authenticated"
+    fi
+
+    # Check if e2b.toml exists, if not, run setup script
+    if [ ! -f "$E2B_DIR/e2b.toml" ]; then
+        echo "  ⚠️  E2B template not initialized. Running setup..."
+        cd "$E2B_DIR"
+        ./setup.sh --yes
+        cd "$SCRIPT_DIR"
+    fi
+
+    # Load template ID from e2b.toml
+    if [ -f "$E2B_DIR/e2b.toml" ]; then
+        E2B_TEMPLATE_ID=$(grep 'template_id' "$E2B_DIR/e2b.toml" | cut -d'"' -f2)
+        echo "  ✅ E2B template ready (ID: $E2B_TEMPLATE_ID)"
+    else
+        echo "  ⚠️  Could not load E2B template ID"
+    fi
+
     echo "  Checking ngrok (sandbox mode)..."
 
     # Check if ngrok is installed
@@ -427,29 +481,64 @@ if [ "$START_SANDBOX" = true ]; then
         NGROK_RUNNING=false
     fi
 
-    # Start ngrok if not running
+    # Create ngrok config file for multiple tunnels
+    echo "  Creating ngrok config for multiple tunnels..."
+    NGROK_CONFIG="/tmp/nexus-ngrok.yml"
+
+    # Extract authtoken from default ngrok config
+    NGROK_DEFAULT_CONFIG="$HOME/Library/Application Support/ngrok/ngrok.yml"
+    NGROK_AUTHTOKEN=$(grep "authtoken:" "$NGROK_DEFAULT_CONFIG" 2>/dev/null | awk '{print $2}')
+
+    if [ -z "$NGROK_AUTHTOKEN" ]; then
+        echo "  ⚠️  Could not find ngrok authtoken. Please run 'ngrok config add-authtoken <YOUR_TOKEN>'"
+        exit 1
+    fi
+
+    cat > "$NGROK_CONFIG" << EOF
+version: "3"
+agent:
+  authtoken: $NGROK_AUTHTOKEN
+tunnels:
+  backend:
+    proto: http
+    addr: $NEXUS_PORT
+    subdomain: nexus-backend
+  frontend:
+    proto: http
+    addr: $FRONTEND_PORT
+    subdomain: nexus-frontend
+EOF
+
+    # Start ngrok with config file if not running
     if [ "$NGROK_RUNNING" = false ]; then
-        echo "  Starting ngrok on port $NEXUS_PORT..."
-        ngrok http $NEXUS_PORT --log=/tmp/ngrok.log > /dev/null 2>&1 &
+        echo "  Starting ngrok tunnels (backend + frontend)..."
+        ngrok start --all --config "$NGROK_CONFIG" --log=/tmp/ngrok.log > /dev/null 2>&1 &
         NGROK_PID=$!
-        sleep 2
+        sleep 3
     else
         # Get existing ngrok PID
         NGROK_PID=$(pgrep -x "ngrok")
-        echo "  ♻️  Reusing existing ngrok tunnel (PID: $NGROK_PID)"
+        echo "  ♻️  Reusing existing ngrok tunnels (PID: $NGROK_PID)"
     fi
 
-    # Wait for ngrok to start and get the public URL
-    echo "  Retrieving ngrok public URL..."
+    # Wait for ngrok to start and get the public URLs
+    echo "  Retrieving ngrok public URLs..."
     MAX_WAIT=10
     WAITED=0
     while [ $WAITED -lt $MAX_WAIT ]; do
-        # Try to get the public URL from ngrok API
-        NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | grep -o '"public_url":"https://[^"]*' | grep -o 'https://[^"]*' | head -1)
+        # Try to get all public URLs from ngrok API
+        NGROK_RESPONSE=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null)
 
-        if [ -n "$NGROK_URL" ]; then
-            echo "  ✅ ngrok tunnel ready"
-            echo "  🌍 Public URL: $NGROK_URL"
+        # Extract backend URL (tunnel named "backend")
+        NGROK_URL=$(echo "$NGROK_RESPONSE" | grep -o '"name":"backend"[^}]*"public_url":"https://[^"]*' | grep -o 'https://[^"]*' | head -1)
+
+        # Extract frontend URL (tunnel named "frontend")
+        NGROK_FRONTEND_URL=$(echo "$NGROK_RESPONSE" | grep -o '"name":"frontend"[^}]*"public_url":"https://[^"]*' | grep -o 'https://[^"]*' | head -1)
+
+        if [ -n "$NGROK_URL" ] && [ -n "$NGROK_FRONTEND_URL" ]; then
+            echo "  ✅ ngrok tunnels ready"
+            echo "  🌍 Backend URL:  $NGROK_URL"
+            echo "  🌍 Frontend URL: $NGROK_FRONTEND_URL"
             break
         fi
 
@@ -457,7 +546,7 @@ if [ "$START_SANDBOX" = true ]; then
         WAITED=$((WAITED + 1))
 
         if [ $WAITED -eq $MAX_WAIT ]; then
-            echo "  ⚠️  Could not retrieve ngrok URL"
+            echo "  ⚠️  Could not retrieve ngrok URLs"
             echo "  Check ngrok dashboard: http://localhost:4040"
         fi
     done
@@ -527,6 +616,16 @@ cat > "$NEXUS_DIR/.demo-env" << EOF
 # Frontend
 export NEXUS_FRONTEND_URL="http://localhost:$FRONTEND_PORT"
 export NEXUS_FRONTEND_PID=$FRONTEND_PID
+EOF
+
+# Add frontend public URL if ngrok is enabled
+if [ "$START_SANDBOX" = true ] && [ -n "$NGROK_FRONTEND_URL" ]; then
+    cat >> "$NEXUS_DIR/.demo-env" << EOF
+export NEXUS_FRONTEND_PUBLIC_URL="$NGROK_FRONTEND_URL"
+EOF
+fi
+
+cat >> "$NEXUS_DIR/.demo-env" << EOF
 
 # Admin Credentials
 EOF
@@ -551,15 +650,39 @@ export NEXUS_HEALTH_URL="http://localhost:$NEXUS_PORT/health"
 export NEXUS_BACKEND_PID=$NEXUS_PID
 EOF
 
-# Add ngrok info if enabled
-if [ "$START_SANDBOX" = true ] && [ -n "$NGROK_URL" ]; then
+# Add sandbox info if enabled (ngrok + e2b)
+if [ "$START_SANDBOX" = true ]; then
     cat >> "$NEXUS_DIR/.demo-env" << EOF
 
-# Public Access (ngrok)
-export NEXUS_PUBLIC_URL="$NGROK_URL"
+# Sandbox (E2B + ngrok)
+EOF
+
+    # Add E2B template ID if available
+    if [ -n "$E2B_TEMPLATE_ID" ]; then
+        cat >> "$NEXUS_DIR/.demo-env" << EOF
+export E2B_TEMPLATE_ID="$E2B_TEMPLATE_ID"
+EOF
+    fi
+
+    # Add E2B API key if set in environment
+    if [ -n "$E2B_API_KEY" ]; then
+        cat >> "$NEXUS_DIR/.demo-env" << EOF
+export E2B_API_KEY="$E2B_API_KEY"
+EOF
+    fi
+
+    # Add ngrok info if available
+    if [ -n "$NGROK_URL" ] || [ -n "$NGROK_FRONTEND_URL" ]; then
+        cat >> "$NEXUS_DIR/.demo-env" << EOF
 export NGROK_DASHBOARD_URL="http://localhost:4040"
 export NGROK_PID=$NGROK_PID
 EOF
+        if [ -n "$NGROK_URL" ]; then
+            cat >> "$NEXUS_DIR/.demo-env" << EOF
+export NEXUS_PUBLIC_URL="$NGROK_URL"
+EOF
+        fi
+    fi
 fi
 
 # Add database info
@@ -651,7 +774,17 @@ cat << EOF
 │ 🎨 NEXUS FRONTEND (Web UI)                                       │
 ├───────────────────────────────────────────────────────────────────┤
 │ Description: React-based web interface for Nexus                 │
-│ Endpoints:   http://localhost:$FRONTEND_PORT                          │
+│ Local URL:   http://localhost:$FRONTEND_PORT                          │
+EOF
+
+# Add public URL if ngrok is enabled for frontend
+if [ "$START_SANDBOX" = true ] && [ -n "$NGROK_FRONTEND_URL" ]; then
+cat << EOF
+│ Public URL:  $NGROK_FRONTEND_URL                           │
+EOF
+fi
+
+cat << EOF
 │ Process:     PID $FRONTEND_PID                                        │
 │ Logs:        /tmp/nexus-frontend.log                              │
 └───────────────────────────────────────────────────────────────────┘
@@ -697,18 +830,47 @@ cat << EOF
 EOF
 echo ""
 
-# 4. ngrok Tunnel (if enabled)
-if [ "$START_SANDBOX" = true ] && [ -n "$NGROK_URL" ]; then
+# 4. Sandbox (E2B + ngrok) (if enabled)
+if [ "$START_SANDBOX" = true ]; then
 cat << EOF
 ┌───────────────────────────────────────────────────────────────────┐
-│ 🌍 NGROK TUNNEL (Public Access)                                  │
+│ 🏖️  SANDBOX (E2B + ngrok)                                        │
 ├───────────────────────────────────────────────────────────────────┤
-│ Description: Secure tunnel exposing local server to the internet │
-│ Endpoints:   $NGROK_URL                                │
-│              $NGROK_URL/health                         │
-│              http://localhost:4040 (dashboard)                    │
-│ Process:     PID $NGROK_PID                                           │
-│ Logs:        /tmp/ngrok.log                                       │
+│ Description: Cloud sandboxes with E2B and public tunnels        │
+EOF
+
+if [ -n "$E2B_TEMPLATE_ID" ]; then
+cat << EOF
+│ E2B Template: $E2B_TEMPLATE_ID                    │
+EOF
+fi
+
+if [ -n "$NGROK_URL" ]; then
+cat << EOF
+│ Backend URL:  $NGROK_URL                           │
+│               $NGROK_URL/health                    │
+EOF
+fi
+
+if [ -n "$NGROK_FRONTEND_URL" ]; then
+cat << EOF
+│ Frontend URL: $NGROK_FRONTEND_URL                           │
+EOF
+fi
+
+if [ -n "$NGROK_URL" ] || [ -n "$NGROK_FRONTEND_URL" ]; then
+cat << EOF
+│ Dashboard:    http://localhost:4040                              │
+│ Process:      PID $NGROK_PID                                          │
+│ Logs:         /tmp/ngrok.log                                     │
+EOF
+else
+cat << EOF
+│ ngrok:        Not started (no public URLs available)             │
+EOF
+fi
+
+cat << EOF
 └───────────────────────────────────────────────────────────────────┘
 EOF
 echo ""
@@ -758,11 +920,21 @@ cat << 'EOF'
 ╚═══════════════════════════════════════════════════════════════════╝
 EOF
 echo ""
-if [ "$START_SANDBOX" = true ] && [ -n "$NGROK_URL" ]; then
+if [ "$START_SANDBOX" = true ]; then
     echo "  Open frontend:      open http://localhost:$FRONTEND_PORT"
+    if [ -n "$NGROK_FRONTEND_URL" ]; then
+        echo "  Open public UI:     open $NGROK_FRONTEND_URL"
+    fi
     echo "  Test local API:     curl http://localhost:$NEXUS_PORT/health"
-    echo "  Test public API:    curl $NGROK_URL/health"
-    echo "  ngrok dashboard:    open http://localhost:4040"
+    if [ -n "$NGROK_URL" ]; then
+        echo "  Test public API:    curl $NGROK_URL/health"
+    fi
+    if [ -n "$NGROK_URL" ] || [ -n "$NGROK_FRONTEND_URL" ]; then
+        echo "  ngrok dashboard:    open http://localhost:4040"
+    fi
+    if [ -n "$E2B_TEMPLATE_ID" ]; then
+        echo "  E2B Template ID:    $E2B_TEMPLATE_ID"
+    fi
     if [ "$START_AGENT" = true ]; then
         echo "  LangGraph docs:     open http://localhost:$LANGGRAPH_PORT/docs"
     fi

@@ -1,0 +1,15 @@
+FROM e2bdev/code-interpreter:latest
+
+# Install FUSE for filesystem operations
+RUN apt-get update && \
+    apt-get install -y fuse libfuse2 && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the nexus package (copied into e2b dir by setup.sh before build)
+COPY nexus /app/nexus
+
+# Install dependencies
+RUN pip install fusepy
+RUN pip install -e /app/nexus

@@ -69,11 +69,20 @@ def register_agent(
 
     # Create entity registry entry
     if entity_registry:
+        # Prepare entity metadata with name and description
+        entity_metadata_dict = {}
+        if name:
+            entity_metadata_dict["name"] = name
+        # Store description from metadata if provided
+        if metadata and "description" in metadata:
+            entity_metadata_dict["description"] = metadata["description"]
+
         entity_registry.register_entity(
             entity_type="agent",
             entity_id=agent_id,
             parent_type="user",
             parent_id=user_id,
+            entity_metadata=entity_metadata_dict if entity_metadata_dict else None,
         )
 
     return {

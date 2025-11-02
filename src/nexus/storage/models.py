@@ -795,6 +795,7 @@ class EntityRegistryModel(Base):
     parent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Metadata
+    entity_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON as string
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )

@@ -1602,7 +1602,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
         with self.SessionLocal() as session:
             return VersionManager.list_versions(session, path)
 
-    def rollback(self, path: str, version: int) -> None:
+    def rollback(self, path: str, version: int, created_by: str | None = None) -> None:
         """Rollback file to a previous version.
 
         Updates the file to point to an older version's content.
@@ -1611,13 +1611,14 @@ class SQLAlchemyMetadataStore(MetadataStore):
         Args:
             path: Virtual path
             version: Version number to rollback to
+            created_by: User or agent ID who performed the rollback (optional)
 
         Example:
             >>> # Rollback to version 2
-            >>> store.rollback("/workspace/data.txt", version=2)
+            >>> store.rollback("/workspace/data.txt", version=2, created_by="alice")
         """
         with self.SessionLocal() as session:
-            VersionManager.rollback(session, path, version)
+            VersionManager.rollback(session, path, version, created_by=created_by)
             session.commit()
 
         # Invalidate cache

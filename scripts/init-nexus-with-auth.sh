@@ -299,6 +299,10 @@ delete_table("admin_bypass_audit")
 delete_table("operation_log")
 delete_table("rebac_tuples")
 
+# Clear entity registry (agents, sessions, etc.)
+print("\n🤖 Clearing entity registry...")
+delete_table("entity_registry")
+
 # Clear file-related tables (dependencies: content_chunks -> file_metadata -> file_paths)
 print("\n📁 Clearing file system data...")
 delete_table("content_chunks")

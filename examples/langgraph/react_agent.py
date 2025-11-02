@@ -37,9 +37,16 @@ from nexus_tools import get_nexus_tools
 
 # Get configuration from environment variables
 NEXUS_SERVER_URL = os.getenv("NEXUS_SERVER_URL", "http://localhost:8080")
+E2B_TEMPLATE_ID = os.getenv("E2B_TEMPLATE_ID")
 
 print(f"Nexus server configured at: {NEXUS_SERVER_URL}")
 print("API key will be provided per-request via config.configurable.nexus_api_key")
+
+# Check E2B configuration
+if E2B_TEMPLATE_ID:
+    print(f"E2B sandbox enabled with template: {E2B_TEMPLATE_ID}")
+else:
+    print("E2B sandbox disabled (E2B_TEMPLATE_ID not set)")
 
 # Create tools (no API key needed - will be passed per-request)
 tools = get_nexus_tools(server_url=NEXUS_SERVER_URL)

@@ -27,6 +27,7 @@ class TestNexusFSVersions:
         fs._get_routing_params = Mock(
             return_value=(None, None, False)
         )  # Returns (tenant_id, agent_id, is_admin)
+        fs._get_created_by = Mock(return_value="test-user")  # Mock created_by tracking
         fs._default_context = EnhancedOperationContext(
             user="test",
             groups=[],
@@ -117,7 +118,7 @@ class TestNexusFSVersions:
 
         # Verify
         mock_fs._check_permission.assert_called_once()
-        mock_fs.metadata.rollback.assert_called_once_with("/test.txt", 2)
+        mock_fs.metadata.rollback.assert_called_once_with("/test.txt", 2, created_by="test-user")
 
     def test_rollback_readonly_path(self, mock_fs):
         """Test that rollback fails on readonly path."""

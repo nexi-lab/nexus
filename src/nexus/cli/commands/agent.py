@@ -123,6 +123,7 @@ def list_cmd(
         table = Table(title="Registered Agents")
         table.add_column("Agent ID", style="cyan")
         table.add_column("Name", style="green")
+        table.add_column("Description", style="dim", no_wrap=False)
         table.add_column("Owner", style="dim")
         table.add_column("Created", style="dim")
 
@@ -132,9 +133,15 @@ def list_cmd(
                 # Shorten ISO timestamp
                 created = created.split("T")[0] if "T" in created else created
 
+            # Truncate description if too long
+            description = agent.get("description", "")
+            if description and len(description) > 50:
+                description = description[:47] + "..."
+
             table.add_row(
                 agent["agent_id"],
                 agent.get("name", agent["agent_id"]),
+                description,
                 agent.get("user_id", ""),
                 created,
             )
@@ -170,6 +177,11 @@ def info_cmd(
 
         console.print(f"[bold]Agent: {agent['agent_id']}[/bold]\n")
         console.print(f"  Name: {agent.get('name', agent['agent_id'])}")
+
+        # Show description if available
+        if "description" in agent and agent["description"]:
+            console.print(f"  Description: {agent['description']}")
+
         console.print(f"  Owner: {agent.get('user_id', 'unknown')}")
         console.print(f"  Created: {agent.get('created_at', 'unknown')}")
 

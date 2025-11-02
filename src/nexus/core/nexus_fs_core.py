@@ -65,6 +65,9 @@ class NexusFSCoreMixin:
         def _get_routing_params(
             self, context: OperationContext | dict[Any, Any] | None
         ) -> tuple[str | None, str | None, bool]: ...
+        def _get_created_by(
+            self, context: OperationContext | dict[Any, Any] | None
+        ) -> str | None: ...
         async def parse(self, path: str, store_result: bool = True) -> Any: ...
 
     @rpc_expose(description="Read file content")
@@ -425,8 +428,7 @@ class NexusFSCoreMixin:
             created_at=meta.created_at if meta else now,
             modified_at=now,
             version=new_version,
-            created_by=getattr(self, "agent_id", None)
-            or getattr(self, "user_id", None),  # Track who created/modified this version
+            created_by=self._get_created_by(context),  # Track who created/modified this version
         )
 
         self.metadata.put(metadata)

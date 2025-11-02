@@ -126,7 +126,7 @@ def get_nexus_tools(server_url: str):
 
         # Create new sandbox
         print(f"Creating E2B sandbox with template: {template_id}")
-        _sandbox_instance = Sandbox.create(template=template_id, timeout=300)
+        _sandbox_instance = Sandbox.create(template=template_id, timeout=3000)
         print(f"E2B sandbox created: {_sandbox_instance.sandbox_id}")
 
         return _sandbox_instance

@@ -6,8 +6,8 @@ This document defines the foundational principles that guide all design decision
 
 ## Table of Contents
 
-1. [Everything as a File](#1-everything-as-a-file)
-2. [Agent-First Design](#2-agent-first-design)
+1. [Agent-First Design](#1-agent-first-design)
+2. [Everything as a File](#2-everything-as-a-file)
 3. [Zero-Deployment Option](#3-zero-deployment-option)
 4. [Auto-Scaling Hosted Mode](#4-auto-scaling-hosted-mode)
 5. [Content-Addressable by Default](#5-content-addressable-by-default)
@@ -15,12 +15,43 @@ This document defines the foundational principles that guide all design decision
 7. [Human-Readable State](#7-human-readable-state)
 8. [Version Everything](#8-version-everything)
 9. [Security by Default](#9-security-by-default)
-10. [MCP-Native](#10-mcp-native)
-11. [Using These Tenets](#using-these-tenets)
+10. [Production-Ready](#10-production-ready)
+11. [MCP-Native](#11-mcp-native)
+12. [How Tenets Connect](#how-tenets-connect)
+13. [When to Break the Rules](#when-to-break-the-rules)
+14. [Using These Tenets](#using-these-tenets)
 
 ---
 
-## 1. Everything as a File
+## 1. Agent-First Design
+
+**Principle:** Optimize for AI agent workflows, not just human developers.
+
+**Why:** Nexus is infrastructure for AI agents. This is our foundational philosophy - every design decision should prioritize:
+- Easy programmatic access (SDK-first, then CLI)
+- Semantic operations (semantic search, LLM-powered reads)
+- Agent workspace isolation and safety
+- Memory management and consolidation
+- Debugging and observability of agent behavior
+
+**Examples:**
+- ✅ `nx.semantic_search()` - AI-native operation
+- ✅ `nx.llm_read()` with KV cache - Optimize for AI usage patterns
+- ✅ Agent workspace versioning - Time-travel debugging for agents
+- ✅ Operation logs - "What did my agent do 10 steps ago?"
+- ✅ Multi-agent collaboration patterns built-in
+- ⚠️ Human-only features (e.g., fancy TUI) - Lower priority than agent features
+- ❌ Sacrificing programmatic APIs for CLI convenience
+
+**Guiding Questions:**
+- Does this make agents more effective?
+- Can an agent use this programmatically?
+- Does this help debug agent behavior?
+- Would this work in a multi-agent environment?
+
+---
+
+## 2. Everything as a File
 
 **Principle:** Configuration, memory, jobs, commands, and state are stored as files in the filesystem.
 
@@ -42,33 +73,6 @@ This document defines the foundational principles that guide all design decision
 - Can this be represented as a file that humans can read/edit?
 - Can this be version-controlled (externally, if user chooses)?
 - Does this work with standard file tools (grep, find, diff)?
-
----
-
-## 2. Agent-First Design
-
-**Principle:** Optimize for AI agent workflows, not just human developers.
-
-**Why:** Nexus is infrastructure for AI agents. Design decisions should prioritize:
-- Easy programmatic access (SDK-first, then CLI)
-- Semantic operations (semantic search, LLM-powered reads)
-- Agent workspace isolation and safety
-- Memory management and consolidation
-- Debugging and observability of agent behavior
-
-**Examples:**
-- ✅ `nx.semantic_search()` - AI-native operation
-- ✅ `nx.llm_read()` with KV cache - Optimize for AI usage patterns
-- ✅ Agent workspace versioning - Time-travel debugging for agents
-- ✅ Operation logs - "What did my agent do 10 steps ago?"
-- ⚠️ Human-only features (e.g., fancy TUI) - Lower priority than agent features
-- ❌ Sacrificing programmatic APIs for CLI convenience
-
-**Guiding Questions:**
-- Does this make agents more effective?
-- Can an agent use this programmatically?
-- Does this help debug agent behavior?
-- Would this work in a multi-agent environment?
 
 ---
 
@@ -255,7 +259,38 @@ This document defines the foundational principles that guide all design decision
 
 ---
 
-## 10. MCP-Native
+## 10. Production-Ready
+
+**Principle:** Nexus is designed for production use with built-in observability, reliability, and operational excellence.
+
+**Why:** AI agents run in production environments handling real workloads. The system must be:
+- Observable (metrics, logs, traces)
+- Reliable (fault tolerance, graceful degradation)
+- Debuggable (operation logs, state inspection)
+- Scalable (from laptop to enterprise)
+- Maintainable (clear errors, health checks)
+
+**Examples:**
+- ✅ Structured logging with context (tenant_id, agent_id, operation)
+- ✅ Health check endpoints for monitoring
+- ✅ Prometheus metrics for operations (read/write latency, cache hit rate)
+- ✅ Operation audit logs (who did what when)
+- ✅ Graceful degradation (cache failures don't break reads)
+- ✅ Clear error messages with actionable guidance
+- ⚠️ Debug-only features in development mode
+- ❌ Swallowing errors silently
+- ❌ No metrics/monitoring capabilities
+- ❌ Unclear error messages ("Something went wrong")
+
+**Guiding Questions:**
+- Can we monitor this in production?
+- What happens when this fails?
+- Can we debug issues from logs alone?
+- Does this degrade gracefully?
+
+---
+
+## 11. MCP-Native
 
 **Principle:** Model Context Protocol (MCP) integration is first-class, not an afterthought.
 
@@ -280,6 +315,163 @@ This document defines the foundational principles that guide all design decision
 
 ---
 
+## How Tenets Connect
+
+These tenets aren't isolated - they reinforce each other:
+
+```mermaid
+graph TB
+    A1["1. Agent-First Design<br>(Foundation)"]
+    A2["2. Everything as a File"]
+    A3["3. Zero-Deployment"]
+    A4["4. Auto-Scaling Hosted"]
+    A5["5. Content-Addressable"]
+    A6["6. Multi-Backend"]
+    A7["7. Human-Readable State"]
+    A8["8. Version Everything"]
+    A9["9. Security by Default"]
+    A10["10. Production-Ready"]
+    A11["11. MCP-Native"]
+
+    A1 -->|enables| A2
+    A1 -->|requires| A7
+    A1 -->|demands| A10
+
+    A2 -->|supports| A3
+    A2 -->|enables| A8
+    A2 -->|requires| A7
+
+    A3 -->|scales to| A4
+
+    A5 -->|enables| A8
+    A5 -->|supports| A6
+
+    A6 -->|enables| A4
+
+    A7 -->|enables| A8
+
+    A9 -->|required by| A1
+    A9 -->|enables| A4
+
+    A10 -->|required by| A4
+
+    A11 -->|supports| A1
+
+    style A1 fill:#e1f5ff
+    style A9 fill:#ffe1e1
+    style A10 fill:#fff3e0
+```
+
+**Key Relationships:**
+
+- **Agent-First** is the foundation that drives most other tenets
+- **Security & Production-Ready** are non-negotiable at scale
+- **Everything as a File** + **Human-Readable** enable transparency
+- **CAS** + **Multi-Backend** enable efficient versioning
+- **Zero-Deployment** → **Auto-Scaling** is the full lifecycle
+
+---
+
+## When to Break the Rules
+
+These tenets guide us, but they're not absolute. Here are real examples where we intentionally broke or bent a tenet:
+
+### Example 1: Binary Embeddings (Broke Human-Readable State)
+
+**Tenet Broken:** #7 Human-Readable State
+
+**Decision:** Store semantic search embeddings as binary numpy arrays, not JSON.
+
+**Why We Broke It:**
+- 100x smaller storage (768 floats as binary vs JSON)
+- 10x faster loading (no parsing overhead)
+- Critical for performance at scale
+
+**Mitigation:**
+- Embeddings are metadata, not primary content
+- Primary content (files, memory) remains human-readable
+- Provide tools to inspect embeddings if needed
+
+**Lesson:** Performance matters for large-scale data. Human-readability is ideal, not mandatory.
+
+---
+
+### Example 2: PostgreSQL Requirement for Hosted Mode (Bent Zero-Deployment)
+
+**Tenet Bent:** #3 Zero-Deployment Option
+
+**Decision:** Hosted mode requires PostgreSQL, not SQLite.
+
+**Why We Bent It:**
+- SQLite doesn't scale to multi-tenant production
+- Row-level security requires PostgreSQL features
+- Concurrency at scale needs real ACID transactions
+
+**Mitigation:**
+- SQLite still works for local development (tenet preserved for dev)
+- Clear docs on when to use SQLite vs PostgreSQL
+- Migration path from SQLite → PostgreSQL
+
+**Lesson:** "Zero-deployment for development" doesn't mean "SQLite in production."
+
+---
+
+### Example 3: Operation Logs in Database (Bent Everything as a File)
+
+**Tenet Bent:** #2 Everything as a File
+
+**Decision:** Store operation logs in PostgreSQL, not files.
+
+**Why We Bent It:**
+- Need structured queries ("show me all writes by agent X")
+- Need efficient retention policies (auto-delete after 30 days)
+- Need multi-tenant isolation at database level
+
+**Mitigation:**
+- Logs are exportable to JSONL files
+- Provide file-based log viewer for debugging
+- Not user-facing configuration (still follows "config as files")
+
+**Lesson:** Operational data has different needs than user data.
+
+---
+
+### Example 4: In-Memory Cache (Bent Content-Addressable)
+
+**Tenet Bent:** #5 Content-Addressable by Default
+
+**Decision:** LRU cache stores content by hash, but not on disk.
+
+**Why We Bent It:**
+- Cache is ephemeral by design (not persistent)
+- Writing cache to CAS would defeat the purpose (performance)
+- Cache misses fall back to CAS anyway
+
+**Mitigation:**
+- Cache is transparent (users don't know it exists)
+- All persistent storage uses CAS (tenet preserved)
+- Cache failures degrade to CAS reads
+
+**Lesson:** Performance optimizations can bypass tenets if transparent.
+
+---
+
+**When to Break a Tenet:**
+
+✅ **Break if:**
+- Performance impact is massive (10x+ difference)
+- User experience is significantly better
+- Mitigation preserves the spirit of the tenet
+- Breaking is transparent to users
+
+❌ **Don't break if:**
+- It's just easier to implement
+- It only saves a few lines of code
+- No clear performance/UX benefit
+- It violates user expectations
+
+---
+
 ## Using These Tenets
 
 ### When Designing Features
@@ -292,42 +484,57 @@ Ask yourself:
 ### When Reviewing PRs
 
 Check:
+- Is this agent-first (can agents use it programmatically)?
 - Does this maintain "Everything as a File"?
-- Is this agent-friendly?
 - Does this work in local mode (zero-deployment)?
-- Is security maintained?
+- Is security maintained by default?
 - Is state human-readable?
+- Is this production-ready (observable, debuggable)?
 
 ### When Making Tradeoffs
 
 Prioritize:
 1. **Agent-First** over human convenience
 2. **Security by Default** over ease of implementation
-3. **Zero-Deployment** over features requiring infrastructure
-4. **Human-Readable** over binary efficiency (unless perf-critical)
+3. **Production-Ready** over rapid prototyping
+4. **Zero-Deployment** over features requiring infrastructure
+5. **Human-Readable** over binary efficiency (unless perf-critical)
+
+**Note:** All tenets can be broken with proper justification (see "When to Break the Rules" above).
 
 ### Examples of Tenet-Driven Decisions
 
+**Decision: SDK-first, CLI second**
+- ✅ #1 Agent-First Design (programmatic access is primary)
+- ✅ #11 MCP-Native (SDK works with MCP clients)
+- ⚠️ CLI comes later (acceptable for agent-first philosophy)
+
 **Decision: Store agent config in YAML files, not database**
-- ✅ Everything as a File
-- ✅ Human-Readable State
-- ✅ Version Everything (via Nexus CAS + optional external VCS)
-- ✅ Zero-Deployment (no database schema migrations)
+- ✅ #2 Everything as a File
+- ✅ #7 Human-Readable State
+- ✅ #8 Version Everything (via Nexus CAS + optional external VCS)
+- ✅ #3 Zero-Deployment (no database schema migrations)
 
 **Decision: CAS-backed file storage**
-- ✅ Content-Addressable by Default
-- ✅ Version Everything (zero-cost snapshots)
+- ✅ #5 Content-Addressable by Default
+- ✅ #8 Version Everything (zero-cost snapshots)
+- ✅ #6 Multi-Backend Abstraction (same CAS across all backends)
 - ⚠️ Slightly more complex implementation (acceptable tradeoff)
 
 **Decision: Permission enforcement enabled by default**
-- ✅ Security by Default
-- ✅ Agent-First (multi-agent safety)
+- ✅ #9 Security by Default
+- ✅ #1 Agent-First (multi-agent safety)
 - ⚠️ Slightly harder to debug locally (acceptable tradeoff)
 
 **Decision: Support both local SQLite and hosted PostgreSQL**
-- ✅ Zero-Deployment Option (SQLite)
-- ✅ Auto-Scaling Hosted (PostgreSQL)
+- ✅ #3 Zero-Deployment Option (SQLite)
+- ✅ #4 Auto-Scaling Hosted (PostgreSQL)
 - ⚠️ More code to maintain (acceptable tradeoff)
+
+**Decision: Built-in operation logs and metrics**
+- ✅ #10 Production-Ready (observable by default)
+- ✅ #1 Agent-First (debug agent behavior)
+- ✅ #8 Version Everything (audit trail)
 
 ---
 

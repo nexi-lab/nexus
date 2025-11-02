@@ -45,6 +45,9 @@ class NexusFSVersionsMixin:
         def _get_routing_params(
             self, context: OperationContext | dict[Any, Any] | None
         ) -> tuple[str | None, str | None, bool]: ...
+        def _get_created_by(
+            self, context: OperationContext | dict[Any, Any] | None
+        ) -> str | None: ...
 
     @rpc_expose(description="Get specific file version")
     def get_version(
@@ -199,8 +202,12 @@ class NexusFSVersionsMixin:
             raise PermissionError(f"Cannot rollback read-only path: {path}")
 
         # Perform rollback in metadata store
-        logger.info(f"[ROLLBACK] Calling metadata.rollback(path={path}, version={version})")
-        self.metadata.rollback(path, version)
+        # Extract created_by from context for version history tracking
+        created_by = self._get_created_by(context)
+        logger.info(
+            f"[ROLLBACK] Calling metadata.rollback(path={path}, version={version}, created_by={created_by})"
+        )
+        self.metadata.rollback(path, version, created_by=created_by)
         logger.info("[ROLLBACK] metadata.rollback() completed successfully")
 
         # Invalidate cache

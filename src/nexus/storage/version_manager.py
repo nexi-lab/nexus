@@ -176,7 +176,7 @@ class VersionManager:
             raise MetadataError(f"Failed to list versions: {e}", path=path) from e
 
     @staticmethod
-    def rollback(session: Session, path: str, version: int) -> None:
+    def rollback(session: Session, path: str, version: int, created_by: str | None = None) -> None:
         """Rollback file to a previous version.
 
         Updates the file to point to an older version's content.
@@ -186,6 +186,7 @@ class VersionManager:
             session: SQLAlchemy session
             path: Virtual path
             version: Version number to rollback to
+            created_by: User or agent ID who performed the rollback (optional)
 
         Raises:
             MetadataError: If file or version not found
@@ -193,7 +194,7 @@ class VersionManager:
         Example:
             >>> # Rollback to version 2
             >>> with store.SessionLocal() as session:
-            ...     VersionManager.rollback(session, "/workspace/data.txt", version=2)
+            ...     VersionManager.rollback(session, "/workspace/data.txt", version=2, created_by="alice")
             ...     session.commit()
         """
         import logging
@@ -305,6 +306,7 @@ class VersionManager:
                 source_type="rollback",
                 change_reason=f"Rollback to version {version}",
                 created_at=datetime.now(UTC),
+                created_by=created_by,  # Track who performed the rollback
             )
             rollback_version_entry.validate()
             session.add(rollback_version_entry)

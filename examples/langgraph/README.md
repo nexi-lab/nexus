@@ -16,11 +16,15 @@ This pattern enables agents to break down complex tasks, gather information syst
 ## Features
 
 - **Remote Nexus Filesystem**: Connect to a shared Nexus server for persistent storage
-- **Four File Operation Tools**:
+- **File Operation Tools**:
   - `grep_files` - Search file content using regex patterns
   - `glob_files` - Find files by name pattern
   - `read_file` - Read file content (cat/less commands)
   - `write_file` - Write analysis results and reports
+- **E2B Sandbox Tools** (optional):
+  - `python` - Execute Python code in Jupyter notebook environment
+  - `bash` - Run shell commands in isolated cloud sandbox
+  - `mount_nexus` - Mount Nexus filesystem inside sandbox for direct file access
 - **Multi-LLM Support**: Works with Claude (Anthropic), GPT-4 (OpenAI), or via OpenRouter
 - **Educational**: Clear, commented code demonstrating agent patterns
 
@@ -80,6 +84,114 @@ This creates test files in `/workspace` with async patterns that the agent can f
 
 ```bash
 python langgraph_react_demo.py
+```
+
+## E2B Sandbox (Optional)
+
+The agent can optionally use **E2B (Execute in Browser)** to run Python code and bash commands in an isolated cloud sandbox. This enables the agent to perform data analysis, run scripts, and execute system commands safely.
+
+### Enabling E2B Sandbox
+
+When running the demo with `--start_sandbox`, E2B will be automatically configured:
+
+```bash
+cd nexus
+./demo.sh --start_sandbox --start_agent
+```
+
+This will:
+1. Install E2B CLI if needed
+2. Authenticate with E2B (opens browser)
+3. Build/load the E2B sandbox template (if not exists)
+4. Export `E2B_TEMPLATE_ID` to environment
+5. Add `python`, `bash`, and `mount_nexus` tools to the agent
+
+### E2B Tools
+
+Once enabled, the agent gains three additional tools:
+
+#### 1. Python Tool
+Execute Python code in a Jupyter notebook environment with pre-installed data science libraries:
+
+```python
+# Agent can run Python code like:
+python("import pandas as pd; df = pd.read_csv('data.csv'); print(df.describe())")
+python("import matplotlib.pyplot as plt; plt.plot([1,2,3]); plt.savefig('plot.png')")
+```
+
+**Features:**
+- Pre-installed: pandas, numpy, matplotlib, scipy, sklearn
+- Persistent state between calls (variables and imports are preserved)
+- Full Jupyter notebook capabilities
+
+#### 2. Bash Tool
+Execute shell commands in the sandbox:
+
+```bash
+# Agent can run bash commands like:
+bash("ls -la /home/user")
+bash("curl https://api.example.com/data | jq '.results'")
+bash("python script.py --input data.csv")
+```
+
+**Features:**
+- Common Unix tools available
+- File system changes persist
+- Network access enabled
+
+#### 3. Mount Nexus Tool
+Mount the Nexus filesystem inside the E2B sandbox for direct file access:
+
+```python
+# Agent can mount Nexus and access files directly:
+mount_nexus("/home/user/nexus")  # Mount Nexus filesystem
+bash("ls -la /home/user/nexus")  # List Nexus files in sandbox
+python("import pandas as pd; df = pd.read_csv('/home/user/nexus/data.csv')")
+```
+
+**Features:**
+- Direct file system access to Nexus from within sandbox
+- Read Nexus files into Python scripts
+- Process Nexus files with bash commands
+- Seamless integration between Nexus storage and E2B execution
+
+**Workflow Example:**
+1. Agent calls `mount_nexus("/home/user/nexus")` to mount the filesystem
+2. Agent uses `bash("ls /home/user/nexus")` to explore available files
+3. Agent uses `python("import pandas as pd; df = pd.read_csv('/home/user/nexus/data.csv')")` to process data
+4. Agent writes results back using standard Nexus tools (write_file)
+
+### Environment Variables
+
+The E2B sandbox requires these environment variables:
+
+```bash
+# Set automatically by demo.sh when using --start_sandbox
+export E2B_TEMPLATE_ID="ty0ffopluq04os6yam4c"  # Your template ID
+export E2B_API_KEY="your-e2b-api-key"           # Get from https://e2b.dev/
+```
+
+### Manual Setup
+
+If not using `demo.sh`, you can set up E2B manually:
+
+```bash
+# 1. Install E2B CLI
+brew install e2b  # or: npm i -g @e2b/cli
+
+# 2. Authenticate
+e2b auth login
+
+# 3. Build template
+cd nexus/examples/e2b
+./setup.sh
+
+# 4. Set environment variables
+export E2B_TEMPLATE_ID="<your-template-id>"
+export E2B_API_KEY="<your-api-key>"
+
+# 5. Install Python package
+pip install e2b-code-interpreter
 ```
 
 ## Example Output

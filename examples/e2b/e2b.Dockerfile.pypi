@@ -1,0 +1,12 @@
+FROM e2bdev/code-interpreter:latest
+
+# Install FUSE for filesystem operations
+RUN apt-get update && \
+    apt-get install -y fuse libfuse2 && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install dependencies and nexus from PyPI
+RUN pip install fusepy
+RUN pip install nexus-ai-fs

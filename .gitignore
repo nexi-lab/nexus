@@ -29,6 +29,7 @@ ENV/
 env/
 .env
 .nexus-admin-env
+.demo-env
 
 # PyCharm
 .idea/
@@ -173,3 +174,4 @@ archive/
 *_SUMMARY.md
 *_STATUS.md
 *_COMPLETE.md
+examples/e2b/nexus

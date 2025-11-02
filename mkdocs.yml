@@ -212,8 +212,18 @@ nav:
     - Skill Seekers: examples/skill-seekers.md
 
   - Core Concepts:
-    - Permissions & ReBAC: PERMISSIONS.md
-    - Multi-Tenancy: MULTI_TENANT.md
+    - What is Nexus?: concepts/what-is-nexus.md
+    - Memory System: concepts/memory-system.md
+    - Agent Permissions: concepts/agent-permissions.md
+    - ReBAC Explained: concepts/rebac-explained.md
+    - Content-Addressable Storage: concepts/content-addressable-storage.md
+    - Learning Loops: concepts/learning-loops.md
+    - Workflows vs Triggers: concepts/workflows-vs-triggers.md
+    - Plugin System: concepts/plugin-system.md
+    - Mounts & Backends: concepts/mounts-and-backends.md
+    - Skills System: concepts/skills-system.md
+    - Multi-Tenancy: concepts/multi-tenancy.md
+    - When to Use What: concepts/when-to-use-what.md
     - Architecture: architecture/ARCHITECTURE.md
     - Core Tenets: CORE_TENETS.md
 

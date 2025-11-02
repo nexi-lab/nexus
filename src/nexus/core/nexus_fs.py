@@ -2638,15 +2638,32 @@ class NexusFS(
             self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
 
         entities = self._entity_registry.get_entities_by_type("agent")
-        return [
-            {
+        result = []
+        for e in entities:
+            import json
+
+            # Parse metadata if available
+            metadata = {}
+            if e.entity_metadata:
+                with contextlib.suppress(json.JSONDecodeError, TypeError):
+                    metadata = json.loads(e.entity_metadata)
+
+            agent_info = {
                 "agent_id": e.entity_id,
                 "user_id": e.parent_id,
-                "name": e.entity_id,  # TODO: Store name in metadata
+                "name": metadata.get(
+                    "name", e.entity_id
+                ),  # Use display name or fallback to entity_id
                 "created_at": e.created_at.isoformat() if e.created_at else None,
             }
-            for e in entities
-        ]
+
+            # Add description if available
+            if "description" in metadata:
+                agent_info["description"] = metadata["description"]
+
+            result.append(agent_info)
+
+        return result
 
     @rpc_expose(description="Get agent information")
     def get_agent(self, agent_id: str, _context: dict | None = None) -> dict | None:
@@ -2673,12 +2690,28 @@ class NexusFS(
         if not entity:
             return None
 
-        return {
+        import json
+
+        # Parse metadata if available
+        metadata = {}
+        if entity.entity_metadata:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
+                metadata = json.loads(entity.entity_metadata)
+
+        agent_info = {
             "agent_id": entity.entity_id,
             "user_id": entity.parent_id,
-            "name": entity.entity_id,
+            "name": metadata.get(
+                "name", entity.entity_id
+            ),  # Use display name or fallback to entity_id
             "created_at": entity.created_at.isoformat() if entity.created_at else None,
         }
+
+        # Add description if available
+        if "description" in metadata:
+            agent_info["description"] = metadata["description"]
+
+        return agent_info
 
     @rpc_expose(description="Delete an agent")
     def delete_agent(self, agent_id: str, _context: dict | None = None) -> bool:

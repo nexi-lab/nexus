@@ -97,6 +97,7 @@ class EntityRegistry:
         entity_id: str,
         parent_type: str | None = None,
         parent_id: str | None = None,
+        entity_metadata: dict | None = None,
     ) -> EntityRegistryModel:
         """Register an entity in the registry.
 
@@ -105,6 +106,8 @@ class EntityRegistry:
             entity_id: Unique identifier for the entity.
             parent_type: Type of parent entity (optional).
             parent_id: ID of parent entity (optional).
+            entity_metadata: Additional metadata as dict (optional). Will be stored as JSON.
+                            For agents: {'name': 'Display Name', 'description': 'Agent description'}
 
         Returns:
             EntityRegistryModel: The registered entity.
@@ -128,11 +131,17 @@ class EntityRegistry:
 
         # Create new entity
         with self._get_session() as session:
+            import json
+
+            # Serialize metadata to JSON string if provided
+            metadata_json = json.dumps(entity_metadata) if entity_metadata else None
+
             entity = EntityRegistryModel(
                 entity_type=entity_type,
                 entity_id=entity_id,
                 parent_type=parent_type,
                 parent_id=parent_id,
+                entity_metadata=metadata_json,
                 created_at=datetime.now(UTC),
             )
 

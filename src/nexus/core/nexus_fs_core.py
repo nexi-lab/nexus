@@ -414,6 +414,15 @@ class NexusFSCoreMixin:
         # Calculate new version number (increment if updating)
         new_version = (meta.version + 1) if meta else 1
 
+        # Extract created_by from context (use provided context or default)
+        ctx = context if context is not None else self._default_context
+        created_by = (
+            getattr(ctx, "agent_id", None)
+            or getattr(ctx, "user_id", None)
+            or getattr(ctx, "user", None)
+            or "anonymous"
+        )
+
         # Store metadata with content hash as both etag and physical_path
         # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
         metadata = FileMetadata(
@@ -425,8 +434,7 @@ class NexusFSCoreMixin:
             created_at=meta.created_at if meta else now,
             modified_at=now,
             version=new_version,
-            created_by=getattr(self, "agent_id", None)
-            or getattr(self, "user_id", None),  # Track who created/modified this version
+            created_by=created_by,  # Track who created/modified this version
         )
 
         self.metadata.put(metadata)

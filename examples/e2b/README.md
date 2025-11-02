@@ -17,13 +17,27 @@ Use the automated setup script:
 
 ```bash
 cd nexus/examples/e2b
-./setup.sh
+./setup.sh              # Interactive build with local nexus source
+./setup.sh --yes        # Non-interactive build with local source
+./setup.sh --from-pypi  # Build using nexus-ai-fs from PyPI
 ```
+
+### Build Modes
+
+**Local Source Mode** (default):
+- Copies your local `nexus` package into the Docker build context
+- Installs with `pip install -e /app/nexus`
+- Useful for development and testing local changes
+
+**PyPI Mode** (`--from-pypi`):
+- Installs the released version from PyPI with `pip install nexus-ai-fs`
+- Faster build (no need to copy local source)
+- Useful for production deployments or testing released versions
 
 The script will:
 - Check if E2B CLI is installed
 - Authenticate with E2B (if needed)
-- Build and deploy the template
+- Build and deploy the template with the selected mode
 - Display the template ID and usage examples
 
 ## Prerequisites

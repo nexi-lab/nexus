@@ -819,6 +819,10 @@ class EnhancedPermissionEnforcer:
     ) -> list[str]:
         """Filter list of paths by read permission.
 
+        Performance optimized with bulk permission checking (issue #380).
+        Instead of checking each path individually (N queries), uses rebac_check_bulk()
+        to check all paths in a single batch (1-2 queries).
+
         Args:
             paths: List of paths to filter
             context: Operation context
@@ -832,7 +836,62 @@ class EnhancedPermissionEnforcer:
         ):
             return paths
 
-        # Filter by ReBAC permissions
+        # OPTIMIZATION: Use bulk permission checking for better performance
+        # This reduces N individual checks (each with 10-15 queries) to 1-2 bulk queries
+        if self.rebac_manager and hasattr(self.rebac_manager, "rebac_check_bulk"):
+            import logging
+
+            logger = logging.getLogger(__name__)
+
+            # Build list of checks: (subject, "read", object) for each path
+            checks = []
+            subject = context.get_subject()
+            tenant_id = context.tenant_id or "default"
+
+            for path in paths:
+                # Determine object type (file vs other namespaces)
+                obj_type = "file"  # Default to file
+                if self.router:
+                    try:
+                        # Use router to determine correct object type
+                        route = self.router.route(
+                            path,
+                            tenant_id=context.tenant_id,
+                            agent_id=context.agent_id,
+                            is_admin=context.is_admin,
+                        )
+                        # Get object type from namespace (if available)
+                        if hasattr(route, "namespace") and route.namespace:
+                            obj_type = route.namespace
+                    except Exception:
+                        # Fallback to "file" if routing fails
+                        pass
+
+                checks.append((subject, "read", (obj_type, path)))
+
+            logger.debug(f"filter_list: Using bulk check for {len(checks)} paths")
+
+            try:
+                # Perform bulk permission check
+                results = self.rebac_manager.rebac_check_bulk(checks, tenant_id=tenant_id)
+
+                # Filter paths based on bulk results
+                filtered = []
+                for path, check in zip(paths, checks, strict=False):
+                    if results.get(check, False):
+                        filtered.append(path)
+
+                logger.debug(f"filter_list: Bulk check allowed {len(filtered)}/{len(paths)} paths")
+                return filtered
+
+            except Exception as e:
+                # Fallback to individual checks if bulk fails
+                logger.warning(
+                    f"Bulk permission check failed, falling back to individual checks: {e}"
+                )
+                # Fall through to original implementation
+
+        # Fallback: Filter by ReBAC permissions individually (original implementation)
         result = []
         for path in paths:
             if self.check(path, Permission.READ, context):

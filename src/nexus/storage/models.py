@@ -106,6 +106,9 @@ class FilePathModel(Base):
         Index("idx_file_paths_virtual_path", "virtual_path"),
         Index("idx_file_paths_accessed_at", "accessed_at"),
         Index("idx_file_paths_locked_by", "locked_by"),
+        # Performance: Composite indexes for common query patterns (#384)
+        Index("idx_tenant_path_prefix", "tenant_id", "virtual_path"),  # Optimized prefix queries
+        Index("idx_content_hash_tenant", "content_hash", "tenant_id"),  # CAS dedup lookups
     )
 
     def __repr__(self) -> str:

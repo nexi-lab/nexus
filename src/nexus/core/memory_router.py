@@ -290,7 +290,7 @@ class MemoryViewRouter:
                 visibility=visibility,
                 memory_type=memory_type,
                 importance=importance,
-                state="inactive",  # #368: Default to inactive (pending review)
+                state="active",  # #368: Default to active for backward compatibility
                 namespace=namespace,
                 path_key=path_key,
             )

@@ -32,10 +32,10 @@ def upgrade() -> None:
     """Add state field to memories table for manual approval workflow."""
 
     # Add state column to memories table
-    # Default to 'inactive' for new memories (pending review)
+    # Default to 'active' for backward compatibility (new memories immediately available)
     with op.batch_alter_table("memories", schema=None) as batch_op:
         batch_op.add_column(
-            sa.Column("state", sa.String(20), nullable=False, server_default="inactive")
+            sa.Column("state", sa.String(20), nullable=False, server_default="active")
         )
 
     # Create index for state queries

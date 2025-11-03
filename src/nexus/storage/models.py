@@ -886,8 +886,8 @@ class MemoryModel(Base):
 
     # State management (#368)
     state: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="inactive", index=True
-    )  # 'inactive', 'active' - supports manual approval workflow
+        String(20), nullable=False, default="active", index=True
+    )  # 'inactive', 'active' - supports manual approval workflow (default: active for backward compatibility)
 
     # Namespace organization (v0.8.0 - #350)
     namespace: Mapped[str | None] = mapped_column(

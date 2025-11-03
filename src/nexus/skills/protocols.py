@@ -828,6 +828,48 @@ class NexusFilesystem(Protocol):
         """
         ...
 
+    def sandbox_connect(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+        mount_path: str = "/mnt/nexus",
+        context: dict | None = None,
+    ) -> dict[Any, Any]:
+        """Connect to user-managed sandbox (Issue #371).
+
+        Args:
+            sandbox_id: External sandbox ID
+            provider: Sandbox provider
+            sandbox_api_key: Provider API key
+            mount_path: Mount path in sandbox
+            context: Operation context
+
+        Returns:
+            Connection result dict
+        """
+        ...
+
+    def sandbox_disconnect(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+        context: dict | None = None,
+    ) -> dict[Any, Any]:
+        """Disconnect from user-managed sandbox (Issue #371).
+
+        Args:
+            sandbox_id: External sandbox ID
+            provider: Sandbox provider
+            sandbox_api_key: Provider API key
+            context: Operation context
+
+        Returns:
+            Disconnection result dict
+        """
+        ...
+
     # ============================================================
     # Lifecycle Management
     # ============================================================

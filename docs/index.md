@@ -147,6 +147,20 @@ Nexus is a **programmable filesystem for AI agents** that combines:
     - **Custom integrations** via plugin system
     - **ML experiment tracking** with versioned checkpoints
 
+=== "📚 Skills & Knowledge Management"
+
+    **Excellent!** Package and share AI capabilities as reusable skills.
+
+    ✅ **You need:** Skill discovery, documentation-to-skill conversion, team sharing
+    👉 **Start here:** [Skills Management (20 min)](learning-paths/skills-management.md)
+
+    **Use cases:**
+    - **Team skill libraries** from internal/external documentation
+    - **Auto-generate skills** from any docs URL
+    - **Skill discovery** across agent/tenant/system tiers
+    - **Knowledge sharing** with ReBAC permissions
+    - **AI agent enhancement** with contextual skills
+
 ### 2. What's your experience level?
 
 === "🌱 New to Nexus"

@@ -435,6 +435,59 @@ def serve(
         # Get filesystem instance with appropriate permissions
         nx = get_filesystem(backend_config, enforce_permissions=enforce_permissions)
 
+        # Load backends from config file if specified
+        if backend_config.config_path:
+            from pathlib import Path as PathlibPath
+
+            from nexus.cli.utils import create_backend_from_config
+            from nexus.config import load_config
+            from nexus.core.nexus_fs import NexusFS
+
+            try:
+                cfg = load_config(PathlibPath(backend_config.config_path))
+                if cfg.backends:
+                    # Type check: backends can only be mounted on NexusFS, not RemoteNexusFS
+                    if not isinstance(nx, NexusFS):
+                        console.print(
+                            "[yellow]⚠️  Warning: Multi-backend configuration is only supported for local NexusFS instances[/yellow]"
+                        )
+                    else:
+                        console.print()
+                        console.print("[bold cyan]Loading backends from config...[/bold cyan]")
+                        for backend_def in cfg.backends:
+                            backend_type = backend_def.get("type")
+                            mount_point = backend_def.get("mount_point")
+                            backend_cfg = backend_def.get("config", {})
+                            priority = backend_def.get("priority", 0)
+                            readonly = backend_def.get("readonly", False)
+
+                            if not backend_type or not mount_point:
+                                console.print(
+                                    "[yellow]⚠️  Warning: Skipping backend with missing type or mount_point[/yellow]"
+                                )
+                                continue
+
+                            try:
+                                # Create backend instance
+                                backend = create_backend_from_config(backend_type, backend_cfg)
+
+                                # Add mount to router (nx is NexusFS at this point)
+                                nx.router.add_mount(mount_point, backend, priority, readonly)
+
+                                readonly_str = " (read-only)" if readonly else ""
+                                console.print(
+                                    f"  [green]✓[/green] Mounted {backend_type} backend at {mount_point}{readonly_str}"
+                                )
+                            except Exception as e:
+                                console.print(
+                                    f"[yellow]⚠️  Warning: Failed to mount {backend_type} at {mount_point}: {e}[/yellow]"
+                                )
+                                continue
+            except Exception as e:
+                console.print(
+                    f"[yellow]⚠️  Warning: Could not load backends from config: {e}[/yellow]"
+                )
+
         # Safety check: Server should never use RemoteNexusFS (would create circular dependency)
         from nexus.remote import RemoteNexusFS
 

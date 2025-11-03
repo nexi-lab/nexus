@@ -23,6 +23,8 @@
 ✅ Familiarity with ReBAC permissions
 ✅ Basic knowledge of SaaS architecture concepts
 
+**📝 API Note:** This tutorial uses Nexus's ReBAC (Relationship-Based Access Control) API for permissions. Admin operations use the RPC interface via `_call_rpc()`. User accounts are created implicitly when their first API key is generated.
+
 ## Overview
 
 Multi-tenant SaaS applications serve multiple customers (tenants) from a single infrastructure while ensuring **complete data isolation** and **independent tenant management**. Nexus provides built-in multi-tenancy support with ReBAC for fine-grained access control.
@@ -103,6 +105,8 @@ curl http://localhost:8080/health
 
 Build a tenant management system:
 
+**Important Note:** This example uses Nexus's internal RPC API via `_call_rpc()` for admin operations and the ReBAC API for permissions. The admin operations create API keys which implicitly create user accounts.
+
 ```python
 # tenant_manager.py
 import nexus
@@ -171,28 +175,25 @@ class TenantManager:
     def create_tenant_admin(self, tenant_id: str, username: str, email: str) -> Dict:
         """Create admin user for a tenant"""
 
-        # Create user account
-        self.admin.admin_create_user(
-            username=username,
-            name=f"{username} (Tenant Admin)",
-            email=email,
-            metadata={"tenant_id": tenant_id, "role": "tenant_admin"}
-        )
+        # Create user account and API key
+        # Note: In Nexus, users are created implicitly when their first API key is generated
+        result = self.admin._call_rpc("admin_create_key", {
+            "user_id": username,
+            "name": f"{username} (Tenant Admin)",
+            "subject_type": "user",
+            "tenant_id": tenant_id,
+            "is_admin": False,  # Tenant admin, not system admin
+        })
 
-        # Generate API key
-        api_key = self.admin.admin_create_user_key(
-            username=username,
-            description=f"Admin key for tenant {tenant_id}"
-        )
+        api_key = result["api_key"]
 
         # Grant tenant admin full access to tenant workspace
         tenant_path = f"/tenants/{tenant_id}"
-        self.admin.grant_permission(
-            subject_type="user",
-            subject_id=username,
-            object_type="file",
-            object_id=tenant_path,
-            relation="owner"
+        self.admin.rebac_create(
+            subject=("user", username),
+            relation="owner",
+            object=("file", tenant_path),
+            tenant_id=tenant_id
         )
 
         print(f"✅ Created tenant admin: {username}")
@@ -215,19 +216,16 @@ class TenantManager:
     ) -> Dict:
         """Add a user to a tenant"""
 
-        # Create user account
-        self.admin.admin_create_user(
-            username=username,
-            name=username,
-            email=email,
-            metadata={"tenant_id": tenant_id, "role": role}
-        )
+        # Create user account and API key
+        result = self.admin._call_rpc("admin_create_key", {
+            "user_id": username,
+            "name": username,
+            "subject_type": "user",
+            "tenant_id": tenant_id,
+            "is_admin": False,
+        })
 
-        # Generate API key
-        api_key = self.admin.admin_create_user_key(
-            username=username,
-            description=f"User key for tenant {tenant_id}"
-        )
+        api_key = result["api_key"]
 
         # Grant appropriate permissions based on role
         tenant_path = f"/tenants/{tenant_id}"
@@ -239,23 +237,21 @@ class TenantManager:
         else:  # role == "user"
             relation = "can_read"
 
-        self.admin.grant_permission(
-            subject_type="user",
-            subject_id=username,
-            object_type="file",
-            object_id=f"{tenant_path}/shared",
-            relation=relation
+        self.admin.rebac_create(
+            subject=("user", username),
+            relation=relation,
+            object=("file", f"{tenant_path}/shared"),
+            tenant_id=tenant_id
         )
 
         # Grant user access to their personal folder
         user_folder = f"{tenant_path}/users/{username}"
         self.admin.mkdir(user_folder)
-        self.admin.grant_permission(
-            subject_type="user",
-            subject_id=username,
-            object_type="file",
-            object_id=user_folder,
-            relation="owner"
+        self.admin.rebac_create(
+            subject=("user", username),
+            relation="owner",
+            object=("file", user_folder),
+            tenant_id=tenant_id
         )
 
         print(f"✅ Added user: {username} (role: {role})")
@@ -280,7 +276,7 @@ class TenantManager:
 
     def list_tenants(self) -> List[Dict]:
         """List all tenants"""
-        tenant_dirs = self.admin.list_files("/tenants", recursive=False)
+        tenant_dirs = self.admin.list("/tenants", recursive=False)
 
         tenants = []
         for tenant_dir in tenant_dirs:
@@ -481,12 +477,12 @@ except nexus.NexusPermissionError:
     print("✅ Isolation working: Alice cannot access Beta files")
 
 # Verify: Users can only see their tenant's files
-alice_files = alice.list_files("/tenants/acme", recursive=True)
+alice_files = alice.list("/tenants/acme", recursive=True)
 print(f"\n📁 Alice can see {len(alice_files)} Acme files:")
 for f in alice_files[:5]:
     print(f"  - {f['path']}")
 
-bob_files = bob.list_files("/tenants/beta", recursive=True)
+bob_files = bob.list("/tenants/beta", recursive=True)
 print(f"\n📁 Bob can see {len(bob_files)} Beta files:")
 for f in bob_files[:5]:
     print(f"  - {f['path']}")
@@ -549,12 +545,13 @@ class CrossTenantSharing:
         shared_file_path = f"{target_path}/{file_path.split('/')[-1]}"
 
         # Grant target tenant read access
-        self.admin.grant_permission(
-            subject_type="tenant",
-            subject_id=target_tenant_id,
-            object_type="file",
-            object_id=shared_file_path,
-            relation=permission
+        # Note: Grant to all users in target tenant by using a group or specific users
+        # For simplicity, we'll create a share that specific users can access
+        self.admin.rebac_create(
+            subject=("tenant", target_tenant_id),
+            relation=permission,
+            object=("file", shared_file_path),
+            tenant_id=tenant_id
         )
 
         # Store share metadata
@@ -829,7 +826,7 @@ class TenantLifecycle:
         # In production, this would create a compressed archive
         # For demo, we'll list what would be exported
 
-        files = self.admin.list_files(tenant_path, recursive=True)
+        files = self.admin.list(tenant_path, recursive=True)
 
         print(f"📦 Exporting tenant data: {tenant_id}")
         print(f"   Total files: {len(files)}")
@@ -1118,25 +1115,22 @@ class MultiTenantSaaS:
 
         # Step 4: Create admin user
         admin_username = f"{tenant_id}_admin"
-        self.admin.admin_create_user(
-            username=admin_username,
-            name=f"{name} Admin",
-            email=admin_email,
-            metadata={"tenant_id": tenant_id, "role": "admin"}
-        )
+        result = self.admin._call_rpc("admin_create_key", {
+            "user_id": admin_username,
+            "name": f"{name} Admin",
+            "subject_type": "user",
+            "tenant_id": tenant_id,
+            "is_admin": False,
+        })
 
-        api_key = self.admin.admin_create_user_key(
-            username=admin_username,
-            description=f"Admin key for {tenant_id}"
-        )
+        api_key = result["api_key"]
 
         # Grant admin full access
-        self.admin.grant_permission(
-            subject_type="user",
-            subject_id=admin_username,
-            object_type="file",
-            object_id=tenant_path,
-            relation="owner"
+        self.admin.rebac_create(
+            subject=("user", admin_username),
+            relation="owner",
+            object=("file", tenant_path),
+            tenant_id=tenant_id
         )
         print(f"  ✅ Created admin user: {admin_email}")
 
@@ -1311,9 +1305,8 @@ if __name__ == "__main__":
 **Solution:**
 ```python
 # Verify permissions are properly scoped
-permissions = nx.list_permissions(
-    subject_type="user",
-    subject_id="alice"
+permissions = nx.rebac_list_tuples(
+    subject=("user", "alice")
 )
 
 # Ensure all permissions start with /tenants/{tenant_id}

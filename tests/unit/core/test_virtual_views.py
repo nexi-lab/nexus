@@ -242,9 +242,13 @@ class TestShouldAddVirtualViews:
         """Test that virtual views should be added for .pptx files."""
         assert should_add_virtual_views("/presentation.pptx") is True
 
-    def test_should_add_for_jpg(self):
-        """Test that virtual views should be added for .jpg files."""
-        assert should_add_virtual_views("/image.jpg") is True
+    def test_should_not_add_for_jpg(self):
+        """Test that virtual views should not be added for .jpg files.
+
+        Images require OCR which is not enabled by default, so we don't
+        create automatic virtual views for them.
+        """
+        assert should_add_virtual_views("/image.jpg") is False
 
 
 class TestAddVirtualViewsToListing:

@@ -231,6 +231,56 @@ def get_filesystem(
         sys.exit(1)
 
 
+def create_backend_from_config(backend_type: str, config: dict[str, Any]) -> Any:
+    """Create backend instance from type and config dict.
+
+    Args:
+        backend_type: Backend type (local, gcs, s3, gdrive, etc.)
+        config: Backend-specific configuration dictionary
+
+    Returns:
+        Backend instance
+
+    Raises:
+        ValueError: If backend type is unknown or not implemented
+
+    Example:
+        >>> backend = create_backend_from_config("local", {"root_path": "./data"})
+        >>> backend = create_backend_from_config("gcs", {"bucket": "my-bucket"})
+    """
+    if backend_type == "local":
+        from nexus.backends.local import LocalBackend
+
+        root_path = config.get("root_path", "./nexus-data/files")
+        return LocalBackend(root_path=root_path)
+
+    elif backend_type == "gcs":
+        from nexus.backends.gcs import GCSBackend
+
+        bucket = config.get("bucket")
+        if not bucket:
+            raise ValueError("GCS backend requires 'bucket' in config")
+
+        return GCSBackend(
+            bucket_name=bucket,
+            project_id=config.get("project_id"),
+            credentials_path=config.get("credentials_path"),
+        )
+
+    elif backend_type == "s3":
+        # TODO: Implement S3Backend
+        raise NotImplementedError(f"S3 backend not yet implemented (backend type: {backend_type})")
+
+    elif backend_type == "gdrive":
+        # TODO: Implement GDriveBackend
+        raise NotImplementedError(
+            f"Google Drive backend not yet implemented (backend type: {backend_type})"
+        )
+
+    else:
+        raise ValueError(f"Unknown backend type: {backend_type}")
+
+
 def get_default_filesystem() -> NexusFilesystem:
     """Get Nexus filesystem instance with default configuration.
 

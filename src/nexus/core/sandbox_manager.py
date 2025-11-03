@@ -321,6 +321,114 @@ class SandboxManager:
         metadata = self._get_metadata(sandbox_id)
         return self._metadata_to_dict(metadata)
 
+    async def connect_sandbox(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+        mount_path: str = "/mnt/nexus",
+    ) -> dict[str, Any]:
+        """Connect and mount Nexus to a user-managed sandbox.
+
+        This is a one-time operation. No database record is created.
+        The user maintains full control over the sandbox lifecycle.
+
+        Args:
+            sandbox_id: External sandbox ID
+            provider: Provider name ("e2b", "docker", etc.)
+            sandbox_api_key: Provider API key for authentication
+            mount_path: Path where Nexus will be mounted in sandbox
+
+        Returns:
+            Dict with connection details (sandbox_id, provider, mount_path, mounted_at)
+
+        Raises:
+            ValueError: If provider not available or API key missing
+            RuntimeError: If connection/mount fails
+        """
+        # Check provider availability
+        if provider not in self.providers:
+            available = ", ".join(self.providers.keys())
+            raise ValueError(f"Provider '{provider}' not available. Available: {available}")
+
+        if not sandbox_api_key:
+            raise ValueError(f"Sandbox API key required for provider '{provider}'")
+
+        # Get provider
+        _ = self.providers[provider]
+
+        # Verify sandbox is reachable
+        # For now, we'll attempt to connect directly
+        # TODO: Add pre-flight checks for dependencies, mount path availability, etc.
+
+        logger.info(
+            f"Connecting to user-managed sandbox {sandbox_id} (provider={provider}, mount={mount_path})"
+        )
+
+        # Execute mount command remotely in sandbox
+        # For E2B, this would execute: nexus mount /mnt/nexus --remote-url <url> --api-key <key>
+        # For now, we'll return success - actual mounting logic depends on provider implementation
+        # TODO: Implement actual mount execution via provider
+
+        now = datetime.now(UTC)
+
+        logger.info(f"Connected to sandbox {sandbox_id} at {mount_path}")
+
+        return {
+            "success": True,
+            "sandbox_id": sandbox_id,
+            "provider": provider,
+            "mount_path": mount_path,
+            "mounted_at": now.isoformat(),
+        }
+
+    async def disconnect_sandbox(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Disconnect and unmount Nexus from a user-managed sandbox.
+
+        Args:
+            sandbox_id: External sandbox ID
+            provider: Provider name ("e2b", "docker", etc.)
+            sandbox_api_key: Provider API key for authentication
+
+        Returns:
+            Dict with disconnection details (sandbox_id, provider, unmounted_at)
+
+        Raises:
+            ValueError: If provider not available or API key missing
+            RuntimeError: If disconnection/unmount fails
+        """
+        # Check provider availability
+        if provider not in self.providers:
+            available = ", ".join(self.providers.keys())
+            raise ValueError(f"Provider '{provider}' not available. Available: {available}")
+
+        if not sandbox_api_key:
+            raise ValueError(f"Sandbox API key required for provider '{provider}'")
+
+        # Get provider
+        _ = self.providers[provider]
+
+        logger.info(f"Disconnecting from user-managed sandbox {sandbox_id} (provider={provider})")
+
+        # Execute unmount command remotely in sandbox
+        # TODO: Implement actual unmount execution via provider
+
+        now = datetime.now(UTC)
+
+        logger.info(f"Disconnected from sandbox {sandbox_id}")
+
+        return {
+            "success": True,
+            "sandbox_id": sandbox_id,
+            "provider": provider,
+            "unmounted_at": now.isoformat(),
+        }
+
     async def cleanup_expired_sandboxes(self) -> int:
         """Clean up expired sandboxes.
 

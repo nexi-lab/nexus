@@ -114,6 +114,12 @@ class NexusConfig(BaseModel):
         description="Enable automatic workflow triggering on file operations (default: True)",
     )
 
+    # Multi-backend storage configuration (v0.9.0)
+    backends: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Multiple backend mount configurations (type, mount_point, config, priority, readonly)",
+    )
+
     # Remote mode settings (monolithic/distributed)
     url: str | None = Field(default=None, description="Nexus server URL for remote modes")
     api_key: str | None = Field(default=None, description="API key for authentication")

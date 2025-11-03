@@ -28,6 +28,8 @@ from typing import Any, overload
 logger = logging.getLogger(__name__)
 
 # File extensions that support parsing to text
+# Note: Image formats (.jpg, .jpeg, .png) require OCR which is not enabled by default,
+# so they are excluded from automatic virtual view generation
 PARSEABLE_EXTENSIONS = {
     ".pdf",
     ".docx",
@@ -41,9 +43,6 @@ PARSEABLE_EXTENSIONS = {
     ".odp",
     ".rtf",
     ".epub",
-    ".jpg",
-    ".jpeg",
-    ".png",
 }
 
 

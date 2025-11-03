@@ -434,6 +434,159 @@ def sandbox_status(
         sys.exit(1)
 
 
+@sandbox.command(name="connect")
+@click.argument("sandbox_id")
+@click.option(
+    "--provider",
+    "-p",
+    default="e2b",
+    type=click.Choice(["e2b"], case_sensitive=False),
+    help="Sandbox provider (default: e2b)",
+)
+@click.option(
+    "--sandbox-api-key",
+    envvar="E2B_API_KEY",
+    required=True,
+    help="Sandbox provider API key (e.g., E2B API key)",
+)
+@click.option(
+    "--mount-path",
+    default="/mnt/nexus",
+    help="Mount path in sandbox (default: /mnt/nexus)",
+)
+@click.option(
+    "--json",
+    "-j",
+    "json_output",
+    is_flag=True,
+    help="Output as JSON",
+)
+@click.option(
+    "--data-dir",
+    envvar="NEXUS_DATA_DIR",
+    help="Nexus data directory",
+)
+def connect_sandbox(
+    sandbox_id: str,
+    provider: str,
+    sandbox_api_key: str,
+    mount_path: str,
+    json_output: bool,
+    data_dir: str | None,  # noqa: ARG001
+) -> None:
+    """Connect and mount Nexus to a user-managed sandbox.
+
+    This is a one-time operation for sandboxes you manage externally.
+    Nexus will mount the filesystem to your sandbox without taking
+    over lifecycle management.
+
+    \b
+    Examples:
+        # Connect to E2B sandbox (API key from env)
+        export E2B_API_KEY=your_key
+        nexus sandbox connect sb_xxx
+
+        # Connect with explicit API key
+        nexus sandbox connect sb_xxx --sandbox-api-key your_key
+
+        # Custom mount path
+        nexus sandbox connect sb_xxx --mount-path /home/user/nexus
+
+        # JSON output
+        nexus sandbox connect sb_xxx --json
+    """
+    try:
+        nx: NexusFilesystem = get_default_filesystem()
+
+        result = nx.sandbox_connect(
+            sandbox_id=sandbox_id,
+            provider=provider,
+            sandbox_api_key=sandbox_api_key,
+            mount_path=mount_path,
+        )
+
+        if json_output:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            click.echo(f"✓ Connected to sandbox: {result['sandbox_id']}")
+            click.echo(f"  Provider: {result['provider']}")
+            click.echo(f"  Mount path: {result['mount_path']}")
+            click.echo(f"  Mounted at: {result['mounted_at']}")
+
+    except Exception as e:
+        click.echo(f"Failed to connect to sandbox: {e}")
+        sys.exit(1)
+
+
+@sandbox.command(name="disconnect")
+@click.argument("sandbox_id")
+@click.option(
+    "--provider",
+    "-p",
+    default="e2b",
+    type=click.Choice(["e2b"], case_sensitive=False),
+    help="Sandbox provider (default: e2b)",
+)
+@click.option(
+    "--sandbox-api-key",
+    envvar="E2B_API_KEY",
+    required=True,
+    help="Sandbox provider API key (e.g., E2B API key)",
+)
+@click.option(
+    "--json",
+    "-j",
+    "json_output",
+    is_flag=True,
+    help="Output as JSON",
+)
+@click.option(
+    "--data-dir",
+    envvar="NEXUS_DATA_DIR",
+    help="Nexus data directory",
+)
+def disconnect_sandbox(
+    sandbox_id: str,
+    provider: str,
+    sandbox_api_key: str,
+    json_output: bool,
+    data_dir: str | None,  # noqa: ARG001
+) -> None:
+    """Disconnect and unmount Nexus from a user-managed sandbox.
+
+    \b
+    Examples:
+        # Disconnect from E2B sandbox
+        export E2B_API_KEY=your_key
+        nexus sandbox disconnect sb_xxx
+
+        # Disconnect with explicit API key
+        nexus sandbox disconnect sb_xxx --sandbox-api-key your_key
+
+        # JSON output
+        nexus sandbox disconnect sb_xxx --json
+    """
+    try:
+        nx: NexusFilesystem = get_default_filesystem()
+
+        result = nx.sandbox_disconnect(
+            sandbox_id=sandbox_id,
+            provider=provider,
+            sandbox_api_key=sandbox_api_key,
+        )
+
+        if json_output:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            click.echo(f"✓ Disconnected from sandbox: {result['sandbox_id']}")
+            click.echo(f"  Provider: {result['provider']}")
+            click.echo(f"  Unmounted at: {result['unmounted_at']}")
+
+    except Exception as e:
+        click.echo(f"Failed to disconnect from sandbox: {e}")
+        sys.exit(1)
+
+
 def register_commands(cli: click.Group) -> None:
     """Register sandbox commands with the main CLI.
 

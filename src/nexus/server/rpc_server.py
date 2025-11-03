@@ -883,6 +883,18 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             # Return metadata dict from write()
             return result
 
+        elif method == "append":
+            # Append content to file (creates if doesn't exist)
+            result = self.nexus_fs.append(
+                params.path,
+                params.content,
+                context=context,
+                if_match=params.if_match,
+                force=params.force,
+            )
+            # Return metadata dict from append()
+            return result
+
         elif method == "delete":
             self.nexus_fs.delete(params.path, context=context)  # type: ignore[call-arg]
             return {"success": True}
@@ -1126,6 +1138,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 memory_type=params.memory_type,
                 namespace=params.namespace,  # v0.8.0
                 namespace_prefix=params.namespace_prefix,  # v0.8.0
+                state=params.state,  # #368
                 limit=params.limit,
             )
             return {"memories": memories}
@@ -1144,12 +1157,38 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             deleted = memory_api.delete(params.memory_id)
             return {"deleted": deleted}
 
+        elif method == "approve_memory":  # #368
+            memory_api = self._get_memory_api_with_context()
+            approved = memory_api.approve(params.memory_id)
+            return {"approved": approved}
+
+        elif method == "deactivate_memory":  # #368
+            memory_api = self._get_memory_api_with_context()
+            deactivated = memory_api.deactivate(params.memory_id)
+            return {"deactivated": deactivated}
+
+        elif method == "approve_memory_batch":  # #368
+            memory_api = self._get_memory_api_with_context()
+            result = memory_api.approve_batch(params.memory_ids)
+            return result
+
+        elif method == "deactivate_memory_batch":  # #368
+            memory_api = self._get_memory_api_with_context()
+            result = memory_api.deactivate_batch(params.memory_ids)
+            return result
+
+        elif method == "delete_memory_batch":  # #368
+            memory_api = self._get_memory_api_with_context()
+            result = memory_api.delete_batch(params.memory_ids)
+            return result
+
         elif method == "query_memories":
             # v0.7.1+v0.8.0: Use memory API with authenticated context
             memory_api = self._get_memory_api_with_context()
             memories = memory_api.query(
                 memory_type=params.memory_type,
                 scope=params.scope,
+                state=params.state,  # #368
                 limit=params.limit,
             )
             return {"memories": memories}

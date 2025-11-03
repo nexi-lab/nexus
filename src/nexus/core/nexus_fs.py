@@ -315,6 +315,11 @@ class NexusFS(
             "agent_id": None,
         }
 
+        # Issue #372: Sandbox manager - lazy initialization
+        from nexus.core.sandbox_manager import SandboxManager
+
+        self._sandbox_manager: SandboxManager | None = None
+
         # v0.7.0: Initialize workflow engine for automatic event triggering
         self.enable_workflows = enable_workflows
         self.workflow_engine = workflow_engine
@@ -3073,6 +3078,212 @@ class NexusFS(
             )
         finally:
             session.close()
+
+    # ========================================================================
+    # Sandbox Management (Issue #372)
+    # ========================================================================
+
+    def _ensure_sandbox_manager(self) -> None:
+        """Ensure sandbox manager is initialized (lazy initialization)."""
+        if not hasattr(self, "_sandbox_manager") or self._sandbox_manager is None:
+            import os
+
+            from nexus.core.sandbox_manager import SandboxManager
+
+            # Initialize sandbox manager with E2B credentials
+            session = self.metadata.SessionLocal()
+            self._sandbox_manager = SandboxManager(
+                db_session=session,
+                e2b_api_key=os.getenv("E2B_API_KEY"),
+                e2b_team_id=os.getenv("E2B_TEAM_ID"),
+                e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
+            )
+
+    @rpc_expose(description="Create a new sandbox")
+    def sandbox_create(
+        self,
+        name: str,
+        ttl_minutes: int = 10,
+        template_id: str | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Create a new code execution sandbox.
+
+        Args:
+            name: User-friendly sandbox name (unique per user)
+            ttl_minutes: Idle timeout in minutes (default: 10)
+            template_id: Provider template ID (optional)
+            context: Operation context with user/agent/tenant info
+
+        Returns:
+            Sandbox metadata dict with sandbox_id, name, status, etc.
+        """
+        ctx = self._parse_context(context)
+
+        # Ensure sandbox manager is initialized
+        self._ensure_sandbox_manager()
+        assert self._sandbox_manager is not None
+
+        # Create sandbox
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        result = loop.run_until_complete(
+            self._sandbox_manager.create_sandbox(
+                name=name,
+                user_id=ctx.user or "system",
+                tenant_id=ctx.tenant_id or self._default_context.tenant_id or "default",
+                agent_id=ctx.agent_id,
+                ttl_minutes=ttl_minutes,
+                template_id=template_id,
+            )
+        )
+        return result
+
+    @rpc_expose(description="Run code in sandbox")
+    def sandbox_run(
+        self,
+        sandbox_id: str,
+        language: str,
+        code: str,
+        timeout: int = 30,
+        context: dict | None = None,  # noqa: ARG002
+    ) -> dict:
+        """Run code in a sandbox.
+
+        Args:
+            sandbox_id: Sandbox ID
+            language: Programming language ("python", "javascript", "bash")
+            code: Code to execute
+            timeout: Execution timeout in seconds (default: 30)
+            context: Operation context
+
+        Returns:
+            Dict with stdout, stderr, exit_code, execution_time
+        """
+        # Ensure sandbox manager is initialized
+        self._ensure_sandbox_manager()
+        assert self._sandbox_manager is not None
+
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        result = loop.run_until_complete(
+            self._sandbox_manager.run_code(sandbox_id, language, code, timeout)
+        )
+        return result
+
+    @rpc_expose(description="Pause sandbox")
+    def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
+        """Pause sandbox to save costs.
+
+        Args:
+            sandbox_id: Sandbox ID
+            context: Operation context
+
+        Returns:
+            Updated sandbox metadata
+        """
+        # Ensure sandbox manager is initialized
+        self._ensure_sandbox_manager()
+        assert self._sandbox_manager is not None
+
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        result = loop.run_until_complete(self._sandbox_manager.pause_sandbox(sandbox_id))
+        return result
+
+    @rpc_expose(description="Resume paused sandbox")
+    def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
+        """Resume a paused sandbox.
+
+        Args:
+            sandbox_id: Sandbox ID
+            context: Operation context
+
+        Returns:
+            Updated sandbox metadata
+        """
+        # Ensure sandbox manager is initialized
+        self._ensure_sandbox_manager()
+        assert self._sandbox_manager is not None
+
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        result = loop.run_until_complete(self._sandbox_manager.resume_sandbox(sandbox_id))
+        return result
+
+    @rpc_expose(description="Stop and destroy sandbox")
+    def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
+        """Stop and destroy sandbox.
+
+        Args:
+            sandbox_id: Sandbox ID
+            context: Operation context
+
+        Returns:
+            Updated sandbox metadata
+        """
+        # Ensure sandbox manager is initialized
+        self._ensure_sandbox_manager()
+        assert self._sandbox_manager is not None
+
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        result = loop.run_until_complete(self._sandbox_manager.stop_sandbox(sandbox_id))
+        return result
+
+    @rpc_expose(description="List sandboxes")
+    def sandbox_list(self, context: dict | None = None) -> dict:
+        """List user's sandboxes.
+
+        Args:
+            context: Operation context
+
+        Returns:
+            Dict with list of sandboxes
+        """
+        # Ensure sandbox manager is initialized
+        self._ensure_sandbox_manager()
+        assert self._sandbox_manager is not None
+
+        ctx = self._parse_context(context)
+
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        sandboxes = loop.run_until_complete(
+            self._sandbox_manager.list_sandboxes(
+                user_id=ctx.user,
+                tenant_id=ctx.tenant_id,
+                agent_id=ctx.agent_id,
+            )
+        )
+        return {"sandboxes": sandboxes}
+
+    @rpc_expose(description="Get sandbox status")
+    def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
+        """Get sandbox status and metadata.
+
+        Args:
+            sandbox_id: Sandbox ID
+            context: Operation context
+
+        Returns:
+            Sandbox metadata dict
+        """
+        # Ensure sandbox manager is initialized
+        self._ensure_sandbox_manager()
+        assert self._sandbox_manager is not None
+
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        result = loop.run_until_complete(self._sandbox_manager.get_sandbox_status(sandbox_id))
+        return result
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

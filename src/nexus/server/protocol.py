@@ -222,6 +222,16 @@ class WriteParams:
 
 
 @dataclass
+class AppendParams:
+    """Parameters for append() method."""
+
+    path: str
+    content: bytes
+    if_match: str | None = None  # Optimistic concurrency control
+    force: bool = False  # Skip version check
+
+
+@dataclass
 class DeleteParams:
     """Parameters for delete() method."""
 
@@ -466,6 +476,7 @@ class ListMemoriesParams:
     memory_type: str | None = None
     namespace: str | None = None  # v0.8.0
     namespace_prefix: str | None = None  # v0.8.0
+    state: str | None = "active"  # #368: Filter by state (inactive/active/all)
 
 
 @dataclass
@@ -666,11 +677,47 @@ class DeleteMemoryParams:
 
 
 @dataclass
+class ApproveMemoryParams:
+    """Parameters for approve_memory() method (#368)."""
+
+    memory_id: str
+
+
+@dataclass
+class DeactivateMemoryParams:
+    """Parameters for deactivate_memory() method (#368)."""
+
+    memory_id: str
+
+
+@dataclass
+class ApproveMemoryBatchParams:
+    """Parameters for approve_memory_batch() method (#368)."""
+
+    memory_ids: list[str]
+
+
+@dataclass
+class DeactivateMemoryBatchParams:
+    """Parameters for deactivate_memory_batch() method (#368)."""
+
+    memory_ids: list[str]
+
+
+@dataclass
+class DeleteMemoryBatchParams:
+    """Parameters for delete_memory_batch() method (#368)."""
+
+    memory_ids: list[str]
+
+
+@dataclass
 class QueryMemoriesParams:
     """Parameters for query_memories() method (v0.5.0)."""
 
     memory_type: str | None = None
     scope: str | None = None
+    state: str | None = "active"  # #368: Filter by state
     limit: int = 50
 
 
@@ -769,10 +816,76 @@ class AdminUpdateKeyParams:
     name: str | None = None
 
 
+# ============================================================================
+# Sandbox Management Parameters (Issue #372)
+# ============================================================================
+
+
+@dataclass
+class SandboxCreateParams:
+    """Parameters for sandbox_create() method."""
+
+    name: str
+    ttl_minutes: int = 10
+    template_id: str | None = None
+    context: dict | None = None
+
+
+@dataclass
+class SandboxRunParams:
+    """Parameters for sandbox_run() method."""
+
+    sandbox_id: str
+    language: str
+    code: str
+    timeout: int = 30
+    context: dict | None = None
+
+
+@dataclass
+class SandboxPauseParams:
+    """Parameters for sandbox_pause() method."""
+
+    sandbox_id: str
+    context: dict | None = None
+
+
+@dataclass
+class SandboxResumeParams:
+    """Parameters for sandbox_resume() method."""
+
+    sandbox_id: str
+    context: dict | None = None
+
+
+@dataclass
+class SandboxStopParams:
+    """Parameters for sandbox_stop() method."""
+
+    sandbox_id: str
+    context: dict | None = None
+
+
+@dataclass
+class SandboxListParams:
+    """Parameters for sandbox_list() method."""
+
+    context: dict | None = None
+
+
+@dataclass
+class SandboxStatusParams:
+    """Parameters for sandbox_status() method."""
+
+    sandbox_id: str
+    context: dict | None = None
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
     "write": WriteParams,
+    "append": AppendParams,
     "delete": DeleteParams,
     "rename": RenameParams,
     "exists": ExistsParams,
@@ -824,6 +937,11 @@ METHOD_PARAMS = {
     "store_memory": StoreMemoryParams,
     "retrieve_memory": RetrieveMemoryParams,  # v0.8.0
     "delete_memory": DeleteMemoryParams,  # v0.8.0
+    "approve_memory": ApproveMemoryParams,  # #368
+    "deactivate_memory": DeactivateMemoryParams,  # #368
+    "approve_memory_batch": ApproveMemoryBatchParams,  # #368
+    "deactivate_memory_batch": DeactivateMemoryBatchParams,  # #368
+    "delete_memory_batch": DeleteMemoryBatchParams,  # #368
     "query_memories": QueryMemoriesParams,
     # Versioning methods
     "get_version": GetVersionParams,
@@ -836,6 +954,14 @@ METHOD_PARAMS = {
     "admin_get_key": AdminGetKeyParams,
     "admin_revoke_key": AdminRevokeKeyParams,
     "admin_update_key": AdminUpdateKeyParams,
+    # Sandbox management methods (v0.8.0 - Issue #372)
+    "sandbox_create": SandboxCreateParams,
+    "sandbox_run": SandboxRunParams,
+    "sandbox_pause": SandboxPauseParams,
+    "sandbox_resume": SandboxResumeParams,
+    "sandbox_stop": SandboxStopParams,
+    "sandbox_list": SandboxListParams,
+    "sandbox_status": SandboxStatusParams,
 }
 
 

@@ -363,6 +363,7 @@ class RemoteMemory:
         memory_type: str | None = None,
         namespace: str | None = None,
         namespace_prefix: str | None = None,
+        state: str | None = "active",  # #368: Default to active memories
         limit: int = 50,
     ) -> builtins.list[dict[str, Any]]:
         """List memories.
@@ -372,6 +373,7 @@ class RemoteMemory:
             memory_type: Filter by type
             namespace: Filter by exact namespace (v0.8.0)
             namespace_prefix: Filter by namespace prefix (v0.8.0)
+            state: Filter by state ('inactive', 'active', 'all'). Defaults to 'active'. #368
             limit: Maximum results
 
         Returns:
@@ -386,6 +388,8 @@ class RemoteMemory:
             params["namespace_prefix"] = namespace_prefix
         if memory_type is not None:
             params["memory_type"] = memory_type
+        if state is not None:
+            params["state"] = state
         result = self.remote_fs._call_rpc("list_memories", params)
         return result["memories"]  # type: ignore[no-any-return]
 
@@ -420,6 +424,7 @@ class RemoteMemory:
         self,
         memory_type: str | None = None,
         scope: str | None = None,
+        state: str | None = "active",  # #368: Default to active memories
         limit: int = 50,
     ) -> builtins.list[dict[str, Any]]:
         """Query memories.
@@ -427,6 +432,7 @@ class RemoteMemory:
         Args:
             memory_type: Filter by type
             scope: Filter by scope
+            state: Filter by state ('inactive', 'active', 'all'). Defaults to 'active'. #368
             limit: Maximum results
 
         Returns:
@@ -437,6 +443,8 @@ class RemoteMemory:
             params["memory_type"] = memory_type
         if scope is not None:
             params["scope"] = scope
+        if state is not None:
+            params["state"] = state
         result = self.remote_fs._call_rpc("query_memories", params)
         return result["memories"]  # type: ignore[no-any-return]
 
@@ -452,6 +460,71 @@ class RemoteMemory:
         params: dict[str, Any] = {"memory_id": memory_id}
         result = self.remote_fs._call_rpc("delete_memory", params)
         return result["deleted"]  # type: ignore[no-any-return]
+
+    def approve(self, memory_id: str) -> bool:
+        """Approve a memory (activate it) (#368).
+
+        Args:
+            memory_id: Memory ID to approve
+
+        Returns:
+            True if approved, False if not found or no permission
+        """
+        params: dict[str, Any] = {"memory_id": memory_id}
+        result = self.remote_fs._call_rpc("approve_memory", params)
+        return result["approved"]  # type: ignore[no-any-return]
+
+    def deactivate(self, memory_id: str) -> bool:
+        """Deactivate a memory (make it inactive) (#368).
+
+        Args:
+            memory_id: Memory ID to deactivate
+
+        Returns:
+            True if deactivated, False if not found or no permission
+        """
+        params: dict[str, Any] = {"memory_id": memory_id}
+        result = self.remote_fs._call_rpc("deactivate_memory", params)
+        return result["deactivated"]  # type: ignore[no-any-return]
+
+    def approve_batch(self, memory_ids: builtins.list[str]) -> dict[str, Any]:
+        """Approve multiple memories at once (#368).
+
+        Args:
+            memory_ids: List of memory IDs to approve
+
+        Returns:
+            Dictionary with success/failure counts and details
+        """
+        params: dict[str, Any] = {"memory_ids": memory_ids}
+        result = self.remote_fs._call_rpc("approve_memory_batch", params)
+        return result  # type: ignore[no-any-return]
+
+    def deactivate_batch(self, memory_ids: builtins.list[str]) -> dict[str, Any]:
+        """Deactivate multiple memories at once (#368).
+
+        Args:
+            memory_ids: List of memory IDs to deactivate
+
+        Returns:
+            Dictionary with success/failure counts and details
+        """
+        params: dict[str, Any] = {"memory_ids": memory_ids}
+        result = self.remote_fs._call_rpc("deactivate_memory_batch", params)
+        return result  # type: ignore[no-any-return]
+
+    def delete_batch(self, memory_ids: builtins.list[str]) -> dict[str, Any]:
+        """Delete multiple memories at once (#368).
+
+        Args:
+            memory_ids: List of memory IDs to delete
+
+        Returns:
+            Dictionary with success/failure counts and details
+        """
+        params: dict[str, Any] = {"memory_ids": memory_ids}
+        result = self.remote_fs._call_rpc("delete_memory_batch", params)
+        return result  # type: ignore[no-any-return]
 
 
 class RemoteFilesystemError(NexusError):
@@ -882,6 +955,54 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "content": content,
                 "if_match": if_match,
                 "if_none_match": if_none_match,
+                "force": force,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def append(
+        self,
+        path: str,
+        content: bytes | str,
+        context: Any = None,  # noqa: ARG002
+        if_match: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Append content to an existing file or create new file.
+
+        Args:
+            path: Virtual path to append to
+            content: Content to append as bytes or str (str will be UTF-8 encoded)
+            context: Unused in remote client (handled server-side)
+            if_match: Optional etag for optimistic concurrency control
+            force: If True, skip version check
+
+        Returns:
+            Dict with metadata (etag, version, modified_at, size)
+
+        Raises:
+            ConflictError: If if_match doesn't match current etag
+
+        Examples:
+            >>> # Append to a log file
+            >>> nx.append("/logs/app.log", "New log entry\\n")
+
+            >>> # Build JSONL file incrementally
+            >>> import json
+            >>> for record in records:
+            ...     line = json.dumps(record) + "\\n"
+            ...     nx.append("/data/events.jsonl", line)
+        """
+        # Auto-convert str to bytes for convenience
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+
+        result = self._call_rpc(
+            "append",
+            {
+                "path": path,
+                "content": content,
+                "if_match": if_match,
                 "force": force,
             },
         )
@@ -2936,6 +3057,180 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             Dict with shutdown statistics from server
         """
         result = self._call_rpc("shutdown_parser_threads", {"timeout": timeout})
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # Sandbox Management (Issue #372)
+    # ============================================================
+
+    def sandbox_create(
+        self,
+        name: str,
+        ttl_minutes: int = 10,
+        template_id: str | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Create a new sandbox for code execution.
+
+        Args:
+            name: User-friendly sandbox name (unique per user)
+            ttl_minutes: Idle timeout in minutes (default: 10)
+            template_id: Provider template ID (optional)
+            context: Operation context
+
+        Returns:
+            Sandbox metadata dict with sandbox_id, name, status, etc.
+
+        Example:
+            >>> nx = RemoteNexusFS("http://nexus.example.com", api_key="...")
+            >>> result = nx.sandbox_create("data-analysis", ttl_minutes=30)
+            >>> print(result['sandbox_id'])
+        """
+        params: dict[str, Any] = {"name": name, "ttl_minutes": ttl_minutes}
+        if template_id is not None:
+            params["template_id"] = template_id
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("sandbox_create", params)
+        return result  # type: ignore[no-any-return]
+
+    def sandbox_run(
+        self,
+        sandbox_id: str,
+        language: str,
+        code: str,
+        timeout: int = 30,
+        context: dict | None = None,
+    ) -> dict:
+        """Run code in a sandbox.
+
+        Args:
+            sandbox_id: Sandbox ID
+            language: Programming language ("python", "javascript", "bash")
+            code: Code to execute
+            timeout: Execution timeout in seconds (default: 30)
+            context: Operation context
+
+        Returns:
+            Dict with stdout, stderr, exit_code, execution_time
+
+        Example:
+            >>> result = nx.sandbox_run(
+            ...     "sb_123",
+            ...     "python",
+            ...     "import pandas as pd\\nprint(pd.__version__)"
+            ... )
+            >>> print(result['stdout'])
+        """
+        params: dict[str, Any] = {
+            "sandbox_id": sandbox_id,
+            "language": language,
+            "code": code,
+            "timeout": timeout,
+        }
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("sandbox_run", params)
+        return result  # type: ignore[no-any-return]
+
+    def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict:
+        """Pause sandbox to save costs.
+
+        Args:
+            sandbox_id: Sandbox ID
+            context: Operation context
+
+        Returns:
+            Updated sandbox metadata
+
+        Example:
+            >>> result = nx.sandbox_pause("sb_123")
+            >>> print(result['status'])  # 'paused'
+        """
+        params: dict[str, Any] = {"sandbox_id": sandbox_id}
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("sandbox_pause", params)
+        return result  # type: ignore[no-any-return]
+
+    def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict:
+        """Resume a paused sandbox.
+
+        Args:
+            sandbox_id: Sandbox ID
+            context: Operation context
+
+        Returns:
+            Updated sandbox metadata
+
+        Example:
+            >>> result = nx.sandbox_resume("sb_123")
+            >>> print(result['status'])  # 'active'
+        """
+        params: dict[str, Any] = {"sandbox_id": sandbox_id}
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("sandbox_resume", params)
+        return result  # type: ignore[no-any-return]
+
+    def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict:
+        """Stop and destroy sandbox.
+
+        Args:
+            sandbox_id: Sandbox ID
+            context: Operation context
+
+        Returns:
+            Updated sandbox metadata
+
+        Example:
+            >>> result = nx.sandbox_stop("sb_123")
+            >>> print(result['status'])  # 'stopped'
+        """
+        params: dict[str, Any] = {"sandbox_id": sandbox_id}
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("sandbox_stop", params)
+        return result  # type: ignore[no-any-return]
+
+    def sandbox_list(self, context: dict | None = None) -> dict:
+        """List user's sandboxes.
+
+        Args:
+            context: Operation context
+
+        Returns:
+            Dict with list of sandboxes
+
+        Example:
+            >>> result = nx.sandbox_list()
+            >>> for sb in result['sandboxes']:
+            ...     print(f"{sb['name']}: {sb['status']}")
+        """
+        params: dict[str, Any] = {}
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("sandbox_list", params)
+        return result  # type: ignore[no-any-return]
+
+    def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict:
+        """Get sandbox status and metadata.
+
+        Args:
+            sandbox_id: Sandbox ID
+            context: Operation context
+
+        Returns:
+            Sandbox metadata dict
+
+        Example:
+            >>> result = nx.sandbox_status("sb_123")
+            >>> print(f"Uptime: {result['uptime_seconds']}s")
+        """
+        params: dict[str, Any] = {"sandbox_id": sandbox_id}
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("sandbox_status", params)
         return result  # type: ignore[no-any-return]
 
     def close(self) -> None:

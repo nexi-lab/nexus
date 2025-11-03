@@ -196,6 +196,7 @@ def search(
 @click.option("--type", "memory_type", default=None, help="Filter by memory type")
 @click.option("--namespace", default=None, help="Filter by exact namespace")
 @click.option("--namespace-prefix", default=None, help="Filter by namespace prefix (hierarchical)")
+@click.option("--state", default="active", help="Filter by state (inactive/active/all)")
 @click.option("--limit", type=int, default=100, help="Maximum number of results")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 def list(
@@ -203,6 +204,7 @@ def list(
     memory_type: str | None,
     namespace: str | None,
     namespace_prefix: str | None,
+    state: str,
     limit: int,
     output_json: bool,
 ) -> None:
@@ -213,6 +215,8 @@ def list(
         nexus memory list
         nexus memory list --namespace "knowledge/geography/facts"
         nexus memory list --namespace-prefix "knowledge/"
+        nexus memory list --state inactive  # List pending memories
+        nexus memory list --state all  # List all memories
         nexus memory list --json
     """
     nx = get_default_filesystem()
@@ -223,6 +227,7 @@ def list(
             memory_type=memory_type,
             namespace=namespace,
             namespace_prefix=namespace_prefix,
+            state=state,
             limit=limit,
         )
 
@@ -236,6 +241,8 @@ def list(
             click.echo(f"Found {len(results)} memories:\n")
             for mem in results:
                 click.echo(f"ID: {mem['memory_id']}")
+                if mem.get("state"):
+                    click.echo(f"  State: {mem['state']}")
                 if mem.get("namespace"):
                     click.echo(f"  Namespace: {mem['namespace']}")
                     if mem.get("path_key"):
@@ -354,6 +361,139 @@ def delete(memory_id: str) -> None:
 
     except Exception as e:
         click.echo(f"Error deleting memory: {e}", err=True)
+        raise click.Abort() from e
+
+
+@memory.command()
+@click.argument("memory_id")
+def approve(memory_id: str) -> None:
+    """Approve a memory (activate it).
+
+    \b
+    Examples:
+        nexus memory approve mem_123
+    """
+    nx = get_default_filesystem()
+
+    try:
+        if nx.memory.approve(memory_id):  # type: ignore[attr-defined]
+            click.echo(f"Memory approved: {memory_id}")
+        else:
+            click.echo(f"Memory not found or no permission: {memory_id}", err=True)
+            raise click.Abort()
+
+    except Exception as e:
+        click.echo(f"Error approving memory: {e}", err=True)
+        raise click.Abort() from e
+
+
+@memory.command()
+@click.argument("memory_id")
+def deactivate(memory_id: str) -> None:
+    """Deactivate a memory (make it inactive).
+
+    \b
+    Examples:
+        nexus memory deactivate mem_123
+    """
+    nx = get_default_filesystem()
+
+    try:
+        if nx.memory.deactivate(memory_id):  # type: ignore[attr-defined]
+            click.echo(f"Memory deactivated: {memory_id}")
+        else:
+            click.echo(f"Memory not found or no permission: {memory_id}", err=True)
+            raise click.Abort()
+
+    except Exception as e:
+        click.echo(f"Error deactivating memory: {e}", err=True)
+        raise click.Abort() from e
+
+
+@memory.command(name="approve-batch")
+@click.argument("memory_ids", nargs=-1, required=True)
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def approve_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
+    """Approve multiple memories at once.
+
+    \b
+    Examples:
+        nexus memory approve-batch mem_1 mem_2 mem_3
+        nexus memory approve-batch mem_1 mem_2 --json
+    """
+    nx = get_default_filesystem()
+
+    try:
+        result = nx.memory.approve_batch(list(memory_ids))  # type: ignore[attr-defined]
+
+        if output_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            click.echo(f"Approved: {result['approved']}")
+            click.echo(f"Failed: {result['failed']}")
+            if result["failed"] > 0:
+                click.echo(f"Failed IDs: {', '.join(result['failed_ids'])}")
+
+    except Exception as e:
+        click.echo(f"Error approving memories: {e}", err=True)
+        raise click.Abort() from e
+
+
+@memory.command(name="deactivate-batch")
+@click.argument("memory_ids", nargs=-1, required=True)
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def deactivate_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
+    """Deactivate multiple memories at once.
+
+    \b
+    Examples:
+        nexus memory deactivate-batch mem_1 mem_2 mem_3
+        nexus memory deactivate-batch mem_1 mem_2 --json
+    """
+    nx = get_default_filesystem()
+
+    try:
+        result = nx.memory.deactivate_batch(list(memory_ids))  # type: ignore[attr-defined]
+
+        if output_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            click.echo(f"Deactivated: {result['deactivated']}")
+            click.echo(f"Failed: {result['failed']}")
+            if result["failed"] > 0:
+                click.echo(f"Failed IDs: {', '.join(result['failed_ids'])}")
+
+    except Exception as e:
+        click.echo(f"Error deactivating memories: {e}", err=True)
+        raise click.Abort() from e
+
+
+@memory.command(name="delete-batch")
+@click.argument("memory_ids", nargs=-1, required=True)
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def delete_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
+    """Delete multiple memories at once.
+
+    \b
+    Examples:
+        nexus memory delete-batch mem_1 mem_2 mem_3
+        nexus memory delete-batch mem_1 mem_2 --json
+    """
+    nx = get_default_filesystem()
+
+    try:
+        result = nx.memory.delete_batch(list(memory_ids))  # type: ignore[attr-defined]
+
+        if output_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            click.echo(f"Deleted: {result['deleted']}")
+            click.echo(f"Failed: {result['failed']}")
+            if result["failed"] > 0:
+                click.echo(f"Failed IDs: {', '.join(result['failed_ids'])}")
+
+    except Exception as e:
+        click.echo(f"Error deleting memories: {e}", err=True)
         raise click.Abort() from e
 
 

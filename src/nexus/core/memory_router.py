@@ -161,6 +161,7 @@ class MemoryViewRouter:
         memory_type: str | None = None,
         namespace: str | None = None,  # v0.8.0: Exact namespace match
         namespace_prefix: str | None = None,  # v0.8.0: Prefix match for hierarchical queries
+        state: str | None = None,  # #368: Filter by state ('inactive', 'active', 'all')
         limit: int | None = None,
     ) -> list[MemoryModel]:
         """Query memories by relationships and metadata.
@@ -173,6 +174,7 @@ class MemoryViewRouter:
             memory_type: Filter by memory type.
             namespace: Filter by exact namespace match. v0.8.0
             namespace_prefix: Filter by namespace prefix (hierarchical). v0.8.0
+            state: Filter by state ('inactive', 'active', 'all'). #368
             limit: Maximum number of results.
 
         Returns:
@@ -201,6 +203,10 @@ class MemoryViewRouter:
         elif namespace_prefix:
             # Prefix match for hierarchical queries
             stmt = stmt.where(MemoryModel.namespace.like(f"{namespace_prefix}%"))
+
+        # #368: State filtering
+        if state and state != "all":
+            stmt = stmt.where(MemoryModel.state == state)
 
         if limit:
             stmt = stmt.limit(limit)
@@ -284,6 +290,7 @@ class MemoryViewRouter:
                 visibility=visibility,
                 memory_type=memory_type,
                 importance=importance,
+                state="inactive",  # #368: Default to inactive (pending review)
                 namespace=namespace,
                 path_key=path_key,
             )
@@ -358,6 +365,47 @@ class MemoryViewRouter:
             self.session.commit()
             return True
         return False
+
+    def update_memory_state(self, memory_id: str, state: str) -> MemoryModel | None:
+        """Update memory state (#368).
+
+        Args:
+            memory_id: Memory ID.
+            state: New state ('inactive', 'active').
+
+        Returns:
+            Updated MemoryModel or None if not found.
+        """
+        memory = self.get_memory_by_id(memory_id)
+        if not memory:
+            return None
+
+        memory.state = state
+        memory.validate()
+        self.session.commit()
+        return memory
+
+    def approve_memory(self, memory_id: str) -> MemoryModel | None:
+        """Approve a memory (set state to active) (#368).
+
+        Args:
+            memory_id: Memory ID to approve.
+
+        Returns:
+            Updated MemoryModel or None if not found.
+        """
+        return self.update_memory_state(memory_id, "active")
+
+    def deactivate_memory(self, memory_id: str) -> MemoryModel | None:
+        """Deactivate a memory (set state to inactive) (#368).
+
+        Args:
+            memory_id: Memory ID to deactivate.
+
+        Returns:
+            Updated MemoryModel or None if not found.
+        """
+        return self.update_memory_state(memory_id, "inactive")
 
     def get_virtual_paths(self, memory: MemoryModel) -> list[str]:
         """Generate all valid virtual paths for a memory.

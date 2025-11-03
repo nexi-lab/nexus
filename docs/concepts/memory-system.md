@@ -200,7 +200,122 @@ Categorize memories by purpose:
 
 ---
 
-### 5. Content-Addressable Storage (CAS)
+### 5. Memory State Management (Manual Approval)
+
+**Issue #368**: Memories now support state-based lifecycle management for quality control and manual curation.
+
+#### States
+
+| State | Description | Use Case |
+|-------|-------------|----------|
+| `inactive` | Newly created, pending review | Manual approval workflow, quality control |
+| `active` | Approved and available for retrieval | Production memories used by agents |
+
+#### Default Behavior
+
+- **New memories** default to `inactive` state (pending review)
+- **Query/List operations** default to `active` state only (safe by default)
+- **Explicit state filtering** available via `state` parameter
+
+#### State Lifecycle
+
+```mermaid
+graph LR
+    A[Create Memory] --> B[inactive]
+    B --> C[approve]
+    C --> D[active]
+    D --> E[deactivate]
+    E --> B
+    B --> F[delete]
+    D --> F
+```
+
+#### API Operations
+
+```python
+from nexus.remote import RemoteNexusFS
+
+nx = RemoteNexusFS(server_url="http://localhost:8080")
+nx.user_id = "alice"
+nx.agent_id = "my-agent"
+
+# Create memory (defaults to inactive)
+memory_id = nx.memory.store("User prefers Python")
+
+# List inactive memories (pending review)
+pending = nx.memory.list(state='inactive')
+
+# Approve a memory
+nx.memory.approve(memory_id)
+
+# Deactivate a memory (temporary disable)
+nx.memory.deactivate(memory_id)
+
+# Bulk operations
+nx.memory.approve_batch([mem_id1, mem_id2, mem_id3])
+nx.memory.deactivate_batch([mem_id4, mem_id5])
+nx.memory.delete_batch([mem_id6, mem_id7])
+```
+
+#### State Filtering
+
+```python
+# List only active memories (default)
+active_mems = nx.memory.list(state='active')
+
+# List only inactive memories (pending review)
+pending_mems = nx.memory.list(state='inactive')
+
+# List all memories regardless of state
+all_mems = nx.memory.list(state='all')
+
+# Query with state filter
+active_prefs = nx.memory.query(
+    memory_type='preference',
+    state='active'  # Defaults to 'active' if not specified
+)
+```
+
+#### Use Cases
+
+1. **Quality Control**: Review agent-generated memories before they affect behavior
+2. **Memory Hygiene**: Temporarily disable outdated memories without deletion
+3. **Privacy Protection**: Review and control what information becomes active
+4. **Debugging**: Disable specific memories to test agent behavior
+5. **Curation**: Maintain a clean, high-quality memory store
+
+#### CLI Commands
+
+```bash
+# List inactive memories for review
+nexus memory list --state inactive
+
+# Approve a memory
+nexus memory approve mem_123
+
+# Deactivate a memory
+nexus memory deactivate mem_123
+
+# Bulk approve
+nexus memory approve-batch mem_1 mem_2 mem_3
+
+# Bulk deactivate
+nexus memory deactivate-batch mem_4 mem_5
+
+# Bulk delete
+nexus memory delete-batch mem_6 mem_7
+```
+
+#### Permission Requirements
+
+All state management operations require **WRITE** permission on the memory:
+- User must own the memory, or
+- Have explicit ReBAC permission, or
+- Be an admin
+
+---
+
+### 6. Content-Addressable Storage (CAS)
 
 Memory content is stored by **SHA-256 hash**, not in the database directly.
 
@@ -375,6 +490,7 @@ memories = nx.memory.query(
     tenant_id: str | None = None,       # Filter by tenant
     scope: str | None = None,           # Filter by scope
     memory_type: str | None = None,     # Filter by type
+    state: str | None = "active",       # Filter by state (inactive/active/all)
     limit: int | None = None,           # Max results
     context: OperationContext | None = None
 ) -> list[dict[str, Any]]
@@ -394,6 +510,7 @@ memories = nx.memory.query(
         "visibility": "private",
         "memory_type": "fact",
         "importance": 0.9,
+        "state": "active",  # Memory state (inactive/active)
         "namespace": "user/preferences/coding",
         "path_key": None,
         "created_at": "2025-01-15T10:00:00Z",
@@ -499,6 +616,7 @@ memories = nx.memory.list(
     memory_type: str | None = None,
     namespace: str | None = None,        # Exact match
     namespace_prefix: str | None = None, # Hierarchical prefix match
+    state: str | None = "active",        # Filter by state (inactive/active/all)
     limit: int | None = 100,
     context: OperationContext | None = None
 ) -> list[dict[str, Any]]
@@ -507,7 +625,7 @@ memories = nx.memory.list(
 **Examples:**
 
 ```python
-# List all user preferences
+# List all user preferences (active only by default)
 prefs = nx.memory.list(
     scope="user",
     memory_type="preference"
@@ -521,6 +639,12 @@ geo = nx.memory.list(namespace_prefix="knowledge/geography/")
 
 # List all facts across all domains
 facts = nx.memory.list(namespace_prefix="*/facts")
+
+# List inactive memories (pending review)
+pending = nx.memory.list(state="inactive")
+
+# List all memories regardless of state
+all_memories = nx.memory.list(state="all")
 ```
 
 ---
@@ -537,6 +661,92 @@ deleted = nx.memory.delete(memory_id: str) -> bool
 success = nx.memory.delete("mem_123")
 if success:
     print("Memory deleted")
+```
+
+---
+
+### 8. approve() - Approve a Memory (Issue #368)
+
+Activate a memory to make it available for queries and retrieval.
+
+```python
+approved = nx.memory.approve(memory_id: str) -> bool
+```
+
+**Examples:**
+
+```python
+# Approve a pending memory
+success = nx.memory.approve("mem_123")
+if success:
+    print("Memory approved and now active")
+```
+
+---
+
+### 9. deactivate() - Deactivate a Memory (Issue #368)
+
+Temporarily disable a memory without deleting it.
+
+```python
+deactivated = nx.memory.deactivate(memory_id: str) -> bool
+```
+
+**Examples:**
+
+```python
+# Deactivate an outdated memory
+success = nx.memory.deactivate("mem_123")
+if success:
+    print("Memory deactivated")
+```
+
+---
+
+### 10. Batch Operations (Issue #368)
+
+Efficiently manage multiple memories at once.
+
+```python
+# Approve multiple memories
+result = nx.memory.approve_batch(memory_ids: list[str]) -> dict[str, Any]
+
+# Deactivate multiple memories
+result = nx.memory.deactivate_batch(memory_ids: list[str]) -> dict[str, Any]
+
+# Delete multiple memories
+result = nx.memory.delete_batch(memory_ids: list[str]) -> dict[str, Any]
+```
+
+**Returns:**
+
+```python
+{
+    "approved": 3,              # Number of successfully approved
+    "failed": 1,                # Number that failed
+    "approved_ids": [...],      # List of successful IDs
+    "failed_ids": [...]         # List of failed IDs
+}
+```
+
+**Examples:**
+
+```python
+# Review and approve multiple memories
+pending = nx.memory.list(state='inactive')
+pending_ids = [m['memory_id'] for m in pending]
+
+result = nx.memory.approve_batch(pending_ids)
+print(f"Approved {result['approved']} memories")
+print(f"Failed {result['failed']} memories")
+
+# Bulk deactivate outdated memories
+old_ids = ["mem_1", "mem_2", "mem_3"]
+result = nx.memory.deactivate_batch(old_ids)
+
+# Bulk delete
+unwanted_ids = ["mem_4", "mem_5"]
+result = nx.memory.delete_batch(unwanted_ids)
 ```
 
 ---
@@ -724,6 +934,57 @@ all_geo = nx.memory.list(namespace_prefix="knowledge/geography/")
 # Query all capitals (across all continents)
 capitals = nx.memory.list(namespace_prefix="knowledge/geography/capitals/")
 ```
+
+---
+
+### Pattern 6: Manual Memory Approval Workflow (Issue #368)
+
+```python
+from nexus.remote import RemoteNexusFS
+
+# Setup
+nx = RemoteNexusFS(server_url="http://localhost:8080")
+nx.user_id = "alice"
+nx.agent_id = "content_agent"
+
+# Step 1: Agent creates memories (defaults to inactive)
+for fact in ["Paris is in France", "Tokyo is in Japan", "London is in UK"]:
+    nx.memory.store(
+        content=fact,
+        namespace="knowledge/geography/capitals",
+        memory_type="fact"
+    )
+
+# Step 2: User reviews pending memories
+pending = nx.memory.list(state='inactive')
+print(f"Found {len(pending)} memories pending review")
+
+for mem in pending:
+    print(f"Review: {mem['content']}")
+    # User decides to approve or reject
+    if user_approves(mem['content']):
+        nx.memory.approve(mem['memory_id'])
+    else:
+        nx.memory.delete(mem['memory_id'])
+
+# Step 3: Agent only sees approved memories
+active_facts = nx.memory.list(
+    namespace_prefix="knowledge/geography/",
+    state='active'  # Defaults to active
+)
+
+# Step 4: Later, deactivate outdated info without deleting
+outdated = nx.memory.query(memory_type='fact', state='active')
+for mem in outdated:
+    if is_outdated(mem['content']):
+        nx.memory.deactivate(mem['memory_id'])
+```
+
+**Benefits:**
+- ✅ Quality control before memories affect agent behavior
+- ✅ Privacy protection - review sensitive information
+- ✅ Memory hygiene - disable without losing data
+- ✅ Debugging - isolate problematic memories
 
 ---
 

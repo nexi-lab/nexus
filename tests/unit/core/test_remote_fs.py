@@ -258,6 +258,218 @@ class TestWriteAndRead:
             remote_fs.read(path)
 
 
+class TestAppend:
+    """Test append operations."""
+
+    def test_append_to_new_file(self, remote_fs: NexusFS) -> None:
+        """Test appending to a new file (creates it)."""
+        content = b"First line\n"
+        path = "/test/log.txt"
+        content_hash = "hash123"
+
+        # Mock backend write_content
+        remote_fs.backend.write_content.return_value = content_hash
+
+        # Mock router.route
+        from unittest.mock import Mock
+
+        mock_route = Mock()
+        mock_route.backend = remote_fs.backend
+        mock_route.readonly = False
+        remote_fs.router.route = Mock(return_value=mock_route)
+
+        # Append to new file
+        result = remote_fs.append(path, content)
+
+        # Verify it was written
+        assert result["etag"] == content_hash
+        assert result["size"] == len(content)
+        assert result["version"] == 1
+
+        # Verify backend was called
+        assert remote_fs.backend.write_content.call_count == 1
+        call_args = remote_fs.backend.write_content.call_args
+        assert call_args[0][0] == content
+
+    def test_append_to_existing_file(self, remote_fs: NexusFS) -> None:
+        """Test appending to an existing file."""
+        path = "/test/log.txt"
+        initial_content = b"Line 1\n"
+        append_content = b"Line 2\n"
+        combined_content = initial_content + append_content
+        hash1 = "hash1"
+        hash2 = "hash2"
+
+        # Mock router.route
+        from unittest.mock import Mock
+
+        mock_route = Mock()
+        mock_route.backend = remote_fs.backend
+        mock_route.readonly = False
+        remote_fs.router.route = Mock(return_value=mock_route)
+
+        # Create initial file
+        remote_fs.backend.write_content.return_value = hash1
+        remote_fs.write(path, initial_content)
+
+        # Mock read_content to return initial content
+        remote_fs.backend.read_content.return_value = initial_content
+
+        # Append new content
+        remote_fs.backend.write_content.return_value = hash2
+        result = remote_fs.append(path, append_content)
+
+        # Verify the combined content was written
+        assert result["etag"] == hash2
+        assert result["size"] == len(combined_content)
+        assert result["version"] == 2  # Version incremented
+
+        # Verify backend write was called with combined content
+        call_args = remote_fs.backend.write_content.call_args
+        assert call_args[0][0] == combined_content
+
+    def test_append_multiple_times(self, remote_fs: NexusFS) -> None:
+        """Test appending multiple times (like building a log)."""
+        path = "/test/log.txt"
+
+        # Mock router.route
+        from unittest.mock import Mock
+
+        mock_route = Mock()
+        mock_route.backend = remote_fs.backend
+        mock_route.readonly = False
+        remote_fs.router.route = Mock(return_value=mock_route)
+
+        # Append three times
+        lines = [b"Line 1\n", b"Line 2\n", b"Line 3\n"]
+        accumulated = b""
+
+        for i, line in enumerate(lines, 1):
+            # Mock read to return accumulated content
+            remote_fs.backend.read_content.return_value = accumulated
+
+            # Append
+            hash_val = f"hash{i}"
+            remote_fs.backend.write_content.return_value = hash_val
+            result = remote_fs.append(path, line)
+
+            # Update accumulated content
+            accumulated += line
+
+            # Verify
+            assert result["version"] == i
+            assert result["size"] == len(accumulated)
+
+    def test_append_with_string_content(self, remote_fs: NexusFS) -> None:
+        """Test appending with string content (auto-converts to bytes)."""
+        path = "/test/log.txt"
+        content = "Text line\n"
+        content_bytes = content.encode("utf-8")
+        content_hash = "hash123"
+
+        # Mock router.route
+        from unittest.mock import Mock
+
+        mock_route = Mock()
+        mock_route.backend = remote_fs.backend
+        mock_route.readonly = False
+        remote_fs.router.route = Mock(return_value=mock_route)
+
+        # Append with string
+        remote_fs.backend.write_content.return_value = content_hash
+        _result = remote_fs.append(path, content)
+
+        # Verify bytes were written
+        call_args = remote_fs.backend.write_content.call_args
+        assert call_args[0][0] == content_bytes
+
+    def test_append_jsonl_use_case(self, remote_fs: NexusFS) -> None:
+        """Test typical JSONL use case - appending JSON lines."""
+        import json
+
+        path = "/logs/events.jsonl"
+
+        # Mock router.route
+        from unittest.mock import Mock
+
+        mock_route = Mock()
+        mock_route.backend = remote_fs.backend
+        mock_route.readonly = False
+        remote_fs.router.route = Mock(return_value=mock_route)
+
+        # Append multiple JSON records
+        events = [
+            {"timestamp": "2024-01-01T00:00:00Z", "event": "login", "user": "alice"},
+            {"timestamp": "2024-01-01T00:01:00Z", "event": "upload", "user": "bob"},
+            {"timestamp": "2024-01-01T00:02:00Z", "event": "logout", "user": "alice"},
+        ]
+
+        accumulated = b""
+        for i, event in enumerate(events, 1):
+            # Convert to JSONL line
+            line = (json.dumps(event) + "\n").encode("utf-8")
+
+            # Mock read
+            remote_fs.backend.read_content.return_value = accumulated
+
+            # Append
+            hash_val = f"hash{i}"
+            remote_fs.backend.write_content.return_value = hash_val
+            remote_fs.append(path, line)
+
+            accumulated += line
+
+        # Verify final size
+        meta = remote_fs.metadata.get(path)
+        assert meta is not None
+        assert meta.size == len(accumulated)
+
+    def test_append_with_optimistic_concurrency_control(self, remote_fs: NexusFS) -> None:
+        """Test append with if_match for concurrency control."""
+        from nexus.core.exceptions import ConflictError
+
+        path = "/test/log.txt"
+        initial_content = b"Line 1\n"
+        hash1 = "hash1"
+
+        # Mock router.route
+        from unittest.mock import Mock
+
+        mock_route = Mock()
+        mock_route.backend = remote_fs.backend
+        mock_route.readonly = False
+        remote_fs.router.route = Mock(return_value=mock_route)
+
+        # Create initial file
+        remote_fs.backend.write_content.return_value = hash1
+        remote_fs.write(path, initial_content)
+
+        # Mock read to return initial content
+        remote_fs.backend.read_content.return_value = initial_content
+
+        # Try to append with wrong etag
+        with pytest.raises(ConflictError) as exc_info:
+            remote_fs.append(path, b"Line 2\n", if_match="wrong_hash")
+
+        assert (
+            "conflict" in str(exc_info.value).lower() or "expected" in str(exc_info.value).lower()
+        )
+
+    def test_append_to_readonly_path(self, remote_fs: NexusFS) -> None:
+        """Test that appending to readonly path raises PermissionError."""
+        # Mock readonly route
+        from unittest.mock import Mock
+
+        mock_route = Mock()
+        mock_route.readonly = True
+        remote_fs.router.route = Mock(return_value=mock_route)
+
+        with pytest.raises(PermissionError) as exc_info:
+            remote_fs.append("/readonly/file.txt", b"content")
+
+        assert "read-only" in str(exc_info.value).lower()
+
+
 class TestDelete:
     """Test delete operations."""
 

@@ -36,6 +36,9 @@ def memory() -> None:
     "--namespace", default=None, help="Hierarchical namespace (e.g., 'knowledge/geography/facts')"
 )
 @click.option("--path-key", default=None, help="Optional unique key for upsert mode")
+@click.option(
+    "--state", default="active", help="Memory state (inactive/active). Defaults to 'active'. #368"
+)
 def store(
     content: str,
     scope: str,
@@ -43,6 +46,7 @@ def store(
     importance: float | None,
     namespace: str | None,
     path_key: str | None,
+    state: str,
 ) -> None:
     """Store a new memory.
 
@@ -51,6 +55,7 @@ def store(
         nexus memory store "User prefers Python" --scope user --type preference
         nexus memory store "Paris is capital of France" --namespace "knowledge/geography/facts"
         nexus memory store "theme:dark" --namespace "user/preferences/ui" --path-key settings
+        nexus memory store "Unverified info" --state inactive
     """
     nx = get_default_filesystem()
 
@@ -62,6 +67,7 @@ def store(
             importance=importance,
             namespace=namespace,
             path_key=path_key,
+            state=state,
         )
         click.echo(f"Memory stored: {memory_id}")
     except Exception as e:
@@ -74,6 +80,11 @@ def store(
 @click.option("--agent-id", default=None, help="Filter by agent ID")
 @click.option("--scope", default=None, help="Filter by scope")
 @click.option("--type", "memory_type", default=None, help="Filter by memory type")
+@click.option(
+    "--state",
+    default="active",
+    help="Filter by state (inactive/active/all). Defaults to 'active'. #368",
+)
 @click.option("--limit", type=int, default=100, help="Maximum number of results")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 def query(
@@ -81,6 +92,7 @@ def query(
     agent_id: str | None,
     scope: str | None,
     memory_type: str | None,
+    state: str,
     limit: int,
     output_json: bool,
 ) -> None:
@@ -90,6 +102,7 @@ def query(
     Examples:
         nexus memory query --scope user --type preference
         nexus memory query --agent-id agent1 --limit 10
+        nexus memory query --state inactive
         nexus memory query --json
     """
     nx = get_default_filesystem()
@@ -99,6 +112,7 @@ def query(
         results = nx.memory.query(  # type: ignore[attr-defined]
             scope=scope,
             memory_type=memory_type,
+            state=state,
             limit=limit,
         )
 

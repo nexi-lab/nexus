@@ -1126,6 +1126,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 importance=params.importance,
                 namespace=params.namespace,  # v0.8.0
                 path_key=params.path_key,  # v0.8.0
+                state=params.state,  # #368
                 # Note: tags param in RPC but not in Memory.store() - ignore it
             )
             return {"memory_id": memory_id}

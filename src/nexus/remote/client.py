@@ -326,6 +326,7 @@ class RemoteMemory:
         importance: float = 0.5,
         namespace: str | None = None,
         path_key: str | None = None,
+        state: str = "active",  # #368: Memory state
         tags: list[str] | None = None,
     ) -> str:
         """Store a memory.
@@ -337,6 +338,7 @@ class RemoteMemory:
             importance: Importance score
             namespace: Hierarchical namespace (v0.8.0)
             path_key: Optional key for upsert mode (v0.8.0)
+            state: Memory state ('inactive', 'active'). Defaults to 'active'. #368
             tags: Optional tags
 
         Returns:
@@ -352,6 +354,8 @@ class RemoteMemory:
             params["namespace"] = namespace
         if path_key is not None:
             params["path_key"] = path_key
+        if state != "active":  # Only send if non-default
+            params["state"] = state
         if tags is not None:
             params["tags"] = tags
         result = self.remote_fs._call_rpc("store_memory", params)

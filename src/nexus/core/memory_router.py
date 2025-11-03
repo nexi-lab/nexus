@@ -225,6 +225,7 @@ class MemoryViewRouter:
         importance: float | None = None,
         namespace: str | None = None,  # v0.8.0: Hierarchical namespace
         path_key: str | None = None,  # v0.8.0: Optional key for upsert mode
+        state: str = "active",  # #368: Memory state
     ) -> MemoryModel:
         """Create a new memory (or update if path_key exists).
 
@@ -290,7 +291,7 @@ class MemoryViewRouter:
                 visibility=visibility,
                 memory_type=memory_type,
                 importance=importance,
-                state="active",  # #368: Default to active for backward compatibility
+                state=state,  # #368: Use provided state (defaults to active for backward compatibility)
                 namespace=namespace,
                 path_key=path_key,
             )

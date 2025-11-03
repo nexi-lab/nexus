@@ -657,6 +657,7 @@ class StoreMemoryParams:
     importance: float = 0.5
     namespace: str | None = None  # v0.8.0
     path_key: str | None = None  # v0.8.0
+    state: str = "active"  # #368
     tags: list[str] | None = None
 
 

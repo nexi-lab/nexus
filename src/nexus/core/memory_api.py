@@ -86,6 +86,7 @@ class Memory:
         importance: float | None = None,
         namespace: str | None = None,  # v0.8.0: Hierarchical namespace
         path_key: str | None = None,  # v0.8.0: Optional key for upsert mode
+        state: str = "active",  # #368: Memory state ('inactive', 'active')
         _metadata: dict[str, Any] | None = None,
         context: OperationContext | None = None,
     ) -> str:
@@ -98,6 +99,7 @@ class Memory:
             importance: Importance score (0.0-1.0).
             namespace: Hierarchical namespace for organization (e.g., "knowledge/geography/facts"). v0.8.0
             path_key: Optional unique key within namespace for upsert mode. v0.8.0
+            state: Memory state ('inactive', 'active'). Defaults to 'active' for backward compatibility. #368
             _metadata: Additional metadata (deprecated, use structured content dict instead).
             context: Optional operation context to override identity (v0.7.1+).
 
@@ -113,10 +115,17 @@ class Memory:
 
             >>> # Upsert mode (with path_key)
             >>> memory_id = memory.store(
-            ...     content={"theme": "dark", "font_size": 14},
+            ...     content={"theme": "dark", "font_size": 14"},
             ...     namespace="user/preferences/ui",
             ...     path_key="settings"  # Will update if exists
             ... )
+
+            >>> # Create inactive memory for manual approval (#368)
+            >>> memory_id = memory.store(
+            ...     content="Unverified information",
+            ...     state="inactive"  # Won't appear in queries until approved
+            ... )
+            >>> memory.approve(memory_id)  # Activate it later
         """
         import json
 
@@ -153,6 +162,7 @@ class Memory:
             importance=importance,
             namespace=namespace,
             path_key=path_key,
+            state=state,  # #368: Pass state parameter
         )
 
         return memory.memory_id

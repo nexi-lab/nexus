@@ -882,6 +882,27 @@ class SandboxStatusParams:
     context: dict | None = None
 
 
+@dataclass
+class SandboxConnectParams:
+    """Parameters for sandbox_connect() method."""
+
+    sandbox_id: str
+    provider: str = "e2b"
+    sandbox_api_key: str | None = None
+    mount_path: str = "/mnt/nexus"
+    context: dict | None = None
+
+
+@dataclass
+class SandboxDisconnectParams:
+    """Parameters for sandbox_disconnect() method."""
+
+    sandbox_id: str
+    provider: str = "e2b"
+    sandbox_api_key: str | None = None
+    context: dict | None = None
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -963,6 +984,8 @@ METHOD_PARAMS = {
     "sandbox_stop": SandboxStopParams,
     "sandbox_list": SandboxListParams,
     "sandbox_status": SandboxStatusParams,
+    "sandbox_connect": SandboxConnectParams,  # Issue #371
+    "sandbox_disconnect": SandboxDisconnectParams,  # Issue #371
 }
 
 

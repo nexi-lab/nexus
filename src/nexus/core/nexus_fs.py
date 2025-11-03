@@ -3310,6 +3310,91 @@ class NexusFS(
         result = loop.run_until_complete(self._sandbox_manager.get_sandbox_status(sandbox_id))
         return result
 
+    @rpc_expose(description="Connect to user-managed sandbox")
+    def sandbox_connect(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+        mount_path: str = "/mnt/nexus",
+        context: dict | None = None,  # noqa: ARG002
+    ) -> dict:
+        """Connect and mount Nexus to a user-managed sandbox.
+
+        This is a one-time operation for sandboxes managed externally by the user.
+        Nexus will mount the filesystem to the sandbox without storing metadata
+        or managing the sandbox lifecycle.
+
+        Args:
+            sandbox_id: External sandbox ID (e.g., E2B sandbox ID)
+            provider: Sandbox provider ("e2b", etc.). Default: "e2b"
+            sandbox_api_key: Provider API key for authentication
+            mount_path: Path where Nexus will be mounted in sandbox (default: /mnt/nexus)
+            context: Operation context
+
+        Returns:
+            Dict with connection details (sandbox_id, provider, mount_path, mounted_at)
+
+        Raises:
+            ValueError: If provider not supported or API key missing
+            RuntimeError: If connection/mount fails
+        """
+        # Ensure sandbox manager is initialized
+        self._ensure_sandbox_manager()
+        assert self._sandbox_manager is not None
+
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        result = loop.run_until_complete(
+            self._sandbox_manager.connect_sandbox(
+                sandbox_id=sandbox_id,
+                provider=provider,
+                sandbox_api_key=sandbox_api_key,
+                mount_path=mount_path,
+            )
+        )
+        return result
+
+    @rpc_expose(description="Disconnect from user-managed sandbox")
+    def sandbox_disconnect(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+        context: dict | None = None,  # noqa: ARG002
+    ) -> dict:
+        """Disconnect and unmount Nexus from a user-managed sandbox.
+
+        Args:
+            sandbox_id: External sandbox ID
+            provider: Sandbox provider ("e2b", etc.). Default: "e2b"
+            sandbox_api_key: Provider API key for authentication
+            context: Operation context
+
+        Returns:
+            Dict with disconnection details (sandbox_id, provider, unmounted_at)
+
+        Raises:
+            ValueError: If provider not supported or API key missing
+            RuntimeError: If disconnection/unmount fails
+        """
+        # Ensure sandbox manager is initialized
+        self._ensure_sandbox_manager()
+        assert self._sandbox_manager is not None
+
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        result = loop.run_until_complete(
+            self._sandbox_manager.disconnect_sandbox(
+                sandbox_id=sandbox_id,
+                provider=provider,
+                sandbox_api_key=sandbox_api_key,
+            )
+        )
+        return result
+
     def close(self) -> None:
         """Close the filesystem and release resources."""
         # Wait for all parser threads to complete before closing metadata store

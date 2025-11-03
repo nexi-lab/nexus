@@ -48,35 +48,75 @@ vector_db:
 
   collection_prefix: nexus
 
-# Storage backends
+# Multi-backend storage configuration
+# Define multiple storage backends that will be automatically mounted on server startup.
+# Each backend can be mounted at a different virtual path with different priorities.
+#
+# IMPORTANT: This feature is only available when using `nexus serve --config config.yaml`
+#
+# Fields:
+#   type: Backend type (local, gcs, s3, gdrive)
+#   mount_point: Virtual path where backend is mounted (e.g., /workspace, /archives)
+#   config: Backend-specific configuration (see examples below)
+#   priority: Mount priority - higher priority mounts are checked first (default: 0)
+#   readonly: Whether mount is read-only (default: false)
+#
+# Example usage:
+#   nexus serve --config config.yaml --auth-type database --init
+#
+# This will:
+#   1. Start the server
+#   2. Auto-mount all backends defined below
+#   3. Files in /workspace will use local storage
+#   4. Files in /archives will use GCS storage
+#
 backends:
-  # Local filesystem
+  # Local filesystem backend (default workspace)
   - type: local
-    name: local
-    mount_point: /local
-    root_path: ./nexus-data/files
+    mount_point: /workspace
+    config:
+      root_path: ./nexus-data/files
+    priority: 0
+    readonly: false
 
-  # Amazon S3
-  # - type: s3
-  #   name: s3-main
-  #   mount_point: /s3
-  #   bucket: my-company-files
-  #   region: us-east-1
-  #   access_key: ${AWS_ACCESS_KEY_ID}
-  #   secret_key: ${AWS_SECRET_ACCESS_KEY}
-
-  # Google Drive
-  # - type: gdrive
-  #   name: gdrive-main
-  #   mount_point: /gdrive
-  #   credentials_path: ./secrets/gdrive-creds.json
-
-  # Google Cloud Storage
+  # Google Cloud Storage for archives (requires GCS credentials)
   # - type: gcs
-  #   name: gcs-main
-  #   mount_point: /gcs
-  #   bucket: my-company-files
-  #   credentials_path: ./secrets/gcs-creds.json
+  #   mount_point: /archives
+  #   config:
+  #     bucket: my-nexus-archives
+  #     project_id: my-gcp-project
+  #     credentials_path: /path/to/gcs-credentials.json
+  #   priority: 10
+  #   readonly: false
+
+  # GCS for shared datasets (read-only)
+  # - type: gcs
+  #   mount_point: /datasets
+  #   config:
+  #     bucket: company-ml-datasets
+  #     project_id: my-gcp-project
+  #     credentials_path: /path/to/gcs-credentials.json
+  #   priority: 10
+  #   readonly: true
+
+  # Amazon S3 (not yet implemented)
+  # - type: s3
+  #   mount_point: /s3
+  #   config:
+  #     bucket: my-company-files
+  #     region: us-east-1
+  #     access_key: ${AWS_ACCESS_KEY_ID}
+  #     secret_key: ${AWS_SECRET_ACCESS_KEY}
+  #   priority: 10
+  #   readonly: false
+
+  # Google Drive (not yet implemented)
+  # - type: gdrive
+  #   mount_point: /gdrive
+  #   config:
+  #     credentials_path: ./secrets/gdrive-creds.json
+  #   priority: 10
+  #   readonly: false
 
 # Authentication
 auth:

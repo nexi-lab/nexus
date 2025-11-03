@@ -3237,6 +3237,86 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("sandbox_status", params)
         return result  # type: ignore[no-any-return]
 
+    def sandbox_connect(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+        mount_path: str = "/mnt/nexus",
+        context: dict | None = None,
+    ) -> dict:
+        """Connect and mount Nexus to a user-managed sandbox (Issue #371).
+
+        This is a one-time operation for sandboxes you manage externally.
+        Nexus will mount the filesystem to your sandbox without storing
+        metadata or managing the sandbox lifecycle.
+
+        Args:
+            sandbox_id: External sandbox ID (e.g., E2B sandbox ID)
+            provider: Sandbox provider ("e2b", etc.). Default: "e2b"
+            sandbox_api_key: Provider API key for authentication
+            mount_path: Path where Nexus will be mounted (default: /mnt/nexus)
+            context: Operation context
+
+        Returns:
+            Dict with connection details (sandbox_id, provider, mount_path, mounted_at)
+
+        Example:
+            >>> result = nx.sandbox_connect(
+            ...     sandbox_id="sb_xxx",
+            ...     sandbox_api_key="your_e2b_key",
+            ...     mount_path="/mnt/nexus"
+            ... )
+            >>> print(f"Mounted at: {result['mounted_at']}")
+        """
+        params: dict[str, Any] = {
+            "sandbox_id": sandbox_id,
+            "provider": provider,
+            "mount_path": mount_path,
+        }
+        if sandbox_api_key is not None:
+            params["sandbox_api_key"] = sandbox_api_key
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("sandbox_connect", params)
+        return result  # type: ignore[no-any-return]
+
+    def sandbox_disconnect(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Disconnect and unmount Nexus from a user-managed sandbox (Issue #371).
+
+        Args:
+            sandbox_id: External sandbox ID
+            provider: Sandbox provider ("e2b", etc.). Default: "e2b"
+            sandbox_api_key: Provider API key for authentication
+            context: Operation context
+
+        Returns:
+            Dict with disconnection details (sandbox_id, provider, unmounted_at)
+
+        Example:
+            >>> result = nx.sandbox_disconnect(
+            ...     sandbox_id="sb_xxx",
+            ...     sandbox_api_key="your_e2b_key"
+            ... )
+            >>> print(f"Unmounted at: {result['unmounted_at']}")
+        """
+        params: dict[str, Any] = {
+            "sandbox_id": sandbox_id,
+            "provider": provider,
+        }
+        if sandbox_api_key is not None:
+            params["sandbox_api_key"] = sandbox_api_key
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("sandbox_disconnect", params)
+        return result  # type: ignore[no-any-return]
+
     def close(self) -> None:
         """Close the client and release resources."""
         self.session.close()

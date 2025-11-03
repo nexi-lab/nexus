@@ -1,0 +1,401 @@
+#!/bin/bash
+
+# Setup script for nexus-hub-dev server
+# This script configures a fresh VM to run Nexus with PostgreSQL + GCS
+#
+# Prerequisites:
+#   1. VM created (nexus-hub-dev)
+#   2. Git installed
+#   3. Repository cloned to /home/nexus/nexi-lib
+#
+# Usage:
+#   sudo ./setup-dev-server.sh [OPTIONS]
+#
+# Options:
+#   --db-password PASSWORD          Database password (default: NexiLabCo)
+#   --gcs-bucket BUCKET             GCS bucket name (default: nexus-hub-dev)
+#   --cloud-sql-instance INSTANCE   Cloud SQL instance (default: nexi-lab-888:us-west1:nexus-hub-dev)
+#   --repo-path PATH                Path to repository (default: /home/nexus/nexi-lib)
+
+set -e  # Exit on error
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Default values
+DB_PASSWORD="NexiLabCo"
+GCS_BUCKET="nexus-hub-dev"
+CLOUD_SQL_INSTANCE="nexi-lab-888:us-west1:nexus-hub-dev"
+REPO_PATH="/home/nexus/nexi-lib"
+NEXUS_USER="nexus"
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --db-password)
+            DB_PASSWORD="$2"
+            shift 2
+            ;;
+        --gcs-bucket)
+            GCS_BUCKET="$2"
+            shift 2
+            ;;
+        --cloud-sql-instance)
+            CLOUD_SQL_INSTANCE="$2"
+            shift 2
+            ;;
+        --repo-path)
+            REPO_PATH="$2"
+            shift 2
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            exit 1
+            ;;
+    esac
+done
+
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Nexus Dev Server Setup${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo ""
+echo "Configuration:"
+echo "  Repository: $REPO_PATH"
+echo "  GCS Bucket: $GCS_BUCKET"
+echo "  Cloud SQL: $CLOUD_SQL_INSTANCE"
+echo "  Database Password: ****"
+echo ""
+
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   echo -e "${RED}This script must be run as root (use sudo)${NC}"
+   exit 1
+fi
+
+# Check if repository exists
+if [ ! -d "$REPO_PATH" ]; then
+    echo -e "${RED}Repository not found at $REPO_PATH${NC}"
+    echo "Please clone the repository first:"
+    echo "  sudo -u $NEXUS_USER git clone <repo-url> $REPO_PATH"
+    exit 1
+fi
+
+echo -e "${YELLOW}[1/8] Installing system dependencies...${NC}"
+apt-get update -qq
+apt-get install -y \
+    python3.11 \
+    python3.11-venv \
+    python3.11-dev \
+    python3-pip \
+    build-essential \
+    libpq-dev \
+    postgresql-client \
+    curl \
+    wget \
+    jq \
+    > /dev/null 2>&1
+
+echo -e "${GREEN}✓ System dependencies installed${NC}"
+
+echo -e "${YELLOW}[2/8] Setting up Python virtual environment...${NC}"
+VENV_PATH="$REPO_PATH/.venv"
+
+# Create venv as nexus user
+if [ ! -d "$VENV_PATH" ]; then
+    sudo -u $NEXUS_USER python3.11 -m venv "$VENV_PATH"
+fi
+
+# Install nexus package in editable mode
+echo "  Installing nexus package..."
+sudo -u $NEXUS_USER bash -c "
+    source '$VENV_PATH/bin/activate' && \
+    cd '$REPO_PATH' && \
+    pip install --upgrade pip > /dev/null 2>&1 && \
+    pip install -e . > /dev/null 2>&1
+"
+
+echo -e "${GREEN}✓ Python environment configured${NC}"
+
+echo -e "${YELLOW}[3/8] Installing Cloud SQL Auth Proxy...${NC}"
+PROXY_VERSION="v2.13.0"
+PROXY_URL="https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/${PROXY_VERSION}/cloud-sql-proxy.linux.amd64"
+
+wget -q "$PROXY_URL" -O /usr/local/bin/cloud-sql-proxy
+chmod +x /usr/local/bin/cloud-sql-proxy
+
+echo -e "${GREEN}✓ Cloud SQL Auth Proxy installed${NC}"
+
+echo -e "${YELLOW}[4/8] Configuring Cloud SQL Auth Proxy service...${NC}"
+
+# Create systemd service for Cloud SQL Proxy
+cat > /etc/systemd/system/cloudsql-proxy.service <<EOF
+[Unit]
+Description=Cloud SQL Auth Proxy
+After=network.target
+
+[Service]
+Type=simple
+User=nexus
+ExecStart=/usr/local/bin/cloud-sql-proxy $CLOUD_SQL_INSTANCE --port 5432
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Reload systemd and start proxy
+systemctl daemon-reload
+systemctl enable cloudsql-proxy.service > /dev/null 2>&1
+systemctl start cloudsql-proxy.service
+
+# Wait for proxy to be ready
+echo "  Waiting for Cloud SQL Proxy to start..."
+sleep 5
+
+if systemctl is-active --quiet cloudsql-proxy.service; then
+    echo -e "${GREEN}✓ Cloud SQL Auth Proxy service started${NC}"
+else
+    echo -e "${RED}✗ Failed to start Cloud SQL Proxy${NC}"
+    systemctl status cloudsql-proxy.service
+    exit 1
+fi
+
+echo -e "${YELLOW}[5/8] Configuring GCS authentication...${NC}"
+
+# Setup Application Default Credentials for GCS access
+# This assumes the VM has appropriate service account with GCS access
+sudo -u $NEXUS_USER gcloud auth application-default login --no-launch-browser || true
+
+echo -e "${GREEN}✓ GCS authentication configured${NC}"
+
+echo -e "${YELLOW}[6/8] Creating environment configuration...${NC}"
+
+# Create .env file
+ENV_FILE="$REPO_PATH/.env"
+cat > "$ENV_FILE" <<EOF
+# Nexus Dev Server Configuration
+# Auto-generated by setup-dev-server.sh
+
+# PostgreSQL metadata store
+NEXUS_DATABASE_URL=postgresql://postgres:$DB_PASSWORD@127.0.0.1:5432/nexus
+
+# GCS backend configuration
+NEXUS_BACKEND=gcs
+NEXUS_GCS_BUCKET=$GCS_BUCKET
+NEXUS_GCS_PROJECT=nexi-lab-888
+
+# Disable permissions for dev (optional)
+# NEXUS_ENFORCE_PERMISSIONS=false
+EOF
+
+chown $NEXUS_USER:$NEXUS_USER "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+
+echo -e "${GREEN}✓ Environment configuration created${NC}"
+
+echo -e "${YELLOW}[7/8] Testing Nexus server manually...${NC}"
+
+# Test nexus serve command manually first
+echo "  Testing: nexus serve --host 0.0.0.0 --port 8080 --backend gcs --gcs-bucket $GCS_BUCKET --gcs-project nexi-lab-888 --auth-type database"
+
+# Start server in background for testing
+sudo -u $NEXUS_USER bash -c "
+    source '$VENV_PATH/bin/activate' && \
+    cd '$REPO_PATH' && \
+    nohup $VENV_PATH/bin/nexus serve \
+        --host 0.0.0.0 \
+        --port 8080 \
+        --backend gcs \
+        --gcs-bucket $GCS_BUCKET \
+        --gcs-project nexi-lab-888 \
+        --auth-type database \
+        > /tmp/nexus-test.log 2>&1 &
+    echo \$!
+" > /tmp/nexus-test.pid
+
+NEXUS_PID=$(cat /tmp/nexus-test.pid)
+echo "  Started test server with PID: $NEXUS_PID"
+
+# Wait for server to start
+echo "  Waiting for server to start..."
+sleep 10
+
+# Health check
+echo "  Testing health endpoint..."
+if curl -f -s http://localhost:8080/health > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ Manual test successful!${NC}"
+
+    # Show server logs
+    echo ""
+    echo "Server logs (last 10 lines):"
+    tail -10 /tmp/nexus-test.log | sed 's/^/  /'
+    echo ""
+
+    # Kill test server
+    echo "  Stopping test server..."
+    kill $NEXUS_PID 2>/dev/null || true
+    sleep 2
+else
+    echo -e "${RED}✗ Manual test failed${NC}"
+    echo ""
+    echo "Server logs:"
+    cat /tmp/nexus-test.log | sed 's/^/  /'
+    echo ""
+
+    # Kill test server
+    kill $NEXUS_PID 2>/dev/null || true
+    exit 1
+fi
+
+echo -e "${YELLOW}[8/9] Creating Nexus systemd service...${NC}"
+
+# Create systemd service for Nexus
+cat > /etc/systemd/system/nexus-server.service <<EOF
+[Unit]
+Description=Nexus Server (Dev)
+After=network.target cloudsql-proxy.service
+Requires=cloudsql-proxy.service
+
+[Service]
+Type=simple
+User=nexus
+WorkingDirectory=$REPO_PATH
+EnvironmentFile=$ENV_FILE
+ExecStart=$VENV_PATH/bin/nexus serve \\
+    --host 0.0.0.0 \\
+    --port 8080 \\
+    --backend gcs \\
+    --gcs-bucket $GCS_BUCKET \\
+    --gcs-project nexi-lab-888 \\
+    --auth-type database
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Reload systemd and start nexus server
+systemctl daemon-reload
+systemctl enable nexus-server.service > /dev/null 2>&1
+systemctl start nexus-server.service
+
+echo -e "${GREEN}✓ Nexus systemd service created and started${NC}"
+
+# Wait for server to start
+echo "  Waiting for Nexus server to start..."
+sleep 10
+
+# Final health check
+MAX_RETRIES=12
+RETRY_COUNT=0
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    if curl -f -s http://localhost:8080/health > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ Nexus server is healthy!${NC}"
+        break
+    fi
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+        echo "  Retry $RETRY_COUNT/$MAX_RETRIES..."
+        sleep 5
+    fi
+done
+
+if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+    echo -e "${RED}✗ Health check failed${NC}"
+    echo "Check logs with: sudo journalctl -u nexus-server -f"
+    exit 1
+fi
+
+# ============================================
+# Create Admin API Key (if needed)
+# ============================================
+
+echo ""
+echo -e "${YELLOW}[9/9] Setting up admin API key...${NC}"
+
+# Check if admin key already exists
+ADMIN_KEY_EXISTS=$(PGPASSWORD=$DB_PASSWORD psql -h 127.0.0.1 -U postgres -d nexus -tAc "SELECT COUNT(*) FROM api_keys WHERE user_id='admin' AND is_admin=1 AND revoked=0;" 2>/dev/null || echo "0")
+
+if [ "$ADMIN_KEY_EXISTS" -gt 0 ]; then
+    echo "  Admin key already exists in database"
+    echo -e "${GREEN}✓ Using existing admin API key${NC}"
+    ADMIN_KEY_CREATED=false
+else
+    echo "  Creating new admin API key..."
+
+    # Get script directory
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+    # Create admin API key (365 day expiry)
+    # create-api-key.py will automatically save to .nexus-admin-env
+    ADMIN_KEY_OUTPUT=$(sudo -u $NEXUS_USER bash -c "
+        source '$VENV_PATH/bin/activate' && \
+        cd '$REPO_PATH' && \
+        export NEXUS_DATABASE_URL='postgresql://postgres:$DB_PASSWORD@127.0.0.1:5432/nexus' && \
+        python3 '$SCRIPT_DIR/create-api-key.py' admin 'Admin key (created by setup script)' --admin --days 365 2>&1
+    ")
+
+    # Check if creation was successful
+    if echo "$ADMIN_KEY_OUTPUT" | grep -q "API Key:"; then
+        echo -e "${GREEN}✓ Admin API key created and saved to .nexus-admin-env${NC}"
+        ADMIN_KEY_CREATED=true
+    else
+        echo -e "${RED}✗ Failed to create admin API key${NC}"
+        echo "$ADMIN_KEY_OUTPUT"
+        exit 1
+    fi
+fi
+
+# Get VM external IP
+EXTERNAL_IP=$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip)
+
+echo ""
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Setup Complete!${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo ""
+echo "Services:"
+echo "  Cloud SQL Proxy: $(systemctl is-active cloudsql-proxy.service)"
+echo "  Nexus Server:    $(systemctl is-active nexus-server.service)"
+echo ""
+echo "Access URLs:"
+echo "  Internal: http://localhost:8080"
+echo "  External: http://$EXTERNAL_IP:8080"
+echo ""
+
+# Show API key info
+if [ "$ADMIN_KEY_CREATED" = true ]; then
+    echo "Admin API Key:"
+    echo "  ✓ New admin key created and saved to: $REPO_PATH/.nexus-admin-env"
+    echo ""
+    echo "To use this key:"
+    echo "  source $REPO_PATH/.nexus-admin-env"
+    echo ""
+    echo "IMPORTANT: The API key is in .nexus-admin-env - save it securely!"
+    echo ""
+else
+    echo "Admin API Key:"
+    echo "  ✓ Admin key already created during initialization (step 7)"
+    echo "  ✓ Key saved to: $REPO_PATH/.nexus-admin-env"
+    echo ""
+    echo "To use this key:"
+    echo "  source $REPO_PATH/.nexus-admin-env"
+    echo ""
+fi
+
+echo "Useful commands:"
+echo "  Check logs:     sudo journalctl -u nexus-server -f"
+echo "  Restart:        sudo systemctl restart nexus-server"
+echo "  Stop:           sudo systemctl stop nexus-server"
+echo "  Start:          sudo systemctl start nexus-server"
+echo ""
+echo "Health check:"
+curl -s http://localhost:8080/health | jq . || echo "  Service is running"
+echo ""

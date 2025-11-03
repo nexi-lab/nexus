@@ -427,7 +427,9 @@ class NexusFS(
 
         return self._memory_api
 
-    def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
+    def _get_created_by(
+        self, context: OperationContext | EnhancedOperationContext | dict | None = None
+    ) -> str | None:
         """Get the created_by value for version history tracking.
 
         Args:
@@ -774,14 +776,20 @@ class NexusFS(
                 f"permission for '{path}'"
             )
 
-    def _create_directory_metadata(self, path: str) -> None:
+    def _create_directory_metadata(
+        self, path: str, context: OperationContext | EnhancedOperationContext | None = None
+    ) -> None:
         """
         Create metadata entry for a directory.
 
         Args:
             path: Virtual path to directory
+            context: Operation context (for tenant_id and created_by)
         """
         now = datetime.now(UTC)
+
+        # Use provided context or default
+        ctx = context if context is not None else self._default_context
 
         # Note: UNIX permissions (owner/group/mode) are deprecated.
         # All permissions are now managed through ReBAC relationships.
@@ -801,7 +809,8 @@ class NexusFS(
             created_at=now,
             modified_at=now,
             version=1,
-            created_by=self._get_created_by(),  # Track who created this directory
+            created_by=self._get_created_by(context),  # Track who created this directory
+            tenant_id=ctx.tenant_id or "default",  # P0 SECURITY: Set tenant_id
         )
 
         self.metadata.put(metadata)
@@ -894,17 +903,16 @@ class NexusFS(
             logger = logging.getLogger(__name__)
 
             for parent_dir in reversed(parents_to_create):
-                self._create_directory_metadata(parent_dir)
+                self._create_directory_metadata(parent_dir, context=ctx)
                 # P0-3: Create parent tuples for each intermediate directory
                 # This ensures permission inheritance works for deeply nested paths
                 if hasattr(self, "_hierarchy_manager"):
                     try:
-                        ctx_inner = context or self._default_context
                         logger.info(
                             f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
                         )
                         self._hierarchy_manager.ensure_parent_tuples(
-                            parent_dir, tenant_id=ctx_inner.tenant_id or "default"
+                            parent_dir, tenant_id=ctx.tenant_id or "default"
                         )
                     except Exception as e:
                         # Don't fail mkdir if parent tuple creation fails
@@ -914,7 +922,7 @@ class NexusFS(
                         pass
 
         # Create explicit metadata entry for the directory
-        self._create_directory_metadata(path)
+        self._create_directory_metadata(path, context=ctx)
 
         # P0-3: Create parent relationship tuples for directory inheritance
         # This enables granting access to /workspace to automatically grant access to subdirectories
@@ -926,9 +934,10 @@ class NexusFS(
             f"mkdir: Checking for hierarchy_manager: hasattr={hasattr(self, '_hierarchy_manager')}"
         )
 
+        ctx = context or self._default_context
+
         if hasattr(self, "_hierarchy_manager"):
             try:
-                ctx = context or self._default_context
                 logger.info(
                     f"mkdir: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id or 'default'}"
                 )
@@ -947,6 +956,22 @@ class NexusFS(
                 import traceback
 
                 logger.debug(traceback.format_exc())
+
+        # Grant direct_owner permission to the user who created the directory
+        # Note: Use 'direct_owner' (not 'owner') as the base relation.
+        # 'owner' is a computed union of direct_owner + parent_owner in the ReBAC schema.
+        if self._rebac_manager and ctx.user and not ctx.is_system:
+            try:
+                logger.info(f"mkdir: Granting direct_owner permission to {ctx.user} for {path}")
+                self._rebac_manager.rebac_write(
+                    subject=("user", ctx.user),
+                    relation="direct_owner",
+                    object=("file", path),
+                    tenant_id=ctx.tenant_id or "default",
+                )
+                logger.info(f"mkdir: Granted direct_owner permission to {ctx.user} for {path}")
+            except Exception as e:
+                logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
 
     @rpc_expose(description="Remove directory")
     def rmdir(

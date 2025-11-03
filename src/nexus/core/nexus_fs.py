@@ -3317,31 +3317,52 @@ class NexusFS(
         provider: str = "e2b",
         sandbox_api_key: str | None = None,
         mount_path: str = "/mnt/nexus",
-        context: dict | None = None,  # noqa: ARG002
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
+        context: dict | None = None,
     ) -> dict:
-        """Connect and mount Nexus to a user-managed sandbox.
+        """Connect and mount Nexus to a sandbox (Nexus-managed or user-managed).
 
-        This is a one-time operation for sandboxes managed externally by the user.
-        Nexus will mount the filesystem to the sandbox without storing metadata
-        or managing the sandbox lifecycle.
+        Works for both:
+        - Nexus-managed sandboxes (created via sandbox_create) - no sandbox_api_key needed
+        - User-managed sandboxes (external) - requires sandbox_api_key
 
         Args:
-            sandbox_id: External sandbox ID (e.g., E2B sandbox ID)
+            sandbox_id: Sandbox ID (Nexus-managed or external)
             provider: Sandbox provider ("e2b", etc.). Default: "e2b"
-            sandbox_api_key: Provider API key for authentication
+            sandbox_api_key: Provider API key (optional, only for user-managed sandboxes)
             mount_path: Path where Nexus will be mounted in sandbox (default: /mnt/nexus)
+            nexus_url: Nexus server URL (auto-detected if not provided)
+            nexus_api_key: Nexus API key (from context if not provided)
             context: Operation context
 
         Returns:
-            Dict with connection details (sandbox_id, provider, mount_path, mounted_at)
+            Dict with connection details (sandbox_id, provider, mount_path, mounted_at, mount_status)
 
         Raises:
-            ValueError: If provider not supported or API key missing
+            ValueError: If provider not supported or required credentials missing
             RuntimeError: If connection/mount fails
         """
         # Ensure sandbox manager is initialized
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
+
+        # Get Nexus URL - should be provided by client
+        # Falls back to localhost only for direct server-side calls
+        if not nexus_url:
+            import os
+
+            nexus_url = os.getenv("NEXUS_URL", "http://localhost:8080")
+
+        # Get Nexus API key from context if not provided
+        if not nexus_api_key:
+            ctx = self._parse_context(context)
+            nexus_api_key = getattr(ctx, "api_key", None)
+
+        if not nexus_api_key:
+            raise ValueError(
+                "Nexus API key required for mounting. Pass nexus_api_key or provide in context."
+            )
 
         import asyncio
 
@@ -3352,6 +3373,8 @@ class NexusFS(
                 provider=provider,
                 sandbox_api_key=sandbox_api_key,
                 mount_path=mount_path,
+                nexus_url=nexus_url,
+                nexus_api_key=nexus_api_key,
             )
         )
         return result

@@ -3243,31 +3243,39 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         provider: str = "e2b",
         sandbox_api_key: str | None = None,
         mount_path: str = "/mnt/nexus",
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
         context: dict | None = None,
     ) -> dict:
-        """Connect and mount Nexus to a user-managed sandbox (Issue #371).
+        """Connect and mount Nexus to a sandbox (Nexus-managed or user-managed).
 
-        This is a one-time operation for sandboxes you manage externally.
-        Nexus will mount the filesystem to your sandbox without storing
-        metadata or managing the sandbox lifecycle.
+        Works for both:
+        - Nexus-managed sandboxes (created via sandbox_create) - no sandbox_api_key needed
+        - User-managed sandboxes (external) - requires sandbox_api_key
 
         Args:
-            sandbox_id: External sandbox ID (e.g., E2B sandbox ID)
+            sandbox_id: Sandbox ID (Nexus-managed or external)
             provider: Sandbox provider ("e2b", etc.). Default: "e2b"
-            sandbox_api_key: Provider API key for authentication
+            sandbox_api_key: Provider API key (optional, only for user-managed sandboxes)
             mount_path: Path where Nexus will be mounted (default: /mnt/nexus)
+            nexus_url: Nexus server URL (auto-detected from client if not provided)
+            nexus_api_key: Nexus API key (auto-detected from client if not provided)
             context: Operation context
 
         Returns:
-            Dict with connection details (sandbox_id, provider, mount_path, mounted_at)
+            Dict with connection details (sandbox_id, provider, mount_path, mounted_at, mount_status)
 
         Example:
-            >>> result = nx.sandbox_connect(
+            >>> # Mount in Nexus-managed sandbox
+            >>> sb = nx.sandbox_create("my-box")
+            >>> nx.sandbox_connect(sb['sandbox_id'], mount_path="/home/user/nexus")
+
+            >>> # Mount in user-managed sandbox
+            >>> nx.sandbox_connect(
             ...     sandbox_id="sb_xxx",
             ...     sandbox_api_key="your_e2b_key",
             ...     mount_path="/mnt/nexus"
             ... )
-            >>> print(f"Mounted at: {result['mounted_at']}")
         """
         params: dict[str, Any] = {
             "sandbox_id": sandbox_id,
@@ -3276,6 +3284,17 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         }
         if sandbox_api_key is not None:
             params["sandbox_api_key"] = sandbox_api_key
+
+        # Auto-provide Nexus URL and API key from client
+        if nexus_url is None:
+            # Use client's server_url (which already reads NEXUS_URL env var)
+            nexus_url = self.server_url
+        if nexus_api_key is None:
+            nexus_api_key = self.api_key
+
+        params["nexus_url"] = nexus_url
+        params["nexus_api_key"] = nexus_api_key
+
         if context is not None:
             params["context"] = context
         result = self._call_rpc("sandbox_connect", params)

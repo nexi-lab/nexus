@@ -690,6 +690,145 @@ class NexusFilesystem(Protocol):
         ...
 
     # ============================================================
+    # Content Operations
+    # ============================================================
+
+    def append(
+        self,
+        path: str,
+        content: bytes | str,
+        context: Any = None,
+        if_match: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Append content to an existing file or create a new file if it doesn't exist.
+
+        Args:
+            path: Virtual path to append to
+            content: Content to append as bytes or str
+            context: Optional operation context for permission checks
+            if_match: Optional etag for optimistic concurrency control
+            force: If True, skip version check
+
+        Returns:
+            Dict with metadata (etag, version, modified_at, size)
+
+        Raises:
+            InvalidPathError: If path is invalid
+            BackendError: If append operation fails
+            AccessDeniedError: If access is denied
+            PermissionError: If path is read-only
+            ConflictError: If if_match doesn't match current etag
+        """
+        ...
+
+    # ============================================================
+    # Sandbox Operations (Issue #372)
+    # ============================================================
+
+    def sandbox_create(
+        self,
+        name: str,
+        ttl_minutes: int = 10,
+        template_id: str | None = None,
+        context: dict | None = None,
+    ) -> dict[Any, Any]:
+        """Create a new code execution sandbox.
+
+        Args:
+            name: User-friendly sandbox name
+            ttl_minutes: Idle timeout in minutes
+            template_id: Provider template ID (optional)
+            context: Operation context
+
+        Returns:
+            Sandbox metadata dict
+        """
+        ...
+
+    def sandbox_run(
+        self,
+        sandbox_id: str,
+        language: str,
+        code: str,
+        timeout: int = 30,
+        context: dict | None = None,
+    ) -> dict[Any, Any]:
+        """Run code in a sandbox.
+
+        Args:
+            sandbox_id: Sandbox identifier
+            language: Programming language
+            code: Code to execute
+            timeout: Execution timeout in seconds
+            context: Operation context
+
+        Returns:
+            Execution result dict
+        """
+        ...
+
+    def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
+        """Pause a running sandbox.
+
+        Args:
+            sandbox_id: Sandbox identifier
+            context: Operation context
+
+        Returns:
+            Operation result dict
+        """
+        ...
+
+    def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
+        """Resume a paused sandbox.
+
+        Args:
+            sandbox_id: Sandbox identifier
+            context: Operation context
+
+        Returns:
+            Operation result dict
+        """
+        ...
+
+    def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
+        """Stop a sandbox.
+
+        Args:
+            sandbox_id: Sandbox identifier
+            context: Operation context
+
+        Returns:
+            Operation result dict
+        """
+        ...
+
+    def sandbox_list(self, context: dict | None = None) -> dict[Any, Any]:
+        """List all sandboxes for the current user.
+
+        Args:
+            context: Operation context
+
+        Returns:
+            List of sandbox metadata dicts
+        """
+        ...
+
+    def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
+        """Get sandbox status.
+
+        Args:
+            sandbox_id: Sandbox identifier
+            context: Operation context
+
+        Returns:
+            Sandbox status dict
+        """
+        ...
+
+    # ============================================================
     # Lifecycle Management
     # ============================================================
 

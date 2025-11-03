@@ -376,76 +376,6 @@ Event-driven workflows fire automatically on file operations. No manual triggeri
 
 </div>
 
-## 📚 Learn by Example
-
-<div class="grid cards" markdown>
-
--   :material-file-document:{ .lg .middle } __File Operations__
-
-    ---
-
-    Master read, write, copy, move, and delete with optimistic concurrency control.
-
-    [:octicons-arrow-right-24: View Example](examples/file-operations.md)
-
--   :material-folder:{ .lg .middle } __Directory Operations__
-
-    ---
-
-    Create hierarchies with automatic permission inheritance.
-
-    [:octicons-arrow-right-24: View Example](examples/directory-operations.md)
-
--   :material-shield-lock:{ .lg .middle } __Permission Management__
-
-    ---
-
-    Fine-grained access control with Google Zanzibar-style ReBAC.
-
-    [:octicons-arrow-right-24: View Example](examples/permissions.md)
-
--   :material-application:{ .lg .middle } __Workspace & Sessions__
-
-    ---
-
-    Build multi-tenant apps with workspace isolation and session tracking.
-
-    [:octicons-arrow-right-24: View Example](examples/workspace-session.md)
-
--   :material-robot:{ .lg .middle } __LangGraph Integration__
-
-    ---
-
-    Build ReAct agents with LangGraph using Nexus as persistent filesystem infrastructure.
-
-    [:octicons-arrow-right-24: View Example](examples/langgraph.md)
-
--   :material-brain:{ .lg .middle } __Agentic Context Engineering__
-
-    ---
-
-    Enable agents to learn from experience with automated reflection and continuous improvement.
-
-    [:octicons-arrow-right-24: View Example](examples/ace.md)
-
--   :material-chat:{ .lg .middle } __Claude Desktop (MCP)__
-
-    ---
-
-    Expose Nexus to Claude Desktop via Model Context Protocol. 14 tools for files, search, memory, and workflows.
-
-    [:octicons-arrow-right-24: View Integration](integrations/mcp.md)
-
-</div>
-
-<div class="cta-section">
-  <p class="cta-description">Each example includes interactive demos, complete code snippets, and runnable shell scripts.</p>
-  <div class="cta-buttons">
-    <a href="examples/" class="md-button md-button--primary cta-large">View All Examples →</a>
-    <a href="api/" class="md-button cta-large">API Reference</a>
-  </div>
-</div>
-
 ## 🎓 Choose Your Learning Path
 
 **Progressive learning from beginner to advanced.** Pick based on your use case and experience level.
@@ -538,7 +468,7 @@ Event-driven workflows fire automatically on file operations. No manual triggeri
 
     ⏱️ **20 min** | 💡 **Difficulty:** Medium
 
-    [:octicons-arrow-right-24: Start Learning](learning-paths/agent-memory-learning.md)
+    [:octicons-arrow-right-24: Start Learning](learning-paths/ai-agent-memory.md)
 
 </div>
 

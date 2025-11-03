@@ -25,6 +25,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(init)
     cli.add_command(cat)
     cli.add_command(write)
+    cli.add_command(append)
     cli.add_command(write_batch)
     cli.add_command(cp)
     cli.add_command(copy_cmd)
@@ -319,6 +320,97 @@ def write(
         nx.close()
 
         console.print(f"[green]✓[/green] Wrote {len(file_content)} bytes to [cyan]{path}[/cyan]")
+
+        if show_metadata:
+            console.print(f"[dim]ETag:[/dim]     {result['etag']}")
+            console.print(f"[dim]Version:[/dim]  {result['version']}")
+            console.print(f"[dim]Size:[/dim]     {result['size']} bytes")
+            console.print(f"[dim]Modified:[/dim] {result['modified_at']}")
+    except Exception as e:
+        handle_error(e)
+
+
+@click.command()
+@click.argument("path", type=str)
+@click.argument("content", type=str, required=False)
+@click.option("-i", "--input", "input_file", type=click.File("rb"), help="Read from file or stdin")
+@click.option(
+    "--if-match",
+    type=str,
+    help="Only append if current ETag matches (optimistic concurrency control)",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Force append without version check (dangerous - can cause data loss!)",
+)
+@click.option(
+    "--show-metadata",
+    is_flag=True,
+    help="Show metadata (etag, version) after appending",
+)
+@add_backend_options
+@add_context_options
+def append(
+    path: str,
+    content: str | None,
+    input_file: Any,
+    if_match: str | None,
+    force: bool,
+    show_metadata: bool,
+    backend_config: BackendConfig,
+    operation_context: dict[str, Any],
+) -> None:
+    """Append content to a file (creates file if it doesn't exist).
+
+    This is useful for building log files, JSONL files, and other
+    append-only data structures without reading the entire file first.
+
+    Examples:
+        # Append to a log file
+        nexus append /workspace/app.log "New log entry\\n"
+
+        # Append from stdin (useful for streaming)
+        echo "New line" | nexus append /workspace/data.txt --input -
+
+        # Append from file
+        nexus append /workspace/output.txt --input input.txt
+
+        # Build JSONL file incrementally
+        echo '{"event": "login", "user": "alice"}' | nexus append /logs/events.jsonl --input -
+
+        # Optimistic concurrency control (prevent concurrent modifications)
+        nexus append /doc.txt "New content" --if-match abc123...
+
+        # Show metadata after appending
+        nexus append /log.txt "Entry\\n" --show-metadata
+    """
+    try:
+        nx = get_filesystem(backend_config)
+
+        # Determine content source
+        if input_file:
+            file_content = input_file.read()
+        elif content == "-":
+            # Read from stdin
+            file_content = sys.stdin.buffer.read()
+        elif content:
+            file_content = content.encode("utf-8")
+        else:
+            console.print("[red]Error:[/red] Must provide content or use --input")
+            sys.exit(1)
+
+        # Append with OCC parameters and context
+        result = nx.append(
+            path,
+            file_content,
+            if_match=if_match,
+            force=force,
+            **operation_context,  # Pass subject, tenant_id, etc.
+        )
+        nx.close()
+
+        console.print(f"[green]✓[/green] Appended {len(file_content)} bytes to [cyan]{path}[/cyan]")
 
         if show_metadata:
             console.print(f"[dim]ETag:[/dim]     {result['etag']}")

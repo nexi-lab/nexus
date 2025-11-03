@@ -1200,7 +1200,49 @@ class NexusFS(
             # If metadata query fails, return False
             return False
 
-        # 3. Check ReBAC permissions on each descendant (with early exit)
+        # 3. OPTIMIZATION (issue #380): Use bulk permission checking for descendants
+        # Instead of checking each descendant individually (N queries), use rebac_check_bulk()
+        if (
+            hasattr(self, "_rebac_manager")
+            and self._rebac_manager is not None
+            and hasattr(self._rebac_manager, "rebac_check_bulk")
+        ):
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.debug(
+                f"_has_descendant_access: Using bulk check for {len(all_descendants)} descendants of {path}"
+            )
+
+            # Build list of checks for all descendants
+            checks = [
+                (subject_tuple, rebac_permission, ("file", meta.path)) for meta in all_descendants
+            ]
+
+            try:
+                # Perform bulk permission check
+                results = self._rebac_manager.rebac_check_bulk(
+                    checks, tenant_id=context.tenant_id or "default"
+                )
+
+                # Check if any descendant is accessible
+                for check in checks:
+                    if results.get(check, False):
+                        logger.debug(
+                            f"_has_descendant_access: Found accessible descendant {check[2][1]}"
+                        )
+                        return True
+
+                logger.debug("_has_descendant_access: No accessible descendants found")
+                return False
+
+            except Exception as e:
+                logger.warning(
+                    f"_has_descendant_access: Bulk check failed, falling back to individual checks: {e}"
+                )
+                # Fall through to original implementation
+
+        # Fallback: Check ReBAC permissions on each descendant (with early exit)
         for meta in all_descendants:
             descendant_access = self.rebac_check(
                 subject=subject_tuple,

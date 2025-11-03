@@ -200,7 +200,7 @@ echo -e "${GREEN}✓ Environment configuration created${NC}"
 echo -e "${YELLOW}[7/8] Testing Nexus server manually...${NC}"
 
 # Test nexus serve command manually first
-echo "  Testing: nexus serve --host 0.0.0.0 --port 8080 --backend gcs --gcs-bucket $GCS_BUCKET --gcs-project nexi-lab-888 --auth-type database --init"
+echo "  Testing: nexus serve --host 0.0.0.0 --port 8080 --backend gcs --gcs-bucket $GCS_BUCKET --gcs-project nexi-lab-888 --auth-type database"
 
 # Start server in background for testing
 sudo -u $NEXUS_USER bash -c "
@@ -213,7 +213,6 @@ sudo -u $NEXUS_USER bash -c "
         --gcs-bucket $GCS_BUCKET \
         --gcs-project nexi-lab-888 \
         --auth-type database \
-        --init \
         > /tmp/nexus-test.log 2>&1 &
     echo \$!
 " > /tmp/nexus-test.pid

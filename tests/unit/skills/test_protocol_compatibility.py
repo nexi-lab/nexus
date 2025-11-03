@@ -158,8 +158,16 @@ def test_protocol_runtime_checkable() -> None:
 
         # Mock object with required methods should also pass
         class MockFilesystem:
-            agent_id: str | None = None
-            tenant_id: str | None = None
+            _agent_id: str | None = None
+            _tenant_id: str | None = None
+
+            @property
+            def agent_id(self) -> str | None:
+                return self._agent_id
+
+            @property
+            def tenant_id(self) -> str | None:
+                return self._tenant_id
 
             def read(self, path: str) -> bytes:
                 return b""
@@ -291,6 +299,14 @@ def test_protocol_runtime_checkable() -> None:
                 return {}
 
             def sandbox_status(self, sandbox_id, context=None):
+                return {}
+
+            def sandbox_connect(
+                self, sandbox_id, source_path, mount_path, read_only=False, context=None
+            ):
+                return {}
+
+            def sandbox_disconnect(self, sandbox_id, mount_path, context=None):
                 return {}
 
             def close(self) -> None:

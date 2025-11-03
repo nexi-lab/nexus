@@ -153,20 +153,56 @@ class NexusFSSearchMixin:
             # For non-recursive listings, infer immediate subdirectories from file paths
             base_path = path if path != "/" else ""
 
-            # Get all files to infer directories (only from files user can read)
+            # OPTIMIZATION (issue #380): Reuse metadata query and avoid double permission check
+            # Get all files to infer directories
             all_files_for_dirs = self.metadata.list(base_path)
 
             # Filter files by permission before inferring directories
+            # NOTE: We need to filter ALL files (not just results), because results may be filtered
+            # to only include files in the current directory (non-recursive), but we need to see
+            # files in subdirectories to infer those subdirectories exist
             if self._enforce_permissions:
                 ctx = context or self._default_context
-                all_paths_for_dirs = [meta.path for meta in all_files_for_dirs]
-                allowed_paths_for_dirs = self._permission_enforcer.filter_list(
-                    all_paths_for_dirs, ctx
-                )
-                # Only infer directories from files user has permission to read
-                all_files_for_dirs = [
-                    meta for meta in all_files_for_dirs if meta.path in allowed_paths_for_dirs
-                ]
+
+                # Check if we already have filtered results we can reuse
+                # If base_path matches our query path, we can use the already-filtered results
+                # plus any additional files found in subdirectories
+                if base_path == path or (path == "/" and base_path == ""):
+                    # Create a set of already-checked paths to avoid duplicate filtering
+                    already_filtered = {meta.path for meta in results}
+
+                    # Only filter paths we haven't already checked
+                    unfiltered_paths = [
+                        meta.path
+                        for meta in all_files_for_dirs
+                        if meta.path not in already_filtered
+                    ]
+
+                    if unfiltered_paths:
+                        # Filter only the new paths
+                        allowed_new_paths = self._permission_enforcer.filter_list(
+                            unfiltered_paths, ctx
+                        )
+                        allowed_new_paths_set = set(allowed_new_paths)
+
+                        # Combine already-filtered results with newly-filtered paths
+                        all_files_for_dirs = [
+                            meta
+                            for meta in all_files_for_dirs
+                            if meta.path in already_filtered or meta.path in allowed_new_paths_set
+                        ]
+                    else:
+                        # All paths already filtered, reuse results
+                        all_files_for_dirs = results
+                else:
+                    # Different path, need to filter everything
+                    all_paths_for_dirs = [meta.path for meta in all_files_for_dirs]
+                    allowed_paths_for_dirs = self._permission_enforcer.filter_list(
+                        all_paths_for_dirs, ctx
+                    )
+                    all_files_for_dirs = [
+                        meta for meta in all_files_for_dirs if meta.path in allowed_paths_for_dirs
+                    ]
 
             for meta in all_files_for_dirs:
                 # Get relative path
@@ -189,11 +225,23 @@ class NexusFSSearchMixin:
                 backend_dirs = self._get_backend_directory_entries(path)
                 ctx = context or self._default_context
 
-                # Use hierarchical access check for each backend directory
-                for dir_path in backend_dirs:
-                    # Check if user has access to this directory or any of its descendants
-                    if self._has_descendant_access(dir_path, Permission.READ, ctx):  # type: ignore[attr-defined]
-                        directories.add(dir_path)
+                # OPTIMIZATION (issue #380): Use bulk check for all backend directories at once
+                # Instead of N separate _has_descendant_access() calls (N bulk queries),
+                # use _has_descendant_access_bulk() for ONE bulk query
+                if hasattr(self, "_has_descendant_access_bulk") and len(backend_dirs) > 1:
+                    # Bulk check all backend directories at once
+                    access_results = self._has_descendant_access_bulk(
+                        list(backend_dirs), Permission.READ, ctx
+                    )
+                    for dir_path, has_access in access_results.items():
+                        if has_access:
+                            directories.add(dir_path)
+                else:
+                    # Fallback to individual checks (for single directory or if method not available)
+                    for dir_path in backend_dirs:
+                        # Check if user has access to this directory or any of its descendants
+                        if self._has_descendant_access(dir_path, Permission.READ, ctx):  # type: ignore[attr-defined]
+                            directories.add(dir_path)
 
         if details:
             # Filter out directory metadata markers to avoid duplicates

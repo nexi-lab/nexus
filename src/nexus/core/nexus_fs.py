@@ -1257,6 +1257,125 @@ class NexusFS(
         # No accessible descendants found
         return False
 
+    def _has_descendant_access_bulk(
+        self,
+        paths: list[str],
+        permission: Permission,
+        context: OperationContext | EnhancedOperationContext,
+    ) -> dict[str, bool]:
+        """Check if user has access to any descendant for multiple paths in bulk.
+
+        This is an optimization for list() operations that need to check many backend directories.
+        Instead of calling _has_descendant_access() for each directory (N separate bulk queries),
+        this method batches all directories + all their descendants into ONE bulk query.
+
+        Args:
+            paths: List of directory paths to check
+            permission: Permission to check (READ, WRITE, or EXECUTE)
+            context: Operation context with user/agent identity
+
+        Returns:
+            Dict mapping each path to True (has access) or False (no access)
+
+        Performance:
+            - Before: N directories × 1 bulk query = N bulk queries
+            - After: 1 bulk query for all directories + all descendants
+            - 10x improvement for 10 backend directories
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Admin/system bypass
+        if context.is_admin or context.is_system:
+            return dict.fromkeys(paths, True)
+
+        # Check if ReBAC bulk checking is available
+        if not (
+            hasattr(self, "_rebac_manager")
+            and self._rebac_manager is not None
+            and hasattr(self._rebac_manager, "rebac_check_bulk")
+        ):
+            # Fallback to individual checks
+            return {path: self._has_descendant_access(path, permission, context) for path in paths}
+
+        # Validate subject_id
+        if context.subject_id is None:
+            return dict.fromkeys(paths, False)
+
+        subject_tuple: tuple[str, str] = (context.subject_type, context.subject_id)
+
+        # Map permission to ReBAC name
+        permission_map = {
+            Permission.READ: "read",
+            Permission.WRITE: "write",
+            Permission.EXECUTE: "execute",
+        }
+        rebac_permission = permission_map.get(permission, "read")
+
+        # PHASE 1: Collect all descendants for all paths
+        all_checks = []
+        path_to_descendants: dict[str, list[str]] = {}
+
+        for path in paths:
+            # Check direct access to the directory itself
+            all_checks.append((subject_tuple, rebac_permission, ("file", path)))
+
+            # Get all descendants
+            prefix = path if path.endswith("/") else path + "/"
+            if path == "/":
+                prefix = ""
+
+            try:
+                descendants = self.metadata.list(prefix)
+                descendant_paths = [meta.path for meta in descendants]
+                path_to_descendants[path] = descendant_paths
+
+                # Add checks for all descendants
+                for desc_path in descendant_paths:
+                    all_checks.append((subject_tuple, rebac_permission, ("file", desc_path)))
+            except Exception as e:
+                logger.warning(f"_has_descendant_access_bulk: Failed to list {path}: {e}")
+                path_to_descendants[path] = []
+
+        logger.debug(
+            f"_has_descendant_access_bulk: Checking {len(all_checks)} paths for {len(paths)} directories"
+        )
+
+        # PHASE 2: Perform ONE bulk permission check for everything
+        try:
+            results = self._rebac_manager.rebac_check_bulk(
+                all_checks, tenant_id=context.tenant_id or "default"
+            )
+        except Exception as e:
+            logger.warning(f"_has_descendant_access_bulk: Bulk check failed, falling back: {e}")
+            # Fallback to individual checks
+            return {path: self._has_descendant_access(path, permission, context) for path in paths}
+
+        # PHASE 3: Map results back to each directory
+        result_map = {}
+        for path in paths:
+            # Check if user has access to directory itself
+            direct_check = (subject_tuple, rebac_permission, ("file", path))
+            if results.get(direct_check, False):
+                result_map[path] = True
+                continue
+
+            # Check if user has access to any descendant
+            has_access = False
+            for desc_path in path_to_descendants.get(path, []):
+                desc_check = (subject_tuple, rebac_permission, ("file", desc_path))
+                if results.get(desc_check, False):
+                    has_access = True
+                    break
+
+            result_map[path] = has_access
+
+        logger.debug(
+            f"_has_descendant_access_bulk: {sum(result_map.values())}/{len(paths)} directories accessible"
+        )
+        return result_map
+
     @rpc_expose(description="Check if path is a directory")
     def is_directory(
         self,

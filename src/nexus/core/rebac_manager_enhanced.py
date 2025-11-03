@@ -1134,6 +1134,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             all_subjects.add(subject)
             all_objects.add(obj)
 
+        # For file paths, we also need to fetch parent hierarchy tuples
+        # Example: checking /a/b/c.txt requires parent tuples: (c.txt, parent, b), (b, parent, a), etc.
+        file_paths = []
+        for obj_type, obj_id in all_objects:
+            if obj_type == "file" and "/" in obj_id:
+                file_paths.append(obj_id)
+
         # Fetch all tuples involving these subjects/objects in a single query
         # This is the key optimization: instead of N queries, we make 1-2 queries
         with self._connection() as conn:
@@ -1153,7 +1160,36 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             for obj_type, obj_id in all_objects:
                 object_params.extend([obj_type, obj_id])
 
-            # Fetch all relevant tuples
+            # OPTIMIZATION: For file paths, also fetch parent hierarchy tuples in bulk
+            # This ensures we have all parent tuples needed for parent_owner/parent_editor/parent_viewer checks
+            # Without this, we'd miss tuples like (child, "parent", parent) that aren't directly in our object set
+            file_path_conditions = []
+            file_path_params = []
+            for file_path in file_paths:
+                # Fetch all parent tuples for files that are prefixes of this path
+                # Example: for /a/b/c.txt, fetch tuples where subject_id LIKE '/a/%'
+                # This captures: (c.txt, parent, b), (b, parent, a), (a, parent, /)
+                # Use LIKE to match path prefixes
+                path_prefix = file_path.rsplit("/", 1)[0] if "/" in file_path else "/"
+                if path_prefix:
+                    # Match files under this path (including the file itself)
+                    file_path_conditions.append("(subject_type = ? AND subject_id LIKE ?)")
+                    file_path_params.extend(["file", file_path + "%"])
+                    # Also match parent paths
+                    if path_prefix != "/":
+                        file_path_conditions.append("(subject_type = ? AND subject_id LIKE ?)")
+                        file_path_params.extend(["file", path_prefix + "%"])
+
+            # Build full query
+            where_clauses = [
+                f"(subject_type, subject_id) IN ({placeholders_subjects})",
+                f"(object_type, object_id) IN ({placeholders_objects})",
+            ]
+            if file_path_conditions:
+                # Limit file path expansion to avoid too many results
+                # Only add top-level path patterns (not all nested paths)
+                where_clauses.append(f"({' OR '.join(file_path_conditions[:10])})")
+
             query = self._fix_sql_placeholders(
                 f"""
                 SELECT subject_type, subject_id, subject_relation, relation,
@@ -1161,14 +1197,16 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 FROM rebac_tuples
                 WHERE tenant_id = ?
                   AND (expires_at IS NULL OR expires_at >= ?)
-                  AND (
-                    (subject_type, subject_id) IN ({placeholders_subjects})
-                    OR (object_type, object_id) IN ({placeholders_objects})
-                  )
+                  AND ({" OR ".join(where_clauses)})
                 """
             )
 
-            params = [tenant_id, datetime.now(UTC).isoformat()] + subject_params + object_params
+            params = (
+                [tenant_id, datetime.now(UTC).isoformat()]
+                + subject_params
+                + object_params
+                + file_path_params[:20]  # Limit params to avoid query size explosion
+            )
             cursor.execute(query, params)
 
             # Build in-memory graph of all tuples
@@ -1187,7 +1225,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     }
                 )
 
-            logger.info(f"Fetched {len(tuples_graph)} tuples in bulk for graph computation")
+            logger.info(
+                f"Fetched {len(tuples_graph)} tuples in bulk for graph computation (includes parent hierarchy)"
+            )
 
         # PHASE 2: Compute permissions for each cache miss using the in-memory graph
         # This avoids additional DB queries per check
@@ -1226,11 +1266,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         obj: Entity,
         tenant_id: str,
         tuples_graph: list[dict[str, Any]],
+        depth: int = 0,
+        visited: set[tuple[str, str, str, str, str]] | None = None,
     ) -> bool:
-        """Compute permission using pre-fetched tuples graph.
+        """Compute permission using pre-fetched tuples graph with full in-memory traversal.
 
-        This is a simplified version of _compute_permission_with_limits that uses
-        an in-memory graph instead of making DB queries.
+        This implements the complete ReBAC graph traversal algorithm without additional DB queries.
+        Handles: direct relations, union, intersection, exclusion, tupleToUserset (parent/group inheritance).
 
         Args:
             subject: Subject entity
@@ -1238,6 +1280,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             obj: Object entity
             tenant_id: Tenant ID
             tuples_graph: Pre-fetched list of all relevant tuples
+            depth: Current traversal depth (for cycle detection)
+            visited: Set of visited nodes (for cycle detection)
 
         Returns:
             True if permission is granted
@@ -1246,61 +1290,202 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         logger = logging.getLogger(__name__)
 
-        # For initial implementation, use a simple direct check
-        # This can be enhanced later with full graph traversal
+        # Initialize visited set on first call
+        if visited is None:
+            visited = set()
+
+        # Depth limit check (prevent infinite recursion)
+        MAX_DEPTH = 50
+        if depth > MAX_DEPTH:
+            logger.warning(
+                f"_compute_permission_bulk_helper: Depth limit exceeded ({depth} > {MAX_DEPTH}), denying"
+            )
+            return False
+
+        # Cycle detection
+        visit_key = (
+            subject.entity_type,
+            subject.entity_id,
+            permission,
+            obj.entity_type,
+            obj.entity_id,
+        )
+        if visit_key in visited:
+            logger.debug(f"_compute_permission_bulk_helper: Cycle detected at {visit_key}, denying")
+            return False
+        visited.add(visit_key)
 
         # Get namespace config
         namespace = self.get_namespace(obj.entity_type)
         if not namespace:
             # No namespace, check for direct relation
-            for tuple_data in tuples_graph:
-                if (
-                    tuple_data["subject_type"] == subject.entity_type
-                    and tuple_data["subject_id"] == subject.entity_id
-                    and tuple_data["relation"] == permission
-                    and tuple_data["object_type"] == obj.entity_type
-                    and tuple_data["object_id"] == obj.entity_id
-                    and tuple_data["subject_relation"] is None
+            return self._check_direct_relation_in_graph(subject, permission, obj, tuples_graph)
+
+        # P0-1: Check if permission is defined via "permissions" config
+        # Example: "read" -> ["viewer", "editor", "owner"]
+        if namespace.has_permission(permission):
+            usersets = namespace.get_permission_usersets(permission)
+            logger.debug(
+                f"_compute_permission_bulk_helper [depth={depth}]: Permission '{permission}' expands to usersets: {usersets}"
+            )
+            # Check each userset in union (OR semantics)
+            for userset in usersets:
+                if self._compute_permission_bulk_helper(
+                    subject, userset, obj, tenant_id, tuples_graph, depth + 1, visited.copy()
                 ):
                     return True
             return False
 
-        # Check if permission is directly defined in namespace
-        namespace_relations = getattr(namespace, "relations", {})
-        if permission in namespace_relations:
-            # Check for direct relation in graph
-            for tuple_data in tuples_graph:
-                if (
-                    tuple_data["subject_type"] == subject.entity_type
-                    and tuple_data["subject_id"] == subject.entity_id
-                    and tuple_data["relation"] == permission
-                    and tuple_data["object_type"] == obj.entity_type
-                    and tuple_data["object_id"] == obj.entity_id
-                    and tuple_data["subject_relation"] is None
+        # Handle union (OR of multiple relations)
+        # Example: "owner" -> union: ["direct_owner", "parent_owner", "group_owner"]
+        if namespace.has_union(permission):
+            union_relations = namespace.get_union_relations(permission)
+            logger.debug(
+                f"_compute_permission_bulk_helper [depth={depth}]: Union '{permission}' -> {union_relations}"
+            )
+            for rel in union_relations:
+                if self._compute_permission_bulk_helper(
+                    subject, rel, obj, tenant_id, tuples_graph, depth + 1, visited.copy()
                 ):
                     return True
+            return False
 
-            # Check computed relations (union of other relations)
-            relation_config = namespace_relations[permission]
-            if isinstance(relation_config, dict) and "union" in relation_config:
-                for base_relation in relation_config["union"]:
-                    # Check if subject has base_relation
-                    for tuple_data in tuples_graph:
-                        if (
-                            tuple_data["subject_type"] == subject.entity_type
-                            and tuple_data["subject_id"] == subject.entity_id
-                            and tuple_data["relation"] == base_relation
-                            and tuple_data["object_type"] == obj.entity_type
-                            and tuple_data["object_id"] == obj.entity_id
-                        ):
-                            return True
+        # Handle intersection (AND of multiple relations)
+        if namespace.has_intersection(permission):
+            intersection_relations = namespace.get_intersection_relations(permission)
+            logger.debug(
+                f"_compute_permission_bulk_helper [depth={depth}]: Intersection '{permission}' -> {intersection_relations}"
+            )
+            for rel in intersection_relations:
+                if not self._compute_permission_bulk_helper(
+                    subject, rel, obj, tenant_id, tuples_graph, depth + 1, visited.copy()
+                ):
+                    return False  # If any is false, whole intersection is false
+            return True
 
-        # For complex cases (tupleToUserset, etc.), fall back to regular check
-        # This is OK as an initial implementation - most common cases are covered
-        logger.debug(f"Complex permission check for {permission}, falling back to regular check")
-        return self.rebac_check(
-            (subject.entity_type, subject.entity_id),
-            permission,
-            (obj.entity_type, obj.entity_id),
-            tenant_id=tenant_id,
-        )
+        # Handle exclusion (NOT relation)
+        if namespace.has_exclusion(permission):
+            excluded_rel = namespace.get_exclusion_relation(permission)
+            if excluded_rel:
+                logger.debug(
+                    f"_compute_permission_bulk_helper [depth={depth}]: Exclusion '{permission}' NOT {excluded_rel}"
+                )
+                return not self._compute_permission_bulk_helper(
+                    subject, excluded_rel, obj, tenant_id, tuples_graph, depth + 1, visited.copy()
+                )
+            return False
+
+        # Handle tupleToUserset (indirect relation via another object)
+        # This is the KEY fix for parent/group inheritance performance!
+        # Example: parent_owner -> tupleToUserset: {tupleset: "parent", computedUserset: "owner"}
+        # Meaning: Check if subject has "owner" permission on any parent of obj
+        if namespace.has_tuple_to_userset(permission):
+            ttu = namespace.get_tuple_to_userset(permission)
+            logger.debug(
+                f"_compute_permission_bulk_helper [depth={depth}]: tupleToUserset '{permission}' -> {ttu}"
+            )
+            if ttu:
+                tupleset_relation = ttu["tupleset"]
+                computed_userset = ttu["computedUserset"]
+
+                # Find related objects via tupleset IN MEMORY (no DB query!)
+                related_objects = self._find_related_objects_in_graph(
+                    obj, tupleset_relation, tuples_graph
+                )
+                logger.debug(
+                    f"_compute_permission_bulk_helper [depth={depth}]: Found {len(related_objects)} related objects via '{tupleset_relation}'"
+                )
+
+                # Check if subject has computed_userset on any related object
+                for related_obj in related_objects:
+                    if self._compute_permission_bulk_helper(
+                        subject,
+                        computed_userset,
+                        related_obj,
+                        tenant_id,
+                        tuples_graph,
+                        depth + 1,
+                        visited.copy(),
+                    ):
+                        logger.debug(
+                            f"_compute_permission_bulk_helper [depth={depth}]: GRANTED via tupleToUserset through {related_obj}"
+                        )
+                        return True
+
+                logger.debug(
+                    f"_compute_permission_bulk_helper [depth={depth}]: No related objects granted permission"
+                )
+            return False
+
+        # Direct relation check (base case)
+        return self._check_direct_relation_in_graph(subject, permission, obj, tuples_graph)
+
+    def _check_direct_relation_in_graph(
+        self,
+        subject: Entity,
+        permission: str,
+        obj: Entity,
+        tuples_graph: list[dict[str, Any]],
+    ) -> bool:
+        """Check if a direct relation tuple exists in the pre-fetched graph.
+
+        Args:
+            subject: Subject entity
+            permission: Relation name
+            obj: Object entity
+            tuples_graph: Pre-fetched tuples
+
+        Returns:
+            True if direct tuple exists
+        """
+        for tuple_data in tuples_graph:
+            if (
+                tuple_data["subject_type"] == subject.entity_type
+                and tuple_data["subject_id"] == subject.entity_id
+                and tuple_data["relation"] == permission
+                and tuple_data["object_type"] == obj.entity_type
+                and tuple_data["object_id"] == obj.entity_id
+                and tuple_data["subject_relation"] is None  # Direct relation only
+            ):
+                # TODO: Check conditions and expiry if needed
+                return True
+        return False
+
+    def _find_related_objects_in_graph(
+        self,
+        obj: Entity,
+        tupleset_relation: str,
+        tuples_graph: list[dict[str, Any]],
+    ) -> list[Entity]:
+        """Find all objects related to obj via tupleset_relation in the pre-fetched graph.
+
+        This is used for tupleToUserset traversal. For example:
+        - To find parent directories: look for tuples (child, "parent", parent)
+        - To find group memberships: look for tuples (subject, "member", group)
+
+        Args:
+            obj: Object to find relations for
+            tupleset_relation: Relation name (e.g., "parent", "member")
+            tuples_graph: Pre-fetched tuples
+
+        Returns:
+            List of related Entity objects
+        """
+        related = []
+        for tuple_data in tuples_graph:
+            # For parent inheritance: (child, "parent", parent)
+            # obj is the child, we want to find parents
+            if (
+                tuple_data["subject_type"] == obj.entity_type
+                and tuple_data["subject_id"] == obj.entity_id
+                and tuple_data["relation"] == tupleset_relation
+            ):
+                # The object of this tuple is the related entity
+                related.append(Entity(tuple_data["object_type"], tuple_data["object_id"]))
+
+            # For group inheritance: subject is implicit (we're looking at obj's permissions)
+            # But the tuple structure is: (group#member, "direct_owner", file)
+            # Where we need to check: (user, "member", group) separately
+            # This is handled by the computed_userset check, so we only need the above case
+
+        return related

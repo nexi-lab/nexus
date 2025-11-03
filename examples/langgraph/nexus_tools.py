@@ -48,7 +48,7 @@ except ImportError:
 _sandbox_instance: Sandbox | None = None
 
 
-def get_nexus_tools(server_url: str):
+def get_nexus_tools():
     """
     Create LangGraph tools that connect to Nexus server with per-request authentication.
 
@@ -77,6 +77,7 @@ def get_nexus_tools(server_url: str):
         # Get API key from metadata.x_auth (required)
         metadata = config.get("metadata", {})
         x_auth = metadata.get("x_auth", "")
+        server_url = metadata.get("nexus_server_url", "")
 
         if not x_auth:
             raise ValueError(

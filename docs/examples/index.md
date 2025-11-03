@@ -241,6 +241,8 @@ All examples include runnable shell scripts that demonstrate the full workflow:
 
 ## 🎯 What's Next?
 
-- **[Quick Start Guide](../getting-started/quickstart.md)** - Get up and running in 30 seconds
-- **[API Reference](../api/index.md)** - Complete API documentation
-- **[Deployment Guide](../deployment/index.md)** - Production deployment patterns
+- **[Learning Paths](../learning-paths/simple-file-storage.md)** - Step-by-step tutorials from beginner to advanced
+- **[AI Agent Memory](../learning-paths/ai-agent-memory.md)** - Build agents that remember and learn
+- **[Administration & Operations](../learning-paths/administration-operations.md)** - Deploy and manage Nexus in production
+- **[Building Plugins](../learning-paths/building-plugins.md)** - Extend Nexus with custom functionality
+- **[Glossary](../glossary.md)** - Complete reference for all Nexus terminology

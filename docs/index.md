@@ -87,6 +87,8 @@ Nexus is a **programmable filesystem for AI agents** that combines:
     nx.write("/workspace/hello.txt", b"Remote write!")
     ```
 
+    👉 **Learn more:** [Administration & Operations (25 min)](learning-paths/administration-operations.md)
+
 ## 🎯 Is Nexus For Me?
 
 **Answer 2 quick questions to find your path:**
@@ -187,12 +189,11 @@ Nexus is a **programmable filesystem for AI agents** that combines:
 
     **Advanced guides:**
 
-    - [Multi-Backend Setup (20 min)](learning-paths/multi-backend-storage.md)
-    - [Security Hardening](production/security-checklist.md)
-    - [Performance Tuning](how-to/optimize/performance-tuning.md)
-    - [Plugin Development (30 min)](learning-paths/building-plugins.md)
-
-    🔧 **Tools:** [Admin Operations](learning-paths/administration-operations.md)
+    - [Administration & Operations (25 min)](learning-paths/administration-operations.md) - User management, API keys, monitoring
+    - [Multi-Backend Setup (20 min)](learning-paths/multi-backend-storage.md) - Configure S3, GCS, databases
+    - [Building Plugins (30 min)](learning-paths/building-plugins.md) - Extend Nexus with custom functionality
+    - [Security Hardening](production/security-checklist.md) - Production security best practices
+    - [Performance Tuning](how-to/optimize/performance-tuning.md) - Optimize for scale
 
 ---
 
@@ -510,17 +511,17 @@ Event-driven workflows fire automatically on file operations. No manual triggeri
 
     [:octicons-arrow-right-24: Start Learning](learning-paths/skills-management.md)
 
--   **🔧 Administration & Operations**
+-   **🔧 Administration & Operations** 🆕
 
     ---
 
     User management, API keys, monitoring, and backup.
 
-    ⏱️ **25 min** | 💡 **Difficulty:** Hard
+    ⏱️ **25 min** | 💡 **Difficulty:** Hard | 📡 **Server Mode**
 
     [:octicons-arrow-right-24: Start Learning](learning-paths/administration-operations.md)
 
--   **🔌 Building Plugins**
+-   **🔌 Building Plugins** 🆕
 
     ---
 
@@ -597,7 +598,7 @@ Event-driven workflows fire automatically on file operations. No manual triggeri
 
     ---
 
-    ReBAC, CAS, and all technical terms explained
+    Complete A-Z reference: ReBAC, CAS, ACE, and all Nexus terminology
 
     [:octicons-arrow-right-24: View Glossary](glossary.md)
 

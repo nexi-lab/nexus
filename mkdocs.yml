@@ -186,14 +186,30 @@ extra_javascript:
 
 # Navigation structure
 nav:
-  - Home: index.md
-
-  - Getting Started:
-    - getting-started/index.md
-    - Installation: getting-started/installation.md
-    - Quick Start: getting-started/quickstart.md
-    - Configuration: getting-started/configuration.md
-    - Deployment Modes: getting-started/deployment-modes.md
+  - Home:
+    - index.md
+    - Getting Started:
+      - getting-started/index.md
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
+      - Configuration: getting-started/configuration.md
+      - Deployment Modes: getting-started/deployment-modes.md
+    - Core Concepts:
+      - What is Nexus?: concepts/what-is-nexus.md
+      - Memory System: concepts/memory-system.md
+      - Sandbox Management: concepts/sandbox-management.md
+      - Agent Permissions: concepts/agent-permissions.md
+      - ReBAC Explained: concepts/rebac-explained.md
+      - Content-Addressable Storage: concepts/content-addressable-storage.md
+      - Learning Loops: concepts/learning-loops.md
+      - Workflows vs Triggers: concepts/workflows-vs-triggers.md
+      - Plugin System: concepts/plugin-system.md
+      - Mounts & Backends: concepts/mounts-and-backends.md
+      - Skills System: concepts/skills-system.md
+      - Multi-Tenancy: concepts/multi-tenancy.md
+      - When to Use What: concepts/when-to-use-what.md
+      - Architecture: architecture/ARCHITECTURE.md
+      - Core Tenets: CORE_TENETS.md
 
   - Examples:
     - examples/index.md
@@ -219,99 +235,7 @@ nav:
     - Team Collaboration: learning-paths/team-collaboration.md
     - Multi-Tenant SaaS: learning-paths/multi-tenant-saas.md
     - Multi-Backend Storage: learning-paths/multi-backend-storage.md
+    - Administration & Operations: learning-paths/administration-operations.md
+    - Building Plugins: learning-paths/building-plugins.md
 
-  - Core Concepts:
-    - What is Nexus?: concepts/what-is-nexus.md
-    - Memory System: concepts/memory-system.md
-    - Sandbox Management: concepts/sandbox-management.md
-    - Agent Permissions: concepts/agent-permissions.md
-    - ReBAC Explained: concepts/rebac-explained.md
-    - Content-Addressable Storage: concepts/content-addressable-storage.md
-    - Learning Loops: concepts/learning-loops.md
-    - Workflows vs Triggers: concepts/workflows-vs-triggers.md
-    - Plugin System: concepts/plugin-system.md
-    - Mounts & Backends: concepts/mounts-and-backends.md
-    - Skills System: concepts/skills-system.md
-    - Multi-Tenancy: concepts/multi-tenancy.md
-    - When to Use What: concepts/when-to-use-what.md
-    - Architecture: architecture/ARCHITECTURE.md
-    - Core Tenets: CORE_TENETS.md
-
-  - API Reference:
-    - api/index.md
-    - Getting Started: api/getting-started.md
-    - Configuration: api/configuration.md
-    - Core API: api/core-api.md
-    - File Operations: api/file-operations.md
-    - Directory Operations: api/directory-operations.md
-    - File Discovery: api/file-discovery.md
-    - Memory Management: api/memory-management.md
-    - Memory Consolidation: api/memory-consolidation.md
-    - Metadata: api/metadata.md
-    - Permissions: api/permissions.md
-    - Versioning: api/versioning.md
-    - Semantic Search: api/semantic-search.md
-    - Mounts: api/mounts.md
-    - Workspace Management: api/workspace-management.md
-    - Skills: api/skills.md
-    - Workflows: api/workflows.md
-    - Advanced Usage: api/advanced-usage.md
-    - Error Handling: api/error-handling.md
-    - Migration Compatibility: api/migration-compatibility.md
-    - RPC API: api/rpc-api.md
-    - LLM Document Reading: api/llm-document-reading.md
-    - ACE:
-      - Learning Loop: api/ace-learning-loop.md
-      - Playbook Management: api/playbook-management.md
-      - Trajectory Tracking: api/trajectory-tracking.md
-    - CLI Reference:
-      - api/cli/index.md
-      - File Operations: api/cli/file-operations.md
-      - Directory Operations: api/cli/directory-operations.md
-      - Search: api/cli/search.md
-      - Versioning: api/cli/versioning.md
-      - Workspace: api/cli/workspace.md
-      - Memory: api/cli/memory.md
-      - Sandbox: api/cli/sandbox.md
-      - Semantic Search: api/cli/semantic-search.md
-      - Permissions: api/cli/permissions.md
-      - Mounts: api/cli/mounts.md
-      - MCP Server: api/cli/mcp.md
-      - LLM Reading: api/cli/llm-reading.md
-      - Server: api/cli/server.md
-      - Advanced: api/cli/advanced.md
-    - Plugins:
-      - api/plugins/index.md
-      - Creating Plugins: api/plugins/creating-plugins.md
-      - Plugin Hooks: api/plugins/hooks.md
-      - Plugin Registry: api/plugins/registry.md
-      - Plugin Reference: api/plugins/reference.md
-      - Examples: api/plugins/examples.md
-      - Built-in Plugins:
-        - Anthropic: api/plugins/anthropic.md
-        - Firecrawl: api/plugins/firecrawl.md
-        - Skill Seekers: api/plugins/skill-seekers.md
-    - Skills API:
-      - api/skills/index.md
-      - Skills Reference: api/skills/reference.md
-
-  - Integrations:
-    - LLM Integration: integrations/llm.md
-    - MCP Integration: integrations/mcp.md
-
-  - Deployment:
-    - deployment/index.md
-    - Server Setup: deployment/server-setup.md
-    - PostgreSQL: deployment/postgresql.md
-    - Authentication: authentication.md
-
-  - Advanced:
-    - FUSE Mounts: advanced/fuse.md
-    - SQL Patterns: advanced/sql-patterns.md
-
-  - Development:
-    - development/index.md
-    - Contributing: development/development.md
-    - Database Schema: development/DATABASE_COMPATIBILITY.md
-    - Permissions Implementation: development/PERMISSIONS_IMPLEMENTATION.md
-    - Plugin Development: development/PLUGIN_DEVELOPMENT.md
+  - Glossary: glossary.md

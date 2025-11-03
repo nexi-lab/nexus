@@ -86,6 +86,7 @@ class Memory:
         importance: float | None = None,
         namespace: str | None = None,  # v0.8.0: Hierarchical namespace
         path_key: str | None = None,  # v0.8.0: Optional key for upsert mode
+        state: str = "active",  # #368: Memory state ('inactive', 'active')
         _metadata: dict[str, Any] | None = None,
         context: OperationContext | None = None,
     ) -> str:
@@ -98,6 +99,7 @@ class Memory:
             importance: Importance score (0.0-1.0).
             namespace: Hierarchical namespace for organization (e.g., "knowledge/geography/facts"). v0.8.0
             path_key: Optional unique key within namespace for upsert mode. v0.8.0
+            state: Memory state ('inactive', 'active'). Defaults to 'active' for backward compatibility. #368
             _metadata: Additional metadata (deprecated, use structured content dict instead).
             context: Optional operation context to override identity (v0.7.1+).
 
@@ -113,10 +115,17 @@ class Memory:
 
             >>> # Upsert mode (with path_key)
             >>> memory_id = memory.store(
-            ...     content={"theme": "dark", "font_size": 14},
+            ...     content={"theme": "dark", "font_size": 14"},
             ...     namespace="user/preferences/ui",
             ...     path_key="settings"  # Will update if exists
             ... )
+
+            >>> # Create inactive memory for manual approval (#368)
+            >>> memory_id = memory.store(
+            ...     content="Unverified information",
+            ...     state="inactive"  # Won't appear in queries until approved
+            ... )
+            >>> memory.approve(memory_id)  # Activate it later
         """
         import json
 
@@ -153,6 +162,7 @@ class Memory:
             importance=importance,
             namespace=namespace,
             path_key=path_key,
+            state=state,  # #368: Pass state parameter
         )
 
         return memory.memory_id
@@ -164,6 +174,7 @@ class Memory:
         tenant_id: str | None = None,
         scope: str | None = None,
         memory_type: str | None = None,
+        state: str | None = "active",  # #368: Default to active memories only
         limit: int | None = None,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
@@ -175,6 +186,7 @@ class Memory:
             tenant_id: Filter by tenant ID (defaults to current tenant).
             scope: Filter by scope.
             memory_type: Filter by memory type.
+            state: Filter by state ('inactive', 'active', 'all'). Defaults to 'active'. #368
             limit: Maximum number of results.
             context: Optional operation context to override identity (v0.7.1+).
 
@@ -199,6 +211,7 @@ class Memory:
             agent_id=agent_id,
             scope=scope,
             memory_type=memory_type,
+            state=state,
             limit=limit,
         )
 
@@ -239,6 +252,7 @@ class Memory:
                     "visibility": memory.visibility,
                     "memory_type": memory.memory_type,
                     "importance": memory.importance,
+                    "state": memory.state,  # #368
                     "created_at": memory.created_at.isoformat() if memory.created_at else None,
                     "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
                 }
@@ -355,6 +369,7 @@ class Memory:
             "visibility": memory.visibility,
             "memory_type": memory.memory_type,
             "importance": memory.importance,
+            "state": memory.state,  # #368
             "namespace": memory.namespace,
             "path_key": memory.path_key,
             "created_at": memory.created_at.isoformat() if memory.created_at else None,
@@ -445,6 +460,7 @@ class Memory:
             "visibility": memory.visibility,
             "memory_type": memory.memory_type,
             "importance": memory.importance,
+            "state": memory.state,  # #368
             "namespace": memory.namespace,
             "path_key": memory.path_key,
             "created_at": memory.created_at.isoformat() if memory.created_at else None,
@@ -474,12 +490,148 @@ class Memory:
 
         return self.memory_router.delete_memory(memory_id)
 
+    def approve(self, memory_id: str) -> bool:
+        """Approve a memory (activate it) (#368).
+
+        Args:
+            memory_id: Memory ID to approve.
+
+        Returns:
+            True if approved, False if not found or no permission.
+
+        Example:
+            >>> memory.approve("mem_123")
+            True
+        """
+        memory = self.memory_router.get_memory_by_id(memory_id)
+        if not memory:
+            return False
+
+        # Check permission
+        if not self.permission_enforcer.check_memory(memory, Permission.WRITE, self.context):
+            return False
+
+        result = self.memory_router.approve_memory(memory_id)
+        return result is not None
+
+    def deactivate(self, memory_id: str) -> bool:
+        """Deactivate a memory (make it inactive) (#368).
+
+        Args:
+            memory_id: Memory ID to deactivate.
+
+        Returns:
+            True if deactivated, False if not found or no permission.
+
+        Example:
+            >>> memory.deactivate("mem_123")
+            True
+        """
+        memory = self.memory_router.get_memory_by_id(memory_id)
+        if not memory:
+            return False
+
+        # Check permission
+        if not self.permission_enforcer.check_memory(memory, Permission.WRITE, self.context):
+            return False
+
+        result = self.memory_router.deactivate_memory(memory_id)
+        return result is not None
+
+    def approve_batch(self, memory_ids: list[str]) -> dict[str, Any]:
+        """Approve multiple memories at once (#368).
+
+        Args:
+            memory_ids: List of memory IDs to approve.
+
+        Returns:
+            Dictionary with success/failure counts and details.
+
+        Example:
+            >>> result = memory.approve_batch(["mem_1", "mem_2", "mem_3"])
+            >>> print(f"Approved {result['approved']} memories")
+        """
+        approved = []
+        failed = []
+
+        for memory_id in memory_ids:
+            if self.approve(memory_id):
+                approved.append(memory_id)
+            else:
+                failed.append(memory_id)
+
+        return {
+            "approved": len(approved),
+            "failed": len(failed),
+            "approved_ids": approved,
+            "failed_ids": failed,
+        }
+
+    def deactivate_batch(self, memory_ids: list[str]) -> dict[str, Any]:
+        """Deactivate multiple memories at once (#368).
+
+        Args:
+            memory_ids: List of memory IDs to deactivate.
+
+        Returns:
+            Dictionary with success/failure counts and details.
+
+        Example:
+            >>> result = memory.deactivate_batch(["mem_1", "mem_2", "mem_3"])
+            >>> print(f"Deactivated {result['deactivated']} memories")
+        """
+        deactivated = []
+        failed = []
+
+        for memory_id in memory_ids:
+            if self.deactivate(memory_id):
+                deactivated.append(memory_id)
+            else:
+                failed.append(memory_id)
+
+        return {
+            "deactivated": len(deactivated),
+            "failed": len(failed),
+            "deactivated_ids": deactivated,
+            "failed_ids": failed,
+        }
+
+    def delete_batch(self, memory_ids: list[str]) -> dict[str, Any]:
+        """Delete multiple memories at once (#368).
+
+        Args:
+            memory_ids: List of memory IDs to delete.
+
+        Returns:
+            Dictionary with success/failure counts and details.
+
+        Example:
+            >>> result = memory.delete_batch(["mem_1", "mem_2", "mem_3"])
+            >>> print(f"Deleted {result['deleted']} memories")
+        """
+        deleted = []
+        failed = []
+
+        for memory_id in memory_ids:
+            if self.delete(memory_id):
+                deleted.append(memory_id)
+            else:
+                failed.append(memory_id)
+
+        return {
+            "deleted": len(deleted),
+            "failed": len(failed),
+            "deleted_ids": deleted,
+            "failed_ids": failed,
+        }
+
     def list(
         self,
         scope: str | None = None,
         memory_type: str | None = None,
         namespace: str | None = None,  # v0.8.0: Exact namespace match
         namespace_prefix: str | None = None,  # v0.8.0: Prefix match for hierarchical queries
+        state: str | None = "active",  # #368: Default to active memories only
         limit: int | None = 100,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
@@ -490,6 +642,7 @@ class Memory:
             memory_type: Filter by memory type.
             namespace: Filter by exact namespace match. v0.8.0
             namespace_prefix: Filter by namespace prefix for hierarchical queries. v0.8.0
+            state: Filter by state ('inactive', 'active', 'all'). Defaults to 'active'. #368
             limit: Maximum number of results.
             context: Optional operation context to override identity (v0.7.1+).
 
@@ -508,6 +661,9 @@ class Memory:
 
             >>> # List all facts across all domains
             >>> facts = memory.list(namespace_prefix="*/facts")
+
+            >>> # List inactive memories (pending review)
+            >>> pending = memory.list(state="inactive")
         """
         # v0.7.1: Use context identity if provided, otherwise fall back to instance identity
         tenant_id = context.tenant_id if context else self.tenant_id
@@ -522,6 +678,7 @@ class Memory:
             memory_type=memory_type,
             namespace=namespace,
             namespace_prefix=namespace_prefix,
+            state=state,
             limit=limit,
         )
 
@@ -542,6 +699,7 @@ class Memory:
                     "visibility": memory.visibility,
                     "memory_type": memory.memory_type,
                     "importance": memory.importance,
+                    "state": memory.state,  # #368
                     "namespace": memory.namespace,
                     "path_key": memory.path_key,
                     "created_at": memory.created_at.isoformat() if memory.created_at else None,

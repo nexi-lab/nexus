@@ -211,9 +211,19 @@ nav:
     - Google ADK Integration: examples/google-adk.md
     - Skill Seekers: examples/skill-seekers.md
 
+  - Learning Paths:
+    - Simple File Storage: learning-paths/simple-file-storage.md
+    - Document Q&A System: learning-paths/document-qa.md
+    - AI Agent Memory: learning-paths/ai-agent-memory.md
+    - Workflow Automation: learning-paths/workflow-automation.md
+    - Team Collaboration: learning-paths/team-collaboration.md
+    - Multi-Tenant SaaS: learning-paths/multi-tenant-saas.md
+    - Multi-Backend Storage: learning-paths/multi-backend-storage.md
+
   - Core Concepts:
     - What is Nexus?: concepts/what-is-nexus.md
     - Memory System: concepts/memory-system.md
+    - Sandbox Management: concepts/sandbox-management.md
     - Agent Permissions: concepts/agent-permissions.md
     - ReBAC Explained: concepts/rebac-explained.md
     - Content-Addressable Storage: concepts/content-addressable-storage.md
@@ -262,6 +272,7 @@ nav:
       - Versioning: api/cli/versioning.md
       - Workspace: api/cli/workspace.md
       - Memory: api/cli/memory.md
+      - Sandbox: api/cli/sandbox.md
       - Semantic Search: api/cli/semantic-search.md
       - Permissions: api/cli/permissions.md
       - Mounts: api/cli/mounts.md

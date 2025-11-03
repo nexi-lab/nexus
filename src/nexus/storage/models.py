@@ -884,6 +884,11 @@ class MemoryModel(Base):
         Float, nullable=True
     )  # 0.0-1.0 importance score
 
+    # State management (#368)
+    state: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active", index=True
+    )  # 'inactive', 'active' - supports manual approval workflow (default: active for backward compatibility)
+
     # Namespace organization (v0.8.0 - #350)
     namespace: Mapped[str | None] = mapped_column(
         String(255), nullable=True, index=True
@@ -926,6 +931,7 @@ class MemoryModel(Base):
         Index("idx_memory_session", "session_id"),
         Index("idx_memory_expires", "expires_at"),
         Index("idx_memory_namespace", "namespace"),  # v0.8.0
+        Index("idx_memory_state", "state"),  # #368 - memory state management
         # Unique constraint on (namespace, path_key) for upsert mode
         # Note: Only enforced when both are NOT NULL (partial index for SQLite/Postgres)
         Index(
@@ -963,6 +969,11 @@ class MemoryModel(Base):
             raise ValidationError(
                 f"visibility must be one of {valid_visibilities}, got {self.visibility}"
             )
+
+        # Validate state (#368)
+        valid_states = ["inactive", "active"]
+        if self.state not in valid_states:
+            raise ValidationError(f"state must be one of {valid_states}, got {self.state}")
 
         # Validate importance
         if self.importance is not None and not 0.0 <= self.importance <= 1.0:
@@ -1802,6 +1813,123 @@ class TrajectoryFeedbackModel(Base):
 
     def __repr__(self) -> str:
         return f"<TrajectoryFeedbackModel(feedback_id={self.feedback_id}, trajectory_id={self.trajectory_id}, type={self.feedback_type})>"
+
+
+# ============================================================================
+# Sandbox Management Tables (Issue #372)
+# ============================================================================
+
+
+class SandboxMetadataModel(Base):
+    """Sandbox metadata for Nexus-managed sandboxes (E2B, etc.).
+
+    Stores metadata for sandboxes that Nexus creates and manages.
+    Supports lifecycle management (pause/resume/stop), TTL, and multi-language code execution.
+    """
+
+    __tablename__ = "sandbox_metadata"
+
+    # Primary key
+    sandbox_id: Mapped[str] = mapped_column(
+        String(255), primary_key=True
+    )  # E2B sandbox ID (e.g., "sb_xxx")
+
+    # User-friendly name (unique per user)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # Identity relationships
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # Provider information
+    provider: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="e2b"
+    )  # "e2b", "docker", etc.
+    template_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # E2B template ID
+
+    # Lifecycle management
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, index=True
+    )  # "creating", "active", "paused", "stopping", "stopped", "error"
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+    )
+    last_active_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # TTL configuration
+    ttl_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=10)  # Idle timeout
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )  # Computed expiry time
+
+    # Auto-creation flag
+    auto_created: Mapped[bool] = mapped_column(
+        Integer, nullable=False, default=1
+    )  # SQLite boolean (always True for managed sandboxes)
+
+    # Provider-specific metadata (JSON)
+    # Note: Using 'provider_metadata' as Python attribute name because 'metadata' is reserved by SQLAlchemy
+    provider_metadata: Mapped[str | None] = mapped_column(
+        "metadata", Text, nullable=True
+    )  # JSON as string
+
+    # Indexes and constraints
+    __table_args__ = (
+        # Unique constraint: one sandbox per name per user
+        UniqueConstraint("user_id", "name", name="uq_sandbox_user_name"),
+        Index("idx_sandbox_user", "user_id"),
+        Index("idx_sandbox_agent", "agent_id"),
+        Index("idx_sandbox_tenant", "tenant_id"),
+        Index("idx_sandbox_status", "status"),
+        Index("idx_sandbox_expires", "expires_at"),
+        Index("idx_sandbox_created", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<SandboxMetadataModel(sandbox_id={self.sandbox_id}, name={self.name}, user={self.user_id}, status={self.status})>"
+
+    def validate(self) -> None:
+        """Validate sandbox metadata before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate sandbox_id
+        if not self.sandbox_id:
+            raise ValidationError("sandbox_id is required")
+
+        # Validate name
+        if not self.name:
+            raise ValidationError("name is required")
+
+        # Validate user_id
+        if not self.user_id:
+            raise ValidationError("user_id is required")
+
+        # Validate tenant_id
+        if not self.tenant_id:
+            raise ValidationError("tenant_id is required")
+
+        # Validate provider
+        valid_providers = ["e2b", "docker", "modal"]
+        if self.provider not in valid_providers:
+            raise ValidationError(f"provider must be one of {valid_providers}, got {self.provider}")
+
+        # Validate status
+        valid_statuses = ["creating", "active", "paused", "stopping", "stopped", "error"]
+        if self.status not in valid_statuses:
+            raise ValidationError(f"status must be one of {valid_statuses}, got {self.status}")
+
+        # Validate ttl_minutes
+        if self.ttl_minutes < 1:
+            raise ValidationError(f"ttl_minutes must be >= 1, got {self.ttl_minutes}")
 
 
 # Add fields to TrajectoryModel for feedback support (these will be added via migration)

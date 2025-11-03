@@ -64,6 +64,7 @@ Nexus routes operations to different backends through **mounts**:
 |---------|-------------|----------------|
 | **Virtual Filesystem (VFS)** | Unified API across all storage backends | Write once, run anywhere (local → cloud) |
 | **Mounts** | Route paths to different backends | `/workspace/db/*` → PostgreSQL, `/workspace/s3/*` → S3 |
+| **Sandboxes** | Secure code execution environments | Run Python/JS/Bash safely in isolated sandboxes |
 | **ReBAC** | Relationship-Based Access Control | Multi-agent teams with fine-grained permissions |
 | **Memory** | Agent context persistence | Agents remember across sessions |
 | **CAS** | Content-Addressable Storage | Automatic deduplication, version history |
@@ -260,9 +261,10 @@ print(f"File has {len(versions)} versions")
 
 ### Understand the Fundamentals
 1. **[Memory System](memory-system.md)** - How agents remember
-2. **[Agent Permissions](agent-permissions.md)** - How agents collaborate
-3. **[ReBAC Explained](rebac-explained.md)** - Fine-grained access control
-4. **[Content-Addressable Storage](content-addressable-storage.md)** - Deduplication + versioning
+2. **[Sandbox Management](sandbox-management.md)** - Secure code execution
+3. **[Agent Permissions](agent-permissions.md)** - How agents collaborate
+4. **[ReBAC Explained](rebac-explained.md)** - Fine-grained access control
+5. **[Content-Addressable Storage](content-addressable-storage.md)** - Deduplication + versioning
 
 ### Explore Use Cases
 - **[AI Agent Memory (Learning Path)](../learning-paths/ai-agent-memory.md)** - 15-minute tutorial
@@ -312,6 +314,7 @@ nx.read("/workspace/data.txt")  # Works on local, S3, PostgreSQL
 
 - **VFS**: Virtual Filesystem - unified API across backends
 - **Mount**: Route a path prefix to a specific backend
+- **Sandbox**: Ephemeral code execution environment (E2B, Docker, Modal)
 - **ReBAC**: Relationship-Based Access Control (Zanzibar-style)
 - **CAS**: Content-Addressable Storage - deduplicate by content hash
 - **Workspace**: Isolated storage namespace for agents/tenants

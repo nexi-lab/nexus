@@ -269,6 +269,30 @@ def test_protocol_runtime_checkable() -> None:
             def get_memory_info(self, path):
                 return None
 
+            def append(self, path, content, context=None, if_match=None, force=False):
+                return {}
+
+            def sandbox_create(self, name, ttl_minutes=10, template_id=None, context=None):
+                return {}
+
+            def sandbox_run(self, sandbox_id, language, code, timeout=30, context=None):
+                return {}
+
+            def sandbox_pause(self, sandbox_id, context=None):
+                return {}
+
+            def sandbox_resume(self, sandbox_id, context=None):
+                return {}
+
+            def sandbox_stop(self, sandbox_id, context=None):
+                return {}
+
+            def sandbox_list(self, context=None):
+                return {}
+
+            def sandbox_status(self, sandbox_id, context=None):
+                return {}
+
             def close(self) -> None:
                 pass
 

@@ -74,6 +74,36 @@ nexus write /new.txt "Initial" --if-none-match
 nexus write /doc.txt "Content" --show-metadata
 ```
 
+#### append - Append content to file
+
+Append content to an existing file or create a new file. Useful for building log files, JSONL files, and append-only data structures.
+
+```bash
+# Append to a log file
+nexus append /logs/app.log "New log entry\n"
+
+# Append from stdin (useful for piping)
+echo "New line" | nexus append /logs/data.txt --input -
+
+# Append from file
+nexus append /logs/output.txt --input input.txt
+
+# Build JSONL file incrementally
+echo '{"event": "login", "user": "alice"}' | nexus append /logs/events.jsonl --input -
+
+# Optimistic concurrency control
+nexus append /doc.txt "New content" --if-match abc123
+
+# Show metadata after appending
+nexus append /log.txt "Entry\n" --show-metadata
+```
+
+**Options:**
+- `--input`, `-i`: Read from file or stdin (use `-` for stdin)
+- `--if-match`: Only append if current ETag matches (prevents conflicts)
+- `--force`: Force append without version check (dangerous)
+- `--show-metadata`: Display metadata (etag, version, size) after appending
+
 #### cat - Display file contents
 
 ```bash
@@ -913,6 +943,7 @@ nexus --config nexus.yaml ls /workspace
 | CLI Command | Python API Equivalent |
 |-------------|----------------------|
 | `nexus write /file.txt "data"` | `nx.write("/file.txt", b"data")` |
+| `nexus append /file.txt "data"` | `nx.append("/file.txt", b"data")` |
 | `nexus cat /file.txt` | `nx.read("/file.txt")` |
 | `nexus ls /workspace` | `nx.list("/workspace")` |
 | `nexus glob "*.py"` | `nx.glob("*.py")` |

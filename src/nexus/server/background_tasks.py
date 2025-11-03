@@ -13,6 +13,36 @@ from nexus.core.sessions import cleanup_expired_sessions, cleanup_inactive_sessi
 logger = logging.getLogger(__name__)
 
 
+async def sandbox_cleanup_task(sandbox_manager: Any, interval_seconds: int = 300) -> None:
+    """Background task: Clean up expired sandboxes (Issue #372).
+
+    Runs periodically to stop and destroy sandboxes that have exceeded their TTL.
+
+    Args:
+        sandbox_manager: SandboxManager instance
+        interval_seconds: How often to run cleanup (default: 300 = 5 minutes)
+
+    Examples:
+        >>> # Start cleanup task in server
+        >>> from nexus.core.sandbox_manager import SandboxManager
+        >>> mgr = SandboxManager(db_session, e2b_api_key="...")
+        >>> asyncio.create_task(sandbox_cleanup_task(mgr, 300))
+    """
+    logger.info(f"Starting sandbox cleanup task (interval: {interval_seconds}s)")
+
+    while True:
+        try:
+            count = await sandbox_manager.cleanup_expired_sandboxes()
+
+            if count > 0:
+                logger.info(f"Cleaned up {count} expired sandboxes")
+
+        except Exception as e:
+            logger.error(f"Sandbox cleanup failed: {e}", exc_info=True)
+
+        await asyncio.sleep(interval_seconds)
+
+
 async def session_cleanup_task(session_factory: Any, interval_seconds: int = 3600) -> None:
     """Background task: Clean up expired sessions.
 
@@ -82,11 +112,12 @@ async def inactive_session_cleanup_task(
         await asyncio.sleep(interval_seconds)
 
 
-def start_background_tasks(session_factory: Any) -> list:
+def start_background_tasks(session_factory: Any, sandbox_manager: Any | None = None) -> list:
     """Start all background tasks.
 
     Args:
         session_factory: SQLAlchemy session factory
+        sandbox_manager: Optional SandboxManager for sandbox cleanup (Issue #372)
 
     Returns:
         List of asyncio tasks
@@ -94,7 +125,7 @@ def start_background_tasks(session_factory: Any) -> list:
     Examples:
         >>> # In server startup
         >>> from nexus.server.background_tasks import start_background_tasks
-        >>> tasks = start_background_tasks(SessionLocal)
+        >>> tasks = start_background_tasks(SessionLocal, sandbox_mgr)
         >>> # Tasks run in background
     """
     tasks = [
@@ -102,6 +133,10 @@ def start_background_tasks(session_factory: Any) -> list:
         # Uncomment to enable inactive session cleanup:
         # asyncio.create_task(inactive_session_cleanup_task(session_factory)),
     ]
+
+    # Add sandbox cleanup if manager provided (Issue #372)
+    if sandbox_manager is not None:
+        tasks.append(asyncio.create_task(sandbox_cleanup_task(sandbox_manager)))
 
     logger.info(f"Started {len(tasks)} background tasks")
     return tasks

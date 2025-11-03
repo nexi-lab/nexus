@@ -62,6 +62,98 @@ with open("image.jpg", "rb") as f:
 
 ---
 
+## append()
+
+Append content to an existing file or create a new file if it doesn't exist. This provides a convenient way to add content without manually reading and rewriting the entire file.
+
+```python
+def append(
+    path: str,
+    content: bytes | str,
+    context: OperationContext | None = None,
+    if_match: str | None = None,
+    force: bool = False,
+) -> dict[str, Any]
+```
+
+**Parameters:**
+- `path` (str): Virtual path to append to
+- `content` (bytes | str): Content to append (str will be UTF-8 encoded automatically)
+- `context` (OperationContext, optional): Operation context for permission checks
+- `if_match` (str, optional): ETag for optimistic concurrency control
+- `force` (bool): If True, skip version check
+
+**Returns:**
+- `dict`: Metadata dict with keys: `etag`, `version`, `modified_at`, `size` (reflects final file state)
+
+**Raises:**
+- `InvalidPathError`: If path is invalid
+- `BackendError`: If append operation fails
+- `AccessDeniedError`: If access is denied
+- `PermissionError`: If path is read-only
+- `ConflictError`: If if_match doesn't match current etag
+
+**Use Cases:**
+- **JSONL files**: Incrementally append JSON lines without reading entire file
+- **Log files**: Add log entries efficiently
+- **Append-only data structures**: Build event logs, audit trails
+- **Streaming data collection**: Collect data as it arrives
+
+**Examples:**
+
+```python
+# Append to a log file
+nx.append("/logs/application.log", "INFO: Server started\n")
+
+# Build JSONL file incrementally
+import json
+events = [
+    {"timestamp": "2024-01-01T00:00:00Z", "event": "login", "user": "alice"},
+    {"timestamp": "2024-01-01T00:01:00Z", "event": "upload", "user": "bob"},
+]
+
+for event in events:
+    line = json.dumps(event) + "\n"
+    nx.append("/logs/events.jsonl", line)
+
+# Append with optimistic concurrency control
+result = nx.read("/workspace/log.txt", return_metadata=True)
+try:
+    nx.append("/workspace/log.txt", "New entry\n", if_match=result['etag'])
+except ConflictError:
+    print("File was modified by another process!")
+
+# Create new file if doesn't exist
+nx.append("/logs/new.txt", "First line\n")  # Creates file
+nx.append("/logs/new.txt", "Second line\n")  # Appends to existing
+```
+
+**CLI Usage:**
+
+```bash
+# Append to a log file
+nexus append /logs/app.log "New log entry\n"
+
+# Append from stdin (useful for piping)
+echo "New line" | nexus append /logs/data.txt --input -
+
+# Append from file
+nexus append /logs/output.txt --input input.txt
+
+# Build JSONL file from command line
+echo '{"event": "login", "user": "alice"}' | nexus append /logs/events.jsonl --input -
+
+# Show metadata after appending
+nexus append /logs/debug.txt "Debug info\n" --show-metadata
+```
+
+**Performance Notes:**
+- For very large files, append still requires reading the entire existing content
+- Consider using smaller log rotation or chunked files for better performance
+- Each append operation creates a new version in the version history
+
+---
+
 ## read()
 
 Read file content as bytes.

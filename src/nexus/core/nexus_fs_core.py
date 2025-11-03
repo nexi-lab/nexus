@@ -587,6 +587,127 @@ class NexusFSCoreMixin:
             "size": len(content),
         }
 
+    @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
+    def append(
+        self,
+        path: str,
+        content: bytes | str,
+        context: OperationContext | None = None,
+        if_match: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Append content to an existing file or create a new file if it doesn't exist.
+
+        This is an efficient way to add content to files without reading the entire
+        file separately, particularly useful for:
+        - Writing JSONL (JSON Lines) logs incrementally
+        - Appending to log files
+        - Building append-only data structures
+        - Streaming data collection
+
+        Args:
+            path: Virtual path to append to
+            content: Content to append as bytes or str (str will be UTF-8 encoded)
+            context: Optional operation context for permission checks (uses default if not provided)
+            if_match: Optional etag for optimistic concurrency control.
+                     If provided, append only succeeds if current file etag matches this value.
+                     Prevents concurrent modification conflicts.
+            force: If True, skip version check and append unconditionally (dangerous!)
+
+        Returns:
+            Dict with metadata about the written file:
+                - etag: Content hash (SHA-256) of the final content (after append)
+                - version: New version number
+                - modified_at: Modification timestamp
+                - size: Final file size in bytes
+
+        Raises:
+            InvalidPathError: If path is invalid
+            BackendError: If append operation fails
+            AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
+            PermissionError: If path is read-only or user doesn't have write permission
+            ConflictError: If if_match is provided and doesn't match current etag
+            NexusFileNotFoundError: If file doesn't exist during read (should not happen in normal flow)
+
+        Examples:
+            >>> # Append to a log file
+            >>> nx.append("/workspace/app.log", "New log entry\\n")
+
+            >>> # Build JSONL file incrementally
+            >>> import json
+            >>> for record in records:
+            ...     line = json.dumps(record) + "\\n"
+            ...     nx.append("/workspace/data.jsonl", line)
+
+            >>> # Append with optimistic concurrency control
+            >>> result = nx.read("/workspace/log.txt", return_metadata=True)
+            >>> try:
+            ...     nx.append("/workspace/log.txt", "New entry\\n", if_match=result['etag'])
+            ... except ConflictError:
+            ...     print("File was modified by another process!")
+
+            >>> # Create new file if doesn't exist
+            >>> nx.append("/workspace/new.txt", "First line\\n")
+        """
+        # Auto-convert str to bytes for convenience
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+
+        path = self._validate_path(path)
+
+        # Try to read existing content if file exists
+        # For non-existent files, we'll create them (existing_content stays empty)
+        existing_content = b""
+        try:
+            result = self.read(path, context=context, return_metadata=True)
+            # Type narrowing: when return_metadata=True, result is always dict
+            assert isinstance(result, dict), "Expected dict when return_metadata=True"
+
+            existing_content = result["content"]
+
+            # If if_match is provided, verify it matches current etag
+            # (the write call will also check, but we check here to fail fast)
+            if if_match is not None and not force:
+                current_etag = result.get("etag")
+                if current_etag != if_match:
+                    from nexus.core.exceptions import ConflictError
+
+                    raise ConflictError(
+                        path=path,
+                        expected_etag=if_match,
+                        current_etag=current_etag or "(no etag)",
+                    )
+        except Exception as e:
+            # If file doesn't exist, treat as empty (will create new file)
+            # Permission errors on non-existent files are OK - write() will check parent permissions
+            from nexus.core.exceptions import NexusFileNotFoundError
+
+            if not isinstance(e, (NexusFileNotFoundError, PermissionError)):
+                # Re-raise unexpected errors
+                raise
+            # For FileNotFoundError or PermissionError, continue with empty content
+            # write() will check if user has permission to create the file
+
+        # Combine existing content with new content
+        final_content = existing_content + content
+
+        # Use the existing write method to handle all the complexity:
+        # - Permission checking
+        # - Version management
+        # - Audit logging
+        # - Workflow triggers
+        # - Parent tuple creation
+        # Note: We pass if_match to write() for additional safety
+        return self.write(
+            path,
+            final_content,
+            context=context,
+            if_match=if_match,
+            if_none_match=False,  # Allow both create and update
+            force=force,
+        )
+
     def write_batch(
         self, files: list[tuple[str, bytes]], context: OperationContext | None = None
     ) -> list[dict[str, Any]]:

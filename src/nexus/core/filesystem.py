@@ -862,6 +862,8 @@ class NexusFilesystem(ABC):
         provider: str = "e2b",
         sandbox_api_key: str | None = None,
         mount_path: str = "/mnt/nexus",
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
         context: dict | None = None,
     ) -> dict[Any, Any]:
         """Connect to user-managed sandbox (Issue #371).
@@ -871,6 +873,8 @@ class NexusFilesystem(ABC):
             provider: Sandbox provider
             sandbox_api_key: Provider API key
             mount_path: Mount path in sandbox
+            nexus_url: Nexus server URL for mounting (auto-detected if not provided)
+            nexus_api_key: Nexus API key for mounting (auto-detected if not provided)
             context: Operation context
 
         Returns:

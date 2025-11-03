@@ -446,8 +446,8 @@ def sandbox_status(
 @click.option(
     "--sandbox-api-key",
     envvar="E2B_API_KEY",
-    required=True,
-    help="Sandbox provider API key (e.g., E2B API key)",
+    required=False,
+    help="Sandbox provider API key (optional, only for user-managed sandboxes)",
 )
 @click.option(
     "--mount-path",
@@ -508,10 +508,25 @@ def connect_sandbox(
         if json_output:
             click.echo(json.dumps(result, indent=2))
         else:
-            click.echo(f"✓ Connected to sandbox: {result['sandbox_id']}")
-            click.echo(f"  Provider: {result['provider']}")
-            click.echo(f"  Mount path: {result['mount_path']}")
-            click.echo(f"  Mounted at: {result['mounted_at']}")
+            if result.get("success", False):
+                click.echo(f"✓ Connected to sandbox: {result['sandbox_id']}")
+                click.echo(f"  Provider: {result['provider']}")
+                click.echo(f"  Mount path: {result['mount_path']}")
+                click.echo(f"  Mounted at: {result['mounted_at']}")
+
+                # Show mount status if available
+                mount_status = result.get("mount_status", {})
+                if mount_status.get("success"):
+                    files_visible = mount_status.get("files_visible", 0)
+                    click.echo("  ✓ Nexus mounted successfully")
+                    click.echo(f"    Files visible: {files_visible}")
+                else:
+                    click.echo(f"  ✗ Mount failed: {mount_status.get('message', 'Unknown error')}")
+            else:
+                click.echo(
+                    f"✗ Failed to connect to sandbox: {result.get('mount_status', {}).get('message', 'Unknown error')}"
+                )
+                sys.exit(1)
 
     except Exception as e:
         click.echo(f"Failed to connect to sandbox: {e}")
@@ -530,8 +545,8 @@ def connect_sandbox(
 @click.option(
     "--sandbox-api-key",
     envvar="E2B_API_KEY",
-    required=True,
-    help="Sandbox provider API key (e.g., E2B API key)",
+    required=False,
+    help="Sandbox provider API key (optional, only for user-managed sandboxes)",
 )
 @click.option(
     "--json",

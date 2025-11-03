@@ -132,7 +132,7 @@ class SandboxManager:
             last_active_at=now,
             ttl_minutes=ttl_minutes,
             expires_at=expires_at,
-            auto_created=True,
+            auto_created=1,  # PostgreSQL integer type
         )
 
         self.db.add(metadata)
@@ -325,25 +325,30 @@ class SandboxManager:
         self,
         sandbox_id: str,
         provider: str = "e2b",
-        sandbox_api_key: str | None = None,
+        sandbox_api_key: str | None = None,  # noqa: ARG002 - Reserved for user-managed sandboxes
         mount_path: str = "/mnt/nexus",
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
     ) -> dict[str, Any]:
-        """Connect and mount Nexus to a user-managed sandbox.
+        """Connect and mount Nexus to a sandbox (Nexus-managed or user-managed).
 
-        This is a one-time operation. No database record is created.
-        The user maintains full control over the sandbox lifecycle.
+        Works for both:
+        - Nexus-managed sandboxes (created via sandbox_create) - no sandbox_api_key needed
+        - User-managed sandboxes (external) - requires sandbox_api_key
 
         Args:
-            sandbox_id: External sandbox ID
+            sandbox_id: Sandbox ID (Nexus-managed or external)
             provider: Provider name ("e2b", "docker", etc.)
-            sandbox_api_key: Provider API key for authentication
+            sandbox_api_key: Provider API key (optional, only for user-managed sandboxes)
             mount_path: Path where Nexus will be mounted in sandbox
+            nexus_url: Nexus server URL (required for mounting)
+            nexus_api_key: Nexus API key (required for mounting)
 
         Returns:
-            Dict with connection details (sandbox_id, provider, mount_path, mounted_at)
+            Dict with connection details (sandbox_id, provider, mount_path, mounted_at, mount_status)
 
         Raises:
-            ValueError: If provider not available or API key missing
+            ValueError: If provider not available or required credentials missing
             RuntimeError: If connection/mount fails
         """
         # Check provider availability
@@ -351,35 +356,40 @@ class SandboxManager:
             available = ", ".join(self.providers.keys())
             raise ValueError(f"Provider '{provider}' not available. Available: {available}")
 
-        if not sandbox_api_key:
-            raise ValueError(f"Sandbox API key required for provider '{provider}'")
+        if not nexus_url or not nexus_api_key:
+            raise ValueError("Both nexus_url and nexus_api_key required for mounting")
 
         # Get provider
-        _ = self.providers[provider]
+        provider_obj = self.providers[provider]
 
-        # Verify sandbox is reachable
-        # For now, we'll attempt to connect directly
-        # TODO: Add pre-flight checks for dependencies, mount path availability, etc.
+        logger.info(f"Connecting to sandbox {sandbox_id} (provider={provider}, mount={mount_path})")
 
-        logger.info(
-            f"Connecting to user-managed sandbox {sandbox_id} (provider={provider}, mount={mount_path})"
+        # Mount Nexus in the sandbox
+        # The provider's mount_nexus will handle connecting to the sandbox
+        # (either from cache for Nexus-managed, or reconnecting for user-managed)
+        mount_result = await provider_obj.mount_nexus(
+            sandbox_id=sandbox_id,
+            mount_path=mount_path,
+            nexus_url=nexus_url,
+            api_key=nexus_api_key,
         )
-
-        # Execute mount command remotely in sandbox
-        # For E2B, this would execute: nexus mount /mnt/nexus --remote-url <url> --api-key <key>
-        # For now, we'll return success - actual mounting logic depends on provider implementation
-        # TODO: Implement actual mount execution via provider
 
         now = datetime.now(UTC)
 
-        logger.info(f"Connected to sandbox {sandbox_id} at {mount_path}")
+        if mount_result["success"]:
+            logger.info(f"Successfully mounted Nexus in sandbox {sandbox_id} at {mount_path}")
+        else:
+            logger.warning(
+                f"Failed to mount Nexus in sandbox {sandbox_id}: {mount_result['message']}"
+            )
 
         return {
-            "success": True,
+            "success": mount_result["success"],
             "sandbox_id": sandbox_id,
             "provider": provider,
             "mount_path": mount_path,
             "mounted_at": now.isoformat(),
+            "mount_status": mount_result,
         }
 
     async def disconnect_sandbox(

@@ -151,6 +151,35 @@ class SandboxProvider(ABC):
         """
         ...
 
+    @abstractmethod
+    async def mount_nexus(
+        self,
+        sandbox_id: str,
+        mount_path: str,
+        nexus_url: str,
+        api_key: str,
+    ) -> dict[str, Any]:
+        """Mount Nexus filesystem inside sandbox via FUSE.
+
+        Args:
+            sandbox_id: The sandbox ID
+            mount_path: Path inside sandbox where to mount
+            nexus_url: Nexus server URL
+            api_key: API key for authentication
+
+        Returns:
+            Mount status dict with:
+            - success: bool
+            - mount_path: str
+            - message: str
+            - files_visible: int (number of files/dirs in mount)
+
+        Raises:
+            SandboxNotFoundError: If sandbox doesn't exist
+            RuntimeError: If mount operation fails
+        """
+        ...
+
 
 class SandboxProviderError(Exception):
     """Base exception for sandbox provider errors."""

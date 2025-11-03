@@ -890,6 +890,8 @@ class SandboxConnectParams:
     provider: str = "e2b"
     sandbox_api_key: str | None = None
     mount_path: str = "/mnt/nexus"
+    nexus_url: str | None = None  # Nexus server URL for mounting
+    nexus_api_key: str | None = None  # Nexus API key for mounting
     context: dict | None = None
 
 

@@ -243,7 +243,7 @@ class E2BSandboxProvider(SandboxProvider):
             raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found")
 
         try:
-            await sandbox.close()
+            await sandbox.kill()
             logger.info(f"Destroyed E2B sandbox: {sandbox_id}")
         except Exception as e:
             logger.error(f"Failed to destroy sandbox {sandbox_id}: {e}")
@@ -282,6 +282,117 @@ class E2BSandboxProvider(SandboxProvider):
             True if E2B SDK is available and API key is set
         """
         return E2B_AVAILABLE and bool(self.api_key)
+
+    async def mount_nexus(
+        self,
+        sandbox_id: str,
+        mount_path: str,
+        nexus_url: str,
+        api_key: str,
+    ) -> dict[str, Any]:
+        """Mount Nexus filesystem inside E2B sandbox via FUSE.
+
+        Args:
+            sandbox_id: E2B sandbox ID
+            mount_path: Path where to mount Nexus (e.g., /home/user/nexus)
+            nexus_url: Nexus server URL
+            api_key: Nexus API key for authentication
+
+        Returns:
+            Mount status dict with success, mount_path, message, files_visible
+
+        Raises:
+            SandboxNotFoundError: If sandbox doesn't exist
+            RuntimeError: If mount fails
+        """
+        sandbox = await self._get_sandbox(sandbox_id)
+
+        logger.info(f"Mounting Nexus at {mount_path} in sandbox {sandbox_id}")
+
+        # Create mount directory
+        mkdir_result = await sandbox.commands.run(f"mkdir -p {mount_path}")
+        if mkdir_result.exit_code != 0:
+            error_msg = f"Failed to create mount directory: {mkdir_result.stderr}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "mount_path": mount_path,
+                "message": error_msg,
+                "files_visible": 0,
+            }
+
+        # Check if nexus CLI is available
+        check_result = await sandbox.commands.run("which nexus")
+        if check_result.exit_code != 0:
+            # nexus not found, try to install
+            logger.info("nexus CLI not found, installing nexus-ai-fs...")
+            install_result = await sandbox.commands.run("pip install -q nexus-ai-fs")
+            if install_result.exit_code != 0:
+                error_msg = f"Failed to install nexus-ai-fs: {install_result.stderr}"
+                logger.error(error_msg)
+                return {
+                    "success": False,
+                    "mount_path": mount_path,
+                    "message": error_msg,
+                    "files_visible": 0,
+                }
+            logger.info("Successfully installed nexus-ai-fs")
+        else:
+            logger.info("nexus CLI already available, skipping installation")
+
+        # Build mount command with sudo and allow-other
+        # Use nohup to run in background
+        logger.info(
+            f"Mounting with nexus_url={nexus_url}, api_key={'***' + api_key[-10:] if api_key else 'None'}"
+        )
+        base_mount = (
+            f"sudo NEXUS_API_KEY={api_key} "
+            f"nexus mount {mount_path} "
+            f"--remote-url {nexus_url} "
+            f"--allow-other"
+        )
+        mount_cmd = f"nohup {base_mount} > /tmp/nexus-mount.log 2>&1 &"
+        logger.debug(f"Mount command: {mount_cmd}")
+
+        # Run mount in background
+        mount_result = await sandbox.commands.run(mount_cmd)
+        if mount_result.exit_code != 0:
+            error_msg = f"Failed to start mount: {mount_result.stderr}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "mount_path": mount_path,
+                "message": error_msg,
+                "files_visible": 0,
+            }
+
+        # Wait for mount to initialize (FUSE needs time to mount)
+        await asyncio.sleep(3)
+
+        # Verify mount by listing directory
+        ls_result = await sandbox.commands.run(f"sudo ls -la {mount_path}")
+
+        if ls_result.exit_code == 0 and ls_result.stdout:
+            # Count files (subtract 2 for . and .., and 1 for header line)
+            file_count = max(0, len(ls_result.stdout.strip().split("\n")) - 3)
+            logger.info(
+                f"Successfully mounted Nexus at {mount_path} with {file_count} files visible"
+            )
+            return {
+                "success": True,
+                "mount_path": mount_path,
+                "message": f"Nexus mounted successfully at {mount_path}",
+                "files_visible": file_count,
+            }
+        else:
+            error_msg = f"Mount verification failed: {ls_result.stderr}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "mount_path": mount_path,
+                "message": error_msg,
+                "files_visible": 0,
+            }
 
     async def _get_sandbox(self, sandbox_id: str) -> AsyncSandbox:
         """Get sandbox from cache or reconnect.

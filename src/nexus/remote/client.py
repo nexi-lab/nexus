@@ -594,7 +594,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         self,
         server_url: str,
         api_key: str | None = None,
-        timeout: int = 30,
+        timeout: int = 90,
         connect_timeout: int = 5,
         max_retries: int = 3,
         pool_connections: int = 10,
@@ -605,7 +605,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Args:
             server_url: Base URL of Nexus RPC server (e.g., "http://localhost:8080")
             api_key: Optional API key for authentication
-            timeout: Request timeout in seconds (default: 30)
+            timeout: Request timeout in seconds (default: 90, increased from 30 to handle cold start - issue #391)
             connect_timeout: Connection timeout in seconds (default: 5)
             max_retries: Maximum number of retry attempts (default: 3)
             pool_connections: Number of connection pools (default: 10)
@@ -722,7 +722,9 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         ),
         reraise=True,
     )
-    def _call_rpc(self, method: str, params: dict[str, Any] | None = None) -> Any:
+    def _call_rpc(
+        self, method: str, params: dict[str, Any] | None = None, read_timeout: float | None = None
+    ) -> Any:
         """Make RPC call to server with automatic retry logic.
 
         This method automatically retries on transient failures (connection errors,
@@ -731,6 +733,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Args:
             method: Method name
             params: Method parameters
+            read_timeout: Optional custom read timeout for this call (uses self.timeout if not specified)
 
         Returns:
             Method result
@@ -772,11 +775,13 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 headers["X-Tenant-ID"] = self.tenant_id
 
             # Use tuple for timeout: (connect_timeout, read_timeout)
+            # Use custom read_timeout if provided, otherwise use default self.timeout
+            actual_read_timeout = read_timeout if read_timeout is not None else self.timeout
             response = self.session.post(
                 url,
                 data=body,
                 headers=headers,
-                timeout=(self.connect_timeout, self.timeout),
+                timeout=(self.connect_timeout, actual_read_timeout),
             )
 
             elapsed = time.time() - start_time
@@ -3071,6 +3076,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         self,
         name: str,
         ttl_minutes: int = 10,
+        provider: str = "e2b",
         template_id: str | None = None,
         context: dict | None = None,
     ) -> dict:
@@ -3079,6 +3085,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Args:
             name: User-friendly sandbox name (unique per user)
             ttl_minutes: Idle timeout in minutes (default: 10)
+            provider: Sandbox provider ("e2b", "docker", etc.)
             template_id: Provider template ID (optional)
             context: Operation context
 
@@ -3087,10 +3094,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         Example:
             >>> nx = RemoteNexusFS("http://nexus.example.com", api_key="...")
-            >>> result = nx.sandbox_create("data-analysis", ttl_minutes=30)
+            >>> result = nx.sandbox_create("data-analysis", ttl_minutes=30, provider="docker")
             >>> print(result['sandbox_id'])
         """
-        params: dict[str, Any] = {"name": name, "ttl_minutes": ttl_minutes}
+        params: dict[str, Any] = {"name": name, "ttl_minutes": ttl_minutes, "provider": provider}
         if template_id is not None:
             params["template_id"] = template_id
         if context is not None:
@@ -3134,7 +3141,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         }
         if context is not None:
             params["context"] = context
-        result = self._call_rpc("sandbox_run", params)
+        # Use execution timeout + 10 seconds buffer for HTTP read timeout
+        # This ensures the HTTP request doesn't timeout before code execution completes
+        read_timeout = timeout + 10
+        result = self._call_rpc("sandbox_run", params, read_timeout=read_timeout)
         return result  # type: ignore[no-any-return]
 
     def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict:

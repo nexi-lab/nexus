@@ -35,7 +35,8 @@ LANGGRAPH_DIR="$SCRIPT_DIR/examples/langgraph"
 
 # Feature flags
 START_AGENT=false        # LangGraph server
-START_SANDBOX=false      # ngrok + e2b
+START_SANDBOX=false      # E2B sandbox
+START_NGROK=true         # Always start ngrok for backend
 NGROK_URL=""
 E2B_TEMPLATE_ID=""
 
@@ -271,7 +272,58 @@ if ! command -v uv &> /dev/null; then
 fi
 echo "  ✅ uv ready ($(uv --version))"
 
-# Check E2B and ngrok if sandbox mode
+# Check ngrok (always enabled)
+echo "  Checking ngrok..."
+
+# Check if ngrok is installed
+if ! command -v ngrok &> /dev/null; then
+    echo "  ⚠️  ngrok not found. Installing..."
+    if [ "$OS_TYPE" == "macos" ]; then
+        if command -v brew &> /dev/null; then
+            brew install ngrok/ngrok/ngrok
+            echo "  ✅ ngrok installed via Homebrew"
+        else
+            echo "  ❌ Homebrew not found. Please install ngrok manually:"
+            echo "    https://ngrok.com/download"
+            exit 1
+        fi
+    elif [ "$OS_TYPE" == "linux" ]; then
+        echo "  📥 Downloading ngrok..."
+        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | \
+            sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null && \
+            echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | \
+            sudo tee /etc/apt/sources.list.d/ngrok.list && \
+            sudo apt update && sudo apt install ngrok
+        echo "  ✅ ngrok installed"
+    else
+        echo "  ❌ Unsupported OS. Please install ngrok manually:"
+        echo "    https://ngrok.com/download"
+        exit 1
+    fi
+fi
+
+# Check if ngrok is authenticated
+echo "  Checking ngrok authentication..."
+if ! ngrok config check &> /dev/null; then
+    echo "  ⚠️  ngrok not authenticated"
+    echo ""
+    echo "  Please authenticate ngrok:"
+    echo "    1. Sign up at https://dashboard.ngrok.com/signup"
+    echo "    2. Get your auth token from https://dashboard.ngrok.com/get-started/your-authtoken"
+    echo "    3. Run: ngrok config add-authtoken <YOUR_TOKEN>"
+    echo ""
+    read -p "  Press Enter after authenticating ngrok..."
+
+    # Check again
+    if ! ngrok config check &> /dev/null; then
+        echo "  ❌ ngrok authentication failed. Please try again."
+        exit 1
+    fi
+fi
+
+echo "  ✅ ngrok ready"
+
+# Check E2B if sandbox mode
 if [ "$START_SANDBOX" = true ]; then
     echo "  Checking E2B (sandbox mode)..."
 
@@ -324,56 +376,6 @@ if [ "$START_SANDBOX" = true ]; then
     else
         echo "  ⚠️  Could not load E2B template ID"
     fi
-
-    echo "  Checking ngrok (sandbox mode)..."
-
-    # Check if ngrok is installed
-    if ! command -v ngrok &> /dev/null; then
-        echo "  ⚠️  ngrok not found. Installing..."
-        if [ "$OS_TYPE" == "macos" ]; then
-            if command -v brew &> /dev/null; then
-                brew install ngrok/ngrok/ngrok
-                echo "  ✅ ngrok installed via Homebrew"
-            else
-                echo "  ❌ Homebrew not found. Please install ngrok manually:"
-                echo "    https://ngrok.com/download"
-                exit 1
-            fi
-        elif [ "$OS_TYPE" == "linux" ]; then
-            echo "  📥 Downloading ngrok..."
-            curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | \
-                sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null && \
-                echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | \
-                sudo tee /etc/apt/sources.list.d/ngrok.list && \
-                sudo apt update && sudo apt install ngrok
-            echo "  ✅ ngrok installed"
-        else
-            echo "  ❌ Unsupported OS. Please install ngrok manually:"
-            echo "    https://ngrok.com/download"
-            exit 1
-        fi
-    fi
-
-    # Check if ngrok is authenticated
-    echo "  Checking ngrok authentication..."
-    if ! ngrok config check &> /dev/null; then
-        echo "  ⚠️  ngrok not authenticated"
-        echo ""
-        echo "  Please authenticate ngrok:"
-        echo "    1. Sign up at https://dashboard.ngrok.com/signup"
-        echo "    2. Get your auth token from https://dashboard.ngrok.com/get-started/your-authtoken"
-        echo "    3. Run: ngrok config add-authtoken <YOUR_TOKEN>"
-        echo ""
-        read -p "  Press Enter after authenticating ngrok..."
-
-        # Check again
-        if ! ngrok config check &> /dev/null; then
-            echo "  ❌ ngrok authentication failed. Please try again."
-            exit 1
-        fi
-    fi
-
-    echo "  ✅ ngrok ready"
 fi
 
 # Check Python virtual environment
@@ -459,100 +461,63 @@ done
 echo ""
 
 # ============================================
-# Start ngrok (if sandbox mode)
+# Start ngrok (always enabled for backend)
 # ============================================
 
-if [ "$START_SANDBOX" = true ]; then
-    echo "🌐 Setting up ngrok tunnel..."
-    echo ""
+echo "🌐 Setting up ngrok tunnel..."
+echo ""
 
-    # Check if ngrok is already running
-    NGROK_RUNNING=false
-    if pgrep -x "ngrok" > /dev/null 2>&1; then
-        NGROK_RUNNING=true
-        echo "  ℹ️  ngrok is already running"
-    fi
-
-    # Only kill and restart if initialization mode is active
-    if [ -n "$INIT_MODE" ] && [ "$NGROK_RUNNING" = true ]; then
-        echo "  🔄 Restarting ngrok (initialization mode)..."
-        pkill ngrok 2>/dev/null || true
-        sleep 1
-        NGROK_RUNNING=false
-    fi
-
-    # Create ngrok config file for multiple tunnels
-    echo "  Creating ngrok config for multiple tunnels..."
-    NGROK_CONFIG="/tmp/nexus-ngrok.yml"
-
-    # Extract authtoken from default ngrok config
-    NGROK_DEFAULT_CONFIG="$HOME/Library/Application Support/ngrok/ngrok.yml"
-    NGROK_AUTHTOKEN=$(grep "authtoken:" "$NGROK_DEFAULT_CONFIG" 2>/dev/null | awk '{print $2}')
-
-    if [ -z "$NGROK_AUTHTOKEN" ]; then
-        echo "  ⚠️  Could not find ngrok authtoken. Please run 'ngrok config add-authtoken <YOUR_TOKEN>'"
-        exit 1
-    fi
-
-    cat > "$NGROK_CONFIG" << EOF
-version: "3"
-agent:
-  authtoken: $NGROK_AUTHTOKEN
-tunnels:
-  backend:
-    proto: http
-    addr: $NEXUS_PORT
-    subdomain: nexus-backend
-  frontend:
-    proto: http
-    addr: $FRONTEND_PORT
-    subdomain: nexus-frontend
-EOF
-
-    # Start ngrok with config file if not running
-    if [ "$NGROK_RUNNING" = false ]; then
-        echo "  Starting ngrok tunnels (backend + frontend)..."
-        ngrok start --all --config "$NGROK_CONFIG" --log=/tmp/ngrok.log > /dev/null 2>&1 &
-        NGROK_PID=$!
-        sleep 3
-    else
-        # Get existing ngrok PID
-        NGROK_PID=$(pgrep -x "ngrok")
-        echo "  ♻️  Reusing existing ngrok tunnels (PID: $NGROK_PID)"
-    fi
-
-    # Wait for ngrok to start and get the public URLs
-    echo "  Retrieving ngrok public URLs..."
-    MAX_WAIT=10
-    WAITED=0
-    while [ $WAITED -lt $MAX_WAIT ]; do
-        # Try to get all public URLs from ngrok API
-        NGROK_RESPONSE=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null)
-
-        # Extract backend URL (tunnel named "backend")
-        NGROK_URL=$(echo "$NGROK_RESPONSE" | grep -o '"name":"backend"[^}]*"public_url":"https://[^"]*' | grep -o 'https://[^"]*' | head -1)
-
-        # Extract frontend URL (tunnel named "frontend")
-        NGROK_FRONTEND_URL=$(echo "$NGROK_RESPONSE" | grep -o '"name":"frontend"[^}]*"public_url":"https://[^"]*' | grep -o 'https://[^"]*' | head -1)
-
-        if [ -n "$NGROK_URL" ] && [ -n "$NGROK_FRONTEND_URL" ]; then
-            echo "  ✅ ngrok tunnels ready"
-            echo "  🌍 Backend URL:  $NGROK_URL"
-            echo "  🌍 Frontend URL: $NGROK_FRONTEND_URL"
-            break
-        fi
-
-        sleep 1
-        WAITED=$((WAITED + 1))
-
-        if [ $WAITED -eq $MAX_WAIT ]; then
-            echo "  ⚠️  Could not retrieve ngrok URLs"
-            echo "  Check ngrok dashboard: http://localhost:4040"
-        fi
-    done
-
-    echo ""
+# Check if ngrok is already running
+NGROK_RUNNING=false
+if pgrep -x "ngrok" > /dev/null 2>&1; then
+    NGROK_RUNNING=true
+    echo "  ℹ️  ngrok is already running"
 fi
+
+# Only kill and restart if initialization mode is active
+if [ -n "$INIT_MODE" ] && [ "$NGROK_RUNNING" = true ]; then
+    echo "  🔄 Restarting ngrok (initialization mode)..."
+    pkill ngrok 2>/dev/null || true
+    sleep 1
+    NGROK_RUNNING=false
+fi
+
+# Start ngrok for backend if not running
+if [ "$NGROK_RUNNING" = false ]; then
+    echo "  Starting ngrok tunnel for backend..."
+    ngrok http $NEXUS_PORT --domain=nexi.ngrok.io --log=/tmp/ngrok-backend.log > /dev/null 2>&1 &
+    NGROK_PID=$!
+    sleep 3
+else
+    # Get existing ngrok PID
+    NGROK_PID=$(pgrep -x "ngrok")
+    echo "  ♻️  Reusing existing ngrok tunnel (PID: $NGROK_PID)"
+fi
+
+# Use reserved domain (no need to query API)
+NGROK_URL="https://nexi.ngrok.io"
+
+# Wait for ngrok to be ready
+echo "  Waiting for ngrok tunnel to be ready..."
+MAX_WAIT=10
+WAITED=0
+while [ $WAITED -lt $MAX_WAIT ]; do
+    if curl -s "$NGROK_URL/health" > /dev/null 2>&1; then
+        echo "  ✅ ngrok tunnel ready"
+        echo "  🌍 Backend URL:  $NGROK_URL"
+        break
+    fi
+
+    sleep 1
+    WAITED=$((WAITED + 1))
+
+    if [ $WAITED -eq $MAX_WAIT ]; then
+        echo "  ⚠️  Could not connect to ngrok tunnel"
+        echo "  Check ngrok dashboard: http://localhost:4040"
+    fi
+done
+
+echo ""
 
 # ============================================
 # Start Frontend
@@ -599,6 +564,45 @@ cd "$SCRIPT_DIR"
 echo ""
 
 # ============================================
+# Start ngrok for Frontend (Optional)
+# ============================================
+
+echo "🌐 Setting up ngrok tunnel for frontend..."
+echo ""
+
+# Check if ngrok is available for frontend (need to start another instance)
+# Note: This requires a second ngrok process or agent
+echo "  Starting ngrok tunnel for frontend..."
+ngrok http $FRONTEND_PORT --domain=nexi-hub.ngrok.io --log=/tmp/ngrok-frontend.log > /dev/null 2>&1 &
+NGROK_FRONTEND_PID=$!
+sleep 3
+
+# Use reserved domain for frontend
+NGROK_FRONTEND_URL="https://nexi-hub.ngrok.io"
+
+# Wait for frontend ngrok to be ready
+echo "  Waiting for frontend ngrok tunnel to be ready..."
+MAX_WAIT=10
+WAITED=0
+while [ $WAITED -lt $MAX_WAIT ]; do
+    if curl -s "$NGROK_FRONTEND_URL" > /dev/null 2>&1; then
+        echo "  ✅ Frontend ngrok tunnel ready"
+        echo "  🌍 Frontend Public URL:  $NGROK_FRONTEND_URL"
+        break
+    fi
+
+    sleep 1
+    WAITED=$((WAITED + 1))
+
+    if [ $WAITED -eq $MAX_WAIT ]; then
+        echo "  ⚠️  Could not connect to frontend ngrok tunnel"
+        echo "  Check ngrok dashboard: http://localhost:4040"
+    fi
+done
+
+echo ""
+
+# ============================================
 # Create Demo Environment File
 # ============================================
 
@@ -615,15 +619,10 @@ cat > "$NEXUS_DIR/.demo-env" << EOF
 
 # Frontend
 export NEXUS_FRONTEND_URL="http://localhost:$FRONTEND_PORT"
-export NEXUS_FRONTEND_PID=$FRONTEND_PID
-EOF
-
-# Add frontend public URL if ngrok is enabled
-if [ "$START_SANDBOX" = true ] && [ -n "$NGROK_FRONTEND_URL" ]; then
-    cat >> "$NEXUS_DIR/.demo-env" << EOF
 export NEXUS_FRONTEND_PUBLIC_URL="$NGROK_FRONTEND_URL"
+export NEXUS_FRONTEND_PID=$FRONTEND_PID
+export NEXUS_FRONTEND_NGROK_PID=$NGROK_FRONTEND_PID
 EOF
-fi
 
 cat >> "$NEXUS_DIR/.demo-env" << EOF
 
@@ -634,8 +633,8 @@ EOF
 # API keys should be passed by the frontend/client, not hardcoded in the environment
 
 # Add backend info
-# Use public URL if ngrok is enabled, otherwise localhost
-if [ "$START_SANDBOX" = true ] && [ -n "$NGROK_URL" ]; then
+# Always use public ngrok URL if available, otherwise localhost
+if [ -n "$NGROK_URL" ]; then
     NEXUS_SERVER_URL="$NGROK_URL"
 else
     NEXUS_SERVER_URL="http://localhost:$NEXUS_PORT"
@@ -646,15 +645,26 @@ cat >> "$NEXUS_DIR/.demo-env" << EOF
 # Backend
 export NEXUS_URL="http://localhost:$NEXUS_PORT"
 export NEXUS_SERVER_URL="$NEXUS_SERVER_URL"
+export NEXUS_PUBLIC_URL="$NGROK_URL"
 export NEXUS_HEALTH_URL="http://localhost:$NEXUS_PORT/health"
 export NEXUS_BACKEND_PID=$NEXUS_PID
 EOF
 
-# Add sandbox info if enabled (ngrok + e2b)
+# Add ngrok info (always enabled)
+if [ -n "$NGROK_URL" ]; then
+    cat >> "$NEXUS_DIR/.demo-env" << EOF
+
+# ngrok Tunnel
+export NGROK_DASHBOARD_URL="http://localhost:4040"
+export NGROK_PID=$NGROK_PID
+EOF
+fi
+
+# Add E2B info if sandbox mode enabled
 if [ "$START_SANDBOX" = true ]; then
     cat >> "$NEXUS_DIR/.demo-env" << EOF
 
-# Sandbox (E2B + ngrok)
+# E2B Sandbox
 EOF
 
     # Add E2B template ID if available
@@ -669,19 +679,6 @@ EOF
         cat >> "$NEXUS_DIR/.demo-env" << EOF
 export E2B_API_KEY="$E2B_API_KEY"
 EOF
-    fi
-
-    # Add ngrok info if available
-    if [ -n "$NGROK_URL" ] || [ -n "$NGROK_FRONTEND_URL" ]; then
-        cat >> "$NEXUS_DIR/.demo-env" << EOF
-export NGROK_DASHBOARD_URL="http://localhost:4040"
-export NGROK_PID=$NGROK_PID
-EOF
-        if [ -n "$NGROK_URL" ]; then
-            cat >> "$NEXUS_DIR/.demo-env" << EOF
-export NEXUS_PUBLIC_URL="$NGROK_URL"
-EOF
-        fi
     fi
 fi
 
@@ -775,18 +772,10 @@ cat << EOF
 ├───────────────────────────────────────────────────────────────────┤
 │ Description: React-based web interface for Nexus                 │
 │ Local URL:   http://localhost:$FRONTEND_PORT                          │
-EOF
-
-# Add public URL if ngrok is enabled for frontend
-if [ "$START_SANDBOX" = true ] && [ -n "$NGROK_FRONTEND_URL" ]; then
-cat << EOF
-│ Public URL:  $NGROK_FRONTEND_URL                           │
-EOF
-fi
-
-cat << EOF
-│ Process:     PID $FRONTEND_PID                                        │
+│ Public URL:  $NGROK_FRONTEND_URL                      │
+│ Process:     PID $FRONTEND_PID (frontend) / PID $NGROK_FRONTEND_PID (ngrok)  │
 │ Logs:        /tmp/nexus-frontend.log                              │
+│              /tmp/ngrok-frontend.log                              │
 └───────────────────────────────────────────────────────────────────┘
 EOF
 echo ""
@@ -822,64 +811,57 @@ cat << EOF
 │ 🔧 NEXUS BACKEND (RPC Server)                                    │
 ├───────────────────────────────────────────────────────────────────┤
 │ Description: Core Nexus RPC server with database-backed auth     │
-│ Endpoints:   http://localhost:$NEXUS_PORT                             │
+│ Local:       http://localhost:$NEXUS_PORT                             │
 │              http://localhost:$NEXUS_PORT/health                       │
+EOF
+
+if [ -n "$NGROK_URL" ]; then
+cat << EOF
+│ Public:      $NGROK_URL                           │
+│              $NGROK_URL/health                    │
+EOF
+fi
+
+cat << EOF
 │ Process:     PID $NEXUS_PID                                           │
 │ Logs:        /tmp/nexus-backend.log                               │
 └───────────────────────────────────────────────────────────────────┘
 EOF
 echo ""
 
-# 4. Sandbox (E2B + ngrok) (if enabled)
-if [ "$START_SANDBOX" = true ]; then
-cat << EOF
-┌───────────────────────────────────────────────────────────────────┐
-│ 🏖️  SANDBOX (E2B + ngrok)                                        │
-├───────────────────────────────────────────────────────────────────┤
-│ Description: Cloud sandboxes with E2B and public tunnels        │
-EOF
-
-if [ -n "$E2B_TEMPLATE_ID" ]; then
-cat << EOF
-│ E2B Template: $E2B_TEMPLATE_ID                    │
-EOF
-fi
-
+# 4. ngrok Tunnel (always enabled)
 if [ -n "$NGROK_URL" ]; then
 cat << EOF
-│ Backend URL:  $NGROK_URL                           │
-│               $NGROK_URL/health                    │
-EOF
-fi
-
-if [ -n "$NGROK_FRONTEND_URL" ]; then
-cat << EOF
-│ Frontend URL: $NGROK_FRONTEND_URL                           │
-EOF
-fi
-
-if [ -n "$NGROK_URL" ] || [ -n "$NGROK_FRONTEND_URL" ]; then
-cat << EOF
-│ Dashboard:    http://localhost:4040                              │
-│ Process:      PID $NGROK_PID                                          │
-│ Logs:         /tmp/ngrok.log                                     │
-EOF
-else
-cat << EOF
-│ ngrok:        Not started (no public URLs available)             │
-EOF
-fi
-
-cat << EOF
+┌───────────────────────────────────────────────────────────────────┐
+│ 🌐 NGROK TUNNEL                                                  │
+├───────────────────────────────────────────────────────────────────┤
+│ Description: Public HTTPS tunnel for Nexus backend              │
+│ Public URL:  $NGROK_URL                           │
+│ Dashboard:   http://localhost:4040                              │
+│ Process:     PID $NGROK_PID                                          │
+│ Logs:        /tmp/ngrok.log                                     │
 └───────────────────────────────────────────────────────────────────┘
 EOF
 echo ""
 fi
 
-# 5. LangGraph Server (if enabled)
+# 5. E2B Sandbox (if enabled)
+if [ "$START_SANDBOX" = true ] && [ -n "$E2B_TEMPLATE_ID" ]; then
+cat << EOF
+┌───────────────────────────────────────────────────────────────────┐
+│ 🏖️  E2B SANDBOX                                                  │
+├───────────────────────────────────────────────────────────────────┤
+│ Description: Cloud code execution sandboxes                     │
+│ Template:    $E2B_TEMPLATE_ID                    │
+└───────────────────────────────────────────────────────────────────┘
+EOF
+echo ""
+fi
+
+# 6. LangGraph Server (if enabled)
 if [ "$START_AGENT" = true ]; then
     # Determine the server URL to display
-    if [ "$START_SANDBOX" = true ] && [ -n "$NGROK_URL" ]; then
+    if [ -n "$NGROK_URL" ]; then
         LG_NEXUS_URL="$NGROK_URL (public)"
     else
         LG_NEXUS_URL="http://localhost:$NEXUS_PORT (local)"
@@ -901,7 +883,7 @@ EOF
 echo ""
 fi
 
-# 6. PostgreSQL Database
+# 7. PostgreSQL Database
 cat << EOF
 ┌───────────────────────────────────────────────────────────────────┐
 │ 🗄️  POSTGRESQL DATABASE                                          │
@@ -920,30 +902,18 @@ cat << 'EOF'
 ╚═══════════════════════════════════════════════════════════════════╝
 EOF
 echo ""
-if [ "$START_SANDBOX" = true ]; then
-    echo "  Open frontend:      open http://localhost:$FRONTEND_PORT"
-    if [ -n "$NGROK_FRONTEND_URL" ]; then
-        echo "  Open public UI:     open $NGROK_FRONTEND_URL"
-    fi
-    echo "  Test local API:     curl http://localhost:$NEXUS_PORT/health"
-    if [ -n "$NGROK_URL" ]; then
-        echo "  Test public API:    curl $NGROK_URL/health"
-    fi
-    if [ -n "$NGROK_URL" ] || [ -n "$NGROK_FRONTEND_URL" ]; then
-        echo "  ngrok dashboard:    open http://localhost:4040"
-    fi
-    if [ -n "$E2B_TEMPLATE_ID" ]; then
-        echo "  E2B Template ID:    $E2B_TEMPLATE_ID"
-    fi
-    if [ "$START_AGENT" = true ]; then
-        echo "  LangGraph docs:     open http://localhost:$LANGGRAPH_PORT/docs"
-    fi
-else
-    echo "  Open frontend:      open http://localhost:$FRONTEND_PORT"
-    echo "  Test backend:       curl http://localhost:$NEXUS_PORT/health"
-    if [ "$START_AGENT" = true ]; then
-        echo "  LangGraph docs:     open http://localhost:$LANGGRAPH_PORT/docs"
-    fi
+echo "  Open frontend:      open http://localhost:$FRONTEND_PORT"
+echo "  Open public frontend: open $NGROK_FRONTEND_URL"
+echo "  Test local API:     curl http://localhost:$NEXUS_PORT/health"
+if [ -n "$NGROK_URL" ]; then
+    echo "  Test public API:    curl $NGROK_URL/health"
+    echo "  ngrok dashboard:    open http://localhost:4040"
+fi
+if [ "$START_AGENT" = true ]; then
+    echo "  LangGraph docs:     open http://localhost:$LANGGRAPH_PORT/docs"
+fi
+if [ "$START_SANDBOX" = true ] && [ -n "$E2B_TEMPLATE_ID" ]; then
+    echo "  E2B Template ID:    $E2B_TEMPLATE_ID"
 fi
 echo ""
 echo "  Environment file:   source $NEXUS_DIR/.demo-env"
@@ -956,28 +926,29 @@ cat << 'EOF'
 ╚═══════════════════════════════════════════════════════════════════╝
 EOF
 echo ""
-if [ "$START_SANDBOX" = true ] && [ "$START_AGENT" = true ]; then
-    echo "  Kill all services:  kill $NEXUS_PID $FRONTEND_PID $LANGGRAPH_PID $NGROK_PID"
-    echo "  Kill backend:       kill $NEXUS_PID"
-    echo "  Kill frontend:      kill $FRONTEND_PID"
+# Build kill command based on what's running
+KILL_ALL="kill $NEXUS_PID $FRONTEND_PID"
+if [ "$START_AGENT" = true ]; then
+    KILL_ALL="$KILL_ALL $LANGGRAPH_PID"
+fi
+if [ -n "$NGROK_PID" ]; then
+    KILL_ALL="$KILL_ALL $NGROK_PID"
+fi
+if [ -n "$NGROK_FRONTEND_PID" ]; then
+    KILL_ALL="$KILL_ALL $NGROK_FRONTEND_PID"
+fi
+
+echo "  Kill all services:  $KILL_ALL"
+echo "  Kill backend:       kill $NEXUS_PID"
+echo "  Kill frontend:      kill $FRONTEND_PID"
+if [ "$START_AGENT" = true ]; then
     echo "  Kill LangGraph:     kill $LANGGRAPH_PID"
-    echo "  Kill ngrok:         kill $NGROK_PID"
-elif [ "$START_SANDBOX" = true ]; then
-    echo "  Kill all services:  kill $NEXUS_PID $FRONTEND_PID $NGROK_PID"
-    echo "  Kill backend:       kill $NEXUS_PID"
-    echo "  Kill frontend:      kill $FRONTEND_PID"
-    echo "  Kill ngrok:         kill $NGROK_PID"
-elif [ "$START_AGENT" = true ]; then
-    echo "  Kill all services:  kill $NEXUS_PID $FRONTEND_PID $LANGGRAPH_PID"
-    echo "  Kill backend:       kill $NEXUS_PID"
-    echo "  Kill frontend:      kill $FRONTEND_PID"
-    echo "  Kill LangGraph:     kill $LANGGRAPH_PID"
-    echo "  Or use ports:       lsof -ti:$NEXUS_PORT,$FRONTEND_PORT,$LANGGRAPH_PORT | xargs kill"
-else
-    echo "  Kill all services:  kill $NEXUS_PID $FRONTEND_PID"
-    echo "  Kill backend:       kill $NEXUS_PID"
-    echo "  Kill frontend:      kill $FRONTEND_PID"
-    echo "  Or use ports:       lsof -ti:$NEXUS_PORT,$FRONTEND_PORT | xargs kill"
+fi
+if [ -n "$NGROK_PID" ]; then
+    echo "  Kill backend ngrok: kill $NGROK_PID"
+fi
+if [ -n "$NGROK_FRONTEND_PID" ]; then
+    echo "  Kill frontend ngrok: kill $NGROK_FRONTEND_PID"
 fi
 echo ""
 
@@ -1004,9 +975,14 @@ cleanup() {
         kill $LANGGRAPH_PID 2>/dev/null || true
     fi
 
-    if [ "$START_SANDBOX" = true ] && [ -n "$NGROK_PID" ]; then
-        echo "  Stopping ngrok (PID $NGROK_PID)..."
+    if [ -n "$NGROK_PID" ]; then
+        echo "  Stopping backend ngrok (PID $NGROK_PID)..."
         kill $NGROK_PID 2>/dev/null || true
+    fi
+
+    if [ -n "$NGROK_FRONTEND_PID" ]; then
+        echo "  Stopping frontend ngrok (PID $NGROK_FRONTEND_PID)..."
+        kill $NGROK_FRONTEND_PID 2>/dev/null || true
     fi
 
     # Also kill by port to ensure cleanup
@@ -1017,9 +993,8 @@ cleanup() {
         lsof -ti:$LANGGRAPH_PORT | xargs kill -9 2>/dev/null || true
     fi
 
-    if [ "$START_SANDBOX" = true ]; then
-        pkill ngrok 2>/dev/null || true
-    fi
+    # Always cleanup ngrok
+    pkill ngrok 2>/dev/null || true
 
     echo ""
     echo "✅ All services stopped"

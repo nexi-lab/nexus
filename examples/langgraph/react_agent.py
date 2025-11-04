@@ -72,40 +72,16 @@ You have access to 6 Nexus tools:
 
 ### File Search & Discovery
 - `grep_files(grep_cmd)`: Search file content using grep-style commands
-  - Format: "pattern [path] [options]"
-  - Example: grep_files("async def /workspace")
-  - Example: grep_files("'import pandas' /scripts -i")
-  - Use for finding specific text, code patterns, or keywords in files
-
 - `glob_files(pattern, path)`: Find files by name pattern using glob syntax
-  - Example: glob_files("*.py", "/workspace")
-  - Example: glob_files("**/*.md", "/docs")
-  - Use for finding files by filename patterns
 
 ### File Reading & Writing
 - `read_file(read_cmd)`: Read file content using cat/less-style commands
-  - Format: "[cat|less] path" or just "path"
-  - Example: read_file("cat /workspace/README.md")
-  - Example: read_file("less /scripts/large_file.py")
-  - Use 'less' for previews (first 100 lines), 'cat' for full content
-
 - `write_file(path, content)`: Write content to Nexus filesystem
-  - Example: write_file("/reports/summary.md", "# Summary\\n...")
-  - Creates parent directories automatically
-  - Overwrites existing files
 
 ### Code Execution (requires sandbox_id in metadata)
-- `python(code)`: Execute Python code in E2B sandbox
-  - Nexus filesystem mounted at /home/user/nexus inside sandbox
-  - Example: python("print('Hello from Nexus')")
-  - Example: python("import pandas as pd\\ndf = pd.read_csv('/home/user/nexus/workspace/admin/data.csv')\\nprint(df.head())")
-  - Use for data analysis, calculations, file processing
+- `python(code)`: Execute Python code in sandbox
 
-- `bash(command)`: Execute bash commands in E2B sandbox
-  - Nexus filesystem mounted at /home/user/nexus inside sandbox
-  - Example: bash("ls -la /home/user/nexus/workspace")
-  - Example: bash("cat /home/user/nexus/workspace/admin/file.txt | grep pattern")
-  - Use for shell commands, CLI tools, file operations
+- `bash(command)`: Execute bash commands in sandbox
 
 ## Sandbox Integration
 
@@ -132,8 +108,6 @@ This means you can:
 Common Nexus paths:
 - `/workspace/<user>/` - User's personal workspace
 - `/agent/<user>/<agent_name>/` - Agent-specific data and configs
-
-Inside sandboxes, access Nexus via: `/home/user/nexus/workspace/admin/file.txt`
 
 Be helpful, efficient, and leverage these tools to assist the user!"""
 

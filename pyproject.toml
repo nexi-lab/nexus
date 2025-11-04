@@ -1,6 +1,6 @@
 [project]
 name = "nexus-ai-fs"
-version = "0.5.2"
+version = "0.5.3"
 description = "AI-Native Distributed Filesystem Architecture"
 readme = "README.md"
 requires-python = ">=3.11"

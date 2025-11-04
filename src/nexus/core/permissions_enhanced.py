@@ -840,10 +840,17 @@ class EnhancedPermissionEnforcer:
         # This reduces N individual checks (each with 10-15 queries) to 1-2 bulk queries
         if self.rebac_manager and hasattr(self.rebac_manager, "rebac_check_bulk"):
             import logging
+            import time
 
             logger = logging.getLogger(__name__)
 
+            overall_start = time.time()
+            logger.warning(
+                f"[PERF-FILTER] filter_list START: {len(paths)} paths, subject={context.get_subject()}, tenant={context.tenant_id}"
+            )
+
             # Build list of checks: (subject, "read", object) for each path
+            build_start = time.time()
             checks = []
             subject = context.get_subject()
             tenant_id = context.tenant_id or "default"
@@ -869,11 +876,17 @@ class EnhancedPermissionEnforcer:
 
                 checks.append((subject, "read", (obj_type, path)))
 
-            logger.debug(f"filter_list: Using bulk check for {len(checks)} paths")
+            build_elapsed = time.time() - build_start
+            logger.warning(
+                f"[PERF-FILTER] Built {len(checks)} permission checks in {build_elapsed:.3f}s"
+            )
 
             try:
                 # Perform bulk permission check
+                bulk_start = time.time()
                 results = self.rebac_manager.rebac_check_bulk(checks, tenant_id=tenant_id)
+                bulk_elapsed = time.time() - bulk_start
+                logger.warning(f"[PERF-FILTER] Bulk check completed in {bulk_elapsed:.3f}s")
 
                 # Filter paths based on bulk results
                 filtered = []
@@ -881,7 +894,10 @@ class EnhancedPermissionEnforcer:
                     if results.get(check, False):
                         filtered.append(path)
 
-                logger.debug(f"filter_list: Bulk check allowed {len(filtered)}/{len(paths)} paths")
+                overall_elapsed = time.time() - overall_start
+                logger.warning(
+                    f"[PERF-FILTER] filter_list DONE: {overall_elapsed:.3f}s total, allowed {len(filtered)}/{len(paths)} paths"
+                )
                 return filtered
 
             except Exception as e:

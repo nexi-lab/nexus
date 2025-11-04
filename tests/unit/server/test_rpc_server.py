@@ -161,8 +161,8 @@ class TestNexusRPCServer:
         """Test server initialization."""
         from unittest.mock import ANY
 
-        # Mock HTTPServer to avoid actual port binding
-        with patch("nexus.server.rpc_server.HTTPServer") as mock_http_server:
+        # Mock ThreadingHTTPServer to avoid actual port binding
+        with patch("nexus.server.rpc_server.ThreadingHTTPServer") as mock_http_server:
             mock_http_server.return_value = Mock()
             server = NexusRPCServer(mock_filesystem, host="127.0.0.1", port=9999, api_key="test")
 
@@ -171,13 +171,13 @@ class TestNexusRPCServer:
             assert server.port == 9999
             assert server.api_key == "test"
 
-            # Verify HTTPServer was called with correct parameters
+            # Verify ThreadingHTTPServer was called with correct parameters
             mock_http_server.assert_called_once_with(("127.0.0.1", 9999), ANY)
 
     def test_server_shutdown(self, mock_filesystem):
         """Test server shutdown."""
-        # Mock HTTPServer to avoid actual port binding
-        with patch("nexus.server.rpc_server.HTTPServer") as mock_http_server:
+        # Mock ThreadingHTTPServer to avoid actual port binding
+        with patch("nexus.server.rpc_server.ThreadingHTTPServer") as mock_http_server:
             mock_server_instance = Mock()
             mock_http_server.return_value = mock_server_instance
             server = NexusRPCServer(mock_filesystem, host="127.0.0.1", port=9999)
@@ -435,8 +435,8 @@ class TestRPCServerIntegration:
 
     def test_server_with_real_filesystem(self, temp_nexus):
         """Test server with real filesystem."""
-        # Mock HTTPServer to avoid actual port binding
-        with patch("nexus.server.rpc_server.HTTPServer") as mock_http_server:
+        # Mock ThreadingHTTPServer to avoid actual port binding
+        with patch("nexus.server.rpc_server.ThreadingHTTPServer") as mock_http_server:
             mock_server_instance = Mock()
             mock_http_server.return_value = mock_server_instance
             _server = NexusRPCServer(temp_nexus, host="127.0.0.1", port=9998, api_key=None)
@@ -445,7 +445,7 @@ class TestRPCServerIntegration:
             assert RPCRequestHandler.nexus_fs == temp_nexus
             assert RPCRequestHandler.api_key is None
 
-            # Verify HTTPServer was created with mocked instance
+            # Verify ThreadingHTTPServer was created with mocked instance
             assert mock_http_server.called
 
 

@@ -731,6 +731,7 @@ class NexusFilesystem(Protocol):
         self,
         name: str,
         ttl_minutes: int = 10,
+        provider: str = "e2b",
         template_id: str | None = None,
         context: dict | None = None,
     ) -> dict[Any, Any]:
@@ -739,6 +740,7 @@ class NexusFilesystem(Protocol):
         Args:
             name: User-friendly sandbox name
             ttl_minutes: Idle timeout in minutes
+            provider: Sandbox provider ("e2b", "docker", etc.)
             template_id: Provider template ID (optional)
             context: Operation context
 

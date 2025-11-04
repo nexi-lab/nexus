@@ -20,6 +20,14 @@ from nexus.core.sandbox_provider import (
 )
 from nexus.storage.models import SandboxMetadataModel
 
+# Try to import Docker provider
+try:
+    from nexus.core.sandbox_docker_provider import DockerSandboxProvider
+
+    DOCKER_PROVIDER_AVAILABLE = True
+except ImportError:
+    DOCKER_PROVIDER_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,6 +69,14 @@ class SandboxManager:
                 team_id=e2b_team_id,
                 default_template=e2b_template_id,
             )
+
+        # Initialize Docker provider if available (no API key needed)
+        if DOCKER_PROVIDER_AVAILABLE:
+            try:
+                self.providers["docker"] = DockerSandboxProvider()
+                logger.info("Docker provider initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Docker provider: {e}")
 
         logger.info(f"Initialized sandbox manager with providers: {list(self.providers.keys())}")
 

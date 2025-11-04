@@ -88,10 +88,16 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If file not found
         """
+        import time
+
+        start_time = time.time()
         try:
             # Check cache first
             cached_attrs = self.cache.get_attr(path)
             if cached_attrs is not None:
+                elapsed = time.time() - start_time
+                if elapsed > 0.001:  # Only log if > 1ms
+                    logger.debug(f"[FUSE-PERF] getattr CACHED: path={path}, {elapsed:.3f}s")
                 return cached_attrs
 
             # Handle virtual views (.raw, .txt, .md)
@@ -183,6 +189,9 @@ class NexusFUSEOperations(Operations):
             # Cache the result
             self.cache.cache_attr(path, attrs)
 
+            elapsed = time.time() - start_time
+            if elapsed > 0.01:  # Log if >10ms
+                logger.info(f"[FUSE-PERF] getattr UNCACHED: path={path}, {elapsed:.3f}s")
             return attrs
         except NexusFileNotFoundError:
             raise FuseOSError(errno.ENOENT) from None
@@ -205,6 +214,11 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If directory not found
         """
+        import time
+
+        start_time = time.time()
+        logger.info(f"[FUSE-PERF] readdir START: path={path}")
+
         try:
             # Standard directory entries
             entries = [".", ".."]
@@ -215,8 +229,13 @@ class NexusFUSEOperations(Operations):
 
             # List files in directory (non-recursive) - returns list[dict] with details
             # Using details=True gets directory status in bulk, avoiding individual is_directory() calls
+            list_start = time.time()
             files_raw = self.nexus_fs.list(path, recursive=False, details=True)
+            list_elapsed = time.time() - list_start
             files = files_raw if isinstance(files_raw, list) else []
+            logger.info(
+                f"[FUSE-PERF] readdir list() took {list_elapsed:.3f}s, returned {len(files)} items"
+            )
 
             for file_info in files:
                 # Handle both string paths and dict entries
@@ -227,6 +246,11 @@ class NexusFUSEOperations(Operations):
                 else:
                     file_path = str(file_info.get("path", ""))
                     is_dir = file_info.get("is_directory", False)
+
+                    # Pre-cache attributes for this file to avoid N+1 queries in getattr()
+                    # This eliminates redundant is_directory() and get_metadata() RPC calls
+                    # when the OS calls getattr() on each file after readdir()
+                    self._cache_file_attrs_from_list(file_path, file_info, is_dir)
 
                 # Extract just the filename/dirname
                 name = file_path.rstrip("/").split("/")[-1]
@@ -255,6 +279,10 @@ class NexusFUSEOperations(Operations):
             # Final filter to remove any OS metadata that might have slipped through
             entries = [e for e in entries if not is_os_metadata_file(e)]
 
+            total_elapsed = time.time() - start_time
+            logger.info(
+                f"[FUSE-PERF] readdir DONE: path={path}, {len(entries)} entries, {total_elapsed:.3f}s total"
+            )
             return entries
         except NexusFileNotFoundError:
             raise FuseOSError(errno.ENOENT) from None
@@ -896,6 +924,62 @@ class NexusFUSEOperations(Operations):
             return self.nexus_fs.metadata.get(path)
 
         return None
+
+    def _cache_file_attrs_from_list(
+        self, file_path: str, file_info: dict[str, Any], is_dir: bool
+    ) -> None:
+        """Cache file attributes from list() results to avoid N+1 queries.
+
+        When readdir() fetches directory contents with details=True, it gets
+        is_directory and size info for all files in one RPC call. This method
+        caches that data so subsequent getattr() calls don't need additional
+        RPC calls for is_directory() and get_metadata().
+
+        Args:
+            file_path: Full path to the file
+            file_info: File info dict from list(details=True)
+            is_dir: Whether this is a directory
+        """
+        now = time.time()
+
+        # Get uid/gid with Windows compatibility
+        try:
+            uid = os.getuid()
+            gid = os.getgid()
+        except AttributeError:
+            # Windows doesn't have getuid/getgid
+            uid = 0
+            gid = 0
+
+        # Build attributes based on whether it's a directory or file
+        if is_dir:
+            attrs = {
+                "st_mode": stat.S_IFDIR | 0o755,
+                "st_nlink": 2,
+                "st_size": 4096,
+                "st_ctime": now,
+                "st_mtime": now,
+                "st_atime": now,
+                "st_uid": uid,
+                "st_gid": gid,
+            }
+        else:
+            # Get file size from list() results if available
+            file_size = file_info.get("size", 0)
+
+            attrs = {
+                "st_mode": stat.S_IFREG | 0o644,
+                "st_nlink": 1,
+                "st_size": file_size,
+                "st_ctime": now,
+                "st_mtime": now,
+                "st_atime": now,
+                "st_uid": uid,
+                "st_gid": gid,
+            }
+
+        # Cache the attributes (uses existing 60s TTL)
+        self.cache.cache_attr(file_path, attrs)
 
     def _dir_attrs(self, metadata: Any = None) -> dict[str, Any]:
         """Get standard directory attributes.

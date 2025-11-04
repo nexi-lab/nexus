@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -1009,7 +1009,16 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return {"is_directory": self.nexus_fs.is_directory(params.path, context=context)}
 
         elif method == "get_available_namespaces":
-            return {"namespaces": self.nexus_fs.get_available_namespaces()}
+            import time
+
+            start = time.time()
+            logger.warning("[PERF] get_available_namespaces: START")
+            namespaces = self.nexus_fs.get_available_namespaces()
+            elapsed = time.time() - start
+            logger.warning(
+                f"[PERF] get_available_namespaces: DONE in {elapsed:.3f}s, returned {len(namespaces)} namespaces: {namespaces}"
+            )
+            return {"namespaces": namespaces}
 
         elif method == "get_metadata":
             # Get file metadata
@@ -1406,7 +1415,8 @@ class NexusRPCServer:
         self._exposed_methods = self._discover_exposed_methods()
 
         # Create HTTP server
-        self.server = HTTPServer((host, port), RPCRequestHandler)
+        # Use ThreadingHTTPServer to handle concurrent requests (fixes FUSE deadlock issue #391)
+        self.server = ThreadingHTTPServer((host, port), RPCRequestHandler)
 
         # Configure handler
         RPCRequestHandler.nexus_fs = nexus_fs

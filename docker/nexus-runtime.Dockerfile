@@ -1,0 +1,82 @@
+# Nexus Runtime Docker Image
+#
+# A pre-configured Docker image for Nexus sandboxes with:
+# - Python 3.11
+# - Node.js 20
+# - Nexus CLI (for FUSE mounting)
+# - Non-root user with sudo access
+# - FUSE support for mounting Nexus filesystem
+#
+# Build:
+#   docker build -f docker/nexus-runtime.Dockerfile -t nexus/runtime:latest .
+#
+# Usage:
+#   Used automatically by DockerSandboxProvider
+#   Or manually: docker run -it --cap-add SYS_ADMIN nexus/runtime:latest
+
+FROM python:3.11-slim
+
+# Metadata
+ARG NEXUS_VERSION=latest
+ARG BUILD_TIME
+LABEL org.nexus.version="${NEXUS_VERSION}"
+LABEL org.nexus.build-time="${BUILD_TIME}"
+LABEL org.nexus.description="Nexus Runtime - Code execution sandbox with FUSE support"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    # FUSE for filesystem mounting (both v2 and v3 for compatibility)
+    fuse3 \
+    libfuse2 \
+    # Utilities
+    curl \
+    git \
+    sudo \
+    # Build tools (for pip packages with C extensions)
+    build-essential \
+    # Node.js setup
+    ca-certificates \
+    gnupg \
+    # Cleanup in same layer to reduce image size
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20.x
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user with sudo access (UID 1000 for consistency)
+# Password-less sudo is needed for FUSE mounting
+RUN useradd -m -u 1000 -s /bin/bash nexus && \
+    echo "nexus ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Install Nexus CLI with FUSE support (latest from PyPI)
+# This allows the sandbox to mount Nexus filesystems via FUSE
+RUN pip install --no-cache-dir 'nexus-ai-fs[fuse]'
+
+# Create common directories
+RUN mkdir -p /home/nexus/workspace \
+    /home/nexus/.cache \
+    /mnt/nexus \
+    && chown -R nexus:nexus /home/nexus /mnt/nexus
+
+# Switch to non-root user
+USER nexus
+WORKDIR /home/nexus/workspace
+
+# Set up Python path for user packages
+ENV PATH="/home/nexus/.local/bin:${PATH}"
+
+# Verify installations
+RUN python --version && \
+    node --version && \
+    npm --version && \
+    nexus --version
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)"
+
+# Default command - sleep infinity allows container to stay running
+# The DockerSandboxProvider will execute commands via docker exec
+CMD ["sleep", "infinity"]

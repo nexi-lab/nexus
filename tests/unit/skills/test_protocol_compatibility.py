@@ -280,7 +280,9 @@ def test_protocol_runtime_checkable() -> None:
             def append(self, path, content, context=None, if_match=None, force=False):
                 return {}
 
-            def sandbox_create(self, name, ttl_minutes=10, template_id=None, context=None):
+            def sandbox_create(
+                self, name, ttl_minutes=10, provider="e2b", template_id=None, context=None
+            ):
                 return {}
 
             def sandbox_run(self, sandbox_id, language, code, timeout=30, context=None):

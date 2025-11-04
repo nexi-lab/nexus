@@ -34,8 +34,15 @@ def sandbox() -> None:
     help="Idle timeout in minutes (default: 10)",
 )
 @click.option(
+    "--provider",
+    "-p",
+    default="e2b",
+    type=click.Choice(["e2b", "docker"], case_sensitive=False),
+    help="Sandbox provider (default: e2b)",
+)
+@click.option(
     "--template",
-    help="Provider template ID (e.g., E2B template)",
+    help="Provider template ID (e.g., E2B template or Docker image)",
 )
 @click.option(
     "--json",
@@ -52,6 +59,7 @@ def sandbox() -> None:
 def create_sandbox(
     name: str,
     ttl: int,
+    provider: str,
     template: str | None,
     json_output: bool,
     data_dir: str | None,  # noqa: ARG001
@@ -61,9 +69,10 @@ def create_sandbox(
     \b
     Examples:
         nexus sandbox create my-sandbox
-        nexus sandbox create data-analysis --ttl 30
+        nexus sandbox create data-analysis --ttl 30 --provider docker
         nexus sandbox create ml-training --template custom-gpu-template
         nexus sandbox create test-sandbox --json
+        nexus sandbox create docker-box --provider docker --template python:3.11-slim
     """
     try:
         nx: NexusFilesystem = get_default_filesystem()
@@ -71,6 +80,7 @@ def create_sandbox(
         result = nx.sandbox_create(
             name=name,
             ttl_minutes=ttl,
+            provider=provider,
             template_id=template,
         )
 
@@ -440,7 +450,7 @@ def sandbox_status(
     "--provider",
     "-p",
     default="e2b",
-    type=click.Choice(["e2b"], case_sensitive=False),
+    type=click.Choice(["e2b", "docker"], case_sensitive=False),
     help="Sandbox provider (default: e2b)",
 )
 @click.option(
@@ -539,7 +549,7 @@ def connect_sandbox(
     "--provider",
     "-p",
     default="e2b",
-    type=click.Choice(["e2b"], case_sensitive=False),
+    type=click.Choice(["e2b", "docker"], case_sensitive=False),
     help="Sandbox provider (default: e2b)",
 )
 @click.option(

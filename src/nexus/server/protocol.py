@@ -828,6 +828,7 @@ class SandboxCreateParams:
 
     name: str
     ttl_minutes: int = 10
+    provider: str = "e2b"
     template_id: str | None = None
     context: dict | None = None
 

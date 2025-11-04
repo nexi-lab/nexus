@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import contextlib
 import hashlib
@@ -1445,6 +1446,16 @@ class NexusFS(
             # Returns: ["archives", "external", "shared", "workspace"]
             # (excludes "system" if not admin)
         """
+        import logging
+        import time
+
+        logger = logging.getLogger(__name__)
+
+        start = time.time()
+        logger.warning(
+            f"[PERF-IMPL] get_available_namespaces: START, is_admin={self.is_admin}, namespace_count={len(self.router._namespaces)}"
+        )
+
         namespaces = []
 
         for name, config in self.router._namespaces.items():
@@ -1454,7 +1465,12 @@ class NexusFS(
             if not config.admin_only or self.is_admin:
                 namespaces.append(name)
 
-        return sorted(namespaces)
+        result = sorted(namespaces)
+        elapsed = time.time() - start
+        logger.warning(
+            f"[PERF-IMPL] get_available_namespaces: DONE in {elapsed:.3f}s, returned {len(result)} namespaces: {result}"
+        )
+        return result
 
     def _get_backend_directory_entries(
         self, path: str, context: OperationContext | None = None
@@ -3285,11 +3301,26 @@ class NexusFS(
                 e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
             )
 
+    @staticmethod
+    def _get_event_loop() -> asyncio.AbstractEventLoop:
+        """Get or create event loop (thread-safe for ThreadingHTTPServer).
+
+        This handles the case where async code needs to run in a thread that
+        doesn't have an event loop (e.g., worker threads in ThreadingHTTPServer).
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop
+
     @rpc_expose(description="Create a new sandbox")
     def sandbox_create(
         self,
         name: str,
         ttl_minutes: int = 10,
+        provider: str = "e2b",
         template_id: str | None = None,
         context: dict | None = None,
     ) -> dict:
@@ -3298,6 +3329,7 @@ class NexusFS(
         Args:
             name: User-friendly sandbox name (unique per user)
             ttl_minutes: Idle timeout in minutes (default: 10)
+            provider: Sandbox provider ("e2b", "docker", etc.)
             template_id: Provider template ID (optional)
             context: Operation context with user/agent/tenant info
 
@@ -3311,16 +3343,16 @@ class NexusFS(
         assert self._sandbox_manager is not None
 
         # Create sandbox
-        import asyncio
 
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(
+        loop = self._get_event_loop()
+        result: dict[Any, Any] = loop.run_until_complete(
             self._sandbox_manager.create_sandbox(
                 name=name,
                 user_id=ctx.user or "system",
                 tenant_id=ctx.tenant_id or self._default_context.tenant_id or "default",
                 agent_id=ctx.agent_id,
                 ttl_minutes=ttl_minutes,
+                provider=provider,
                 template_id=template_id,
             )
         )
@@ -3351,10 +3383,8 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        import asyncio
-
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(
+        loop = self._get_event_loop()
+        result: dict[Any, Any] = loop.run_until_complete(
             self._sandbox_manager.run_code(sandbox_id, language, code, timeout)
         )
         return result
@@ -3374,10 +3404,10 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        import asyncio
-
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(self._sandbox_manager.pause_sandbox(sandbox_id))
+        loop = self._get_event_loop()
+        result: dict[Any, Any] = loop.run_until_complete(
+            self._sandbox_manager.pause_sandbox(sandbox_id)
+        )
         return result
 
     @rpc_expose(description="Resume paused sandbox")
@@ -3395,10 +3425,10 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        import asyncio
-
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(self._sandbox_manager.resume_sandbox(sandbox_id))
+        loop = self._get_event_loop()
+        result: dict[Any, Any] = loop.run_until_complete(
+            self._sandbox_manager.resume_sandbox(sandbox_id)
+        )
         return result
 
     @rpc_expose(description="Stop and destroy sandbox")
@@ -3416,10 +3446,10 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        import asyncio
-
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(self._sandbox_manager.stop_sandbox(sandbox_id))
+        loop = self._get_event_loop()
+        result: dict[Any, Any] = loop.run_until_complete(
+            self._sandbox_manager.stop_sandbox(sandbox_id)
+        )
         return result
 
     @rpc_expose(description="List sandboxes")
@@ -3438,9 +3468,7 @@ class NexusFS(
 
         ctx = self._parse_context(context)
 
-        import asyncio
-
-        loop = asyncio.get_event_loop()
+        loop = self._get_event_loop()
         sandboxes = loop.run_until_complete(
             self._sandbox_manager.list_sandboxes(
                 user_id=ctx.user,
@@ -3465,10 +3493,10 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        import asyncio
-
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(self._sandbox_manager.get_sandbox_status(sandbox_id))
+        loop = self._get_event_loop()
+        result: dict[Any, Any] = loop.run_until_complete(
+            self._sandbox_manager.get_sandbox_status(sandbox_id)
+        )
         return result
 
     @rpc_expose(description="Connect to user-managed sandbox")
@@ -3525,10 +3553,8 @@ class NexusFS(
                 "Nexus API key required for mounting. Pass nexus_api_key or provide in context."
             )
 
-        import asyncio
-
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(
+        loop = self._get_event_loop()
+        result: dict[Any, Any] = loop.run_until_complete(
             self._sandbox_manager.connect_sandbox(
                 sandbox_id=sandbox_id,
                 provider=provider,
@@ -3567,10 +3593,8 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        import asyncio
-
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(
+        loop = self._get_event_loop()
+        result: dict[Any, Any] = loop.run_until_complete(
             self._sandbox_manager.disconnect_sandbox(
                 sandbox_id=sandbox_id,
                 provider=provider,

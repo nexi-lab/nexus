@@ -130,11 +130,32 @@ class NexusFSSearchMixin:
 
         # Filter by read permission (v0.3.0)
         if self._enforce_permissions:
+            import logging
+            import time
+
+            logger = logging.getLogger(__name__)
+
+            perm_start = time.time()
             ctx = context or self._default_context
             result_paths = [meta.path for meta in results]
+
+            logger.warning(
+                f"[PERF-LIST] Starting permission filter for {len(result_paths)} paths, path={path}, recursive={recursive}"
+            )
+
+            filter_start = time.time()
             allowed_paths = self._permission_enforcer.filter_list(result_paths, ctx)
+            filter_elapsed = time.time() - filter_start
+
+            logger.warning(
+                f"[PERF-LIST] Permission filter completed in {filter_elapsed:.3f}s, allowed {len(allowed_paths)}/{len(result_paths)} paths"
+            )
+
             # Filter results to only include allowed paths
             results = [meta for meta in results if meta.path in allowed_paths]
+
+            perm_total = time.time() - perm_start
+            logger.warning(f"[PERF-LIST] Total permission filtering: {perm_total:.3f}s")
 
         # Sort by path name
         results.sort(key=lambda m: m.path)

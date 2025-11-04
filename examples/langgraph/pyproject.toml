@@ -8,7 +8,7 @@ dependencies = [
     "langchain-core>=0.3.0",
     "langchain-anthropic>=0.2.0",
     "langchain-openai>=0.2.0",
-    "nexus-ai-fs>=0.3.0",
+    "nexus-ai-fs>=0.5.3",
     "langgraph-cli[inmem]>=0.4.4",
     "e2b-code-interpreter>=1.0.0",
 ]

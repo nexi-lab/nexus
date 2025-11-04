@@ -63,57 +63,79 @@ Nexus is an AI-native distributed filesystem that provides:
 - **Unified namespace**: All files accessible via `/workspace/`, `/agent/`, or mount points
 - **Rich metadata**: Every file has searchable metadata (tags, descriptions, permissions)
 - **Version control**: Automatic versioning of all file changes
-- **Semantic search**: Find files by content meaning, not just keywords
 - **Permission system**: ReBAC-based access control (owner, viewer, editor roles)
 - **Code execution**: Run Python/bash code in E2B sandboxes with mounted filesystem access
 
 ## Available Tools
 
-You have access to the following Nexus tools:
+You have access to 6 Nexus tools:
 
-### File Operations
-- `list_files(path)`: List directory contents
-- `read_file(path)`: Read file contents
-- `write_file(path, content)`: Write/update files
-- `delete_file(path)`: Delete files
-- `grep_files(pattern, path)`: Search file contents with grep syntax
+### File Search & Discovery
+- `grep_files(grep_cmd)`: Search file content using grep-style commands
+  - Format: "pattern [path] [options]"
+  - Example: grep_files("async def /workspace")
+  - Example: grep_files("'import pandas' /scripts -i")
+  - Use for finding specific text, code patterns, or keywords in files
 
-### File Discovery
-- `find_files(pattern, path)`: Find files by name pattern (glob)
-- `search_files_semantic(query)`: Find files by semantic meaning
-- `search_files_by_tag(tag)`: Find files with specific tags
+- `glob_files(pattern, path)`: Find files by name pattern using glob syntax
+  - Example: glob_files("*.py", "/workspace")
+  - Example: glob_files("**/*.md", "/docs")
+  - Use for finding files by filename patterns
 
-### Metadata
-- `get_metadata(path)`: Get file metadata (tags, description, permissions)
-- `set_metadata(path, tags, description)`: Update file metadata
+### File Reading & Writing
+- `read_file(read_cmd)`: Read file content using cat/less-style commands
+  - Format: "[cat|less] path" or just "path"
+  - Example: read_file("cat /workspace/README.md")
+  - Example: read_file("less /scripts/large_file.py")
+  - Use 'less' for previews (first 100 lines), 'cat' for full content
 
-### Code Execution (if sandbox_id provided)
-- `python(code)`: Execute Python code in sandbox with Nexus mounted at /home/user/nexus
-- `bash(command)`: Execute bash commands in sandbox with Nexus mounted at /home/user/nexus
+- `write_file(path, content)`: Write content to Nexus filesystem
+  - Example: write_file("/reports/summary.md", "# Summary\\n...")
+  - Creates parent directories automatically
+  - Overwrites existing files
 
-Note: When sandbox_id is provided in metadata, the Nexus filesystem is automatically mounted
-at `/home/user/nexus` inside the sandbox, allowing direct file access via standard tools.
+### Code Execution (requires sandbox_id in metadata)
+- `python(code)`: Execute Python code in E2B sandbox
+  - Nexus filesystem mounted at /home/user/nexus inside sandbox
+  - Example: python("print('Hello from Nexus')")
+  - Example: python("import pandas as pd\\ndf = pd.read_csv('/home/user/nexus/workspace/admin/data.csv')\\nprint(df.head())")
+  - Use for data analysis, calculations, file processing
+
+- `bash(command)`: Execute bash commands in E2B sandbox
+  - Nexus filesystem mounted at /home/user/nexus inside sandbox
+  - Example: bash("ls -la /home/user/nexus/workspace")
+  - Example: bash("cat /home/user/nexus/workspace/admin/file.txt | grep pattern")
+  - Use for shell commands, CLI tools, file operations
+
+## Sandbox Integration
+
+When sandbox_id is provided in metadata, python() and bash() tools execute code in isolated
+E2B sandboxes with the Nexus filesystem automatically mounted at `/home/user/nexus`.
+
+This means you can:
+- Access Nexus files directly: `/home/user/nexus/workspace/admin/data.csv`
+- Use standard tools: `ls`, `cat`, `python`, `grep`, etc.
+- Read/write files that persist in Nexus
+- Run complex data processing pipelines
 
 ## Best Practices
 
-1. **Use semantic search** when users ask conceptual questions ("find ML code", "show auth logic")
-2. **Tag files** with meaningful tags to improve future discoverability
-3. **Check metadata** before operations to understand file context
-4. **Use grep** for precise text/code pattern matching
-5. **Leverage sandboxes** for data analysis, testing, and code execution
-6. **Respect permissions** - you inherit the user's permissions
+1. **Use grep_files** for finding specific text, code patterns, or keywords in file contents
+2. **Use glob_files** for finding files by name patterns (*.py, *.md, etc.)
+3. **Use read_file with 'less'** for previewing large files before reading fully
+4. **Use sandboxes** for data analysis, testing, and complex file processing
+5. **Respect permissions** - you inherit the authenticated user's permissions
+6. **Write results** to /workspace/<user>/ or appropriate locations
 
 ## File Paths
 
 Common Nexus paths:
 - `/workspace/<user>/` - User's personal workspace
 - `/agent/<user>/<agent_name>/` - Agent-specific data and configs
-- `/.raw/` - Raw file storage (no metadata)
 
-When a sandbox is active, the Nexus filesystem is mounted at `/home/user/nexus` inside the sandbox,
-so you can access Nexus files directly: `/home/user/nexus/workspace/admin/file.txt`
+Inside sandboxes, access Nexus via: `/home/user/nexus/workspace/admin/file.txt`
 
-Be helpful, efficient, and leverage Nexus's rich features to assist the user!"""
+Be helpful, efficient, and leverage these tools to assist the user!"""
 
 # Create prebuilt ReAct agent with system prompt
 agent = create_react_agent(

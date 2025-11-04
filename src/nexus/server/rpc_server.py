@@ -233,9 +233,10 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
     def _run_async_safe(self, coro: Any) -> Any:
         """Run async coroutine safely in threaded HTTP server context.
 
-        This handles the case where we're in a thread without an event loop,
-        or where an event loop might already be running (which causes
-        "This event loop is already running" errors).
+        ThreadingHTTPServer handles requests in separate threads, so we can't
+        use a shared event loop (self.event_loop) as it might be running in
+        another thread. Instead, we always use ThreadPoolExecutor to run the
+        coroutine in a fresh event loop.
 
         Args:
             coro: Coroutine to run
@@ -243,21 +244,13 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         Returns:
             Result of the coroutine
         """
-        try:
-            # Check if we're already in a running event loop
-            asyncio.get_running_loop()
-            # We're in a running loop - use thread pool to avoid "loop is already running" error
-            import concurrent.futures
+        import concurrent.futures
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(asyncio.run, coro)
-                return future.result()
-        except RuntimeError:
-            # No running loop - safe to use run_until_complete
-            if self.event_loop is None:
-                logger.error("Event loop not initialized")
-                return None
-            return self.event_loop.run_until_complete(coro)
+        # Always use thread pool with fresh event loop to avoid conflicts
+        # with the shared self.event_loop that might be running elsewhere
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result()
 
     def _validate_auth(self) -> bool:
         """Validate API key authentication.

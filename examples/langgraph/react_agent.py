@@ -115,7 +115,7 @@ Be helpful, efficient, and leverage these tools to assist the user!"""
 agent = create_react_agent(
     model=llm,
     tools=tools,
-    state_modifier=SYSTEM_PROMPT,
+    prompt=SYSTEM_PROMPT,
 )
 
 

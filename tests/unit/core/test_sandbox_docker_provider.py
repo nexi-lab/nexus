@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import sys
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+
+# Mock docker package if not installed
+if "docker" not in sys.modules:
+    sys.modules["docker"] = MagicMock()
+    sys.modules["docker.errors"] = MagicMock()
+    sys.modules["docker"].errors = sys.modules["docker.errors"]
 
 from nexus.core.sandbox_docker_provider import DockerSandboxProvider
 from nexus.core.sandbox_provider import (

@@ -76,9 +76,6 @@ class E2BSandboxProvider(SandboxProvider):
         self.team_id = team_id
         self.default_template = default_template
 
-        # Cache for active sandboxes
-        self._sandboxes: dict[str, AsyncSandbox] = {}
-
     async def create(
         self,
         template_id: str | None = None,
@@ -110,9 +107,8 @@ class E2BSandboxProvider(SandboxProvider):
                 metadata=metadata or {},
             )
 
-            # Cache sandbox instance
+            # Don't cache - avoid event loop issues (sandbox will reconnect when needed)
             sandbox_id = str(sandbox.sandbox_id)
-            self._sandboxes[sandbox_id] = sandbox
 
             logger.info(f"Created E2B sandbox: {sandbox_id} (template={template})")
             return sandbox_id
@@ -237,10 +233,12 @@ class E2BSandboxProvider(SandboxProvider):
         Raises:
             SandboxNotFoundError: If sandbox doesn't exist
         """
-        sandbox = self._sandboxes.pop(sandbox_id, None)
-        if not sandbox:
-            logger.warning(f"Sandbox {sandbox_id} not in cache, cannot destroy")
-            raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found")
+        # Reconnect to sandbox before destroying (no caching to avoid event loop issues)
+        try:
+            sandbox = await AsyncSandbox.connect(sandbox_id, api_key=self.api_key)
+        except Exception as e:
+            logger.error(f"Failed to connect to sandbox {sandbox_id} for destruction: {e}")
+            raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found") from e
 
         try:
             await sandbox.kill()
@@ -366,26 +364,59 @@ class E2BSandboxProvider(SandboxProvider):
                 "files_visible": 0,
             }
 
-        # Wait for mount to initialize (FUSE needs time to mount)
-        await asyncio.sleep(3)
+        # Wait for mount to initialize (FUSE needs time to mount and authenticate)
+        # Initial connection may take longer due to remote API calls
+        logger.info("Waiting for FUSE mount to initialize...")
+        await asyncio.sleep(5)
 
-        # Verify mount by listing directory
-        ls_result = await sandbox.commands.run(f"sudo ls -la {mount_path}")
+        # Verify mount with lightweight stat check (avoids timeout from full directory listing)
+        # The first stat may timeout as FUSE initializes, so we retry with exponential backoff
+        max_retries = 3
+        base_delay = 5  # Start with 5 seconds
+        stat_result = None
 
-        if ls_result.exit_code == 0 and ls_result.stdout:
-            # Count files (subtract 2 for . and .., and 1 for header line)
-            file_count = max(0, len(ls_result.stdout.strip().split("\n")) - 3)
-            logger.info(
-                f"Successfully mounted Nexus at {mount_path} with {file_count} files visible"
+        for attempt in range(max_retries):
+            logger.info(f"Verifying mount (attempt {attempt + 1}/{max_retries})...")
+            # Use stat instead of ls - just checks mount accessibility without listing all files
+            stat_cmd = f"timeout 10 stat {mount_path}"
+            stat_result = await sandbox.commands.run(stat_cmd, timeout=15)
+
+            if stat_result.exit_code == 0:
+                # Success! Mount is accessible
+                break
+
+            if attempt < max_retries - 1:
+                # Exponential backoff: 5s, 10s, 20s
+                retry_delay = base_delay * (2**attempt)
+                logger.warning(
+                    f"Mount verification attempt {attempt + 1} failed, retrying in {retry_delay}s..."
+                )
+                await asyncio.sleep(retry_delay)
+        else:
+            # All retries failed, check logs for details
+            log_result = await sandbox.commands.run("cat /tmp/nexus-mount.log")
+            error_msg = (
+                f"Mount verification failed after {max_retries} attempts. Log: {log_result.stdout}"
             )
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "mount_path": mount_path,
+                "message": error_msg,
+                "files_visible": 0,
+            }
+
+        # Mount verified successfully
+        if stat_result and stat_result.exit_code == 0:
+            logger.info(f"Successfully mounted Nexus at {mount_path} (verified with stat)")
             return {
                 "success": True,
                 "mount_path": mount_path,
                 "message": f"Nexus mounted successfully at {mount_path}",
-                "files_visible": file_count,
+                "files_visible": -1,  # Not counted with stat check
             }
         else:
-            error_msg = f"Mount verification failed: {ls_result.stderr}"
+            error_msg = "Mount verification failed: stat check unsuccessful"
             logger.error(error_msg)
             return {
                 "success": False,
@@ -395,25 +426,22 @@ class E2BSandboxProvider(SandboxProvider):
             }
 
     async def _get_sandbox(self, sandbox_id: str) -> AsyncSandbox:
-        """Get sandbox from cache or reconnect.
+        """Get sandbox by reconnecting (no caching to avoid event loop issues).
 
         Args:
             sandbox_id: Sandbox ID
 
         Returns:
-            Sandbox instance
+            Fresh sandbox instance
 
         Raises:
             SandboxNotFoundError: If sandbox doesn't exist
         """
-        # Try cache first
-        if sandbox_id in self._sandboxes:
-            return self._sandboxes[sandbox_id]
-
-        # Try to connect to existing sandbox
+        # Always reconnect to avoid event loop issues
+        # DO NOT cache - cached sandbox objects have asyncio objects bound to specific event loops
+        # Each request may run in a different event loop, so we must reconnect every time
         try:
             sandbox = await AsyncSandbox.connect(sandbox_id, api_key=self.api_key)
-            self._sandboxes[sandbox_id] = sandbox
             return sandbox
         except Exception as e:
             logger.error(f"Failed to connect to sandbox {sandbox_id}: {e}")

@@ -230,6 +230,35 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             self.send_response(500)
             self.end_headers()
 
+    def _run_async_safe(self, coro: Any) -> Any:
+        """Run async coroutine safely in threaded HTTP server context.
+
+        This handles the case where we're in a thread without an event loop,
+        or where an event loop might already be running (which causes
+        "This event loop is already running" errors).
+
+        Args:
+            coro: Coroutine to run
+
+        Returns:
+            Result of the coroutine
+        """
+        try:
+            # Check if we're already in a running event loop
+            asyncio.get_running_loop()
+            # We're in a running loop - use thread pool to avoid "loop is already running" error
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(asyncio.run, coro)
+                return future.result()
+        except RuntimeError:
+            # No running loop - safe to use run_until_complete
+            if self.event_loop is None:
+                logger.error("Event loop not initialized")
+                return None
+            return self.event_loop.run_until_complete(coro)
+
     def _validate_auth(self) -> bool:
         """Validate API key authentication.
 
@@ -258,7 +287,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             if self.event_loop is None:
                 logger.error("Event loop not initialized for auth provider")
                 return False
-            result = self.event_loop.run_until_complete(self.auth_provider.authenticate(token))
+            result = self._run_async_safe(self.auth_provider.authenticate(token))
+            if result is None:
+                return False
             return cast(bool, result.authenticated)
 
         # Fall back to static API key (backward compatibility)
@@ -291,7 +322,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     logger.error("Event loop not initialized on request handler")
                     return None
 
-                result = self.event_loop.run_until_complete(self.auth_provider.authenticate(token))
+                result = self._run_async_safe(self.auth_provider.authenticate(token))
+                if result is None:
+                    return None
                 if result.authenticated and result.subject_type and result.subject_id:
                     # v0.5.0: Check for X-Agent-ID header
                     agent_id = self.headers.get("X-Agent-ID")

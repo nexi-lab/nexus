@@ -15,11 +15,12 @@ Complete reference for all Nexus RPC server APIs (v0.5.1+)
 8. [Workspace Management](#workspace-management)
 9. [Memory API](#memory-api)
 10. [Agent Management](#agent-management)
-11. [Admin API Management](#admin-api-management)
-12. [ReBAC Permissions](#rebac-permissions)
-13. [Versioning Operations](#versioning-operations)
-14. [Namespace Management](#namespace-management)
-15. [Complete Method Reference](#complete-method-reference)
+11. [Sandbox Management](#sandbox-management)
+12. [Admin API Management](#admin-api-management)
+13. [ReBAC Permissions](#rebac-permissions)
+14. [Versioning Operations](#versioning-operations)
+15. [Namespace Management](#namespace-management)
+16. [Complete Method Reference](#complete-method-reference)
 
 ---
 
@@ -1542,6 +1543,404 @@ Delete an agent.
 
 ---
 
+## Sandbox Management
+
+Code execution sandbox management for running code in isolated environments (v0.5.0+).
+
+### sandbox_create
+
+Create a new code execution sandbox.
+
+**Endpoint**: `POST /api/nfs/sandbox_create`
+
+**Parameters:**
+- `name` (string, required): User-friendly sandbox name (unique per user)
+- `ttl_minutes` (int, optional): Idle timeout in minutes (default: 10)
+- `provider` (string, optional): Sandbox provider ("e2b", "docker", etc.) (default: "e2b")
+- `template_id` (string, optional): Provider template ID
+- `context` (dict, optional): Operation context
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "sandbox_create",
+  "params": {
+    "name": "data-analysis",
+    "ttl_minutes": 30,
+    "provider": "e2b",
+    "template_id": "python-base"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "sandbox_id": "sbx-abc123",
+    "name": "data-analysis",
+    "status": "running",
+    "provider": "e2b",
+    "created_at": "2025-01-15T10:00:00Z",
+    "expires_at": "2025-01-15T10:30:00Z"
+  }
+}
+```
+
+---
+
+### sandbox_run
+
+Run code in a sandbox.
+
+**Endpoint**: `POST /api/nfs/sandbox_run`
+
+**Parameters:**
+- `sandbox_id` (string, required): Sandbox ID
+- `language` (string, required): Programming language ("python", "javascript", "bash")
+- `code` (string, required): Code to execute
+- `timeout` (int, optional): Execution timeout in seconds (default: 30)
+- `context` (dict, optional): Operation context
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "sandbox_run",
+  "params": {
+    "sandbox_id": "sbx-abc123",
+    "language": "python",
+    "code": "print('Hello from sandbox!')\nresult = 2 + 2\nprint(f'Result: {result}')",
+    "timeout": 30
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "stdout": "Hello from sandbox!\nResult: 4\n",
+    "stderr": "",
+    "exit_code": 0,
+    "execution_time": 0.123
+  }
+}
+```
+
+---
+
+### sandbox_pause
+
+Pause a sandbox to save costs.
+
+**Endpoint**: `POST /api/nfs/sandbox_pause`
+
+**Parameters:**
+- `sandbox_id` (string, required): Sandbox ID
+- `context` (dict, optional): Operation context
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "sandbox_pause",
+  "params": {
+    "sandbox_id": "sbx-abc123"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+    "sandbox_id": "sbx-abc123",
+    "status": "paused",
+    "paused_at": "2025-01-15T10:15:00Z"
+  }
+}
+```
+
+---
+
+### sandbox_resume
+
+Resume a paused sandbox.
+
+**Endpoint**: `POST /api/nfs/sandbox_resume`
+
+**Parameters:**
+- `sandbox_id` (string, required): Sandbox ID
+- `context` (dict, optional): Operation context
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "sandbox_resume",
+  "params": {
+    "sandbox_id": "sbx-abc123"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "result": {
+    "sandbox_id": "sbx-abc123",
+    "status": "running",
+    "resumed_at": "2025-01-15T10:20:00Z"
+  }
+}
+```
+
+---
+
+### sandbox_stop
+
+Stop and destroy a sandbox.
+
+**Endpoint**: `POST /api/nfs/sandbox_stop`
+
+**Parameters:**
+- `sandbox_id` (string, required): Sandbox ID
+- `context` (dict, optional): Operation context
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "method": "sandbox_stop",
+  "params": {
+    "sandbox_id": "sbx-abc123"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "result": {
+    "sandbox_id": "sbx-abc123",
+    "status": "stopped",
+    "stopped_at": "2025-01-15T10:25:00Z"
+  }
+}
+```
+
+---
+
+### sandbox_list
+
+List user's sandboxes.
+
+**Endpoint**: `POST /api/nfs/sandbox_list`
+
+**Parameters:**
+- `context` (dict, optional): Operation context
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "sandbox_list",
+  "params": {}
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "result": {
+    "sandboxes": [
+      {
+        "sandbox_id": "sbx-abc123",
+        "name": "data-analysis",
+        "status": "running",
+        "provider": "e2b",
+        "created_at": "2025-01-15T10:00:00Z"
+      },
+      {
+        "sandbox_id": "sbx-def456",
+        "name": "test-env",
+        "status": "paused",
+        "provider": "docker",
+        "created_at": "2025-01-15T09:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### sandbox_status
+
+Get sandbox status and metadata.
+
+**Endpoint**: `POST /api/nfs/sandbox_status`
+
+**Parameters:**
+- `sandbox_id` (string, required): Sandbox ID
+- `context` (dict, optional): Operation context
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "sandbox_status",
+  "params": {
+    "sandbox_id": "sbx-abc123"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "result": {
+    "sandbox_id": "sbx-abc123",
+    "name": "data-analysis",
+    "status": "running",
+    "provider": "e2b",
+    "created_at": "2025-01-15T10:00:00Z",
+    "last_activity": "2025-01-15T10:25:00Z",
+    "expires_at": "2025-01-15T10:30:00Z"
+  }
+}
+```
+
+---
+
+### sandbox_connect
+
+Connect and mount Nexus to a sandbox (Nexus-managed or user-managed).
+
+**Endpoint**: `POST /api/nfs/sandbox_connect`
+
+**Parameters:**
+- `sandbox_id` (string, required): Sandbox ID (Nexus-managed or external)
+- `provider` (string, optional): Sandbox provider ("e2b", etc.) (default: "e2b")
+- `sandbox_api_key` (string, optional): Provider API key (only for user-managed sandboxes)
+- `mount_path` (string, optional): Path where Nexus will be mounted (default: "/mnt/nexus")
+- `nexus_url` (string, optional): Nexus server URL (auto-detected if not provided)
+- `nexus_api_key` (string, optional): Nexus API key (from context if not provided)
+- `context` (dict, optional): Operation context
+
+**Example Request (Nexus-managed sandbox):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "sandbox_connect",
+  "params": {
+    "sandbox_id": "sbx-abc123",
+    "mount_path": "/mnt/nexus",
+    "nexus_url": "https://nexus.example.com",
+    "nexus_api_key": "nxk_live_..."
+  }
+}
+```
+
+**Example Request (User-managed sandbox):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "sandbox_connect",
+  "params": {
+    "sandbox_id": "external-sandbox-id",
+    "provider": "e2b",
+    "sandbox_api_key": "e2b_api_key_...",
+    "mount_path": "/mnt/nexus",
+    "nexus_url": "https://nexus.example.com",
+    "nexus_api_key": "nxk_live_..."
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "result": {
+    "sandbox_id": "sbx-abc123",
+    "provider": "e2b",
+    "mount_path": "/mnt/nexus",
+    "mounted_at": "2025-01-15T10:30:00Z",
+    "mount_status": "success"
+  }
+}
+```
+
+---
+
+### sandbox_disconnect
+
+Disconnect and unmount Nexus from a user-managed sandbox.
+
+**Endpoint**: `POST /api/nfs/sandbox_disconnect`
+
+**Parameters:**
+- `sandbox_id` (string, required): External sandbox ID
+- `provider` (string, optional): Sandbox provider ("e2b", etc.) (default: "e2b")
+- `sandbox_api_key` (string, optional): Provider API key
+- `context` (dict, optional): Operation context
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "method": "sandbox_disconnect",
+  "params": {
+    "sandbox_id": "external-sandbox-id",
+    "provider": "e2b",
+    "sandbox_api_key": "e2b_api_key_..."
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "result": {
+    "sandbox_id": "external-sandbox-id",
+    "provider": "e2b",
+    "unmounted_at": "2025-01-15T10:35:00Z"
+  }
+}
+```
+
+---
+
 ## Admin API Management
 
 Admin-only APIs for managing API keys (v0.5.1). All operations require admin privileges.
@@ -2317,6 +2716,15 @@ Get all available ReBAC namespaces.
 | `list_agents` | Agent | List agents |
 | `get_agent` | Agent | Get agent info |
 | `delete_agent` | Agent | Delete agent |
+| `sandbox_create` | Sandbox | Create sandbox |
+| `sandbox_run` | Sandbox | Run code in sandbox |
+| `sandbox_pause` | Sandbox | Pause sandbox |
+| `sandbox_resume` | Sandbox | Resume sandbox |
+| `sandbox_stop` | Sandbox | Stop sandbox |
+| `sandbox_list` | Sandbox | List sandboxes |
+| `sandbox_status` | Sandbox | Get sandbox status |
+| `sandbox_connect` | Sandbox | Connect to sandbox |
+| `sandbox_disconnect` | Sandbox | Disconnect from sandbox |
 | `admin_create_key` | Admin | Create API key |
 | `admin_list_keys` | Admin | List API keys |
 | `admin_get_key` | Admin | Get API key details |
@@ -2338,7 +2746,7 @@ Get all available ReBAC namespaces.
 | `namespace_delete` | Namespace | Delete namespace |
 | `get_available_namespaces` | Namespace | Get available namespaces |
 
-**Total: 58 RPC Methods**
+**Total: 67 RPC Methods**
 
 ---
 
@@ -2440,5 +2848,5 @@ server {
 
 ---
 
-**Last Updated**: 2025-10-30
+**Last Updated**: 2025-11-03
 **Version**: 0.5.1+

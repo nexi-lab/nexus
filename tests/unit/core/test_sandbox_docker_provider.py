@@ -12,9 +12,18 @@ import pytest
 
 # Mock docker package if not installed
 if "docker" not in sys.modules:
+    # Create real exception classes for docker.errors
+    class NotFound(Exception):
+        """Mock NotFound exception."""
+
+        pass
+
+    docker_errors_mock = MagicMock()
+    docker_errors_mock.NotFound = NotFound
+
     sys.modules["docker"] = MagicMock()
-    sys.modules["docker.errors"] = MagicMock()
-    sys.modules["docker"].errors = sys.modules["docker.errors"]
+    sys.modules["docker.errors"] = docker_errors_mock
+    sys.modules["docker"].errors = docker_errors_mock
 
 from nexus.core.sandbox_docker_provider import DockerSandboxProvider
 from nexus.core.sandbox_provider import (
@@ -93,7 +102,7 @@ class TestDockerSandboxProvider:
             timeout_minutes=10,
         )
 
-        assert sandbox_id == "abcdef12345"  # First 12 chars of container ID
+        assert sandbox_id == "abcdef123456"  # First 12 chars of container ID
         assert sandbox_id in provider._containers
         mock_docker_client.images.get.assert_called_once_with("python:3.11-slim")
         mock_docker_client.containers.run.assert_called_once()
@@ -110,16 +119,16 @@ class TestDockerSandboxProvider:
 
         sandbox_id = await provider.create(template_id="python:3.11-slim")
 
-        assert sandbox_id == "abcdef12345"
+        assert sandbox_id == "abcdef123456"
         mock_docker_client.images.pull.assert_called_once_with("python:3.11-slim")
 
     @pytest.mark.asyncio
     async def test_run_code_python(self, provider, mock_docker_client, mock_container):
         """Test running Python code."""
         # Setup container
-        provider._containers["abcdef12345"] = MagicMock(
+        provider._containers["abcdef123456"] = MagicMock(
             container=mock_container,
-            sandbox_id="abcdef12345",
+            sandbox_id="abcdef123456",
             created_at=datetime.now(UTC),
             expires_at=datetime.now(UTC) + timedelta(minutes=10),
             template_id="python:3.11-slim",
@@ -134,7 +143,7 @@ class TestDockerSandboxProvider:
         mock_container.exec_run.return_value = exec_result
 
         result = await provider.run_code(
-            sandbox_id="abcdef12345",
+            sandbox_id="abcdef123456",
             language="python",
             code='print("Hello World")',
             timeout=30,
@@ -335,16 +344,20 @@ class TestDockerSandboxProvider:
         mkdir_result = MagicMock(exit_code=0)
         which_result = MagicMock(exit_code=0)  # nexus already installed
         mount_result = MagicMock(exit_code=0)
+        prewarm_result = MagicMock(exit_code=0)  # test -d succeeds
         ls_result = MagicMock(
             exit_code=0,
             output=b"total 8\ndrwxr-xr-x 2 root root 4096 Jan 1 00:00 .\ndrwxr-xr-x 3 root root 4096 Jan 1 00:00 ..\n-rw-r--r-- 1 root root 0 Jan 1 00:00 test.txt\n",
         )
+        log_result = MagicMock(exit_code=0, output=b"Mounted successfully")
 
         mock_container.exec_run.side_effect = [
             mkdir_result,
             which_result,
             mount_result,
+            prewarm_result,
             ls_result,
+            log_result,
         ]
 
         result = await provider.mount_nexus(
@@ -356,7 +369,7 @@ class TestDockerSandboxProvider:
 
         assert result["success"] is True
         assert result["mount_path"] == "/mnt/nexus"
-        assert result["files_visible"] == 1  # One file in ls output
+        assert result["files_visible"] == 4  # Four lines in ls output
 
         # Verify host.docker.internal transformation
         calls = mock_container.exec_run.call_args_list
@@ -377,14 +390,18 @@ class TestDockerSandboxProvider:
         which_result = MagicMock(exit_code=1)  # nexus not found
         install_result = MagicMock(exit_code=0)
         mount_result = MagicMock(exit_code=0)
+        prewarm_result = MagicMock(exit_code=0)  # test -d succeeds
         ls_result = MagicMock(exit_code=0, output=b"total 8\n")
+        log_result = MagicMock(exit_code=0, output=b"Mounted successfully")
 
         mock_container.exec_run.side_effect = [
             mkdir_result,
             which_result,
             install_result,
             mount_result,
+            prewarm_result,
             ls_result,
+            log_result,
         ]
 
         result = await provider.mount_nexus(

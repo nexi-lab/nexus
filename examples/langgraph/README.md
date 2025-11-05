@@ -144,9 +144,9 @@ Mount the Nexus filesystem inside the E2B sandbox for direct file access:
 
 ```python
 # Agent can mount Nexus and access files directly:
-mount_nexus("/home/user/nexus")  # Mount Nexus filesystem
-bash("ls -la /home/user/nexus")  # List Nexus files in sandbox
-python("import pandas as pd; df = pd.read_csv('/home/user/nexus/data.csv')")
+mount_nexus("/mnt/nexus")  # Mount Nexus filesystem
+bash("ls -la /mnt/nexus")  # List Nexus files in sandbox
+python("import pandas as pd; df = pd.read_csv('/mnt/nexus/data.csv')")
 ```
 
 **Features:**
@@ -156,9 +156,9 @@ python("import pandas as pd; df = pd.read_csv('/home/user/nexus/data.csv')")
 - Seamless integration between Nexus storage and E2B execution
 
 **Workflow Example:**
-1. Agent calls `mount_nexus("/home/user/nexus")` to mount the filesystem
-2. Agent uses `bash("ls /home/user/nexus")` to explore available files
-3. Agent uses `python("import pandas as pd; df = pd.read_csv('/home/user/nexus/data.csv')")` to process data
+1. Agent calls `mount_nexus("/mnt/nexus")` to mount the filesystem
+2. Agent uses `bash("ls /mnt/nexus")` to explore available files
+3. Agent uses `python("import pandas as pd; df = pd.read_csv('/mnt/nexus/data.csv')")` to process data
 4. Agent writes results back using standard Nexus tools (write_file)
 
 ### Environment Variables

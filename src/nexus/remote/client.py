@@ -3110,7 +3110,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         sandbox_id: str,
         language: str,
         code: str,
-        timeout: int = 30,
+        timeout: int = 300,
         context: dict | None = None,
     ) -> dict:
         """Run code in a sandbox.
@@ -3119,7 +3119,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             sandbox_id: Sandbox ID
             language: Programming language ("python", "javascript", "bash")
             code: Code to execute
-            timeout: Execution timeout in seconds (default: 30)
+            timeout: Execution timeout in seconds (default: 300)
             context: Operation context
 
         Returns:
@@ -3276,9 +3276,9 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             Dict with connection details (sandbox_id, provider, mount_path, mounted_at, mount_status)
 
         Example:
-            >>> # Mount in Nexus-managed sandbox
+            >>> # Mount in Nexus-managed sandbox (Docker)
             >>> sb = nx.sandbox_create("my-box")
-            >>> nx.sandbox_connect(sb['sandbox_id'], mount_path="/home/user/nexus")
+            >>> nx.sandbox_connect(sb['sandbox_id'], mount_path="/mnt/nexus")
 
             >>> # Mount in user-managed sandbox
             >>> nx.sandbox_connect(

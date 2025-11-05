@@ -6,7 +6,7 @@
 #   ./demo.sh --init                                 # Initialize (clean data, preserve credentials)
 #   ./demo.sh --init --clean-credentials             # Initialize (clean data AND credentials)
 #   ./demo.sh --start_agent                          # Start with LangGraph server
-#   ./demo.sh --start_sandbox                        # Start with E2B + ngrok (sandbox + public access)
+#   ./demo.sh --start_sandbox                        # Start with Docker sandbox (local code execution)
 #   ./demo.sh --start_agent --start_sandbox --init   # All services + init
 
 set -e  # Exit on error
@@ -18,7 +18,6 @@ set -e  # Exit on error
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NEXUS_DIR="$SCRIPT_DIR"
 FRONTEND_DIR="$SCRIPT_DIR/../nexus-frontend"
-E2B_DIR="$SCRIPT_DIR/examples/e2b"
 
 # Nexus server configuration
 export NEXUS_DATABASE_URL="${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@localhost/nexus}"
@@ -35,10 +34,9 @@ LANGGRAPH_DIR="$SCRIPT_DIR/examples/langgraph"
 
 # Feature flags
 START_AGENT=false        # LangGraph server
-START_SANDBOX=false      # E2B sandbox
+START_SANDBOX=false      # Docker sandbox
 START_NGROK=true         # Always start ngrok for backend
 NGROK_URL=""
-E2B_TEMPLATE_ID=""
 
 # Parse arguments
 INIT_MODE=""
@@ -323,61 +321,6 @@ fi
 
 echo "  ✅ ngrok ready"
 
-# Check E2B if sandbox mode
-if [ "$START_SANDBOX" = true ]; then
-    echo "  Checking E2B (sandbox mode)..."
-
-    # Check if E2B CLI is installed
-    if ! command -v e2b &> /dev/null; then
-        echo "  ⚠️  E2B CLI not found. Installing..."
-        if [ "$OS_TYPE" == "macos" ]; then
-            if command -v brew &> /dev/null; then
-                brew install e2b
-                echo "  ✅ E2B installed via Homebrew"
-            else
-                echo "  ❌ Homebrew not found. Please install E2B CLI manually:"
-                echo "    https://e2b.dev/docs"
-                exit 1
-            fi
-        else
-            echo "  ⚠️  E2B CLI not found. Installing via npm..."
-            npm i -g @e2b/cli
-            echo "  ✅ E2B installed via npm"
-        fi
-    fi
-
-    # Check if authenticated with E2B
-    echo "  Checking E2B authentication..."
-    if ! e2b auth whoami &> /dev/null; then
-        echo "  ⚠️  Not authenticated with E2B"
-        echo ""
-        echo "  Starting E2B authentication..."
-        echo "  This will open your browser for login."
-        echo ""
-        e2b auth login
-        echo ""
-        echo "  ✅ E2B authentication successful!"
-    else
-        echo "  ✅ E2B authenticated"
-    fi
-
-    # Check if e2b.toml exists, if not, run setup script
-    if [ ! -f "$E2B_DIR/e2b.toml" ]; then
-        echo "  ⚠️  E2B template not initialized. Running setup..."
-        cd "$E2B_DIR"
-        ./setup.sh --yes
-        cd "$SCRIPT_DIR"
-    fi
-
-    # Load template ID from e2b.toml
-    if [ -f "$E2B_DIR/e2b.toml" ]; then
-        E2B_TEMPLATE_ID=$(grep 'template_id' "$E2B_DIR/e2b.toml" | cut -d'"' -f2)
-        echo "  ✅ E2B template ready (ID: $E2B_TEMPLATE_ID)"
-    else
-        echo "  ⚠️  Could not load E2B template ID"
-    fi
-fi
-
 # Check Python virtual environment
 echo "  Checking Python virtual environment..."
 if [ ! -d "$NEXUS_DIR/.venv" ]; then
@@ -389,6 +332,39 @@ if [ ! -d "$NEXUS_DIR/.venv" ]; then
     cd "$SCRIPT_DIR"
 fi
 echo "  ✅ Python virtual environment ready"
+
+# Check Docker if sandbox mode
+if [ "$START_SANDBOX" = true ]; then
+    echo "  Checking Docker (sandbox mode)..."
+
+    # Check if Docker is installed
+    if ! command -v docker &> /dev/null; then
+        echo "  ❌ Docker not found. Please install Docker:"
+        echo "    https://docs.docker.com/get-docker/"
+        exit 1
+    fi
+    echo "  ✅ Docker installed ($(docker --version))"
+
+    # Check if Docker daemon is running
+    if ! docker info > /dev/null 2>&1; then
+        echo "  ❌ Docker is not running"
+        echo "    Please start Docker Desktop or Docker daemon"
+        exit 1
+    fi
+    echo "  ✅ Docker daemon is running"
+
+    # Check if docker Python SDK is installed
+    echo "  Checking Docker Python SDK..."
+    if ! "$NEXUS_DIR/.venv/bin/python" -c "import docker" 2>/dev/null; then
+        echo "  ⚠️  Docker Python SDK not found. Installing..."
+        "$NEXUS_DIR/.venv/bin/pip" install docker
+        echo "  ✅ Docker Python SDK installed"
+    else
+        echo "  ✅ Docker Python SDK ready"
+    fi
+
+    echo "  ✅ Docker sandbox ready"
+fi
 
 echo ""
 
@@ -660,26 +636,13 @@ export NGROK_PID=$NGROK_PID
 EOF
 fi
 
-# Add E2B info if sandbox mode enabled
+# Add Docker info if sandbox mode enabled
 if [ "$START_SANDBOX" = true ]; then
     cat >> "$NEXUS_DIR/.demo-env" << EOF
 
-# E2B Sandbox
+# Docker Sandbox
+export NEXUS_SANDBOX_PROVIDER="docker"
 EOF
-
-    # Add E2B template ID if available
-    if [ -n "$E2B_TEMPLATE_ID" ]; then
-        cat >> "$NEXUS_DIR/.demo-env" << EOF
-export E2B_TEMPLATE_ID="$E2B_TEMPLATE_ID"
-EOF
-    fi
-
-    # Add E2B API key if set in environment
-    if [ -n "$E2B_API_KEY" ]; then
-        cat >> "$NEXUS_DIR/.demo-env" << EOF
-export E2B_API_KEY="$E2B_API_KEY"
-EOF
-    fi
 fi
 
 # Add database info
@@ -845,14 +808,16 @@ EOF
 echo ""
 fi
 
-# 5. E2B Sandbox (if enabled)
-if [ "$START_SANDBOX" = true ] && [ -n "$E2B_TEMPLATE_ID" ]; then
+# 5. Docker Sandbox (if enabled)
+if [ "$START_SANDBOX" = true ]; then
 cat << EOF
 ┌───────────────────────────────────────────────────────────────────┐
-│ 🏖️  E2B SANDBOX                                                  │
+│ 🐳 DOCKER SANDBOX                                                │
 ├───────────────────────────────────────────────────────────────────┤
-│ Description: Cloud code execution sandboxes                     │
-│ Template:    $E2B_TEMPLATE_ID                    │
+│ Description: Local Docker-based code execution sandboxes        │
+│ Provider:    docker                                              │
+│ Runtime:     nexus/runtime:dev                                   │
+│ Features:    • Python 3.11 • Node.js 20 • FUSE mounting         │
 └───────────────────────────────────────────────────────────────────┘
 EOF
 echo ""
@@ -912,8 +877,8 @@ fi
 if [ "$START_AGENT" = true ]; then
     echo "  LangGraph docs:     open http://localhost:$LANGGRAPH_PORT/docs"
 fi
-if [ "$START_SANDBOX" = true ] && [ -n "$E2B_TEMPLATE_ID" ]; then
-    echo "  E2B Template ID:    $E2B_TEMPLATE_ID"
+if [ "$START_SANDBOX" = true ]; then
+    echo "  Docker sandbox:     docker ps (view containers)"
 fi
 echo ""
 echo "  Environment file:   source $NEXUS_DIR/.demo-env"

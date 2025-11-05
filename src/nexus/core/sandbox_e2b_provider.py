@@ -122,7 +122,7 @@ class E2BSandboxProvider(SandboxProvider):
         sandbox_id: str,
         language: str,
         code: str,
-        timeout: int = 30,
+        timeout: int = 300,
     ) -> CodeExecutionResult:
         """Run code in E2B sandbox.
 

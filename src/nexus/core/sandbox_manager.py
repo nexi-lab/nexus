@@ -87,7 +87,7 @@ class SandboxManager:
         tenant_id: str,
         agent_id: str | None = None,
         ttl_minutes: int = 10,
-        provider: str = "e2b",
+        provider: str | None = None,
         template_id: str | None = None,
     ) -> dict[str, Any]:
         """Create a new sandbox.
@@ -98,7 +98,7 @@ class SandboxManager:
             tenant_id: Tenant ID
             agent_id: Agent ID (optional)
             ttl_minutes: Idle timeout in minutes
-            provider: Provider name ("e2b", "docker", etc.)
+            provider: Provider name ("docker", "e2b", etc.). If None, selects best available.
             template_id: Template ID for provider
 
         Returns:
@@ -108,6 +108,15 @@ class SandboxManager:
             ValueError: If provider not available or name already exists
             SandboxCreationError: If sandbox creation fails
         """
+        # Auto-select provider if not specified (prefer docker -> e2b)
+        if provider is None:
+            if "docker" in self.providers:
+                provider = "docker"
+            elif "e2b" in self.providers:
+                provider = "e2b"
+            else:
+                raise ValueError("No sandbox providers available")
+
         # Check provider availability
         if provider not in self.providers:
             available = ", ".join(self.providers.keys())
@@ -166,7 +175,7 @@ class SandboxManager:
         sandbox_id: str,
         language: str,
         code: str,
-        timeout: int = 30,
+        timeout: int = 300,
     ) -> dict[str, Any]:
         """Run code in sandbox.
 

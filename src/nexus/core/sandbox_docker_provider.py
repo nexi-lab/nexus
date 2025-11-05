@@ -71,9 +71,9 @@ class DockerSandboxProvider(SandboxProvider):
     def __init__(
         self,
         docker_client: Any | None = None,  # docker.DockerClient | None
-        default_image: str = "python:3.11-slim",
+        default_image: str = "nexus/runtime:latest",
         cleanup_interval: int = 60,
-        auto_pull: bool = True,
+        auto_pull: bool = False,
         memory_limit: str = "512m",
         cpu_limit: float = 1.0,
     ):
@@ -81,9 +81,9 @@ class DockerSandboxProvider(SandboxProvider):
 
         Args:
             docker_client: Docker client (defaults to docker.from_env())
-            default_image: Default container image
+            default_image: Default container image (default: nexus/runtime:latest with sudo)
             cleanup_interval: Seconds between cleanup checks
-            auto_pull: Auto-pull missing images
+            auto_pull: Auto-pull missing images (disabled by default for custom images)
             memory_limit: Memory limit (e.g., "512m", "1g")
             cpu_limit: CPU limit in cores (e.g., 1.0 = 1 core)
         """
@@ -191,7 +191,7 @@ class DockerSandboxProvider(SandboxProvider):
         sandbox_id: str,
         language: str,
         code: str,
-        timeout: int = 30,
+        timeout: int = 300,
     ) -> CodeExecutionResult:
         """Run code in Docker sandbox.
 

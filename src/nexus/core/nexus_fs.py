@@ -3354,7 +3354,7 @@ class NexusFS(
         self,
         name: str,
         ttl_minutes: int = 10,
-        provider: str = "e2b",
+        provider: str | None = None,
         template_id: str | None = None,
         context: dict | None = None,
     ) -> dict:
@@ -3363,7 +3363,7 @@ class NexusFS(
         Args:
             name: User-friendly sandbox name (unique per user)
             ttl_minutes: Idle timeout in minutes (default: 10)
-            provider: Sandbox provider ("e2b", "docker", etc.)
+            provider: Sandbox provider ("docker", "e2b", etc.). If None, auto-selects based on environment.
             template_id: Provider template ID (optional)
             context: Operation context with user/agent/tenant info
 
@@ -3376,7 +3376,7 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        # Create sandbox
+        # Create sandbox (provider auto-selection happens in sandbox_manager)
         result: dict[Any, Any] = self._run_async(
             self._sandbox_manager.create_sandbox(
                 name=name,
@@ -3396,7 +3396,7 @@ class NexusFS(
         sandbox_id: str,
         language: str,
         code: str,
-        timeout: int = 30,
+        timeout: int = 300,
         context: dict | None = None,  # noqa: ARG002
     ) -> dict:
         """Run code in a sandbox.
@@ -3405,7 +3405,7 @@ class NexusFS(
             sandbox_id: Sandbox ID
             language: Programming language ("python", "javascript", "bash")
             code: Code to execute
-            timeout: Execution timeout in seconds (default: 30)
+            timeout: Execution timeout in seconds (default: 300)
             context: Operation context
 
         Returns:

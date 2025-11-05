@@ -122,6 +122,7 @@ else
 import os
 import sys
 import hashlib
+import hmac
 from datetime import UTC, datetime, timedelta
 
 # Add src to path
@@ -131,7 +132,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from nexus.core.entity_registry import EntityRegistry
 from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-from nexus.server.auth.models import APIKey
+from nexus.storage.models import APIKeyModel
 
 database_url = os.getenv('NEXUS_DATABASE_URL')
 admin_user = '${ADMIN_USER}'
@@ -156,21 +157,23 @@ try:
         if custom_key:
             # Use custom API key from environment
             # Hash the key for storage (same as DatabaseAPIKeyAuth does)
-            key_hash = hashlib.sha256(custom_key.encode()).hexdigest()
+            # Uses HMAC-SHA256 with salt (same as nexus.server.auth.database_key)
+            HMAC_SALT = "nexus-api-key-v1"
+            key_hash = hmac.new(HMAC_SALT.encode("utf-8"), custom_key.encode("utf-8"), hashlib.sha256).hexdigest()
 
             # Check if key already exists
-            existing = session.query(APIKey).filter_by(user_id=admin_user).first()
+            existing = session.query(APIKeyModel).filter_by(user_id=admin_user).first()
             if existing:
                 print(f"API Key: {custom_key}")
                 print(f"Custom API key already registered for user: {admin_user}")
             else:
                 # Insert custom key into database
-                api_key = APIKey(
+                api_key = APIKeyModel(
                     user_id=admin_user,
                     key_hash=key_hash,
                     name='Admin key (from environment)',
                     tenant_id='default',
-                    is_admin=True,
+                    is_admin=1,  # PostgreSQL expects integer, not boolean
                     created_at=datetime.now(UTC),
                     expires_at=expires_at,
                 )

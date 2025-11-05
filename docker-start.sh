@@ -97,6 +97,10 @@ cmd_start() {
     check_docker
     check_env_file
 
+    echo "🧹 Cleaning up old sandbox containers..."
+    docker ps -a --filter "ancestor=nexus/runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
+    echo ""
+
     echo "🚀 Starting Nexus services..."
     echo ""
     show_services
@@ -116,6 +120,10 @@ cmd_build() {
     print_banner
     check_docker
     check_env_file
+
+    echo "🧹 Cleaning up old sandbox containers..."
+    docker ps -a --filter "ancestor=nexus/runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
+    echo ""
 
     echo "🔨 Building Docker images..."
     echo ""
@@ -208,9 +216,10 @@ cmd_init() {
     echo "🔧 INITIALIZATION MODE"
     echo ""
     echo "This will:"
-    echo "  1. Clean all existing data and containers"
-    echo "  2. Rebuild all Docker images"
-    echo "  3. Start all services fresh"
+    echo "  1. Clean up old sandbox containers"
+    echo "  2. Clean all existing data and containers"
+    echo "  3. Rebuild all Docker images"
+    echo "  4. Start all services fresh"
     echo ""
     read -p "Are you sure you want to continue? (yes/no): " CONFIRM
 
@@ -221,15 +230,19 @@ cmd_init() {
     fi
 
     echo ""
-    echo "🧹 Step 1/3: Cleaning..."
+    echo "🧹 Step 1/4: Cleaning up old sandbox containers..."
+    docker ps -a --filter "ancestor=nexus/runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
+
+    echo ""
+    echo "🧹 Step 2/4: Cleaning Docker Compose resources..."
     docker compose -f "$COMPOSE_FILE" down -v
 
     echo ""
-    echo "🔨 Step 2/3: Building images..."
+    echo "🔨 Step 3/4: Building images..."
     docker compose -f "$COMPOSE_FILE" build
 
     echo ""
-    echo "🚀 Step 3/3: Starting services..."
+    echo "🚀 Step 4/4: Starting services..."
     docker compose -f "$COMPOSE_FILE" up -d
 
     echo ""

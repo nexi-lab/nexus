@@ -1,0 +1,220 @@
+# Nexus Development Environment - Docker Compose
+# Complete stack: PostgreSQL + Nexus + LangGraph + Frontend
+#
+# Usage:
+#   docker compose -f docker-compose.demo.yml up          # Start all services
+#   docker compose -f docker-compose.demo.yml up -d       # Start in background
+#   docker compose -f docker-compose.demo.yml down        # Stop all services
+#   docker compose -f docker-compose.demo.yml logs -f     # View logs
+#
+# Services:
+#   - postgres:    PostgreSQL database (port 5432)
+#   - nexus:       Nexus RPC server (port 8080)
+#   - langgraph:   LangGraph agent server (port 2024)
+#   - frontend:    React web UI (port 5173)
+
+version: '3.8'
+
+services:
+  # ============================================
+  # PostgreSQL Database
+  # ============================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: nexus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexus}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-nexus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # Nexus RPC Server
+  # ============================================
+  nexus:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nexus-server:latest
+    container_name: nexus-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Server configuration
+      NEXUS_HOST: 0.0.0.0
+      NEXUS_PORT: 8080
+      NEXUS_DATA_DIR: /app/data
+
+      # Database configuration (PostgreSQL)
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+
+      # Authentication
+      # Admin user for initialization (default: admin)
+      NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
+
+      # Optional: Pre-set API key (otherwise auto-generated on first run)
+      # Leave empty to auto-generate - check logs with: docker logs nexus-server
+      NEXUS_API_KEY: ${NEXUS_API_KEY:-}
+
+      # Backend storage (local by default, can be 'gcs' for production)
+      NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
+      NEXUS_GCS_BUCKET: ${NEXUS_GCS_BUCKET:-}
+      NEXUS_GCS_PROJECT: ${NEXUS_GCS_PROJECT:-}
+
+      # Optional: GCS credentials
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+
+      # Sandbox configuration
+      # URL that sandboxes should use to connect back to Nexus server
+      # Use Docker service name for container-to-container communication
+      NEXUS_SERVER_URL: http://nexus:8080
+      # Docker network for sandboxes to join
+      NEXUS_DOCKER_NETWORK: nexus_nexus-network
+    volumes:
+      # Persistent data directory (local backend)
+      - nexus-data:/app/data
+      # Optional: Mount GCS credentials
+      - ${GCS_CREDENTIALS_PATH:-./gcs-credentials.json}:/app/gcs-credentials.json:ro
+      # Docker socket for sandbox provider
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "${NEXUS_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # LangGraph Agent Server
+  # ============================================
+  langgraph:
+    build:
+      context: ./examples/langgraph
+      dockerfile: Dockerfile
+    image: nexus-langgraph:latest
+    container_name: nexus-langgraph
+    restart: unless-stopped
+    depends_on:
+      nexus:
+        condition: service_healthy
+    environment:
+      # LangGraph configuration
+      LANGGRAPH_PORT: 2024
+      LANGGRAPH_HOST: 0.0.0.0
+
+      # Nexus server URL (internal Docker network)
+      NEXUS_SERVER_URL: http://nexus:8080
+
+      # API Keys for LLM providers (required)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      # Optional: Additional tool API keys
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      E2B_API_KEY: ${E2B_API_KEY:-}
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+
+      # LangSmith tracing (optional)
+      LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-}
+      LANGCHAIN_ENDPOINT: ${LANGCHAIN_ENDPOINT:-}
+      LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+    ports:
+      - "${LANGGRAPH_PORT:-2024}:2024"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2024/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # Frontend (React + Vite)
+  # ============================================
+  frontend:
+    build:
+      context: ../nexus-frontend
+      dockerfile: Dockerfile
+      args:
+        # Browser URLs - use localhost for browser to access services
+        VITE_NEXUS_API_URL: ${VITE_NEXUS_API_URL:-http://localhost:8080}
+        VITE_LANGGRAPH_API_URL: ${VITE_LANGGRAPH_API_URL:-http://localhost:2024}
+        # LangGraph server URL - use Docker service name for container-to-container
+        VITE_NEXUS_SERVER_URL: ${VITE_NEXUS_SERVER_URL:-http://nexus:8080}
+    image: nexus-frontend:latest
+    container_name: nexus-frontend
+    restart: unless-stopped
+    depends_on:
+      nexus:
+        condition: service_healthy
+    environment:
+      # Frontend configuration
+      VITE_NEXUS_API_URL: ${VITE_NEXUS_API_URL:-http://localhost:8080}
+      VITE_LANGGRAPH_API_URL: ${VITE_LANGGRAPH_API_URL:-http://localhost:2024}
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  postgres-data:
+    driver: local
+  nexus-data:
+    driver: local
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  nexus-network:
+    driver: bridge

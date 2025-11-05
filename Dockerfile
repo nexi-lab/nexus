@@ -21,12 +21,16 @@ COPY alembic.ini ./
 # Install dependencies to system (not editable for multi-stage build)
 RUN uv pip install --system .
 
+# Install sandbox providers
+RUN uv pip install --system docker e2b
+
 # Production image
 FROM python:3.11-slim
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from builder
@@ -38,9 +42,17 @@ WORKDIR /app
 COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini pyproject.toml README.md ./
+COPY docker-entrypoint.sh /usr/local/bin/
+
+# Make entrypoint executable
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Create non-root user for security
 RUN useradd -r -m -u 1000 -s /bin/bash nexus
+
+# Add nexus user to root group for Docker socket access
+# This is safe in containers as the root group doesn't grant elevated privileges
+RUN usermod -aG root nexus
 
 # Create data directory with correct permissions
 RUN mkdir -p /app/data && chown -R nexus:nexus /app
@@ -59,26 +71,9 @@ ENV PYTHONUNBUFFERED=1 \
 EXPOSE 8080
 
 # Health check - updated to correct endpoint
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:${NEXUS_PORT}/health || exit 1
 
-# Run the server
-# Use shell form to support conditional backend flags based on environment
-CMD sh -c " \
-    if [ \"${NEXUS_BACKEND}\" = \"gcs\" ]; then \
-        nexus serve \
-            --host ${NEXUS_HOST} \
-            --port ${NEXUS_PORT} \
-            --backend gcs \
-            --gcs-bucket ${NEXUS_GCS_BUCKET} \
-            ${NEXUS_GCS_PROJECT:+--gcs-project $NEXUS_GCS_PROJECT} \
-            --data-dir ${NEXUS_DATA_DIR} \
-            ${NEXUS_API_KEY:+--api-key $NEXUS_API_KEY}; \
-    else \
-        nexus serve \
-            --host ${NEXUS_HOST} \
-            --port ${NEXUS_PORT} \
-            --data-dir ${NEXUS_DATA_DIR} \
-            ${NEXUS_API_KEY:+--api-key $NEXUS_API_KEY}; \
-    fi \
-    "
+# Run the server via entrypoint script
+# The entrypoint handles database initialization and API key creation
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

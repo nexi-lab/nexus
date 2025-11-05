@@ -76,6 +76,7 @@ class DockerSandboxProvider(SandboxProvider):
         auto_pull: bool = False,
         memory_limit: str = "512m",
         cpu_limit: float = 1.0,
+        network_name: str | None = None,
     ):
         """Initialize Docker sandbox provider.
 
@@ -86,6 +87,7 @@ class DockerSandboxProvider(SandboxProvider):
             auto_pull: Auto-pull missing images (disabled by default for custom images)
             memory_limit: Memory limit (e.g., "512m", "1g")
             cpu_limit: CPU limit in cores (e.g., 1.0 = 1 core)
+            network_name: Docker network name (defaults to NEXUS_DOCKER_NETWORK env var)
         """
         if not DOCKER_AVAILABLE:
             raise RuntimeError("docker package not installed. Install with: pip install docker")
@@ -114,6 +116,15 @@ class DockerSandboxProvider(SandboxProvider):
         self.auto_pull = auto_pull
         self.memory_limit = memory_limit
         self.cpu_limit = cpu_limit
+
+        # Read Docker network from env var if not provided
+        import os
+
+        self.network_name = network_name or os.environ.get("NEXUS_DOCKER_NETWORK")
+        if not self.network_name:
+            raise RuntimeError(
+                "NEXUS_DOCKER_NETWORK environment variable must be set for Docker Compose deployments"
+            )
 
         # Cache for active containers
         self._containers: dict[str, ContainerInfo] = {}
@@ -714,7 +725,7 @@ class DockerSandboxProvider(SandboxProvider):
             mem_limit=self.memory_limit,
             cpu_quota=int(self.cpu_limit * 100000),
             cpu_period=100000,
-            network_mode="bridge",
+            network_mode=self.network_name,
             remove=False,  # Don't auto-remove, we'll handle cleanup
         )
 

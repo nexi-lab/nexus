@@ -104,7 +104,7 @@ This means you can:
 1. **Use grep_files** for finding specific text, code patterns, or keywords in file contents
 2. **Use glob_files** for finding files by name patterns (*.py, *.md, etc.)
 3. **Use read_file with 'less'** for previewing large files before reading fully
-4. **For binary files** (PDF, Excel, Word, PowerPoint), always use the `_parsed.{ext}.md` path to read as markdown
+4. **For binary files** (PDF, Excel, Word, PowerPoint), always use the `_parsed.{ext}.md` path to read as markdown, e.g. AR_Subledger_05.2025.xlsx -> AR_Subledger_05.2025_parsed.xlsx.md
 5. **Use sandboxes** for data analysis, testing, and complex file processing
 6. **Respect permissions** - you inherit the authenticated user's permissions
 7. **Write results** to /workspace/<user>/ or appropriate locations

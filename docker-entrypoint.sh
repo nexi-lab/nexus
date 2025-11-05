@@ -102,25 +102,27 @@ fi
 # Create Admin API Key (First Run)
 # ============================================
 
-# Check if API key already exists (from previous run or env variable)
+# Check if API key already exists (from previous run)
 if [ -f "$API_KEY_FILE" ]; then
     echo ""
     echo "🔑 Using existing admin API key"
     ADMIN_API_KEY=$(cat "$API_KEY_FILE")
-elif [ -n "$NEXUS_API_KEY" ]; then
-    echo ""
-    echo "🔑 Using API key from environment variable"
-    ADMIN_API_KEY="$NEXUS_API_KEY"
-    # Save for future runs
-    echo "$ADMIN_API_KEY" > "$API_KEY_FILE"
 else
     echo ""
-    echo "🔑 Creating admin API key..."
+    if [ -n "$NEXUS_API_KEY" ]; then
+        echo "🔑 Registering custom API key from environment..."
+        CUSTOM_KEY="$NEXUS_API_KEY"
+    else
+        echo "🔑 Creating admin API key..."
+        CUSTOM_KEY=""
+    fi
 
-    # Create admin API key using Python (matches create-api-key.py)
+    # Create/register admin API key using Python
     API_KEY_OUTPUT=$(python3 << PYTHON_CREATE_KEY
 import os
 import sys
+import hashlib
+import hmac
 from datetime import UTC, datetime, timedelta
 
 # Add src to path
@@ -130,9 +132,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from nexus.core.entity_registry import EntityRegistry
 from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+from nexus.storage.models import APIKeyModel
 
 database_url = os.getenv('NEXUS_DATABASE_URL')
 admin_user = '${ADMIN_USER}'
+custom_key = '${CUSTOM_KEY}'
 
 try:
     engine = create_engine(database_url)
@@ -147,22 +151,55 @@ try:
         parent_id='default',
     )
 
-    # Create API key (90 day expiry)
     with SessionFactory() as session:
         expires_at = datetime.now(UTC) + timedelta(days=90)
-        key_id, raw_key = DatabaseAPIKeyAuth.create_key(
-            session,
-            user_id=admin_user,
-            name='Admin key (Docker auto-generated)',
-            tenant_id='default',
-            is_admin=True,
-            expires_at=expires_at,
-        )
-        session.commit()
 
-        print(f"API Key: {raw_key}")
-        print(f"Created admin API key for user: {admin_user}")
-        print(f"Expires: {expires_at.isoformat()}")
+        if custom_key:
+            # Use custom API key from environment
+            # Hash the key for storage (same as DatabaseAPIKeyAuth does)
+            # Uses HMAC-SHA256 with salt (same as nexus.server.auth.database_key)
+            HMAC_SALT = "nexus-api-key-v1"
+            key_hash = hmac.new(HMAC_SALT.encode("utf-8"), custom_key.encode("utf-8"), hashlib.sha256).hexdigest()
+
+            # Check if key already exists
+            existing = session.query(APIKeyModel).filter_by(user_id=admin_user).first()
+            if existing:
+                print(f"API Key: {custom_key}")
+                print(f"Custom API key already registered for user: {admin_user}")
+            else:
+                # Insert custom key into database
+                api_key = APIKeyModel(
+                    user_id=admin_user,
+                    key_hash=key_hash,
+                    name='Admin key (from environment)',
+                    tenant_id='default',
+                    is_admin=1,  # PostgreSQL expects integer, not boolean
+                    created_at=datetime.now(UTC),
+                    expires_at=expires_at,
+                )
+                session.add(api_key)
+                session.commit()
+
+                print(f"API Key: {custom_key}")
+                print(f"Registered custom API key for user: {admin_user}")
+                print(f"Expires: {expires_at.isoformat()}")
+
+            raw_key = custom_key
+        else:
+            # Generate new API key
+            key_id, raw_key = DatabaseAPIKeyAuth.create_key(
+                session,
+                user_id=admin_user,
+                name='Admin key (Docker auto-generated)',
+                tenant_id='default',
+                is_admin=True,
+                expires_at=expires_at,
+            )
+            session.commit()
+
+            print(f"API Key: {raw_key}")
+            print(f"Created admin API key for user: {admin_user}")
+            print(f"Expires: {expires_at.isoformat()}")
 
 except Exception as e:
     print(f"ERROR: {e}", file=sys.stderr)

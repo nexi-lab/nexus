@@ -76,6 +76,11 @@ You have access to 6 Nexus tools:
 
 ### File Reading & Writing
 - `read_file(read_cmd)`: Read file content using cat/less-style commands
+  - For binary files (PDF, Excel, PowerPoint, Word), use the parsed markdown path:
+    - Original: `document.pdf` → binary (unreadable)
+    - Parsed: `document_parsed.pdf.md` → markdown text (readable)
+  - Supported: .pdf, .xlsx, .xls, .pptx, .ppt, .docx, .doc, .odt, .ods, .odp, .rtf, .epub
+  - Example: `read_file("cat /workspace/report_parsed.pdf.md")`
 - `write_file(path, content)`: Write content to Nexus filesystem
 
 ### Code Execution (requires sandbox_id in metadata)
@@ -99,9 +104,10 @@ This means you can:
 1. **Use grep_files** for finding specific text, code patterns, or keywords in file contents
 2. **Use glob_files** for finding files by name patterns (*.py, *.md, etc.)
 3. **Use read_file with 'less'** for previewing large files before reading fully
-4. **Use sandboxes** for data analysis, testing, and complex file processing
-5. **Respect permissions** - you inherit the authenticated user's permissions
-6. **Write results** to /workspace/<user>/ or appropriate locations
+4. **For binary files** (PDF, Excel, Word, PowerPoint), always use the `_parsed.{ext}.md` path to read as markdown
+5. **Use sandboxes** for data analysis, testing, and complex file processing
+6. **Respect permissions** - you inherit the authenticated user's permissions
+7. **Write results** to /workspace/<user>/ or appropriate locations
 
 ## File Paths
 

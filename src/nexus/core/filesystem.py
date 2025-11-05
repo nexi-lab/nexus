@@ -776,7 +776,7 @@ class NexusFilesystem(ABC):
         sandbox_id: str,
         language: str,
         code: str,
-        timeout: int = 30,
+        timeout: int = 300,
         context: dict | None = None,
     ) -> dict[Any, Any]:
         """Run code in a sandbox.

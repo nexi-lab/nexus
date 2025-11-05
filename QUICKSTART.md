@@ -8,6 +8,19 @@ Get Nexus running with Docker in 3 minutes.
 - Anthropic API key (get from https://console.anthropic.com/)
 - OpenAI API key (optional, get from https://platform.openai.com/)
 
+## Clone Repositories
+
+```bash
+# 1. Clone Nexus backend
+git clone https://github.com/nexi-lab/nexus.git
+cd nexus
+
+# 2. Clone frontend (as sibling directory)
+cd ..
+git clone https://github.com/nexi-lab/nexus-frontend.git
+cd nexus  # Back to nexus directory
+```
+
 ## Start Services
 
 ```bash
@@ -20,7 +33,7 @@ cp .env.example .env
 nano .env  # or use your favorite editor
 
 # 3. Start all services
-./docker-start.sh
+./docker-start.sh --build
 ```
 
 ## Get Your Admin API Key

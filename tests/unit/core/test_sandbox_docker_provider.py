@@ -63,6 +63,7 @@ def provider(mock_docker_client):
         default_image="python:3.11-slim",
         cleanup_interval=60,
         auto_pull=True,
+        network_name="bridge",  # Use bridge network for tests
     )
 
 

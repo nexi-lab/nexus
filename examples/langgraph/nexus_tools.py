@@ -11,6 +11,8 @@ Nexus Tools:
 4. write_file: Write content to Nexus filesystem
 5. python: Execute Python code in Nexus-managed sandbox
 6. bash: Execute bash commands in Nexus-managed sandbox
+7. tavily_search: Search the web using Tavily API
+8. firecrawl_fetch: Fetch and extract content from web pages using Firecrawl API
 
 These tools enable agents to interact with a remote Nexus filesystem and execute
 code in isolated Nexus-managed sandboxes, allowing them to search, read, analyze, persist
@@ -22,6 +24,7 @@ Authentication:
     Each tool creates an authenticated RemoteNexusFS instance using the extracted token.
 """
 
+import os
 import shlex
 
 from langchain_core.runnables import RunnableConfig
@@ -350,7 +353,9 @@ def get_nexus_tools():
                 return "Error: sandbox_id not found in metadata. Please start a sandbox first."
 
             # Execute Python code in sandbox
-            result = nx.sandbox_run(sandbox_id=sandbox_id, language="python", code=code, timeout=30)
+            result = nx.sandbox_run(
+                sandbox_id=sandbox_id, language="python", code=code, timeout=300
+            )
 
             # Format output
             output_parts = []
@@ -417,7 +422,7 @@ def get_nexus_tools():
 
             # Execute bash command in sandbox
             result = nx.sandbox_run(
-                sandbox_id=sandbox_id, language="bash", code=command, timeout=30
+                sandbox_id=sandbox_id, language="bash", code=command, timeout=300
             )
 
             # Format output
@@ -447,7 +452,176 @@ def get_nexus_tools():
         except Exception as e:
             return f"Error executing bash command: {str(e)}"
 
+    # Web Search and Fetch Tools
+    @tool
+    def tavily_search(query: str, config: RunnableConfig, max_results: int = 5) -> str:  # noqa: ARG001
+        """Search the web using Tavily API.
+
+        Use this tool to search the internet for current information, news, research,
+        documentation, or any topic that requires web search.
+
+        Args:
+            query: Search query string (e.g., "latest Python 3.12 features")
+            max_results: Maximum number of results to return (default: 5, max: 20)
+
+        Returns:
+            Search results including titles, URLs, and content snippets.
+            Returns error message if search fails.
+
+        Examples:
+            - tavily_search("latest AI research papers 2024") → Find recent AI papers
+            - tavily_search("Python asyncio best practices", max_results=10) → Get more results
+            - tavily_search("weather in San Francisco") → Current weather info
+        """
+        try:
+            # Import here to avoid requiring tavily when not used
+            from tavily import TavilyClient
+
+            # Get API key from environment
+            api_key = os.getenv("TAVILY_API_KEY")
+            if not api_key:
+                return "Error: TAVILY_API_KEY not found in environment variables"
+
+            # Initialize Tavily client
+            client = TavilyClient(api_key=api_key)
+
+            # Perform search
+            response = client.search(query=query, max_results=max_results)
+
+            # Format results
+            if not response or "results" not in response:
+                return f"No results found for query: {query}"
+
+            results = response.get("results", [])
+            if not results:
+                return f"No results found for query: {query}"
+
+            output_lines = [f"Found {len(results)} results for '{query}':\n"]
+
+            for i, result in enumerate(results, 1):
+                title = result.get("title", "No title")
+                url = result.get("url", "No URL")
+                content = result.get("content", "No content")
+
+                output_lines.append(f"\n{i}. {title}")
+                output_lines.append(f"   URL: {url}")
+                output_lines.append(
+                    f"   {content[:300]}..." if len(content) > 300 else f"   {content}"
+                )
+
+            # Add answer if available
+            if "answer" in response and response["answer"]:
+                output_lines.insert(1, f"\nAnswer: {response['answer']}\n")
+
+            return "\n".join(output_lines)
+
+        except ImportError:
+            return "Error: tavily-python package not installed. Run: pip install tavily-python"
+        except Exception as e:
+            return f"Error performing web search: {str(e)}"
+
+    @tool
+    def firecrawl_fetch(url: str, config: RunnableConfig) -> str:  # noqa: ARG001
+        """Fetch and extract content from a web page using Firecrawl API.
+
+        Use this tool to fetch, parse, and extract clean content from any web page.
+        Firecrawl converts web pages into clean markdown format suitable for analysis.
+
+        Args:
+            url: The web page URL to fetch and extract content from
+                 (e.g., "https://example.com/article")
+
+        Returns:
+            Extracted page content in markdown format with metadata.
+            Returns error message if fetch fails.
+
+        Examples:
+            - firecrawl_fetch("https://docs.python.org/3/library/asyncio.html") → Get Python docs
+            - firecrawl_fetch("https://github.com/example/repo") → Fetch GitHub page
+            - firecrawl_fetch("https://news.ycombinator.com") → Extract Hacker News content
+        """
+        try:
+            # Import here to avoid requiring firecrawl when not used
+            from firecrawl import FirecrawlApp
+
+            # Get API key from environment
+            api_key = os.getenv("FIRECRAWL_API_KEY")
+            if not api_key:
+                return "Error: FIRECRAWL_API_KEY not found in environment variables"
+
+            # Initialize Firecrawl client
+            app = FirecrawlApp(api_key=api_key)
+
+            # Scrape the URL (API v4.5.0+ returns Document object with formats parameter)
+            result = app.scrape(url, formats=["markdown", "html"])
+
+            if not result:
+                return f"Error: Failed to fetch content from {url}"
+
+            # Extract content from Document object (Firecrawl v4.5.0+)
+            # Result is a Document object with attributes: markdown, metadata, html, etc.
+            markdown_content = getattr(result, "markdown", "")
+            metadata_obj = getattr(result, "metadata", None)
+
+            # Extract metadata fields
+            metadata = {}
+            if metadata_obj:
+                # metadata_obj might be a dict or an object with attributes
+                if isinstance(metadata_obj, dict):
+                    metadata = metadata_obj
+                else:
+                    # Extract common metadata fields
+                    for field in ["title", "description", "url", "language", "author"]:
+                        value = getattr(metadata_obj, field, None)
+                        if value:
+                            metadata[field] = value
+
+            if not markdown_content:
+                return f"Error: No content extracted from {url}"
+
+            # Format output
+            output_lines = [f"Content from {url}:\n"]
+
+            # Add metadata if available
+            if metadata:
+                title = metadata.get("title", "")
+                description = metadata.get("description", "")
+                if title:
+                    output_lines.append(f"Title: {title}")
+                if description:
+                    output_lines.append(f"Description: {description}")
+                output_lines.append("")
+
+            # Add content (limit to reasonable size)
+            max_length = 8000
+            if len(markdown_content) > max_length:
+                output_lines.append(f"{markdown_content[:max_length]}...")
+                output_lines.append(
+                    f"\n[Content truncated - total length: {len(markdown_content)} characters]"
+                )
+            else:
+                output_lines.append(markdown_content)
+
+            return "\n".join(output_lines)
+
+        except ImportError:
+            return "Error: firecrawl-py package not installed. Run: pip install firecrawl-py"
+        except Exception as e:
+            import traceback
+
+            error_details = traceback.format_exc()
+            return f"Error fetching web page: {str(e)}\n\nDetails:\n{error_details}"
+
     # Return all tools
-    tools = [grep_files, glob_files, read_file, write_file, python, bash]
+    tools = [
+        grep_files,
+        glob_files,
+        read_file,
+        write_file,
+        python,
+        bash,
+        tavily_search,
+        firecrawl_fetch,
+    ]
 
     return tools

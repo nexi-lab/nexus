@@ -1,7 +1,7 @@
 # Nexus Runtime Docker Image
 #
 # A pre-configured Docker image for Nexus sandboxes with:
-# - Python 3.11
+# - Python 3.11 with data science packages (pandas, numpy, matplotlib, scikit-learn, etc.)
 # - Node.js 20
 # - Nexus CLI (for FUSE mounting)
 # - Non-root user with sudo access
@@ -37,6 +37,14 @@ RUN apt-get update && apt-get install -y \
     # Node.js setup
     ca-certificates \
     gnupg \
+    # OpenCV dependencies
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    # Audio processing (for soundfile)
+    libsndfile1 \
     # Cleanup in same layer to reduce image size
     && rm -rf /var/lib/apt/lists/*
 
@@ -53,6 +61,43 @@ RUN useradd -m -u 1000 -s /bin/bash nexus && \
 # Install Nexus CLI with FUSE support (latest from PyPI)
 # This allows the sandbox to mount Nexus filesystems via FUSE
 RUN pip install --no-cache-dir 'nexus-ai-fs[fuse]'
+
+# Install data science and utility packages (matching E2B sandbox)
+# These packages enable Python code execution for data analysis, ML, and visualization
+RUN pip install --no-cache-dir \
+    # Data manipulation and analysis
+    pandas \
+    numpy \
+    scipy \
+    # Machine learning
+    scikit-learn \
+    scikit-image \
+    # Visualization
+    matplotlib \
+    seaborn \
+    plotly \
+    # Image processing
+    opencv-python \
+    # NLP
+    nltk \
+    spacy \
+    textblob \
+    # File format support
+    openpyxl \
+    python-docx \
+    xlrd \
+    # Scientific computing
+    sympy \
+    xarray \
+    # Audio processing
+    soundfile \
+    # Testing
+    pytest \
+    # Utilities
+    requests \
+    urllib3 \
+    pytz \
+    tornado
 
 # Create common directories
 RUN mkdir -p /home/nexus/workspace \

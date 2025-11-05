@@ -86,10 +86,10 @@ You have access to 6 Nexus tools:
 ## Sandbox Integration
 
 When sandbox_id is provided in metadata, python() and bash() tools execute code in isolated
-E2B sandboxes with the Nexus filesystem automatically mounted at `/home/user/nexus`.
+sandboxes with the Nexus filesystem automatically mounted at `/mnt/nexus`.
 
 This means you can:
-- Access Nexus files directly: `/home/user/nexus/workspace/admin/data.csv`
+- Access Nexus files directly: `/mnt/nexus/workspace/admin/data.csv`
 - Use standard tools: `ls`, `cat`, `python`, `grep`, etc.
 - Read/write files that persist in Nexus
 - Run complex data processing pipelines

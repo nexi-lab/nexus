@@ -11,6 +11,8 @@ dependencies = [
     "nexus-ai-fs>=0.5.3",
     "langgraph-cli[inmem]>=0.4.4",
     "e2b-code-interpreter>=1.0.0",
+    "tavily-python>=0.3.0",
+    "firecrawl-py>=1.0.0",
 ]
 
 [build-system]

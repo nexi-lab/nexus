@@ -1642,16 +1642,25 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         object: tuple[str, str],
         expires_at: Any = None,
         tenant_id: str | None = None,  # Auto-filled from auth if None
+        column_config: dict[str, Any] | None = None,  # Column-level permissions for dynamic_viewer
     ) -> str:
         """Create a ReBAC relationship tuple.
 
         Args:
             subject: (subject_type, subject_id) tuple (e.g., ('agent', 'alice'))
-            relation: Relation type (e.g., 'member-of', 'owner-of')
+            relation: Relation type (e.g., 'member-of', 'owner-of', 'dynamic_viewer')
             object: (object_type, object_id) tuple (e.g., ('group', 'developers'))
             expires_at: Optional expiration datetime for temporary relationships
             tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
                        tenant_id from authenticated user's credentials.
+            column_config: Optional column-level permissions config for dynamic_viewer relation.
+                          Only applies to CSV files.
+                          Structure: {
+                              "hidden_columns": ["password", "ssn"],  # Completely hide these columns
+                              "aggregations": {"age": "mean", "salary": "sum"},  # Show aggregated values (single operation per column)
+                              "visible_columns": ["name", "email"]  # Show raw data (optional, auto-calculated if empty)
+                          }
+                          Note: A column can only appear in one category (hidden, aggregations, or visible)
 
         Returns:
             Tuple ID of created relationship
@@ -1661,6 +1670,19 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ...     subject=("agent", "alice"),
             ...     relation="member-of",
             ...     object=("group", "developers")
+            ... )
+            'uuid-string'
+
+            >>> # Dynamic viewer with column-level permissions for CSV files
+            >>> nx.rebac_create(
+            ...     subject=("agent", "alice"),
+            ...     relation="dynamic_viewer",
+            ...     object=("file", "/data/users.csv"),
+            ...     column_config={
+            ...         "hidden_columns": ["password", "ssn"],
+            ...         "aggregations": {"age": "mean", "salary": "sum"},
+            ...         "visible_columns": ["name", "email"]
+            ...     }
             ... )
             'uuid-string'
         """
@@ -1675,6 +1697,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "object": object,
                 "expires_at": expires_at.isoformat() if expires_at else None,
                 "tenant_id": effective_tenant_id,
+                "column_config": column_config,
             },
         )
         return result  # type: ignore[no-any-return]

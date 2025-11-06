@@ -3,6 +3,7 @@
 # A pre-configured Docker image for Nexus sandboxes with:
 # - Python 3.11 with data science packages (pandas, numpy, matplotlib, scikit-learn, etc.)
 # - Node.js 20
+# - GitHub CLI (gh)
 # - Nexus CLI (for FUSE mounting)
 # - Non-root user with sudo access
 # - FUSE support for mounting Nexus filesystem
@@ -51,6 +52,14 @@ RUN apt-get update && apt-get install -y \
 # Install Node.js 20.x
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install GitHub CLI (gh)
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user with sudo access (UID 1000 for consistency)
@@ -116,6 +125,7 @@ ENV PATH="/home/nexus/.local/bin:${PATH}"
 RUN python --version && \
     node --version && \
     npm --version && \
+    gh --version && \
     nexus --version
 
 # Health check

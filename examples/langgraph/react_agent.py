@@ -22,16 +22,19 @@ Usage from Frontend (HTTP):
         "metadata": {
             "x_auth": "Bearer sk-your-api-key-here",
             "user_id": "user-123",
-            "tenant_id": "tenant-123"
+            "tenant_id": "tenant-123",
+            "opened_file_path": "/workspace/admin/script.py"  // Optional: currently opened file
         }
     }
 
-    Note: The frontend automatically includes x_auth in metadata when user is logged in.
+    Note: The frontend automatically includes x_auth and opened_file_path in metadata when user is logged in.
 """
 
 import os
 
 from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import SystemMessage
+from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langgraph.prebuilt import create_react_agent
 from nexus_tools import get_nexus_tools
 
@@ -118,11 +121,41 @@ Common Nexus paths:
 
 Be helpful, efficient, and leverage these tools to assist the user!"""
 
-# Create prebuilt ReAct agent with system prompt
+
+def build_prompt(state: dict, config: RunnableConfig) -> list:
+    """Build prompt with optional opened file context from metadata.
+
+    This function is called before each LLM invocation and can access
+    the config which includes metadata from the frontend.
+    """
+    # Extract opened_file_path from metadata
+    metadata = config.get("metadata", {})
+    opened_file_path = metadata.get("opened_file_path")
+
+    # Build system prompt with optional context
+    system_content = SYSTEM_PROMPT
+    if opened_file_path:
+        system_content += f"""
+
+## Current Context
+
+The user currently has the following file open in their editor:
+**{opened_file_path}**
+
+When the user asks questions or requests changes without specifying a file, they are likely referring to this currently opened file. Use this context to provide more relevant and targeted assistance."""
+
+    # Return system message + user messages
+    return [SystemMessage(content=system_content)] + state["messages"]
+
+
+# Create a runnable that wraps the prompt builder
+prompt_runnable = RunnableLambda(build_prompt)
+
+# Create prebuilt ReAct agent with dynamic prompt
 agent = create_react_agent(
     model=llm,
     tools=tools,
-    prompt=SYSTEM_PROMPT,
+    prompt=prompt_runnable,
 )
 
 
@@ -137,8 +170,15 @@ if __name__ == "__main__":
         sys.exit(1)
 
     print("Testing ReAct agent...")
+
+    # Test with opened file context
     result = agent.invoke(
-        {"messages": [{"role": "user", "content": "Find all Python files and count them"}]},
-        config={"metadata": {"x_auth": f"Bearer {api_key}"}},
+        {"messages": [{"role": "user", "content": "What does this file do?"}]},
+        config={
+            "metadata": {
+                "x_auth": f"Bearer {api_key}",
+                "opened_file_path": "/workspace/admin/test.py",  # Optional: simulates opened file
+            }
+        },
     )
     print(result)

@@ -873,6 +873,10 @@ class SandboxListParams:
     """Parameters for sandbox_list() method."""
 
     context: dict | None = None
+    verify_status: bool = False
+    user_id: str | None = None
+    tenant_id: str | None = None
+    agent_id: str | None = None
 
 
 @dataclass
@@ -880,6 +884,18 @@ class SandboxStatusParams:
     """Parameters for sandbox_status() method."""
 
     sandbox_id: str
+    context: dict | None = None
+
+
+@dataclass
+class SandboxGetOrCreateParams:
+    """Parameters for sandbox_get_or_create() method."""
+
+    name: str
+    ttl_minutes: int = 10
+    provider: str | None = None
+    template_id: str | None = None
+    verify_status: bool = True
     context: dict | None = None
 
 
@@ -987,6 +1003,7 @@ METHOD_PARAMS = {
     "sandbox_stop": SandboxStopParams,
     "sandbox_list": SandboxListParams,
     "sandbox_status": SandboxStatusParams,
+    "sandbox_get_or_create": SandboxGetOrCreateParams,  # Issue #396
     "sandbox_connect": SandboxConnectParams,  # Issue #371
     "sandbox_disconnect": SandboxDisconnectParams,  # Issue #371
 }

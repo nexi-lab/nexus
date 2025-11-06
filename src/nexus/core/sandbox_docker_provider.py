@@ -360,6 +360,34 @@ class DockerSandboxProvider(SandboxProvider):
         """
         container_info = self._get_container_info(sandbox_id)
 
+        # Check actual container status from Docker API (not just cache)
+        try:
+            container = container_info.container
+            container.reload()  # Refresh container state from Docker
+            docker_status = container.status.lower()
+
+            # Map Docker status to our status
+            if docker_status == "running":
+                actual_status = "active"
+            elif docker_status in ("exited", "dead", "stopped"):
+                actual_status = "stopped"
+            elif docker_status == "paused":
+                actual_status = "paused"
+            else:
+                actual_status = "stopped"  # Default to stopped for unknown states
+
+            # Update cache if status changed
+            if actual_status != container_info.status:
+                logger.info(
+                    f"Container {sandbox_id} status changed: {container_info.status} -> {actual_status}"
+                )
+                container_info.status = actual_status
+        except Exception as e:
+            logger.warning(f"Failed to get actual container status for {sandbox_id}: {e}")
+            # If we can't check, assume stopped
+            actual_status = "stopped"
+            container_info.status = actual_status
+
         return SandboxInfo(
             sandbox_id=sandbox_id,
             status=container_info.status,

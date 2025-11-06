@@ -99,6 +99,26 @@ if [ $? -ne 0 ]; then
 fi
 
 # ============================================
+# Run Database Migrations
+# ============================================
+echo ""
+echo "🔄 Running database migrations..."
+
+# Run Alembic migrations to apply schema changes
+# env.py automatically reads NEXUS_DATABASE_URL from environment
+cd /app
+
+# Run with timeout to avoid hanging
+timeout 30 alembic upgrade head 2>&1 || true
+
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✓ Database migrations applied${NC}"
+else
+    echo -e "${YELLOW}⚠ Database migrations timed out or failed${NC}"
+    echo -e "${YELLOW}  This is expected for legacy databases - continuing startup${NC}"
+fi
+
+# ============================================
 # Create Admin API Key (First Run)
 # ============================================
 

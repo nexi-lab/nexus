@@ -93,7 +93,7 @@ class NexusFSCoreMixin:
             logger.debug("_apply_dynamic_viewer_filter: No _get_subject_from_context method")
             return content
 
-        subject = self._get_subject_from_context(context)  # type: ignore[attr-defined]
+        subject = self._get_subject_from_context(context)
         if not subject:
             logger.debug(f"_apply_dynamic_viewer_filter: No subject found in context for {path}")
             return content

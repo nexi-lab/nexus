@@ -912,6 +912,17 @@ class MemoryModel(Base):
         Integer, nullable=False, default=0
     )  # Consolidation tracking
 
+    # Semantic search support (#406)
+    embedding_model: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, index=True
+    )  # Name of embedding model used
+    embedding_dim: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )  # Dimension of embedding vector
+    embedding: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # Vector embedding (JSON array for SQLite, vector for PostgreSQL)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)

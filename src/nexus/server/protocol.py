@@ -720,6 +720,10 @@ class QueryMemoriesParams:
     scope: str | None = None
     state: str | None = "active"  # #368: Filter by state
     limit: int = 50
+    # #406: Semantic search support
+    query: str | None = None  # Natural language query for semantic search
+    search_mode: str | None = None  # "semantic", "keyword", or "hybrid"
+    embedding_provider: str | None = None  # "openai", "voyage", or "openrouter"
 
 
 @dataclass

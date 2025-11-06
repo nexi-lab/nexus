@@ -57,10 +57,36 @@ gcloud compute ssh nexus-server --zone=us-west1-a --command="sudo -u nexus /opt/
 
 **Workflow**: Propose (2-3 options) → Approve → Implement → Show diff → Get commit approval
 
-**Critical rules**:
-- Issues must complete in single session (<6h work, 200K context limit)
-- If issue >6h: Stop, alert PM, propose split
-- Session startup: git pull → check handoffs (NEXT_SESSION_START.md) → check issues → wait for PM
-- Quality checklist before closing: tests pass, docs updated, diff reviewed, commit approved
+### Session Startup Protocol
 
-**Mobile collaboration**: Check `[MOBILE]` issues if using Github Mobile.
+**Every session:**
+1. Pull latest changes (CRITICAL first step)
+2. Find session handoff: Check top 10 recently updated issues (show number, time, title, labels). Read latest comments for "🔄 Session Handoff" marker. Prioritize `in-progress` labeled issues.
+3. Check git status
+4. Wait for PM to assign task
+
+### Critical Rules
+
+- **Issues must complete in single session** (<6h work)
+- **If issue >6h**: Stop, alert PM, propose split
+
+### Quality Checklist
+
+Before closing any issue:
+- [ ] Code tested, all tests pass
+- [ ] Docs updated (if applicable)
+- [ ] Diff reviewed by PM
+- [ ] Commit approved by PM
+
+### Commit Format
+
+| Format | Example |
+|--------|---------|
+| `<type>(#issue): description` | `feat(#123): Add feature X` |
+
+Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+**Always reference issue number.**
+
+### Mobile Collaboration
+
+Check `[MOBILE]` issues (label: `mobile-task`). Work in issue thread: post findings as comments, update label to `mobile-done-pc-todo` when done.

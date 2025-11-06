@@ -877,6 +877,7 @@ class SandboxListParams:
     user_id: str | None = None
     tenant_id: str | None = None
     agent_id: str | None = None
+    status: str | None = None
 
 
 @dataclass

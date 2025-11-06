@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -163,10 +164,14 @@ class DockerSandboxProvider(SandboxProvider):
             created_at = datetime.now(UTC)
             expires_at = created_at + timedelta(minutes=timeout_minutes)
 
+            # Extract name from metadata if provided
+            container_name = metadata.get("name") if metadata else None
+
             # Create container with resource limits
             container = await asyncio.to_thread(
                 self._create_container,
                 image,
+                container_name,
             )
 
             # Generate sandbox ID (use first 12 chars of container ID)
@@ -188,8 +193,9 @@ class DockerSandboxProvider(SandboxProvider):
                 self._cleanup_task = asyncio.create_task(self._cleanup_loop())
                 self._cleanup_running = True
 
+            name_info = f", name={container_name}" if container_name else ""
             logger.info(
-                f"Created Docker sandbox: {sandbox_id} (image={image}, ttl={timeout_minutes}m)"
+                f"Created Docker sandbox: {sandbox_id} (image={image}, ttl={timeout_minutes}m{name_info})"
             )
             return sandbox_id
 
@@ -731,19 +737,30 @@ class DockerSandboxProvider(SandboxProvider):
             raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found")
         return self._containers[sandbox_id]
 
-    def _create_container(self, image: str) -> Any:  # -> Container
+    def _create_container(self, image: str, name: str | None = None) -> Any:  # -> Container
         """Create a Docker container.
 
         Args:
             image: Docker image to use
+            name: Optional container name (will be sanitized for Docker)
 
         Returns:
             Container instance
         """
+        # Sanitize name for Docker (alphanumeric, hyphens, underscores only)
+        container_name = None
+        if name:
+            # Replace invalid chars with hyphens, remove leading/trailing hyphens
+            sanitized = re.sub(r"[^a-zA-Z0-9_-]", "-", name)
+            sanitized = sanitized.strip("-_")
+            if sanitized:
+                container_name = sanitized
+
         return self.docker_client.containers.run(
             image=image,
             command="sleep infinity",
             detach=True,
+            name=container_name,  # Set container name if provided
             cap_add=["SYS_ADMIN"],  # Needed for FUSE
             devices=["/dev/fuse:/dev/fuse:rwm"],  # FUSE device access
             security_opt=[

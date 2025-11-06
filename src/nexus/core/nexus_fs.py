@@ -3482,6 +3482,7 @@ class NexusFS(
         user_id: str | None = None,
         tenant_id: str | None = None,
         agent_id: str | None = None,
+        status: str | None = None,
     ) -> dict:
         """List user's sandboxes.
 
@@ -3491,6 +3492,7 @@ class NexusFS(
             user_id: Filter by user_id (admin only)
             tenant_id: Filter by tenant_id (admin only)
             agent_id: Filter by agent_id
+            status: Filter by status (e.g., 'active', 'stopped', 'paused')
 
         Returns:
             Dict with list of sandboxes
@@ -3513,6 +3515,7 @@ class NexusFS(
                 user_id=filter_user_id,
                 tenant_id=filter_tenant_id,
                 agent_id=filter_agent_id,
+                status=status,
                 verify_status=verify_status,
             )
         )

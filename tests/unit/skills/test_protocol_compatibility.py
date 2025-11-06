@@ -285,6 +285,17 @@ def test_protocol_runtime_checkable() -> None:
             ):
                 return {}
 
+            def sandbox_get_or_create(
+                self,
+                name,
+                ttl_minutes=10,
+                provider=None,
+                template_id=None,
+                verify_status=True,
+                context=None,
+            ):
+                return {}
+
             def sandbox_run(self, sandbox_id, language, code, timeout=30, context=None):
                 return {}
 
@@ -297,7 +308,9 @@ def test_protocol_runtime_checkable() -> None:
             def sandbox_stop(self, sandbox_id, context=None):
                 return {}
 
-            def sandbox_list(self, context=None):
+            def sandbox_list(
+                self, context=None, verify_status=False, user_id=None, tenant_id=None, agent_id=None
+            ):
                 return {}
 
             def sandbox_status(self, sandbox_id, context=None):

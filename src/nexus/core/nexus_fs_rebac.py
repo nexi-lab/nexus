@@ -265,6 +265,7 @@ class NexusFSReBACMixin:
 
                         try:
                             import io
+
                             import pandas as pd
 
                             df = pd.read_csv(io.StringIO(content))
@@ -313,7 +314,7 @@ class NexusFSReBACMixin:
                     )
                 all_columns.add(col)
 
-            for col in aggregations.keys():
+            for col in aggregations:
                 if col in all_columns:
                     raise ValueError(
                         f"Column '{col}' appears in multiple categories. "
@@ -1312,14 +1313,12 @@ class NexusFSReBACMixin:
         self,
         subject: tuple[str, str],
         file_path: str,
-        tenant_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Get the dynamic_viewer configuration for a subject and file.
 
         Args:
             subject: (subject_type, subject_id) tuple (e.g., ('agent', 'alice'))
             file_path: Path to the file
-            tenant_id: Optional tenant ID for multi-tenant isolation
 
         Returns:
             Dictionary with column_config if dynamic_viewer relation exists, None otherwise
@@ -1420,16 +1419,16 @@ class NexusFSReBACMixin:
             import io
 
             import pandas as pd
-        except ImportError:
+        except ImportError as e:
             raise RuntimeError(
                 "pandas is required for dynamic viewer filtering. Install with: pip install pandas"
-            )
+            ) from e
 
         # Parse CSV data
         try:
             df = pd.read_csv(io.StringIO(data))
         except Exception as e:
-            raise RuntimeError(f"Failed to parse CSV data: {e}")
+            raise RuntimeError(f"Failed to parse CSV data: {e}") from e
 
         # Get configuration
         hidden_columns = column_config.get("hidden_columns", [])
@@ -1502,10 +1501,7 @@ class NexusFSReBACMixin:
                 columns_shown.append(col)
 
         # Build result dataframe from ordered columns
-        if result_columns:
-            result_df = pd.DataFrame({name: series for name, series in result_columns})
-        else:
-            result_df = pd.DataFrame()
+        result_df = pd.DataFrame(dict(result_columns)) if result_columns else pd.DataFrame()
 
         # Convert result dataframe to CSV string
         filtered_data = result_df.to_csv(index=False)

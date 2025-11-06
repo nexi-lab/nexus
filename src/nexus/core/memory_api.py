@@ -7,6 +7,7 @@ with identity-based relationships and semantic search.
 from __future__ import annotations
 
 import builtins
+import contextlib
 from typing import Any, Literal
 
 from sqlalchemy.orm import Session
@@ -89,6 +90,8 @@ class Memory:
         state: str = "active",  # #368: Memory state ('inactive', 'active')
         _metadata: dict[str, Any] | None = None,
         context: OperationContext | None = None,
+        generate_embedding: bool = True,  # #406: Generate embedding for semantic search
+        embedding_provider: Any = None,  # #406: Optional embedding provider
     ) -> str:
         """Store a memory.
 
@@ -151,6 +154,47 @@ class Memory:
             # If backend write fails, we can't proceed
             raise RuntimeError(f"Failed to store content in backend: {e}") from e
 
+        # Generate embedding if requested (#406)
+        embedding_json = None
+        embedding_model_name = None
+        embedding_dim = None
+
+        if generate_embedding:
+            # Get text content for embedding
+            if isinstance(content, dict):
+                # For structured content, embed the JSON string
+                text_content = json.dumps(content)
+            elif isinstance(content, str):
+                text_content = content
+            else:
+                # For binary content, skip embedding
+                text_content = None
+
+            if text_content and len(text_content.strip()) > 0:
+                # Try to get embedding provider
+                if embedding_provider is None:
+                    try:
+                        from nexus.search.embeddings import create_embedding_provider
+
+                        # Try to create default provider (OpenRouter)
+                        with contextlib.suppress(Exception):
+                            embedding_provider = create_embedding_provider(provider="openrouter")
+                    except ImportError:
+                        pass
+
+                # Generate embedding
+                if embedding_provider:
+                    import asyncio
+
+                    try:
+                        embedding_vec = asyncio.run(embedding_provider.embed_text(text_content))
+                        embedding_json = json.dumps(embedding_vec)
+                        embedding_model_name = getattr(embedding_provider, "model", "unknown")
+                        embedding_dim = len(embedding_vec)
+                    except Exception:
+                        # Failed to generate embedding, continue without it
+                        pass
+
         # Create memory record (upserts if namespace+path_key exists)
         memory = self.memory_router.create_memory(
             content_hash=content_hash,
@@ -163,6 +207,9 @@ class Memory:
             namespace=namespace,
             path_key=path_key,
             state=state,  # #368: Pass state parameter
+            embedding=embedding_json,  # #406: Store embedding
+            embedding_model=embedding_model_name,  # #406: Store model name
+            embedding_dim=embedding_dim,  # #406: Store dimension
         )
 
         return memory.memory_id
@@ -268,6 +315,8 @@ class Memory:
         scope: str | None = None,
         memory_type: str | None = None,
         limit: int = 10,
+        search_mode: str = "hybrid",
+        embedding_provider: Any = None,
     ) -> list[dict[str, Any]]:
         """Semantic search over memories.
 
@@ -276,6 +325,8 @@ class Memory:
             scope: Filter by scope.
             memory_type: Filter by memory type.
             limit: Maximum number of results.
+            search_mode: Search mode - "semantic", "keyword", or "hybrid" (default: "hybrid")
+            embedding_provider: Optional embedding provider for semantic/hybrid search
 
         Returns:
             List of memory dictionaries with relevance scores.
@@ -289,9 +340,154 @@ class Memory:
             Semantic search requires vector embeddings. If not available,
             falls back to simple text matching.
         """
-        # TODO: Implement vector-based semantic search
-        # For now, fall back to query-based filtering with text matching
+        import asyncio
+        import json
 
+        # If semantic or hybrid mode is requested but no embeddings available, fall back to keyword
+        if (
+            search_mode in ("semantic", "hybrid")
+            and embedding_provider is None
+            and self.llm_provider is None
+        ):
+            # No embedding provider available, fall back to keyword search
+            search_mode = "keyword"
+
+        if search_mode == "keyword":
+            # Keyword-only search using text matching
+            return self._keyword_search(query, scope, memory_type, limit)
+
+        # For semantic/hybrid search, we need embeddings
+        if embedding_provider is None:
+            # Try to use a default embedding provider if available
+            try:
+                from nexus.search.embeddings import create_embedding_provider
+
+                # Try to create an embedding provider (checks for API keys in env)
+                try:
+                    embedding_provider = create_embedding_provider(provider="openrouter")
+                except Exception:
+                    # Fall back to keyword search if no provider available
+                    return self._keyword_search(query, scope, memory_type, limit)
+            except ImportError:
+                # Fall back to keyword search
+                return self._keyword_search(query, scope, memory_type, limit)
+
+        # Generate query embedding
+        query_embedding = asyncio.run(embedding_provider.embed_text(query))
+
+        # Query memories from database
+        from sqlalchemy import select
+
+        from nexus.storage.models import MemoryModel
+
+        with self.session as session:
+            stmt = select(MemoryModel).where(MemoryModel.embedding.isnot(None))
+
+            if scope:
+                stmt = stmt.where(MemoryModel.scope == scope)
+            if memory_type:
+                stmt = stmt.where(MemoryModel.memory_type == memory_type)
+
+            # Filter by tenant/user/agent
+            if self.tenant_id:
+                stmt = stmt.where(MemoryModel.tenant_id == self.tenant_id)
+            if self.user_id:
+                stmt = stmt.where(MemoryModel.user_id == self.user_id)
+            if self.agent_id:
+                stmt = stmt.where(MemoryModel.agent_id == self.agent_id)
+
+            # Get memories with embeddings
+            result = session.execute(stmt)
+            memories_with_embeddings = result.scalars().all()
+
+            # Compute similarity scores
+            scored_memories = []
+            for memory in memories_with_embeddings:
+                # Check permission
+                if not self.permission_enforcer.check_memory(memory, Permission.READ, self.context):
+                    continue
+
+                # Parse embedding from JSON
+                if not memory.embedding:
+                    continue
+
+                try:
+                    memory_embedding = json.loads(memory.embedding)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+                # Compute cosine similarity
+                similarity = self._cosine_similarity(query_embedding, memory_embedding)
+
+                # For hybrid mode, also compute keyword score
+                keyword_score = 0.0
+                if search_mode == "hybrid":
+                    # Read content and compute keyword match
+                    try:
+                        content_bytes = self.backend.read_content(
+                            memory.content_hash, context=self.context
+                        )
+                        content = content_bytes.decode("utf-8")
+                        keyword_score = self._compute_keyword_score(query, content)
+                    except Exception:
+                        pass
+
+                # Combined score for hybrid mode
+                if search_mode == "hybrid":
+                    # Weight: 70% semantic, 30% keyword
+                    score = 0.7 * similarity + 0.3 * keyword_score
+                else:
+                    score = similarity
+
+                scored_memories.append((memory, score, similarity, keyword_score))
+
+            # Sort by score
+            scored_memories.sort(key=lambda x: x[1], reverse=True)
+
+            # Limit results
+            scored_memories = scored_memories[:limit]
+
+            # Build result list with content
+            results = []
+            for memory, score, semantic_score, keyword_score in scored_memories:
+                # Read content
+                try:
+                    content_bytes = self.backend.read_content(
+                        memory.content_hash, context=self.context
+                    )
+                    content = content_bytes.decode("utf-8")
+                except Exception:
+                    content = f"<content not available: {memory.content_hash}>"
+
+                results.append(
+                    {
+                        "memory_id": memory.memory_id,
+                        "content": content,
+                        "content_hash": memory.content_hash,
+                        "tenant_id": memory.tenant_id,
+                        "user_id": memory.user_id,
+                        "agent_id": memory.agent_id,
+                        "scope": memory.scope,
+                        "visibility": memory.visibility,
+                        "memory_type": memory.memory_type,
+                        "importance": memory.importance,
+                        "state": memory.state,
+                        "namespace": memory.namespace,
+                        "path_key": memory.path_key,
+                        "created_at": memory.created_at.isoformat() if memory.created_at else None,
+                        "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
+                        "score": score,
+                        "semantic_score": semantic_score if search_mode == "hybrid" else None,
+                        "keyword_score": keyword_score if search_mode == "hybrid" else None,
+                    }
+                )
+
+            return results
+
+    def _keyword_search(
+        self, query: str, scope: str | None, memory_type: str | None, limit: int
+    ) -> list[dict[str, Any]]:
+        """Keyword-only search fallback."""
         # Get all memories matching filters
         memories = self.query(
             scope=scope,
@@ -299,8 +495,7 @@ class Memory:
             limit=limit * 3,  # Get more to filter
         )
 
-        # Simple text matching (fallback until vector search is integrated)
-        query_lower = query.lower()
+        # Simple text matching
         scored_results = []
 
         for memory in memories:
@@ -308,17 +503,8 @@ class Memory:
             if not content or isinstance(content, bytes):
                 continue
 
-            content_lower = str(content).lower()
-
             # Simple relevance scoring
-            score = 0.0
-            if query_lower in content_lower:
-                score = 1.0
-            else:
-                # Count word matches
-                query_words = query_lower.split()
-                matches = sum(1 for word in query_words if word in content_lower)
-                score = matches / len(query_words) if query_words else 0.0
+            score = self._compute_keyword_score(query, content)
 
             if score > 0:
                 memory["score"] = score
@@ -327,6 +513,37 @@ class Memory:
         # Sort by score and limit
         scored_results.sort(key=lambda x: x["score"], reverse=True)
         return scored_results[:limit]
+
+    def _compute_keyword_score(self, query: str, content: str) -> float:
+        """Compute keyword match score."""
+        query_lower = query.lower()
+        content_lower = content.lower()
+
+        # Simple relevance scoring
+        if query_lower in content_lower:
+            return 1.0
+        else:
+            # Count word matches
+            query_words = query_lower.split()
+            matches = sum(1 for word in query_words if word in content_lower)
+            return matches / len(query_words) if query_words else 0.0
+
+    def _cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
+        """Compute cosine similarity between two vectors."""
+        import math
+
+        # Compute dot product
+        dot_product = sum(a * b for a, b in zip(vec1, vec2, strict=False))
+
+        # Compute magnitudes
+        mag1 = math.sqrt(sum(a * a for a in vec1))
+        mag2 = math.sqrt(sum(b * b for b in vec2))
+
+        # Avoid division by zero
+        if mag1 == 0 or mag2 == 0:
+            return 0.0
+
+        return dot_product / (mag1 * mag2)
 
     def get(self, memory_id: str) -> dict[str, Any] | None:
         """Get a specific memory by ID.
@@ -1715,3 +1932,144 @@ class Memory:
 
         # Process relearning queue
         return learning_loop.process_relearning_queue(limit)
+
+    async def index_memories_async(
+        self,
+        embedding_provider: Any | None = None,
+        batch_size: int = 10,
+        memory_type: str | None = None,
+        scope: str | None = None,
+    ) -> dict[str, Any]:
+        """Generate embeddings for existing memories that don't have them (#406).
+
+        Args:
+            embedding_provider: Optional embedding provider (uses OpenRouter by default)
+            batch_size: Number of memories to process in each batch
+            memory_type: Filter by memory type
+            scope: Filter by scope
+
+        Returns:
+            Dictionary with indexing results:
+                - total_processed: Total memories processed
+                - success_count: Number successfully indexed
+                - error_count: Number of errors
+                - skipped_count: Number skipped (already have embeddings)
+
+        Example:
+            >>> result = await memory.index_memories_async()
+            >>> print(f"Indexed {result['success_count']} memories")
+        """
+        import json
+
+        from sqlalchemy import select
+
+        from nexus.storage.models import MemoryModel
+
+        # Try to get embedding provider
+        if embedding_provider is None:
+            try:
+                from nexus.search.embeddings import create_embedding_provider
+
+                embedding_provider = create_embedding_provider(provider="openrouter")
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to create embedding provider: {e}. "
+                    "Please provide an embedding provider or set OPENROUTER_API_KEY env var."
+                ) from e
+
+        # Query memories without embeddings
+        stmt = select(MemoryModel).where(MemoryModel.embedding.is_(None))
+
+        if memory_type:
+            stmt = stmt.where(MemoryModel.memory_type == memory_type)
+        if scope:
+            stmt = stmt.where(MemoryModel.scope == scope)
+
+        # Filter by tenant/user/agent
+        if self.tenant_id:
+            stmt = stmt.where(MemoryModel.tenant_id == self.tenant_id)
+        if self.user_id:
+            stmt = stmt.where(MemoryModel.user_id == self.user_id)
+        if self.agent_id:
+            stmt = stmt.where(MemoryModel.agent_id == self.agent_id)
+
+        with self.session as session:
+            result = session.execute(stmt)
+            memories_to_index = result.scalars().all()
+
+            total_processed = 0
+            success_count = 0
+            error_count = 0
+            skipped_count = 0
+
+            # Process in batches
+            for i in range(0, len(memories_to_index), batch_size):
+                batch = memories_to_index[i : i + batch_size]
+
+                for memory in batch:
+                    total_processed += 1
+
+                    # Skip if already has embedding
+                    if memory.embedding:
+                        skipped_count += 1
+                        continue
+
+                    try:
+                        # Read content
+                        content_bytes = self.backend.read_content(
+                            memory.content_hash, context=self.context
+                        )
+                        content = content_bytes.decode("utf-8")
+
+                        # Generate embedding
+                        embedding_vec = await embedding_provider.embed_text(content)
+                        embedding_json = json.dumps(embedding_vec)
+
+                        # Update memory with embedding
+                        memory.embedding = embedding_json
+                        memory.embedding_model = getattr(embedding_provider, "model", "unknown")
+                        memory.embedding_dim = len(embedding_vec)
+
+                        success_count += 1
+                    except Exception:
+                        # Failed to generate embedding for this memory
+                        error_count += 1
+                        continue
+
+                # Commit batch
+                session.commit()
+
+            return {
+                "total_processed": total_processed,
+                "success_count": success_count,
+                "error_count": error_count,
+                "skipped_count": skipped_count,
+            }
+
+    def index_memories(
+        self,
+        embedding_provider: Any | None = None,
+        batch_size: int = 10,
+        memory_type: str | None = None,
+        scope: str | None = None,
+    ) -> dict[str, Any]:
+        """Generate embeddings for existing memories (sync version).
+
+        Args:
+            embedding_provider: Optional embedding provider
+            batch_size: Number of memories to process in each batch
+            memory_type: Filter by memory type
+            scope: Filter by scope
+
+        Returns:
+            Dictionary with indexing results
+
+        Example:
+            >>> result = memory.index_memories()
+            >>> print(f"Indexed {result['success_count']} memories")
+        """
+        import asyncio
+
+        return asyncio.run(
+            self.index_memories_async(embedding_provider, batch_size, memory_type, scope)
+        )

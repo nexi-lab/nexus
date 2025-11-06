@@ -1221,12 +1221,40 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         elif method == "query_memories":
             # v0.7.1+v0.8.0: Use memory API with authenticated context
             memory_api = self._get_memory_api_with_context()
-            memories = memory_api.query(
-                memory_type=params.memory_type,
-                scope=params.scope,
-                state=params.state,  # #368
-                limit=params.limit,
-            )
+
+            # #406: Support semantic search if query is provided
+            if params.query:
+                # Create embedding provider if specified
+                embedding_provider_obj = None
+                if params.embedding_provider:
+                    try:
+                        from nexus.search.embeddings import create_embedding_provider
+
+                        embedding_provider_obj = create_embedding_provider(
+                            provider=params.embedding_provider
+                        )
+                    except Exception:
+                        # Failed to create provider, will use default or fallback
+                        pass
+
+                # Use search method with semantic search
+                search_mode = params.search_mode or "hybrid"
+                memories = memory_api.search(
+                    query=params.query,
+                    memory_type=params.memory_type,
+                    scope=params.scope,
+                    limit=params.limit,
+                    search_mode=search_mode,
+                    embedding_provider=embedding_provider_obj,
+                )
+            else:
+                # Use regular query method
+                memories = memory_api.query(
+                    memory_type=params.memory_type,
+                    scope=params.scope,
+                    state=params.state,  # #368
+                    limit=params.limit,
+                )
             return {"memories": memories}
 
         # ========== Admin API (v0.5.1) ==========

@@ -226,6 +226,9 @@ class MemoryViewRouter:
         namespace: str | None = None,  # v0.8.0: Hierarchical namespace
         path_key: str | None = None,  # v0.8.0: Optional key for upsert mode
         state: str = "active",  # #368: Memory state
+        embedding: str | None = None,  # #406: Embedding vector (JSON)
+        embedding_model: str | None = None,  # #406: Embedding model name
+        embedding_dim: int | None = None,  # #406: Embedding dimension
     ) -> MemoryModel:
         """Create a new memory (or update if path_key exists).
 
@@ -240,6 +243,9 @@ class MemoryViewRouter:
             importance: Importance score (0.0-1.0).
             namespace: Hierarchical namespace (e.g., "knowledge/geography/facts"). v0.8.0
             path_key: Optional unique key within namespace for upsert mode. v0.8.0
+            embedding: Vector embedding as JSON string. #406
+            embedding_model: Name of embedding model used. #406
+            embedding_dim: Dimension of embedding vector. #406
 
         Returns:
             MemoryModel: Created or updated memory.
@@ -276,6 +282,13 @@ class MemoryViewRouter:
                 existing_memory.user_id = user_id
             if agent_id is not None:
                 existing_memory.agent_id = agent_id
+            # Update embedding fields (#406)
+            if embedding is not None:
+                existing_memory.embedding = embedding
+            if embedding_model is not None:
+                existing_memory.embedding_model = embedding_model
+            if embedding_dim is not None:
+                existing_memory.embedding_dim = embedding_dim
 
             existing_memory.validate()
             self.session.commit()
@@ -294,6 +307,9 @@ class MemoryViewRouter:
                 state=state,  # #368: Use provided state (defaults to active for backward compatibility)
                 namespace=namespace,
                 path_key=path_key,
+                embedding=embedding,  # #406
+                embedding_model=embedding_model,  # #406
+                embedding_dim=embedding_dim,  # #406
             )
 
             # Validate before adding

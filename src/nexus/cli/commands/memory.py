@@ -158,26 +158,77 @@ def query(
 @click.option("--scope", default=None, help="Filter by scope")
 @click.option("--type", "memory_type", default=None, help="Filter by memory type")
 @click.option("--limit", type=int, default=10, help="Maximum number of results")
+@click.option(
+    "--mode",
+    "search_mode",
+    type=click.Choice(["semantic", "keyword", "hybrid"], case_sensitive=False),
+    default="hybrid",
+    help="Search mode: semantic (vector), keyword (text), or hybrid (default: hybrid)",
+)
+@click.option(
+    "--provider",
+    "embedding_provider",
+    type=click.Choice(["openai", "voyage", "openrouter"], case_sensitive=False),
+    default=None,
+    help="Embedding provider for semantic search (default: auto-detect from env)",
+)
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 def search(
-    query_text: str, scope: str | None, memory_type: str | None, limit: int, output_json: bool
+    query_text: str,
+    scope: str | None,
+    memory_type: str | None,
+    limit: int,
+    search_mode: str,
+    embedding_provider: str | None,
+    output_json: bool,
 ) -> None:
     """Semantic search over memories.
 
     \b
     Examples:
+        # Hybrid search (default - combines semantic + keyword)
         nexus memory search "Python programming"
-        nexus memory search "user preferences" --scope user --limit 5
-        nexus memory search "API keys" --json
+
+        # Semantic-only search (requires API key)
+        nexus memory search "user preferences" --mode semantic
+
+        # Keyword-only search (no API key needed)
+        nexus memory search "OAuth" --mode keyword
+
+        # With filters
+        nexus memory search "API keys" --scope user --type preference --limit 5
+
+        # Specify embedding provider
+        nexus memory search "authentication" --provider openrouter
+
+        # JSON output
+        nexus memory search "database" --json
     """
     nx = get_default_filesystem()
 
     try:
+        # Create embedding provider if specified
+        embedding_provider_obj = None
+        if embedding_provider and search_mode in ("semantic", "hybrid"):
+            try:
+                from nexus.search.embeddings import create_embedding_provider
+
+                embedding_provider_obj = create_embedding_provider(provider=embedding_provider)
+            except Exception as e:
+                click.echo(
+                    f"Warning: Failed to create embedding provider '{embedding_provider}': {e}",
+                    err=True,
+                )
+                click.echo("Falling back to keyword search.", err=True)
+                search_mode = "keyword"
+
         results = nx.memory.search(  # type: ignore[attr-defined]
             query=query_text,
             scope=scope,
             memory_type=memory_type,
             limit=limit,
+            search_mode=search_mode,
+            embedding_provider=embedding_provider_obj,
         )
 
         if output_json:
@@ -187,9 +238,19 @@ def search(
                 click.echo("No memories found.")
                 return
 
-            click.echo(f"Found {len(results)} memories:\n")
+            click.echo(f"Found {len(results)} memories (mode: {search_mode}):\n")
             for mem in results:
-                click.echo(f"ID: {mem['memory_id']} (score: {mem.get('score', 0):.2f})")
+                score = mem.get("score", 0)
+                semantic_score = mem.get("semantic_score")
+                keyword_score = mem.get("keyword_score")
+
+                # Build score display
+                if semantic_score is not None and keyword_score is not None:
+                    score_str = f"score: {score:.3f} (semantic: {semantic_score:.3f}, keyword: {keyword_score:.3f})"
+                else:
+                    score_str = f"score: {score:.3f}"
+
+                click.echo(f"ID: {mem['memory_id']} ({score_str})")
                 click.echo(
                     f"  Content: {mem['content'][:100]}..."
                     if len(mem["content"]) > 100

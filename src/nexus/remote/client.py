@@ -452,6 +452,59 @@ class RemoteMemory:
         result = self.remote_fs._call_rpc("query_memories", params)
         return result["memories"]  # type: ignore[no-any-return]
 
+    def search(
+        self,
+        query: str,
+        scope: str | None = None,
+        memory_type: str | None = None,
+        limit: int = 10,
+        search_mode: str = "hybrid",
+        embedding_provider: Any = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """Semantic search over memories (#406).
+
+        Args:
+            query: Natural language search query
+            scope: Filter by scope
+            memory_type: Filter by type
+            limit: Maximum results
+            search_mode: Search mode - "semantic", "keyword", or "hybrid" (default)
+            embedding_provider: Embedding provider name ("openai", "voyage", "openrouter")
+
+        Returns:
+            List of matching memories with relevance scores
+
+        Example:
+            >>> results = memory.search("authentication flow")
+            >>> for mem in results:
+            ...     print(f"Score: {mem['score']:.2f} - {mem['content'][:50]}...")
+        """
+        params: dict[str, Any] = {
+            "query": query,
+            "limit": limit,
+        }
+        if memory_type is not None:
+            params["memory_type"] = memory_type
+        if scope is not None:
+            params["scope"] = scope
+        if search_mode != "hybrid":
+            params["search_mode"] = search_mode
+        if embedding_provider is not None:
+            # Convert provider object to string name
+            if hasattr(embedding_provider, "__class__"):
+                provider_name = embedding_provider.__class__.__name__.lower()
+                if "openrouter" in provider_name:
+                    params["embedding_provider"] = "openrouter"
+                elif "openai" in provider_name:
+                    params["embedding_provider"] = "openai"
+                elif "voyage" in provider_name:
+                    params["embedding_provider"] = "voyage"
+            elif isinstance(embedding_provider, str):
+                params["embedding_provider"] = embedding_provider
+
+        result = self.remote_fs._call_rpc("query_memories", params)
+        return result["memories"]  # type: ignore[no-any-return]
+
     def delete(self, memory_id: str) -> bool:
         """Delete a memory.
 

@@ -563,7 +563,7 @@ class NexusFS(
         """Parse context dict or OperationContext into OperationContext.
 
         Args:
-            context: Optional context dict or OperationContext with user, groups, tenant_id, etc.
+            context: Optional context dict or OperationContext with user_id, groups, tenant_id, etc.
 
         Returns:
             OperationContext instance
@@ -578,7 +578,7 @@ class NexusFS(
             context = {}
 
         return OperationContext(
-            user=context.get("user", "system"),
+            user=context.get("user_id", "system"),
             groups=context.get("groups", []),
             tenant_id=context.get("tenant_id"),
             agent_id=context.get("agent_id"),

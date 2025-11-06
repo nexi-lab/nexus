@@ -253,6 +253,8 @@ class Memory:
                     "memory_type": memory.memory_type,
                     "importance": memory.importance,
                     "state": memory.state,  # #368
+                    "namespace": memory.namespace,  # v0.8.0
+                    "path_key": memory.path_key,  # v0.8.0
                     "created_at": memory.created_at.isoformat() if memory.created_at else None,
                     "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
                 }

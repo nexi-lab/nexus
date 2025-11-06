@@ -9,7 +9,6 @@ This test verifies:
 
 import io
 import tempfile
-from pathlib import Path
 
 import pandas as pd
 
@@ -74,9 +73,9 @@ def test_dynamic_viewer_read_integration():
         full_content = nx.read(csv_path, context=admin_context)
         full_df = pd.read_csv(io.StringIO(full_content.decode("utf-8")))
 
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("Test 1: Admin read (full access)")
-        print("="*60)
+        print("=" * 60)
         print(f"Columns: {list(full_df.columns)}")
         print(f"Row count: {len(full_df)}")
         assert "password" in full_df.columns, "Admin should see password column"
@@ -89,9 +88,9 @@ def test_dynamic_viewer_read_integration():
         filtered_content = nx.read(csv_path, context=alice_context)
         filtered_df = pd.read_csv(io.StringIO(filtered_content.decode("utf-8")))
 
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("Test 2: Alice read (dynamic_viewer - filtered)")
-        print("="*60)
+        print("=" * 60)
         print(f"Columns: {list(filtered_df.columns)}")
         print(f"Row count: {len(filtered_df)}")
         print("\nFiltered data:")
@@ -120,9 +119,9 @@ def test_dynamic_viewer_read_integration():
         print("✓ Alice sees only filtered data with aggregations")
 
         # Test 3: Test CSV column validation
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("Test 3: CSV column validation")
-        print("="*60)
+        print("=" * 60)
 
         try:
             # Try to create permission with invalid column
@@ -136,15 +135,15 @@ def test_dynamic_viewer_read_integration():
                 context=admin_context,
             )
             print("✗ Should have failed with invalid column")
-            assert False, "Should raise ValueError for invalid column"
+            raise AssertionError("Should raise ValueError for invalid column")
         except ValueError as e:
             print(f"✓ Correctly rejected invalid column: {e}")
             assert "invalid_column" in str(e)
 
         # Test 4: Test with read_with_dynamic_viewer method
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("Test 4: read_with_dynamic_viewer method")
-        print("="*60)
+        print("=" * 60)
 
         # Grant Alice viewer permission (dynamic_viewer extends viewer)
         nx.rebac_create(
@@ -177,9 +176,9 @@ def test_dynamic_viewer_read_integration():
         print(f"✓ aggregated_columns: {result['aggregated_columns']}")
         print(f"✓ aggregations: {result['aggregations']}")
 
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("All tests passed! ✓")
-        print("="*60)
+        print("=" * 60)
 
 
 if __name__ == "__main__":

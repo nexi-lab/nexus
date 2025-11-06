@@ -142,6 +142,7 @@ class SandboxManager:
         sandbox_id = await provider_obj.create(
             template_id=template_id,
             timeout_minutes=ttl_minutes,
+            metadata={"name": name},
         )
 
         # Calculate expiry time
@@ -311,6 +312,7 @@ class SandboxManager:
         user_id: str | None = None,
         tenant_id: str | None = None,
         agent_id: str | None = None,
+        status: str | None = None,
         verify_status: bool = False,
     ) -> list[dict[str, Any]]:
         """List sandboxes with optional filtering.
@@ -319,6 +321,7 @@ class SandboxManager:
             user_id: Filter by user (optional)
             tenant_id: Filter by tenant (optional)
             agent_id: Filter by agent (optional)
+            status: Filter by status (e.g., 'active', 'stopped', 'paused') (optional)
             verify_status: If True, verify status with provider (slower but accurate)
 
         Returns:
@@ -332,6 +335,8 @@ class SandboxManager:
             query = query.where(SandboxMetadataModel.tenant_id == tenant_id)
         if agent_id:
             query = query.where(SandboxMetadataModel.agent_id == agent_id)
+        if status:
+            query = query.where(SandboxMetadataModel.status == status)
 
         result = self.db.execute(query)
         sandboxes = result.scalars().all()

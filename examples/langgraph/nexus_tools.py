@@ -11,8 +11,9 @@ Nexus Tools:
 4. write_file: Write content to Nexus filesystem
 5. python: Execute Python code in Nexus-managed sandbox
 6. bash: Execute bash commands in Nexus-managed sandbox
-7. tavily_search: Search the web using Tavily API
-8. firecrawl_fetch: Fetch and extract content from web pages using Firecrawl API
+7. query_memories: Query and retrieve stored memory records
+8. web_search: Search the web for current information
+9. web_crawl: Fetch and extract web page content as markdown
 
 These tools enable agents to interact with a remote Nexus filesystem and execute
 code in isolated Nexus-managed sandboxes, allowing them to search, read, analyze, persist
@@ -80,31 +81,15 @@ def get_nexus_tools():
 
     @tool
     def grep_files(grep_cmd: str, config: RunnableConfig) -> str:
-        """Search file content using grep-style commands.
-
-        Use this tool to find files containing specific text or code patterns.
-        Follows grep command syntax for familiarity.
+        """Search file content for text patterns.
 
         Args:
-            grep_cmd: Grep command in format: "pattern [path] [options]"
-                     - pattern: Required. Text or regex to search for (quote if contains spaces)
-                     - path: Optional. Directory to search (default: "/")
-                     - Options: -i (case insensitive)
+            grep_cmd: Format "pattern [path] [options]"
+                     - pattern: Text/regex to search (quote if spaces)
+                     - path: Directory to search (default "/")
+                     - -i: Case insensitive
 
-                     Examples:
-                     - "async def /workspace"
-                     - "'import pandas' /scripts -i"
-                     - "TODO:"
-                     - "function.*calculate /src"
-
-        Returns:
-            String describing matches found, including file paths, line numbers, and content.
-            Returns "No matches found" if pattern doesn't match anything.
-
-        Examples:
-            - grep_files("async def /workspace") → Find all async function definitions
-            - grep_files("TODO:") → Find all TODO comments in entire filesystem
-            - grep_files("'import pandas' /scripts -i") → Case-insensitive pandas imports
+        Examples: "async def /workspace", "TODO:", "'import pandas' -i"
         """
         try:
             # Get authenticated client
@@ -162,23 +147,13 @@ def get_nexus_tools():
 
     @tool
     def glob_files(pattern: str, config: RunnableConfig, path: str = "/") -> str:
-        """Find files by name pattern using glob syntax.
-
-        Use this tool to find files matching a specific naming pattern.
-        Supports standard glob patterns like wildcards and recursive search.
+        """Find files by name pattern.
 
         Args:
-            pattern: Glob pattern to match filenames (e.g., "*.py", "**/*.md", "test_*.py")
-            path: Directory path to search in (default: "/" for entire filesystem)
+            pattern: Glob pattern (e.g., "*.py", "**/*.md", "test_*.py")
+            path: Directory to search (default "/")
 
-        Returns:
-            String listing all matching file paths, one per line.
-            Returns "No files found" if no matches.
-
-        Examples:
-            - glob_files("*.py", "/workspace") → Find all Python files
-            - glob_files("**/*.md", "/docs") → Find all Markdown files recursively
-            - glob_files("test_*.py", "/tests") → Find all test files
+        Examples: glob_files("*.py", "/workspace"), glob_files("**/*.md")
         """
         try:
             # Get authenticated client
@@ -203,30 +178,14 @@ def get_nexus_tools():
 
     @tool
     def read_file(read_cmd: str, config: RunnableConfig) -> str:
-        """Read file content using cat/less-style commands.
-
-        Use this tool to read and analyze file contents.
-        Works with text files including code, documentation, and data files.
-        Supports both 'cat' (full content) and 'less' (preview) commands.
+        """Read file content.
 
         Args:
-            read_cmd: Read command in format: "[cat|less] path"
-                     - cat: Display entire file content
-                     - less: Display first 100 lines as preview
-                     - path: File path to read
+            read_cmd: "[cat|less] path" or just "path"
+                     - cat: Full content (default)
+                     - less: First 100 lines preview
 
-                     Examples:
-                     - "cat /workspace/README.md"
-                     - "less /scripts/analysis.py"
-                     - "/data/results.json" (defaults to cat)
-
-        Returns:
-            File content as string, or error message if file cannot be read.
-
-        Examples:
-            - read_file("cat /workspace/README.md") → Read entire README
-            - read_file("less /scripts/large_file.py") → Preview first 100 lines
-            - read_file("/data/results.json") → Read JSON file (defaults to cat)
+        Examples: "cat /workspace/README.md", "less /scripts/large.py", "/data/file.json"
         """
         try:
             # Get authenticated client
@@ -280,23 +239,13 @@ def get_nexus_tools():
 
     @tool
     def write_file(path: str, content: str, config: RunnableConfig) -> str:
-        """Write content to Nexus filesystem.
-
-        Use this tool to save analysis results, reports, or generated content.
-        Creates parent directories automatically if they don't exist.
-        Overwrites existing files.
+        """Write content to file. Creates parent directories automatically, overwrites if exists.
 
         Args:
-            path: Absolute path where file should be written (e.g., "/reports/summary.md")
-            content: Text content to write to the file
+            path: Absolute file path (e.g., "/reports/summary.md")
+            content: Text content to write
 
-        Returns:
-            Success message with file path and size, or error message if write fails.
-
-        Examples:
-            - write_file("/reports/summary.md", "# Summary\\n...") → Save analysis report
-            - write_file("/workspace/config.json", "{}") → Create config file
-            - write_file("/data/results.txt", "Results:\\n...") → Save results
+        Examples: write_file("/reports/summary.md", "# Summary\\n..."), write_file("/data/results.txt", "...")
         """
         try:
             # Get authenticated client
@@ -321,26 +270,12 @@ def get_nexus_tools():
     # Nexus Sandbox Tools
     @tool
     def python(code: str, config: RunnableConfig) -> str:
-        """Execute Python code in a Nexus-managed sandbox.
-
-        Use this tool to run Python code for data analysis, calculations, file processing,
-        or any other computational tasks. The code runs in an isolated Nexus-managed sandbox.
+        """Execute Python code in sandbox. Use print() for output.
 
         Args:
-            code: Python code to execute. Can be multiple lines.
-                  Use print() to see output.
+            code: Python code (multi-line supported)
 
-        Returns:
-            Execution results including:
-            - Standard output (stdout)
-            - Standard error (stderr) if any
-            - Exit code
-            - Execution time
-
-        Examples:
-            - python("print('Hello from Nexus')") → Execute simple print
-            - python("import pandas as pd\\ndf = pd.DataFrame({'a': [1,2,3]})\\nprint(df)")
-            - python("result = 2 + 2\\nprint(f'Result: {result}')")
+        Examples: python("print('Hello')"), python("import pandas as pd\\nprint(pd.DataFrame({'a': [1,2,3]}))")
         """
         try:
             nx = _get_nexus_client(config)
@@ -386,29 +321,12 @@ def get_nexus_tools():
 
     @tool
     def bash(command: str, config: RunnableConfig) -> str:
-        """Execute bash commands in a Nexus-managed sandbox.
-
-        Use this tool to run shell commands like file operations, system commands,
-        or CLI tool executions. Commands run in an isolated Nexus-managed sandbox.
+        """Execute bash commands in sandbox. Supports pipes, redirects. Changes persist in session.
 
         Args:
-            command: Bash command to execute. Can include pipes, redirects, etc.
+            command: Bash command to execute
 
-        Returns:
-            Command execution results including:
-            - Standard output (stdout)
-            - Standard error (stderr) if any
-            - Exit code
-            - Execution time
-
-        Examples:
-            - bash("ls -la") → List files in current directory
-            - bash("echo 'Hello World'") → Print text
-            - bash("cat file.txt | grep pattern") → Search file content
-            - bash("python script.py") → Run a Python script
-
-        Note: Commands run in the sandbox's working directory.
-              File system changes persist between calls in the same session.
+        Examples: bash("ls -la"), bash("echo 'Hello'"), bash("cat file.txt | grep pattern")
         """
         try:
             nx = _get_nexus_client(config)
@@ -452,26 +370,53 @@ def get_nexus_tools():
         except Exception as e:
             return f"Error executing bash command: {str(e)}"
 
+    # Memory Tools
+    @tool
+    def query_memories(config: RunnableConfig) -> str:
+        """Query all stored active memory records. Returns content, namespace, scope, importance.
+
+        Example: query_memories()
+        """
+        try:
+            nx = _get_nexus_client(config)
+
+            # Query active memories using RemoteMemory API
+            memories = nx.memory.query(state="active", limit=100)
+
+            if not memories:
+                return "No memories found"
+
+            # Format results
+            output_lines = [f"Found {len(memories)} memories:\n"]
+
+            for i, memory in enumerate(memories, 1):
+                content = memory.get("content", "")
+                mem_namespace = memory.get("namespace", "N/A")
+                importance = memory.get("importance")
+
+                # Truncate content if too long
+                display_content = content[:200] + "..." if len(content) > 200 else content
+
+                output_lines.append(f"\n{i}. {display_content}")
+                output_lines.append(f"   Namespace: {mem_namespace}")
+                if importance is not None:
+                    output_lines.append(f"   Importance: {importance:.2f}")
+
+            return "\n".join(output_lines)
+
+        except Exception as e:
+            return f"Error querying memories: {str(e)}"
+
     # Web Search and Fetch Tools
     @tool
-    def tavily_search(query: str, config: RunnableConfig, max_results: int = 5) -> str:  # noqa: ARG001
-        """Search the web using Tavily API.
-
-        Use this tool to search the internet for current information, news, research,
-        documentation, or any topic that requires web search.
+    def web_search(query: str, config: RunnableConfig, max_results: int = 5) -> str:  # noqa: ARG001
+        """Search the web for current information. Returns titles, URLs, snippets.
 
         Args:
-            query: Search query string (e.g., "latest Python 3.12 features")
-            max_results: Maximum number of results to return (default: 5, max: 20)
+            query: Search query
+            max_results: Max results (default 5, max 20)
 
-        Returns:
-            Search results including titles, URLs, and content snippets.
-            Returns error message if search fails.
-
-        Examples:
-            - tavily_search("latest AI research papers 2024") → Find recent AI papers
-            - tavily_search("Python asyncio best practices", max_results=10) → Get more results
-            - tavily_search("weather in San Francisco") → Current weather info
+        Examples: web_search("Python asyncio best practices"), web_search("latest AI research 2024", max_results=10)
         """
         try:
             # Import here to avoid requiring tavily when not used
@@ -521,24 +466,13 @@ def get_nexus_tools():
             return f"Error performing web search: {str(e)}"
 
     @tool
-    def firecrawl_fetch(url: str, config: RunnableConfig) -> str:  # noqa: ARG001
-        """Fetch and extract content from a web page using Firecrawl API.
-
-        Use this tool to fetch, parse, and extract clean content from any web page.
-        Firecrawl converts web pages into clean markdown format suitable for analysis.
+    def web_crawl(url: str, config: RunnableConfig) -> str:  # noqa: ARG001
+        """Fetch and extract web page content as clean markdown with metadata.
 
         Args:
-            url: The web page URL to fetch and extract content from
-                 (e.g., "https://example.com/article")
+            url: Web page URL to fetch
 
-        Returns:
-            Extracted page content in markdown format with metadata.
-            Returns error message if fetch fails.
-
-        Examples:
-            - firecrawl_fetch("https://docs.python.org/3/library/asyncio.html") → Get Python docs
-            - firecrawl_fetch("https://github.com/example/repo") → Fetch GitHub page
-            - firecrawl_fetch("https://news.ycombinator.com") → Extract Hacker News content
+        Examples: web_crawl("https://docs.python.org/3/library/asyncio.html"), web_crawl("https://github.com/example/repo")
         """
         try:
             # Import here to avoid requiring firecrawl when not used
@@ -620,8 +554,9 @@ def get_nexus_tools():
         write_file,
         python,
         bash,
-        tavily_search,
-        firecrawl_fetch,
+        query_memories,
+        web_search,
+        web_crawl,
     ]
 
     return tools

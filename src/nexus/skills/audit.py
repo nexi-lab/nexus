@@ -6,7 +6,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol
 
 from nexus.core.exceptions import ValidationError
@@ -34,7 +34,7 @@ class DatabaseConnection(Protocol):
         ...
 
 
-class AuditAction(str, Enum):
+class AuditAction(StrEnum):
     """Types of auditable actions for skills."""
 
     CREATED = "created"

@@ -6,7 +6,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
 from nexus.core.exceptions import PermissionDeniedError, ValidationError
@@ -37,7 +37,7 @@ class DatabaseConnection(Protocol):
         ...
 
 
-class ApprovalStatus(str, Enum):
+class ApprovalStatus(StrEnum):
     """Status of a skill approval request."""
 
     PENDING = "pending"

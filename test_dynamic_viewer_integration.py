@@ -29,14 +29,16 @@ def test_dynamic_viewer_read_integration():
         nx = nexus.connect(config=config)
 
         # Create test CSV file
-        test_data = pd.DataFrame({
-            "name": ["Alice", "Bob", "Charlie"],
-            "email": ["alice@example.com", "bob@example.com", "charlie@example.com"],
-            "age": [30, 25, 35],
-            "salary": [100000, 80000, 120000],
-            "password": ["secret1", "secret2", "secret3"],
-            "ssn": ["111-11-1111", "222-22-2222", "333-33-3333"],
-        })
+        test_data = pd.DataFrame(
+            {
+                "name": ["Alice", "Bob", "Charlie"],
+                "email": ["alice@example.com", "bob@example.com", "charlie@example.com"],
+                "age": [30, 25, 35],
+                "salary": [100000, 80000, 120000],
+                "password": ["secret1", "secret2", "secret3"],
+                "ssn": ["111-11-1111", "222-22-2222", "333-33-3333"],
+            }
+        )
 
         csv_path = "/test_users.csv"
         csv_content = test_data.to_csv(index=False).encode("utf-8")
@@ -112,7 +114,9 @@ def test_dynamic_viewer_read_integration():
         expected_sum_salary = 300000.0  # 100000 + 80000 + 120000
 
         assert abs(mean_age - expected_mean_age) < 0.01, f"Mean age should be {expected_mean_age}"
-        assert abs(sum_salary - expected_sum_salary) < 0.01, f"Sum salary should be {expected_sum_salary}"
+        assert abs(sum_salary - expected_sum_salary) < 0.01, (
+            f"Sum salary should be {expected_sum_salary}"
+        )
 
         print(f"✓ Mean age: {mean_age}")
         print(f"✓ Sum salary: {sum_salary}")

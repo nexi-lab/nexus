@@ -23,15 +23,17 @@ def test_column_order_preservation():
 
         # Create test CSV with specific column order
         # Original order: col1, col2, col3, col4, col5, col6, col7
-        test_data = pd.DataFrame({
-            "col1": [1, 2, 3],
-            "col2": [10, 20, 30],
-            "col3": [100, 200, 300],
-            "col4": [1000, 2000, 3000],
-            "col5": [10000, 20000, 30000],
-            "col6": [100000, 200000, 300000],
-            "col7": [1000000, 2000000, 3000000],
-        })
+        test_data = pd.DataFrame(
+            {
+                "col1": [1, 2, 3],
+                "col2": [10, 20, 30],
+                "col3": [100, 200, 300],
+                "col4": [1000, 2000, 3000],
+                "col5": [10000, 20000, 30000],
+                "col6": [100000, 200000, 300000],
+                "col7": [1000000, 2000000, 3000000],
+            }
+        )
 
         csv_path = "/test_order.csv"
         csv_content = test_data.to_csv(index=False).encode("utf-8")

@@ -437,7 +437,7 @@ def serve(
         nx = get_filesystem(
             backend_config,
             enforce_permissions=enforce_permissions,
-            force_local=True  # Force local mode to prevent RemoteNexusFS
+            force_local=True,  # Force local mode to prevent RemoteNexusFS
         )
 
         # Load backends from config file if specified

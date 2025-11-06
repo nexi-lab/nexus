@@ -272,7 +272,11 @@ class NexusFSReBACMixin:
                             actual_columns = set(df.columns)
 
                             # Collect all configured columns
-                            configured_columns = set(hidden_columns) | set(aggregations.keys()) | set(visible_columns)
+                            configured_columns = (
+                                set(hidden_columns)
+                                | set(aggregations.keys())
+                                | set(visible_columns)
+                            )
 
                             # Check for invalid columns
                             invalid_columns = configured_columns - actual_columns
@@ -290,6 +294,7 @@ class NexusFSReBACMixin:
                         except Exception as e:
                             # If CSV parsing fails (non-validation error), provide warning but allow creation
                             import logging
+
                             logger = logging.getLogger(__name__)
                             logger.warning(
                                 f"Could not validate CSV columns for {file_path}: {e}. "
@@ -301,6 +306,7 @@ class NexusFSReBACMixin:
                 except Exception as e:
                     # If file read fails, skip validation (file might not exist yet)
                     import logging
+
                     logger = logging.getLogger(__name__)
                     logger.debug(f"Could not read file {file_path} for column validation: {e}")
 
@@ -348,9 +354,7 @@ class NexusFSReBACMixin:
             conditions = {"type": "dynamic_viewer", "column_config": column_config}
         elif column_config is not None:
             # column_config provided but relation is not dynamic_viewer
-            raise ValueError(
-                "column_config can only be provided when relation is 'dynamic_viewer'"
-            )
+            raise ValueError("column_config can only be provided when relation is 'dynamic_viewer'")
 
         # Create relationship
         return self._rebac_manager.rebac_write(
@@ -1575,16 +1579,18 @@ class NexusFSReBACMixin:
         )
 
         if not has_read:
-            raise PermissionError(
-                f"Subject {subject} does not have read permission on {file_path}"
-            )
+            raise PermissionError(f"Subject {subject} does not have read permission on {file_path}")
 
         # Get dynamic viewer config
         column_config = self.get_dynamic_viewer_config(subject=subject, file_path=file_path)
 
         # Read the file content WITHOUT dynamic_viewer filtering
         # We need the raw content to apply filtering here
-        if hasattr(self, "metadata") and hasattr(self, "router") and hasattr(self, "_get_routing_params"):
+        if (
+            hasattr(self, "metadata")
+            and hasattr(self, "router")
+            and hasattr(self, "_get_routing_params")
+        ):
             # NexusFS instance - read directly from backend to bypass filtering
             tenant_id, agent_id, is_admin = self._get_routing_params(context)  # type: ignore[attr-defined]
             route = self.router.route(  # type: ignore[attr-defined]
@@ -1600,7 +1606,9 @@ class NexusFSReBACMixin:
 
             # Read raw content from backend
             content_bytes = route.backend.read_content(meta.etag, context=context)
-            content = content_bytes.decode("utf-8") if isinstance(content_bytes, bytes) else content_bytes
+            content = (
+                content_bytes.decode("utf-8") if isinstance(content_bytes, bytes) else content_bytes
+            )
         else:
             # Fallback: read from filesystem
             with open(file_path, encoding="utf-8") as f:
@@ -1621,11 +1629,13 @@ class NexusFSReBACMixin:
         result = self.apply_dynamic_viewer_filter(
             data=content,  # Raw unfiltered content
             column_config=column_config,
-            file_format="csv"
+            file_format="csv",
         )
 
         return {
-            "content": result["filtered_data"].encode("utf-8") if isinstance(result["filtered_data"], str) else result["filtered_data"],
+            "content": result["filtered_data"].encode("utf-8")
+            if isinstance(result["filtered_data"], str)
+            else result["filtered_data"],
             "is_filtered": True,
             "config": column_config,
             "aggregations": result["aggregations"],

@@ -181,7 +181,9 @@ def add_backend_options(func: Any) -> Any:
 
 
 def get_filesystem(
-    backend_config: BackendConfig, enforce_permissions: bool | None = None, force_local: bool = False
+    backend_config: BackendConfig,
+    enforce_permissions: bool | None = None,
+    force_local: bool = False,
 ) -> NexusFilesystem:
     """Get Nexus filesystem instance from backend configuration.
 

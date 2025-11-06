@@ -62,7 +62,7 @@ def test_column_order_preservation():
         content1 = nx.read(csv_path, context=context1)
         df1 = pd.read_csv(io.StringIO(content1.decode("utf-8")))
 
-        print(f"Expected order: col1, sum(col2), col3, mean(col4), max(col6)")
+        print("Expected order: col1, sum(col2), col3, mean(col4), max(col6)")
         print(f"Actual order:   {', '.join(df1.columns)}")
         assert list(df1.columns) == ["col1", "sum(col2)", "col3", "mean(col4)", "max(col6)"]
         print("✓ Order is correct!")
@@ -89,7 +89,7 @@ def test_column_order_preservation():
         content2 = nx.read(csv_path, context=context2)
         df2 = pd.read_csv(io.StringIO(content2.decode("utf-8")))
 
-        print(f"Expected order: count(col1), col2, col5, col6, std(col7)")
+        print("Expected order: count(col1), col2, col5, col6, std(col7)")
         print(f"Actual order:   {', '.join(df2.columns)}")
         assert list(df2.columns) == ["count(col1)", "col2", "col5", "col6", "std(col7)"]
         print("✓ Order is correct!")
@@ -116,7 +116,7 @@ def test_column_order_preservation():
         content3 = nx.read(csv_path, context=context3)
         df3 = pd.read_csv(io.StringIO(content3.decode("utf-8")))
 
-        print(f"Expected order: col1, min(col2), col3, col5, col6, col7")
+        print("Expected order: col1, min(col2), col3, col5, col6, col7")
         print(f"Actual order:   {', '.join(df3.columns)}")
         assert list(df3.columns) == ["col1", "min(col2)", "col3", "col5", "col6", "col7"]
         print("✓ Order is correct!")

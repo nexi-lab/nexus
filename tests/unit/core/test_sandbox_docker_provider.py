@@ -154,7 +154,7 @@ class TestDockerSandboxProvider:
         assert result.stdout == "Hello World\n"
         assert result.stderr == ""
         assert result.exit_code == 0
-        assert result.execution_time > 0
+        assert result.execution_time >= 0  # Allow 0 for very fast execution on Windows
 
         mock_container.exec_run.assert_called_once()
         call_args = mock_container.exec_run.call_args

@@ -28,6 +28,9 @@ class EmbeddingModel(str, Enum):
     VOYAGE_2 = "voyage-2"
     VOYAGE_LARGE_2 = "voyage-large-2"
 
+    # OpenRouter (via OpenAI-compatible API)
+    OPENROUTER_DEFAULT = "openai/text-embedding-3-small"
+
 
 class EmbeddingProvider(ABC):
     """Abstract base class for embedding providers."""
@@ -202,6 +205,75 @@ class VoyageAIEmbeddingProvider(EmbeddingProvider):
             return 1024
 
 
+class OpenRouterEmbeddingProvider(EmbeddingProvider):
+    """OpenRouter embedding provider (OpenAI-compatible API)."""
+
+    def __init__(self, model: str = EmbeddingModel.OPENROUTER_DEFAULT, api_key: str | None = None):
+        """Initialize OpenRouter embedding provider.
+
+        Args:
+            model: Model name (OpenRouter format: provider/model)
+            api_key: OpenRouter API key (defaults to OPENROUTER_API_KEY env var)
+        """
+        self.model = model
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+
+        if not self.api_key:
+            raise ValueError(
+                "OpenRouter API key not provided and OPENROUTER_API_KEY env var not set"
+            )
+
+        # Import OpenAI client
+        try:
+            from openai import AsyncOpenAI
+
+            # OpenRouter uses OpenAI-compatible API
+            self.client = AsyncOpenAI(api_key=self.api_key, base_url="https://openrouter.ai/api/v1")
+        except ImportError as e:
+            raise ImportError(
+                "OpenAI package not installed. Install with: pip install openai"
+            ) from e
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Embed a batch of texts.
+
+        Args:
+            texts: List of texts to embed
+
+        Returns:
+            List of embeddings
+        """
+        response = await self.client.embeddings.create(input=texts, model=self.model)
+        return [item.embedding for item in response.data]
+
+    async def embed_text(self, text: str) -> list[float]:
+        """Embed a single text.
+
+        Args:
+            text: Text to embed
+
+        Returns:
+            Embedding vector
+        """
+        embeddings = await self.embed_texts([text])
+        return embeddings[0]
+
+    def embedding_dimension(self) -> int:
+        """Get the embedding dimension.
+
+        Returns:
+            Embedding dimension
+        """
+        # OpenRouter typically uses OpenAI models
+        if "text-embedding-3-large" in self.model:
+            return 3072
+        elif "text-embedding-3-small" in self.model or "text-embedding-ada" in self.model:
+            return 1536
+        else:
+            # Default for unknown models
+            return 1536
+
+
 def create_embedding_provider(
     provider: str = "openai", model: str | None = None, api_key: str | None = None
 ) -> EmbeddingProvider:
@@ -209,7 +281,7 @@ def create_embedding_provider(
 
     Args:
         provider: Provider name (default: "openai" - recommended)
-                 Options: "openai" (recommended), "voyage"
+                 Options: "openai" (recommended), "voyage", "openrouter"
         model: Model name (uses default if not provided)
         api_key: API key for the provider
 
@@ -225,7 +297,10 @@ def create_embedding_provider(
     elif provider == "voyage":
         model = model or EmbeddingModel.VOYAGE_2
         return VoyageAIEmbeddingProvider(model=model, api_key=api_key)
+    elif provider == "openrouter":
+        model = model or EmbeddingModel.OPENROUTER_DEFAULT
+        return OpenRouterEmbeddingProvider(model=model, api_key=api_key)
     else:
         raise ValueError(
-            f"Unknown embedding provider: {provider}. Supported providers: openai, voyage"
+            f"Unknown embedding provider: {provider}. Supported providers: openai, voyage, openrouter"
         )

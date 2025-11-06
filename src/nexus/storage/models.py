@@ -1883,8 +1883,8 @@ class SandboxMetadataModel(Base):
 
     # Indexes and constraints
     __table_args__ = (
-        # Unique constraint: one sandbox per name per user
-        UniqueConstraint("user_id", "name", name="uq_sandbox_user_name"),
+        # Note: Removed UniqueConstraint on (user_id, name) to allow name reuse
+        # for stopped sandboxes. Application layer enforces uniqueness for active sandboxes only.
         Index("idx_sandbox_user", "user_id"),
         Index("idx_sandbox_agent", "agent_id"),
         Index("idx_sandbox_tenant", "tenant_id"),

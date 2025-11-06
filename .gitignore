@@ -46,6 +46,7 @@ env/
 
 # Environments
 .env
+.env.save
 .venv
 env/
 venv/
@@ -175,3 +176,4 @@ archive/
 *_STATUS.md
 *_COMPLETE.md
 examples/e2b/nexus
+examples/cli/

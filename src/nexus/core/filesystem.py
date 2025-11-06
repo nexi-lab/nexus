@@ -771,6 +771,31 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
+    def sandbox_get_or_create(
+        self,
+        name: str,
+        ttl_minutes: int = 10,
+        provider: str | None = None,
+        template_id: str | None = None,
+        verify_status: bool = True,
+        context: dict | None = None,
+    ) -> dict[Any, Any]:
+        """Get existing active sandbox or create a new one.
+
+        Args:
+            name: Sandbox name (e.g., "user_id,agent_id")
+            ttl_minutes: Idle timeout in minutes
+            provider: Sandbox provider ("docker", "e2b", etc.)
+            template_id: Provider template ID (optional)
+            verify_status: Whether to verify the sandbox status
+            context: Operation context
+
+        Returns:
+            Sandbox metadata dict
+        """
+        ...
+
+    @abstractmethod
     def sandbox_run(
         self,
         sandbox_id: str,
@@ -833,11 +858,22 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
-    def sandbox_list(self, context: dict | None = None) -> dict[Any, Any]:
+    def sandbox_list(
+        self,
+        context: dict | None = None,
+        verify_status: bool = False,
+        user_id: str | None = None,
+        tenant_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> dict[Any, Any]:
         """List all sandboxes for the current user.
 
         Args:
             context: Operation context
+            verify_status: Whether to verify sandbox status
+            user_id: Filter by user ID
+            tenant_id: Filter by tenant ID
+            agent_id: Filter by agent ID
 
         Returns:
             List of sandbox metadata dicts

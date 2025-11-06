@@ -65,7 +65,7 @@ def rebac() -> None:
     "--column-config",
     type=str,
     default=None,
-    help="JSON column config for dynamic_viewer (e.g., '{\"mode\":\"whitelist\",\"visible_columns\":[\"name\",\"email\"]}')",
+    help='JSON column config for dynamic_viewer (e.g., \'{"mode":"whitelist","visible_columns":["name","email"]}\')',
 )
 @add_backend_options
 def rebac_create(

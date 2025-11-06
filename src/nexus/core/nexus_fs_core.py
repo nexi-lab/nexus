@@ -98,11 +98,15 @@ class NexusFSCoreMixin:
             logger.debug(f"_apply_dynamic_viewer_filter: No subject found in context for {path}")
             return content
 
-        logger.debug(f"_apply_dynamic_viewer_filter: Checking dynamic_viewer for {subject} on {path}")
+        logger.debug(
+            f"_apply_dynamic_viewer_filter: Checking dynamic_viewer for {subject} on {path}"
+        )
 
         # Check if ReBAC is available
         if not hasattr(self, "_rebac_manager") or not hasattr(self, "get_dynamic_viewer_config"):
-            logger.debug("_apply_dynamic_viewer_filter: ReBAC or get_dynamic_viewer_config not available")
+            logger.debug(
+                "_apply_dynamic_viewer_filter: ReBAC or get_dynamic_viewer_config not available"
+            )
             return content
 
         try:
@@ -111,10 +115,14 @@ class NexusFSCoreMixin:
 
             if not column_config:
                 # No dynamic_viewer permission, return original content
-                logger.debug(f"_apply_dynamic_viewer_filter: No dynamic_viewer config for {subject} on {path}")
+                logger.debug(
+                    f"_apply_dynamic_viewer_filter: No dynamic_viewer config for {subject} on {path}"
+                )
                 return content
 
-            logger.info(f"_apply_dynamic_viewer_filter: Applying filter for {subject} on {path}: {column_config}")
+            logger.info(
+                f"_apply_dynamic_viewer_filter: Applying filter for {subject} on {path}: {column_config}"
+            )
 
             # Apply filtering
             content_str = content.decode("utf-8") if isinstance(content, bytes) else content
@@ -125,12 +133,17 @@ class NexusFSCoreMixin:
             # Return filtered content as bytes
             filtered_content = result["filtered_data"]
             logger.info(f"_apply_dynamic_viewer_filter: Successfully filtered {path}")
-            return filtered_content.encode("utf-8") if isinstance(filtered_content, str) else filtered_content
+            return (
+                filtered_content.encode("utf-8")
+                if isinstance(filtered_content, str)
+                else filtered_content
+            )
 
         except Exception as e:
             # Log error but don't fail the read operation
             logger.warning(f"Failed to apply dynamic_viewer filter for {path}: {e}")
             import traceback
+
             logger.warning(traceback.format_exc())
             return content
 

@@ -53,7 +53,7 @@ class NexusFSReBACMixin:
         if isinstance(context, dict):
             subject = context.get("subject")
             if subject and isinstance(subject, tuple) and len(subject) == 2:
-                return subject
+                return (str(subject[0]), str(subject[1]))
 
             # Construct from subject_type + subject_id
             subject_type = context.get("subject_type", "user")
@@ -65,7 +65,10 @@ class NexusFSReBACMixin:
 
         # Handle OperationContext format - use get_subject() method
         if hasattr(context, "get_subject") and callable(context.get_subject):
-            return context.get_subject()
+            result = context.get_subject()
+            if result is not None:
+                return (str(result[0]), str(result[1]))
+            return None
 
         # Fallback: construct from attributes
         if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
@@ -1372,7 +1375,8 @@ class NexusFSReBACMixin:
             if row and row["conditions"]:
                 conditions = json.loads(row["conditions"])
                 if conditions.get("type") == "dynamic_viewer":
-                    return conditions.get("column_config")
+                    column_config = conditions.get("column_config")
+                    return column_config if column_config is not None else None
         finally:
             conn.close()
 
@@ -1450,7 +1454,7 @@ class NexusFSReBACMixin:
         # Build result dataframe in original column order
         # Iterate through original columns and add visible/aggregated columns in order
         result_columns = []  # List of (column_name, series) tuples
-        aggregation_results = {}
+        aggregation_results: dict[str, dict[str, float | int | str]] = {}
         aggregated_column_names = []
         columns_shown = []
 
@@ -1592,15 +1596,15 @@ class NexusFSReBACMixin:
             and hasattr(self, "_get_routing_params")
         ):
             # NexusFS instance - read directly from backend to bypass filtering
-            tenant_id, agent_id, is_admin = self._get_routing_params(context)  # type: ignore[attr-defined]
-            route = self.router.route(  # type: ignore[attr-defined]
+            tenant_id, agent_id, is_admin = self._get_routing_params(context)
+            route = self.router.route(
                 file_path,
                 tenant_id=tenant_id,
                 agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=False,
             )
-            meta = self.metadata.get(file_path)  # type: ignore[attr-defined]
+            meta = self.metadata.get(file_path)
             if meta is None or meta.etag is None:
                 raise RuntimeError(f"File not found: {file_path}")
 

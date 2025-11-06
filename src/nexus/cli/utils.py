@@ -210,7 +210,7 @@ def get_filesystem(
             if force_local:
                 # Force embedded mode to prevent RemoteNexusFS
                 config_obj = load_config(Path(backend_config.config_path))
-                config_dict = {
+                config_dict: dict[str, Any] = {
                     "mode": "embedded",  # Force embedded mode
                     "data_dir": config_obj.data_dir,
                     "backend": config_obj.backend,

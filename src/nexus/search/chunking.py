@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -24,7 +24,7 @@ else:
         TIKTOKEN_AVAILABLE = False
 
 
-class ChunkStrategy(str, Enum):
+class ChunkStrategy(StrEnum):
     """Chunking strategy."""
 
     FIXED = "fixed"  # Fixed-size chunks

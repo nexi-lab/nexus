@@ -36,14 +36,14 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 # Wildcard subject for public access
 WILDCARD_SUBJECT = ("*", "*")
 
 
-class RelationType(str, Enum):
+class RelationType(StrEnum):
     """Standard relationship types in ReBAC."""
 
     MEMBER_OF = "member-of"
@@ -54,7 +54,7 @@ class RelationType(str, Enum):
     SHARED_WITH = "shared-with"
 
 
-class EntityType(str, Enum):
+class EntityType(StrEnum):
     """Types of entities in ReBAC system.
 
     Note: These are predefined constants for common entity types.

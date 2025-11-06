@@ -3475,11 +3475,22 @@ class NexusFS(
         return result
 
     @rpc_expose(description="List sandboxes")
-    def sandbox_list(self, context: dict | None = None) -> dict:
+    def sandbox_list(
+        self,
+        context: dict | None = None,
+        verify_status: bool = False,
+        user_id: str | None = None,
+        tenant_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> dict:
         """List user's sandboxes.
 
         Args:
             context: Operation context
+            verify_status: If True, verify status with provider (slower but accurate)
+            user_id: Filter by user_id (admin only)
+            tenant_id: Filter by tenant_id (admin only)
+            agent_id: Filter by agent_id
 
         Returns:
             Dict with list of sandboxes
@@ -3490,11 +3501,19 @@ class NexusFS(
 
         ctx = self._parse_context(context)
 
+        # Determine filter values
+        # If explicit filter parameters are provided and user is admin, use them
+        # Otherwise filter by authenticated user
+        filter_user_id = user_id if (user_id is not None and ctx.is_admin) else ctx.user
+        filter_tenant_id = tenant_id if (tenant_id is not None and ctx.is_admin) else ctx.tenant_id
+        filter_agent_id = agent_id if agent_id is not None else ctx.agent_id
+
         sandboxes = self._run_async(
             self._sandbox_manager.list_sandboxes(
-                user_id=ctx.user,
-                tenant_id=ctx.tenant_id,
-                agent_id=ctx.agent_id,
+                user_id=filter_user_id,
+                tenant_id=filter_tenant_id,
+                agent_id=filter_agent_id,
+                verify_status=verify_status,
             )
         )
         return {"sandboxes": sandboxes}
@@ -3516,6 +3535,62 @@ class NexusFS(
 
         result: dict[Any, Any] = self._run_async(
             self._sandbox_manager.get_sandbox_status(sandbox_id)
+        )
+        return result
+
+    @rpc_expose(description="Get or create sandbox")
+    def sandbox_get_or_create(
+        self,
+        name: str,
+        ttl_minutes: int = 10,
+        provider: str | None = None,
+        template_id: str | None = None,
+        verify_status: bool = True,
+        context: dict | None = None,
+    ) -> dict:
+        """Get existing active sandbox or create a new one.
+
+        This handles the common pattern where you want to reuse an existing
+        sandbox if it exists and is still running, or create a new one if not.
+        Perfect for agent workflows where each user+agent pair should have
+        one persistent sandbox.
+
+        Args:
+            name: Sandbox name (e.g., "user_id,agent_id")
+            ttl_minutes: Idle timeout in minutes (default: 10)
+            provider: Sandbox provider ("docker", "e2b", etc.)
+            template_id: Provider template ID (optional)
+            verify_status: If True, verify with provider that sandbox is running (default: True)
+            context: Operation context with user/agent/tenant info
+
+        Returns:
+            Sandbox metadata dict (either existing or newly created)
+
+        Example:
+            # Agent workflow: always get valid sandbox for user+agent
+            sandbox = nx.sandbox_get_or_create(
+                name=f"{user_id},{agent_id}",
+                context={"user": user_id, "agent_id": agent_id}
+            )
+            sandbox_id = sandbox["sandbox_id"]  # Always valid!
+        """
+        ctx = self._parse_context(context)
+
+        # Ensure sandbox manager is initialized
+        self._ensure_sandbox_manager()
+        assert self._sandbox_manager is not None
+
+        result: dict[Any, Any] = self._run_async(
+            self._sandbox_manager.get_or_create_sandbox(
+                name=name,
+                user_id=ctx.user or "system",
+                tenant_id=ctx.tenant_id or self._default_context.tenant_id or "default",
+                agent_id=ctx.agent_id,
+                ttl_minutes=ttl_minutes,
+                provider=provider,
+                template_id=template_id,
+                verify_status=verify_status,
+            )
         )
         return result
 

@@ -3207,11 +3207,22 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("sandbox_stop", params)
         return result  # type: ignore[no-any-return]
 
-    def sandbox_list(self, context: dict | None = None) -> dict:
+    def sandbox_list(
+        self,
+        context: dict | None = None,
+        verify_status: bool = False,
+        user_id: str | None = None,
+        tenant_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> dict:
         """List user's sandboxes.
 
         Args:
             context: Operation context
+            verify_status: Verify actual sandbox status with provider (default: False)
+            user_id: Filter by user_id (admin only)
+            tenant_id: Filter by tenant_id (admin only)
+            agent_id: Filter by agent_id
 
         Returns:
             Dict with list of sandboxes
@@ -3221,9 +3232,15 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             >>> for sb in result['sandboxes']:
             ...     print(f"{sb['name']}: {sb['status']}")
         """
-        params: dict[str, Any] = {}
+        params: dict[str, Any] = {"verify_status": verify_status}
         if context is not None:
             params["context"] = context
+        if user_id is not None:
+            params["user_id"] = user_id
+        if tenant_id is not None:
+            params["tenant_id"] = tenant_id
+        if agent_id is not None:
+            params["agent_id"] = agent_id
         result = self._call_rpc("sandbox_list", params)
         return result  # type: ignore[no-any-return]
 
@@ -3245,6 +3262,46 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         if context is not None:
             params["context"] = context
         result = self._call_rpc("sandbox_status", params)
+        return result  # type: ignore[no-any-return]
+
+    def sandbox_get_or_create(
+        self,
+        name: str,
+        ttl_minutes: int = 10,
+        provider: str | None = None,
+        template_id: str | None = None,
+        verify_status: bool = True,
+        context: dict | None = None,
+    ) -> dict:
+        """Get existing sandbox or create new one.
+
+        Args:
+            name: Sandbox name
+            ttl_minutes: Idle timeout in minutes
+            provider: Provider name ("docker" or "e2b")
+            template_id: Provider template ID
+            verify_status: Verify sandbox status with provider
+            context: Operation context
+
+        Returns:
+            Sandbox metadata dict
+
+        Example:
+            >>> result = nx.sandbox_get_or_create("alice,agent1")
+            >>> print(f"Sandbox: {result['sandbox_id']}")
+        """
+        params: dict[str, Any] = {
+            "name": name,
+            "ttl_minutes": ttl_minutes,
+            "verify_status": verify_status,
+        }
+        if provider is not None:
+            params["provider"] = provider
+        if template_id is not None:
+            params["template_id"] = template_id
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("sandbox_get_or_create", params)
         return result  # type: ignore[no-any-return]
 
     def sandbox_connect(

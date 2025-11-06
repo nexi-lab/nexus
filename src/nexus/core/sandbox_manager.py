@@ -122,15 +122,20 @@ class SandboxManager:
             available = ", ".join(self.providers.keys())
             raise ValueError(f"Provider '{provider}' not available. Available: {available}")
 
-        # Check name uniqueness
+        # Check name uniqueness for active sandboxes only
+        # Allow reusing name if existing sandbox is stopped/paused
         existing = self.db.execute(
             select(SandboxMetadataModel).where(
                 SandboxMetadataModel.user_id == user_id,
                 SandboxMetadataModel.name == name,
+                SandboxMetadataModel.status == "active",
             )
         )
         if existing.scalar_one_or_none():
-            raise ValueError(f"Sandbox with name '{name}' already exists for user {user_id}")
+            raise ValueError(
+                f"Active sandbox with name '{name}' already exists for user {user_id}. "
+                f"Use sandbox_get_or_create() to reuse it or choose a different name."
+            )
 
         # Create sandbox via provider (async call)
         provider_obj = self.providers[provider]
@@ -306,6 +311,7 @@ class SandboxManager:
         user_id: str | None = None,
         tenant_id: str | None = None,
         agent_id: str | None = None,
+        verify_status: bool = False,
     ) -> list[dict[str, Any]]:
         """List sandboxes with optional filtering.
 
@@ -313,6 +319,7 @@ class SandboxManager:
             user_id: Filter by user (optional)
             tenant_id: Filter by tenant (optional)
             agent_id: Filter by agent (optional)
+            verify_status: If True, verify status with provider (slower but accurate)
 
         Returns:
             List of sandbox metadata dicts
@@ -329,7 +336,64 @@ class SandboxManager:
         result = self.db.execute(query)
         sandboxes = result.scalars().all()
 
-        return [self._metadata_to_dict(sb) for sb in sandboxes]
+        # Convert to dicts
+        sandbox_dicts = [self._metadata_to_dict(sb) for sb in sandboxes]
+
+        # Verify status with provider if requested
+        if verify_status:
+            for i, metadata in enumerate(sandboxes):
+                try:
+                    # Get provider for this sandbox
+                    provider = self.providers.get(metadata.provider)
+                    if not provider:
+                        logger.warning(
+                            f"Provider '{metadata.provider}' not available for sandbox {metadata.sandbox_id}"
+                        )
+                        sandbox_dicts[i]["verified"] = False
+                        continue
+
+                    # Get actual status from provider
+                    provider_info = await provider.get_info(metadata.sandbox_id)
+                    actual_status = provider_info.status
+
+                    # Update dict with verified status
+                    sandbox_dicts[i]["verified"] = True
+                    sandbox_dicts[i]["provider_status"] = actual_status
+
+                    # Update database if status has changed
+                    if actual_status != metadata.status:
+                        logger.info(
+                            f"Status mismatch for {metadata.sandbox_id}: "
+                            f"DB={metadata.status}, Provider={actual_status}. Updating DB."
+                        )
+                        metadata.status = actual_status
+                        # Update stopped_at if provider shows stopped
+                        if actual_status == "stopped" and not metadata.stopped_at:
+                            metadata.stopped_at = datetime.now(UTC)
+                            metadata.expires_at = None
+                        self.db.commit()
+                        sandbox_dicts[i]["status"] = actual_status
+
+                except SandboxNotFoundError:
+                    # Sandbox doesn't exist in provider anymore
+                    logger.warning(
+                        f"Sandbox {metadata.sandbox_id} not found in provider. Marking as stopped."
+                    )
+                    sandbox_dicts[i]["verified"] = True
+                    sandbox_dicts[i]["provider_status"] = "stopped"
+
+                    if metadata.status != "stopped":
+                        metadata.status = "stopped"
+                        metadata.stopped_at = datetime.now(UTC)
+                        metadata.expires_at = None
+                        self.db.commit()
+                        sandbox_dicts[i]["status"] = "stopped"
+
+                except Exception as e:
+                    logger.warning(f"Failed to verify status for {metadata.sandbox_id}: {e}")
+                    sandbox_dicts[i]["verified"] = False
+
+        return sandbox_dicts
 
     async def get_sandbox_status(self, sandbox_id: str) -> dict[str, Any]:
         """Get sandbox status and metadata.
@@ -345,6 +409,125 @@ class SandboxManager:
         """
         metadata = self._get_metadata(sandbox_id)
         return self._metadata_to_dict(metadata)
+
+    async def get_or_create_sandbox(
+        self,
+        name: str,
+        user_id: str,
+        tenant_id: str,
+        agent_id: str | None = None,
+        ttl_minutes: int = 10,
+        provider: str | None = None,
+        template_id: str | None = None,
+        verify_status: bool = True,
+    ) -> dict[str, Any]:
+        """Get existing active sandbox or create a new one.
+
+        This handles the common pattern of:
+        1. Check if sandbox exists for user+agent
+        2. Verify it's actually running (if verify_status=True)
+        3. Create new sandbox if none found or existing one is dead
+
+        Args:
+            name: User-friendly sandbox name (unique per user)
+            user_id: User ID
+            tenant_id: Tenant ID
+            agent_id: Agent ID (optional)
+            ttl_minutes: Idle timeout in minutes (default: 10)
+            provider: Sandbox provider ("docker", "e2b", etc.)
+            template_id: Provider template ID (optional)
+            verify_status: If True, verify status with provider (default: True)
+
+        Returns:
+            Sandbox metadata dict (either existing or newly created)
+
+        Raises:
+            ValueError: If provider not available
+            SandboxCreationError: If sandbox creation fails
+        """
+        # List existing sandboxes for this user+agent
+        sandboxes = await self.list_sandboxes(
+            user_id=user_id,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            verify_status=verify_status,
+        )
+
+        # Look for an active sandbox with the same name
+        for sandbox in sandboxes:
+            if sandbox["name"] == name and sandbox["status"] == "active":
+                # If verification was requested and passed, use this sandbox
+                if verify_status:
+                    if sandbox.get("verified", False):
+                        logger.info(
+                            f"Found existing active sandbox {sandbox['sandbox_id']} "
+                            f"(name={name}, user={user_id}, agent={agent_id})"
+                        )
+                        return sandbox
+                    else:
+                        # Verification failed - mark as stopped and continue
+                        logger.warning(
+                            f"Sandbox {sandbox['sandbox_id']} verification failed, "
+                            f"will create new one"
+                        )
+                        continue
+                else:
+                    # No verification requested - use cached status
+                    logger.info(
+                        f"Found existing sandbox {sandbox['sandbox_id']} "
+                        f"(name={name}, user={user_id}, agent={agent_id}) - not verified"
+                    )
+                    return sandbox
+
+        # No active sandbox found - create new one
+        logger.info(
+            f"No active sandbox found for name={name}, user={user_id}, agent={agent_id}. "
+            f"Creating new sandbox..."
+        )
+
+        try:
+            return await self.create_sandbox(
+                name=name,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                agent_id=agent_id,
+                ttl_minutes=ttl_minutes,
+                provider=provider,
+                template_id=template_id,
+            )
+        except ValueError as e:
+            if "already exists" in str(e):
+                # Race condition: sandbox was created between list and create
+                # Delete the stale one and create fresh
+                logger.warning("Sandbox name conflict detected. Cleaning up stale sandbox...")
+                result = self.db.execute(
+                    select(SandboxMetadataModel).where(
+                        SandboxMetadataModel.user_id == user_id,
+                        SandboxMetadataModel.name == name,
+                    )
+                )
+                stale = result.scalar_one_or_none()
+                if stale:
+                    # Mark as stopped in DB
+                    stale.status = "stopped"
+                    stale.stopped_at = datetime.now(UTC)
+                    self.db.commit()
+                    logger.info(f"Marked stale sandbox {stale.sandbox_id} as stopped")
+
+                # Retry create with modified name
+                new_name = f"{name}-{datetime.now(UTC).strftime('%H%M%S')}"
+                logger.info(f"Retrying with name: {new_name}")
+                return await self.create_sandbox(
+                    name=new_name,
+                    user_id=user_id,
+                    tenant_id=tenant_id,
+                    agent_id=agent_id,
+                    ttl_minutes=ttl_minutes,
+                    provider=provider,
+                    template_id=template_id,
+                )
+            else:
+                raise
 
     async def connect_sandbox(
         self,

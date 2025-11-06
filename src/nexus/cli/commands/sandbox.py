@@ -98,6 +98,113 @@ def create_sandbox(
         sys.exit(1)
 
 
+@sandbox.command(name="get-or-create")
+@click.argument("name")
+@click.option(
+    "--ttl",
+    "-t",
+    type=int,
+    default=10,
+    help="Idle timeout in minutes (default: 10)",
+)
+@click.option(
+    "--provider",
+    "-p",
+    default="docker",
+    type=click.Choice(["e2b", "docker"], case_sensitive=False),
+    help="Sandbox provider (default: docker)",
+)
+@click.option(
+    "--template",
+    help="Provider template ID (e.g., E2B template or Docker image)",
+)
+@click.option(
+    "--verify/--no-verify",
+    default=True,
+    help="Verify sandbox status with provider (default: verify)",
+)
+@click.option(
+    "--json",
+    "-j",
+    "json_output",
+    is_flag=True,
+    help="Output as JSON",
+)
+@click.option(
+    "--data-dir",
+    envvar="NEXUS_DATA_DIR",
+    help="Nexus data directory",
+)
+def get_or_create_sandbox(
+    name: str,
+    ttl: int,
+    provider: str,
+    template: str | None,
+    verify: bool,
+    json_output: bool,
+    data_dir: str | None,  # noqa: ARG001
+) -> None:
+    """Get existing sandbox or create new one (idempotent).
+
+    This command handles the common pattern where you want to reuse an
+    existing sandbox if it's still running, or create a new one if not.
+    Perfect for agent workflows where each user+agent should have one
+    persistent sandbox.
+
+    The command will:
+    1. Check if a sandbox with this name exists for current user
+    2. Verify it's actually running (if --verify is enabled)
+    3. Return existing sandbox if found and active
+    4. Create new sandbox if none found or existing one is dead
+
+    \b
+    Examples:
+        # Get or create sandbox (with verification)
+        nexus sandbox get-or-create my-agent-sandbox
+
+        # Agent workflow: user,agent naming
+        nexus sandbox get-or-create alice,agent_ml
+
+        # Without verification (faster but may be stale)
+        nexus sandbox get-or-create my-sandbox --no-verify
+
+        # With custom TTL and provider
+        nexus sandbox get-or-create my-sandbox --ttl 30 --provider e2b
+
+        # JSON output
+        nexus sandbox get-or-create my-sandbox --json
+    """
+    try:
+        nx: NexusFilesystem = get_default_filesystem()
+
+        result = nx.sandbox_get_or_create(
+            name=name,
+            ttl_minutes=ttl,
+            provider=provider,
+            template_id=template,
+            verify_status=verify,
+        )
+
+        if json_output:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            # Check if it was created or reused
+            action = "Found and verified" if result.get("verified") else "Got"
+
+            click.echo(f"✓ {action} sandbox: {result['sandbox_id']}")
+            click.echo(f"  Name: {result['name']}")
+            click.echo(f"  Status: {result['status']}")
+            click.echo(f"  TTL: {result['ttl_minutes']} minutes")
+            click.echo(f"  Expires: {result['expires_at']}")
+
+            if verify:
+                click.echo(f"  Verified: {result.get('verified', False)}")
+
+    except Exception as e:
+        click.echo(f"Failed to get or create sandbox: {e}")
+        sys.exit(1)
+
+
 @sandbox.command(name="run")
 @click.argument("sandbox_id")
 @click.option(
@@ -344,6 +451,27 @@ def stop_sandbox(
 
 @sandbox.command(name="list")
 @click.option(
+    "--user-id",
+    "-u",
+    help="Filter by user ID",
+)
+@click.option(
+    "--agent-id",
+    "-a",
+    help="Filter by agent ID",
+)
+@click.option(
+    "--tenant-id",
+    "-t",
+    help="Filter by tenant ID",
+)
+@click.option(
+    "--verify",
+    "-v",
+    is_flag=True,
+    help="Verify status with provider (slower but accurate)",
+)
+@click.option(
     "--json",
     "-j",
     "json_output",
@@ -356,19 +484,55 @@ def stop_sandbox(
     help="Nexus data directory",
 )
 def list_sandboxes(
+    user_id: str | None,
+    agent_id: str | None,
+    tenant_id: str | None,
+    verify: bool,
     json_output: bool,
     data_dir: str | None,  # noqa: ARG001
 ) -> None:
-    """List all sandboxes.
+    """List sandboxes with optional filtering.
+
+    By default, lists sandboxes for the current user. Use filter options
+    to narrow results by user, agent, or tenant.
+
+    The --verify flag checks actual status with Docker/E2B provider (slower
+    but ensures accuracy). Without --verify, status comes from database cache
+    which may be stale if sandboxes were killed externally.
 
     \b
     Examples:
+        # List all sandboxes for current user
         nexus sandbox list
+
+        # List sandboxes for specific user
+        nexus sandbox list --user-id alice
+
+        # List sandboxes for specific agent
+        nexus sandbox list --agent-id agent_123
+
+        # List sandboxes for specific tenant
+        nexus sandbox list --tenant-id tenant_456
+
+        # Combine filters (sandboxes for specific agent and tenant)
+        nexus sandbox list --agent-id agent_123 --tenant-id tenant_456
+
+        # Verify status with provider (slower but accurate)
+        nexus sandbox list --verify
+
+        # JSON output
         nexus sandbox list --json
     """
     try:
         nx: NexusFilesystem = get_default_filesystem()
-        result = nx.sandbox_list()
+
+        # Call with filter parameters (not context)
+        result = nx.sandbox_list(
+            user_id=user_id,
+            agent_id=agent_id,
+            tenant_id=tenant_id,
+            verify_status=verify,
+        )
         sandboxes = result["sandboxes"]
 
         if json_output:
@@ -379,16 +543,32 @@ def list_sandboxes(
                 return
 
             # Display as table
-            click.echo(f"{'NAME':<20} {'SANDBOX ID':<20} {'STATUS':<12} {'CREATED'}")
-            click.echo("-" * 80)
-            for sb in sandboxes:
-                name = sb["name"][:19]
-                sandbox_id = sb["sandbox_id"][:19]
-                status = sb["status"]
-                created = sb["created_at"][:19]
-                click.echo(f"{name:<20} {sandbox_id:<20} {status:<12} {created}")
+            if verify:
+                # Include verification column if --verify was used
+                click.echo(
+                    f"{'NAME':<20} {'SANDBOX ID':<20} {'STATUS':<12} {'VERIFIED':<10} {'CREATED'}"
+                )
+                click.echo("-" * 90)
+                for sb in sandboxes:
+                    name = sb["name"][:19]
+                    sandbox_id = sb["sandbox_id"][:19]
+                    status = sb["status"]
+                    verified = "✓" if sb.get("verified", False) else "✗"
+                    created = sb["created_at"][:19]
+                    click.echo(f"{name:<20} {sandbox_id:<20} {status:<12} {verified:<10} {created}")
+            else:
+                click.echo(f"{'NAME':<20} {'SANDBOX ID':<20} {'STATUS':<12} {'CREATED'}")
+                click.echo("-" * 80)
+                for sb in sandboxes:
+                    name = sb["name"][:19]
+                    sandbox_id = sb["sandbox_id"][:19]
+                    status = sb["status"]
+                    created = sb["created_at"][:19]
+                    click.echo(f"{name:<20} {sandbox_id:<20} {status:<12} {created}")
 
             click.echo(f"\nTotal: {len(sandboxes)} sandbox(es)")
+            if verify:
+                click.echo("Note: Status verified with provider")
 
     except Exception as e:
         click.echo(f"Failed to list sandboxes: {e}")

@@ -314,6 +314,10 @@ class TestDockerSandboxProvider:
     async def test_get_info(self, provider, mock_container):
         """Test getting sandbox info."""
         now = datetime.now(UTC)
+        # Mock container status to be "running" so it maps to "active"
+        mock_container.status = "running"
+        mock_container.reload = Mock()
+
         provider._containers["test123"] = MagicMock(
             container=mock_container,
             sandbox_id="test123",

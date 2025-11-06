@@ -188,12 +188,38 @@ print("Time:", result["execution_time"], "seconds")
 
 ### sandbox list - List sandboxes
 
-List all sandboxes for the current user.
+List sandboxes with optional filtering by user, agent, or tenant.
+
+By default, lists sandboxes for the current user. Use filter options to narrow results or (for admins) to view sandboxes for other users.
+
+**Status Verification:**
+- **Without `--verify`**: Returns cached status from database (fast, may be stale)
+- **With `--verify`**: Checks actual status with Docker/E2B provider (slower but accurate)
+
+Use `--verify` when you need to ensure status is current, especially if sandboxes may have been killed externally.
 
 **CLI:**
 ```bash
-# List sandboxes (table format)
+# List sandboxes for current user (table format)
 nexus sandbox list
+
+# List sandboxes for specific user (admin only)
+nexus sandbox list --user-id alice
+
+# List sandboxes for specific agent
+nexus sandbox list --agent-id agent_123
+
+# List sandboxes for specific tenant
+nexus sandbox list --tenant-id tenant_456
+
+# Combine filters
+nexus sandbox list --agent-id agent_123 --tenant-id tenant_456
+
+# Verify status with provider (slower but accurate)
+nexus sandbox list --verify
+
+# Combine filtering and verification
+nexus sandbox list --user-id alice --verify
 
 # List as JSON
 nexus sandbox list --json
@@ -201,14 +227,36 @@ nexus sandbox list --json
 
 **Python API:**
 ```python
-# List sandboxes
+# List sandboxes for current user
 result = nx.sandbox_list()
 
+# List sandboxes with filtering
+result = nx.sandbox_list(context={
+    "user": "alice",           # Filter by user
+    "agent_id": "agent_123",   # Filter by agent
+    "tenant_id": "tenant_456"  # Filter by tenant
+})
+
+# List with status verification
+result = nx.sandbox_list(verify_status=True)
+
+# Combine filtering and verification
+result = nx.sandbox_list(
+    context={"user": "alice"},
+    verify_status=True
+)
+
 for sandbox in result["sandboxes"]:
-    print(f"{sandbox['name']}: {sandbox['status']}")
+    status = sandbox['status']
+    verified = sandbox.get('verified', False)
+    print(f"{sandbox['name']}: {status} {'(verified)' if verified else ''}")
 ```
 
 **Options:**
+- `--user-id, -u TEXT`: Filter by user ID
+- `--agent-id, -a TEXT`: Filter by agent ID
+- `--tenant-id, -t TEXT`: Filter by tenant ID
+- `--verify, -v`: Verify status with provider (slower but accurate)
 - `--json, -j`: Output as JSON
 
 **Returns:**
@@ -227,6 +275,28 @@ for sandbox in result["sandboxes"]:
   ]
 }
 ```
+
+**With `--verify` flag, additional fields are included:**
+```json
+{
+  "sandboxes": [
+    {
+      "sandbox_id": "ipi7dxuc5687axlhm5hmd",
+      "name": "demo-sandbox-1",
+      "status": "active",
+      "verified": true,
+      "provider_status": "active",
+      "created_at": "2025-11-03T01:03:40",
+      "expires_at": "2025-11-03T01:13:40",
+      "ttl_minutes": 10,
+      "uptime_seconds": 123.4
+    }
+  ]
+}
+```
+
+- `verified`: Boolean indicating if status was successfully verified with provider
+- `provider_status`: Actual status from provider (may differ from `status` if DB was stale)
 
 ---
 

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
-class MessageRole(str, Enum):
+class MessageRole(StrEnum):
     """Role of a message in a conversation."""
 
     SYSTEM = "system"
@@ -17,7 +17,7 @@ class MessageRole(str, Enum):
     TOOL = "tool"
 
 
-class ContentType(str, Enum):
+class ContentType(StrEnum):
     """Type of content in a message."""
 
     TEXT = "text"
@@ -25,7 +25,7 @@ class ContentType(str, Enum):
     IMAGE_FILE = "image_file"
 
 
-class ImageDetail(str, Enum):
+class ImageDetail(StrEnum):
     """Level of detail for image analysis."""
 
     AUTO = "auto"

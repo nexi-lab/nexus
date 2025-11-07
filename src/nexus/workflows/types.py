@@ -2,12 +2,12 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
 
-class WorkflowStatus(str, Enum):
+class WorkflowStatus(StrEnum):
     """Status of a workflow execution."""
 
     PENDING = "pending"
@@ -17,7 +17,7 @@ class WorkflowStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class TriggerType(str, Enum):
+class TriggerType(StrEnum):
     """Types of workflow triggers."""
 
     FILE_WRITE = "file_write"

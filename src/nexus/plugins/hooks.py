@@ -1,11 +1,11 @@
 """Plugin hooks system for lifecycle events."""
 
 from collections.abc import Callable
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class HookType(str, Enum):
+class HookType(StrEnum):
     """Available hook types for plugins."""
 
     BEFORE_WRITE = "before_write"

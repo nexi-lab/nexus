@@ -61,6 +61,12 @@ def rebac() -> None:
     is_flag=True,
     help="Use wildcard subject (*:*) for public access (overrides subject_type/subject_id)",
 )
+@click.option(
+    "--column-config",
+    type=str,
+    default=None,
+    help='JSON column config for dynamic_viewer (e.g., \'{"mode":"whitelist","visible_columns":["name","email"]}\')',
+)
 @add_backend_options
 def rebac_create(
     subject_type: str,
@@ -72,6 +78,7 @@ def rebac_create(
     tenant_id: str | None,
     subject_relation: str | None,
     wildcard: bool,
+    column_config: str | None,
     backend_config: BackendConfig,
 ) -> None:
     """Create a relationship tuple.
@@ -82,6 +89,7 @@ def rebac_create(
     Advanced Features:
         --subject-relation: Grant to entire groups (userset-as-subject)
         --wildcard: Grant public access to anyone
+        --column-config: Column-level permissions for dynamic_viewer
 
     Examples:
         # Basic: Alice is member of eng-team
@@ -98,6 +106,9 @@ def rebac_create(
 
         # Temporary access (expires in 1 hour)
         nexus rebac create agent bob viewer-of file secret --expires 2025-12-31T23:59:59
+
+        # Dynamic viewer with column-level permissions (CSV only)
+        nexus rebac create agent alice dynamic_viewer file /data/users.csv --column-config '{"hidden_columns":["password"],"aggregations":{"age":"mean"},"visible_columns":["name","email"]}'
     """
     try:
         nx = get_filesystem(backend_config)
@@ -117,6 +128,18 @@ def rebac_create(
 
         # Get tenant_id from parameter or environment
         tenant = get_tenant_id(tenant_id)
+
+        # Parse column_config JSON if provided
+        column_config_dict = None
+        if column_config:
+            import json
+
+            try:
+                column_config_dict = json.loads(column_config)
+            except json.JSONDecodeError as e:
+                console.print(f"[red]Error:[/red] Invalid JSON in column-config: {e}")
+                nx.close()
+                sys.exit(1)
 
         # Build subject tuple
         subject_tuple: tuple[str, str] | tuple[str, str, str]
@@ -140,6 +163,7 @@ def rebac_create(
             object=(object_type, object_id),
             expires_at=expires_at,
             tenant_id=tenant,
+            column_config=column_config_dict,
         )
 
         nx.close()
@@ -159,6 +183,20 @@ def rebac_create(
             console.print(f"  Tenant: [blue]{tenant}[/blue]")
         if expires_at:
             console.print(f"  Expires: [dim]{expires_at.isoformat()}[/dim]")
+        if column_config_dict:
+            console.print("  Column Config:")
+            if column_config_dict.get("hidden_columns"):
+                console.print(
+                    f"    Hidden Columns: [red]{', '.join(column_config_dict['hidden_columns'])}[/red]"
+                )
+            if column_config_dict.get("visible_columns"):
+                console.print(
+                    f"    Visible Columns: [green]{', '.join(column_config_dict['visible_columns'])}[/green]"
+                )
+            if column_config_dict.get("aggregations"):
+                console.print("    Aggregations:")
+                for col, op in column_config_dict["aggregations"].items():
+                    console.print(f"      {col}: [yellow]{op}[/yellow]")
 
     except Exception as e:
         handle_error(e)

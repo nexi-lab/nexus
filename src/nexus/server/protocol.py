@@ -330,6 +330,7 @@ class RebacCreateParams:
     object: tuple[str, str]
     expires_at: str | None = None
     tenant_id: str | None = None
+    column_config: dict[str, Any] | None = None
 
 
 @dataclass

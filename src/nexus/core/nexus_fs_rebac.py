@@ -28,6 +28,61 @@ class NexusFSReBACMixin:
 
         def _validate_path(self, path: str) -> str: ...
 
+    def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
+        """Extract subject from operation context.
+
+        Args:
+            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+
+        Returns:
+            Subject tuple (type, id) or None if not found
+
+        Examples:
+            >>> context = {"subject": ("user", "alice")}
+            >>> self._get_subject_from_context(context)
+            ('user', 'alice')
+
+            >>> context = OperationContext(user="alice", groups=[])
+            >>> self._get_subject_from_context(context)
+            ('user', 'alice')
+        """
+        if not context:
+            return None
+
+        # Handle dict format (used by RPC server and tests)
+        if isinstance(context, dict):
+            subject = context.get("subject")
+            if subject and isinstance(subject, tuple) and len(subject) == 2:
+                return (str(subject[0]), str(subject[1]))
+
+            # Construct from subject_type + subject_id
+            subject_type = context.get("subject_type", "user")
+            subject_id = context.get("subject_id") or context.get("user")
+            if subject_id:
+                return (subject_type, subject_id)
+
+            return None
+
+        # Handle OperationContext format - use get_subject() method
+        if hasattr(context, "get_subject") and callable(context.get_subject):
+            result = context.get_subject()
+            if result is not None:
+                return (str(result[0]), str(result[1]))
+            return None
+
+        # Fallback: construct from attributes
+        if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
+            subject_type = getattr(context, "subject_type", "user")
+            subject_id = getattr(context, "subject_id", None) or getattr(context, "user", None)
+            if subject_id:
+                return (subject_type, subject_id)
+
+        # Last resort: use user field
+        if hasattr(context, "user") and context.user:
+            return ("user", context.user)
+
+        return None
+
     @rpc_expose(description="Create ReBAC relationship tuple")
     def rebac_create(
         self,
@@ -37,23 +92,32 @@ class NexusFSReBACMixin:
         expires_at: datetime | None = None,
         tenant_id: str | None = None,
         context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        column_config: dict[str, Any] | None = None,  # Column-level permissions for dynamic_viewer
     ) -> str:
         """Create a relationship tuple in ReBAC system.
 
         Args:
             subject: (subject_type, subject_id) tuple (e.g., ('agent', 'alice'))
-            relation: Relation type (e.g., 'member-of', 'owner-of', 'viewer-of')
+            relation: Relation type (e.g., 'member-of', 'owner-of', 'viewer-of', 'dynamic_viewer')
             object: (object_type, object_id) tuple (e.g., ('group', 'developers'))
             expires_at: Optional expiration datetime for temporary relationships
             tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
                        tenant_id from operation context.
             context: Operation context (automatically provided by RPC server)
+            column_config: Optional column-level permissions config for dynamic_viewer relation.
+                          Only applies to CSV files.
+                          Structure: {
+                              "hidden_columns": ["password", "ssn"],  # Completely hide these columns
+                              "aggregations": {"age": "mean", "salary": "sum"},  # Show aggregated values
+                              "visible_columns": ["name", "email"]  # Show raw data (optional, auto-calculated if empty)
+                          }
+                          Note: A column can only appear in one category (hidden, aggregations, or visible)
 
         Returns:
             Tuple ID of created relationship
 
         Raises:
-            ValueError: If subject or object tuples are invalid
+            ValueError: If subject or object tuples are invalid, or column_config is invalid
             RuntimeError: If ReBAC is not available
 
         Examples:
@@ -80,6 +144,19 @@ class NexusFSReBACMixin:
             ...     relation="viewer-of",
             ...     object=("file", "/workspace/secret.txt"),
             ...     expires_at=datetime.now(UTC) + timedelta(hours=1)
+            ... )
+            'uuid-string'
+
+            >>> # Dynamic viewer with column-level permissions for CSV files
+            >>> nx.rebac_create(
+            ...     subject=("agent", "alice"),
+            ...     relation="dynamic_viewer",
+            ...     object=("file", "/data/users.csv"),
+            ...     column_config={
+            ...         "hidden_columns": ["password", "ssn"],
+            ...         "aggregations": {"age": "mean", "salary": "sum"},
+            ...         "visible_columns": ["name", "email"]
+            ...     }
             ... )
             'uuid-string'
         """
@@ -145,6 +222,143 @@ class NexusFSReBACMixin:
                             f"permission to manage permissions on '{file_path}'"
                         )
 
+        # Validate column_config for dynamic_viewer relation
+        conditions = None
+        if relation == "dynamic_viewer":
+            # Check if object is a CSV file
+            if object[0] == "file" and not object[1].lower().endswith(".csv"):
+                raise ValueError(
+                    f"dynamic_viewer relation only supports CSV files. "
+                    f"File '{object[1]}' does not have .csv extension."
+                )
+
+            if column_config is None:
+                raise ValueError(
+                    "column_config is required when relation is 'dynamic_viewer'. "
+                    "Provide configuration with hidden_columns, aggregations, and/or visible_columns."
+                )
+
+            # Validate column_config structure
+            if not isinstance(column_config, dict):
+                raise ValueError("column_config must be a dictionary")
+
+            # Get all column categories
+            hidden_columns = column_config.get("hidden_columns", [])
+            aggregations = column_config.get("aggregations", {})
+            visible_columns = column_config.get("visible_columns", [])
+
+            # Validate types
+            if not isinstance(hidden_columns, list):
+                raise ValueError("column_config.hidden_columns must be a list")
+            if not isinstance(aggregations, dict):
+                raise ValueError("column_config.aggregations must be a dictionary")
+            if not isinstance(visible_columns, list):
+                raise ValueError("column_config.visible_columns must be a list")
+
+            # Validate columns against actual CSV file
+            file_path = object[1]
+            if hasattr(self, "read") and hasattr(self, "exists"):
+                try:
+                    # Check if file exists
+                    if self.exists(file_path):
+                        # Read file to get actual columns
+                        content = self.read(file_path)
+                        if isinstance(content, bytes):
+                            content = content.decode("utf-8")
+
+                        try:
+                            import io
+
+                            import pandas as pd
+
+                            df = pd.read_csv(io.StringIO(content))
+                            actual_columns = set(df.columns)
+
+                            # Collect all configured columns
+                            configured_columns = (
+                                set(hidden_columns)
+                                | set(aggregations.keys())
+                                | set(visible_columns)
+                            )
+
+                            # Check for invalid columns
+                            invalid_columns = configured_columns - actual_columns
+                            if invalid_columns:
+                                raise ValueError(
+                                    f"Column config contains invalid columns: {sorted(invalid_columns)}. "
+                                    f"Available columns in CSV: {sorted(actual_columns)}"
+                                )
+                        except ValueError:
+                            # Re-raise ValueError (validation error)
+                            raise
+                        except ImportError:
+                            # pandas not available, skip validation
+                            pass
+                        except Exception as e:
+                            # If CSV parsing fails (non-validation error), provide warning but allow creation
+                            import logging
+
+                            logger = logging.getLogger(__name__)
+                            logger.warning(
+                                f"Could not validate CSV columns for {file_path}: {e}. "
+                                f"Column config will be created without validation."
+                            )
+                except ValueError:
+                    # Re-raise validation errors
+                    raise
+                except Exception as e:
+                    # If file read fails, skip validation (file might not exist yet)
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.debug(f"Could not read file {file_path} for column validation: {e}")
+
+            # Check that a column only appears in one category
+            all_columns = set()
+            for col in hidden_columns:
+                if col in all_columns:
+                    raise ValueError(
+                        f"Column '{col}' appears in multiple categories. "
+                        f"Each column can only be in hidden_columns, aggregations, or visible_columns."
+                    )
+                all_columns.add(col)
+
+            for col in aggregations:
+                if col in all_columns:
+                    raise ValueError(
+                        f"Column '{col}' appears in multiple categories. "
+                        f"Each column can only be in hidden_columns, aggregations, or visible_columns."
+                    )
+                all_columns.add(col)
+
+            for col in visible_columns:
+                if col in all_columns:
+                    raise ValueError(
+                        f"Column '{col}' appears in multiple categories. "
+                        f"Each column can only be in hidden_columns, aggregations, or visible_columns."
+                    )
+                all_columns.add(col)
+
+            # Validate aggregation operations (single value per column)
+            valid_ops = {"mean", "sum", "min", "max", "std", "median", "count"}
+            for col, op in aggregations.items():
+                if not isinstance(op, str):
+                    raise ValueError(
+                        f"column_config.aggregations['{col}'] must be a string (one of: {', '.join(valid_ops)}). "
+                        f"Got: {type(op).__name__}"
+                    )
+                if op not in valid_ops:
+                    raise ValueError(
+                        f"Invalid aggregation operation '{op}' for column '{col}'. "
+                        f"Valid operations: {', '.join(sorted(valid_ops))}"
+                    )
+
+            # Store column_config as conditions
+            conditions = {"type": "dynamic_viewer", "column_config": column_config}
+        elif column_config is not None:
+            # column_config provided but relation is not dynamic_viewer
+            raise ValueError("column_config can only be provided when relation is 'dynamic_viewer'")
+
         # Create relationship
         return self._rebac_manager.rebac_write(
             subject=subject,
@@ -152,6 +366,7 @@ class NexusFSReBACMixin:
             object=object,
             expires_at=expires_at,
             tenant_id=effective_tenant_id,
+            conditions=conditions,
         )
 
     @rpc_expose(description="Check ReBAC permission")
@@ -1095,3 +1310,339 @@ class NexusFSReBACMixin:
         if tuples:
             return self.rebac_delete(tuples[0]["tuple_id"])
         return False
+
+    # =========================================================================
+    # Dynamic Viewer - Column-level Permissions for Data Files
+    # =========================================================================
+
+    @rpc_expose(description="Get dynamic viewer configuration for a file")
+    def get_dynamic_viewer_config(
+        self,
+        subject: tuple[str, str],
+        file_path: str,
+    ) -> dict[str, Any] | None:
+        """Get the dynamic_viewer configuration for a subject and file.
+
+        Args:
+            subject: (subject_type, subject_id) tuple (e.g., ('agent', 'alice'))
+            file_path: Path to the file
+
+        Returns:
+            Dictionary with column_config if dynamic_viewer relation exists, None otherwise
+
+        Raises:
+            RuntimeError: If ReBAC is not available
+
+        Examples:
+            >>> # Get alice's dynamic viewer config for users.csv
+            >>> config = nx.get_dynamic_viewer_config(
+            ...     subject=("agent", "alice"),
+            ...     file_path="/data/users.csv"
+            ... )
+            >>> if config:
+            ...     print(config["mode"])  # "whitelist" or "blacklist"
+            ...     print(config["visible_columns"])  # ["name", "email"]
+        """
+        if not hasattr(self, "_rebac_manager"):
+            raise RuntimeError(
+                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+            )
+
+        # Find dynamic_viewer tuples for this subject and file
+        tuples = self.rebac_list_tuples(
+            subject=subject, relation="dynamic_viewer", object=("file", file_path)
+        )
+
+        if not tuples:
+            return None
+
+        # Get the most recent tuple (in case there are multiple)
+        tuple_data = tuples[0]
+
+        # Parse conditions from the tuple
+        import json
+
+        conn = self._rebac_manager._get_connection()
+        try:
+            cursor = self._rebac_manager._create_cursor(conn)
+            cursor.execute(
+                self._rebac_manager._fix_sql_placeholders(
+                    "SELECT conditions FROM rebac_tuples WHERE tuple_id = ?"
+                ),
+                (tuple_data["tuple_id"],),
+            )
+            row = cursor.fetchone()
+            if row and row["conditions"]:
+                conditions = json.loads(row["conditions"])
+                if conditions.get("type") == "dynamic_viewer":
+                    column_config = conditions.get("column_config")
+                    return column_config if column_config is not None else None
+        finally:
+            conn.close()
+
+        return None
+
+    @rpc_expose(description="Apply dynamic viewer filter to CSV data")
+    def apply_dynamic_viewer_filter(
+        self,
+        data: str,
+        column_config: dict[str, Any],
+        file_format: str = "csv",
+    ) -> dict[str, Any]:
+        """Apply column-level filtering and aggregations to CSV data.
+
+        Args:
+            data: Raw data content (CSV string)
+            column_config: Column configuration dict with hidden_columns, aggregations, visible_columns
+            file_format: Format of the data (currently only "csv" is supported)
+
+        Returns:
+            Dictionary with:
+                - filtered_data: Filtered data as CSV string (visible columns + aggregated columns)
+                - aggregations: Dictionary of computed aggregations
+                - columns_shown: List of column names included in filtered data
+                - aggregated_columns: List of aggregated column names with operation prefix
+
+        Raises:
+            ValueError: If file_format is not supported
+            RuntimeError: If data parsing fails
+
+        Examples:
+            >>> # Apply filter to CSV data
+            >>> result = nx.apply_dynamic_viewer_filter(
+            ...     data="name,email,age,password\\nalice,a@ex.com,30,secret\\nbob,b@ex.com,25,pwd\\n",
+            ...     column_config={
+            ...         "hidden_columns": ["password"],
+            ...         "aggregations": {"age": "mean"},
+            ...         "visible_columns": ["name", "email"]
+            ...     }
+            ... )
+            >>> print(result["filtered_data"])  # name,email,mean(age) with values
+            >>> print(result["aggregations"])    # {"age": {"mean": 27.5}}
+        """
+        if file_format != "csv":
+            raise ValueError(f"Unsupported file format: {file_format}. Only 'csv' is supported.")
+
+        try:
+            import io
+
+            import pandas as pd
+        except ImportError as e:
+            raise RuntimeError(
+                "pandas is required for dynamic viewer filtering. Install with: pip install pandas"
+            ) from e
+
+        # Parse CSV data
+        try:
+            df = pd.read_csv(io.StringIO(data))
+        except Exception as e:
+            raise RuntimeError(f"Failed to parse CSV data: {e}") from e
+
+        # Get configuration
+        hidden_columns = column_config.get("hidden_columns", [])
+        aggregations = column_config.get("aggregations", {})
+        visible_columns = column_config.get("visible_columns", [])
+
+        # Auto-calculate visible_columns if empty
+        # visible_columns = all columns - hidden_columns - aggregation columns
+        if not visible_columns:
+            all_cols = set(df.columns)
+            hidden_set = set(hidden_columns)
+            agg_set = set(aggregations.keys())
+            visible_columns = list(all_cols - hidden_set - agg_set)
+
+        # Build result dataframe in original column order
+        # Iterate through original columns and add visible/aggregated columns in order
+        result_columns = []  # List of (column_name, series) tuples
+        aggregation_results: dict[str, dict[str, float | int | str]] = {}
+        aggregated_column_names = []
+        columns_shown = []
+
+        for col in df.columns:
+            if col in hidden_columns:
+                # Skip hidden columns
+                continue
+            elif col in aggregations:
+                # Add aggregated column at original position
+                operation = aggregations[col]
+                try:
+                    # Compute aggregation
+                    if operation == "mean":
+                        agg_value = float(df[col].mean())
+                    elif operation == "sum":
+                        agg_value = float(df[col].sum())
+                    elif operation == "count":
+                        agg_value = int(df[col].count())
+                    elif operation == "min":
+                        agg_value = float(df[col].min())
+                    elif operation == "max":
+                        agg_value = float(df[col].max())
+                    elif operation == "std":
+                        agg_value = float(df[col].std())
+                    elif operation == "median":
+                        agg_value = float(df[col].median())
+                    else:
+                        # Unknown operation, skip
+                        continue
+
+                    # Store aggregation result
+                    if col not in aggregation_results:
+                        aggregation_results[col] = {}
+                    aggregation_results[col][operation] = agg_value
+
+                    # Add aggregated column with formatted name
+                    agg_col_name = f"{operation}({col})"
+                    aggregated_column_names.append(agg_col_name)
+
+                    # Create series with aggregated value repeated for all rows
+                    agg_series = pd.Series([agg_value] * len(df), name=agg_col_name)
+                    result_columns.append((agg_col_name, agg_series))
+
+                except Exception as e:
+                    # If aggregation fails, store error message
+                    if col not in aggregation_results:
+                        aggregation_results[col] = {}
+                    aggregation_results[col][operation] = f"error: {str(e)}"
+            elif col in visible_columns:
+                # Add visible column at original position
+                result_columns.append((col, df[col]))
+                columns_shown.append(col)
+
+        # Build result dataframe from ordered columns
+        result_df = pd.DataFrame(dict(result_columns)) if result_columns else pd.DataFrame()
+
+        # Convert result dataframe to CSV string
+        filtered_data = result_df.to_csv(index=False)
+
+        return {
+            "filtered_data": filtered_data,
+            "aggregations": aggregation_results,
+            "columns_shown": columns_shown,
+            "aggregated_columns": aggregated_column_names,
+        }
+
+    @rpc_expose(description="Read file with dynamic viewer permissions applied")
+    def read_with_dynamic_viewer(
+        self,
+        file_path: str,
+        subject: tuple[str, str],
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Read a CSV file with dynamic_viewer permissions applied.
+
+        This method checks if the subject has dynamic_viewer permissions on the file,
+        and if so, applies the column-level filtering before returning the data.
+        Only supports CSV files.
+
+        Args:
+            file_path: Path to the CSV file to read
+            subject: (subject_type, subject_id) tuple
+            context: Operation context (automatically provided by RPC server)
+
+        Returns:
+            Dictionary with:
+                - content: Filtered file content (or full content if not dynamic viewer)
+                - is_filtered: Boolean indicating if dynamic filtering was applied
+                - config: The column config used (if filtered)
+                - aggregations: Computed aggregations (if any)
+                - columns_shown: List of visible columns (if filtered)
+                - aggregated_columns: List of aggregated column names with operation prefix
+
+        Raises:
+            PermissionError: If subject has no read permission on file
+            ValueError: If file is not a CSV file for dynamic_viewer
+            RuntimeError: If ReBAC is not available
+
+        Examples:
+            >>> # Read CSV file with dynamic viewer permissions
+            >>> result = nx.read_with_dynamic_viewer(
+            ...     file_path="/data/users.csv",
+            ...     subject=("agent", "alice")
+            ... )
+            >>> if result["is_filtered"]:
+            ...     print("Filtered data:", result["content"])
+            ...     print("Aggregations:", result["aggregations"])
+            ...     print("Columns:", result["columns_shown"])
+            ...     print("Aggregated:", result["aggregated_columns"])
+        """
+        if not hasattr(self, "_rebac_manager"):
+            raise RuntimeError(
+                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+            )
+
+        # Check if this is a CSV file
+        if not file_path.lower().endswith(".csv"):
+            raise ValueError(
+                f"read_with_dynamic_viewer only supports CSV files. "
+                f"File '{file_path}' does not have .csv extension."
+            )
+
+        # Check if subject has read permission (either viewer or dynamic_viewer)
+        has_read = self.rebac_check(
+            subject=subject, permission="read", object=("file", file_path), context=context
+        )
+
+        if not has_read:
+            raise PermissionError(f"Subject {subject} does not have read permission on {file_path}")
+
+        # Get dynamic viewer config
+        column_config = self.get_dynamic_viewer_config(subject=subject, file_path=file_path)
+
+        # Read the file content WITHOUT dynamic_viewer filtering
+        # We need the raw content to apply filtering here
+        if (
+            hasattr(self, "metadata")
+            and hasattr(self, "router")
+            and hasattr(self, "_get_routing_params")
+        ):
+            # NexusFS instance - read directly from backend to bypass filtering
+            tenant_id, agent_id, is_admin = self._get_routing_params(context)
+            route = self.router.route(
+                file_path,
+                tenant_id=tenant_id,
+                agent_id=agent_id,
+                is_admin=is_admin,
+                check_write=False,
+            )
+            meta = self.metadata.get(file_path)
+            if meta is None or meta.etag is None:
+                raise RuntimeError(f"File not found: {file_path}")
+
+            # Read raw content from backend
+            content_bytes = route.backend.read_content(meta.etag, context=context)
+            content = (
+                content_bytes.decode("utf-8") if isinstance(content_bytes, bytes) else content_bytes
+            )
+        else:
+            # Fallback: read from filesystem
+            with open(file_path, encoding="utf-8") as f:
+                content = f.read()
+
+        # If no dynamic viewer config, return full content
+        if not column_config:
+            return {
+                "content": content.encode("utf-8") if isinstance(content, str) else content,
+                "is_filtered": False,
+                "config": None,
+                "aggregations": {},
+                "columns_shown": [],
+                "aggregated_columns": [],
+            }
+
+        # Apply dynamic viewer filtering to raw content
+        result = self.apply_dynamic_viewer_filter(
+            data=content,  # Raw unfiltered content
+            column_config=column_config,
+            file_format="csv",
+        )
+
+        return {
+            "content": result["filtered_data"].encode("utf-8")
+            if isinstance(result["filtered_data"], str)
+            else result["filtered_data"],
+            "is_filtered": True,
+            "config": column_config,
+            "aggregations": result["aggregations"],
+            "columns_shown": result["columns_shown"],
+            "aggregated_columns": result["aggregated_columns"],
+        }

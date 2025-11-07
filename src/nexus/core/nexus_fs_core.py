@@ -70,6 +70,83 @@ class NexusFSCoreMixin:
         ) -> str | None: ...
         async def parse(self, path: str, store_result: bool = True) -> Any: ...
 
+    def _apply_dynamic_viewer_filter_if_needed(
+        self, path: str, content: bytes, context: OperationContext | None
+    ) -> bytes:
+        """Apply dynamic_viewer column-level filtering for CSV files if needed.
+
+        Args:
+            path: File path
+            content: Original file content
+            context: Operation context
+
+        Returns:
+            Filtered content if dynamic_viewer permission exists, otherwise original content
+        """
+        # Only process CSV files
+        if not path.lower().endswith(".csv"):
+            logger.debug(f"_apply_dynamic_viewer_filter: Skipping non-CSV file: {path}")
+            return content
+
+        # Extract subject from context (uses NexusFSReBACMixin method)
+        if not hasattr(self, "_get_subject_from_context"):
+            logger.debug("_apply_dynamic_viewer_filter: No _get_subject_from_context method")
+            return content
+
+        subject = self._get_subject_from_context(context)
+        if not subject:
+            logger.debug(f"_apply_dynamic_viewer_filter: No subject found in context for {path}")
+            return content
+
+        logger.debug(
+            f"_apply_dynamic_viewer_filter: Checking dynamic_viewer for {subject} on {path}"
+        )
+
+        # Check if ReBAC is available
+        if not hasattr(self, "_rebac_manager") or not hasattr(self, "get_dynamic_viewer_config"):
+            logger.debug(
+                "_apply_dynamic_viewer_filter: ReBAC or get_dynamic_viewer_config not available"
+            )
+            return content
+
+        try:
+            # Get dynamic_viewer configuration for this subject + file
+            column_config = self.get_dynamic_viewer_config(subject=subject, file_path=path)  # type: ignore[attr-defined]
+
+            if not column_config:
+                # No dynamic_viewer permission, return original content
+                logger.debug(
+                    f"_apply_dynamic_viewer_filter: No dynamic_viewer config for {subject} on {path}"
+                )
+                return content
+
+            logger.info(
+                f"_apply_dynamic_viewer_filter: Applying filter for {subject} on {path}: {column_config}"
+            )
+
+            # Apply filtering
+            content_str = content.decode("utf-8") if isinstance(content, bytes) else content
+            result = self.apply_dynamic_viewer_filter(  # type: ignore[attr-defined]
+                data=content_str, column_config=column_config, file_format="csv"
+            )
+
+            # Return filtered content as bytes
+            filtered_content = result["filtered_data"]
+            logger.info(f"_apply_dynamic_viewer_filter: Successfully filtered {path}")
+            return (
+                filtered_content.encode("utf-8")
+                if isinstance(filtered_content, str)
+                else filtered_content
+            )
+
+        except Exception as e:
+            # Log error but don't fail the read operation
+            logger.warning(f"Failed to apply dynamic_viewer filter for {path}: {e}")
+            import traceback
+
+            logger.warning(traceback.format_exc())
+            return content
+
     @rpc_expose(description="Read file content")
     def read(
         self, path: str, context: OperationContext | None = None, return_metadata: bool = False
@@ -152,6 +229,11 @@ class NexusFSCoreMixin:
 
             original_content = route.backend.read_content(meta.etag, context=context)
 
+            # Apply dynamic_viewer filtering for CSV files before parsing
+            original_content = self._apply_dynamic_viewer_filter_if_needed(
+                original_path, original_content, context
+            )
+
             # Parse the content
             content = get_parsed_content(original_content, original_path, view_type)
 
@@ -184,14 +266,18 @@ class NexusFSCoreMixin:
         # Read from routed backend using content hash
         content = route.backend.read_content(meta.etag, context=context)
 
+        # Apply dynamic_viewer filtering for CSV files
+        content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
+
         # Return content with metadata if requested
         if return_metadata:
+            # Update size after filtering
             return {
                 "content": content,
                 "etag": meta.etag,
                 "version": meta.version,
                 "modified_at": meta.modified_at,
-                "size": meta.size,
+                "size": len(content),  # Update size after filtering
             }
 
         return content

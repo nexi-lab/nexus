@@ -1695,16 +1695,25 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         object: tuple[str, str],
         expires_at: Any = None,
         tenant_id: str | None = None,  # Auto-filled from auth if None
+        column_config: dict[str, Any] | None = None,  # Column-level permissions for dynamic_viewer
     ) -> str:
         """Create a ReBAC relationship tuple.
 
         Args:
             subject: (subject_type, subject_id) tuple (e.g., ('agent', 'alice'))
-            relation: Relation type (e.g., 'member-of', 'owner-of')
+            relation: Relation type (e.g., 'member-of', 'owner-of', 'dynamic_viewer')
             object: (object_type, object_id) tuple (e.g., ('group', 'developers'))
             expires_at: Optional expiration datetime for temporary relationships
             tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
                        tenant_id from authenticated user's credentials.
+            column_config: Optional column-level permissions config for dynamic_viewer relation.
+                          Only applies to CSV files.
+                          Structure: {
+                              "hidden_columns": ["password", "ssn"],  # Completely hide these columns
+                              "aggregations": {"age": "mean", "salary": "sum"},  # Show aggregated values (single operation per column)
+                              "visible_columns": ["name", "email"]  # Show raw data (optional, auto-calculated if empty)
+                          }
+                          Note: A column can only appear in one category (hidden, aggregations, or visible)
 
         Returns:
             Tuple ID of created relationship
@@ -1714,6 +1723,19 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ...     subject=("agent", "alice"),
             ...     relation="member-of",
             ...     object=("group", "developers")
+            ... )
+            'uuid-string'
+
+            >>> # Dynamic viewer with column-level permissions for CSV files
+            >>> nx.rebac_create(
+            ...     subject=("agent", "alice"),
+            ...     relation="dynamic_viewer",
+            ...     object=("file", "/data/users.csv"),
+            ...     column_config={
+            ...         "hidden_columns": ["password", "ssn"],
+            ...         "aggregations": {"age": "mean", "salary": "sum"},
+            ...         "visible_columns": ["name", "email"]
+            ...     }
             ... )
             'uuid-string'
         """
@@ -1728,6 +1750,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "object": object,
                 "expires_at": expires_at.isoformat() if expires_at else None,
                 "tenant_id": effective_tenant_id,
+                "column_config": column_config,
             },
         )
         return result  # type: ignore[no-any-return]
@@ -1967,6 +1990,128 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         )
         # Convert list of lists back to list of tuples
         return [tuple(item) for item in result]
+
+    # ============================================================
+    # Dynamic Viewer - Column-level Permissions
+    # ============================================================
+
+    def get_dynamic_viewer_config(
+        self,
+        subject: tuple[str, str],
+        file_path: str,
+    ) -> dict[str, Any] | None:
+        """Get the dynamic_viewer configuration for a subject and file.
+
+        Args:
+            subject: (subject_type, subject_id) tuple (e.g., ('agent', 'alice'))
+            file_path: Path to the file
+
+        Returns:
+            Dictionary with column_config if dynamic_viewer relation exists, None otherwise
+
+        Examples:
+            >>> # Get alice's dynamic viewer config for users.csv
+            >>> config = nx.get_dynamic_viewer_config(
+            ...     subject=("agent", "alice"),
+            ...     file_path="/data/users.csv"
+            ... )
+            >>> if config:
+            ...     print(config["hidden_columns"])  # ["password", "ssn"]
+        """
+        result = self._call_rpc(
+            "get_dynamic_viewer_config",
+            {
+                "subject": subject,
+                "file_path": file_path,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def apply_dynamic_viewer_filter(
+        self,
+        data: str,
+        column_config: dict[str, Any],
+        file_format: str = "csv",
+    ) -> dict[str, Any]:
+        """Apply column-level filtering and aggregations to CSV data.
+
+        Args:
+            data: Raw data content (CSV string)
+            column_config: Column configuration dict with hidden_columns, aggregations, visible_columns
+            file_format: Format of the data (currently only "csv" is supported)
+
+        Returns:
+            Dictionary with:
+                - filtered_data: Filtered data as CSV string (visible columns + aggregated columns)
+                - aggregations: Dictionary of computed aggregations
+                - columns_shown: List of column names included in filtered data
+                - aggregated_columns: List of aggregated column names with operation prefix
+
+        Examples:
+            >>> # Apply filter to CSV data
+            >>> result = nx.apply_dynamic_viewer_filter(
+            ...     data="name,email,age,password\\nalice,a@ex.com,30,secret\\n",
+            ...     column_config={
+            ...         "hidden_columns": ["password"],
+            ...         "aggregations": {"age": "mean"},
+            ...         "visible_columns": ["name", "email"]
+            ...     }
+            ... )
+            >>> print(result["filtered_data"])
+        """
+        result = self._call_rpc(
+            "apply_dynamic_viewer_filter",
+            {
+                "data": data,
+                "column_config": column_config,
+                "file_format": file_format,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def read_with_dynamic_viewer(
+        self,
+        file_path: str,
+        subject: tuple[str, str],
+        context: Any = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Read a CSV file with dynamic_viewer permissions applied.
+
+        This method checks if the subject has dynamic_viewer permissions on the file,
+        and if so, applies the column-level filtering before returning the data.
+        Only supports CSV files.
+
+        Args:
+            file_path: Path to the CSV file to read
+            subject: (subject_type, subject_id) tuple
+            context: Unused in remote client (handled server-side)
+
+        Returns:
+            Dictionary with:
+                - content: Filtered file content (or full content if not dynamic viewer)
+                - is_filtered: Boolean indicating if dynamic filtering was applied
+                - config: The column config used (if filtered)
+                - aggregations: Computed aggregations (if any)
+                - columns_shown: List of visible columns (if filtered)
+                - aggregated_columns: List of aggregated column names with operation prefix
+
+        Examples:
+            >>> # Read CSV file with dynamic viewer permissions
+            >>> result = nx.read_with_dynamic_viewer(
+            ...     file_path="/data/users.csv",
+            ...     subject=("agent", "alice")
+            ... )
+            >>> if result["is_filtered"]:
+            ...     print("Filtered data:", result["content"])
+        """
+        result = self._call_rpc(
+            "read_with_dynamic_viewer",
+            {
+                "file_path": file_path,
+                "subject": subject,
+            },
+        )
+        return result  # type: ignore[no-any-return]
 
     def get_rebac_option(self, key: str) -> Any:
         """Get a ReBAC configuration option.

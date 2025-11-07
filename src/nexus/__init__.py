@@ -155,21 +155,26 @@ def connect(
 
     # PRIORITY 1: Check for server URL (remote mode)
     # If url is explicitly set in config or NEXUS_URL env var, use RemoteNexusFS
-    server_url = cfg.url or os.getenv("NEXUS_URL")
-    if server_url:
-        # Remote/Server mode: thin HTTP client
-        api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
+    # IMPORTANT: If mode is explicitly set to "embedded" in config, skip URL check
+    # This allows server mode to force local NexusFS even when NEXUS_URL is set
+    explicit_embedded = isinstance(config, dict) and config.get("mode") == "embedded"
 
-        # Connection parameters with sensible defaults
-        timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
-        connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
+    if not explicit_embedded:
+        server_url = cfg.url or os.getenv("NEXUS_URL")
+        if server_url:
+            # Remote/Server mode: thin HTTP client
+            api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
 
-        return RemoteNexusFS(
-            server_url=server_url,
-            api_key=api_key,
-            timeout=timeout,
-            connect_timeout=connect_timeout,
-        )
+            # Connection parameters with sensible defaults
+            timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
+            connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
+
+            return RemoteNexusFS(
+                server_url=server_url,
+                api_key=api_key,
+                timeout=timeout,
+                connect_timeout=connect_timeout,
+            )
 
     # PRIORITY 2: Embedded mode (local backend)
     # Only used if no URL is configured

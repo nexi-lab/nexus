@@ -432,8 +432,13 @@ def serve(
         # - With auth → enforce_permissions=True (secure by default)
         enforce_permissions = has_auth
 
-        # Get filesystem instance with appropriate permissions
-        nx = get_filesystem(backend_config, enforce_permissions=enforce_permissions)
+        # IMPORTANT: Server must always use local NexusFS, never RemoteNexusFS
+        # Use force_local=True to prevent circular dependency even if NEXUS_URL is set
+        nx = get_filesystem(
+            backend_config,
+            enforce_permissions=enforce_permissions,
+            force_local=True,  # Force local mode to prevent RemoteNexusFS
+        )
 
         # Load backends from config file if specified
         if backend_config.config_path:
@@ -489,13 +494,15 @@ def serve(
                 )
 
         # Safety check: Server should never use RemoteNexusFS (would create circular dependency)
+        # This should never trigger due to NEXUS_URL clearing above, but kept as defensive check
         from nexus.remote import RemoteNexusFS
 
         if isinstance(nx, RemoteNexusFS):
             console.print(
                 "[red]Error:[/red] Server cannot use RemoteNexusFS (circular dependency detected)"
             )
-            console.print("[yellow]Hint:[/yellow] Unset NEXUS_URL environment variable:")
+            console.print("[yellow]This is unexpected - please report this bug.[/yellow]")
+            console.print("[yellow]Workaround:[/yellow] Unset NEXUS_URL environment variable:")
             console.print("  unset NEXUS_URL")
             console.print("  nexus serve ...")
             sys.exit(1)

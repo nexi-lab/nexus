@@ -99,6 +99,7 @@ def list_files(
             if long:
                 # Detailed listing
                 table = Table(title=f"Files in {path}")
+                table.add_column("Type", style="magenta", width=4)
                 table.add_column("Path", style="cyan")
                 table.add_column("Size", justify="right", style="green")
                 table.add_column("Owner", style="blue")
@@ -107,21 +108,35 @@ def list_files(
                 table.add_column("Modified", style="yellow")
 
                 for file in files:
-                    size_str = f"{file['size']:,} bytes"
+                    # Check if directory from time-travel data
+                    is_dir = nx.is_directory(file["path"])
+                    type_str = "dir" if is_dir else "file"
+                    path_display = f"{file['path']}/" if is_dir else file["path"]
+                    size_str = f"{file['size']:,} bytes" if not is_dir else "-"
                     owner_str = file.get("owner") or "-"
                     group_str = file.get("group") or "-"
                     mode_str = str(file.get("mode") or "-")
                     modified_str = file.get("modified_at") or "-"
 
                     table.add_row(
-                        file["path"], size_str, owner_str, group_str, mode_str, modified_str
+                        type_str,
+                        path_display,
+                        size_str,
+                        owner_str,
+                        group_str,
+                        mode_str,
+                        modified_str,
                     )
 
                 console.print(table)
             else:
                 # Simple listing
                 for file in files:
-                    console.print(f"  {file['path']}")
+                    is_dir = nx.is_directory(file["path"])
+                    if is_dir:
+                        console.print(f"  [bold cyan]{file['path']}/[/bold cyan]")
+                    else:
+                        console.print(f"  {file['path']}")
 
             return
 
@@ -136,6 +151,7 @@ def list_files(
                 return
 
             table = Table(title=f"Files in {path}")
+            table.add_column("Type", style="magenta", width=4)
             table.add_column("Permissions", style="magenta")
             table.add_column("Owner", style="blue")
             table.add_column("Group", style="blue")
@@ -146,22 +162,39 @@ def list_files(
             # Get metadata with permissions
             if isinstance(nx, NexusFS):
                 for file in files:
+                    # Check if directory and add type indicator
+                    is_dir = nx.is_directory(file["path"])
+                    type_str = "dir" if is_dir else "file"
                     # Format permissions (UNIX permissions removed - using ReBAC)
                     perms_str = "---------"  # Placeholder since UNIX permissions are deprecated
                     owner_str = "-"  # Owner managed through ReBAC
                     group_str = "-"  # Group managed through ReBAC
-                    size_str = f"{file['size']:,} bytes"
+                    size_str = f"{file['size']:,} bytes" if not is_dir else "-"
                     modified_str = format_timestamp(file.get("modified_at"))
 
+                    # Format path with directory indicator
+                    path_display = f"{file['path']}/" if is_dir else file["path"]
+
                     table.add_row(
-                        perms_str, owner_str, group_str, file["path"], size_str, modified_str
+                        type_str,
+                        perms_str,
+                        owner_str,
+                        group_str,
+                        path_display,
+                        size_str,
+                        modified_str,
                     )
             else:
                 # Remote FS - no permission support yet
                 for file in files:
-                    size_str = f"{file['size']:,} bytes"
+                    is_dir = nx.is_directory(file["path"])
+                    type_str = "dir" if is_dir else "file"
+                    size_str = f"{file['size']:,} bytes" if not is_dir else "-"
                     modified_str = format_timestamp(file.get("modified_at"))
-                    table.add_row("---------", "-", "-", file["path"], size_str, modified_str)
+                    path_display = f"{file['path']}/" if is_dir else file["path"]
+                    table.add_row(
+                        type_str, "---------", "-", "-", path_display, size_str, modified_str
+                    )
 
             console.print(table)
         else:
@@ -175,7 +208,12 @@ def list_files(
                 return
 
             for file_path in file_paths:
-                console.print(f"  {file_path}")
+                # Check if it's a directory and add visual indicator
+                is_dir = nx.is_directory(file_path)
+                if is_dir:
+                    console.print(f"  [bold cyan]{file_path}/[/bold cyan]")
+                else:
+                    console.print(f"  {file_path}")
 
         nx.close()
     except Exception as e:

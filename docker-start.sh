@@ -10,6 +10,7 @@
 #   ./docker-start.sh --status           # Check service status
 #   ./docker-start.sh --clean            # Stop and remove all data (volumes)
 #   ./docker-start.sh --init             # Initialize (clean + build + start)
+#   ./docker-start.sh --env=production   # Use production environment files
 #
 # Services:
 #   - postgres:    PostgreSQL database (port 5432)
@@ -23,7 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 COMPOSE_FILE="docker-compose.demo.yml"
-ENV_FILE=".env"
+ENV_MODE="local"  # Default: local development
 
 # ============================================
 # Banner
@@ -57,24 +58,92 @@ check_docker() {
 }
 
 check_env_file() {
+    # Determine environment files based on ENV_MODE
+    case "$ENV_MODE" in
+        production)
+            ENV_FILE=".env.production"
+            ENV_SECRETS=".env.production.secrets"
+            FRONTEND_ENV_FILE="../nexus-frontend/.env.production"
+            ;;
+        *)
+            # Local development (default)
+            # Try .env.local first, fallback to .env for backwards compatibility
+            if [ -f ".env.local" ]; then
+                ENV_FILE=".env.local"
+            else
+                ENV_FILE=".env"
+            fi
+            ENV_SECRETS=""
+            FRONTEND_ENV_FILE="../nexus-frontend/.env.local"
+            ;;
+    esac
+
+    echo "🎯 Environment mode: $ENV_MODE"
+    echo "   Backend config: $ENV_FILE"
+    if [ -n "$ENV_SECRETS" ]; then
+        echo "   Backend secrets: $ENV_SECRETS"
+    fi
+    echo "   Frontend config: $FRONTEND_ENV_FILE"
+    echo ""
+
+    # Check main env file
     if [ ! -f "$ENV_FILE" ]; then
         echo "⚠️  Environment file not found: $ENV_FILE"
         echo ""
-        echo "Creating .env from .env.example..."
-        if [ -f ".env.example" ]; then
-            cp .env.example .env
-            echo "✅ Created .env file"
-            echo ""
-            echo "⚠️  IMPORTANT: Edit .env and add your API keys:"
-            echo "   - ANTHROPIC_API_KEY (required for LangGraph)"
-            echo "   - OPENAI_API_KEY (required for LangGraph)"
-            echo ""
-            read -p "Press Enter to continue after editing .env..."
-        else
-            echo "❌ .env.example not found"
+
+        if [ "$ENV_MODE" = "production" ]; then
+            echo "❌ Production environment file missing!"
+            echo "   Expected: $ENV_FILE"
             exit 1
+        else
+            echo "Creating $ENV_FILE from .env.example..."
+            if [ -f ".env.example" ]; then
+                cp .env.example "$ENV_FILE"
+                echo "✅ Created $ENV_FILE"
+                echo ""
+                echo "⚠️  IMPORTANT: Edit $ENV_FILE and add your API keys:"
+                echo "   - ANTHROPIC_API_KEY (required for LangGraph)"
+                echo "   - OPENAI_API_KEY (required for LangGraph)"
+                echo ""
+                read -p "Press Enter to continue after editing $ENV_FILE..."
+            else
+                echo "❌ .env.example not found"
+                exit 1
+            fi
         fi
     fi
+
+    # Load main env file
+    set -a  # Auto-export all variables
+    source "$ENV_FILE"
+    set +a
+
+    # Load secrets file if in production mode
+    if [ "$ENV_MODE" = "production" ] && [ -n "$ENV_SECRETS" ]; then
+        if [ -f "$ENV_SECRETS" ]; then
+            echo "🔐 Loading production secrets from $ENV_SECRETS"
+            set -a
+            source "$ENV_SECRETS"
+            set +a
+        else
+            echo "⚠️  Production secrets file not found: $ENV_SECRETS"
+            echo "   This is OK for testing, but required for production deployment"
+        fi
+    fi
+
+    # Check for frontend env file
+    if [ -f "$FRONTEND_ENV_FILE" ]; then
+        echo "📦 Loading frontend config from $FRONTEND_ENV_FILE"
+        set -a
+        source "$FRONTEND_ENV_FILE"
+        set +a
+    else
+        echo "ℹ️  Frontend env file not found: $FRONTEND_ENV_FILE (using defaults)"
+        if [ "$ENV_MODE" != "production" ]; then
+            echo "   💡 Tip: Create $FRONTEND_ENV_FILE for custom frontend config"
+        fi
+    fi
+    echo ""
 }
 
 show_services() {
@@ -295,7 +364,17 @@ EOF
 # Main
 # ============================================
 
-# Parse arguments
+# Parse --env flag from all arguments
+for arg in "$@"; do
+    case $arg in
+        --env=*)
+            ENV_MODE="${arg#*=}"
+            shift
+            ;;
+    esac
+done
+
+# Parse command arguments
 if [ $# -eq 0 ]; then
     cmd_start
     exit 0
@@ -331,7 +410,7 @@ case "$1" in
         ;;
     --help|-h)
         print_banner
-        echo "Usage: $0 [OPTION]"
+        echo "Usage: $0 [OPTION] [--env=MODE]"
         echo ""
         echo "Options:"
         echo "  (none)          Start all services (detached)"
@@ -342,7 +421,17 @@ case "$1" in
         echo "  --status        Check service status"
         echo "  --clean         Stop and remove all data (volumes)"
         echo "  --init          Initialize (clean + build + start)"
+        echo "  --env=MODE      Set environment mode (local|production)"
         echo "  --help, -h      Show this help message"
+        echo ""
+        echo "Environment Modes:"
+        echo "  local           Use .env.local and .env (default)"
+        echo "  production      Use .env.production and .env.production.secrets"
+        echo ""
+        echo "Examples:"
+        echo "  ./docker-start.sh                    # Start with local env"
+        echo "  ./docker-start.sh --env=production   # Start with production env"
+        echo "  ./docker-start.sh --build --env=production  # Rebuild with production env"
         echo ""
         show_services
         ;;

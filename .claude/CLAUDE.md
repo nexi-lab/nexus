@@ -34,20 +34,30 @@ gh pr checks
 
 **Quick deploy after PyPI release:**
 ```bash
-gcloud compute ssh nexus-server --zone=us-west1-a --command="sudo -u nexus bash -c 'cd /opt/nexus/repo && git pull && /opt/nexus/repo/.venv/bin/pip install --upgrade nexus-ai-fs && sudo pkill -f \"nexus.cli serve\" && nohup /opt/nexus/repo/.venv/bin/python -m nexus.cli serve --host 0.0.0.0 --port 8080 --data-dir /var/lib/nexus > /tmp/nexus.log 2>&1 &'"
+gcloud compute ssh nexus-server-spot --zone=us-west1-a --command="cd ~/nexus && git pull && docker-compose -f docker-compose.demo.yml pull nexus && docker-compose -f docker-compose.demo.yml up -d nexus"
 ```
 
 **Verify:**
 ```bash
-curl http://35.230.4.67:8080/health
-gcloud compute ssh nexus-server --zone=us-west1-a --command="sudo -u nexus /opt/nexus/repo/.venv/bin/pip show nexus-ai-fs | grep Version"
+curl http://35.197.30.59:8080/health
+gcloud compute ssh nexus-server-spot --zone=us-west1-a --command="docker exec nexus-server pip show nexus-ai-fs | grep Version"
 ```
 
 **Server details:**
-- IP: `35.230.4.67`
+- Instance: `nexus-server-spot` (GCP Spot VM - e2-standard-2)
+- IP: `35.197.30.59` (Static IP)
 - Domain: `nexus.sudorouter.ai` (Caddy HTTPS reverse proxy)
-- Location: `/opt/nexus/repo` (user: `nexus`)
-- Python: `python3.11` in `.venv`
+- Deployment: Docker Compose (`docker-compose.demo.yml`)
+- Location: `~/nexus` (user: `songym`)
+- Frontend: http://35.197.30.59:5173
+- API: http://35.197.30.59:8080
+- LangGraph: http://35.197.30.59:2024
+
+**Rebuild frontend with new configuration:**
+```bash
+# If API URLs change, rebuild frontend
+gcloud compute ssh nexus-server-spot --zone=us-west1-a --command="cd ~/nexus-frontend && docker build --build-arg VITE_NEXUS_API_URL=http://35.197.30.59:8080 --build-arg VITE_LANGGRAPH_API_URL=http://35.197.30.59:2024 -t nexus-frontend:latest . && cd ~/nexus && docker-compose -f docker-compose.demo.yml up -d frontend"
+```
 
 ---
 

@@ -216,7 +216,9 @@ def serve(
         console.print()
 
         # Create and run MCP server
-        mcp_server = create_mcp_server(nx=nx, remote_url=remote_url)
+        mcp_server = create_mcp_server(
+            nx=nx, remote_url=remote_url, remote_api_key=backend_config.remote_api_key
+        )
 
         # Run with appropriate transport
         if transport == "stdio":

@@ -15,9 +15,15 @@ The Docker setup includes 4 services:
 
 ### Prerequisites
 
-- Docker Desktop (Mac/Windows) or Docker Engine (Linux)
-- Docker Compose v2.0+
-- API keys for LLM providers (Anthropic/OpenAI)
+- **Docker Desktop** (Mac/Windows) or Docker Engine (Linux)
+  - Windows: [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/) - Make sure WSL 2 backend is enabled
+  - Mac: [Docker Desktop for Mac](https://docs.docker.com/desktop/install/mac-install/)
+  - Linux: [Docker Engine](https://docs.docker.com/engine/install/)
+- **Docker Compose v2.0+** (included with Docker Desktop)
+- **Git Bash** (Windows only) - Comes with [Git for Windows](https://gitforwindows.org/)
+- **API keys** for LLM providers (Anthropic/OpenAI)
+
+> **Windows Users**: Run all commands in **Git Bash** (not PowerShell or CMD) unless otherwise specified.
 
 ### 1. Setup Environment
 
@@ -413,3 +419,220 @@ Then restart the service:
 ```bash
 docker compose -f docker-compose.demo.yml restart nexus
 ```
+
+---
+
+## Windows-Specific Guide
+
+### Prerequisites for Windows
+
+1. **Enable WSL 2**
+   ```powershell
+   # Run in PowerShell as Administrator
+   wsl --install
+   # Restart your computer
+   ```
+
+2. **Install Docker Desktop**
+   - Download from [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/)
+   - During installation, ensure "Use WSL 2 instead of Hyper-V" is selected
+   - After installation, open Docker Desktop and wait for it to fully start
+
+3. **Install Git for Windows**
+   - Download from [Git for Windows](https://gitforwindows.org/)
+   - During installation, select "Git Bash Here" context menu option
+   - Use Git Bash for all commands in this guide
+
+### Common Windows Issues
+
+#### 1. Line Ending Issues (CRLF vs LF)
+
+**Problem**: `exec /usr/local/bin/docker-entrypoint.sh: no such file or directory`
+
+**Cause**: Windows uses CRLF (`\r\n`) line endings while Linux/Docker expects LF (`\n`).
+
+**Solutions**:
+
+a) **Automatic Fix** (Recommended): The `docker-start.sh` script detects and fixes this automatically. Just wait for the rebuild.
+
+b) **Manual Fix**:
+```bash
+# Using dos2unix (if installed)
+dos2unix docker-entrypoint.sh
+dos2unix docker-start.sh
+
+# Or using sed
+sed -i 's/\r$//' docker-entrypoint.sh
+sed -i 's/\r$//' docker-start.sh
+
+# Then rebuild
+./docker-start.sh --build
+```
+
+c) **Prevention**: Configure Git to not convert line endings:
+```bash
+# For current repository only
+git config core.autocrlf false
+
+# Or globally for all repositories
+git config --global core.autocrlf input
+```
+
+#### 2. Docker Desktop Not Running
+
+**Problem**: `Cannot connect to the Docker daemon`
+
+**Solutions**:
+1. Check if Docker Desktop is running (look for whale icon in system tray)
+2. Start Docker Desktop from Start menu
+3. Wait 30-60 seconds for Docker to fully initialize
+4. Verify: `docker version` should show both client and server info
+
+#### 3. Permission Issues
+
+**Problem**: `permission denied` errors when mounting volumes
+
+**Solutions**:
+1. Make sure files are on a drive shared with Docker Desktop:
+   - Open Docker Desktop → Settings → Resources → File Sharing
+   - Add your project drive (e.g., `C:\`)
+
+2. Run Git Bash as Administrator (right-click → "Run as administrator")
+
+#### 4. Slow Performance
+
+**Problem**: Docker builds or containers run slowly on Windows
+
+**Solutions**:
+1. **Increase Docker Desktop Resources**:
+   - Open Docker Desktop → Settings → Resources
+   - Increase CPUs to at least 4
+   - Increase Memory to at least 8GB
+   - Increase Disk image size if needed
+
+2. **Use WSL 2 Backend** (not Hyper-V):
+   - Docker Desktop → Settings → General
+   - Ensure "Use the WSL 2 based engine" is checked
+
+3. **Store Project in WSL Filesystem** (Advanced):
+   ```bash
+   # Access WSL filesystem
+   \wsl$\Ubuntu\home\youruser\nexus
+   
+   # Clone directly in WSL
+   wsl
+   cd ~
+   git clone https://github.com/nexi-lab/nexus.git
+   ```
+
+#### 5. Path Issues
+
+**Problem**: Scripts can't find files due to Windows vs Unix path differences
+
+**Solutions**:
+- Always use forward slashes `/` in scripts
+- Use Git Bash which handles path translation automatically
+- Avoid spaces in directory names
+
+#### 6. Firewall/Antivirus Blocking Docker
+
+**Problem**: Services fail to start or network connections timeout
+
+**Solutions**:
+1. Add Docker Desktop to Windows Firewall exceptions
+2. Temporarily disable antivirus to test
+3. Add Nexus project folder to antivirus exclusions
+
+### Windows Development Workflow
+
+```bash
+# 1. Open Git Bash in project directory
+cd /c/Users/youruser/projects/nexus
+
+# 2. Ensure Docker Desktop is running
+# Check system tray for Docker icon
+
+# 3. Pull latest changes
+git pull
+
+# 4. Start services
+./docker-start.sh --build
+
+# 5. Check logs in real-time
+./docker-start.sh --logs
+
+# 6. Stop services when done
+./docker-start.sh --stop
+```
+
+### Using PowerShell (Alternative)
+
+If you prefer PowerShell over Git Bash:
+
+```powershell
+# Set environment variables (PowerShell syntax)
+$env:NEXUS_API_KEY='your-key-here'
+$env:NEXUS_URL='http://localhost:8080'
+
+# Use docker compose directly (bash scripts won't work)
+docker compose -f docker-compose.demo.yml up -d --build
+
+# View logs
+docker compose -f docker-compose.demo.yml logs -f
+
+# Stop services
+docker compose -f docker-compose.demo.yml down
+```
+
+### Verifying Windows Setup
+
+Run these commands to verify your setup:
+
+```bash
+# 1. Check Docker is running
+docker version
+# Should show both Client and Server versions
+
+# 2. Check Docker Compose
+docker compose version
+# Should show v2.x.x or higher
+
+# 3. Check Git Bash
+bash --version
+# Should show 4.x or higher
+
+# 4. Check line endings config
+git config core.autocrlf
+# Should show "false" or "input"
+
+# 5. Test Docker networking
+curl http://localhost:8080/health
+# Should return: {"status": "healthy", "service": "nexus-rpc"}
+```
+
+### Windows Performance Tips
+
+1. **Use SSD**: Store project on SSD rather than HDD
+2. **Close Unused Apps**: Free up RAM for Docker
+3. **Disable Real-time Antivirus Scanning** for project folder
+4. **Use Native WSL 2 Storage**: Clone project directly in WSL filesystem for best performance
+5. **Restart Docker Desktop** weekly to clear cached data
+
+### Getting Help
+
+If you encounter issues not covered here:
+
+1. **Check Docker Desktop Logs**:
+   - Docker Desktop → Troubleshoot → View Logs
+
+2. **Check Windows Event Viewer**:
+   - Search for "Event Viewer" in Start menu
+   - Windows Logs → Application
+
+3. **Report Issues**:
+   - Include your Windows version: `winver`
+   - Include Docker Desktop version: `docker version`
+   - Include error messages from: `docker logs nexus-server`
+
+---
+

@@ -32,9 +32,25 @@ gh pr checks
 
 ## Deploying to nexus-server (GCP)
 
-**Quick deploy after PyPI release:**
+**IMPORTANT**: The deployment consists of TWO separate repositories:
+- `~/nexus` - Main Nexus backend (this repo)
+- `~/nexus-frontend` - Frontend UI (separate repo: nexi-lab/nexus-frontend)
+
+Both must be updated for a complete deployment!
+
+**Full production deployment (recommended):**
+```bash
+gcloud compute ssh nexus-server-spot --zone=us-west1-a --command="bash ~/nexus/scripts/deploy-production.sh"
+```
+
+**Quick deploy - Backend only (after PyPI release):**
 ```bash
 gcloud compute ssh nexus-server-spot --zone=us-west1-a --command="cd ~/nexus && git pull && docker-compose -f docker-compose.demo.yml pull nexus && docker-compose -f docker-compose.demo.yml up -d nexus"
+```
+
+**Quick deploy - Frontend only (after nexus-frontend repo update):**
+```bash
+gcloud compute ssh nexus-server-spot --zone=us-west1-a --command="cd ~/nexus-frontend && git pull && cd ~/nexus && docker-compose -f docker-compose.demo.yml build frontend && docker-compose -f docker-compose.demo.yml up -d frontend"
 ```
 
 **Verify:**
@@ -48,10 +64,13 @@ gcloud compute ssh nexus-server-spot --zone=us-west1-a --command="docker exec ne
 - IP: `35.197.30.59` (Static IP)
 - Domain: `nexus.sudorouter.ai` (Caddy HTTPS reverse proxy)
 - Deployment: Docker Compose (`docker-compose.demo.yml`)
-- Location: `~/nexus` (user: `songym`)
-- Frontend: http://35.197.30.59:5173
-- API: http://35.197.30.59:8080
-- LangGraph: http://35.197.30.59:2024
+- Repositories:
+  - Backend: `~/nexus` (nexi-lab/nexus)
+  - Frontend: `~/nexus-frontend` (nexi-lab/nexus-frontend)
+- Endpoints:
+  - Frontend: http://35.197.30.59:5173
+  - API: http://35.197.30.59:8080
+  - LangGraph: http://35.197.30.59:2024
 
 **Rebuild frontend with new configuration:**
 ```bash

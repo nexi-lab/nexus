@@ -82,18 +82,35 @@ def create_mcp_server(
             return f"Error reading file: {str(e)}"
 
     @mcp.tool()
-    def nexus_write_file(path: str, content: str) -> str:
+    def nexus_write_file(path: str, content: str, encoding: str = "utf-8") -> str:
         """Write content to a file in Nexus filesystem.
 
+        Supports both text and binary files. For binary files (images, Excel, PDFs, etc.),
+        use base64 encoding.
+
         Args:
-            path: File path to write (e.g., "/workspace/data.txt")
-            content: Content to write
+            path: File path to write (e.g., "/workspace/data.txt", "/reports/sales.xlsx")
+            content: Content to write. For text files, provide UTF-8 string. For binary files,
+                    provide base64-encoded string.
+            encoding: Content encoding - "utf-8" for text files (default), "base64" for binary files
 
         Returns:
             Success message or error
+
+        Examples:
+            Text file: nexus_write_file("/notes.txt", "Hello world", "utf-8")
+            Binary file: nexus_write_file("/data.xlsx", "<base64-encoded-content>", "base64")
         """
         try:
-            content_bytes = content.encode("utf-8") if isinstance(content, str) else content
+            if encoding == "base64":
+                # Decode base64 for binary files
+                import base64
+
+                content_bytes = base64.b64decode(content)
+            else:
+                # UTF-8 encoding for text files
+                content_bytes = content.encode("utf-8") if isinstance(content, str) else content
+
             nx.write(path, content_bytes)
             return f"Successfully wrote {len(content_bytes)} bytes to {path}"
         except Exception as e:

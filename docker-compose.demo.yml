@@ -151,7 +151,9 @@ services:
         sleep 5
         echo "🚀 Starting Nexus MCP server on port 8081..."
         echo "   NEXUS_URL: $${NEXUS_URL}"
-        exec nexus mcp serve --transport http --port 8081 --host 0.0.0.0
+        echo "   NEXUS_API_KEY: $${NEXUS_API_KEY}"
+        echo "   Command: nexus mcp serve --transport http --port 8081 --host 0.0.0.0 --remote-api-key <key>"
+        exec nexus mcp serve --transport http --port 8081 --host 0.0.0.0 --remote-url "$${NEXUS_URL}" --remote-api-key "$${NEXUS_API_KEY}"
       '
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/mcp"]

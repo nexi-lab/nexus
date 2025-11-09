@@ -18,6 +18,7 @@ def create_mcp_server(
     nx: NexusFilesystem | None = None,
     name: str = "nexus",
     remote_url: str | None = None,
+    remote_api_key: str | None = None,
 ) -> FastMCP:
     """Create an MCP server for Nexus operations.
 
@@ -25,6 +26,7 @@ def create_mcp_server(
         nx: NexusFilesystem instance (if None, will auto-connect)
         name: Server name (default: "nexus")
         remote_url: Remote Nexus URL for connecting to remote server
+        remote_api_key: API key for remote server authentication
 
     Returns:
         FastMCP server instance
@@ -38,14 +40,17 @@ def create_mcp_server(
         >>> server = create_mcp_server(nx)
         >>>
         >>> # Remote filesystem
-        >>> server = create_mcp_server(remote_url="http://localhost:8080")
+        >>> server = create_mcp_server(
+        ...     remote_url="http://localhost:8080",
+        ...     remote_api_key="your-api-key"
+        ... )
     """
     # Initialize Nexus filesystem if not provided
     if nx is None:
         if remote_url:
             from nexus.remote import RemoteNexusFS
 
-            nx = RemoteNexusFS(remote_url)
+            nx = RemoteNexusFS(remote_url, api_key=remote_api_key)
         else:
             from nexus import connect
 

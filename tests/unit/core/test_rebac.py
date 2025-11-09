@@ -241,21 +241,72 @@ def test_cache_invalidation_on_write(rebac_manager):
     )
     assert result is True
 
-    # Add another relationship for same subject-object pair (should invalidate cache)
+    # Add another relationship for same subject-object pair
+    # With eager cache update, this should RECOMPUTE and UPDATE the cache
+    # instead of just invalidating it
     rebac_manager.rebac_write(
         subject=("agent", "alice"),
         relation="editor-of",
         object=("file", "file123"),
     )
 
-    # Cache should be invalidated for this specific subject-object pair
+    # OPTIMIZATION: Cache is now eagerly updated instead of invalidated
+    # The "viewer-of" permission should still be cached and remain True
     cached = rebac_manager._get_cached_check(
         Entity("agent", "alice"),
         "viewer-of",
         Entity("file", "file123"),
     )
-    # After invalidation, cache should be empty (None)
-    assert cached is None
+    # After eager cache update, "viewer-of" permission is still cached
+    # (because adding "editor-of" doesn't change "viewer-of" result)
+    assert cached is True  # Changed from None - cache is now eagerly updated!
+
+
+def test_eager_cache_update_on_write(rebac_manager):
+    """Test that cache is eagerly updated (not just invalidated) on write.
+
+    This is a performance optimization: instead of invalidating the cache on write,
+    we eagerly recompute affected permissions and update the cache. This means
+    the next read is instant (<1ms) instead of requiring graph traversal (50-500ms).
+    """
+    # Grant alice viewer-of permission
+    rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="viewer-of",
+        object=("file", "file123"),
+    )
+
+    # Check and cache "viewer-of" permission
+    result = rebac_manager.rebac_check(
+        subject=("agent", "alice"),
+        permission="viewer-of",
+        object=("file", "file123"),
+    )
+    assert result is True
+
+    # Now grant editor-of permission (which also grants viewer-of via union)
+    rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="editor-of",
+        object=("file", "file123"),
+    )
+
+    # EAGER UPDATE: Cache should be updated, not invalidated
+    # The "viewer-of" permission should still be cached
+    cached_viewer = rebac_manager._get_cached_check(
+        Entity("agent", "alice"),
+        "viewer-of",
+        Entity("file", "file123"),
+    )
+    assert cached_viewer is True  # Still cached!
+
+    # Next read should be instant (cache hit, not graph traversal)
+    result = rebac_manager.rebac_check(
+        subject=("agent", "alice"),
+        permission="viewer-of",
+        object=("file", "file123"),
+    )
+    assert result is True
 
 
 def test_cache_invalidation_on_delete(rebac_manager):

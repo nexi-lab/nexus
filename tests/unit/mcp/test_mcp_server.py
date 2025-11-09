@@ -38,7 +38,7 @@ class TestCreateMCPServer:
 
             server = create_mcp_server(remote_url="http://localhost:8080")
 
-            mock_remote_fs.assert_called_once_with("http://localhost:8080")
+            mock_remote_fs.assert_called_once_with("http://localhost:8080", api_key=None)
             assert server is not None
 
     def test_create_server_auto_connect(self):

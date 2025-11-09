@@ -133,11 +133,13 @@ class NexusFSCoreMixin:
             # Return filtered content as bytes
             filtered_content = result["filtered_data"]
             logger.info(f"_apply_dynamic_viewer_filter: Successfully filtered {path}")
-            return (
-                filtered_content.encode("utf-8")
-                if isinstance(filtered_content, str)
-                else filtered_content
-            )
+            if isinstance(filtered_content, str):
+                return filtered_content.encode("utf-8")
+            elif isinstance(filtered_content, bytes):
+                return filtered_content
+            else:
+                # Fallback: convert to string then bytes
+                return str(filtered_content).encode("utf-8")
 
         except Exception as e:
             # Log error but don't fail the read operation

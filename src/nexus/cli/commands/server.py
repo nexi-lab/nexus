@@ -807,6 +807,56 @@ def serve(
             console.print(")")
         console.print("  nx.write('/workspace/file.txt', b'Hello!')")
         console.print()
+
+        # ============================================
+        # Cache Warming (Optional Performance Optimization)
+        # ============================================
+        # Warm up caches to improve first-request performance
+        # This preloads commonly accessed paths and permissions
+        start_time = time.time()
+
+        console.print("[yellow]Warming caches...[/yellow]", end="")
+
+        cache_stats_before = None
+        if (
+            hasattr(nx, "_rebac_manager")
+            and nx._rebac_manager
+            and hasattr(nx._rebac_manager, "get_cache_stats")
+        ):
+            with contextlib.suppress(Exception):
+                cache_stats_before = nx._rebac_manager.get_cache_stats()
+
+        warmed_count = 0
+        try:
+            # Warm up common paths (non-blocking, best effort)
+            common_paths = ["/", "/workspace", "/tmp", "/data"]
+            for path in common_paths:
+                with contextlib.suppress(Exception):
+                    # Check if path exists and warm permission cache
+                    if nx.exists(path):
+                        # List directory to warm listing cache
+                        with contextlib.suppress(Exception):
+                            nx.list(path, recursive=False, details=False)
+                            warmed_count += 1
+
+            elapsed = time.time() - start_time
+            console.print(f" [green]✓[/green] ({warmed_count} paths, {elapsed:.2f}s)")
+
+            # Show cache stats if available
+            if cache_stats_before:
+                with contextlib.suppress(Exception):
+                    cache_stats_after = nx._rebac_manager.get_cache_stats()  # type: ignore[attr-defined]
+                    l2_before = cache_stats_before.get("l2_size", 0)
+                    l2_after = cache_stats_after.get("l2_size", 0)
+                    l2_warmed = l2_after - l2_before
+
+                    if l2_warmed > 0:
+                        console.print(f"  [dim]L2 permission cache: +{l2_warmed} entries[/dim]")
+
+        except Exception as e:
+            console.print(f" [yellow]⚠ [/yellow] ({str(e)})")
+
+        console.print()
         console.print("[green]Press Ctrl+C to stop server[/green]")
 
         server = NexusRPCServer(

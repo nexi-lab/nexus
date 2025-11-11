@@ -245,6 +245,8 @@ def get_nexus_tools():
                         return f"Error: Invalid end line number: {parts[2]}"
 
             # Read file content
+            if path.startswith("/mnt/nexus"):
+                path = path[len("/mnt/nexus") :]
             content = nx.read(path)
 
             # Handle bytes
@@ -345,6 +347,8 @@ def get_nexus_tools():
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
 
             # Write file (Nexus creates parent directories automatically)
+            if path.startswith("/mnt/nexus"):
+                path = path[len("/mnt/nexus") :]
             nx.write(path, content_bytes)
 
             # Verify write was successful

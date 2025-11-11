@@ -286,6 +286,9 @@ cmd_clean() {
 
 cmd_init() {
     print_banner
+    check_docker
+    check_env_file
+
     echo "🔧 INITIALIZATION MODE"
     echo ""
     echo "This will:"

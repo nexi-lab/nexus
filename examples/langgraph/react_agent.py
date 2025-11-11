@@ -55,6 +55,7 @@ tools = get_nexus_tools()
 # Create LLM
 llm = ChatAnthropic(
     model="claude-sonnet-4-5-20250929",
+    max_tokens=10000,
 )
 
 # System prompt for Nexus filesystem awareness

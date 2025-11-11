@@ -151,6 +151,7 @@ tools.append(run_backtest)
 # Create LLM
 llm = ChatAnthropic(
     model="claude-sonnet-4-5-20250929",
+    max_tokens=10000,
 )
 
 # One-shot example: Dual Moving Average Strategy for qlib

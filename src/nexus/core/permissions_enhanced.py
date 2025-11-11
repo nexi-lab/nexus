@@ -856,11 +856,16 @@ class EnhancedPermissionEnforcer:
             tenant_id = context.tenant_id or "default"
 
             for path in paths:
-                # Determine object type (file vs other namespaces)
-                obj_type = "file"  # Default to file
-                if self.router:
+                # PERFORMANCE FIX: Skip expensive router.route() call for each file
+                # For standard file paths, just use "file" as object type
+                # This avoids O(N) routing overhead during bulk permission checks
+                obj_type = "file"  # Default to file for all paths
+
+                # Only check router for special namespaces (non-file paths)
+                # This is much faster than routing every single file
+                if self.router and not path.startswith("/workspace"):
                     try:
-                        # Use router to determine correct object type
+                        # Use router to determine correct object type for special paths
                         route = self.router.route(
                             path,
                             tenant_id=context.tenant_id,

@@ -10,7 +10,7 @@
 #   ./docker-start.sh --status           # Check service status
 #   ./docker-start.sh --clean            # Stop and remove all data (volumes)
 #   ./docker-start.sh --init             # Initialize (clean + build + start)
-#   ./docker-start.sh --init --skip_permission  # Initialize without permission setup
+#   ./docker-start.sh --init --skip_permission  # Initialize with permissions disabled
 #   ./docker-start.sh --env=production   # Use production environment files
 #
 # Services:
@@ -292,7 +292,7 @@ cmd_init() {
     echo "  3. Rebuild all Docker images"
     echo "  4. Start all services fresh"
     if [ "$SKIP_PERMISSIONS" = true ]; then
-        echo "  5. Skip permission setup (--skip_permission enabled)"
+        echo "  5. Skip permission setup and disable runtime permission checks"
     fi
     echo ""
     read -p "Are you sure you want to continue? (yes/no): " CONFIRM
@@ -320,7 +320,8 @@ cmd_init() {
     # Export SKIP_PERMISSIONS so Docker Compose can pass it to containers
     if [ "$SKIP_PERMISSIONS" = true ]; then
         export NEXUS_SKIP_PERMISSIONS=true
-        echo "   (Skipping permission setup)"
+        export NEXUS_ENFORCE_PERMISSIONS=false
+        echo "   (Skipping permission setup and disabling runtime permission checks)"
     fi
     docker compose -f "$COMPOSE_FILE" up -d
 
@@ -447,7 +448,7 @@ case "$COMMAND" in
         echo "  --clean         Stop and remove all data (volumes)"
         echo "  --init          Initialize (clean + build + start)"
         echo "  --env=MODE      Set environment mode (local|production)"
-        echo "  --skip_permission  Skip permission setup (use with --init)"
+        echo "  --skip_permission  Skip permission setup and disable runtime checks (use with --init)"
         echo "  --help, -h      Show this help message"
         echo ""
         echo "Environment Modes:"
@@ -458,7 +459,7 @@ case "$COMMAND" in
         echo "  ./docker-start.sh                    # Start with local env"
         echo "  ./docker-start.sh --env=production   # Start with production env"
         echo "  ./docker-start.sh --build --env=production  # Rebuild with production env"
-        echo "  ./docker-start.sh --init --skip_permission  # Initialize without permissions"
+        echo "  ./docker-start.sh --init --skip_permission  # Initialize with permissions disabled"
         echo ""
         show_services
         ;;

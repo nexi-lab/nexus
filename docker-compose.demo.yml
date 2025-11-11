@@ -103,6 +103,10 @@ services:
       # Permission setup (optional)
       # Set to 'true' to skip entity registry and permission setup during init
       NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
+
+      # Runtime permission enforcement
+      # Set to 'false' to disable permission checks at runtime
+      NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
     volumes:
       # Persistent data directory (local backend)
       - nexus-data:/app/data

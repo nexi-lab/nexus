@@ -21,10 +21,16 @@ echo "║        Nexus Server - Docker Init        ║"
 echo "╚═══════════════════════════════════════════╝"
 echo ""
 
-# Show if permissions are being skipped
+# Show if permissions are being skipped or disabled
 if [ "${NEXUS_SKIP_PERMISSIONS:-false}" = "true" ]; then
     echo -e "${YELLOW}⚠️  NEXUS_SKIP_PERMISSIONS=true${NC}"
     echo -e "${YELLOW}   Entity registry and permission setup will be skipped${NC}"
+    echo ""
+fi
+
+if [ "${NEXUS_ENFORCE_PERMISSIONS:-true}" = "false" ]; then
+    echo -e "${YELLOW}⚠️  NEXUS_ENFORCE_PERMISSIONS=false${NC}"
+    echo -e "${YELLOW}   Runtime permission checks are DISABLED${NC}"
     echo ""
 fi
 

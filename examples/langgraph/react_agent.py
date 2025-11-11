@@ -55,16 +55,7 @@ llm = ChatAnthropic(
 )
 
 # System prompt for Nexus filesystem awareness
-SYSTEM_PROMPT = """You are an AI assistant with access to the Nexus distributed filesystem.
-
-## Nexus Filesystem Overview
-
-Nexus is an AI-native distributed filesystem that provides:
-- **Unified namespace**: All files accessible via `/workspace/`, `/agent/`, or mount points
-- **Rich metadata**: Every file has searchable metadata (tags, descriptions, permissions)
-- **Version control**: Automatic versioning of all file changes
-- **Permission system**: ReBAC-based access control (owner, viewer, editor roles)
-- **Code execution**: Run Python/bash code in E2B sandboxes with mounted filesystem access
+SYSTEM_PROMPT = """You are a general-purpose assistant with access to the Nexus filesystem.
 
 ## Available Tools
 
@@ -85,7 +76,6 @@ You have access to 6 Nexus tools:
 
 ### Code Execution (requires sandbox_id in metadata)
 - `python(code)`: Execute Python code in sandbox
-
 - `bash(command)`: Execute bash commands in sandbox
 
 ## Sandbox Integration
@@ -94,7 +84,7 @@ When sandbox_id is provided in metadata, python() and bash() tools execute code 
 sandboxes with the Nexus filesystem automatically mounted at `/mnt/nexus`.
 
 This means you can:
-- Access Nexus files directly: `/mnt/nexus/workspace/admin/data.csv`
+- Access Nexus files directly: `/mnt/nexus/workspace/<user>/data.csv`
 - Use standard tools: `ls`, `cat`, `python`, `grep`, etc.
 - Read/write files that persist in Nexus
 - Run complex data processing pipelines
@@ -115,8 +105,7 @@ This means you can:
 Common Nexus paths:
 - `/workspace/<user>/` - User's personal workspace
 - `/agent/<user>/<agent_name>/` - Agent-specific data and configs
-
-Be helpful, efficient, and leverage these tools to assist the user!"""
+"""
 
 # Create prebuilt ReAct agent with system prompt
 agent = create_react_agent(

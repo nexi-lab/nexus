@@ -121,21 +121,21 @@ def get_nexus_tools():
             if not results:
                 return f"No matches found for pattern '{pattern}' in {path}"
 
-            # Format results into readable output
-            output_lines = [f"Found {len(results)} matches for pattern '{pattern}' in {path}:\n"]
+            # Format results in standard grep format: file_path:line_number:content
+            output_lines = []
+            max_line_length = 300  # Limit line length to prevent overwhelming output
 
-            # Group by file for better readability
-            current_file = None
             for match in results[:50]:  # Limit to first 50 matches
                 file_path = match.get("file", "unknown")
-                line_num = match.get("line", 0)
+                line_num = match.get("line", "")
                 content = match.get("content", "").strip()
 
-                if file_path != current_file:
-                    output_lines.append(f"\n{file_path}:")
-                    current_file = file_path
+                # Truncate long lines if needed
+                if len(content) > max_line_length:
+                    content = content[:max_line_length] + "..."
 
-                output_lines.append(f"  Line {line_num}: {content}")
+                # Standard grep format: file:line:content
+                output_lines.append(f"{file_path}:{line_num}:{content}")
 
             if len(results) > 50:
                 output_lines.append(f"\n... and {len(results) - 50} more matches")
@@ -181,11 +181,17 @@ def get_nexus_tools():
         """Read file content.
 
         Args:
-            read_cmd: "[cat|less] path" or just "path"
+            read_cmd: "[cat|less] path [start] [end]" or just "path"
                      - cat: Full content (default)
                      - less: First 100 lines preview
+                     - start: Starting line number (1-indexed, optional)
+                     - end: Ending line number (inclusive, optional)
 
-        Examples: "cat /workspace/README.md", "less /scripts/large.py", "/data/file.json"
+        Examples:
+            "cat /workspace/README.md" - read entire file
+            "less /scripts/large.py" - preview first 100 lines
+            "cat /data/file.json 10 20" - read lines 10-20
+            "cat /data/file.json 50" - read from line 50 to end
         """
         try:
             # Get authenticated client
@@ -194,18 +200,49 @@ def get_nexus_tools():
             # Parse read command
             parts = shlex.split(read_cmd.strip())
             if not parts:
-                return "Error: Empty read command. Usage: read_file('[cat|less] path')"
+                return (
+                    "Error: Empty read command. Usage: read_file('[cat|less] path [start] [end]')"
+                )
 
-            # Determine command type and path
+            # Determine command type, path, and line range
+            start_line = None
+            end_line = None
+
             if parts[0] in ["cat", "less"]:
                 command = parts[0]
                 if len(parts) < 2:
-                    return f"Error: Missing file path. Usage: read_file('{command} path')"
+                    return f"Error: Missing file path. Usage: read_file('{command} path [start] [end]')"
                 path = parts[1]
+
+                # Parse optional start and end line numbers
+                if len(parts) >= 3:
+                    try:
+                        start_line = int(parts[2])
+                    except ValueError:
+                        return f"Error: Invalid start line number: {parts[2]}"
+
+                if len(parts) >= 4:
+                    try:
+                        end_line = int(parts[3])
+                    except ValueError:
+                        return f"Error: Invalid end line number: {parts[3]}"
             else:
                 # Default to cat if no command specified
                 command = "cat"
                 path = parts[0]
+
+                # Parse optional start and end line numbers
+                if len(parts) >= 2:
+                    try:
+                        start_line = int(parts[1])
+                    except ValueError:
+                        return f"Error: Invalid start line number: {parts[1]}"
+
+                if len(parts) >= 3:
+                    try:
+                        end_line = int(parts[2])
+                    except ValueError:
+                        return f"Error: Invalid end line number: {parts[2]}"
 
             # Read file content
             content = nx.read(path)
@@ -214,16 +251,69 @@ def get_nexus_tools():
             if isinstance(content, bytes):
                 content = content.decode("utf-8")
 
+            # Split into lines for line-based operations
+            lines = content.split("\n")
+            total_lines = len(lines)
+
+            # Validate line range if specified
+            if start_line is not None:
+                if start_line < 1:
+                    return f"Error: Start line must be >= 1, got {start_line}"
+                if start_line > total_lines:
+                    return (
+                        f"Error: Start line {start_line} exceeds file length ({total_lines} lines)"
+                    )
+
+            if end_line is not None:
+                if end_line < 1:
+                    return f"Error: End line must be >= 1, got {end_line}"
+                if start_line is not None and end_line < start_line:
+                    return f"Error: End line {end_line} must be >= start line {start_line}"
+
+            # Extract the requested line range
+            if start_line is not None or end_line is not None:
+                # Convert to 0-indexed
+                start_idx = (start_line - 1) if start_line is not None else 0
+                end_idx = end_line if end_line is not None else total_lines
+
+                # Extract lines
+                selected_lines = lines[start_idx:end_idx]
+                content = "\n".join(selected_lines)
+
+                # Check content length and return error if too large
+                max_content_length = 30000
+                if len(content) > max_content_length:
+                    return (
+                        f"Error: Requested content is too large ({len(content)} characters). "
+                        f"Maximum allowed is {max_content_length} characters. "
+                        f"Requested lines {start_line or 1}-{end_line or total_lines} from {path}. "
+                        f"Try a smaller line range."
+                    )
+
+                output = (
+                    f"Content of {path} (lines {start_line or 1}-{end_idx} of {total_lines}):\n\n"
+                )
+                output += content
+                return output
+
+            # Check content length and return error if too large (for full file)
+            max_content_length = 30000
+            if len(content) > max_content_length:
+                return (
+                    f"Error: File {path} is too large ({len(content)} characters). "
+                    f"Maximum allowed is {max_content_length} characters. "
+                    f"Use 'less {path}' to preview first 100 lines, or use line range like 'cat {path} 1 100'."
+                )
+
             # For 'less', show preview
             if command == "less":
-                lines = content.split("\n")
-                if len(lines) > 100:
+                if total_lines > 100:
                     preview_content = "\n".join(lines[:100])
-                    output = f"Preview of {path} (first 100 of {len(lines)} lines):\n\n"
+                    output = f"Preview of {path} (first 100 of {total_lines} lines):\n\n"
                     output += preview_content
-                    output += f"\n\n... ({len(lines) - 100} more lines)"
+                    output += f"\n\n... ({total_lines - 100} more lines)"
                 else:
-                    output = f"Content of {path} ({len(lines)} lines):\n\n"
+                    output = f"Content of {path} ({total_lines} lines):\n\n"
                     output += content
             else:
                 # For 'cat', show full content
@@ -526,15 +616,16 @@ def get_nexus_tools():
                     output_lines.append(f"Description: {description}")
                 output_lines.append("")
 
-            # Add content (limit to reasonable size)
-            max_length = 8000
+            # Check content length and return error if too large
+            max_length = 30000
             if len(markdown_content) > max_length:
-                output_lines.append(f"{markdown_content[:max_length]}...")
-                output_lines.append(
-                    f"\n[Content truncated - total length: {len(markdown_content)} characters]"
+                return (
+                    f"Error: Web page content from {url} is too large ({len(markdown_content)} characters). "
+                    f"Maximum allowed is {max_length} characters. "
+                    f"Consider fetching a more specific page or processing the content in smaller sections."
                 )
-            else:
-                output_lines.append(markdown_content)
+
+            output_lines.append(markdown_content)
 
             return "\n".join(output_lines)
 

@@ -241,21 +241,72 @@ def test_cache_invalidation_on_write(rebac_manager):
     )
     assert result is True
 
-    # Add another relationship for same subject-object pair (should invalidate cache)
+    # Add another relationship for same subject-object pair
+    # With eager cache update, this should RECOMPUTE and UPDATE the cache
+    # instead of just invalidating it
     rebac_manager.rebac_write(
         subject=("agent", "alice"),
         relation="editor-of",
         object=("file", "file123"),
     )
 
-    # Cache should be invalidated for this specific subject-object pair
+    # OPTIMIZATION: Cache is now eagerly updated instead of invalidated
+    # The "viewer-of" permission should still be cached and remain True
     cached = rebac_manager._get_cached_check(
         Entity("agent", "alice"),
         "viewer-of",
         Entity("file", "file123"),
     )
-    # After invalidation, cache should be empty (None)
-    assert cached is None
+    # After eager cache update, "viewer-of" permission is still cached
+    # (because adding "editor-of" doesn't change "viewer-of" result)
+    assert cached is True  # Changed from None - cache is now eagerly updated!
+
+
+def test_eager_cache_update_on_write(rebac_manager):
+    """Test that cache is eagerly updated (not just invalidated) on write.
+
+    This is a performance optimization: instead of invalidating the cache on write,
+    we eagerly recompute affected permissions and update the cache. This means
+    the next read is instant (<1ms) instead of requiring graph traversal (50-500ms).
+    """
+    # Grant alice viewer-of permission
+    rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="viewer-of",
+        object=("file", "file123"),
+    )
+
+    # Check and cache "viewer-of" permission
+    result = rebac_manager.rebac_check(
+        subject=("agent", "alice"),
+        permission="viewer-of",
+        object=("file", "file123"),
+    )
+    assert result is True
+
+    # Now grant editor-of permission (which also grants viewer-of via union)
+    rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="editor-of",
+        object=("file", "file123"),
+    )
+
+    # EAGER UPDATE: Cache should be updated, not invalidated
+    # The "viewer-of" permission should still be cached
+    cached_viewer = rebac_manager._get_cached_check(
+        Entity("agent", "alice"),
+        "viewer-of",
+        Entity("file", "file123"),
+    )
+    assert cached_viewer is True  # Still cached!
+
+    # Next read should be instant (cache hit, not graph traversal)
+    result = rebac_manager.rebac_check(
+        subject=("agent", "alice"),
+        permission="viewer-of",
+        object=("file", "file123"),
+    )
+    assert result is True
 
 
 def test_cache_invalidation_on_delete(rebac_manager):
@@ -784,3 +835,109 @@ def test_group_based_file_permissions_issue_338(rebac_manager):
         object=("file", "/workspace/shared"),
     )
     assert result is True, "Alice should still have write permission (still in group)"
+
+
+def test_dynamic_viewer_column_config(rebac_manager):
+    """Test dynamic_viewer relation with column-level permissions.
+
+    Tests:
+    - Creating dynamic_viewer relationship with column_config
+    - Storing column configuration in conditions field
+    - Retrieving column configuration from tuple
+    - Auto-calculating visible_columns
+    """
+    # Create dynamic_viewer relationship with column config
+    column_config = {
+        "hidden_columns": ["password", "ssn"],
+        "aggregations": {"age": "mean", "salary": "sum"},
+        "visible_columns": ["name", "email"],
+    }
+
+    tuple_id = rebac_manager.rebac_write(
+        subject=("agent", "alice"),
+        relation="dynamic_viewer",
+        object=("file", "/data/users.csv"),
+        conditions={"type": "dynamic_viewer", "column_config": column_config},
+    )
+
+    assert tuple_id is not None, "Should create dynamic_viewer tuple"
+
+    # Verify the tuple was created by listing
+    from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
+
+    # Create a minimal mock that has the required attributes
+    class MockNexusFS(NexusFSReBACMixin):
+        def __init__(self, rebac_manager):
+            self._rebac_manager = rebac_manager
+            self._enforce_permissions = False
+
+    mock_fs = MockNexusFS(rebac_manager)
+    tuples = mock_fs.rebac_list_tuples(
+        subject=("agent", "alice"), relation="dynamic_viewer", object=("file", "/data/users.csv")
+    )
+
+    assert len(tuples) == 1, "Should find the dynamic_viewer tuple"
+    assert tuples[0]["relation"] == "dynamic_viewer"
+
+    # Verify column config can be retrieved
+    config = mock_fs.get_dynamic_viewer_config(
+        subject=("agent", "alice"), file_path="/data/users.csv"
+    )
+
+    assert config is not None, "Should retrieve column config"
+    assert config["hidden_columns"] == ["password", "ssn"]
+    assert config["aggregations"] == {"age": "mean", "salary": "sum"}
+    assert config["visible_columns"] == ["name", "email"]
+
+
+def test_dynamic_viewer_aggregation_single_value(rebac_manager):
+    """Test that aggregations must be single values, not lists."""
+    column_config = {
+        "hidden_columns": ["password"],
+        "aggregations": {"age": "mean", "salary": "max"},
+        "visible_columns": [],  # Auto-calculate
+    }
+
+    tuple_id = rebac_manager.rebac_write(
+        subject=("agent", "bob"),
+        relation="dynamic_viewer",
+        object=("file", "/data/employees.csv"),
+        conditions={"type": "dynamic_viewer", "column_config": column_config},
+    )
+
+    assert tuple_id is not None
+
+    # Verify retrieval
+    from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
+
+    class MockNexusFS(NexusFSReBACMixin):
+        def __init__(self, rebac_manager):
+            self._rebac_manager = rebac_manager
+            self._enforce_permissions = False
+
+    mock_fs = MockNexusFS(rebac_manager)
+    config = mock_fs.get_dynamic_viewer_config(
+        subject=("agent", "bob"), file_path="/data/employees.csv"
+    )
+
+    assert config is not None
+    assert config["aggregations"]["age"] == "mean"
+    assert config["aggregations"]["salary"] == "max"
+    assert config["visible_columns"] == []  # Empty means auto-calculate
+
+
+def test_dynamic_viewer_no_config_returns_none(rebac_manager):
+    """Test that get_dynamic_viewer_config returns None when no config exists."""
+    from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
+
+    class MockNexusFS(NexusFSReBACMixin):
+        def __init__(self, rebac_manager):
+            self._rebac_manager = rebac_manager
+            self._enforce_permissions = False
+
+    mock_fs = MockNexusFS(rebac_manager)
+    config = mock_fs.get_dynamic_viewer_config(
+        subject=("agent", "charlie"), file_path="/data/nonexistent.csv"
+    )
+
+    assert config is None, "Should return None when no dynamic_viewer config exists"

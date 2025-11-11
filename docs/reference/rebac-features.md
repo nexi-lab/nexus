@@ -13,6 +13,7 @@ This document clearly distinguishes between:
 | Feature | Status | Schema Support | Notes |
 |---------|--------|----------------|-------|
 | **Direct Relationships** | ✅ ENFORCED | Yes | direct_owner, direct_editor, direct_viewer |
+| **Dynamic Viewer (Column-level)** | ✅ ENFORCED | Yes | CSV column filtering & aggregations |
 | **Permission Hierarchy** | ✅ ENFORCED | Yes | owner ⊃ editor ⊃ viewer |
 | **Group Inheritance** | ✅ ENFORCED | Yes | Via tupleToUserset |
 | **Deny Semantics** | ✅ ENFORCED | Yes | Via exclusion operator |
@@ -21,6 +22,132 @@ This document clearly distinguishes between:
 | **Multi-Tenant Isolation** | ✅ ENFORCED | Data scoping | Via tenant_id filtering |
 | **Batch Operations** | ✅ ENFORCED | Yes | rebac_check_batch |
 | **Explainability** | ✅ ENFORCED | Yes | rebac_explain with proof paths |
+
+---
+
+## Column-Level Permissions (Dynamic Viewer)
+
+### Status: ✅ **FULLY IMPLEMENTED & ENFORCED**
+
+**What It Does:**
+Provides fine-grained column-level access control for CSV files, with support for:
+- Hidden columns (completely excluded from results)
+- Aggregated columns (show computed statistics only, not raw data)
+- Visible columns (show raw data)
+- Auto-calculation of visible columns when not specified
+
+**Key Features:**
+- ✅ **CSV Only**: Restricted to CSV files for security
+- ✅ **Single Aggregation**: Each column can have only one aggregation operation
+- ✅ **Exclusive Categories**: A column can only be in one category (hidden, aggregated, or visible)
+- ✅ **Auto-calculation**: If visible_columns is empty, automatically calculated as: all columns - hidden - aggregated
+- ✅ **Formatted Headers**: Aggregated columns display as "operation(column_name)" (e.g., "mean(age)")
+
+**Example Usage:**
+
+```python
+# Grant alice access to users.csv with column-level filtering
+nx.rebac_create(
+    subject=("agent", "alice"),
+    relation="dynamic_viewer",
+    object=("file", "/data/users.csv"),
+    column_config={
+        "hidden_columns": ["password", "ssn"],       # Completely hidden
+        "aggregations": {"age": "mean", "salary": "sum"},  # Show only aggregates
+        "visible_columns": ["name", "email"]         # Show raw data
+    }
+)
+
+# Read the file with column filtering applied
+result = nx.read_with_dynamic_viewer(
+    file_path="/data/users.csv",
+    subject=("agent", "alice")
+)
+
+print(result["content"])          # CSV with: name, email, mean(age), sum(salary)
+print(result["aggregations"])     # {"age": {"mean": 28.5}, "salary": {"sum": 500000}}
+print(result["columns_shown"])    # ["name", "email"]
+print(result["aggregated_columns"])  # ["mean(age)", "sum(salary)"]
+```
+
+**CLI Usage:**
+
+```bash
+# Create dynamic viewer with column config
+nexus rebac create agent alice dynamic_viewer file /data/users.csv \
+  --column-config '{"hidden_columns":["password"],"aggregations":{"age":"mean"},"visible_columns":["name","email"]}'
+
+# Auto-calculate visible_columns (all columns except hidden and aggregated)
+nexus rebac create agent bob dynamic_viewer file /data/employees.csv \
+  --column-config '{"hidden_columns":["ssn","salary"],"aggregations":{"age":"median"},"visible_columns":[]}'
+```
+
+**Configuration Schema:**
+
+```python
+column_config = {
+    "hidden_columns": ["password", "ssn"],           # Completely excluded
+    "aggregations": {"age": "mean", "salary": "sum"}, # Single operation per column
+    "visible_columns": ["name", "email"]             # Optional, auto-calculated if empty or []
+}
+```
+
+**Supported Aggregation Operations:**
+- `mean` - Average value
+- `sum` - Total sum
+- `count` - Count of non-null values
+- `min` - Minimum value
+- `max` - Maximum value
+- `std` - Standard deviation
+- `median` - Median value
+
+**Column Assignment Rules:**
+1. Each column can only appear in ONE of: hidden_columns, aggregations, or visible_columns
+2. If a column appears in multiple categories, validation will fail
+3. If visible_columns is empty/[], it auto-calculates as: all_columns - hidden_columns - aggregation_columns
+4. Aggregations must be a single string value (not a list)
+
+**Output Format:**
+- Visible columns: Show original column names and raw data
+- Aggregated columns: Show as "operation(column_name)" with computed value repeated for all rows
+- Hidden columns: Completely excluded from output
+
+**Example CSV Transformation:**
+
+Original CSV:
+```csv
+name,email,age,salary,password
+alice,a@ex.com,30,80000,secret
+bob,b@ex.com,25,70000,pwd123
+```
+
+Config:
+```python
+{
+    "hidden_columns": ["password"],
+    "aggregations": {"salary": "sum"},
+    "visible_columns": ["name", "age"]
+}
+```
+
+Filtered CSV:
+```csv
+name,age,sum(salary)
+alice,30,150000
+bob,25,150000
+```
+
+**Implementation Details:**
+- Stored in `rebac_tuples.conditions` field as JSON
+- Retrieved via `get_dynamic_viewer_config()`
+- Applied via `apply_dynamic_viewer_filter()` which uses pandas
+- Integrated with `read_with_dynamic_viewer()` for seamless file reading
+- CSV file validation enforced at creation time
+
+**Requirements:**
+- Requires `pandas` for CSV processing
+- Install with: `pip install pandas`
+- Only supports `.csv` file extension
 
 ---
 

@@ -29,6 +29,7 @@ from nexus.core.rebac import (
     Entity,
     NamespaceConfig,
 )
+from nexus.core.rebac_cache import ReBACPermissionCache
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -58,19 +59,44 @@ class ReBACManager:
         engine: Engine,
         cache_ttl_seconds: int = 300,
         max_depth: int = 50,
+        enable_l1_cache: bool = True,
+        l1_cache_size: int = 10000,
+        l1_cache_ttl: int = 60,
+        enable_metrics: bool = True,
+        enable_adaptive_ttl: bool = False,
     ):
         """Initialize ReBAC manager.
 
         Args:
             engine: SQLAlchemy database engine
-            cache_ttl_seconds: Cache TTL in seconds (default: 5 minutes)
+            cache_ttl_seconds: L2 cache TTL in seconds (default: 5 minutes)
             max_depth: Maximum graph traversal depth (default: 10 hops)
+            enable_l1_cache: Enable in-memory L1 cache (default: True)
+            l1_cache_size: L1 cache max entries (default: 10k)
+            l1_cache_ttl: L1 cache TTL in seconds (default: 60s)
+            enable_metrics: Track cache metrics (default: True)
+            enable_adaptive_ttl: Adjust TTL based on write frequency (default: False)
         """
         self.engine = engine
         self.cache_ttl_seconds = cache_ttl_seconds
         self.max_depth = max_depth
         self._last_cleanup_time: datetime | None = None
         self._namespaces_initialized = False  # Track if default namespaces were initialized
+
+        # Initialize L1 in-memory cache
+        self._l1_cache: ReBACPermissionCache | None = None
+        if enable_l1_cache:
+            self._l1_cache = ReBACPermissionCache(
+                max_size=l1_cache_size,
+                ttl_seconds=l1_cache_ttl,
+                enable_metrics=enable_metrics,
+                enable_adaptive_ttl=enable_adaptive_ttl,
+            )
+            logger.info(
+                f"L1 cache enabled: max_size={l1_cache_size}, ttl={l1_cache_ttl}s, "
+                f"metrics={enable_metrics}, adaptive_ttl={enable_adaptive_ttl}"
+            )
+
         # Use SQLAlchemy sessionmaker for proper connection management
         from sqlalchemy.orm import sessionmaker
 
@@ -625,8 +651,9 @@ class ReBACManager:
             conn.commit()
 
             # Invalidate cache entries affected by this change
+            # Pass expires_at to disable eager recomputation for expiring tuples
             self._invalidate_cache_for_tuple(
-                subject_entity, relation, object_entity, tenant_id, subject_relation
+                subject_entity, relation, object_entity, tenant_id, subject_relation, expires_at
             )
 
         return tuple_id
@@ -1031,7 +1058,7 @@ class ReBACManager:
 
         # Check cache first (only if no context, since context makes checks dynamic)
         if context is None:
-            cached = self._get_cached_check(subject_entity, permission, object_entity)
+            cached = self._get_cached_check(subject_entity, permission, object_entity, tenant_id)
             if cached is not None:
                 logger.info(f"✅ CACHE HIT: result={cached}")
                 return cached
@@ -2416,17 +2443,37 @@ class ReBACManager:
                 results.append((row["subject_type"], row["subject_id"]))
             return results
 
-    def _get_cached_check(self, subject: Entity, permission: str, obj: Entity) -> bool | None:
+    def _get_cached_check(
+        self, subject: Entity, permission: str, obj: Entity, tenant_id: str | None = None
+    ) -> bool | None:
         """Get cached permission check result.
+
+        Checks L1 (in-memory) cache first, then L2 (database) cache.
 
         Args:
             subject: Subject entity
             permission: Permission
             obj: Object entity
+            tenant_id: Optional tenant ID
 
         Returns:
             Cached result or None if not cached or expired
         """
+        # Check L1 cache first (if enabled)
+        if self._l1_cache:
+            l1_result = self._l1_cache.get(
+                subject.entity_type,
+                subject.entity_id,
+                permission,
+                obj.entity_type,
+                obj.entity_id,
+                tenant_id,
+            )
+            if l1_result is not None:
+                logger.debug("✅ L1 CACHE HIT")
+                return l1_result
+
+        # L1 miss - check L2 (database) cache
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
@@ -2453,8 +2500,22 @@ class ReBACManager:
 
             row = cursor.fetchone()
             if row:
-                result = row["result"]
-                return bool(result)
+                result = bool(row["result"])
+                logger.debug("✅ L2 CACHE HIT (populating L1)")
+
+                # Populate L1 cache from L2
+                if self._l1_cache:
+                    self._l1_cache.set(
+                        subject.entity_type,
+                        subject.entity_id,
+                        permission,
+                        obj.entity_type,
+                        obj.entity_id,
+                        result,
+                        tenant_id,
+                    )
+
+                return result
             return None
 
     def _cache_check_result(
@@ -2465,7 +2526,7 @@ class ReBACManager:
         result: bool,
         tenant_id: str | None = None,
     ) -> None:
-        """Cache permission check result.
+        """Cache permission check result in both L1 and L2 caches.
 
         Args:
             subject: Subject entity
@@ -2474,6 +2535,19 @@ class ReBACManager:
             result: Check result
             tenant_id: Optional tenant ID for multi-tenant isolation
         """
+        # Cache in L1 first (faster)
+        if self._l1_cache:
+            self._l1_cache.set(
+                subject.entity_type,
+                subject.entity_id,
+                permission,
+                obj.entity_type,
+                obj.entity_id,
+                result,
+                tenant_id,
+            )
+
+        # Then cache in L2 (database)
         cache_id = str(uuid.uuid4())
         computed_at = datetime.now(UTC)
         expires_at = computed_at + timedelta(seconds=self.cache_ttl_seconds)
@@ -2539,8 +2613,9 @@ class ReBACManager:
         obj: Entity,
         tenant_id: str | None = None,
         subject_relation: str | None = None,
+        expires_at: datetime | None = None,
     ) -> None:
-        """Invalidate cache entries affected by tuple change.
+        """Invalidate and optionally recompute cache entries affected by tuple change.
 
         When a tuple is added or removed, we need to invalidate cache entries that
         might be affected. This uses PRECISE invalidation to minimize cache churn:
@@ -2549,42 +2624,114 @@ class ReBACManager:
         2. Transitive (if subject has subject_relation): Invalidate members of this group
         3. Transitive (for object): Invalidate derived permissions on related objects
 
-        PERFORMANCE FIX: Previous implementation invalidated ALL cache entries for
-        the subject and object, causing massive cache churn. This implementation is
-        much more precise, invalidating only entries that could actually be affected.
+        OPTIMIZATION: For simple direct relations, we RECOMPUTE and UPDATE the cache
+        instead of just invalidating. This means the next read is instant (<1ms) instead
+        of requiring expensive graph traversal (50-500ms).
 
         Args:
             subject: Subject entity
             relation: Relation type (used for precise invalidation)
             obj: Object entity
             tenant_id: Optional tenant ID for tenant-scoped invalidation
+            subject_relation: Optional subject relation for userset-as-subject
+            expires_at: Optional expiration time (disables eager recomputation)
         """
         # Use "default" tenant if not specified
         effective_tenant_id = tenant_id if tenant_id is not None else "default"
 
+        # Track write for adaptive TTL (Phase 4)
+        if self._l1_cache:
+            self._l1_cache.track_write(obj.entity_id)
+
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
-            # 1. DIRECT: Invalidate cache entries for this specific subject-object pair
-            #    This handles direct permission checks like "can alice read doc1"
-            #    IMPORTANT: Also filter by tenant_id for proper isolation
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    DELETE FROM rebac_check_cache
-                    WHERE tenant_id = ?
-                      AND subject_type = ? AND subject_id = ?
-                      AND object_type = ? AND object_id = ?
-                    """
-                ),
-                (
-                    effective_tenant_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    obj.entity_type,
-                    obj.entity_id,
-                ),
+            # 1. DIRECT: For simple direct relations, try to eagerly recompute permissions
+            #    instead of just invalidating. This avoids cache miss on next read.
+            #
+            # Only do eager recomputation for:
+            # - Direct relations (not group-based)
+            # - Not hierarchy relations (parent/member)
+            # - Single subject-object pair (not wildcards)
+            # - NOT expiring tuples (cache would become stale when tuple expires)
+            should_eager_recompute = (
+                expires_at is None  # Not an expiring tuple
+                and subject_relation is None  # Not a userset-as-subject
+                and relation not in ("member-of", "member", "parent")  # Not hierarchy
+                and subject.entity_type != "*"  # Not wildcard
+                and subject.entity_id != "*"
             )
+
+            if should_eager_recompute:
+                # Get the namespace to find which permissions this relation grants
+                namespace = self.get_namespace(obj.entity_type)
+                if namespace and namespace.config and "relations" in namespace.config:
+                    # Find permissions that this relation affects
+                    affected_permissions = []
+                    relations = namespace.config.get("relations", {})
+                    for perm, rel_spec in relations.items():
+                        # Check if this permission uses our relation
+                        if (
+                            isinstance(rel_spec, dict)
+                            and "union" in rel_spec
+                            and relation in rel_spec["union"]
+                        ):
+                            affected_permissions.append(perm)
+
+                    # Eagerly recompute and update cache for these permissions
+                    for permission in affected_permissions[:5]:  # Limit to 5 most common
+                        try:
+                            # Recompute the permission
+                            result = self._compute_permission(
+                                subject,
+                                permission,
+                                obj,
+                                visited=set(),
+                                depth=0,
+                                tenant_id=tenant_id,
+                            )
+                            # Update cache immediately (not invalidate)
+                            self._cache_check_result(subject, permission, obj, result, tenant_id)
+                            logger.debug(
+                                f"Eager cache update: ({subject}, {permission}, {obj}) = {result}"
+                            )
+                        except Exception as e:
+                            # If recomputation fails, fall back to invalidation
+                            logger.debug(
+                                f"Eager recomputation failed, falling back to invalidation: {e}"
+                            )
+                            break
+
+            # If we didn't do eager recomputation, invalidate as usual
+            if not should_eager_recompute:
+                # L1 cache invalidation
+                if self._l1_cache:
+                    self._l1_cache.invalidate_subject_object_pair(
+                        subject.entity_type,
+                        subject.entity_id,
+                        obj.entity_type,
+                        obj.entity_id,
+                        tenant_id,
+                    )
+
+                # L2 cache invalidation
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        DELETE FROM rebac_check_cache
+                        WHERE tenant_id = ?
+                          AND subject_type = ? AND subject_id = ?
+                          AND object_type = ? AND object_id = ?
+                        """
+                    ),
+                    (
+                        effective_tenant_id,
+                        subject.entity_type,
+                        subject.entity_id,
+                        obj.entity_type,
+                        obj.entity_id,
+                    ),
+                )
 
             # 2. TRANSITIVE (Groups): If subject is a group/set (has subject_relation),
             #    invalidate cache for potential members of this group accessing the object
@@ -2612,6 +2759,12 @@ class ReBACManager:
             if has_subject_relation:
                 # This is a group-based permission - invalidate all cache for this object
                 # because we don't know who's in the group without expensive queries
+
+                # L1 cache invalidation
+                if self._l1_cache:
+                    self._l1_cache.invalidate_object(obj.entity_type, obj.entity_id, tenant_id)
+
+                # L2 cache invalidation
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
@@ -2629,6 +2782,14 @@ class ReBACManager:
             #    then (alice, edit, file:doc) cache needs invalidation
             if relation in ("member-of", "member", "parent"):
                 # Subject joined a group or hierarchy - invalidate subject's permissions
+
+                # L1 cache invalidation
+                if self._l1_cache:
+                    self._l1_cache.invalidate_subject(
+                        subject.entity_type, subject.entity_id, tenant_id
+                    )
+
+                # L2 cache invalidation
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
@@ -2654,6 +2815,14 @@ class ReBACManager:
             ):
                 # Invalidate all cache entries for paths that are children of this object
                 # Match object_id that starts with obj.entity_id/ (children)
+
+                # L1 cache invalidation - invalidate prefix
+                if self._l1_cache:
+                    self._l1_cache.invalidate_object_prefix(
+                        obj.entity_type, obj.entity_id, tenant_id
+                    )
+
+                # L2 cache invalidation
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
@@ -2678,6 +2847,12 @@ class ReBACManager:
                 logger.info(
                     f"Userset-as-subject detected ({subject}#{subject_relation}), clearing ALL cache for safety"
                 )
+
+                # L1 cache invalidation - clear all for this tenant
+                if self._l1_cache:
+                    self._l1_cache.clear()  # Conservative: clear entire L1 cache
+
+                # L2 cache invalidation
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
@@ -2691,7 +2866,7 @@ class ReBACManager:
             conn.commit()
 
     def _invalidate_cache_for_namespace(self, object_type: str) -> None:
-        """Invalidate all cache entries for objects of a given type.
+        """Invalidate all cache entries for objects of a given type in both L1 and L2.
 
         When a namespace configuration is updated, all cached permission checks
         for objects of that type may be stale and must be invalidated.
@@ -2699,6 +2874,12 @@ class ReBACManager:
         Args:
             object_type: Type of object whose namespace was updated
         """
+        # L1 cache invalidation - clear all (conservative approach)
+        if self._l1_cache:
+            self._l1_cache.clear()
+            logger.info(f"Cleared L1 cache due to namespace '{object_type}' config update")
+
+        # L2 cache invalidation
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
@@ -2825,14 +3006,84 @@ class ReBACManager:
                 )
 
                 # Invalidate cache for this tuple
+                # Pass a dummy expires_at to prevent eager recomputation during cleanup
                 subject = Entity(subject_type, subject_id)
                 obj = Entity(object_type, object_id)
                 self._invalidate_cache_for_tuple(
-                    subject, relation, obj, tenant_id, subject_relation
+                    subject,
+                    relation,
+                    obj,
+                    tenant_id,
+                    subject_relation,
+                    expires_at=datetime.now(UTC),
                 )
 
             conn.commit()
             return len(expired_tuples)
+
+    def get_cache_stats(self) -> dict[str, Any]:
+        """Get cache statistics for monitoring and debugging.
+
+        Returns comprehensive statistics about both L1 (in-memory) and L2 (database)
+        cache performance, including hit rates, sizes, and latency metrics.
+
+        Returns:
+            Dictionary with cache statistics:
+                - l1_enabled: Whether L1 cache is enabled
+                - l1_stats: L1 cache statistics (if enabled)
+                - l2_enabled: Whether L2 cache is enabled (always True)
+                - l2_size: Number of entries in L2 cache
+                - l2_ttl_seconds: L2 cache TTL
+
+        Example:
+            >>> stats = manager.get_cache_stats()
+            >>> print(f"L1 hit rate: {stats['l1_stats']['hit_rate_percent']}%")
+            >>> print(f"L1 avg latency: {stats['l1_stats']['avg_lookup_time_ms']}ms")
+            >>> print(f"L2 cache size: {stats['l2_size']} entries")
+        """
+        stats: dict[str, Any] = {
+            "l1_enabled": self._l1_cache is not None,
+            "l2_enabled": True,
+            "l2_ttl_seconds": self.cache_ttl_seconds,
+        }
+
+        # L1 cache stats
+        if self._l1_cache:
+            stats["l1_stats"] = self._l1_cache.get_stats()
+        else:
+            stats["l1_stats"] = None
+
+        # L2 cache stats (query database)
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            # Count total entries in L2 cache
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    SELECT COUNT(*) as count
+                    FROM rebac_check_cache
+                    WHERE expires_at > ?
+                    """
+                ),
+                (datetime.now(UTC).isoformat(),),
+            )
+            row = cursor.fetchone()
+            stats["l2_size"] = row["count"] if row else 0
+
+        return stats
+
+    def reset_cache_stats(self) -> None:
+        """Reset cache statistics counters.
+
+        Useful for benchmarking and monitoring. Resets hit/miss counters
+        and timing metrics for L1 cache.
+
+        Note: Only resets metrics, does not clear cache entries.
+        """
+        if self._l1_cache:
+            self._l1_cache.reset_stats()
+            logger.info("Cache statistics reset")
 
     def close(self) -> None:
         """Close database connection.

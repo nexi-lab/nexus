@@ -45,6 +45,20 @@ def mcp() -> None:
                 }
             }
         }
+
+    For remote server with authentication:
+        {
+            "mcpServers": {
+                "nexus": {
+                    "command": "nexus",
+                    "args": ["mcp", "serve", "--transport", "stdio"],
+                    "env": {
+                        "NEXUS_URL": "http://localhost:8080",
+                        "NEXUS_API_KEY": "your-api-key-here"
+                    }
+                }
+            }
+        }
     """
     pass
 
@@ -70,11 +84,17 @@ def mcp() -> None:
     help="Server port (only for http/sse transport)",
     show_default=True,
 )
+@click.option(
+    "--api-key",
+    help="API key for remote server authentication (or set NEXUS_API_KEY env var)",
+    envvar="NEXUS_API_KEY",
+)
 @add_backend_options
 def serve(
     transport: str,
     host: str,
     port: int,
+    api_key: str | None,
     backend_config: BackendConfig,
 ) -> None:
     """Start Nexus MCP server.
@@ -115,6 +135,11 @@ def serve(
         # Use with remote Nexus server
         NEXUS_URL=http://localhost:8080 nexus mcp serve
 
+        # Use with remote Nexus server and API key
+        nexus mcp serve --url http://localhost:8080 --api-key YOUR_KEY
+        # Or via environment:
+        NEXUS_URL=http://localhost:8080 NEXUS_API_KEY=YOUR_KEY nexus mcp serve
+
         # Use with local backend
         nexus mcp serve --data-dir ./my-data
     """
@@ -135,6 +160,8 @@ def serve(
         # Check if using remote URL
         if backend_config.remote_url:
             console.print(f"  Remote URL: [cyan]{backend_config.remote_url}[/cyan]")
+            if api_key:
+                console.print(f"  API Key: [cyan]{'*' * 8}[/cyan]")
             nx = None
             remote_url = backend_config.remote_url
         else:
@@ -200,6 +227,8 @@ def serve(
             console.print('      "env": {')
             if backend_config.remote_url:
                 console.print(f'        "NEXUS_URL": "{backend_config.remote_url}"')
+                if api_key:
+                    console.print('        "NEXUS_API_KEY": "your-api-key-here"')
             else:
                 console.print(f'        "NEXUS_DATA_DIR": "{backend_config.data_dir}"')
             console.print("      }")
@@ -216,7 +245,7 @@ def serve(
         console.print()
 
         # Create and run MCP server
-        mcp_server = create_mcp_server(nx=nx, remote_url=remote_url)
+        mcp_server = create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
 
         # Run with appropriate transport
         if transport == "stdio":

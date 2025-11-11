@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     pass
 
 
-class EmbeddingModel(str, Enum):
+class EmbeddingModel(StrEnum):
     """Supported embedding models."""
 
     # OpenAI (recommended)

@@ -12,6 +12,7 @@ from rich.console import Console
 
 import nexus
 from nexus import NexusFilesystem
+from nexus.config import load_config
 from nexus.core.exceptions import NexusError, NexusFileNotFoundError, ValidationError
 
 console = Console()
@@ -180,19 +181,23 @@ def add_backend_options(func: Any) -> Any:
 
 
 def get_filesystem(
-    backend_config: BackendConfig, enforce_permissions: bool | None = None
+    backend_config: BackendConfig,
+    enforce_permissions: bool | None = None,
+    force_local: bool = False,
 ) -> NexusFilesystem:
     """Get Nexus filesystem instance from backend configuration.
 
     Args:
         backend_config: Backend configuration
         enforce_permissions: Whether to enforce permissions (None = use environment/config default)
+        force_local: If True, always use local NexusFS even if NEXUS_URL is set (for server mode)
 
     Returns:
         NexusFilesystem instance
     """
     try:
-        if backend_config.remote_url:
+        # If force_local is True, skip remote mode check (used by server to prevent circular dependency)
+        if not force_local and backend_config.remote_url:
             # Use remote server connection
             from nexus.remote import RemoteNexusFS
 
@@ -201,28 +206,42 @@ def get_filesystem(
                 api_key=backend_config.remote_api_key,
             )
         elif backend_config.config_path:
-            # Use explicit config file (will load environment variables via load_config)
-            return nexus.connect(config=backend_config.config_path)
+            # Use explicit config file
+            if force_local:
+                # Force embedded mode to prevent RemoteNexusFS
+                config_obj = load_config(Path(backend_config.config_path))
+                config_dict: dict[str, Any] = {
+                    "mode": "embedded",  # Force embedded mode
+                    "data_dir": config_obj.data_dir,
+                    "backend": config_obj.backend,
+                }
+                if enforce_permissions is not None:
+                    config_dict["enforce_permissions"] = enforce_permissions
+                return nexus.connect(config=config_dict)
+            else:
+                return nexus.connect(config=backend_config.config_path)
         elif backend_config.backend == "gcs":
-            # Use GCS backend via nexus.connect()
+            # Use GCS backend
             if not backend_config.gcs_bucket:
                 console.print("[red]Error:[/red] --gcs-bucket is required when using --backend=gcs")
                 sys.exit(1)
             config: dict[str, Any] = {
+                "mode": "embedded",  # Explicitly set embedded mode
                 "backend": "gcs",
                 "gcs_bucket_name": backend_config.gcs_bucket,
                 "gcs_project_id": backend_config.gcs_project,
                 "gcs_credentials_path": backend_config.gcs_credentials,
                 "db_path": str(Path(backend_config.data_dir) / "nexus-gcs-metadata.db"),
             }
-            # Only set enforce_permissions if explicitly provided
             if enforce_permissions is not None:
                 config["enforce_permissions"] = enforce_permissions
             return nexus.connect(config=config)
         else:
             # Use local backend (default)
-            # Let nexus.connect() load from environment variables if not explicitly set
-            config = {"data_dir": backend_config.data_dir}
+            config = {
+                "mode": "embedded",  # Explicitly set embedded mode
+                "data_dir": backend_config.data_dir,
+            }
             if enforce_permissions is not None:
                 config["enforce_permissions"] = enforce_permissions
             return nexus.connect(config=config)

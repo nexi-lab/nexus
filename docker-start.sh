@@ -183,7 +183,7 @@ cmd_start() {
     echo "✅ Services started!"
     echo ""
     cmd_status
-    echo ""
+    show_api_key
     cmd_urls
 }
 
@@ -210,7 +210,7 @@ cmd_build() {
 
     echo ""
     cmd_status
-    echo ""
+    show_api_key
     cmd_urls
 }
 
@@ -236,6 +236,8 @@ cmd_restart() {
     echo "✅ Services restarted!"
     echo ""
     cmd_status
+    show_api_key
+    cmd_urls
 }
 
 cmd_logs() {
@@ -329,8 +331,45 @@ cmd_init() {
     echo "✅ Initialization complete!"
     echo ""
     cmd_status
-    echo ""
+    show_api_key
     cmd_urls
+}
+
+show_api_key() {
+    echo ""
+    echo "🔑 Retrieving admin API key..."
+    echo ""
+
+    # Wait a moment for container to fully initialize
+    sleep 2
+
+    # Try to get API key from container
+    API_KEY=$(docker exec nexus-server cat /app/data/.admin-api-key 2>/dev/null || echo "")
+
+    if [ -z "$API_KEY" ]; then
+        # Fallback: try to extract from logs
+        API_KEY=$(docker logs nexus-server 2>&1 | grep "API Key:" | tail -1 | awk '{print $3}')
+    fi
+
+    if [ -n "$API_KEY" ]; then
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "ADMIN API KEY"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "  User:    admin"
+        echo "  API Key: ${API_KEY}"
+        echo ""
+        echo "  To use this key:"
+        echo "    export NEXUS_API_KEY='${API_KEY}'"
+        echo "    export NEXUS_URL='http://localhost:8080'"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+    else
+        echo "⚠️  Could not retrieve API key from container"
+        echo "   Try: docker logs nexus-server | grep 'API Key:'"
+        echo ""
+    fi
 }
 
 cmd_urls() {
@@ -425,7 +464,7 @@ case "$COMMAND" in
     --status)
         print_banner
         cmd_status
-        echo ""
+        show_api_key
         cmd_urls
         ;;
     --clean)

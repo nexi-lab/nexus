@@ -21,6 +21,13 @@ echo "║        Nexus Server - Docker Init        ║"
 echo "╚═══════════════════════════════════════════╝"
 echo ""
 
+# Show if permissions are being skipped
+if [ "${NEXUS_SKIP_PERMISSIONS:-false}" = "true" ]; then
+    echo -e "${YELLOW}⚠️  NEXUS_SKIP_PERMISSIONS=true${NC}"
+    echo -e "${YELLOW}   Entity registry and permission setup will be skipped${NC}"
+    echo ""
+fi
+
 # ============================================
 # Wait for PostgreSQL
 # ============================================
@@ -157,19 +164,24 @@ from nexus.storage.models import APIKeyModel
 database_url = os.getenv('NEXUS_DATABASE_URL')
 admin_user = '${ADMIN_USER}'
 custom_key = '${CUSTOM_KEY}'
+skip_permissions = os.getenv('NEXUS_SKIP_PERMISSIONS', 'false').lower() == 'true'
 
 try:
     engine = create_engine(database_url)
     SessionFactory = sessionmaker(bind=engine)
 
     # Register user in entity registry (for agent permission inheritance)
-    entity_registry = EntityRegistry(SessionFactory)
-    entity_registry.register_entity(
-        entity_type='user',
-        entity_id=admin_user,
-        parent_type='tenant',
-        parent_id='default',
-    )
+    # Skip if NEXUS_SKIP_PERMISSIONS is set to true
+    if not skip_permissions:
+        entity_registry = EntityRegistry(SessionFactory)
+        entity_registry.register_entity(
+            entity_type='user',
+            entity_id=admin_user,
+            parent_type='tenant',
+            parent_id='default',
+        )
+    else:
+        print("Skipping entity registry setup (NEXUS_SKIP_PERMISSIONS=true)")
 
     with SessionFactory() as session:
         expires_at = datetime.now(UTC) + timedelta(days=90)

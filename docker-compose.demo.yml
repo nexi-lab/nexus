@@ -99,6 +99,10 @@ services:
       NEXUS_SERVER_URL: http://nexus:8080
       # Docker network for sandboxes to join
       NEXUS_DOCKER_NETWORK: nexus_nexus-network
+
+      # Permission setup (optional)
+      # Set to 'true' to skip entity registry and permission setup during init
+      NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
     volumes:
       # Persistent data directory (local backend)
       - nexus-data:/app/data

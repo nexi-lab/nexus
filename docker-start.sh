@@ -10,6 +10,7 @@
 #   ./docker-start.sh --status           # Check service status
 #   ./docker-start.sh --clean            # Stop and remove all data (volumes)
 #   ./docker-start.sh --init             # Initialize (clean + build + start)
+#   ./docker-start.sh --init --skip_permission  # Initialize without permission setup
 #   ./docker-start.sh --env=production   # Use production environment files
 #
 # Services:
@@ -25,6 +26,7 @@ cd "$SCRIPT_DIR"
 
 COMPOSE_FILE="docker-compose.demo.yml"
 ENV_MODE="local"  # Default: local development
+SKIP_PERMISSIONS=false  # Default: set up permissions
 
 # ============================================
 # Banner
@@ -289,6 +291,9 @@ cmd_init() {
     echo "  2. Clean all existing data and containers"
     echo "  3. Rebuild all Docker images"
     echo "  4. Start all services fresh"
+    if [ "$SKIP_PERMISSIONS" = true ]; then
+        echo "  5. Skip permission setup (--skip_permission enabled)"
+    fi
     echo ""
     read -p "Are you sure you want to continue? (yes/no): " CONFIRM
 
@@ -312,6 +317,11 @@ cmd_init() {
 
     echo ""
     echo "🚀 Step 4/4: Starting services..."
+    # Export SKIP_PERMISSIONS so Docker Compose can pass it to containers
+    if [ "$SKIP_PERMISSIONS" = true ]; then
+        export NEXUS_SKIP_PERMISSIONS=true
+        echo "   (Skipping permission setup)"
+    fi
     docker compose -f "$COMPOSE_FILE" up -d
 
     echo ""
@@ -364,23 +374,38 @@ EOF
 # Main
 # ============================================
 
-# Parse --env flag from all arguments
-for arg in "$@"; do
-    case $arg in
+# Parse flags and filter out non-command arguments
+COMMAND=""
+while [ $# -gt 0 ]; do
+    case $1 in
         --env=*)
-            ENV_MODE="${arg#*=}"
+            ENV_MODE="${1#*=}"
+            shift
+            ;;
+        --skip_permission)
+            SKIP_PERMISSIONS=true
+            shift
+            ;;
+        --*)
+            # This is a command argument
+            if [ -z "$COMMAND" ]; then
+                COMMAND="$1"
+            fi
+            shift
+            ;;
+        *)
             shift
             ;;
     esac
 done
 
 # Parse command arguments
-if [ $# -eq 0 ]; then
+if [ -z "$COMMAND" ]; then
     cmd_start
     exit 0
 fi
 
-case "$1" in
+case "$COMMAND" in
     --start)
         cmd_start
         ;;
@@ -410,7 +435,7 @@ case "$1" in
         ;;
     --help|-h)
         print_banner
-        echo "Usage: $0 [OPTION] [--env=MODE]"
+        echo "Usage: $0 [OPTION] [--env=MODE] [--skip_permission]"
         echo ""
         echo "Options:"
         echo "  (none)          Start all services (detached)"
@@ -422,6 +447,7 @@ case "$1" in
         echo "  --clean         Stop and remove all data (volumes)"
         echo "  --init          Initialize (clean + build + start)"
         echo "  --env=MODE      Set environment mode (local|production)"
+        echo "  --skip_permission  Skip permission setup (use with --init)"
         echo "  --help, -h      Show this help message"
         echo ""
         echo "Environment Modes:"
@@ -432,6 +458,7 @@ case "$1" in
         echo "  ./docker-start.sh                    # Start with local env"
         echo "  ./docker-start.sh --env=production   # Start with production env"
         echo "  ./docker-start.sh --build --env=production  # Rebuild with production env"
+        echo "  ./docker-start.sh --init --skip_permission  # Initialize without permissions"
         echo ""
         show_services
         ;;

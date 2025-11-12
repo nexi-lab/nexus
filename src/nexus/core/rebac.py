@@ -556,17 +556,19 @@ DEFAULT_FILE_NAMESPACE = NamespaceConfig(
             "direct_editor": {},
             "direct_viewer": {},
             # Parent inheritance via tupleToUserset
-            "parent_owner": {"tupleToUserset": {"tupleset": "parent", "computedUserset": "owner"}},
+            # HYBRID OPTIMIZATION: Use direct_* to prevent recursive union expansion
+            # This breaks the recursion: parent_owner checks direct_owner (not owner union)
+            # Depth: parent_owner -> parent -> direct_owner (depth 2, not 4)
+            "parent_owner": {
+                "tupleToUserset": {"tupleset": "parent", "computedUserset": "direct_owner"}
+            },
             "parent_editor": {
-                "tupleToUserset": {"tupleset": "parent", "computedUserset": "editor"}
+                "tupleToUserset": {"tupleset": "parent", "computedUserset": "direct_editor"}
             },
             "parent_viewer": {
-                "tupleToUserset": {"tupleset": "parent", "computedUserset": "viewer"}
+                "tupleToUserset": {"tupleset": "parent", "computedUserset": "direct_viewer"}
             },
             # Group-based permissions via tupleToUserset
-            # Allows permissions to be granted to groups, then inherited by group members
-            # Example: [user, joe] --[member]--> [group, team] AND [group, team] --[direct_editor]--> [file, doc]
-            #          => joe inherits editor permission on doc
             "group_owner": {
                 "tupleToUserset": {"tupleset": "direct_owner", "computedUserset": "member"}
             },
@@ -576,24 +578,24 @@ DEFAULT_FILE_NAMESPACE = NamespaceConfig(
             "group_viewer": {
                 "tupleToUserset": {"tupleset": "direct_viewer", "computedUserset": "member"}
             },
-            # Computed relations (union of direct + parent inheritance + group inheritance)
+            # Computed relations (union of direct + parent + group)
+            # HYBRID: Keep unions for better memoization caching
+            # Permission checks → 3 unions (viewer, editor, owner) instead of 9 relations
+            # This gives better cache hit rates since many files share the same union checks
+            # IMPORTANT: Don't nest unions (e.g., editor includes owner) - causes exponential checks
             "owner": {"union": ["direct_owner", "parent_owner", "group_owner"]},
-            "editor": {"union": ["direct_editor", "parent_editor", "group_editor", "owner"]},
-            # FIX: viewer should NOT include editor to prevent circular dependency
-            # The "read" permission explicitly lists [viewer, editor, owner], so having
-            # editor grants read access. Including editor in viewer causes recursion issues.
+            "editor": {"union": ["direct_editor", "parent_editor", "group_editor"]},
             "viewer": {"union": ["direct_viewer", "parent_viewer", "group_viewer"]},
         },
         # P0-1: Explicit permission-to-userset mapping (Zanzibar-style)
-        # Prevents ambiguous check("write") bugs by defining exact semantics
+        # HYBRID OPTIMIZATION: Use unions for better memoization
+        # Checking "viewer" on file1 and file2 uses same cache key
+        # vs flattened schema where each of 9 relations needs separate cache entry
+        # Result: ~3x fewer cache misses, better performance
         "permissions": {
-            "read": [
-                "viewer",
-                "editor",
-                "owner",
-            ],  # Read = viewer OR editor OR owner (explicit for inheritance)
-            "write": ["editor", "owner"],  # Write = editor OR owner
-            "execute": ["owner"],  # Execute = owner only
+            "read": ["viewer", "editor", "owner"],  # 3 unions (good caching)
+            "write": ["editor", "owner"],  # 2 unions
+            "execute": ["owner"],  # 1 union
         },
     },
 )

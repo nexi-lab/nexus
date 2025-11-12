@@ -1240,11 +1240,31 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         # With memo: ~100-200 unique computations (rest are cache hits)
         # Use a list to track hit count (mutable so inner function can modify it)
         bulk_memo_cache: dict[tuple[str, str, str, str, str], bool] = {}
-        memo_stats = {"hits": 0, "misses": 0}  # Track cache hits/misses
+        memo_stats = {
+            "hits": 0,
+            "misses": 0,
+            "max_depth": 0,
+        }  # Track cache hits/misses and max depth
 
         logger.info(
             f"Starting computation for {len(cache_misses)} cache misses with shared memo cache"
         )
+
+        # Log the first permission expansion to verify hybrid schema is being used
+        if cache_misses:
+            first_check = cache_misses[0]
+            subject, permission, obj = first_check
+            # obj is a tuple (entity_type, entity_id), not an Entity
+            obj_type = obj[0]
+            namespace = self.get_namespace(obj_type)
+            if namespace and namespace.has_permission(permission):
+                usersets = namespace.get_permission_usersets(permission)
+                logger.info(
+                    f"[SCHEMA-VERIFY] Permission '{permission}' on '{obj_type}' expands to {len(usersets)} relations: {usersets}"
+                )
+                logger.info(
+                    "[SCHEMA-VERIFY] Expected: 3 for hybrid schema (viewer, editor, owner) or 9 for flattened"
+                )
 
         for check in cache_misses:
             subject, permission, obj = check
@@ -1286,6 +1306,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             f"Cache performance: {memo_stats['hits']} hits + {memo_stats['misses']} misses = {total_accesses} total accesses"
         )
         logger.info(f"Cache hit rate: {hit_rate:.1f}% ({memo_stats['hits']}/{total_accesses})")
+        logger.info(f"Max traversal depth reached: {memo_stats.get('max_depth', 0)}")
 
         logger.info(f"rebac_check_bulk completed: {len(results)} results")
         return results
@@ -1352,6 +1373,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         # Cache miss - will need to compute
         if memo_stats is not None:
             memo_stats["misses"] += 1
+            # Track maximum depth reached
+            if depth > memo_stats.get("max_depth", 0):
+                memo_stats["max_depth"] = depth
 
         # Depth limit check (prevent infinite recursion)
         MAX_DEPTH = 50

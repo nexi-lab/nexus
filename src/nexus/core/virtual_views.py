@@ -243,14 +243,23 @@ def add_virtual_views_to_listing(
         # Get the file path (handle both string and dict formats)
         if isinstance(file, str):
             file_path = file
+            is_dir = None  # Unknown, will need to check
         elif isinstance(file, dict) and "path" in file:
             file_path = file["path"]
+            # OPTIMIZATION: Use is_directory from dict if available (avoids N RPC calls)
+            is_dir = file.get("is_directory", None)
         else:
             continue
 
         # Skip directories
+        # First check if we already know from the dict, then fall back to function call
         try:
-            if is_directory_fn(file_path):
+            if is_dir is None:
+                # Only call is_directory_fn if we don't already know
+                if is_directory_fn(file_path):
+                    continue
+            elif is_dir:
+                # Already know it's a directory from the dict
                 continue
         except Exception:
             pass

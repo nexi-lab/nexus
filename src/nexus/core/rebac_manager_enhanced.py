@@ -1231,6 +1231,21 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         # PHASE 2: Compute permissions for each cache miss using the in-memory graph
         # This avoids additional DB queries per check
+        #
+        # OPTIMIZATION: Create a shared memoization cache for this bulk operation
+        # This dramatically speeds up repeated checks like:
+        # - Checking if admin owns /workspace (used by all 679 files via parent_owner)
+        # - Checking if user is in a group (used by all group members)
+        # Without memo: 679 files × 10 checks each = 6,790 computations
+        # With memo: ~100-200 unique computations (rest are cache hits)
+        # Use a list to track hit count (mutable so inner function can modify it)
+        bulk_memo_cache: dict[tuple[str, str, str, str, str], bool] = {}
+        memo_stats = {"hits": 0, "misses": 0}  # Track cache hits/misses
+
+        logger.info(
+            f"Starting computation for {len(cache_misses)} cache misses with shared memo cache"
+        )
+
         for check in cache_misses:
             subject, permission, obj = check
             subject_entity = Entity(subject[0], subject[1])
@@ -1241,7 +1256,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             # This already provides 90% of the benefit by reducing tuple fetch queries
             try:
                 result = self._compute_permission_bulk_helper(
-                    subject_entity, permission, obj_entity, tenant_id, tuples_graph
+                    subject_entity,
+                    permission,
+                    obj_entity,
+                    tenant_id,
+                    tuples_graph,
+                    bulk_memo_cache=bulk_memo_cache,  # Pass shared memo cache
+                    memo_stats=memo_stats,  # Pass stats tracker
                 )
             except Exception as e:
                 logger.warning(f"Bulk check failed for {check}, falling back: {e}")
@@ -1256,6 +1277,16 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             if consistency == ConsistencyLevel.EVENTUAL:
                 self._cache_check_result(subject_entity, permission, obj_entity, result, tenant_id)
 
+        # Report actual cache statistics
+        total_accesses = memo_stats["hits"] + memo_stats["misses"]
+        hit_rate = (memo_stats["hits"] / total_accesses * 100) if total_accesses > 0 else 0
+
+        logger.info(f"Bulk memo cache stats: {len(bulk_memo_cache)} unique checks stored")
+        logger.info(
+            f"Cache performance: {memo_stats['hits']} hits + {memo_stats['misses']} misses = {total_accesses} total accesses"
+        )
+        logger.info(f"Cache hit rate: {hit_rate:.1f}% ({memo_stats['hits']}/{total_accesses})")
+
         logger.info(f"rebac_check_bulk completed: {len(results)} results")
         return results
 
@@ -1268,6 +1299,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         tuples_graph: list[dict[str, Any]],
         depth: int = 0,
         visited: set[tuple[str, str, str, str, str]] | None = None,
+        bulk_memo_cache: dict[tuple[str, str, str, str, str], bool] | None = None,
+        memo_stats: dict[str, int] | None = None,
     ) -> bool:
         """Compute permission using pre-fetched tuples graph with full in-memory traversal.
 
@@ -1282,6 +1315,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             tuples_graph: Pre-fetched list of all relevant tuples
             depth: Current traversal depth (for cycle detection)
             visited: Set of visited nodes (for cycle detection)
+            bulk_memo_cache: Shared memoization cache for bulk operations (optimization)
 
         Returns:
             True if permission is granted
@@ -1294,6 +1328,31 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if visited is None:
             visited = set()
 
+        # OPTIMIZATION: Check memoization cache first
+        # This avoids recomputing the same permission checks multiple times within a bulk operation
+        # Example: All 679 files check "does admin own /workspace?" - only compute once!
+        memo_key = (
+            subject.entity_type,
+            subject.entity_id,
+            permission,
+            obj.entity_type,
+            obj.entity_id,
+        )
+        if bulk_memo_cache is not None and memo_key in bulk_memo_cache:
+            # Cache hit! Return cached result
+            if memo_stats is not None:
+                memo_stats["hits"] += 1
+                # Log every 100th hit to show progress without flooding
+                if memo_stats["hits"] % 100 == 0:
+                    logger.info(
+                        f"[MEMO HIT #{memo_stats['hits']}] {subject.entity_type}:{subject.entity_id} {permission} on {obj.entity_type}:{obj.entity_id}"
+                    )
+            return bulk_memo_cache[memo_key]
+
+        # Cache miss - will need to compute
+        if memo_stats is not None:
+            memo_stats["misses"] += 1
+
         # Depth limit check (prevent infinite recursion)
         MAX_DEPTH = 50
         if depth > MAX_DEPTH:
@@ -1302,14 +1361,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             )
             return False
 
-        # Cycle detection
-        visit_key = (
-            subject.entity_type,
-            subject.entity_id,
-            permission,
-            obj.entity_type,
-            obj.entity_id,
-        )
+        # Cycle detection (within this specific traversal path)
+        visit_key = memo_key  # Same key works for both
         if visit_key in visited:
             logger.debug(f"_compute_permission_bulk_helper: Cycle detected at {visit_key}, denying")
             return False
@@ -1329,12 +1382,25 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 f"_compute_permission_bulk_helper [depth={depth}]: Permission '{permission}' expands to usersets: {usersets}"
             )
             # Check each userset in union (OR semantics)
+            result = False
             for userset in usersets:
                 if self._compute_permission_bulk_helper(
-                    subject, userset, obj, tenant_id, tuples_graph, depth + 1, visited.copy()
+                    subject,
+                    userset,
+                    obj,
+                    tenant_id,
+                    tuples_graph,
+                    depth + 1,
+                    visited.copy(),
+                    bulk_memo_cache,
+                    memo_stats,
                 ):
-                    return True
-            return False
+                    result = True
+                    break
+            # Store result in memo cache before returning
+            if bulk_memo_cache is not None:
+                bulk_memo_cache[memo_key] = result
+            return result
 
         # Handle union (OR of multiple relations)
         # Example: "owner" -> union: ["direct_owner", "parent_owner", "group_owner"]
@@ -1343,12 +1409,25 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             logger.debug(
                 f"_compute_permission_bulk_helper [depth={depth}]: Union '{permission}' -> {union_relations}"
             )
+            result = False
             for rel in union_relations:
                 if self._compute_permission_bulk_helper(
-                    subject, rel, obj, tenant_id, tuples_graph, depth + 1, visited.copy()
+                    subject,
+                    rel,
+                    obj,
+                    tenant_id,
+                    tuples_graph,
+                    depth + 1,
+                    visited.copy(),
+                    bulk_memo_cache,
+                    memo_stats,
                 ):
-                    return True
-            return False
+                    result = True
+                    break
+            # Store result in memo cache before returning
+            if bulk_memo_cache is not None:
+                bulk_memo_cache[memo_key] = result
+            return result
 
         # Handle intersection (AND of multiple relations)
         if namespace.has_intersection(permission):
@@ -1356,12 +1435,25 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             logger.debug(
                 f"_compute_permission_bulk_helper [depth={depth}]: Intersection '{permission}' -> {intersection_relations}"
             )
+            result = True
             for rel in intersection_relations:
                 if not self._compute_permission_bulk_helper(
-                    subject, rel, obj, tenant_id, tuples_graph, depth + 1, visited.copy()
+                    subject,
+                    rel,
+                    obj,
+                    tenant_id,
+                    tuples_graph,
+                    depth + 1,
+                    visited.copy(),
+                    bulk_memo_cache,
+                    memo_stats,
                 ):
-                    return False  # If any is false, whole intersection is false
-            return True
+                    result = False
+                    break  # If any is false, whole intersection is false
+            # Store result in memo cache before returning
+            if bulk_memo_cache is not None:
+                bulk_memo_cache[memo_key] = result
+            return result
 
         # Handle exclusion (NOT relation)
         if namespace.has_exclusion(permission):
@@ -1370,9 +1462,21 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 logger.debug(
                     f"_compute_permission_bulk_helper [depth={depth}]: Exclusion '{permission}' NOT {excluded_rel}"
                 )
-                return not self._compute_permission_bulk_helper(
-                    subject, excluded_rel, obj, tenant_id, tuples_graph, depth + 1, visited.copy()
+                result = not self._compute_permission_bulk_helper(
+                    subject,
+                    excluded_rel,
+                    obj,
+                    tenant_id,
+                    tuples_graph,
+                    depth + 1,
+                    visited.copy(),
+                    bulk_memo_cache,
+                    memo_stats,
                 )
+                # Store result in memo cache before returning
+                if bulk_memo_cache is not None:
+                    bulk_memo_cache[memo_key] = result
+                return result
             return False
 
         # Handle tupleToUserset (indirect relation via another object)
@@ -1397,6 +1501,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 )
 
                 # Check if subject has computed_userset on any related object
+                result = False
                 for related_obj in related_objects:
                     if self._compute_permission_bulk_helper(
                         subject,
@@ -1406,19 +1511,30 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         tuples_graph,
                         depth + 1,
                         visited.copy(),
+                        bulk_memo_cache,
+                        memo_stats,
                     ):
                         logger.debug(
                             f"_compute_permission_bulk_helper [depth={depth}]: GRANTED via tupleToUserset through {related_obj}"
                         )
-                        return True
+                        result = True
+                        break
 
                 logger.debug(
                     f"_compute_permission_bulk_helper [depth={depth}]: No related objects granted permission"
                 )
+                # Store result in memo cache before returning
+                if bulk_memo_cache is not None:
+                    bulk_memo_cache[memo_key] = result
+                return result
             return False
 
         # Direct relation check (base case)
-        return self._check_direct_relation_in_graph(subject, permission, obj, tuples_graph)
+        result = self._check_direct_relation_in_graph(subject, permission, obj, tuples_graph)
+        # Store result in memo cache before returning
+        if bulk_memo_cache is not None:
+            bulk_memo_cache[memo_key] = result
+        return result
 
     def _check_direct_relation_in_graph(
         self,

@@ -44,3 +44,31 @@ jobs:
       - name: Run mypy type checking
         run: |
           uv run mypy src/nexus
+
+  rust-lint:
+    name: Rust Lint and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt, clippy
+
+      - name: Check Rust formatting
+        run: |
+          cd rust/nexus_fast
+          cargo fmt --check
+
+      - name: Run Clippy
+        run: |
+          cd rust/nexus_fast
+          cargo clippy -- -D warnings
+
+      - name: Run Rust tests
+        run: |
+          cd rust/nexus_fast
+          cargo test

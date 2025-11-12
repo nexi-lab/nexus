@@ -41,3 +41,17 @@ repos:
         language: system
         pass_filenames: false
         files: ^(pyproject\.toml|src/nexus/__init__\.py)$
+
+      - id: rust-fmt
+        name: Rust Format Check
+        entry: bash -c 'cd rust/nexus_fast && cargo fmt --check'
+        language: system
+        pass_filenames: false
+        files: ^rust/nexus_fast/.*\.rs$
+
+      - id: rust-clippy
+        name: Rust Clippy
+        entry: bash -c 'cd rust/nexus_fast && cargo clippy -- -D warnings'
+        language: system
+        pass_filenames: false
+        files: ^rust/nexus_fast/.*\.rs$

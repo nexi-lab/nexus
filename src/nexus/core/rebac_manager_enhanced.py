@@ -1099,8 +1099,16 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         results = {}
         cache_misses = []
 
-        if consistency == ConsistencyLevel.EVENTUAL:
-            # Try to get results from cache first
+        # OPTIMIZATION: Skip cache check for bulk operations (adds 323ms overhead)
+        # For large batches (>100), cache checking is slower than just computing with Rust
+        # TODO: Implement batch cache lookup for better performance
+        if len(checks) > 100:
+            logger.info(
+                f"[CACHE-OPT] Skipping cache check for {len(checks)} items (would add ~{len(checks) * 0.5:.0f}ms)"
+            )
+            cache_misses = checks
+        elif consistency == ConsistencyLevel.EVENTUAL:
+            # Try to get results from cache first (only for small batches)
             for check in checks:
                 subject, permission, obj = check
                 subject_entity = Entity(subject[0], subject[1])
@@ -1266,36 +1274,100 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     "[SCHEMA-VERIFY] Expected: 3 for hybrid schema (viewer, editor, owner) or 9 for flattened"
                 )
 
-        for check in cache_misses:
-            subject, permission, obj = check
-            subject_entity = Entity(subject[0], subject[1])
-            obj_entity = Entity(obj[0], obj[1])
+        # TRY RUST ACCELERATION FIRST for bulk computation
+        from nexus.core.rebac_fast import check_permissions_bulk_with_fallback, is_rust_available
 
-            # Compute permission using the pre-fetched tuples_graph
-            # For now, fall back to regular check (will be optimized in follow-up)
-            # This already provides 90% of the benefit by reducing tuple fetch queries
+        rust_success = False
+        if is_rust_available() and len(cache_misses) >= 10:
             try:
-                result = self._compute_permission_bulk_helper(
-                    subject_entity,
-                    permission,
-                    obj_entity,
-                    tenant_id,
-                    tuples_graph,
-                    bulk_memo_cache=bulk_memo_cache,  # Pass shared memo cache
-                    memo_stats=memo_stats,  # Pass stats tracker
+                logger.info(f"⚡ Attempting Rust acceleration for {len(cache_misses)} checks")
+
+                # Get all namespace configs
+                object_types = {obj[0] for _, _, obj in cache_misses}
+                namespace_configs = {}
+                for obj_type in object_types:
+                    ns = self.get_namespace(obj_type)
+                    if ns:
+                        # ns.config contains the relations and permissions
+                        namespace_configs[obj_type] = ns.config
+
+                # Debug: log the config format
+                if namespace_configs:
+                    sample_type = list(namespace_configs.keys())[0]
+                    sample_config = namespace_configs[sample_type]
+                    logger.info(
+                        f"[RUST-DEBUG] Sample namespace config for '{sample_type}': {str(sample_config)[:200]}"
+                    )
+
+                # Call Rust for bulk computation
+                import time
+
+                rust_start = time.perf_counter()
+                rust_results_dict = check_permissions_bulk_with_fallback(
+                    cache_misses, tuples_graph, namespace_configs, force_python=False
                 )
+                rust_elapsed = time.perf_counter() - rust_start
+                per_check_us = (rust_elapsed / len(cache_misses)) * 1_000_000
+                logger.info(
+                    f"[RUST-TIMING] {len(cache_misses)} checks in {rust_elapsed * 1000:.1f}ms = {per_check_us:.1f}µs/check"
+                )
+
+                # Convert results (skip caching in loop for speed)
+                for check in cache_misses:
+                    subject, permission, obj = check
+                    key = (subject[0], subject[1], permission, obj[0], obj[1])
+                    result = rust_results_dict.get(key, False)
+                    results[check] = result
+
+                # Cache results in batch after loop (avoid 679 individual cache writes)
+                # TODO: Implement batch cache write for better performance
+                # For now, skip caching to avoid the 425ms overhead
+                logger.info(
+                    f"[RUST-PERF] Skipping individual cache writes (would add ~{len(cache_misses) * 0.6:.0f}ms overhead)"
+                )
+
+                rust_success = True
+                logger.info(f"✅ Rust acceleration successful for {len(cache_misses)} checks")
+
             except Exception as e:
-                logger.warning(f"Bulk check failed for {check}, falling back: {e}")
-                # Fallback to individual check
-                result = self.rebac_check(
-                    subject, permission, obj, tenant_id=tenant_id, consistency=consistency
-                )
+                logger.warning(f"Rust acceleration failed: {e}, falling back to Python")
+                rust_success = False
 
-            results[check] = result
+        # FALLBACK TO PYTHON if Rust not available or failed
+        if not rust_success:
+            logger.info(f"🐍 Using Python for {len(cache_misses)} checks")
+            for check in cache_misses:
+                subject, permission, obj = check
+                subject_entity = Entity(subject[0], subject[1])
+                obj_entity = Entity(obj[0], obj[1])
 
-            # Cache the result if using EVENTUAL consistency
-            if consistency == ConsistencyLevel.EVENTUAL:
-                self._cache_check_result(subject_entity, permission, obj_entity, result, tenant_id)
+                # Compute permission using the pre-fetched tuples_graph
+                # For now, fall back to regular check (will be optimized in follow-up)
+                # This already provides 90% of the benefit by reducing tuple fetch queries
+                try:
+                    result = self._compute_permission_bulk_helper(
+                        subject_entity,
+                        permission,
+                        obj_entity,
+                        tenant_id,
+                        tuples_graph,
+                        bulk_memo_cache=bulk_memo_cache,  # Pass shared memo cache
+                        memo_stats=memo_stats,  # Pass stats tracker
+                    )
+                except Exception as e:
+                    logger.warning(f"Bulk check failed for {check}, falling back: {e}")
+                    # Fallback to individual check
+                    result = self.rebac_check(
+                        subject, permission, obj, tenant_id=tenant_id, consistency=consistency
+                    )
+
+                results[check] = result
+
+                # Cache the result if using EVENTUAL consistency
+                if consistency == ConsistencyLevel.EVENTUAL:
+                    self._cache_check_result(
+                        subject_entity, permission, obj_entity, result, tenant_id
+                    )
 
         # Report actual cache statistics
         total_accesses = memo_stats["hits"] + memo_stats["misses"]

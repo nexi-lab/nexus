@@ -760,9 +760,11 @@ def rebac_check_batch_cmd(
                 nx.close()
                 sys.exit(1)
 
-        # Perform batch check
-        console.print(f"[cyan]Checking {len(checks)} permissions...[/cyan]")
-        results = nx.rebac_manager.rebac_check_batch(checks)  # type: ignore[attr-defined]
+        # Perform batch check with Rust acceleration
+        console.print(
+            f"[cyan]Checking {len(checks)} permissions (Rust acceleration enabled)...[/cyan]"
+        )
+        results = nx.rebac_manager.rebac_check_batch_fast(checks)  # type: ignore[attr-defined]
         nx.close()
 
         # Output results

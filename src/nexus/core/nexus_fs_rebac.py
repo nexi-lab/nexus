@@ -640,8 +640,8 @@ class NexusFSReBACMixin:
             if not isinstance(obj, tuple) or len(obj) != 2:
                 raise ValueError(f"Check {i}: object must be (type, id) tuple, got {obj}")
 
-        # Perform batch check
-        return self._rebac_manager.rebac_check_batch(checks=checks)
+        # Perform batch check with Rust acceleration
+        return self._rebac_manager.rebac_check_batch_fast(checks=checks)
 
     @rpc_expose(description="Delete ReBAC relationship tuple")
     def rebac_delete(self, tuple_id: str) -> bool:

@@ -2,14 +2,20 @@
 # Multi-stage build for optimal image size
 FROM python:3.11-slim as builder
 
-# Install build dependencies
+# Install build dependencies (including Rust for nexus_fast extension)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     git \
+    curl \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for faster dependency installation
-RUN pip install --no-cache-dir uv
+# Install Rust toolchain for building nexus_fast extension
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Install uv and maturin for faster dependency installation
+RUN pip install --no-cache-dir uv maturin
 
 # Copy project files
 WORKDIR /build
@@ -24,6 +30,13 @@ RUN uv pip install --system .
 # Install sandbox providers
 RUN uv pip install --system docker e2b
 
+# Build and install Rust extension (nexus_fast)
+COPY rust/ ./rust/
+WORKDIR /build/rust/nexus_fast
+RUN maturin build --release && \
+    pip install --no-cache-dir target/wheels/nexus_fast-*.whl
+WORKDIR /build
+
 # Production image
 FROM python:3.11-slim
 
@@ -33,10 +46,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Python packages from builder
+# Copy Python packages from builder (including Rust extension)
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
+
+# Verify Rust extension is available (optional debug step)
+RUN python3 -c "import nexus_fast; print('✓ Rust acceleration available')" || echo "⚠ Rust not available"
 
 # Copy application files
 WORKDIR /app

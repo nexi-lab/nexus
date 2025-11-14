@@ -137,9 +137,17 @@ class TestPermissionEnforcer:
         assert enforcer.check("/file.txt", Permission.READ, ctx) is True
         assert enforcer.check("/file.txt", Permission.WRITE, ctx) is False
 
-        assert len(rebac.checks) == 2
+        # Expect 3 checks due to parent directory inheritance:
+        # 1. /file.txt with read (succeeds)
+        # 2. /file.txt with write (fails)
+        # 3. / (parent) with write (checked for inheritance)
+        assert len(rebac.checks) == 3
         assert rebac.checks[0]["permission"] == "read"
+        assert rebac.checks[0]["object"] == ("file", "/file.txt")
         assert rebac.checks[1]["permission"] == "write"
+        assert rebac.checks[1]["object"] == ("file", "/file.txt")
+        assert rebac.checks[2]["permission"] == "write"
+        assert rebac.checks[2]["object"] == ("file", "/")
 
     def test_rebac_check_with_tenant_id(self):
         """Test ReBAC permission checking includes tenant ID."""

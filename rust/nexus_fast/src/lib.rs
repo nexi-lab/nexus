@@ -3,6 +3,7 @@
 use ahash::{AHashMap, AHashSet};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
+use regex::bytes::RegexBuilder;
 use serde::Deserialize;
 use std::collections::HashMap as StdHashMap;
 
@@ -332,9 +333,108 @@ fn find_related_objects(object: &Entity, relation: &str, tuples: &[ReBACTuple]) 
     related
 }
 
+/// Grep search result
+#[derive(Debug)]
+struct GrepMatch {
+    file: String,
+    line: usize,
+    content: String,
+    match_text: String,
+}
+
+/// Fast content search using Rust regex
+#[pyfunction]
+#[pyo3(signature = (pattern, file_contents, ignore_case=false, max_results=1000))]
+fn grep_bulk<'py>(
+    py: Python<'py>,
+    pattern: &str,
+    file_contents: &Bound<PyDict>,
+    ignore_case: bool,
+    max_results: usize,
+) -> PyResult<Bound<'py, PyList>> {
+    // Compile regex pattern
+    let regex = RegexBuilder::new(pattern)
+        .case_insensitive(ignore_case)
+        .build()
+        .map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e))
+        })?;
+
+    // Extract all file contents from Python objects first
+    let mut files_data: Vec<(String, Vec<u8>)> = Vec::new();
+    for (file_path_py, content_py) in file_contents.iter() {
+        let file_path = match file_path_py.extract::<String>() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        let content_bytes = match content_py.extract::<Vec<u8>>() {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+
+        files_data.push((file_path, content_bytes));
+    }
+
+    // Release GIL for computation
+    let matches = py.allow_threads(|| {
+        let mut results = Vec::new();
+
+        // Iterate over extracted file contents
+        for (file_path, content_bytes) in files_data {
+            if results.len() >= max_results {
+                break;
+            }
+
+            // Try to decode as UTF-8 (skip binary files)
+            let content_str = match std::str::from_utf8(&content_bytes) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            // Search line by line
+            for (line_num, line) in content_str.lines().enumerate() {
+                if results.len() >= max_results {
+                    break;
+                }
+
+                let line_bytes = line.as_bytes();
+                if let Some(mat) = regex.find(line_bytes) {
+                    let match_text = std::str::from_utf8(&line_bytes[mat.start()..mat.end()])
+                        .unwrap_or("")
+                        .to_string();
+
+                    results.push(GrepMatch {
+                        file: file_path.clone(),
+                        line: line_num + 1, // 1-indexed
+                        content: line.to_string(),
+                        match_text,
+                    });
+                }
+            }
+        }
+
+        results
+    });
+
+    // Convert results to Python list of dicts
+    let py_list = PyList::empty_bound(py);
+    for m in matches {
+        let dict = PyDict::new_bound(py);
+        dict.set_item("file", m.file)?;
+        dict.set_item("line", m.line)?;
+        dict.set_item("content", m.content)?;
+        dict.set_item("match", m.match_text)?;
+        py_list.append(dict)?;
+    }
+
+    Ok(py_list)
+}
+
 /// Python module definition
 #[pymodule]
 fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compute_permissions_bulk, m)?)?;
+    m.add_function(wrap_pyfunction!(grep_bulk, m)?)?;
     Ok(())
 }

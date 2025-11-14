@@ -249,7 +249,7 @@ class NexusFS(
         # P0 Fixes: Initialize EnhancedPermissionEnforcer with audit logging
         from nexus.core.permissions_enhanced import EnhancedPermissionEnforcer
 
-        self._permission_enforcer = EnhancedPermissionEnforcer(  # type: ignore[assignment]
+        self._permission_enforcer = EnhancedPermissionEnforcer(
             metadata_store=self.metadata,
             rebac_manager=self._rebac_manager,
             allow_admin_bypass=allow_admin_bypass,  # P0-4: Controlled by constructor parameter
@@ -748,7 +748,13 @@ class NexusFS(
             return
 
         # Use default context if none provided
-        ctx = context or self._default_context
+        from nexus.core.permissions_enhanced import EnhancedOperationContext
+
+        ctx_raw = context or self._default_context
+        assert isinstance(ctx_raw, EnhancedOperationContext), (
+            "Context must be EnhancedOperationContext"
+        )
+        ctx: EnhancedOperationContext = ctx_raw
 
         logger.info(
             f"_check_permission: path={path}, permission={permission.name}, user={ctx.user}, tenant={getattr(ctx, 'tenant_id', None)}"
@@ -1161,6 +1167,11 @@ class NexusFS(
 
         if not has_rebac:
             # Fallback to permission enforcer if no ReBAC
+            from nexus.core.permissions_enhanced import EnhancedOperationContext
+
+            assert isinstance(context, EnhancedOperationContext), (
+                "Context must be EnhancedOperationContext"
+            )
             return self._permission_enforcer.check(path, permission, context)
 
         # Validate subject_id (required for ReBAC checks)

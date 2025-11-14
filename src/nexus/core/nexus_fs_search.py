@@ -14,11 +14,12 @@ import fnmatch
 import re
 from typing import TYPE_CHECKING, Any, cast
 
+from nexus.core import grep_fast
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext, PermissionEnforcer
+    from nexus.core.permissions import OperationContext
     from nexus.search.semantic import SemanticSearch
     from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
@@ -28,10 +29,12 @@ class NexusFSSearchMixin:
 
     # Type hints for attributes that will be provided by NexusFS parent class
     if TYPE_CHECKING:
+        from nexus.core.permissions_enhanced import EnhancedPermissionEnforcer
+
         metadata: SQLAlchemyMetadataStore
         _enforce_permissions: bool
         _default_context: OperationContext
-        _permission_enforcer: PermissionEnforcer
+        _permission_enforcer: EnhancedPermissionEnforcer
         _semantic_search: SemanticSearch | None
 
         def _validate_path(self, path: str) -> str: ...
@@ -39,6 +42,13 @@ class NexusFSSearchMixin:
         def read(
             self, path: str, context: OperationContext | None = None, return_metadata: bool = False
         ) -> bytes | dict[str, Any]: ...
+        def read_bulk(
+            self,
+            paths: builtins.list[str],
+            context: OperationContext | None = None,
+            return_metadata: bool = False,
+            skip_errors: bool = True,
+        ) -> dict[str, bytes | dict[str, Any] | None]: ...
         async def ls(
             self, path: str = "/", recursive: bool = False
         ) -> builtins.list[str] | builtins.list[dict[str, Any]]: ...
@@ -90,6 +100,13 @@ class NexusFSSearchMixin:
             fs.list("/memory/by-user/alice")  # Returns memory paths for user alice
             fs.list("/workspace/alice/agent1/memory")  # Returns memories for agent1
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"[LIST-DEBUG-START] list() called with path={path}, recursive={recursive}, details={details}"
+        )
+
         # Phase 2 Integration (v0.4.0): Intercept memory paths
         from nexus.core.memory_router import MemoryViewRouter
 
@@ -136,7 +153,13 @@ class NexusFSSearchMixin:
             logger = logging.getLogger(__name__)
 
             perm_start = time.time()
-            ctx = context or self._default_context
+            from nexus.core.permissions_enhanced import EnhancedOperationContext
+
+            ctx_raw = context or self._default_context
+            assert isinstance(ctx_raw, EnhancedOperationContext), (
+                "Context must be EnhancedOperationContext"
+            )
+            ctx: EnhancedOperationContext = ctx_raw
             result_paths = [meta.path for meta in results]
 
             logger.warning(
@@ -183,7 +206,13 @@ class NexusFSSearchMixin:
             # to only include files in the current directory (non-recursive), but we need to see
             # files in subdirectories to infer those subdirectories exist
             if self._enforce_permissions:
-                ctx = context or self._default_context
+                from nexus.core.permissions_enhanced import EnhancedOperationContext
+
+                ctx_raw_glob = context or self._default_context
+                assert isinstance(ctx_raw_glob, EnhancedOperationContext), (
+                    "Context must be EnhancedOperationContext"
+                )
+                ctx_glob: EnhancedOperationContext = ctx_raw_glob
 
                 # Check if we already have filtered results we can reuse
                 # If base_path matches our query path, we can use the already-filtered results
@@ -202,7 +231,7 @@ class NexusFSSearchMixin:
                     if unfiltered_paths:
                         # Filter only the new paths
                         allowed_new_paths = self._permission_enforcer.filter_list(
-                            unfiltered_paths, ctx
+                            unfiltered_paths, ctx_glob
                         )
                         allowed_new_paths_set = set(allowed_new_paths)
 
@@ -219,7 +248,7 @@ class NexusFSSearchMixin:
                     # Different path, need to filter everything
                     all_paths_for_dirs = [meta.path for meta in all_files_for_dirs]
                     allowed_paths_for_dirs = self._permission_enforcer.filter_list(
-                        all_paths_for_dirs, ctx
+                        all_paths_for_dirs, ctx_glob
                     )
                     all_files_for_dirs = [
                         meta for meta in all_files_for_dirs if meta.path in allowed_paths_for_dirs
@@ -261,7 +290,7 @@ class NexusFSSearchMixin:
                     # Fallback to individual checks (for single directory or if method not available)
                     for dir_path in backend_dirs:
                         # Check if user has access to this directory or any of its descendants
-                        if self._has_descendant_access(dir_path, Permission.READ, ctx):  # type: ignore[attr-defined]
+                        if self._has_descendant_access(dir_path, Permission.READ, ctx):
                             directories.add(dir_path)
 
         if details:
@@ -298,12 +327,18 @@ class NexusFSSearchMixin:
             # Combine and sort
             all_results = file_results + dir_results
             all_results.sort(key=lambda x: str(x["path"]))
+            logger.warning(
+                f"[LIST-DEBUG] Returning {len(all_results)} results (details=True), path={path}, recursive={recursive}"
+            )
             return all_results
         else:
             # Return paths only (filter out directory metadata markers)
             file_paths = [meta.path for meta in results if meta.mime_type != "inode/directory"]
             all_paths = file_paths + sorted(directories)
             all_paths.sort()
+            logger.warning(
+                f"[LIST-DEBUG] Returning {len(all_paths)} paths (details=False), path={path}, recursive={recursive}, file_paths={len(file_paths)}, directories={len(directories)}"
+            )
             return all_paths
 
     @rpc_expose(description="Find files by glob pattern")
@@ -413,7 +448,7 @@ class NexusFSSearchMixin:
         path: str = "/",
         file_pattern: str | None = None,
         ignore_case: bool = False,
-        max_results: int = 1000,
+        max_results: int = 100,  # Reduced from 1000 for faster first response
         search_mode: str = "auto",
         context: Any = None,
     ) -> builtins.list[dict[str, Any]]:
@@ -473,26 +508,105 @@ class NexusFSSearchMixin:
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}") from e
 
+        # DEBUG: Add timing to understand performance bottleneck
+        import logging
+        import time
+
+        logger = logging.getLogger(__name__)
+        grep_start = time.time()
+
         # Get files to search
+        list_start = time.time()
         if file_pattern:
             files = self.glob(file_pattern, path, context=context)
         else:
             # Get all files under path (with ReBAC filtering)
             files = cast(list[str], self.list(path, recursive=True, context=context))
+        list_elapsed = time.time() - list_start
+        logger.warning(
+            f"[GREP-PERF] Phase 1: list() found {len(files)} files in {list_elapsed:.3f}s"
+        )
 
-        # Search through files
+        # Try Rust-accelerated grep for raw content searches
+        logger.warning(
+            f"[GREP-PERF] Checking Rust path: search_mode={search_mode}, grep_fast.is_available()={grep_fast.is_available()}"
+        )
+
+        if search_mode == "raw" and grep_fast.is_available():
+            logger.warning("[GREP-PERF] ✓ Taking Rust-accelerated path!")
+            # Batch read all files for Rust processing using read_bulk()
+            read_start = time.time()
+
+            # Use read_bulk() for efficient batch reading
+            # This eliminates per-file RPC overhead and batches permission checks
+            bulk_results = self.read_bulk(files, context=context, skip_errors=True)
+
+            # Filter out failed reads (None values)
+            file_contents: dict[str, bytes] = {}
+            for file_path, content in bulk_results.items():
+                if content is not None:
+                    assert isinstance(content, bytes), "Expected bytes from read_bulk()"
+                    file_contents[file_path] = content
+                else:
+                    logger.warning(f"[GREP-PERF] Failed to read {file_path} (skipped)")
+
+            read_elapsed = time.time() - read_start
+
+            logger.warning(
+                f"[GREP-PERF] Phase 2: read_bulk() loaded {len(file_contents)} files ({sum(len(c) for c in file_contents.values())} bytes) in {read_elapsed:.3f}s"
+            )
+
+            # Use Rust grep_bulk for fast searching
+            rust_start = time.time()
+            rust_results = grep_fast.grep_bulk(
+                pattern, file_contents, ignore_case=ignore_case, max_results=max_results
+            )
+            rust_elapsed = time.time() - rust_start
+            logger.warning(f"[GREP-PERF] Phase 3: Rust grep_bulk searched in {rust_elapsed:.3f}s")
+
+            if rust_results is not None:
+                # Note: Keep "match" field - it's NOT redundant for regex patterns!
+                # Pattern is "def \w+" but match is "def foo" or "def bar"
+                # Add source field for consistency with docstring
+                for result in rust_results:
+                    result["source"] = "raw"
+                total_elapsed = time.time() - grep_start
+                logger.warning(
+                    f"[GREP-PERF] TOTAL (raw mode): {total_elapsed:.3f}s (list={list_elapsed:.3f}s, read={read_elapsed:.3f}s, rust={rust_elapsed:.3f}s)"
+                )
+                logger.warning(
+                    f"[GREP-PERF] Breakdown: list={list_elapsed / total_elapsed * 100:.1f}%, read={read_elapsed / total_elapsed * 100:.1f}%, rust={rust_elapsed / total_elapsed * 100:.1f}%"
+                )
+                return rust_results
+            # Fall through to Python implementation if Rust fails
+
+        # Search through files (Python fallback or parsed text search)
+        python_start = time.time()
+        read_time = 0.0
+        search_time = 0.0
+        decode_time = 0.0
         results: list[dict[str, Any]] = []
-        for file_path in files:
+
+        logger.warning(f"[GREP-PERF] Starting Python loop for {len(files)} files")
+        for i, file_path in enumerate(files):
             if len(results) >= max_results:
                 break
 
             try:
                 text: str | None = None
-                source: str = "raw"
+                source: str = "raw"  # Track the source of text for result metadata
 
                 # Get parsed text if needed
                 if search_mode in ("auto", "parsed"):
+                    metadata_start = time.time()
                     parsed_text = self.metadata.get_file_metadata(file_path, "parsed_text")
+                    metadata_elapsed = time.time() - metadata_start
+
+                    if i < 3:  # Log first 3 files
+                        logger.warning(
+                            f"[GREP-PERF] File {i + 1}/{len(files)}: get_file_metadata() took {metadata_elapsed * 1000:.1f}ms"
+                        )
+
                     if parsed_text:
                         text = parsed_text
                         source = "parsed"
@@ -500,43 +614,79 @@ class NexusFSSearchMixin:
                 # Get raw text if needed
                 if text is None and search_mode in ("auto", "raw"):
                     # Read raw content
-                    content = self.read(file_path)
+                    read_file_start = time.time()
+                    read_result = self.read(file_path, context=context)
+                    read_elapsed = time.time() - read_file_start
+                    read_time += read_elapsed
+
+                    # Handle both bytes and dict return types
+                    if isinstance(read_result, bytes):
+                        raw_content: bytes = read_result
+                    else:
+                        # Skip if metadata was returned (shouldn't happen with return_metadata=False)
+                        continue
+                    content = raw_content
+
+                    if i < 3:  # Log first 3 files
+                        logger.warning(
+                            f"[GREP-PERF] File {i + 1}/{len(files)}: read({file_path}) took {read_elapsed * 1000:.1f}ms"
+                        )
 
                     # Type narrowing: when return_metadata=False (default), result is bytes
                     assert isinstance(content, bytes), "Expected bytes from read()"
 
                     # Try to decode as text
+                    decode_start = time.time()
                     try:
                         text = content.decode("utf-8")
-                        source = "raw"
                     except UnicodeDecodeError:
                         # Skip binary files
                         continue
+                    decode_time += time.time() - decode_start
 
                 # Skip if no text available
                 if text is None:
                     continue
 
                 # Search line by line
+                search_file_start = time.time()
                 for line_num, line in enumerate(text.splitlines(), start=1):
                     if len(results) >= max_results:
                         break
 
-                    match = regex.search(line)
-                    if match:
+                    match_obj = regex.search(line)
+                    if match_obj:
                         results.append(
                             {
                                 "file": file_path,
                                 "line": line_num,
                                 "content": line,
-                                "match": match.group(0),
+                                "match": match_obj.group(
+                                    0
+                                ),  # The matched text (NOT redundant for regex!)
                                 "source": source,
                             }
                         )
+                search_time += time.time() - search_file_start
 
             except Exception:
                 # Skip files that can't be read
                 continue
+
+        # Log Python mode performance breakdown
+        python_elapsed = time.time() - python_start
+        total_elapsed = time.time() - grep_start
+        other_time = python_elapsed - read_time - search_time - decode_time
+
+        logger.warning(
+            f"[GREP-PERF] Python loop breakdown: read={read_time:.3f}s, search={search_time:.3f}s, decode={decode_time:.3f}s, other={other_time:.3f}s"
+        )
+        logger.warning(
+            f"[GREP-PERF] TOTAL ({search_mode} mode): {total_elapsed:.3f}s (list={list_elapsed:.3f}s, python_loop={python_elapsed:.3f}s)"
+        )
+        logger.warning(
+            f"[GREP-PERF] Breakdown: list={list_elapsed / total_elapsed * 100:.1f}%, read={read_time / total_elapsed * 100:.1f}%, search={search_time / total_elapsed * 100:.1f}%, decode={decode_time / total_elapsed * 100:.1f}%, other={other_time / total_elapsed * 100:.1f}%"
+        )
 
         return results
 

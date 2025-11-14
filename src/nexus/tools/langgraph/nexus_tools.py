@@ -24,12 +24,20 @@ Authentication:
 """
 
 import shlex
-from typing import Any
+from typing import Annotated, Any
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
+from langgraph.graph import MessagesState
+from langgraph.prebuilt import InjectedState
 
 from nexus.remote import RemoteNexusFS
+
+
+class NexusAgentState(MessagesState):
+    """State for Nexus LangGraph agent."""
+
+    context: dict[str, Any] | None = None
 
 
 def get_nexus_tools() -> list[Any]:
@@ -53,12 +61,21 @@ def get_nexus_tools() -> list[Any]:
         )
     """
 
-    def _get_nexus_client(config: RunnableConfig) -> RemoteNexusFS:
+    def _get_nexus_client(
+        state: Annotated[NexusAgentState, InjectedState], config: RunnableConfig
+    ) -> RemoteNexusFS:
         """Create authenticated RemoteNexusFS from config.
 
         Requires authentication via metadata.x_auth: "Bearer <token>"
         """
         # Get API key from metadata.x_auth (required)
+        if (x_auth := state.get("context", {}).get("x_auth")) and (
+            server_url := state.get("context", {}).get("nexus_server_url")
+        ):
+            api_key = x_auth.removeprefix("Bearer ").strip()
+            if not api_key:
+                raise ValueError("Invalid x_auth format. Expected 'Bearer <token>', got: " + x_auth)
+            return RemoteNexusFS(server_url=server_url, api_key=api_key)
         metadata = config.get("metadata", {})
         x_auth = metadata.get("x_auth", "")
         server_url = metadata.get("nexus_server_url", "")
@@ -78,7 +95,9 @@ def get_nexus_tools() -> list[Any]:
         return RemoteNexusFS(server_url=server_url, api_key=api_key)
 
     @tool
-    def grep_files(grep_cmd: str, config: RunnableConfig) -> str:
+    def grep_files(
+        grep_cmd: str, state: Annotated[NexusAgentState, InjectedState], config: RunnableConfig
+    ) -> str:
         """Search file content for text patterns.
 
         Args:
@@ -91,7 +110,7 @@ def get_nexus_tools() -> list[Any]:
         """
         try:
             # Get authenticated client
-            nx = _get_nexus_client(config)
+            nx = _get_nexus_client(state, config)
 
             # Parse grep command
             parts = shlex.split(grep_cmd)
@@ -144,7 +163,12 @@ def get_nexus_tools() -> list[Any]:
             return f"Error executing grep: {str(e)}\nUsage: grep_files('pattern [path] [options]')"
 
     @tool
-    def glob_files(pattern: str, config: RunnableConfig, path: str = "/") -> str:
+    def glob_files(
+        pattern: str,
+        state: Annotated[NexusAgentState, InjectedState],
+        config: RunnableConfig,
+        path: str = "/",
+    ) -> str:
         """Find files by name pattern.
 
         Args:
@@ -155,7 +179,7 @@ def get_nexus_tools() -> list[Any]:
         """
         try:
             # Get authenticated client
-            nx = _get_nexus_client(config)
+            nx = _get_nexus_client(state, config)
 
             files = nx.glob(pattern, path)
 
@@ -175,7 +199,9 @@ def get_nexus_tools() -> list[Any]:
             return f"Error finding files: {str(e)}"
 
     @tool
-    def read_file(read_cmd: str, config: RunnableConfig) -> str:
+    def read_file(
+        read_cmd: str, state: Annotated[NexusAgentState, InjectedState], config: RunnableConfig
+    ) -> str:
         """Read file content.
 
         Args:
@@ -193,7 +219,7 @@ def get_nexus_tools() -> list[Any]:
         """
         try:
             # Get authenticated client
-            nx = _get_nexus_client(config)
+            nx = _get_nexus_client(state, config)
 
             # Parse read command
             parts = shlex.split(read_cmd.strip())
@@ -332,7 +358,12 @@ def get_nexus_tools() -> list[Any]:
             return f"Error reading file: {str(e)}\nUsage: read_file('[cat|less] path')"
 
     @tool
-    def write_file(path: str, content: str, config: RunnableConfig) -> str:
+    def write_file(
+        path: str,
+        content: str,
+        state: Annotated[NexusAgentState, InjectedState],
+        config: RunnableConfig,
+    ) -> str:
         """Write content to file. Creates parent directories automatically, overwrites if exists.
 
         Args:
@@ -343,7 +374,7 @@ def get_nexus_tools() -> list[Any]:
         """
         try:
             # Get authenticated client
-            nx = _get_nexus_client(config)
+            nx = _get_nexus_client(state, config)
 
             # Convert string to bytes for Nexus
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
@@ -365,7 +396,9 @@ def get_nexus_tools() -> list[Any]:
 
     # Nexus Sandbox Tools
     @tool
-    def python(code: str, config: RunnableConfig) -> str:
+    def python(
+        code: str, state: Annotated[NexusAgentState, InjectedState], config: RunnableConfig
+    ) -> str:
         """Execute Python code in sandbox. Use print() for output.
 
         Args:
@@ -374,7 +407,7 @@ def get_nexus_tools() -> list[Any]:
         Examples: python("print('Hello')"), python("import pandas as pd\\nprint(pd.DataFrame({'a': [1,2,3]}))")
         """
         try:
-            nx = _get_nexus_client(config)
+            nx = _get_nexus_client(state, config)
 
             # Get sandbox_id from metadata
             metadata = config.get("metadata", {})
@@ -416,7 +449,9 @@ def get_nexus_tools() -> list[Any]:
             return f"Error executing Python code: {str(e)}"
 
     @tool
-    def bash(command: str, config: RunnableConfig) -> str:
+    def bash(
+        command: str, state: Annotated[NexusAgentState, InjectedState], config: RunnableConfig
+    ) -> str:
         """Execute bash commands in sandbox. Supports pipes, redirects. Changes persist in session.
 
         Args:
@@ -425,7 +460,7 @@ def get_nexus_tools() -> list[Any]:
         Examples: bash("ls -la"), bash("echo 'Hello'"), bash("cat file.txt | grep pattern")
         """
         try:
-            nx = _get_nexus_client(config)
+            nx = _get_nexus_client(state, config)
 
             # Get sandbox_id from metadata
             metadata = config.get("metadata", {})
@@ -468,13 +503,15 @@ def get_nexus_tools() -> list[Any]:
 
     # Memory Tools
     @tool
-    def query_memories(config: RunnableConfig) -> str:
+    def query_memories(
+        state: Annotated[NexusAgentState, InjectedState], config: RunnableConfig
+    ) -> str:
         """Query all stored active memory records. Returns content, namespace, scope, importance.
 
         Example: query_memories()
         """
         try:
-            nx = _get_nexus_client(config)
+            nx = _get_nexus_client(state, config)
 
             # Query active memories using RemoteMemory API
             memories = nx.memory.query(state="active", limit=100)

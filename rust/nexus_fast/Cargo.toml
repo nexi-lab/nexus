@@ -12,6 +12,8 @@ pyo3 = { version = "0.22", features = ["extension-module", "hashbrown"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ahash = "0.8"  # Fast hashmap for better performance
+regex = "1.10"  # Fast regex matching
+encoding_rs = "0.8"  # Encoding detection for text files
 
 [profile.release]
 lto = true

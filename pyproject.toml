@@ -69,6 +69,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+performance = [
+    # Fast JSON serialization (2-3x faster than stdlib json)
+    "orjson>=3.9.0",
+]
+
 dev = [
     # Testing
     "pytest>=7.4.4",

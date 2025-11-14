@@ -229,15 +229,7 @@ def grep(
                 # Format line number if requested
                 line_num_str = f"{match['line']}:" if line_number else ""
 
-                # Display source type
-                source = match.get("source", "raw")
-                source_color = "magenta" if source == "parsed" else "dim"
-
                 console.print(f"  [yellow]{line_num_str}[/yellow] {match['content']}")
-                console.print(
-                    f"      [dim]Match: [green]{match['match']}[/green] "
-                    f"[{source_color}]({source})[/{source_color}][/dim]"
-                )
 
             console.print()
 

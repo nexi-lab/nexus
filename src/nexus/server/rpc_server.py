@@ -1001,6 +1001,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 file_pattern=params.file_pattern,
                 ignore_case=params.ignore_case,
                 max_results=params.max_results,
+                search_mode=params.search_mode,
                 context=context,
             )
             # Convert to serializable format
@@ -1389,17 +1390,40 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         return serialized
 
     def _send_rpc_response(self, response: RPCResponse) -> None:
-        """Send RPC response.
+        """Send RPC response with optional gzip compression.
 
         Args:
             response: RPC response object
         """
+        import gzip
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         response_dict = response.to_dict()
         body = encode_rpc_message(response_dict)
+        original_size = len(body)
+
+        # Compress response if client supports it and body is large enough
+        accept_encoding = self.headers.get("Accept-Encoding", "")
+        if "gzip" in accept_encoding and len(body) > 1024:  # Only compress if > 1KB
+            body = gzip.compress(body, compresslevel=6)  # Level 6 is good balance of speed/size
+            content_encoding = "gzip"
+            logger.info(
+                f"[RPC-PERF] gzip: {original_size} bytes → {len(body)} bytes ({len(body) / original_size * 100:.1f}%)"
+            )
+        else:
+            content_encoding = None
+            if len(body) > 1024:
+                logger.warning(
+                    f"[RPC-PERF] No gzip! Body size: {original_size} bytes, Accept-Encoding: {accept_encoding}"
+                )
 
         self.send_response(200)
         self._set_cors_headers()
         self.send_header("Content-Type", "application/json")
+        if content_encoding:
+            self.send_header("Content-Encoding", content_encoding)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -1419,17 +1443,29 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         self._send_rpc_response(response)
 
     def _send_json_response(self, status_code: int, data: dict[str, Any]) -> None:
-        """Send JSON response.
+        """Send JSON response with optional gzip compression.
 
         Args:
             status_code: HTTP status code
             data: Response data
         """
+        import gzip
+
         body = encode_rpc_message(data)
+
+        # Compress response if client supports it and body is large enough
+        accept_encoding = self.headers.get("Accept-Encoding", "")
+        if "gzip" in accept_encoding and len(body) > 1024:
+            body = gzip.compress(body, compresslevel=6)
+            content_encoding = "gzip"
+        else:
+            content_encoding = None
 
         self.send_response(status_code)
         self._set_cors_headers()
         self.send_header("Content-Type", "application/json")
+        if content_encoding:
+            self.send_header("Content-Encoding", content_encoding)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

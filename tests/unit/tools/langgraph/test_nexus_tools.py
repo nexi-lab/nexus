@@ -2,6 +2,12 @@
 
 from unittest.mock import Mock, patch
 
+import pytest
+
+# Skip all tests if langchain_core is not installed
+pytest.importorskip("langchain_core")
+pytest.importorskip("langgraph")
+
 from langchain_core.runnables import RunnableConfig
 
 from nexus.remote import RemoteNexusFS

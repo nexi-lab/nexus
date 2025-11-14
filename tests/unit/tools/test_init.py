@@ -1,5 +1,11 @@
 """Unit tests for nexus.tools module."""
 
+import pytest
+
+# Skip langgraph tests if not installed
+pytest.importorskip("langchain_core")
+pytest.importorskip("langgraph")
+
 
 def test_langgraph_import():
     """Test that langgraph module can be imported."""

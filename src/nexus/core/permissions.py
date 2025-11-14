@@ -339,7 +339,48 @@ class PermissionEnforcer:
         if result:
             return True
 
-        # 2. v0.5.0 ACE: Agent inheritance from user
+        # 2. NEW: Check parent directories for inherited permissions (filesystem hierarchy)
+        # For READ/WRITE, if user has permission on parent directory, grant access to child
+        # This enables permission inheritance: grant /workspace → inherits to /workspace/file.txt
+        if permission_name in ("read", "write") and object_id:
+            import os
+
+            parent_path = object_id
+            checked_parents = []
+
+            # Walk up the directory tree
+            while parent_path and parent_path != "/":
+                parent_path = os.path.dirname(parent_path)
+                if not parent_path or parent_path == object_id:
+                    # Reached root or no change
+                    parent_path = "/"
+
+                checked_parents.append(parent_path)
+                logger.info(f"[_check_rebac] Checking parent directory: {parent_path}")
+
+                # Check parent directory permission
+                parent_result = self.rebac_manager.rebac_check(
+                    subject=subject,
+                    permission=permission_name,
+                    object=(object_type, parent_path),
+                    tenant_id=tenant_id,
+                )
+
+                if parent_result:
+                    logger.info(
+                        f"[_check_rebac] ALLOW (inherited from parent directory: {parent_path})"
+                    )
+                    return True
+
+                # Stop at root
+                if parent_path == "/":
+                    break
+
+            logger.info(
+                f"[_check_rebac] No parent directory permissions found (checked: {checked_parents})"
+            )
+
+        # 3. v0.5.0 ACE: Agent inheritance from user
         # If subject is an agent, check if the agent's owner (user) has permission
         if context.subject_type == "agent" and context.agent_id and self.entity_registry:
             logger.info(f"[_check_rebac] Checking agent inheritance for agent={context.agent_id}")

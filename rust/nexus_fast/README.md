@@ -1,20 +1,30 @@
 # nexus_fast
 
-High-performance Rust implementation of ReBAC (Relationship-Based Access Control) permission computation for Nexus.
+High-performance Rust implementations for Nexus core operations.
 
 ## Overview
 
-`nexus_fast` is a Python extension module written in Rust using PyO3. It provides blazing-fast bulk permission checking for ReBAC systems, with performance improvements of 10-100x over pure Python implementations.
+`nexus_fast` is a Python extension module written in Rust using PyO3. It provides blazing-fast implementations of:
+
+1. **ReBAC Permission Computation** - 10-100x faster permission checking
+2. **Content Search (grep)** - 30-100x faster regex-based file searching
 
 ## Performance
 
+### ReBAC Permission Checking
 - **~6µs per permission check** (tested on Apple M-series)
 - **170,000+ checks per second** on a single core
-- GIL-free computation for true parallel execution
-- Zero-copy data structures with `ahash` for optimal performance
+
+### Content Search (grep)
+- **~186,000 files per second** for pattern matching
+- **30-100x faster** than Python regex
+- **5ms to search 1000 files** with 30,000 lines
+
+All operations use GIL-free computation for true parallel execution with zero-copy data structures.
 
 ## Features
 
+### ReBAC Acceleration
 - ✅ Direct relation checks
 - ✅ Union relations (OR semantics)
 - ✅ Tuple-to-userset (parent/child relationships)
@@ -23,27 +33,61 @@ High-performance Rust implementation of ReBAC (Relationship-Based Access Control
 - ✅ Bulk permission computation
 - ✅ Namespace configuration support
 
+### Grep Acceleration
+- ✅ Fast regex-based content search
+- ✅ Case-sensitive and case-insensitive matching
+- ✅ Binary file detection and skipping
+- ✅ UTF-8 text processing
+- ✅ Batch file processing
+- ✅ Max results limiting
+
 ## Installation
 
-### Prerequisites
+### Option 1: Use Without Rust (Automatic Fallback)
+
+When you install Nexus from PyPI, the Rust extension is **optional**. If not available, Nexus automatically falls back to Python implementations:
+
+```bash
+pip install nexus-ai-fs
+# Grep will use Python regex (still fast, just 30x slower)
+```
+
+### Option 2: Build Rust Extension for Maximum Performance
+
+For 30-100x speedup on grep operations:
+
+#### Prerequisites
 
 - Rust toolchain (install via [rustup](https://rustup.rs/))
 - Python 3.8+
 - maturin (`pip install maturin`)
 
-### Development Build
+#### Build Steps
 
 ```bash
-# From the rust/nexus_fast directory
+# Navigate to the Rust extension directory
+cd rust/nexus_fast
+
+# Build and install in development mode
 maturin develop --release
-```
 
-### Production Build
-
-```bash
+# Or build a wheel for distribution
 maturin build --release
 pip install target/wheels/*.whl
 ```
+
+#### Verify Installation
+
+```python
+from nexus.core import grep_fast
+
+print(grep_fast.is_available())  # Should print True
+```
+
+**Note:** The Rust extension must be rebuilt after:
+- Pulling new code changes
+- Switching branches with Rust changes
+- Updating Rust toolchain
 
 ## Usage
 
@@ -91,6 +135,53 @@ print(results[("user", "alice", "read", "file", "doc1")])  # True/False
 ```
 
 ## API Reference
+
+### `compute_permissions_bulk(checks, tuples, namespace_configs) -> dict`
+
+Compute multiple permission checks in bulk.
+
+### `grep_bulk(pattern, file_contents, ignore_case=False, max_results=1000) -> list`
+
+Fast regex-based content search across multiple files.
+
+**Parameters:**
+- `pattern`: Regex pattern string to search for
+- `file_contents`: Dict mapping file paths to file content bytes `{"/path/file.txt": b"content"}`
+- `ignore_case`: Boolean, whether to ignore case (default: False)
+- `max_results`: Maximum number of matches to return (default: 1000)
+
+**Returns:**
+- List of match dictionaries:
+  ```python
+  [
+      {
+          "file": "/path/file.txt",
+          "line": 42,                 # 1-indexed line number
+          "content": "full line text",
+          "match": "matched text"
+      }
+  ]
+  ```
+
+**Example:**
+```python
+import nexus_fast
+
+files = {
+    "/test.py": b"def hello():\n    print('Hello')\n",
+    "/main.py": b"from test import hello\n"
+}
+
+# Case-sensitive search
+results = nexus_fast.grep_bulk(r"def \w+", files)
+
+# Case-insensitive search
+results = nexus_fast.grep_bulk("hello", files, ignore_case=True)
+```
+
+---
+
+### ReBAC API
 
 ### `compute_permissions_bulk(checks, tuples, namespace_configs) -> dict`
 

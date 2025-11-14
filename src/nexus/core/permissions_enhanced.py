@@ -734,6 +734,45 @@ class EnhancedPermissionEnforcer:
 
         logger.info(f"  -> rebac_manager.rebac_check returned: {result}")
 
+        # NEW: Check parent directories for inherited permissions (filesystem hierarchy)
+        # For READ/WRITE, if user has permission on parent directory, grant access to child
+        if not result and permission_name in ("read", "write") and object_id:
+            import os
+
+            parent_path = object_id
+            checked_parents = []
+
+            # Walk up the directory tree
+            while parent_path and parent_path != "/":
+                parent_path = os.path.dirname(parent_path)
+                if not parent_path or parent_path == object_id:
+                    parent_path = "/"
+
+                checked_parents.append(parent_path)
+                logger.info(f"[PARENT-INHERIT] Checking parent directory: {parent_path}")
+
+                # Check parent directory permission
+                parent_result = self.rebac_manager.rebac_check(
+                    subject=subject,
+                    permission=permission_name,
+                    object=(object_type, parent_path),
+                    tenant_id=tenant_id,
+                )
+
+                if parent_result:
+                    logger.info(
+                        f"[PARENT-INHERIT] ✅ ALLOW (inherited from parent directory: {parent_path})"
+                    )
+                    return True
+
+                # Stop at root
+                if parent_path == "/":
+                    break
+
+            logger.info(
+                f"[PARENT-INHERIT] No parent directory permissions found (checked: {checked_parents})"
+            )
+
         # v0.5.0 ACE: Agent inheritance from user (if direct check failed)
         # If subject is an agent, check if the agent's owner (user) has permission
         if (

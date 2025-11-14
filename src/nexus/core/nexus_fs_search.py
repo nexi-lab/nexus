@@ -565,12 +565,11 @@ class NexusFSSearchMixin:
             logger.warning(f"[GREP-PERF] Phase 3: Rust grep_bulk searched in {rust_elapsed:.3f}s")
 
             if rust_results is not None:
-                # Optimize result format: remove redundant fields
-                # - "match" is redundant (client knows the pattern)
-                # - "source" can be inferred (raw mode = raw source)
+                # Note: Keep "match" field - it's NOT redundant for regex patterns!
+                # Pattern is "def \w+" but match is "def foo" or "def bar"
+                # Add source field for consistency with docstring
                 for result in rust_results:
-                    result.pop("match", None)  # Remove match field
-                    # Don't add source field - client knows it's raw mode
+                    result["source"] = "raw"
                 total_elapsed = time.time() - grep_start
                 logger.warning(
                     f"[GREP-PERF] TOTAL (raw mode): {total_elapsed:.3f}s (list={list_elapsed:.3f}s, read={read_elapsed:.3f}s, rust={rust_elapsed:.3f}s)"
@@ -595,6 +594,7 @@ class NexusFSSearchMixin:
 
             try:
                 text: str | None = None
+                source: str = "raw"  # Track the source of text for result metadata
 
                 # Get parsed text if needed
                 if search_mode in ("auto", "parsed"):
@@ -609,6 +609,7 @@ class NexusFSSearchMixin:
 
                     if parsed_text:
                         text = parsed_text
+                        source = "parsed"
 
                 # Get raw text if needed
                 if text is None and search_mode in ("auto", "raw"):
@@ -653,16 +654,17 @@ class NexusFSSearchMixin:
                     if len(results) >= max_results:
                         break
 
-                    match = regex.search(line)
-                    if match:
-                        # Optimized result format (remove redundant fields)
+                    match_obj = regex.search(line)
+                    if match_obj:
                         results.append(
                             {
                                 "file": file_path,
                                 "line": line_num,
                                 "content": line,
-                                # "match" removed - client knows the pattern
-                                # "source" removed - can be inferred from search_mode
+                                "match": match_obj.group(
+                                    0
+                                ),  # The matched text (NOT redundant for regex!)
+                                "source": source,
                             }
                         )
                 search_time += time.time() - search_file_start

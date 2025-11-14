@@ -518,7 +518,7 @@ git config --global core.autocrlf input
    ```bash
    # Access WSL filesystem
    \wsl$\Ubuntu\home\youruser\nexus
-   
+
    # Clone directly in WSL
    wsl
    cd ~
@@ -635,4 +635,3 @@ If you encounter issues not covered here:
    - Include error messages from: `docker logs nexus-server`
 
 ---
-

@@ -15,6 +15,7 @@ import contextlib
 import hashlib
 import logging
 import threading
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -39,6 +40,8 @@ class NexusFSCoreMixin:
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
+        from nexus.core.permissions_enhanced import EnhancedPermissionEnforcer
+
         metadata: SQLAlchemyMetadataStore
         backend: Backend
         router: PathRouter
@@ -49,6 +52,7 @@ class NexusFSCoreMixin:
         _default_context: OperationContext
         _parser_threads: list[threading.Thread]
         _parser_threads_lock: threading.Lock
+        _permission_enforcer: EnhancedPermissionEnforcer
 
         @property
         def tenant_id(self) -> str | None: ...
@@ -203,7 +207,15 @@ class NexusFSCoreMixin:
             return self._read_memory_path(path, return_metadata, context=context)
 
         # Check read permission (handles virtual views by checking original file)
+        perm_check_start = time.time()
         self._check_permission(path, Permission.READ, context)
+        perm_check_elapsed = time.time() - perm_check_start
+
+        # Log slow permission checks
+        if perm_check_elapsed > 0.010:  # >10ms
+            logger.warning(
+                f"[READ-PERF] SLOW permission check for {path}: {perm_check_elapsed * 1000:.1f}ms"
+            )
 
         # Fix #332: Handle virtual parsed views (e.g., report_parsed.pdf.md)
         from nexus.core.virtual_views import get_parsed_content, parse_virtual_path
@@ -283,6 +295,158 @@ class NexusFSCoreMixin:
             }
 
         return content
+
+    @rpc_expose(description="Read multiple files in a single RPC call")
+    def read_bulk(
+        self,
+        paths: list[str],
+        context: OperationContext | None = None,
+        return_metadata: bool = False,
+        skip_errors: bool = True,
+    ) -> dict[str, bytes | dict[str, Any] | None]:
+        """
+        Read multiple files in a single RPC call for improved performance.
+
+        This method is optimized for bulk operations like grep, where many files
+        need to be read. It batches permission checks and reduces RPC overhead.
+
+        Args:
+            paths: List of virtual paths to read
+            context: Optional operation context for permission checks
+            return_metadata: If True, return dicts with content and metadata
+            skip_errors: If True, skip files that can't be read and return None.
+                        If False, raise exception on first error.
+
+        Returns:
+            Dict mapping path -> content (or None if skip_errors=True and read failed)
+            If return_metadata=False: {path: bytes}
+            If return_metadata=True: {path: {content, etag, version, ...}}
+
+        Performance:
+            - Single RPC call instead of N calls
+            - Batch permission checks (one DB query instead of N)
+            - Reduced network round trips
+            - Expected speedup: 2-5x for 50+ files
+
+        Examples:
+            >>> # Read multiple files at once
+            >>> results = nx.read_bulk(["/file1.txt", "/file2.txt", "/file3.txt"])
+            >>> print(results["/file1.txt"])  # b'content'
+            >>> print(results["/file2.txt"])  # b'content' or None if failed
+
+            >>> # With metadata
+            >>> results = nx.read_bulk(["/file1.txt"], return_metadata=True)
+            >>> print(results["/file1.txt"]["content"])
+            >>> print(results["/file1.txt"]["etag"])
+        """
+        import time
+
+        bulk_start = time.time()
+        results: dict[str, bytes | dict[str, Any] | None] = {}
+
+        # Validate all paths
+        validated_paths = []
+        for path in paths:
+            try:
+                validated_path = self._validate_path(path)
+                validated_paths.append(validated_path)
+            except Exception:
+                if skip_errors:
+                    results[path] = None
+                    continue
+                raise
+
+        if not validated_paths:
+            return results
+
+        # Batch permission check using filter_list
+        perm_start = time.time()
+        allowed_set: set[str]
+        try:
+            # Use the existing bulk permission check from list()
+            # Note: filter_list assumes READ permission, which is what we want
+            from nexus.core.permissions_enhanced import EnhancedOperationContext
+
+            ctx = context if context is not None else self._default_context
+            assert isinstance(ctx, EnhancedOperationContext), (
+                "Context must be EnhancedOperationContext"
+            )
+            allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
+            allowed_set = set(allowed_paths)
+        except Exception as e:
+            logger.error(f"[READ-BULK] Permission check failed: {e}")
+            if not skip_errors:
+                raise
+            # If skip_errors, assume no files are allowed
+            allowed_set = set()
+
+        perm_elapsed = time.time() - perm_start
+        logger.info(
+            f"[READ-BULK] Permission check: {len(allowed_set)}/{len(validated_paths)} allowed in {perm_elapsed * 1000:.1f}ms"
+        )
+
+        # Mark denied files
+        for path in validated_paths:
+            if path not in allowed_set:
+                results[path] = None
+
+        # Read allowed files
+        read_start = time.time()
+        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+
+        for path in allowed_set:
+            try:
+                # Get metadata
+                meta = self.metadata.get(path)
+                if meta is None or meta.etag is None:
+                    if skip_errors:
+                        results[path] = None
+                        continue
+                    raise NexusFileNotFoundError(path)
+
+                # Route to backend
+                route = self.router.route(
+                    path,
+                    tenant_id=tenant_id,
+                    agent_id=agent_id,
+                    is_admin=is_admin,
+                    check_write=False,
+                )
+
+                # Read content
+                content = route.backend.read_content(meta.etag, context=context)
+
+                # Apply filtering if needed
+                content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
+
+                # Store result
+                if return_metadata:
+                    results[path] = {
+                        "content": content,
+                        "etag": meta.etag,
+                        "version": meta.version,
+                        "modified_at": meta.modified_at,
+                        "size": len(content),
+                    }
+                else:
+                    results[path] = content
+
+            except Exception as e:
+                logger.warning(f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}")
+                if skip_errors:
+                    results[path] = None
+                else:
+                    raise
+
+        read_elapsed = time.time() - read_start
+        bulk_elapsed = time.time() - bulk_start
+
+        logger.info(
+            f"[READ-BULK] Completed: {len(results)} files in {bulk_elapsed * 1000:.1f}ms "
+            f"(perm={perm_elapsed * 1000:.0f}ms, read={read_elapsed * 1000:.0f}ms)"
+        )
+
+        return results
 
     @rpc_expose(description="Stream file content in chunks")
     def stream(

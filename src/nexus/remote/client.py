@@ -817,7 +817,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         try:
             # Build headers
-            headers = {"Content-Type": "application/json"}
+            headers = {
+                "Content-Type": "application/json",
+                "Accept-Encoding": "gzip",  # Request compressed responses
+            }
 
             # Add agent identity header if set (for permission checks)
             if self.agent_id:
@@ -830,12 +833,15 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             # Use tuple for timeout: (connect_timeout, read_timeout)
             # Use custom read_timeout if provided, otherwise use default self.timeout
             actual_read_timeout = read_timeout if read_timeout is not None else self.timeout
+
+            network_start = time.time()
             response = self.session.post(
                 url,
                 data=body,
                 headers=headers,
                 timeout=(self.connect_timeout, actual_read_timeout),
             )
+            network_time = time.time() - network_start
 
             elapsed = time.time() - start_time
 
@@ -851,6 +857,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 )
 
             # Decode response
+            decode_start = time.time()
             response_dict = decode_rpc_message(response.content)
             rpc_response = RPCResponse(
                 jsonrpc=response_dict.get("jsonrpc", "2.0"),
@@ -858,6 +865,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 result=response_dict.get("result"),
                 error=response_dict.get("error"),
             )
+            decode_time = time.time() - decode_start
 
             # Check for RPC error
             if rpc_response.error:
@@ -865,6 +873,14 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                     f"API call RPC error: {method} - {rpc_response.error.get('message')} ({elapsed:.3f}s)"
                 )
                 self._handle_rpc_error(rpc_response.error)
+
+            # Log detailed timing breakdown for grep operations
+            if method == "grep":
+                logger.warning(
+                    f"[CLIENT-PERF] {method}: total={elapsed * 1000:.0f}ms "
+                    f"(network={network_time * 1000:.0f}ms, decode={decode_time * 1000:.0f}ms, "
+                    f"response_size={len(response.content)} bytes)"
+                )
 
             logger.info(f"API call completed: {method} ({elapsed:.3f}s)")
             return rpc_response.result
@@ -1145,7 +1161,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         file_pattern: str | None = None,
         ignore_case: bool = False,
         max_results: int = 1000,
-        search_mode: str = "auto",  # noqa: ARG002
+        search_mode: str = "auto",
         context: Any = None,  # noqa: ARG002
     ) -> builtins.list[dict[str, Any]]:
         """Search file contents using regex patterns."""
@@ -1158,6 +1174,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "file_pattern": file_pattern,
                 "ignore_case": ignore_case,
                 "max_results": max_results,
+                "search_mode": search_mode,
             },
         )
         return result["results"]  # type: ignore[no-any-return]

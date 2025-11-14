@@ -975,6 +975,35 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("read", {"path": path, "return_metadata": return_metadata})
         return result  # type: ignore[no-any-return]
 
+    def read_bulk(
+        self,
+        paths: list[str],
+        context: Any = None,  # noqa: ARG002
+        return_metadata: bool = False,
+        skip_errors: bool = True,
+    ) -> dict[str, bytes | dict[str, Any] | None]:
+        """Read multiple files in a single RPC call for improved performance.
+
+        This method is optimized for bulk operations like grep, where many files
+        need to be read. It batches permission checks and reduces RPC overhead.
+
+        Args:
+            paths: List of virtual paths to read
+            context: Unused in remote client (handled server-side)
+            return_metadata: If True, return dicts with content and metadata
+            skip_errors: If True, skip files that can't be read and return None.
+                        If False, raise exception on first error.
+
+        Returns:
+            Dict mapping paths to file content (or metadata dicts if return_metadata=True).
+            Failed reads return None when skip_errors=True.
+        """
+        result = self._call_rpc(
+            "read_bulk",
+            {"paths": paths, "return_metadata": return_metadata, "skip_errors": skip_errors},
+        )
+        return result  # type: ignore[no-any-return]
+
     def stream(self, path: str, chunk_size: int = 8192, context: Any = None) -> Any:  # noqa: ARG002
         """Stream file content in chunks.
 

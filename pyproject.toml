@@ -104,6 +104,9 @@ test = [
     "pytest-benchmark>=4.0.0",
     "pytest-xdist>=3.5.0",  # Parallel test execution
     "freezegun>=1.4.0",  # Time mocking for tests
+    # LangGraph integration tests
+    "langchain-core>=0.3.0",
+    "langgraph>=0.2.0",
 ]
 
 fuse = [

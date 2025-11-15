@@ -69,9 +69,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+fast = [
+    # Rust-accelerated grep (30-100x faster than Python regex)
+    # Pre-built wheels available for Linux/macOS/Windows on x86_64 and aarch64
+    "nexus-fast>=0.1.0",
+]
+
 performance = [
     # Fast JSON serialization (2-3x faster than stdlib json)
     "orjson>=3.9.0",
+    # Include Rust acceleration
+    "nexus-fast>=0.1.0",
 ]
 
 dev = [
@@ -160,6 +168,8 @@ all = [
     "sqlite-vec>=0.1.0",
     "pgvector>=0.3.0",
     "openai>=1.0.0",
+    "orjson>=3.9.0",
+    "nexus-fast>=0.1.0",
 ]
 
 [project.urls]

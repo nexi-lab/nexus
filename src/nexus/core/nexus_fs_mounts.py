@@ -45,7 +45,7 @@ class NexusFSMountsMixin:
 
         Args:
             mount_point: Virtual path where backend is mounted (e.g., "/personal/alice")
-            backend_type: Backend type - "local", "gcs", "google_drive", etc.
+            backend_type: Backend type - "local", "gcs", "gcs_connector", "google_drive", etc.
             backend_config: Backend-specific configuration dict
             priority: Mount priority - higher values take precedence (default: 0)
             readonly: Whether mount is read-only (default: False)
@@ -58,7 +58,7 @@ class NexusFSMountsMixin:
             RuntimeError: If backend type is not supported
 
         Examples:
-            >>> # Add personal GCS mount
+            >>> # Add personal GCS mount (CAS-based)
             >>> mount_id = nx.add_mount(
             ...     mount_point="/personal/alice",
             ...     backend_type="gcs",
@@ -67,6 +67,17 @@ class NexusFSMountsMixin:
             ...         "project_id": "my-project"
             ...     },
             ...     priority=10
+            ... )
+
+            >>> # Add GCS connector mount (direct path mapping for external buckets)
+            >>> mount_id = nx.add_mount(
+            ...     mount_point="/workspace/gdrive",
+            ...     backend_type="gcs_connector",
+            ...     backend_config={
+            ...         "bucket": "my-external-bucket",
+            ...         "project_id": "my-project",
+            ...         "prefix": "workspace"  # Optional prefix in bucket
+            ...     }
             ... )
 
             >>> # Add local shared mount
@@ -90,6 +101,15 @@ class NexusFSMountsMixin:
                 bucket_name=backend_config["bucket"],
                 project_id=backend_config.get("project_id"),
                 credentials_path=backend_config.get("credentials_path"),
+            )
+        elif backend_type == "gcs_connector":
+            from nexus.backends.gcs_connector import GCSConnectorBackend
+
+            backend = GCSConnectorBackend(
+                bucket_name=backend_config["bucket"],
+                project_id=backend_config.get("project_id"),
+                credentials_path=backend_config.get("credentials_path"),
+                prefix=backend_config.get("prefix", ""),
             )
         else:
             raise RuntimeError(f"Unsupported backend type: {backend_type}")

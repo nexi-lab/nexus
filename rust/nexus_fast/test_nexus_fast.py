@@ -178,6 +178,74 @@ def test_negative_case() -> None:
     print("  ✓ Passed")
 
 
+def test_single_permission_check() -> None:
+    """Test compute_permission_single function"""
+    print("\nTest 6: Single permission check (new function)...")
+
+    tuples = [
+        {
+            "subject_type": "user",
+            "subject_id": "alice",
+            "subject_relation": None,
+            "relation": "read",
+            "object_type": "file",
+            "object_id": "doc1",
+        }
+    ]
+
+    namespace_configs: dict[str, Any] = {}
+
+    result = nexus_fast.compute_permission_single(
+        "user", "alice", "read", "file", "doc1", tuples, namespace_configs
+    )
+    print(f"  Result: {result}")
+    assert result is True
+    print("  ✓ Passed")
+
+
+def test_single_with_hierarchy() -> None:
+    """Test single check with parent hierarchy"""
+    print("\nTest 7: Single permission with parent hierarchy...")
+
+    tuples = [
+        # doc1 is in folder1
+        {
+            "subject_type": "file",
+            "subject_id": "doc1",
+            "subject_relation": None,
+            "relation": "parent",
+            "object_type": "folder",
+            "object_id": "folder1",
+        },
+        # alice can read folder1
+        {
+            "subject_type": "user",
+            "subject_id": "alice",
+            "subject_relation": None,
+            "relation": "read",
+            "object_type": "folder",
+            "object_id": "folder1",
+        },
+    ]
+
+    namespace_configs = {
+        "file": {
+            "relations": {
+                "read": {"tupleToUserset": {"tupleset": "parent", "computedUserset": "read"}}
+            },
+            "permissions": {},
+        },
+        "folder": {"relations": {"read": "direct"}, "permissions": {}},
+    }
+
+    result = nexus_fast.compute_permission_single(
+        "user", "alice", "read", "file", "doc1", tuples, namespace_configs
+    )
+    print(f"  Result: {result}")
+    assert result is True
+    print("  ✓ Passed")
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("Testing nexus_fast Rust extension")
@@ -188,6 +256,8 @@ if __name__ == "__main__":
     test_tuple_to_userset()
     test_bulk_performance()
     test_negative_case()
+    test_single_permission_check()
+    test_single_with_hierarchy()
 
     print("\n" + "=" * 60)
     print("All tests passed! ✓")

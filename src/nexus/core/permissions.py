@@ -76,6 +76,7 @@ class OperationContext:
         tenant_id: Tenant/organization ID for multi-tenant isolation (optional)
         is_admin: Whether the subject has admin privileges
         is_system: Whether this is a system operation (bypasses all checks)
+        backend_path: Backend-relative path for connector backends (optional)
 
     Examples:
         >>> # Human user context
@@ -114,6 +115,9 @@ class OperationContext:
     # P0-2: Subject-based identity
     subject_type: str = "user"  # Default to "user" for backward compatibility
     subject_id: str | None = None  # If None, uses self.user
+
+    # Backend path for path-based connectors (GCS, Stripe, etc.)
+    backend_path: str | None = None  # Backend-relative path for connector backends
 
     def __post_init__(self) -> None:
         """Validate context and apply defaults."""

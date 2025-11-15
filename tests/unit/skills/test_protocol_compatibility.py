@@ -134,6 +134,10 @@ def test_nexus_fs_satisfies_protocol() -> None:
             assert callable(getattr(fs, "mkdir", None))
             assert callable(getattr(fs, "rmdir", None))
             assert callable(getattr(fs, "is_directory", None))
+            assert callable(getattr(fs, "add_mount", None))
+            assert callable(getattr(fs, "remove_mount", None))
+            assert callable(getattr(fs, "list_mounts", None))
+            assert callable(getattr(fs, "get_mount", None))
             assert callable(getattr(fs, "close", None))
 
         # This should pass without errors
@@ -323,6 +327,20 @@ def test_protocol_runtime_checkable() -> None:
 
             def sandbox_disconnect(self, sandbox_id, mount_path, context=None):
                 return {}
+
+            def add_mount(
+                self, mount_point, backend_type, backend_config, priority=0, readonly=False
+            ):
+                return "mount_id"
+
+            def remove_mount(self, mount_point):
+                return True
+
+            def list_mounts(self):
+                return []
+
+            def get_mount(self, mount_point):
+                return None
 
             def close(self) -> None:
                 pass

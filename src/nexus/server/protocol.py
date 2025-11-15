@@ -1003,6 +1003,46 @@ class SandboxDisconnectParams:
     context: dict | None = None
 
 
+# Mount management parameters (v0.5.6 - Issue #313)
+@dataclass
+class AddMountParams:
+    """Parameters for add_mount() method."""
+
+    mount_point: str
+    backend_type: str
+    backend_config: dict[str, Any]
+    priority: int = 0
+    readonly: bool = False
+
+
+@dataclass
+class RemoveMountParams:
+    """Parameters for remove_mount() method."""
+
+    mount_point: str
+
+
+@dataclass
+class ListMountsParams:
+    """Parameters for list_mounts() method."""
+
+    pass
+
+
+@dataclass
+class GetMountParams:
+    """Parameters for get_mount() method."""
+
+    mount_point: str
+
+
+@dataclass
+class HasMountParams:
+    """Parameters for has_mount() method."""
+
+    mount_point: str
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -1087,6 +1127,12 @@ METHOD_PARAMS = {
     "sandbox_get_or_create": SandboxGetOrCreateParams,  # Issue #396
     "sandbox_connect": SandboxConnectParams,  # Issue #371
     "sandbox_disconnect": SandboxDisconnectParams,  # Issue #371
+    # Mount management methods (v0.5.6 - Issue #313)
+    "add_mount": AddMountParams,
+    "remove_mount": RemoveMountParams,
+    "list_mounts": ListMountsParams,
+    "get_mount": GetMountParams,
+    "has_mount": HasMountParams,
 }
 
 

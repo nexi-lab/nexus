@@ -912,6 +912,66 @@ class NexusFilesystem(Protocol):
         ...
 
     # ============================================================
+    # Mount Operations
+    # ============================================================
+
+    def add_mount(
+        self,
+        mount_point: str,
+        backend_type: str,
+        backend_config: dict[str, Any],
+        priority: int = 0,
+        readonly: bool = False,
+    ) -> str:
+        """Add a dynamic backend mount to the filesystem.
+
+        Args:
+            mount_point: Virtual path where backend is mounted
+            backend_type: Backend type (e.g., "local", "gcs", "gcs_connector")
+            backend_config: Backend-specific configuration dict
+            priority: Mount priority (higher values take precedence)
+            readonly: Whether mount is read-only
+
+        Returns:
+            Mount ID (unique identifier for this mount)
+
+        Raises:
+            ValueError: If mount_point already exists or configuration is invalid
+            RuntimeError: If backend type is not supported
+        """
+        ...
+
+    def remove_mount(self, mount_point: str) -> bool:
+        """Remove a backend mount from the filesystem.
+
+        Args:
+            mount_point: Virtual path of mount to remove
+
+        Returns:
+            True if mount was removed, False if mount not found
+        """
+        ...
+
+    def list_mounts(self) -> builtins.list[dict[str, Any]]:
+        """List all active backend mounts.
+
+        Returns:
+            List of mount info dictionaries with mount_point, priority, readonly, backend_type
+        """
+        ...
+
+    def get_mount(self, mount_point: str) -> dict[str, Any] | None:
+        """Get details about a specific mount.
+
+        Args:
+            mount_point: Virtual path of mount
+
+        Returns:
+            Mount info dict if found, None otherwise
+        """
+        ...
+
+    # ============================================================
     # Lifecycle Management
     # ============================================================
 

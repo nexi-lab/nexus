@@ -241,7 +241,13 @@ class NexusFSCoreMixin:
             if meta is None or meta.etag is None:
                 raise NexusFileNotFoundError(original_path)
 
-            original_content = route.backend.read_content(meta.etag, context=context)
+            # Add backend_path to context for path-based connectors
+            read_context = context
+            if context:
+                from dataclasses import replace
+
+                read_context = replace(context, backend_path=route.backend_path)
+            original_content = route.backend.read_content(meta.etag, context=read_context)
 
             # Apply dynamic_viewer filtering for CSV files before parsing
             original_content = self._apply_dynamic_viewer_filter_if_needed(
@@ -278,7 +284,19 @@ class NexusFSCoreMixin:
             raise NexusFileNotFoundError(path)
 
         # Read from routed backend using content hash
-        content = route.backend.read_content(meta.etag, context=context)
+        # Add backend_path to context for path-based connectors
+        from dataclasses import replace
+
+        if context:
+            read_context = replace(context, backend_path=route.backend_path)
+        else:
+            # Create minimal context with just backend_path for connectors
+            from nexus.core.permissions import OperationContext
+
+            read_context = OperationContext(
+                user="anonymous", groups=[], backend_path=route.backend_path
+            )
+        content = route.backend.read_content(meta.etag, context=read_context)
 
         # Apply dynamic_viewer filtering for CSV files
         content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
@@ -414,7 +432,13 @@ class NexusFSCoreMixin:
                 )
 
                 # Read content
-                content = route.backend.read_content(meta.etag, context=context)
+                # Add backend_path to context for path-based connectors
+                read_context = context
+                if context:
+                    from dataclasses import replace
+
+                    read_context = replace(context, backend_path=route.backend_path)
+                content = route.backend.read_content(meta.etag, context=read_context)
 
                 # Apply filtering if needed
                 content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
@@ -657,6 +681,17 @@ class NexusFSCoreMixin:
                     )
 
         # Write to routed backend - returns content hash
+        # Add backend_path to context for path-based connectors
+        from dataclasses import replace
+
+        if context:
+            # Create new context with backend_path populated
+            context = replace(context, backend_path=route.backend_path)
+        else:
+            # Create minimal context with just backend_path for connectors
+            from nexus.core.permissions import OperationContext
+
+            context = OperationContext(user="anonymous", groups=[], backend_path=route.backend_path)
         content_hash = route.backend.write_content(content, context=context)
 
         # NOTE: Do NOT delete old content when updating a file!

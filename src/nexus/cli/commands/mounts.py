@@ -5,6 +5,10 @@ Commands for managing persistent mount configurations:
 - nexus mounts remove - Remove a mount
 - nexus mounts list - List all mounts
 - nexus mounts info - Show mount details
+
+Note: All commands work with both local and remote Nexus instances.
+For remote servers, commands call the RPC API (add_mount, remove_mount, etc.).
+For local instances, commands interact directly with the NexusFS methods.
 """
 
 from __future__ import annotations
@@ -59,7 +63,6 @@ def mounts_group() -> None:
 @click.option("--readonly", is_flag=True, help="Mount as read-only")
 @click.option("--owner", type=str, default=None, help="Owner user ID")
 @click.option("--tenant", type=str, default=None, help="Tenant ID")
-@click.option("--description", type=str, default=None, help="Mount description")
 @add_backend_options
 def add_mount(
     mount_point: str,
@@ -69,7 +72,6 @@ def add_mount(
     readonly: bool,
     owner: str | None,
     tenant: str | None,
-    description: str | None,
     backend_config: BackendConfig,
 ) -> None:
     """Add a new backend mount.
@@ -91,11 +93,9 @@ def add_mount(
 
         # Mount with ownership
         nexus mounts add /personal/alice google_drive '{"access_token":"..."}' \\
-            --owner "google:alice123" --tenant "acme" --description "Alice's Google Drive"
+            --owner "google:alice123" --tenant "acme"
     """
     try:
-        from nexus.core.mount_manager import MountManager
-
         # Parse backend config JSON
         try:
             config_dict = json.loads(config_json)
@@ -103,39 +103,27 @@ def add_mount(
             console.print(f"[red]Error:[/red] Invalid JSON in config_json: {e}")
             sys.exit(1)
 
-        # Get filesystem
+        # Get filesystem (works with both local and remote)
         nx = get_filesystem(backend_config)
 
-        # Get mount manager
-        if not hasattr(nx, "metadata") or not hasattr(nx.metadata, "SessionLocal"):
-            console.print(
-                "[red]Error:[/red] Mount persistence requires a NexusFS instance with metadata store"
+        # Call add_mount - works for both RemoteNexusFS (RPC) and NexusFS (local)
+        console.print("[yellow]Adding mount...[/yellow]")
+
+        try:
+            mount_id = nx.add_mount(
+                mount_point=mount_point,
+                backend_type=backend_type,
+                backend_config=config_dict,
+                priority=priority,
+                readonly=readonly,
             )
+            console.print(f"[green]✓[/green] Mount added successfully (ID: {mount_id})")
+        except AttributeError:
+            # Fallback for older NexusFS that doesn't have add_mount
+            # This shouldn't happen in normal usage
+            console.print("[red]Error:[/red] This Nexus instance doesn't support dynamic mounts")
+            console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
             sys.exit(1)
-
-        manager = MountManager(nx.metadata.SessionLocal)
-
-        # Save mount to database
-        console.print("[yellow]Saving mount configuration...[/yellow]")
-        mount_id = manager.save_mount(
-            mount_point=mount_point,
-            backend_type=backend_type,
-            backend_config=config_dict,
-            priority=priority,
-            readonly=readonly,
-            owner_user_id=owner,
-            tenant_id=tenant,
-            description=description,
-        )
-
-        console.print(f"[green]✓[/green] Mount configuration saved (ID: {mount_id})")
-
-        # Try to mount immediately
-        # Note: This requires a backend factory - for now we just save to DB
-        # The mount will be restored on next server restart
-        console.print(
-            "[yellow]Note:[/yellow] Mount saved to database. Restart server or use programmatic API to activate."
-        )
 
         console.print()
         console.print("[bold cyan]Mount Details:[/bold cyan]")
@@ -169,29 +157,22 @@ def remove_mount(mount_point: str, backend_config: BackendConfig) -> None:
         nexus mounts remove /cloud/bucket
     """
     try:
-        from nexus.core.mount_manager import MountManager
-
-        # Get filesystem
+        # Get filesystem (works with both local and remote)
         nx = get_filesystem(backend_config)
 
-        # Get mount manager
-        if not hasattr(nx, "metadata") or not hasattr(nx.metadata, "SessionLocal"):
-            console.print(
-                "[red]Error:[/red] Mount persistence requires a NexusFS instance with metadata store"
-            )
-            sys.exit(1)
-
-        manager = MountManager(nx.metadata.SessionLocal)
-
-        # Remove from database
+        # Call remove_mount - works for both RemoteNexusFS (RPC) and NexusFS (local)
         console.print(f"[yellow]Removing mount at {mount_point}...[/yellow]")
-        if manager.remove_mount(mount_point):
-            console.print("[green]✓[/green] Mount removed from database")
-            console.print(
-                "[yellow]Note:[/yellow] Restart server or use programmatic API to deactivate."
-            )
-        else:
-            console.print(f"[red]Error:[/red] Mount not found: {mount_point}")
+
+        try:
+            success = nx.remove_mount(mount_point)
+            if success:
+                console.print("[green]✓[/green] Mount removed successfully")
+            else:
+                console.print(f"[red]Error:[/red] Mount not found: {mount_point}")
+                sys.exit(1)
+        except AttributeError:
+            console.print("[red]Error:[/red] This Nexus instance doesn't support dynamic mounts")
+            console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
             sys.exit(1)
 
     except Exception as e:
@@ -225,31 +206,26 @@ def list_mounts(
         nexus mounts list --json
     """
     try:
-        from nexus.core.mount_manager import MountManager
-
-        # Get filesystem
+        # Get filesystem (works with both local and remote)
         nx = get_filesystem(backend_config)
 
-        # Get mount manager
-        if not hasattr(nx, "metadata") or not hasattr(nx.metadata, "SessionLocal"):
-            console.print(
-                "[red]Error:[/red] Mount persistence requires a NexusFS instance with metadata store"
-            )
+        # Call list_mounts - works for both RemoteNexusFS (RPC) and NexusFS (local)
+        try:
+            mounts = nx.list_mounts()
+        except AttributeError:
+            console.print("[red]Error:[/red] This Nexus instance doesn't support listing mounts")
+            console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
             sys.exit(1)
 
-        manager = MountManager(nx.metadata.SessionLocal)
-
-        # Get mounts
-        mounts = manager.list_mounts(owner_user_id=owner, tenant_id=tenant)
+        # Note: owner/tenant filtering not yet supported in remote mode
+        if owner or tenant:
+            console.print(
+                "[yellow]Warning:[/yellow] Filtering by owner/tenant not yet supported. Showing all mounts."
+            )
 
         if output_json:
             # Output as JSON
             import json as json_lib
-
-            # Convert datetime to string for JSON serialization
-            for m in mounts:
-                m["created_at"] = m["created_at"].isoformat() if m["created_at"] else None
-                m["updated_at"] = m["updated_at"].isoformat() if m["updated_at"] else None
 
             console.print(json_lib.dumps(mounts, indent=2))
         else:
@@ -258,24 +234,15 @@ def list_mounts(
                 console.print("[yellow]No mounts found[/yellow]")
                 return
 
-            console.print(f"\n[bold cyan]Persisted Mounts ({len(mounts)} total)[/bold cyan]\n")
+            console.print(f"\n[bold cyan]Active Mounts ({len(mounts)} total)[/bold cyan]\n")
 
             for mount in mounts:
                 console.print(f"[bold]{mount['mount_point']}[/bold]")
-                console.print(f"  Backend Type: [cyan]{mount['backend_type']}[/cyan]")
+                console.print(
+                    f"  Backend Type: [cyan]{mount.get('backend_type', 'unknown')}[/cyan]"
+                )
                 console.print(f"  Priority: [cyan]{mount['priority']}[/cyan]")
                 console.print(f"  Read-Only: [cyan]{'Yes' if mount['readonly'] else 'No'}[/cyan]")
-
-                if mount["owner_user_id"]:
-                    console.print(f"  Owner: [cyan]{mount['owner_user_id']}[/cyan]")
-
-                if mount["tenant_id"]:
-                    console.print(f"  Tenant: [cyan]{mount['tenant_id']}[/cyan]")
-
-                if mount["description"]:
-                    console.print(f"  Description: {mount['description']}")
-
-                console.print(f"  Created: {mount['created_at'].strftime('%Y-%m-%d %H:%M:%S')}")
                 console.print()
 
     except Exception as e:
@@ -296,22 +263,16 @@ def mount_info(mount_point: str, show_config: bool, backend_config: BackendConfi
         nexus mounts info /cloud/bucket --show-config
     """
     try:
-        from nexus.core.mount_manager import MountManager
-
-        # Get filesystem
+        # Get filesystem (works with both local and remote)
         nx = get_filesystem(backend_config)
 
-        # Get mount manager
-        if not hasattr(nx, "metadata") or not hasattr(nx.metadata, "SessionLocal"):
-            console.print(
-                "[red]Error:[/red] Mount persistence requires a NexusFS instance with metadata store"
-            )
+        # Call get_mount - works for both RemoteNexusFS (RPC) and NexusFS (local)
+        try:
+            mount = nx.get_mount(mount_point)
+        except AttributeError:
+            console.print("[red]Error:[/red] This Nexus instance doesn't support mount info")
+            console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
             sys.exit(1)
-
-        manager = MountManager(nx.metadata.SessionLocal)
-
-        # Get mount
-        mount = manager.get_mount(mount_point)
 
         if not mount:
             console.print(f"[red]Error:[/red] Mount not found: {mount_point}")
@@ -320,35 +281,14 @@ def mount_info(mount_point: str, show_config: bool, backend_config: BackendConfi
         # Display mount info
         console.print(f"\n[bold cyan]Mount Information: {mount_point}[/bold cyan]\n")
 
-        console.print(f"[bold]Mount ID:[/bold] {mount['mount_id']}")
-        console.print(f"[bold]Backend Type:[/bold] {mount['backend_type']}")
+        console.print(f"[bold]Backend Type:[/bold] {mount.get('backend_type', 'unknown')}")
         console.print(f"[bold]Priority:[/bold] {mount['priority']}")
         console.print(f"[bold]Read-Only:[/bold] {'Yes' if mount['readonly'] else 'No'}")
 
-        if mount["owner_user_id"]:
-            console.print(f"[bold]Owner:[/bold] {mount['owner_user_id']}")
-
-        if mount["tenant_id"]:
-            console.print(f"[bold]Tenant:[/bold] {mount['tenant_id']}")
-
-        if mount["description"]:
-            console.print(f"[bold]Description:[/bold] {mount['description']}")
-
-        console.print(
-            f"[bold]Created:[/bold] {mount['created_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}"
-        )
-        console.print(
-            f"[bold]Updated:[/bold] {mount['updated_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}"
-        )
-
+        # Note: show_config not supported yet for active mounts (config not returned by router)
         if show_config:
-            console.print("\n[bold]Backend Configuration:[/bold]")
-            import json as json_lib
-
-            console.print(json_lib.dumps(mount["backend_config"], indent=2))
-        else:
             console.print(
-                "\n[dim]Use --show-config to display backend configuration (may contain secrets)[/dim]"
+                "\n[yellow]Note:[/yellow] Backend configuration display not yet supported for active mounts"
             )
 
         console.print()

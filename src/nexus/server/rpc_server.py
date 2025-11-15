@@ -302,7 +302,6 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         Returns:
             OperationContext or None if no authentication
         """
-        from nexus.core.permissions import OperationContext
 
         # Extract from auth provider if available
         if self.auth_provider:
@@ -358,15 +357,18 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         subject_type = result.subject_type
                         subject_id = result.subject_id
 
-                    return OperationContext(
-                        user=user_id,  # Owner (human user)
-                        user_id=user_id,  # v0.5.0: Explicit owner tracking
+                    # Use EnhancedOperationContext for ReBAC/permission support
+                    from nexus.core.permissions_enhanced import EnhancedOperationContext
+
+                    return EnhancedOperationContext(
+                        user=user_id,  # Owner (human user) - LEGACY field
                         agent_id=agent_id,  # v0.5.0: Agent identity (if present)
                         subject_type=subject_type,  # Subject for permission checks
                         subject_id=subject_id,  # Subject ID for permission checks
                         tenant_id=result.tenant_id,
                         is_admin=result.is_admin,
                         groups=[],  # TODO: Extract groups from auth result if available
+                        admin_capabilities=set(),  # P0-4: Admin capabilities
                     )
 
         # Check for explicit subject header (for backward compatibility)
@@ -374,11 +376,15 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         if subject_header:
             parts = subject_header.split(":", 1)
             if len(parts) == 2:
-                return OperationContext(
+                # Use EnhancedOperationContext for ReBAC/permission support
+                from nexus.core.permissions_enhanced import EnhancedOperationContext
+
+                return EnhancedOperationContext(
                     user=parts[1],  # Required
                     subject_type=parts[0],
                     subject_id=parts[1],
                     groups=[],
+                    admin_capabilities=set(),
                 )
 
         # No authentication - return None to use default context

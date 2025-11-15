@@ -429,6 +429,9 @@ class EnhancedOperationContext:
     subject_type: str = "user"
     subject_id: str | None = None
 
+    # Backend path for path-based connectors (GCS, Stripe, etc.)
+    backend_path: str | None = None  # Backend-relative path for connector backends
+
     def __post_init__(self) -> None:
         """Validate context and apply P0-2 subject defaults."""
         # P0-2: If subject_id not provided, use user field for backward compatibility

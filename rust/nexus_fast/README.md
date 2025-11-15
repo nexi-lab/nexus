@@ -43,18 +43,42 @@ All operations use GIL-free computation for true parallel execution with zero-co
 
 ## Installation
 
-### Option 1: Use Without Rust (Automatic Fallback)
+### Automatic Installation (Recommended)
 
-When you install Nexus from PyPI, the Rust extension is **optional**. If not available, Nexus automatically falls back to Python implementations:
+Starting with version 0.5.6+, pre-built Rust wheels are available on PyPI:
 
 ```bash
+# Install with Rust acceleration (recommended - 30-100x faster grep)
+pip install nexus-ai-fs[fast]
+
+# Or install all optional dependencies (includes Rust acceleration)
+pip install nexus-ai-fs[all]
+
+# Or install all performance optimizations
+pip install nexus-ai-fs[performance]
+
+# Base installation (no Rust acceleration)
 pip install nexus-ai-fs
-# Grep will use Python regex (still fast, just 30x slower)
 ```
 
-### Option 2: Build Rust Extension for Maximum Performance
+Pre-built wheels are available for:
+- **Linux**: x86_64, aarch64 (ARM64)
+- **macOS**: x86_64 (Intel), aarch64 (Apple Silicon)
+- **Windows**: x86_64
 
-For 30-100x speedup on grep operations:
+If a pre-built wheel is not available for your platform, Nexus will automatically fall back to Python implementations.
+
+#### Verify Installation
+
+```python
+from nexus.core import grep_fast
+
+print(grep_fast.is_available())  # Should print True if Rust extension is available
+```
+
+### Manual Build (Development Only)
+
+Only needed for development or unsupported platforms:
 
 #### Prerequisites
 
@@ -76,18 +100,10 @@ maturin build --release
 pip install target/wheels/*.whl
 ```
 
-#### Verify Installation
-
-```python
-from nexus.core import grep_fast
-
-print(grep_fast.is_available())  # Should print True
-```
-
-**Note:** The Rust extension must be rebuilt after:
-- Pulling new code changes
-- Switching branches with Rust changes
-- Updating Rust toolchain
+**Note:** Manual builds are only needed when:
+- Developing/modifying the Rust code
+- Using an unsupported platform
+- Pre-built wheels are not available
 
 ## Usage
 

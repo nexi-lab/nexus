@@ -160,6 +160,7 @@ all = [
     "sqlite-vec>=0.1.0",
     "pgvector>=0.3.0",
     "openai>=1.0.0",
+    "orjson>=3.9.0",
 ]
 
 [project.urls]
@@ -174,11 +175,14 @@ Changelog = "https://github.com/nexi-lab/nexus/blob/main/CHANGELOG.md"
 nexus = "nexus.cli:main"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/nexus"]
+[tool.maturin]
+python-source = "src"
+module-name = "nexus._nexus_fast"
+# Build Rust extension as optional - pure Python wheel will work without it
+features = ["pyo3/extension-module"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

@@ -10,8 +10,8 @@ permissions:
   id-token: write
 
 jobs:
-  build-rust-wheels:
-    name: Build Rust wheels for ${{ matrix.platform.target }}
+  build-wheels:
+    name: Build wheels for ${{ matrix.platform.target }}
     runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
@@ -53,9 +53,6 @@ jobs:
         with:
           targets: ${{ matrix.platform.target }}
 
-      - name: Install maturin
-        run: pip install maturin
-
       - name: Build wheels (Linux aarch64)
         if: matrix.platform.target == 'aarch64-unknown-linux-gnu'
         uses: PyO3/maturin-action@v1
@@ -63,13 +60,12 @@ jobs:
           target: ${{ matrix.platform.target }}
           manylinux: auto
           args: --release --out dist
-          working-directory: rust/nexus_fast
 
       - name: Build wheels (other platforms)
         if: matrix.platform.target != 'aarch64-unknown-linux-gnu'
         run: |
-          cd rust/nexus_fast
-          maturin build --release --target ${{ matrix.platform.target }} --out ../../dist
+          pip install maturin
+          maturin build --release --target ${{ matrix.platform.target }} --out dist
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -78,8 +74,8 @@ jobs:
           path: dist/*.whl
           if-no-files-found: error
 
-  build-python-package:
-    name: Build Python package
+  build-sdist:
+    name: Build source distribution
     runs-on: ubuntu-latest
 
     steps:
@@ -93,23 +89,21 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-
-      - name: Build package
+      - name: Build sdist
         run: |
-          uv build
+          pip install maturin
+          maturin sdist --out dist
 
-      - name: Upload distribution
+      - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
-          name: python-package
-          path: dist/*
+          name: sdist
+          path: dist/*.tar.gz
           if-no-files-found: error
 
   publish:
     name: Publish to PyPI
-    needs: [build-rust-wheels, build-python-package]
+    needs: [build-wheels, build-sdist]
     runs-on: ubuntu-latest
 
     steps:
@@ -124,9 +118,9 @@ jobs:
       - name: Collect all distributions
         run: |
           mkdir -p dist
-          # Copy Python package
-          cp artifacts/python-package/* dist/ 2>/dev/null || true
-          # Copy all Rust wheels
+          # Copy source distribution
+          cp artifacts/sdist/* dist/ 2>/dev/null || true
+          # Copy all wheels
           find artifacts -name "*.whl" -exec cp {} dist/ \;
           ls -lh dist/
 

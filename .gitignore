@@ -91,6 +91,10 @@ cython_debug/
 # uv
 .uv/
 
+# Rust
+target/
+Cargo.lock
+
 # Nexus specific data directories
 nexus-data/
 nexus-workspace/

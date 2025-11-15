@@ -62,6 +62,87 @@ type MemoCache = AHashMap<(String, String, String, String, String), bool>;
 /// Permission check request: (subject_type, subject_id, permission, object_type, object_id)
 type CheckRequest = (String, String, String, String, String);
 
+/// Key for tuple index: (object_type, object_id, relation, subject_type, subject_id)
+type TupleKey = (String, String, String, String, String);
+
+/// Key for adjacency list: (subject_type, subject_id, relation)
+type AdjacencyKey = (String, String, String);
+
+/// Graph indexing structure for fast lookups
+#[derive(Debug, Clone)]
+struct ReBACGraph {
+    /// Hash index for direct tuple lookups: O(1) instead of O(n)
+    /// Key: (object_type, object_id, relation, subject_type, subject_id)
+    tuple_index: AHashMap<TupleKey, bool>,
+
+    /// Adjacency list for finding related objects: O(1) instead of O(n)
+    /// Key: (subject_type, subject_id, relation)
+    /// Value: List of objects related via that relation
+    adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>>,
+}
+
+impl ReBACGraph {
+    /// Build graph indexes from tuples for fast lookups
+    fn from_tuples(tuples: &[ReBACTuple]) -> Self {
+        let mut tuple_index = AHashMap::new();
+        let mut adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
+
+        for tuple in tuples {
+            // Build tuple index for direct relation checks
+            let tuple_key = (
+                tuple.object_type.clone(),
+                tuple.object_id.clone(),
+                tuple.relation.clone(),
+                tuple.subject_type.clone(),
+                tuple.subject_id.clone(),
+            );
+            tuple_index.insert(tuple_key, true);
+
+            // Build adjacency list for finding related objects
+            // This is used for tupleToUserset traversal
+            let adj_key = (
+                tuple.subject_type.clone(),
+                tuple.subject_id.clone(),
+                tuple.relation.clone(),
+            );
+            adjacency_list.entry(adj_key).or_default().push(Entity {
+                entity_type: tuple.object_type.clone(),
+                entity_id: tuple.object_id.clone(),
+            });
+        }
+
+        ReBACGraph {
+            tuple_index,
+            adjacency_list,
+        }
+    }
+
+    /// Check for direct relation in O(1) time using hash index
+    fn check_direct_relation(&self, subject: &Entity, relation: &str, object: &Entity) -> bool {
+        let tuple_key = (
+            object.entity_type.clone(),
+            object.entity_id.clone(),
+            relation.to_string(),
+            subject.entity_type.clone(),
+            subject.entity_id.clone(),
+        );
+        self.tuple_index.contains_key(&tuple_key)
+    }
+
+    /// Find related objects in O(1) time using adjacency list
+    fn find_related_objects(&self, object: &Entity, relation: &str) -> Vec<Entity> {
+        let adj_key = (
+            object.entity_type.clone(),
+            object.entity_id.clone(),
+            relation.to_string(),
+        );
+        self.adjacency_list
+            .get(&adj_key)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
 /// Main function: compute permissions in bulk using Rust
 #[pyfunction]
 fn compute_permissions_bulk<'py>(
@@ -128,6 +209,9 @@ fn compute_permissions_bulk<'py>(
         let mut results = AHashMap::new();
         let mut memo_cache: MemoCache = AHashMap::new();
 
+        // Build graph indexes once for all checks - massive speedup!
+        let graph = ReBACGraph::from_tuples(&rebac_tuples);
+
         for check in check_requests {
             let (subject_type, subject_id, permission, object_type, object_id) = &check;
 
@@ -145,7 +229,7 @@ fn compute_permissions_bulk<'py>(
                 &subject,
                 permission,
                 &object,
-                &rebac_tuples,
+                &graph,
                 &namespaces,
                 &mut memo_cache,
                 &mut AHashSet::new(),
@@ -173,7 +257,7 @@ fn compute_permission(
     subject: &Entity,
     permission: &str,
     object: &Entity,
-    tuples: &[ReBACTuple],
+    graph: &ReBACGraph,
     namespaces: &AHashMap<String, NamespaceConfig>,
     memo_cache: &mut MemoCache,
     visited: &mut AHashSet<(String, String, String, String, String)>,
@@ -208,8 +292,8 @@ fn compute_permission(
     let namespace = match namespaces.get(&object.entity_type) {
         Some(ns) => ns,
         None => {
-            // No namespace, check direct relation
-            let result = check_direct_relation(subject, permission, object, tuples);
+            // No namespace, check direct relation using O(1) graph index
+            let result = graph.check_direct_relation(subject, permission, object);
             memo_cache.insert(memo_key, result);
             return result;
         }
@@ -224,7 +308,7 @@ fn compute_permission(
                 subject,
                 userset,
                 object,
-                tuples,
+                graph,
                 namespaces,
                 memo_cache,
                 &mut visited.clone(),
@@ -240,7 +324,8 @@ fn compute_permission(
         match relation_config {
             RelationConfig::Direct(_) | RelationConfig::EmptyDict(_) => {
                 // Both "direct" string and {} empty dict mean direct relation
-                check_direct_relation(subject, permission, object, tuples)
+                // Use O(1) graph index instead of O(n) scan
+                graph.check_direct_relation(subject, permission, object)
             }
             RelationConfig::Union { union } => {
                 // Union (OR semantics)
@@ -250,7 +335,7 @@ fn compute_permission(
                         subject,
                         rel,
                         object,
-                        tuples,
+                        graph,
                         namespaces,
                         memo_cache,
                         &mut visited.clone(),
@@ -263,9 +348,9 @@ fn compute_permission(
                 allowed
             }
             RelationConfig::TupleToUserset { tuple_to_userset } => {
-                // TupleToUserset: find related objects, check permission on them
+                // TupleToUserset: find related objects using O(1) adjacency list
                 let related_objects =
-                    find_related_objects(object, &tuple_to_userset.tupleset, tuples);
+                    graph.find_related_objects(object, &tuple_to_userset.tupleset);
 
                 let mut allowed = false;
                 for related_obj in related_objects {
@@ -273,7 +358,7 @@ fn compute_permission(
                         subject,
                         &tuple_to_userset.computed_userset,
                         &related_obj,
-                        tuples,
+                        graph,
                         namespaces,
                         memo_cache,
                         &mut visited.clone(),
@@ -294,43 +379,80 @@ fn compute_permission(
     result
 }
 
-/// Check for direct relation in tuple graph
-fn check_direct_relation(
-    subject: &Entity,
-    relation: &str,
-    object: &Entity,
-    tuples: &[ReBACTuple],
-) -> bool {
-    for tuple in tuples {
-        if tuple.object_type == object.entity_type
-            && tuple.object_id == object.entity_id
-            && tuple.relation == relation
-            && tuple.subject_type == subject.entity_type
-            && tuple.subject_id == subject.entity_id
-        {
-            return true;
-        }
+/// Python function: compute a single permission check
+/// This is for interactive/single-check use cases (faster than Python, slower than bulk)
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn compute_permission_single(
+    py: Python<'_>,
+    subject_type: String,
+    subject_id: String,
+    permission: String,
+    object_type: String,
+    object_id: String,
+    tuples: &Bound<PyList>,
+    namespace_configs: &Bound<PyDict>,
+) -> PyResult<bool> {
+    // Parse tuples from Python
+    let rebac_tuples: Vec<ReBACTuple> = tuples
+        .iter()
+        .map(|item| {
+            let dict = item.downcast::<PyDict>()?;
+            Ok(ReBACTuple {
+                subject_type: dict.get_item("subject_type")?.unwrap().extract()?,
+                subject_id: dict.get_item("subject_id")?.unwrap().extract()?,
+                subject_relation: dict
+                    .get_item("subject_relation")?
+                    .and_then(|v| v.extract().ok()),
+                relation: dict.get_item("relation")?.unwrap().extract()?,
+                object_type: dict.get_item("object_type")?.unwrap().extract()?,
+                object_id: dict.get_item("object_id")?.unwrap().extract()?,
+            })
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+
+    // Parse namespace configs
+    let mut namespaces = AHashMap::new();
+    for (key, value) in namespace_configs.iter() {
+        let obj_type: String = key.extract()?;
+        let config_dict = value.downcast::<PyDict>()?;
+        let json_module = py.import_bound("json")?;
+        let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
+        let config_json: String = config_json_py.extract()?;
+        let config: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
+        })?;
+        namespaces.insert(obj_type, config);
     }
-    false
-}
 
-/// Find related objects via a relation
-fn find_related_objects(object: &Entity, relation: &str, tuples: &[ReBACTuple]) -> Vec<Entity> {
-    let mut related = Vec::new();
+    // Release GIL for computation
+    let result = py.allow_threads(|| {
+        let subject = Entity {
+            entity_type: subject_type,
+            entity_id: subject_id,
+        };
+        let object = Entity {
+            entity_type: object_type,
+            entity_id: object_id,
+        };
 
-    for tuple in tuples {
-        if tuple.subject_type == object.entity_type
-            && tuple.subject_id == object.entity_id
-            && tuple.relation == relation
-        {
-            related.push(Entity {
-                entity_type: tuple.object_type.clone(),
-                entity_id: tuple.object_id.clone(),
-            });
-        }
-    }
+        // Build graph indexes for fast lookups
+        let graph = ReBACGraph::from_tuples(&rebac_tuples);
+        let mut memo_cache: MemoCache = AHashMap::new();
 
-    related
+        compute_permission(
+            &subject,
+            &permission,
+            &object,
+            &graph,
+            &namespaces,
+            &mut memo_cache,
+            &mut AHashSet::new(),
+            0,
+        )
+    });
+
+    Ok(result)
 }
 
 /// Grep search result
@@ -486,6 +608,7 @@ fn glob_match_bulk(
 #[pymodule]
 fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compute_permissions_bulk, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_permission_single, m)?)?;
     m.add_function(wrap_pyfunction!(grep_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(glob_match_bulk, m)?)?;
     Ok(())

@@ -398,7 +398,9 @@ class NexusFSSearchMixin:
             full_pattern = base_path + pattern
 
         # Try Rust acceleration first (10-20x faster)
-        rust_matches = glob_fast.glob_match_bulk([full_pattern], accessible_files)
+        # Adjust pattern for Rust: paths have leading /, so pattern should too
+        rust_pattern = full_pattern if full_pattern.startswith("/") else "/" + full_pattern
+        rust_matches = glob_fast.glob_match_bulk([rust_pattern], accessible_files)
         if rust_matches is not None:
             return sorted(rust_matches)
 

@@ -431,10 +431,62 @@ fn grep_bulk<'py>(
     Ok(py_list)
 }
 
+/// Fast glob pattern matching using Rust globset
+#[pyfunction]
+#[pyo3(signature = (patterns, paths))]
+fn glob_match_bulk(
+    py: Python<'_>,
+    patterns: Vec<String>,
+    paths: Vec<String>,
+) -> PyResult<Bound<'_, PyList>> {
+    use globset::{Glob, GlobSetBuilder};
+
+    // Build glob set from patterns
+    let globset = py.allow_threads(|| {
+        let mut builder = GlobSetBuilder::new();
+        for pattern in &patterns {
+            match Glob::new(pattern) {
+                Ok(glob) => {
+                    builder.add(glob);
+                }
+                Err(e) => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid glob pattern '{}': {}",
+                        pattern, e
+                    )));
+                }
+            }
+        }
+        builder.build().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Failed to build globset: {}", e))
+        })
+    })?;
+
+    // Match paths against the glob set
+    let matches = py.allow_threads(|| {
+        let mut results = Vec::new();
+        for path in paths {
+            if globset.is_match(&path) {
+                results.push(path);
+            }
+        }
+        results
+    });
+
+    // Convert results to Python list
+    let py_list = PyList::empty_bound(py);
+    for path in matches {
+        py_list.append(path)?;
+    }
+
+    Ok(py_list)
+}
+
 /// Python module definition
 #[pymodule]
 fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compute_permissions_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(grep_bulk, m)?)?;
+    m.add_function(wrap_pyfunction!(glob_match_bulk, m)?)?;
     Ok(())
 }

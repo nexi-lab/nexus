@@ -14,6 +14,7 @@ serde_json = "1.0"
 ahash = "0.8"  # Fast hashmap for better performance
 regex = "1.10"  # Fast regex matching
 encoding_rs = "0.8"  # Encoding detection for text files
+globset = "0.4"  # Fast glob pattern matching
 
 [profile.release]
 lto = true

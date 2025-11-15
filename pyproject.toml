@@ -262,6 +262,10 @@ module = "nexus.backends.gcs"
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
+module = "nexus.backends.gcs_connector"
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
 module = [
     "*.examples.*",
     "examples.*",

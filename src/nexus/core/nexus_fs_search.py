@@ -14,7 +14,7 @@ import fnmatch
 import re
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.core import grep_fast
+from nexus.core import glob_fast, grep_fast
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 
@@ -397,6 +397,14 @@ class NexusFSSearchMixin:
             base_path = path[1:] if path.startswith("/") else path
             full_pattern = base_path + pattern
 
+        # Try Rust acceleration first (10-20x faster)
+        # Adjust pattern for Rust: paths have leading /, so pattern should too
+        rust_pattern = full_pattern if full_pattern.startswith("/") else "/" + full_pattern
+        rust_matches = glob_fast.glob_match_bulk([rust_pattern], accessible_files)
+        if rust_matches is not None:
+            return sorted(rust_matches)
+
+        # Fallback to Python implementation
         # Match accessible files against pattern
         # Handle ** for recursive matching
         if "**" in full_pattern:

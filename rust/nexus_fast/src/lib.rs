@@ -604,6 +604,58 @@ fn glob_match_bulk(
     Ok(py_list)
 }
 
+/// Fast path filtering using Rust glob patterns
+#[pyfunction]
+fn filter_paths(
+    py: Python<'_>,
+    paths: Vec<String>,
+    exclude_patterns: Vec<String>,
+) -> PyResult<Vec<String>> {
+    use globset::{Glob, GlobSetBuilder};
+
+    // Build glob set from exclude patterns
+    let globset = py.allow_threads(|| {
+        let mut builder = GlobSetBuilder::new();
+        for pattern in &exclude_patterns {
+            match Glob::new(pattern) {
+                Ok(glob) => {
+                    builder.add(glob);
+                }
+                Err(e) => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid glob pattern '{}': {}",
+                        pattern, e
+                    )));
+                }
+            }
+        }
+        builder.build().map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Failed to build globset: {}", e))
+        })
+    })?;
+
+    // Filter paths against exclude patterns
+    let filtered = py.allow_threads(|| {
+        let mut results = Vec::new();
+        for path in paths {
+            // Extract filename from path
+            let filename = if let Some(pos) = path.rfind('/') {
+                &path[pos + 1..]
+            } else {
+                &path
+            };
+
+            // Check if filename matches any exclude pattern
+            if !globset.is_match(filename) {
+                results.push(path);
+            }
+        }
+        results
+    });
+
+    Ok(filtered)
+}
+
 /// Python module definition
 #[pymodule]
 fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
@@ -611,5 +663,6 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compute_permission_single, m)?)?;
     m.add_function(wrap_pyfunction!(grep_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(glob_match_bulk, m)?)?;
+    m.add_function(wrap_pyfunction!(filter_paths, m)?)?;
     Ok(())
 }

@@ -111,6 +111,16 @@ class NexusFSMountsMixin:
                 credentials_path=backend_config.get("credentials_path"),
                 prefix=backend_config.get("prefix", ""),
             )
+        elif backend_type == "gdrive_connector":
+            from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
+
+            backend = GoogleDriveConnectorBackend(
+                token_manager_db=backend_config["token_manager_db"],
+                root_folder=backend_config.get("root_folder", "nexus-data"),
+                user_email=backend_config.get(
+                    "user_email"
+                ),  # Optional - uses context.user_id if None
+            )
         else:
             raise RuntimeError(f"Unsupported backend type: {backend_type}")
 

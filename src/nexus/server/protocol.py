@@ -1079,6 +1079,15 @@ class DeleteSavedMountParams:
     mount_point: str
 
 
+@dataclass
+class SyncMountParams:
+    """Parameters for sync_mount() method."""
+
+    mount_point: str
+    recursive: bool = True
+    dry_run: bool = False
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -1174,6 +1183,7 @@ METHOD_PARAMS = {
     "list_saved_mounts": ListSavedMountsParams,
     "load_mount": LoadMountParams,
     "delete_saved_mount": DeleteSavedMountParams,
+    "sync_mount": SyncMountParams,
 }
 
 

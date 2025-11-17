@@ -132,7 +132,11 @@ class GCSConnectorBackend(Backend):
         """
         backend_path = backend_path.lstrip("/")
         if self.prefix:
-            return f"{self.prefix}/{backend_path}"
+            if backend_path:
+                return f"{self.prefix}/{backend_path}"
+            else:
+                # For empty backend_path, return prefix without trailing slash
+                return self.prefix
         return backend_path
 
     def _compute_hash(self, content: bytes) -> str:

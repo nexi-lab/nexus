@@ -161,5 +161,23 @@ class AuditLogError(NexusError):
         super().__init__(message, path)
 
 
+class AuthenticationError(NexusError):
+    """Raised when authentication fails.
+
+    This is used by OAuth and other authentication systems when:
+    - Credentials are not found
+    - Tokens are invalid or expired
+    - Token refresh fails
+    - Authentication provider is unavailable
+
+    Examples:
+        >>> raise AuthenticationError("No OAuth credential found for google:user@example.com")
+        >>> raise AuthenticationError("Failed to refresh token: refresh_token revoked")
+    """
+
+    def __init__(self, message: str, path: str | None = None):
+        super().__init__(message, path)
+
+
 # Alias for convenience (used in time-travel debugging)
 NotFoundError = NexusFileNotFoundError

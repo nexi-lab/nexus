@@ -495,20 +495,42 @@ class GCSConnectorBackend(Backend):
         """
         Check if path is a directory.
 
+        In GCS, a "directory" is either:
+        1. An explicit directory marker blob (path ending with "/")
+        2. A virtual directory (any prefix that has blobs under it)
+
+        This is important because GCS doesn't require explicit directory markers.
+        For example, creating "folder/file.txt" doesn't require "folder/" to exist.
+
         Args:
             path: Path to check
 
         Returns:
-            True if path is a directory, False otherwise
+            True if path is a directory (has marker or has children), False otherwise
         """
         try:
             path = path.strip("/")
             if not path:
                 return True  # Root is always a directory
 
-            gcs_path = self._get_gcs_path(path) + "/"
-            blob = self.bucket.blob(gcs_path)
-            return bool(blob.exists())
+            gcs_path = self._get_gcs_path(path)
+
+            # Check 1: Explicit directory marker blob
+            marker_blob = self.bucket.blob(gcs_path + "/")
+            if marker_blob.exists():
+                return True
+
+            # Check 2: Virtual directory (has any blobs under this prefix)
+            # Use list_blobs with prefix and max_results=1 for efficiency
+            prefix = gcs_path + "/"
+            blobs_iterator = self.bucket.list_blobs(prefix=prefix, max_results=1)
+
+            # Try to get at least one blob
+            for _ in blobs_iterator:
+                return True  # Found at least one blob, so this is a valid directory
+
+            # No marker blob and no children found
+            return False
 
         except Exception:
             return False
@@ -564,4 +586,52 @@ class GCSConnectorBackend(Backend):
                 f"Failed to list directory {path}: {e}",
                 backend="gcs_connector",
                 path=path,
+            ) from e
+
+    def rename_file(self, old_path: str, new_path: str) -> None:
+        """
+        Rename/move a file in GCS.
+
+        For path-based connector backends, we need to actually move
+        the file in GCS (not just update metadata).
+
+        Args:
+            old_path: Current backend-relative path
+            new_path: New backend-relative path
+
+        Raises:
+            FileNotFoundError: If source file doesn't exist
+            FileExistsError: If destination already exists
+            BackendError: If operation fails
+        """
+        try:
+            old_path = old_path.strip("/")
+            new_path = new_path.strip("/")
+
+            old_gcs_path = self._get_gcs_path(old_path)
+            new_gcs_path = self._get_gcs_path(new_path)
+
+            # Get source blob
+            source_blob = self.bucket.blob(old_gcs_path)
+            if not source_blob.exists():
+                raise FileNotFoundError(f"Source file not found: {old_path}")
+
+            # Check destination doesn't exist
+            dest_blob = self.bucket.blob(new_gcs_path)
+            if dest_blob.exists():
+                raise FileExistsError(f"Destination already exists: {new_path}")
+
+            # Copy to new location
+            self.bucket.copy_blob(source_blob, self.bucket, new_gcs_path)
+
+            # Delete old location
+            source_blob.delete()
+
+        except (FileNotFoundError, FileExistsError):
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to rename file {old_path} -> {new_path}: {e}",
+                backend="gcs_connector",
+                path=old_path,
             ) from e

@@ -1946,6 +1946,144 @@ class SandboxMetadataModel(Base):
             raise ValidationError(f"ttl_minutes must be >= 1, got {self.ttl_minutes}")
 
 
+# === OAuth Credentials Model ===
+
+
+class OAuthCredentialModel(Base):
+    """OAuth 2.0 credential storage for backend integrations.
+
+    Stores encrypted OAuth tokens for services like Google Drive, Microsoft Graph, etc.
+    Supports automatic token refresh and multi-tenant isolation.
+
+    Security features:
+    - Encrypted token storage (access_token, refresh_token)
+    - HMAC integrity protection
+    - Tenant isolation
+    - Audit logging of token operations
+    - Automatic expiry enforcement
+
+    Example:
+        # Store Google Drive credentials for a user
+        cred = OAuthCredentialModel(
+            provider="google",
+            user_email="alice@example.com",
+            tenant_id="org_acme",
+            scopes=["https://www.googleapis.com/auth/drive"],
+            encrypted_access_token="...",
+            encrypted_refresh_token="...",
+            expires_at=datetime.now(UTC) + timedelta(hours=1)
+        )
+    """
+
+    __tablename__ = "oauth_credentials"
+
+    # Primary key
+    credential_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # OAuth provider (google, microsoft, dropbox, etc.)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+
+    # User identity
+    user_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+
+    # Encrypted tokens (encrypted at rest)
+    encrypted_access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Token metadata
+    token_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="Bearer"
+    )  # "Bearer", "MAC", etc.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    scopes: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of scopes
+
+    # OAuth provider metadata
+    client_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    token_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Lifecycle
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked: Mapped[int] = mapped_column(Integer, default=0, index=True)  # SQLite: bool as Integer
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Audit fields
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Indexes
+    __table_args__ = (
+        # Unique constraint: one credential per (provider, user_email, tenant)
+        UniqueConstraint("provider", "user_email", "tenant_id", name="uq_oauth_credential"),
+        Index("idx_oauth_provider", "provider"),
+        Index("idx_oauth_user_email", "user_email"),
+        Index("idx_oauth_tenant", "tenant_id"),
+        Index("idx_oauth_expires", "expires_at"),
+        Index("idx_oauth_revoked", "revoked"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<OAuthCredentialModel(credential_id={self.credential_id}, provider={self.provider}, user_email={self.user_email})>"
+
+    def is_expired(self) -> bool:
+        """Check if the access token is expired."""
+        if self.expires_at is None:
+            return False
+        # Ensure expires_at is timezone-aware for comparison
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        return datetime.now(UTC) >= expires_at
+
+    def is_valid(self) -> bool:
+        """Check if the credential is valid (not revoked and not expired)."""
+        return not self.revoked and not self.is_expired()
+
+    def validate(self) -> None:
+        """Validate OAuth credential before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate provider
+        if not self.provider:
+            raise ValidationError("provider is required")
+
+        valid_providers = ["google", "microsoft", "dropbox", "box"]
+        if self.provider not in valid_providers:
+            raise ValidationError(f"provider must be one of {valid_providers}, got {self.provider}")
+
+        # Validate user_email
+        if not self.user_email:
+            raise ValidationError("user_email is required")
+
+        # Validate encrypted tokens
+        if not self.encrypted_access_token:
+            raise ValidationError("encrypted_access_token is required")
+
+        # Validate scopes format (if provided)
+        if self.scopes:
+            try:
+                scopes_list = json.loads(self.scopes)
+                if not isinstance(scopes_list, list):
+                    raise ValidationError("scopes must be a JSON array")
+            except json.JSONDecodeError as e:
+                raise ValidationError(f"scopes must be valid JSON: {e}") from None
+
+
 # Add fields to TrajectoryModel for feedback support (these will be added via migration)
 # - feedback_count: INTEGER DEFAULT 0
 # - effective_score: FLOAT (latest/weighted score)

@@ -428,9 +428,26 @@ def serve(
         has_auth = bool(auth_type or api_key)
 
         # Server mode permissions logic:
-        # - No auth → enforce_permissions=False (everyone is anonymous)
-        # - With auth → enforce_permissions=True (secure by default)
-        enforce_permissions = has_auth
+        # - Check NEXUS_ENFORCE_PERMISSIONS environment variable first
+        # - If not set, default: No auth → False, With auth → True
+        enforce_permissions_env = os.getenv("NEXUS_ENFORCE_PERMISSIONS", "").lower()
+        if enforce_permissions_env in ("false", "0", "no", "off"):
+            enforce_permissions = False
+            console.print(
+                "[yellow]⚠️  Permissions DISABLED by NEXUS_ENFORCE_PERMISSIONS "
+                "environment variable[/yellow]"
+            )
+        elif enforce_permissions_env in ("true", "1", "yes", "on"):
+            enforce_permissions = True
+            console.print(
+                "[green]✓ Permissions ENABLED by NEXUS_ENFORCE_PERMISSIONS "
+                "environment variable[/green]"
+            )
+        else:
+            # Default: enable permissions when auth is configured (secure by default)
+            enforce_permissions = has_auth
+            if has_auth:
+                console.print("[green]✓ Permissions enabled (authentication configured)[/green]")
 
         # IMPORTANT: Server must always use local NexusFS, never RemoteNexusFS
         # Use force_local=True to prevent circular dependency even if NEXUS_URL is set
@@ -528,11 +545,114 @@ def serve(
             engine = create_engine(db_url)
             session_factory = sessionmaker(bind=engine)
             auth_provider = create_auth_provider("database", session_factory=session_factory)
+
+        elif auth_type == "local":
+            # Local username/password authentication with JWT tokens
+            import os
+
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+
+            from nexus.server.auth.factory import create_auth_provider
+
+            db_url = os.getenv("NEXUS_DATABASE_URL")
+            if not db_url:
+                console.print("[red]Error:[/red] Local authentication requires NEXUS_DATABASE_URL")
+                sys.exit(1)
+
+            jwt_secret = os.getenv("NEXUS_JWT_SECRET")
+            if not jwt_secret:
+                console.print(
+                    "[yellow]⚠️  Warning:[/yellow] NEXUS_JWT_SECRET not set, generating random secret"
+                )
+                console.print(
+                    "[yellow]   For production, set: export NEXUS_JWT_SECRET='your-secret-key'[/yellow]"
+                )
+                import secrets
+
+                jwt_secret = secrets.token_urlsafe(32)
+
+            engine = create_engine(db_url)
+            session_factory = sessionmaker(bind=engine)
+            auth_provider = create_auth_provider(
+                "local", session_factory=session_factory, jwt_secret=jwt_secret
+            )
+            console.print("[green]✓[/green] Local authentication enabled (username/password + JWT)")
+
+        elif auth_type == "oidc":
+            # Single OIDC provider authentication
+            import os
+
+            from nexus.server.auth.factory import create_auth_provider
+
+            oidc_issuer = os.getenv("NEXUS_OIDC_ISSUER")
+            oidc_audience = os.getenv("NEXUS_OIDC_AUDIENCE")
+
+            if not oidc_issuer or not oidc_audience:
+                console.print("[red]Error:[/red] OIDC authentication requires:")
+                console.print("  export NEXUS_OIDC_ISSUER='https://accounts.google.com'")
+                console.print("  export NEXUS_OIDC_AUDIENCE='your-client-id'")
+                sys.exit(1)
+
+            auth_provider = create_auth_provider("oidc", issuer=oidc_issuer, audience=oidc_audience)
+            console.print(f"[green]✓[/green] OIDC authentication enabled (issuer: {oidc_issuer})")
+
+        elif auth_type == "multi-oidc":
+            # Multiple OIDC providers (Google, Microsoft, GitHub, etc.)
+            # Load provider configs from environment
+            # Format: NEXUS_OIDC_PROVIDERS='{"google":{"issuer":"...","audience":"..."},...}'
+            import json
+            import os
+
+            from nexus.server.auth.factory import create_auth_provider
+
+            oidc_providers_json = os.getenv("NEXUS_OIDC_PROVIDERS")
+            if not oidc_providers_json:
+                console.print("[red]Error:[/red] Multi-OIDC authentication requires:")
+                console.print(
+                    '  export NEXUS_OIDC_PROVIDERS=\'{"google":{"issuer":"...","audience":"..."}}\''
+                )
+                sys.exit(1)
+
+            try:
+                providers = json.loads(oidc_providers_json)
+            except json.JSONDecodeError as e:
+                console.print(f"[red]Error:[/red] Invalid NEXUS_OIDC_PROVIDERS JSON: {e}")
+                sys.exit(1)
+
+            auth_provider = create_auth_provider("multi-oidc", providers=providers)
+            console.print(
+                f"[green]✓[/green] Multi-OIDC authentication enabled ({len(providers)} providers)"
+            )
+
+        elif auth_type == "static":
+            # Static API key authentication (deprecated, use database instead)
+            from nexus.server.auth.factory import create_auth_provider
+
+            if not api_key:
+                console.print("[red]Error:[/red] Static authentication requires --api-key")
+                console.print(
+                    "[yellow]Hint:[/yellow] Use: nexus serve --auth-type static --api-key 'your-key'"
+                )
+                sys.exit(1)
+
+            auth_provider = create_auth_provider("static", api_key=api_key)
+            console.print("[yellow]⚠️  Static API key authentication (deprecated)[/yellow]")
+            console.print("[yellow]   Consider using --auth-type database for production[/yellow]")
+
         elif api_key:
-            # Simple static API key authentication (backward compatibility)
-            # This is the old behavior - just pass api_key to server
-            pass
-        # Future: add support for other auth types (local, oidc, etc.)
+            # Backward compatibility: --api-key without --auth-type defaults to static
+            from nexus.server.auth.factory import create_auth_provider
+
+            auth_provider = create_auth_provider("static", api_key=api_key)
+            console.print("[yellow]⚠️  Using static API key authentication (deprecated)[/yellow]")
+            console.print(
+                "[yellow]   Consider using: nexus serve --auth-type database --init[/yellow]"
+            )
+
+        elif auth_type:
+            console.print(f"[red]Error:[/red] Unknown auth type: {auth_type}")
+            sys.exit(1)
 
         # ============================================
         # Database Reset (if requested)
@@ -557,6 +677,7 @@ def serve(
             # List of tables to clear (in dependency order)
             tables_to_clear = [
                 # Auth tables
+                "oauth_credentials",  # OAuth tokens (v0.7.0)
                 "refresh_tokens",
                 "api_keys",
                 "users",

@@ -82,6 +82,72 @@ class TestGCSConnectorInitialization:
         assert "does not exist" in str(exc_info.value)
 
 
+class TestContentTypeDetection:
+    """Test Content-Type detection for GCS uploads."""
+
+    def test_detect_text_plain_with_utf8(self, gcs_connector_backend: GCSConnectorBackend) -> None:
+        """Test UTF-8 text file gets charset=utf-8."""
+        content = b"Hello, World!"
+        content_type = gcs_connector_backend._detect_content_type("file.txt", content)
+        assert content_type == "text/plain; charset=utf-8"
+
+    def test_detect_python_file_with_utf8(self, gcs_connector_backend: GCSConnectorBackend) -> None:
+        """Test Python file gets text/x-python with charset=utf-8."""
+        content = b"#!/usr/bin/env python3\nprint('Hello')"
+        content_type = gcs_connector_backend._detect_content_type("script.py", content)
+        assert content_type == "text/x-python; charset=utf-8"
+
+    def test_detect_json_file(self, gcs_connector_backend: GCSConnectorBackend) -> None:
+        """Test JSON file gets application/json (no charset needed per spec)."""
+        content = b'{"key": "value"}'
+        content_type = gcs_connector_backend._detect_content_type("data.json", content)
+        # JSON is detected as application/json (charset not needed - JSON is always UTF-8)
+        assert content_type == "application/json"
+
+    def test_detect_markdown_file_with_utf8(
+        self, gcs_connector_backend: GCSConnectorBackend
+    ) -> None:
+        """Test Markdown file gets text type with charset=utf-8."""
+        content = b"# Markdown Header\n\nSome text."
+        content_type = gcs_connector_backend._detect_content_type("README.md", content)
+        assert "charset=utf-8" in content_type
+
+    def test_detect_binary_file_no_charset(
+        self, gcs_connector_backend: GCSConnectorBackend
+    ) -> None:
+        """Test binary file gets appropriate type without charset."""
+        # PNG magic bytes
+        content = b"\x89PNG\r\n\x1a\n"
+        content_type = gcs_connector_backend._detect_content_type("image.png", content)
+        assert content_type == "image/png"
+        assert "charset" not in content_type
+
+    def test_detect_non_utf8_binary_fallback(
+        self, gcs_connector_backend: GCSConnectorBackend
+    ) -> None:
+        """Test non-UTF-8 binary content falls back to octet-stream."""
+        # Invalid UTF-8 sequence
+        content = b"\xff\xfe\x00\x01\x02"
+        content_type = gcs_connector_backend._detect_content_type("unknown.dat", content)
+        assert content_type == "application/octet-stream"
+        assert "charset" not in content_type
+
+    def test_detect_pdf_file(self, gcs_connector_backend: GCSConnectorBackend) -> None:
+        """Test PDF file gets correct MIME type."""
+        # PDF magic bytes
+        content = b"%PDF-1.4"
+        content_type = gcs_connector_backend._detect_content_type("document.pdf", content)
+        assert content_type == "application/pdf"
+
+    def test_detect_unknown_extension_utf8(
+        self, gcs_connector_backend: GCSConnectorBackend
+    ) -> None:
+        """Test unknown extension with UTF-8 content defaults to text/plain."""
+        content = b"This is plain text"
+        content_type = gcs_connector_backend._detect_content_type("file.unknown", content)
+        assert content_type == "text/plain; charset=utf-8"
+
+
 class TestWriteContentWithoutVersioning:
     """Test write_content without GCS versioning."""
 
@@ -99,9 +165,11 @@ class TestWriteContentWithoutVersioning:
         assert len(result) == 64
         int(result, 16)  # Verify it's hex
 
-        # Should upload to correct path
+        # Should upload to correct path with proper Content-Type
         gcs_connector_backend.bucket.blob.assert_called_with("test-prefix/file.txt")
-        mock_blob.upload_from_string.assert_called_once_with(test_content, timeout=60)
+        mock_blob.upload_from_string.assert_called_once_with(
+            test_content, content_type="text/plain; charset=utf-8", timeout=60
+        )
 
     def test_write_content_without_context(
         self, gcs_connector_backend: GCSConnectorBackend
@@ -143,8 +211,10 @@ class TestWriteContentWithVersioning:
         # Should return generation number as string
         assert result == "1234567890"
 
-        # Should upload and reload to get generation
-        mock_blob.upload_from_string.assert_called_once_with(test_content, timeout=60)
+        # Should upload with proper Content-Type and reload to get generation
+        mock_blob.upload_from_string.assert_called_once_with(
+            test_content, content_type="text/plain; charset=utf-8", timeout=60
+        )
         mock_blob.reload.assert_called_once()
 
     def test_write_content_multiple_versions(

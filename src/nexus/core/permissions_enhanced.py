@@ -698,15 +698,17 @@ class EnhancedPermissionEnforcer:
                 )
                 # Ask backend for its object type
                 object_type = route.backend.get_object_type(route.backend_path)
-                object_id = route.backend.get_object_id(route.backend_path)
 
-                # FIX: Normalize file paths to always have leading slash for ReBAC consistency
-                # Router strips leading slash by design (backend_path is relative)
-                # But ReBAC tuples are created with leading slash ("/workspace/alice")
+                # CRITICAL FIX: Use the FULL VIRTUAL PATH for permissions, not backend-relative path
+                # Permissions are granted on virtual paths like "/mnt/gcs/file.txt"
+                # NOT on backend-relative paths like "file.txt"
+                object_id = path  # Use original full virtual path
+
+                # Ensure leading slash for consistency
                 if object_type == "file" and object_id and not object_id.startswith("/"):
                     object_id = "/" + object_id
                     logger.info(
-                        f"[EnhancedPermissionEnforcer] Normalized path: '{route.backend_path}' → '{object_id}'"
+                        f"[EnhancedPermissionEnforcer] Normalized path: '{path}' → '{object_id}'"
                     )
             except Exception as e:
                 # If routing fails, fall back to default "file" type

@@ -19,7 +19,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.exceptions import ConflictError, NexusFileNotFoundError
+from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.metadata import FileMetadata
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
@@ -1388,14 +1388,67 @@ class NexusFSCoreMixin:
             }
 
         # Check if destination already exists
+        # For connector backends, also verify the file exists in backend storage
+        # (metadata might be stale if previous operations failed)
         if self.metadata.exists(new_path):
-            raise FileExistsError(f"Destination path already exists: {new_path}")
+            if hasattr(new_route.backend, "rename_file"):
+                # Connector backend - verify file actually exists in storage
+                # If metadata says it exists but storage doesn't, clean up stale metadata
+                try:
+                    # Check if this is a GCS connector backend (has bucket attribute)
+                    if hasattr(new_route.backend, "bucket") and hasattr(
+                        new_route.backend, "_get_gcs_path"
+                    ):
+                        # GCS-specific attributes (dynamically checked with hasattr above)
+                        dest_blob = new_route.backend.bucket.blob(
+                            new_route.backend._get_gcs_path(new_route.backend_path)
+                        )
+                        if not dest_blob.exists():
+                            # Stale metadata - clean it up
+                            import logging
+
+                            log = logging.getLogger(__name__)
+                            log.warning(
+                                f"Cleaning up stale metadata for {new_path} (file not in backend storage)"
+                            )
+                            self.metadata.delete(new_path)
+                        else:
+                            # File really exists
+                            raise FileExistsError(f"Destination path already exists: {new_path}")
+                    else:
+                        # Not a GCS connector backend, just check metadata
+                        raise FileExistsError(f"Destination path already exists: {new_path}")
+                except AttributeError:
+                    # Not a GCS connector backend, just check metadata
+                    raise FileExistsError(f"Destination path already exists: {new_path}") from None
+            else:
+                # CAS backend - metadata is source of truth
+                raise FileExistsError(f"Destination path already exists: {new_path}")
 
         # Check if this is a directory BEFORE renaming (important!)
         # After rename, the old path won't have children anymore
         is_directory = self.metadata.is_implicit_directory(old_path)
 
-        # Perform metadata-only rename (no CAS I/O!)
+        # For path-based connector backends, we need to move the actual file
+        # in the backend storage (not just metadata)
+        if hasattr(old_route.backend, "rename_file"):
+            # Connector backend - move the file in backend storage
+            try:
+                old_route.backend.rename_file(old_route.backend_path, new_route.backend_path)
+            except FileExistsError:
+                # Backend says destination exists, but metadata check passed
+                # This means metadata is stale - re-raise the error
+                raise
+            except Exception as e:
+                # Failed to rename in backend - don't update metadata
+                raise BackendError(
+                    f"Failed to rename file in backend: {e}",
+                    backend=old_route.backend.name,
+                ) from e
+
+        # Perform metadata rename
+        # For CAS backends: metadata-only (content stays at same hash location)
+        # For connector backends: metadata follows the file we just moved
         self.metadata.rename_path(old_path, new_path)
 
         # Update ReBAC permissions to follow the renamed file/directory

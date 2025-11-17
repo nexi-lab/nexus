@@ -556,17 +556,18 @@ DEFAULT_FILE_NAMESPACE = NamespaceConfig(
             "direct_editor": {},
             "direct_viewer": {},
             # Parent inheritance via tupleToUserset
-            # HYBRID OPTIMIZATION: Use direct_* to prevent recursive union expansion
-            # This breaks the recursion: parent_owner checks direct_owner (not owner union)
-            # Depth: parent_owner -> parent -> direct_owner (depth 2, not 4)
+            # FIX: Use 'owner'/'editor'/'viewer' (not direct_*) to enable RECURSIVE parent inheritance
+            # This allows permission to propagate up the entire parent chain until finding direct_owner
+            # Example: /a/b/c/d/file.txt can inherit from /a if admin has direct_owner on /a
+            # The recursion is bounded by max_depth and parent chain length (typically < 10 levels)
             "parent_owner": {
-                "tupleToUserset": {"tupleset": "parent", "computedUserset": "direct_owner"}
+                "tupleToUserset": {"tupleset": "parent", "computedUserset": "owner"}
             },
             "parent_editor": {
-                "tupleToUserset": {"tupleset": "parent", "computedUserset": "direct_editor"}
+                "tupleToUserset": {"tupleset": "parent", "computedUserset": "editor"}
             },
             "parent_viewer": {
-                "tupleToUserset": {"tupleset": "parent", "computedUserset": "direct_viewer"}
+                "tupleToUserset": {"tupleset": "parent", "computedUserset": "viewer"}
             },
             # Group-based permissions via tupleToUserset
             "group_owner": {

@@ -500,6 +500,24 @@ def serve(
                                 console.print(
                                     f"  [green]✓[/green] Mounted {backend_type} backend at {mount_point}{readonly_str}"
                                 )
+
+                                # Auto-grant permissions to admin user for this mount point
+                                # This ensures the admin can list/read/write files in config-mounted backends
+                                if mount_point != "/":  # Skip root mount (already has permissions)
+                                    try:
+                                        # Grant direct_owner to admin for full access
+                                        nx.rebac_create(
+                                            subject=("user", admin_user),
+                                            relation="direct_owner",
+                                            object=("file", mount_point),
+                                        )
+                                        console.print(
+                                            f"    [dim]→ Granted {admin_user} permissions to {mount_point}[/dim]"
+                                        )
+                                    except Exception as perm_error:
+                                        console.print(
+                                            f"    [yellow]⚠️  Could not grant permissions to {mount_point}: {perm_error}[/yellow]"
+                                        )
                             except Exception as e:
                                 console.print(
                                     f"[yellow]⚠️  Warning: Failed to mount {backend_type} at {mount_point}: {e}[/yellow]"

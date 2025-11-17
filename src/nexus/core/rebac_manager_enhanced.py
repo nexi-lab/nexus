@@ -1171,32 +1171,49 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             # OPTIMIZATION: For file paths, also fetch parent hierarchy tuples in bulk
             # This ensures we have all parent tuples needed for parent_owner/parent_editor/parent_viewer checks
             # Without this, we'd miss tuples like (child, "parent", parent) that aren't directly in our object set
-            file_path_conditions = []
-            file_path_params = []
+            
+            # NEW STRATEGY: Instead of using LIKE queries (which can miss tuples and cause query explosion),
+            # compute all ancestor paths for all files and fetch tuples for those specific paths.
+            # This is more precise and ensures we get ALL parent tuples needed.
+            ancestor_paths = set()
             for file_path in file_paths:
-                # Fetch all parent tuples for files that are prefixes of this path
-                # Example: for /a/b/c.txt, fetch tuples where subject_id LIKE '/a/%'
-                # This captures: (c.txt, parent, b), (b, parent, a), (a, parent, /)
-                # Use LIKE to match path prefixes
-                path_prefix = file_path.rsplit("/", 1)[0] if "/" in file_path else "/"
-                if path_prefix:
-                    # Match files under this path (including the file itself)
-                    file_path_conditions.append("(subject_type = ? AND subject_id LIKE ?)")
-                    file_path_params.extend(["file", file_path + "%"])
-                    # Also match parent paths
-                    if path_prefix != "/":
-                        file_path_conditions.append("(subject_type = ? AND subject_id LIKE ?)")
-                        file_path_params.extend(["file", path_prefix + "%"])
+                # For each file, compute all ancestor paths
+                # Example: /a/b/c.txt → [/a/b/c.txt, /a/b, /a, /]
+                parts = file_path.strip("/").split("/")
+                for i in range(len(parts), 0, -1):
+                    ancestor = "/" + "/".join(parts[:i])
+                    ancestor_paths.add(ancestor)
+                if file_path != "/":
+                    ancestor_paths.add("/")  # Always include root
+            
+            # Add all ancestor paths to BOTH subjects and objects
+            # We need tuples in both directions:
+            # 1. (child, "parent", ancestor) - ancestor in object position
+            # 2. (ancestor, "parent", ancestor's_parent) - ancestor in subject position
+            # This ensures we fetch the complete parent chain
+            file_path_tuples = [("file", path) for path in ancestor_paths]
+            all_objects.update(file_path_tuples)
+            all_subjects.update(file_path_tuples)
+            
+            # Rebuild BOTH subject and object params to include ancestor paths
+            subject_params = []
+            for subj_type, subj_id in all_subjects:
+                subject_params.extend([subj_type, subj_id])
+            
+            object_params = []
+            for obj_type, obj_id in all_objects:
+                object_params.extend([obj_type, obj_id])
+            
+            placeholders_subjects = ", ".join(["(?, ?)"] * len(all_subjects))
+            placeholders_objects = ", ".join(["(?, ?)"] * len(all_objects))
 
             # Build full query
+            # Note: We've already included all ancestor paths in all_objects above,
+            # so we don't need separate file_path_conditions anymore
             where_clauses = [
                 f"(subject_type, subject_id) IN ({placeholders_subjects})",
                 f"(object_type, object_id) IN ({placeholders_objects})",
             ]
-            if file_path_conditions:
-                # Limit file path expansion to avoid too many results
-                # Only add top-level path patterns (not all nested paths)
-                where_clauses.append(f"({' OR '.join(file_path_conditions[:10])})")
 
             query = self._fix_sql_placeholders(
                 f"""
@@ -1209,12 +1226,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 """
             )
 
-            params = (
-                [tenant_id, datetime.now(UTC).isoformat()]
-                + subject_params
-                + object_params
-                + file_path_params[:20]  # Limit params to avoid query size explosion
-            )
+            params = [tenant_id, datetime.now(UTC).isoformat()] + subject_params + object_params
             cursor.execute(query, params)
 
             # Build in-memory graph of all tuples
@@ -1278,7 +1290,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         from nexus.core.rebac_fast import check_permissions_bulk_with_fallback, is_rust_available
 
         rust_success = False
-        if is_rust_available() and len(cache_misses) >= 10:
+        # TODO: Rust bulk checker has a bug with parent tuple evaluation (tupleToUserset)
+        # Disabling for now until Rust implementation is fixed
+        # See: Python's _compute_permission_bulk_helper works correctly with parent tuples
+        if False and is_rust_available() and len(cache_misses) >= 10:
             try:
                 logger.info(f"⚡ Attempting Rust acceleration for {len(cache_misses)} checks")
 

@@ -148,6 +148,33 @@ check_env_file() {
     echo ""
 }
 
+check_gcs_credentials() {
+    echo "🔍 Checking for GCS credentials..."
+    
+    # Priority order for finding credentials:
+    # 1. GCS_CREDENTIALS_PATH environment variable (if set)
+    # 2. ./gcs-credentials.json (local file)
+    # 3. ~/.config/gcloud/application_default_credentials.json (gcloud default)
+    
+    if [ -n "$GCS_CREDENTIALS_PATH" ] && [ -f "$GCS_CREDENTIALS_PATH" ]; then
+        echo "✅ Found GCS credentials at: $GCS_CREDENTIALS_PATH (from GCS_CREDENTIALS_PATH)"
+    elif [ -f "./gcs-credentials.json" ]; then
+        echo "✅ Found GCS credentials at: ./gcs-credentials.json"
+        export GCS_CREDENTIALS_PATH="./gcs-credentials.json"
+    elif [ -f "$HOME/.config/gcloud/application_default_credentials.json" ]; then
+        echo "✅ Found GCS credentials at: ~/.config/gcloud/application_default_credentials.json"
+        export GCS_CREDENTIALS_PATH="$HOME/.config/gcloud/application_default_credentials.json"
+    else
+        echo "⚠️  No GCS credentials found - GCS mounts will not work"
+        echo "   To set up: gcloud auth application-default login"
+        echo "   Continuing without GCS support..."
+        # Create empty placeholder to prevent mount errors
+        touch ./gcs-credentials.json
+        export GCS_CREDENTIALS_PATH="./gcs-credentials.json"
+    fi
+    echo ""
+}
+
 show_services() {
     cat << EOF
 📦 Services:
@@ -167,6 +194,7 @@ cmd_start() {
     print_banner
     check_docker
     check_env_file
+    check_gcs_credentials
 
     echo "🧹 Cleaning up old sandbox containers..."
     docker ps -a --filter "ancestor=nexus/runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
@@ -191,6 +219,7 @@ cmd_build() {
     print_banner
     check_docker
     check_env_file
+    check_gcs_credentials
 
     echo "🧹 Cleaning up old sandbox containers..."
     docker ps -a --filter "ancestor=nexus/runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true

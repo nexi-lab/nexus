@@ -1,13 +1,19 @@
 """Unit tests for Nexus exceptions."""
 
 from nexus.core.exceptions import (
+    AuditLogError,
+    AuthenticationError,
     BackendError,
+    ConflictError,
     InvalidPathError,
     MetadataError,
     NexusError,
     NexusFileNotFoundError,
     NexusPermissionError,
+    NotFoundError,
     ParserError,
+    PermissionDeniedError,
+    ValidationError,
 )
 
 
@@ -129,6 +135,107 @@ def test_exception_inheritance() -> None:
     assert issubclass(InvalidPathError, NexusError)
     assert issubclass(MetadataError, NexusError)
     assert issubclass(ParserError, NexusError)
+    assert issubclass(PermissionDeniedError, NexusError)
+    assert issubclass(ValidationError, NexusError)
+    assert issubclass(ConflictError, NexusError)
+    assert issubclass(AuditLogError, NexusError)
+    assert issubclass(AuthenticationError, NexusError)
 
     # All should also be standard Exceptions
     assert issubclass(NexusError, Exception)
+
+
+def test_permission_denied_error() -> None:
+    """Test PermissionDeniedError for ReBAC operations."""
+    # Without path
+    error = PermissionDeniedError("No permission to read skill 'my-skill'")
+    assert "No permission to read skill 'my-skill'" in str(error)
+    assert error.path is None
+
+    # With path
+    error = PermissionDeniedError("User lacks 'approve' permission", path="/skills/my-skill")
+    assert "User lacks 'approve' permission" in str(error)
+    assert "/skills/my-skill" in str(error)
+    assert error.path == "/skills/my-skill"
+
+
+def test_validation_error() -> None:
+    """Test ValidationError."""
+    # Without path
+    error = ValidationError("name is required")
+    assert str(error) == "name is required"
+    assert error.path is None
+
+    # With path
+    error = ValidationError("size cannot be negative", path="/data/file.txt")
+    assert "size cannot be negative" in str(error)
+    assert "/data/file.txt" in str(error)
+    assert error.path == "/data/file.txt"
+
+
+def test_conflict_error() -> None:
+    """Test ConflictError for optimistic concurrency."""
+    expected_etag = "abc123def456ghi789jkl012mno345pqr678"
+    current_etag = "xyz987wvu654tsr321qpo098nml765kji432"
+
+    error = ConflictError("/workspace/file.txt", expected_etag, current_etag)
+
+    # Check attributes
+    assert error.path == "/workspace/file.txt"
+    assert error.expected_etag == expected_etag
+    assert error.current_etag == current_etag
+
+    # Check message format (shows truncated etags)
+    assert "Conflict detected" in str(error)
+    assert "abc123def456ghi7" in str(error)  # First 16 chars of expected
+    assert "xyz987wvu654tsr3" in str(error)  # First 16 chars of current
+    assert "/workspace/file.txt" in str(error)
+
+
+def test_audit_log_error() -> None:
+    """Test AuditLogError for audit compliance."""
+    # Without path or original error
+    error = AuditLogError("Audit logging failed")
+    assert str(error) == "Audit logging failed"
+    assert error.path is None
+    assert error.original_error is None
+
+    # With path
+    error = AuditLogError("Audit logging failed", path="/workspace/file.txt")
+    assert "Audit logging failed" in str(error)
+    assert "/workspace/file.txt" in str(error)
+    assert error.path == "/workspace/file.txt"
+
+    # With original error
+    original = ValueError("Database connection failed")
+    error = AuditLogError("Audit logging failed", original_error=original)
+    assert error.original_error is original
+    assert str(error) == "Audit logging failed"
+
+
+def test_authentication_error() -> None:
+    """Test AuthenticationError for OAuth and auth systems."""
+    # Without path
+    error = AuthenticationError("No OAuth credential found for google:user@example.com")
+    assert "No OAuth credential found" in str(error)
+    assert error.path is None
+
+    # With path
+    error = AuthenticationError("Failed to refresh token", path="/credentials/google")
+    assert "Failed to refresh token" in str(error)
+    assert "/credentials/google" in str(error)
+    assert error.path == "/credentials/google"
+
+
+def test_not_found_error_alias() -> None:
+    """Test NotFoundError alias for NexusFileNotFoundError."""
+    # Verify it's the same class
+    assert NotFoundError is NexusFileNotFoundError
+
+    # Can be used interchangeably
+    error1 = NotFoundError("/missing.txt")
+    error2 = NexusFileNotFoundError("/missing.txt")
+
+    assert isinstance(error1, type(error2))  # noqa: E721
+    assert isinstance(error1, NexusFileNotFoundError)
+    assert isinstance(error2, NotFoundError)

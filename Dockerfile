@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir uv maturin
 
 # Copy project files
 WORKDIR /build
-COPY pyproject.toml uv.lock* README.md ./
+COPY pyproject.toml uv.lock* README.md Cargo.toml ./
 COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./

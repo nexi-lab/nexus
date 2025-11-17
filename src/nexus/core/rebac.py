@@ -560,9 +560,7 @@ DEFAULT_FILE_NAMESPACE = NamespaceConfig(
             # This allows permission to propagate up the entire parent chain until finding direct_owner
             # Example: /a/b/c/d/file.txt can inherit from /a if admin has direct_owner on /a
             # The recursion is bounded by max_depth and parent chain length (typically < 10 levels)
-            "parent_owner": {
-                "tupleToUserset": {"tupleset": "parent", "computedUserset": "owner"}
-            },
+            "parent_owner": {"tupleToUserset": {"tupleset": "parent", "computedUserset": "owner"}},
             "parent_editor": {
                 "tupleToUserset": {"tupleset": "parent", "computedUserset": "editor"}
             },

@@ -428,6 +428,7 @@ class NexusFSMountsMixin:
         """
         import logging
         from datetime import UTC, datetime
+        from typing import cast
 
         from nexus.core.metadata import FileMetadata
 
@@ -436,7 +437,9 @@ class NexusFSMountsMixin:
         # Check hierarchy manager status
         has_hierarchy = hasattr(self, "_hierarchy_manager") and self._hierarchy_manager
         enable_inheritance = (
-            self._hierarchy_manager.enable_inheritance if has_hierarchy else False
+            self._hierarchy_manager.enable_inheritance  # type: ignore[attr-defined]
+            if has_hierarchy
+            else False
         )
         logger.info(
             f"[SYNC_MOUNT] Starting sync for {mount_point}, "
@@ -460,7 +463,7 @@ class NexusFSMountsMixin:
             )
 
         # Track sync statistics
-        stats = {
+        stats: dict[str, int | list[str]] = {
             "files_found": 0,
             "files_added": 0,
             "files_updated": 0,
@@ -496,19 +499,25 @@ class NexusFSMountsMixin:
                             scan_directory(entry_virtual_path, entry_backend_path)
                     else:
                         # Process file
-                        stats["files_found"] += 1
+                        stats["files_found"] = (
+                            stats["files_found"] + 1  # type: ignore[operator]
+                        )
 
                         if dry_run:
                             # Dry run: just count, don't modify database
                             continue
 
                         # Check if file already exists in metadata
-                        existing_meta = self.metadata.get(entry_virtual_path)
+                        existing_meta = self.metadata.get(  # type: ignore[attr-defined]
+                            entry_virtual_path
+                        )
 
                         if existing_meta:
                             # File exists - check if it needs update
                             # For now, we'll skip updates (could check size/mtime in future)
-                            stats["files_skipped"] += 1
+                            stats["files_skipped"] = (
+                                stats["files_skipped"] + 1  # type: ignore[operator]
+                            )
 
                             # Still create parent relationships for permission inheritance
                             # (in case they're missing from previous syncs)
@@ -549,8 +558,10 @@ class NexusFSMountsMixin:
                                 )
 
                                 # Save to database
-                                self.metadata.put(meta)
-                                stats["files_added"] += 1
+                                self.metadata.put(meta)  # type: ignore[attr-defined]
+                                stats["files_added"] = (
+                                    stats["files_added"] + 1  # type: ignore[operator]
+                                )
 
                                 # Create parent relationships for permission inheritance
                                 if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager:
@@ -572,11 +583,11 @@ class NexusFSMountsMixin:
 
                             except Exception as e:
                                 error_msg = f"Failed to add {entry_virtual_path}: {e}"
-                                stats["errors"].append(error_msg)
+                                cast(list[str], stats["errors"]).append(error_msg)
 
             except Exception as e:
                 error_msg = f"Failed to scan {virtual_path}: {e}"
-                stats["errors"].append(error_msg)
+                cast(list[str], stats["errors"]).append(error_msg)
 
         # Start scanning from mount point root
         # For connector backends, the prefix is already built into the backend itself

@@ -1171,7 +1171,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             # OPTIMIZATION: For file paths, also fetch parent hierarchy tuples in bulk
             # This ensures we have all parent tuples needed for parent_owner/parent_editor/parent_viewer checks
             # Without this, we'd miss tuples like (child, "parent", parent) that aren't directly in our object set
-            
+
             # NEW STRATEGY: Instead of using LIKE queries (which can miss tuples and cause query explosion),
             # compute all ancestor paths for all files and fetch tuples for those specific paths.
             # This is more precise and ensures we get ALL parent tuples needed.
@@ -1185,7 +1185,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     ancestor_paths.add(ancestor)
                 if file_path != "/":
                     ancestor_paths.add("/")  # Always include root
-            
+
             # Add all ancestor paths to BOTH subjects and objects
             # We need tuples in both directions:
             # 1. (child, "parent", ancestor) - ancestor in object position
@@ -1194,12 +1194,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             file_path_tuples = [("file", path) for path in ancestor_paths]
             all_objects.update(file_path_tuples)
             all_subjects.update(file_path_tuples)
-            
+
             # Rebuild BOTH subject and object params to include ancestor paths
             subject_params = []
             for subj_type, subj_id in all_subjects:
                 subject_params.extend([subj_type, subj_id])
-            
+
             object_params = []
             for obj_type, obj_id in all_objects:
                 object_params.extend([obj_type, obj_id])

@@ -509,7 +509,7 @@ class NexusFSMountsMixin:
                             # File exists - check if it needs update
                             # For now, we'll skip updates (could check size/mtime in future)
                             stats["files_skipped"] += 1
-                            
+
                             # Still create parent relationships for permission inheritance
                             # (in case they're missing from previous syncs)
                             if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager:
@@ -582,7 +582,7 @@ class NexusFSMountsMixin:
         # For connector backends, the prefix is already built into the backend itself
         # So we start with an empty path, and the backend will automatically apply its prefix
         backend_path = ""  # Start from root (backend's prefix will be applied automatically)
-        
+
         scan_directory(mount_point, backend_path)
 
         return stats

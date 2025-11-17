@@ -69,4 +69,3 @@ monitoring:
   logging:
     level: info
     format: text
-

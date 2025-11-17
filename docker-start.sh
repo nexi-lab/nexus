@@ -150,12 +150,12 @@ check_env_file() {
 
 check_gcs_credentials() {
     echo "🔍 Checking for GCS credentials..."
-    
+
     # Priority order for finding credentials:
     # 1. GCS_CREDENTIALS_PATH environment variable (if set)
     # 2. ./gcs-credentials.json (local file)
     # 3. ~/.config/gcloud/application_default_credentials.json (gcloud default)
-    
+
     if [ -n "$GCS_CREDENTIALS_PATH" ] && [ -f "$GCS_CREDENTIALS_PATH" ]; then
         echo "✅ Found GCS credentials at: $GCS_CREDENTIALS_PATH (from GCS_CREDENTIALS_PATH)"
     elif [ -f "./gcs-credentials.json" ]; then

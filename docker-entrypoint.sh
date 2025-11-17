@@ -308,10 +308,10 @@ if [ -f "$CONFIG_FILE" ]; then
 else
     echo "  Config: Not found (using CLI options)"
     echo ""
-    
+
     # Build command based on backend type (legacy CLI mode)
     CMD="nexus serve --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-8080} --auth-type database"
-    
+
     if [ "${NEXUS_BACKEND}" = "gcs" ]; then
         CMD="$CMD --backend gcs --gcs-bucket ${NEXUS_GCS_BUCKET}"
         if [ -n "${NEXUS_GCS_PROJECT}" ]; then
@@ -354,10 +354,10 @@ if [ ! -f "$CONFIG_FILE" ]; then
     if [ $? -eq 0 ]; then
         # Count mounts
         MOUNT_COUNT=$(echo "$SAVED_MOUNTS" | python3 -c "import sys, json; data=json.load(sys.stdin); print(len(data.get('result', [])))" 2>/dev/null || echo "0")
-        
+
         if [ "$MOUNT_COUNT" -gt 0 ]; then
             echo "Found $MOUNT_COUNT saved mount(s)"
-            
+
             # Extract mount points and load each one
             echo "$SAVED_MOUNTS" | python3 -c "
 import sys, json
@@ -372,7 +372,7 @@ for mount in mounts:
                         -H "Content-Type: application/json" \
                         -H "Authorization: Bearer ${ADMIN_API_KEY}" \
                         -d "{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"load_mount\", \"params\": {\"mount_point\": \"$MOUNT_POINT\"}}" 2>/dev/null)
-                    
+
                     if [ $? -eq 0 ]; then
                         echo -e "    ${GREEN}✓${NC} Loaded: $MOUNT_POINT"
                     else

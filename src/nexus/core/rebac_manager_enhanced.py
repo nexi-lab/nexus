@@ -1203,7 +1203,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             object_params = []
             for obj_type, obj_id in all_objects:
                 object_params.extend([obj_type, obj_id])
-            
+
             placeholders_subjects = ", ".join(["(?, ?)"] * len(all_subjects))
             placeholders_objects = ", ".join(["(?, ?)"] * len(all_objects))
 
@@ -1290,10 +1290,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         from nexus.core.rebac_fast import check_permissions_bulk_with_fallback, is_rust_available
 
         rust_success = False
-        # TODO: Rust bulk checker has a bug with parent tuple evaluation (tupleToUserset)
-        # Disabling for now until Rust implementation is fixed
-        # See: Python's _compute_permission_bulk_helper works correctly with parent tuples
-        if False and is_rust_available() and len(cache_misses) >= 10:
+        if is_rust_available() and len(cache_misses) >= 10:
             try:
                 logger.info(f"⚡ Attempting Rust acceleration for {len(cache_misses)} checks")
 

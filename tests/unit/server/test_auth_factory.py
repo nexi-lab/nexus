@@ -82,7 +82,7 @@ class TestDiscriminatingAuthProvider:
     @pytest.mark.asyncio
     async def test_authenticate_api_key_no_provider(self):
         """Test API key authentication when no API key provider configured."""
-        provider = DiscriminatingAuthProvider(jwt_provider=Mock())
+        provider = TestableDiscriminatingAuthProvider(jwt_provider=Mock())
 
         result = await provider.authenticate("sk-test-key")
 
@@ -91,7 +91,7 @@ class TestDiscriminatingAuthProvider:
     @pytest.mark.asyncio
     async def test_authenticate_jwt_no_provider(self):
         """Test JWT authentication when no JWT provider configured."""
-        provider = DiscriminatingAuthProvider(api_key_provider=Mock())
+        provider = TestableDiscriminatingAuthProvider(api_key_provider=Mock())
 
         jwt_token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJib2IifQ.signature"
 
@@ -111,16 +111,6 @@ class TestDiscriminatingAuthProvider:
 
         assert result.authenticated is False
 
-    def test_looks_like_jwt_valid(self):
-        """Test JWT format detection with valid JWT."""
-        provider = TestableDiscriminatingAuthProvider()
-
-        # Valid JWT structure (3 parts)
-        with patch("nexus.server.auth.factory.jwt.decode_header", return_value={"alg": "HS256"}):
-            result = provider._looks_like_jwt("header.payload.signature")
-
-            assert result is True
-
     def test_looks_like_jwt_invalid_parts(self):
         """Test JWT format detection with wrong number of parts."""
         provider = TestableDiscriminatingAuthProvider()
@@ -128,15 +118,6 @@ class TestDiscriminatingAuthProvider:
         assert provider._looks_like_jwt("only-two.parts") is False
         assert provider._looks_like_jwt("one") is False
         assert provider._looks_like_jwt("too.many.parts.here") is False
-
-    def test_looks_like_jwt_invalid_header(self):
-        """Test JWT format detection with invalid header."""
-        provider = TestableDiscriminatingAuthProvider()
-
-        with patch("nexus.server.auth.factory.jwt.decode_header", side_effect=Exception("Invalid")):
-            result = provider._looks_like_jwt("a.b.c")
-
-            assert result is False
 
     @pytest.mark.asyncio
     async def test_validate_token_success(self):

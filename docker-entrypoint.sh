@@ -297,17 +297,103 @@ echo ""
 echo "  Host: ${NEXUS_HOST:-0.0.0.0}"
 echo "  Port: ${NEXUS_PORT:-8080}"
 echo "  Backend: ${NEXUS_BACKEND:-local}"
-echo ""
 
-# Build command based on backend type
-CMD="nexus serve --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-8080} --auth-type database"
+# Check if config file is specified
+CONFIG_FILE="${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}"
+if [ -f "$CONFIG_FILE" ]; then
+    echo "  Config: $CONFIG_FILE"
+    echo ""
+    echo -e "${GREEN}✓ Using configuration file${NC}"
+    CMD="nexus serve --config $CONFIG_FILE --auth-type database"
+else
+    echo "  Config: Not found (using CLI options)"
+    echo ""
 
-if [ "${NEXUS_BACKEND}" = "gcs" ]; then
-    CMD="$CMD --backend gcs --gcs-bucket ${NEXUS_GCS_BUCKET}"
-    if [ -n "${NEXUS_GCS_PROJECT}" ]; then
-        CMD="$CMD --gcs-project ${NEXUS_GCS_PROJECT}"
+    # Build command based on backend type (legacy CLI mode)
+    CMD="nexus serve --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-8080} --auth-type database"
+
+    if [ "${NEXUS_BACKEND}" = "gcs" ]; then
+        CMD="$CMD --backend gcs --gcs-bucket ${NEXUS_GCS_BUCKET}"
+        if [ -n "${NEXUS_GCS_PROJECT}" ]; then
+            CMD="$CMD --gcs-project ${NEXUS_GCS_PROJECT}"
+        fi
     fi
 fi
 
-# Execute the server (replace shell with nexus process)
-exec $CMD
+# Start server in background to load saved mounts
+echo "Starting server..."
+$CMD &
+SERVER_PID=$!
+
+# Wait for server to be ready
+echo "Waiting for server to start..."
+for i in {1..30}; do
+    if curl -sf http://localhost:${NEXUS_PORT:-8080}/health > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ Server is ready${NC}"
+        break
+    fi
+    sleep 1
+    if [ $i -eq 30 ]; then
+        echo -e "${YELLOW}⚠ Server health check timeout (but continuing...)${NC}"
+    fi
+done
+sleep 2
+
+# Load saved mounts (only if not using config file)
+# Config-based backends are auto-loaded by the server
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo ""
+    echo "🔄 Loading saved mounts from database..."
+
+    # Call list_saved_mounts API
+    SAVED_MOUNTS=$(curl -sf http://localhost:${NEXUS_PORT:-8080}/api/nfs/list_saved_mounts \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${ADMIN_API_KEY}" \
+        -d '{"jsonrpc": "2.0", "id": 1, "method": "list_saved_mounts"}' 2>/dev/null)
+
+    if [ $? -eq 0 ]; then
+        # Count mounts
+        MOUNT_COUNT=$(echo "$SAVED_MOUNTS" | python3 -c "import sys, json; data=json.load(sys.stdin); print(len(data.get('result', [])))" 2>/dev/null || echo "0")
+
+        if [ "$MOUNT_COUNT" -gt 0 ]; then
+            echo "Found $MOUNT_COUNT saved mount(s)"
+
+            # Extract mount points and load each one
+            echo "$SAVED_MOUNTS" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+mounts = data.get('result', [])
+for mount in mounts:
+    print(mount['mount_point'])
+" 2>/dev/null | while read -r MOUNT_POINT; do
+                if [ -n "$MOUNT_POINT" ]; then
+                    echo "  Loading mount: $MOUNT_POINT"
+                    LOAD_RESULT=$(curl -sf http://localhost:${NEXUS_PORT:-8080}/api/nfs/load_mount \
+                        -H "Content-Type: application/json" \
+                        -H "Authorization: Bearer ${ADMIN_API_KEY}" \
+                        -d "{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"load_mount\", \"params\": {\"mount_point\": \"$MOUNT_POINT\"}}" 2>/dev/null)
+
+                    if [ $? -eq 0 ]; then
+                        echo -e "    ${GREEN}✓${NC} Loaded: $MOUNT_POINT"
+                    else
+                        echo -e "    ${YELLOW}⚠${NC} Failed to load: $MOUNT_POINT"
+                    fi
+                fi
+            done
+        else
+            echo "No saved mounts found"
+        fi
+    else
+        echo -e "${YELLOW}⚠ Could not check for saved mounts (API not ready)${NC}"
+    fi
+else
+    echo ""
+    echo -e "${GREEN}✓ Backends loaded from configuration file${NC}"
+fi
+
+echo ""
+echo -e "${GREEN}✓ Server initialization complete${NC}"
+echo ""
+
+# Wait for server process (bring to foreground)
+wait $SERVER_PID

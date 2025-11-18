@@ -46,18 +46,28 @@ class OAuthCrypto:
         Args:
             encryption_key: Base64-encoded Fernet key. If None, loads from:
                           1. NEXUS_OAUTH_ENCRYPTION_KEY environment variable
-                          2. ~/.nexus/encryption.key file (auto-created if missing)
+                          2. Generates a new random key (NOTE: not persistent!)
 
         Raises:
             ValueError: If the provided key is invalid
+
+        Note:
+            When encryption_key is None and NEXUS_OAUTH_ENCRYPTION_KEY is not set,
+            a new random key is generated for each instance. This is secure but
+            means tokens encrypted by one instance cannot be decrypted by another.
+
+            For production deployments, ALWAYS set NEXUS_OAUTH_ENCRYPTION_KEY to
+            ensure consistent encryption/decryption across server restarts.
         """
         if encryption_key is None:
             # Try to load from environment
             encryption_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY")
 
             if encryption_key is None:
-                # Try to load from persistent file
-                encryption_key = self._load_or_create_key_file()
+                # Generate a new random key for this instance
+                # Note: This means tokens are not portable between instances!
+                key_bytes: bytes = Fernet.generate_key()
+                encryption_key = key_bytes.decode("utf-8")
 
         # Convert to bytes if string
         if isinstance(encryption_key, str):
@@ -69,56 +79,6 @@ class OAuthCrypto:
             self._fernet = Fernet(encryption_key_bytes)
         except Exception as e:
             raise ValueError(f"Invalid encryption key: {e}") from e
-
-    @staticmethod
-    def _load_or_create_key_file() -> str:
-        """Load encryption key from file or create new one.
-
-        Loads from ~/.nexus/encryption.key. If file doesn't exist,
-        generates a new key and saves it.
-
-        Returns:
-            Base64-encoded Fernet key
-
-        Note:
-            For production server deployments, use NEXUS_OAUTH_ENCRYPTION_KEY
-            environment variable instead. This file-based approach is for
-            CLI-only usage.
-        """
-        home = os.path.expanduser("~")
-        key_file = os.path.join(home, ".nexus", "encryption.key")
-
-        # Try to load existing key
-        if os.path.exists(key_file):
-            try:
-                with open(key_file) as f:
-                    key = f.read().strip()
-                    # Validate it's a valid Fernet key
-                    Fernet(key.encode("utf-8"))
-                    return key
-            except Exception:
-                # If key file is corrupted, regenerate
-                pass
-
-        # Generate new key
-        key = Fernet.generate_key().decode("utf-8")
-
-        # Create directory if needed
-        os.makedirs(os.path.dirname(key_file), exist_ok=True)
-
-        # Save key to file (with restrictive permissions)
-        with open(key_file, "w") as f:
-            f.write(key)
-
-        # Set file permissions to 600 (owner read/write only)
-        os.chmod(key_file, 0o600)
-
-        print(f"INFO: Generated new encryption key and saved to {key_file}")
-        print(
-            "INFO: For production server deployments, set NEXUS_OAUTH_ENCRYPTION_KEY environment variable."
-        )
-
-        return key
 
     @staticmethod
     def generate_key() -> str:

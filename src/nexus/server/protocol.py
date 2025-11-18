@@ -1043,6 +1043,51 @@ class HasMountParams:
     mount_point: str
 
 
+@dataclass
+class SaveMountParams:
+    """Parameters for save_mount() method."""
+
+    mount_point: str
+    backend_type: str
+    backend_config: dict[str, Any]
+    priority: int = 0
+    readonly: bool = False
+    owner_user_id: str | None = None
+    tenant_id: str | None = None
+    description: str | None = None
+
+
+@dataclass
+class ListSavedMountsParams:
+    """Parameters for list_saved_mounts() method."""
+
+    owner_user_id: str | None = None
+    tenant_id: str | None = None
+
+
+@dataclass
+class LoadMountParams:
+    """Parameters for load_mount() method."""
+
+    mount_point: str
+
+
+@dataclass
+class DeleteSavedMountParams:
+    """Parameters for delete_saved_mount() method."""
+
+    mount_point: str
+
+
+@dataclass
+class SyncMountParams:
+    """Parameters for sync_mount() method."""
+
+    mount_point: str
+    recursive: bool = True
+    dry_run: bool = False
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -1133,6 +1178,12 @@ METHOD_PARAMS = {
     "list_mounts": ListMountsParams,
     "get_mount": GetMountParams,
     "has_mount": HasMountParams,
+    # Mount persistence methods
+    "save_mount": SaveMountParams,
+    "list_saved_mounts": ListSavedMountsParams,
+    "load_mount": LoadMountParams,
+    "delete_saved_mount": DeleteSavedMountParams,
+    "sync_mount": SyncMountParams,
 }
 
 

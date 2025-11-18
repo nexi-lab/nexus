@@ -21,9 +21,10 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             arch: x64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            arch: aarch64
+          # TODO: Re-enable aarch64 Linux builds once Docker/QEMU issues are resolved
+          # - os: ubuntu-latest
+          #   target: aarch64-unknown-linux-gnu
+          #   arch: aarch64
 
           # macOS builds
           - os: macos-latest
@@ -53,16 +54,7 @@ jobs:
         with:
           targets: ${{ matrix.platform.target }}
 
-      - name: Build wheels (Linux aarch64)
-        if: matrix.platform.target == 'aarch64-unknown-linux-gnu'
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.platform.target }}
-          manylinux: auto
-          args: --release --out dist
-
-      - name: Build wheels (other platforms)
-        if: matrix.platform.target != 'aarch64-unknown-linux-gnu'
+      - name: Build wheels
         run: |
           pip install maturin
           maturin build --release --target ${{ matrix.platform.target }} --out dist

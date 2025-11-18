@@ -708,7 +708,7 @@ class NexusFSCoreMixin:
         # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
         metadata = FileMetadata(
             path=path,
-            backend_name=self.backend.name,
+            backend_name=route.backend.name,  # FIX: Use routed backend name, not default backend
             physical_path=content_hash,  # CAS: hash is the "physical" location
             size=len(content),
             etag=content_hash,  # SHA-256 hash for integrity
@@ -1093,7 +1093,7 @@ class NexusFSCoreMixin:
             # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
             metadata = FileMetadata(
                 path=path,
-                backend_name=self.backend.name,
+                backend_name=route.backend.name,  # FIX: Use routed backend name, not default backend
                 physical_path=content_hash,  # CAS: hash is the "physical" location
                 size=len(content),
                 etag=content_hash,  # SHA-256 hash for integrity

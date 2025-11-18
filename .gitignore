@@ -184,3 +184,6 @@ archive/
 *_COMPLETE.md
 examples/e2b/nexus
 examples/cli/
+
+# GCS credentials - never commit!
+gcs-credentials.json

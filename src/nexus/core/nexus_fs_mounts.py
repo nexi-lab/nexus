@@ -386,3 +386,214 @@ class NexusFSMountsMixin:
             )
 
         return self.mount_manager.remove_mount(mount_point)
+
+    @rpc_expose(description="Sync metadata from connector backend")
+    def sync_mount(
+        self,
+        mount_point: str,
+        recursive: bool = True,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Sync metadata from a connector backend to Nexus database.
+
+        For connector backends (like gcs_connector), this scans the external storage
+        and updates Nexus's metadata database with any files that were added externally
+        or existed before Nexus was configured.
+
+        Args:
+            mount_point: Virtual path of mount to sync (e.g., "/mnt/gcs_demo")
+            recursive: If True, sync all subdirectories recursively (default: True)
+            dry_run: If True, only report what would be synced without making changes (default: False)
+
+        Returns:
+            Dictionary with sync results:
+                - files_found: Number of files found in backend
+                - files_added: Number of new files added to database
+                - files_updated: Number of existing files updated
+                - files_skipped: Number of files skipped (already up-to-date)
+                - errors: List of error messages (if any)
+
+        Raises:
+            ValueError: If mount_point doesn't exist
+            RuntimeError: If backend doesn't support listing (not a connector backend)
+
+        Examples:
+            >>> # Sync GCS connector mount
+            >>> result = nx.sync_mount("/mnt/gcs_demo")
+            >>> print(f"Added {result['files_added']} new files")
+
+            >>> # Dry run to see what would be synced
+            >>> result = nx.sync_mount("/mnt/gcs_demo", dry_run=True)
+            >>> print(f"Would add {result['files_found']} files")
+        """
+        import logging
+        from datetime import UTC, datetime
+        from typing import cast
+
+        from nexus.core.metadata import FileMetadata
+
+        logger = logging.getLogger(__name__)
+
+        # Check hierarchy manager status
+        has_hierarchy = hasattr(self, "_hierarchy_manager") and self._hierarchy_manager
+        enable_inheritance = (
+            self._hierarchy_manager.enable_inheritance  # type: ignore[attr-defined]
+            if has_hierarchy
+            else False
+        )
+        logger.info(
+            f"[SYNC_MOUNT] Starting sync for {mount_point}, "
+            f"hierarchy_manager={has_hierarchy}, "
+            f"enable_inheritance={enable_inheritance}"
+        )
+
+        # Get the mount
+        mount = self.router.get_mount(mount_point)
+        if not mount:
+            raise ValueError(f"Mount not found: {mount_point}")
+
+        backend = mount.backend
+        backend_name = type(backend).__name__
+
+        # Check if backend supports list_dir (connector-style backends)
+        if not hasattr(backend, "list_dir"):
+            raise RuntimeError(
+                f"Backend {backend_name} does not support metadata sync. "
+                f"Only connector-style backends (e.g., gcs_connector) can be synced."
+            )
+
+        # Track sync statistics
+        stats: dict[str, int | list[str]] = {
+            "files_found": 0,
+            "files_added": 0,
+            "files_updated": 0,
+            "files_skipped": 0,
+            "errors": [],
+        }
+
+        # Recursive function to scan directories
+        def scan_directory(virtual_path: str, backend_path: str) -> None:
+            try:
+                # List entries in this directory
+                entries = backend.list_dir(backend_path)
+
+                for entry_name in entries:
+                    is_dir = entry_name.endswith("/")
+                    entry_name = entry_name.rstrip("/")
+
+                    # Construct full virtual path
+                    if virtual_path == mount_point:
+                        entry_virtual_path = f"{mount_point}/{entry_name}"
+                    else:
+                        entry_virtual_path = f"{virtual_path}/{entry_name}"
+
+                    # Construct backend path
+                    if backend_path:
+                        entry_backend_path = f"{backend_path}/{entry_name}"
+                    else:
+                        entry_backend_path = entry_name
+
+                    if is_dir:
+                        # Recursively scan subdirectory
+                        if recursive:
+                            scan_directory(entry_virtual_path, entry_backend_path)
+                    else:
+                        # Process file
+                        stats["files_found"] = (
+                            stats["files_found"] + 1  # type: ignore[operator]
+                        )
+
+                        if dry_run:
+                            # Dry run: just count, don't modify database
+                            continue
+
+                        # Check if file already exists in metadata
+                        existing_meta = self.metadata.get(  # type: ignore[attr-defined]
+                            entry_virtual_path
+                        )
+
+                        if existing_meta:
+                            # File exists - check if it needs update
+                            # For now, we'll skip updates (could check size/mtime in future)
+                            stats["files_skipped"] = (
+                                stats["files_skipped"] + 1  # type: ignore[operator]
+                            )
+
+                            # Still create parent relationships for permission inheritance
+                            # (in case they're missing from previous syncs)
+                            if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager:
+                                try:
+                                    logger.info(
+                                        f"[SYNC_MOUNT] Creating parent tuples for existing file: {entry_virtual_path}"
+                                    )
+                                    created = self._hierarchy_manager.ensure_parent_tuples(
+                                        entry_virtual_path, tenant_id=None
+                                    )
+                                    logger.info(
+                                        f"[SYNC_MOUNT] Created {created} parent tuples for {entry_virtual_path}"
+                                    )
+                                except Exception as parent_error:
+                                    logger.warning(
+                                        f"Failed to create parent tuples for existing {entry_virtual_path}: {parent_error}"
+                                    )
+                        else:
+                            # File doesn't exist in metadata - add it
+                            try:
+                                # Create minimal metadata entry
+                                # Note: We don't know the actual size without reading the file,
+                                # so we use 0 as a placeholder. The size will be updated on first read.
+                                now = datetime.now(UTC)
+                                # Use a placeholder hash for synced files - marks them as "discovered but not yet read"
+                                # This will be updated with the actual hash on first read operation
+                                placeholder_hash = "synced_" + entry_backend_path.replace("/", "_")
+                                meta = FileMetadata(
+                                    path=entry_virtual_path,
+                                    backend_name=backend.name,
+                                    physical_path=entry_backend_path,
+                                    size=0,  # Placeholder - will be updated on first access
+                                    etag=placeholder_hash,  # Placeholder hash - will be updated on first read
+                                    created_at=now,
+                                    modified_at=now,
+                                    version=1,
+                                )
+
+                                # Save to database
+                                self.metadata.put(meta)  # type: ignore[attr-defined]
+                                stats["files_added"] = (
+                                    stats["files_added"] + 1  # type: ignore[operator]
+                                )
+
+                                # Create parent relationships for permission inheritance
+                                if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager:
+                                    try:
+                                        logger.info(
+                                            f"[SYNC_MOUNT] Creating parent tuples for new file: {entry_virtual_path}"
+                                        )
+                                        created = self._hierarchy_manager.ensure_parent_tuples(
+                                            entry_virtual_path, tenant_id=None
+                                        )
+                                        logger.info(
+                                            f"[SYNC_MOUNT] Created {created} parent tuples for {entry_virtual_path}"
+                                        )
+                                    except Exception as parent_error:
+                                        # Log but don't fail sync - permissions can be fixed later
+                                        logger.warning(
+                                            f"Failed to create parent tuples for {entry_virtual_path}: {parent_error}"
+                                        )
+
+                            except Exception as e:
+                                error_msg = f"Failed to add {entry_virtual_path}: {e}"
+                                cast(list[str], stats["errors"]).append(error_msg)
+
+            except Exception as e:
+                error_msg = f"Failed to scan {virtual_path}: {e}"
+                cast(list[str], stats["errors"]).append(error_msg)
+
+        # Start scanning from mount point root
+        # For connector backends, the prefix is already built into the backend itself
+        # So we start with an empty path, and the backend will automatically apply its prefix
+        backend_path = ""  # Start from root (backend's prefix will be applied automatically)
+
+        scan_directory(mount_point, backend_path)
+
+        return stats

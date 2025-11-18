@@ -13,14 +13,15 @@ Complete reference for all Nexus RPC server APIs (v0.5.1+)
 6. [Directory Operations](#directory-operations)
 7. [Search Operations](#search-operations)
 8. [Workspace Management](#workspace-management)
-9. [Memory API](#memory-api)
-10. [Agent Management](#agent-management)
-11. [Sandbox Management](#sandbox-management)
-12. [Admin API Management](#admin-api-management)
-13. [ReBAC Permissions](#rebac-permissions)
-14. [Versioning Operations](#versioning-operations)
-15. [Namespace Management](#namespace-management)
-16. [Complete Method Reference](#complete-method-reference)
+9. [Mount Management](#mount-management)
+10. [Memory API](#memory-api)
+11. [Agent Management](#agent-management)
+12. [Sandbox Management](#sandbox-management)
+13. [Admin API Management](#admin-api-management)
+14. [ReBAC Permissions](#rebac-permissions)
+15. [Versioning Operations](#versioning-operations)
+16. [Namespace Management](#namespace-management)
+17. [Complete Method Reference](#complete-method-reference)
 
 ---
 
@@ -1079,6 +1080,531 @@ Compare two workspace snapshots.
     }
   }
 }
+```
+
+---
+
+## Mount Management
+
+Backend mount management for attaching multiple storage backends to different paths (v0.5.0+).
+
+Nexus supports dynamic mount management, allowing you to add/remove storage backends at runtime. This is useful for:
+- User-specific storage (personal Google Drive, GCS buckets)
+- Multi-tenant scenarios with isolated storage per tenant
+- Temporary mounts for specific tasks
+- Mounting external buckets or shared storage
+
+### Supported Backend Types
+
+- **`local`** - Local filesystem backend
+- **`gcs`** - Google Cloud Storage (content-addressable, CAS-based)
+- **`gcs_connector`** - GCS Connector (direct path mapping for external buckets)
+- **`google_drive`** - Google Drive backend (requires authentication)
+
+### add_mount
+
+Add a dynamic backend mount at runtime.
+
+**Endpoint**: `POST /api/nfs/add_mount`
+
+**Parameters:**
+- `mount_point` (string, required): Virtual path where backend is mounted (e.g., "/personal/alice")
+- `backend_type` (string, required): Backend type - "local", "gcs", "gcs_connector", "google_drive"
+- `backend_config` (object, required): Backend-specific configuration
+- `priority` (int, optional): Mount priority - higher values take precedence (default: 0)
+- `readonly` (bool, optional): Whether mount is read-only (default: false)
+
+**Backend Configuration Examples:**
+
+**Local Backend:**
+```json
+{
+  "data_dir": "/path/to/local/directory"
+}
+```
+
+**GCS Backend (CAS-based):**
+```json
+{
+  "bucket": "bucket-name",
+  "project_id": "my-project",
+  "credentials_path": "/path/to/credentials.json"  // optional
+}
+```
+
+**GCS Connector Backend (Direct path mapping):**
+```json
+{
+  "bucket": "external-bucket",
+  "project_id": "my-project",
+  "prefix": "workspace",  // optional prefix in bucket
+  "credentials_path": "/path/to/credentials.json"  // optional
+}
+```
+
+**Example Request (Add GCS mount):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "add_mount",
+  "params": {
+    "mount_point": "/personal/alice",
+    "backend_type": "gcs",
+    "backend_config": {
+      "bucket": "alice-personal-bucket",
+      "project_id": "my-project"
+    },
+    "priority": 10
+  }
+}
+```
+
+**Example Request (Add GCS Connector mount):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "add_mount",
+  "params": {
+    "mount_point": "/workspace/shared",
+    "backend_type": "gcs_connector",
+    "backend_config": {
+      "bucket": "external-shared-bucket",
+      "project_id": "my-project",
+      "prefix": "team-workspace"
+    },
+    "priority": 5
+  }
+}
+```
+
+**Example Request (Add local mount):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "add_mount",
+  "params": {
+    "mount_point": "/shared/team",
+    "backend_type": "local",
+    "backend_config": {
+      "data_dir": "/mnt/shared/team-data"
+    },
+    "priority": 5,
+    "readonly": true
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": "/personal/alice"
+}
+```
+
+**cURL Example:**
+```bash
+curl -X POST http://localhost:8080/api/nfs/add_mount \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "add_mount",
+    "params": {
+      "mount_point": "/workspace/gcs",
+      "backend_type": "gcs_connector",
+      "backend_config": {
+        "bucket": "my-external-bucket",
+        "project_id": "my-project"
+      },
+      "priority": 10
+    }
+  }'
+```
+
+---
+
+### remove_mount
+
+Remove a backend mount from the filesystem.
+
+**Endpoint**: `POST /api/nfs/remove_mount`
+
+**Parameters:**
+- `mount_point` (string, required): Virtual path of mount to remove
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "remove_mount",
+  "params": {
+    "mount_point": "/personal/alice"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "result": true
+}
+```
+
+---
+
+### list_mounts
+
+List all active backend mounts.
+
+**Endpoint**: `POST /api/nfs/list_mounts`
+
+**Parameters:** None
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "method": "list_mounts",
+  "params": {}
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "result": [
+    {
+      "mount_point": "/personal/alice",
+      "priority": 10,
+      "readonly": false,
+      "backend_type": "GCSBackend"
+    },
+    {
+      "mount_point": "/workspace/shared",
+      "priority": 5,
+      "readonly": false,
+      "backend_type": "GCSConnectorBackend"
+    },
+    {
+      "mount_point": "/shared/team",
+      "priority": 5,
+      "readonly": true,
+      "backend_type": "LocalBackend"
+    }
+  ]
+}
+```
+
+---
+
+### get_mount
+
+Get details about a specific mount.
+
+**Endpoint**: `POST /api/nfs/get_mount`
+
+**Parameters:**
+- `mount_point` (string, required): Virtual path of mount
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "get_mount",
+  "params": {
+    "mount_point": "/personal/alice"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "result": {
+    "mount_point": "/personal/alice",
+    "priority": 10,
+    "readonly": false,
+    "backend_type": "GCSBackend"
+  }
+}
+```
+
+**Response (not found):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "result": null
+}
+```
+
+---
+
+### has_mount
+
+Check if a mount exists at the given path.
+
+**Endpoint**: `POST /api/nfs/has_mount`
+
+**Parameters:**
+- `mount_point` (string, required): Virtual path to check
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "has_mount",
+  "params": {
+    "mount_point": "/personal/alice"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "result": true
+}
+```
+
+---
+
+### save_mount
+
+Save a mount configuration to the database for persistence.
+
+**Endpoint**: `POST /api/nfs/save_mount`
+
+**Parameters:**
+- `mount_point` (string, required): Virtual path where backend is mounted
+- `backend_type` (string, required): Backend type - "local", "gcs", "gcs_connector", etc.
+- `backend_config` (object, required): Backend-specific configuration
+- `priority` (int, optional): Mount priority (default: 0)
+- `readonly` (bool, optional): Whether mount is read-only (default: false)
+- `owner_user_id` (string, optional): User who owns this mount
+- `tenant_id` (string, optional): Tenant ID for multi-tenant isolation
+- `description` (string, optional): Human-readable description
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "save_mount",
+  "params": {
+    "mount_point": "/personal/alice",
+    "backend_type": "google_drive",
+    "backend_config": {
+      "access_token": "ya29.xxx",
+      "refresh_token": "1//xxx"
+    },
+    "owner_user_id": "google:alice123",
+    "tenant_id": "acme",
+    "description": "Alice's personal Google Drive",
+    "priority": 10
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "result": "4594a9be-7a75-44c6-b96d-605c399ce8f7"
+}
+```
+
+**Note:** The result is the mount ID (UUID string). This only saves the configuration - use `load_mount` to activate it.
+
+---
+
+### list_saved_mounts
+
+List mount configurations saved in the database.
+
+**Endpoint**: `POST /api/nfs/list_saved_mounts`
+
+**Parameters:**
+- `owner_user_id` (string, optional): Filter by owner user ID
+- `tenant_id` (string, optional): Filter by tenant ID
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "list_saved_mounts",
+  "params": {
+    "owner_user_id": "google:alice123"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "result": [
+    {
+      "mount_id": "4594a9be-7a75-44c6-b96d-605c399ce8f7",
+      "mount_point": "/personal/alice",
+      "backend_type": "google_drive",
+      "backend_config": {
+        "access_token": "ya29.xxx",
+        "refresh_token": "1//xxx"
+      },
+      "priority": 10,
+      "readonly": false,
+      "owner_user_id": "google:alice123",
+      "tenant_id": "acme",
+      "description": "Alice's personal Google Drive",
+      "created_at": "2025-01-15T10:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
+### load_mount
+
+Load a saved mount configuration and activate it.
+
+**Endpoint**: `POST /api/nfs/load_mount`
+
+**Parameters:**
+- `mount_point` (string, required): Virtual path of saved mount to load
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "method": "load_mount",
+  "params": {
+    "mount_point": "/personal/alice"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "result": "/personal/alice"
+}
+```
+
+**Error Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "error": {
+    "code": -32000,
+    "message": "Mount not found in database: /personal/alice"
+  }
+}
+```
+
+---
+
+### delete_saved_mount
+
+Delete a saved mount configuration from the database.
+
+**Endpoint**: `POST /api/nfs/delete_saved_mount`
+
+**Parameters:**
+- `mount_point` (string, required): Virtual path of mount to delete
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "method": "delete_saved_mount",
+  "params": {
+    "mount_point": "/personal/alice"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "result": true
+}
+```
+
+**Note:** This only removes the saved configuration. Use `remove_mount` to deactivate an active mount.
+
+---
+
+### Mount Workflow Example
+
+Complete workflow for user-specific mounts:
+
+```python
+# 1. Add a mount at runtime
+mount_id = client.add_mount(
+    mount_point="/personal/alice",
+    backend_type="gcs",
+    backend_config={
+        "bucket": "alice-personal-bucket",
+        "project_id": "my-project"
+    },
+    priority=10
+)
+
+# 2. Save the mount configuration for persistence
+saved_id = client.save_mount(
+    mount_point="/personal/alice",
+    backend_type="gcs",
+    backend_config={
+        "bucket": "alice-personal-bucket",
+        "project_id": "my-project"
+    },
+    owner_user_id="google:alice123",
+    description="Alice's personal storage",
+    priority=10
+)
+
+# 3. Use the mount (files are automatically routed)
+client.write("/personal/alice/file.txt", b"Hello!")
+content = client.read("/personal/alice/file.txt")
+
+# 4. Later: Load saved mount after server restart
+client.load_mount("/personal/alice")
+
+# 5. Remove the active mount
+client.remove_mount("/personal/alice")
+
+# 6. Delete the saved configuration
+client.delete_saved_mount("/personal/alice")
 ```
 
 ---
@@ -2697,6 +3223,15 @@ Get all available ReBAC namespaces.
 | `workspace_restore` | Workspace | Restore snapshot |
 | `workspace_log` | Workspace | List snapshots |
 | `workspace_diff` | Workspace | Compare snapshots |
+| `add_mount` | Mount Management | Add dynamic backend mount |
+| `remove_mount` | Mount Management | Remove backend mount |
+| `list_mounts` | Mount Management | List all active mounts |
+| `get_mount` | Mount Management | Get mount details |
+| `has_mount` | Mount Management | Check if mount exists |
+| `save_mount` | Mount Management | Save mount configuration |
+| `list_saved_mounts` | Mount Management | List saved mounts |
+| `load_mount` | Mount Management | Load and activate mount |
+| `delete_saved_mount` | Mount Management | Delete saved mount |
 | `register_memory` | Memory | Register memory |
 | `unregister_memory` | Memory | Unregister memory |
 | `list_memories` | Memory | List memories |
@@ -2746,7 +3281,7 @@ Get all available ReBAC namespaces.
 | `namespace_delete` | Namespace | Delete namespace |
 | `get_available_namespaces` | Namespace | Get available namespaces |
 
-**Total: 67 RPC Methods**
+**Total: 76 RPC Methods** (9 Mount Management methods added)
 
 ---
 
@@ -2848,5 +3383,5 @@ server {
 
 ---
 
-**Last Updated**: 2025-11-03
-**Version**: 0.5.1+
+**Last Updated**: 2025-11-17
+**Version**: 0.5.1+ (Mount Management API added)

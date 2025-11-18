@@ -21,9 +21,10 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             arch: x64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            arch: aarch64
+          # TODO: Re-enable aarch64 Linux builds once Docker/QEMU issues are resolved
+          # - os: ubuntu-latest
+          #   target: aarch64-unknown-linux-gnu
+          #   arch: aarch64
 
           # macOS builds
           - os: macos-latest
@@ -43,34 +44,17 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
-        if: matrix.platform.target != 'aarch64-unknown-linux-gnu'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           architecture: ${{ matrix.platform.arch }}
 
       - name: Install Rust toolchain
-        if: matrix.platform.target != 'aarch64-unknown-linux-gnu'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform.target }}
 
-      - name: Set up QEMU
-        if: matrix.platform.target == 'aarch64-unknown-linux-gnu'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Build wheels (Linux aarch64)
-        if: matrix.platform.target == 'aarch64-unknown-linux-gnu'
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.platform.target }}
-          manylinux: auto
-          args: --release --out dist --find-interpreter
-
-      - name: Build wheels (other platforms)
-        if: matrix.platform.target != 'aarch64-unknown-linux-gnu'
+      - name: Build wheels
         run: |
           pip install maturin
           maturin build --release --target ${{ matrix.platform.target }} --out dist

@@ -94,6 +94,10 @@ services:
       # Override with environment variable if using a different path
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcs-credentials.json}
 
+      # OAuth encryption key (for secure token storage)
+      # Generate with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      NEXUS_OAUTH_ENCRYPTION_KEY: ${NEXUS_OAUTH_ENCRYPTION_KEY:-}
+
       # Sandbox configuration
       # URL that sandboxes should use to connect back to Nexus server
       # Use Docker service name for container-to-container communication

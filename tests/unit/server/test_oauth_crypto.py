@@ -56,8 +56,12 @@ class TestOAuthCrypto:
 
     def test_decrypt_with_wrong_key_fails(self):
         """Test that decrypting with wrong key fails."""
-        crypto1 = OAuthCrypto()
-        crypto2 = OAuthCrypto()  # Different key
+        # Generate two different keys explicitly
+        key1 = OAuthCrypto.generate_key()
+        key2 = OAuthCrypto.generate_key()
+
+        crypto1 = OAuthCrypto(key1)
+        crypto2 = OAuthCrypto(key2)  # Different key
 
         token = "test_token_123"
         encrypted = crypto1.encrypt_token(token)

@@ -2679,6 +2679,54 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("delete_saved_mount", {"mount_point": mount_point})
         return result  # type: ignore[no-any-return]
 
+    def sync_mount(
+        self,
+        mount_point: str,
+        recursive: bool = True,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Sync metadata from a connector backend to Nexus database.
+
+        For connector backends (like gcs_connector), this scans the external storage
+        and updates Nexus's metadata database with any files that were added externally
+        or existed before Nexus was configured.
+
+        Args:
+            mount_point: Virtual path of mount to sync (e.g., "/mnt/gcs_demo")
+            recursive: If True, sync all subdirectories recursively (default: True)
+            dry_run: If True, only report what would be synced without making changes (default: False)
+
+        Returns:
+            Dictionary with sync results:
+                - files_found: Number of files found in backend
+                - files_added: Number of new files added to database
+                - files_updated: Number of existing files updated
+                - files_skipped: Number of files skipped (already up-to-date)
+                - errors: List of error messages (if any)
+
+        Raises:
+            ValueError: If mount_point doesn't exist
+            RemoteFilesystemError: If backend doesn't support listing (not a connector backend)
+
+        Examples:
+            >>> # Sync GCS connector mount
+            >>> result = nx.sync_mount("/mnt/gcs_demo")
+            >>> print(f"Added {result['files_added']} new files")
+
+            >>> # Dry run to see what would be synced
+            >>> result = nx.sync_mount("/mnt/gcs_demo", dry_run=True)
+            >>> print(f"Would add {result['files_found']} files")
+        """
+        result = self._call_rpc(
+            "sync_mount",
+            {
+                "mount_point": mount_point,
+                "recursive": recursive,
+                "dry_run": dry_run,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
     # ============================================================
     # Workspace and Memory Management
     # ============================================================

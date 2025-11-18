@@ -500,6 +500,47 @@ def serve(
                                 console.print(
                                     f"  [green]✓[/green] Mounted {backend_type} backend at {mount_point}{readonly_str}"
                                 )
+
+                                # Auto-grant permissions to admin user for this mount point
+                                # This ensures the admin can list/read/write files in config-mounted backends
+                                if mount_point != "/":  # Skip root mount (already has permissions)
+                                    try:
+                                        # Grant direct_owner to admin for full access
+                                        nx.rebac_create(
+                                            subject=("user", admin_user),
+                                            relation="direct_owner",
+                                            object=("file", mount_point),
+                                        )
+                                        console.print(
+                                            f"    [dim]→ Granted {admin_user} permissions to {mount_point}[/dim]"
+                                        )
+                                    except Exception as perm_error:
+                                        console.print(
+                                            f"    [yellow]⚠️  Could not grant permissions to {mount_point}: {perm_error}[/yellow]"
+                                        )
+
+                                    # Auto-sync connector backends to discover existing files
+                                    # Connector backends provide direct path mapping to external storage
+                                    if "connector" in backend_type.lower() and hasattr(
+                                        backend, "list_dir"
+                                    ):
+                                        try:
+                                            console.print(
+                                                f"    [dim]→ Syncing metadata from {backend_type}...[/dim]"
+                                            )
+                                            sync_result = nx.sync_mount(mount_point, recursive=True)
+                                            if sync_result["files_added"] > 0:
+                                                console.print(
+                                                    f"    [dim]→ Discovered {sync_result['files_added']} files[/dim]"
+                                                )
+                                            if sync_result["errors"]:
+                                                console.print(
+                                                    f"    [yellow]⚠️  Sync errors: {len(sync_result['errors'])}[/yellow]"
+                                                )
+                                        except Exception as sync_error:
+                                            console.print(
+                                                f"    [yellow]⚠️  Could not sync {mount_point}: {sync_error}[/yellow]"
+                                            )
                             except Exception as e:
                                 console.print(
                                     f"[yellow]⚠️  Warning: Failed to mount {backend_type} at {mount_point}: {e}[/yellow]"

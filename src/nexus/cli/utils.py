@@ -286,6 +286,20 @@ def create_backend_from_config(backend_type: str, config: dict[str, Any]) -> Any
             credentials_path=config.get("credentials_path"),
         )
 
+    elif backend_type == "gcs_connector":
+        from nexus.backends.gcs_connector import GCSConnectorBackend
+
+        bucket = config.get("bucket")
+        if not bucket:
+            raise ValueError("GCS connector backend requires 'bucket' in config")
+
+        return GCSConnectorBackend(
+            bucket_name=bucket,
+            project_id=config.get("project_id"),
+            credentials_path=config.get("credentials_path"),
+            prefix=config.get("prefix", ""),
+        )
+
     elif backend_type == "s3":
         # TODO: Implement S3Backend
         raise NotImplementedError(f"S3 backend not yet implemented (backend type: {backend_type})")

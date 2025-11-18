@@ -28,6 +28,7 @@ Authentication:
 """
 
 import hashlib
+import mimetypes
 from typing import TYPE_CHECKING
 
 from google.cloud import storage
@@ -132,12 +133,52 @@ class GCSConnectorBackend(Backend):
         """
         backend_path = backend_path.lstrip("/")
         if self.prefix:
-            return f"{self.prefix}/{backend_path}"
+            if backend_path:
+                return f"{self.prefix}/{backend_path}"
+            else:
+                # For empty backend_path, return prefix without trailing slash
+                return self.prefix
         return backend_path
 
     def _compute_hash(self, content: bytes) -> str:
         """Compute SHA-256 hash of content for metadata compatibility."""
         return hashlib.sha256(content).hexdigest()
+
+    def _detect_content_type(self, backend_path: str, content: bytes) -> str:
+        """
+        Detect appropriate Content-Type for file based on path and content.
+
+        For text files, ensures charset=utf-8 is included for proper display
+        in GCP Console and other tools.
+
+        Args:
+            backend_path: File path (used for extension-based detection)
+            content: File content bytes
+
+        Returns:
+            Content-Type string (e.g., "text/plain; charset=utf-8")
+        """
+        # Try to guess from file extension
+        content_type, _ = mimetypes.guess_type(backend_path)
+
+        # If couldn't guess or got text type, try to detect if it's UTF-8 text
+        if not content_type or content_type.startswith("text/"):
+            try:
+                # Try decoding as UTF-8
+                content.decode("utf-8")
+                # Success! It's UTF-8 text
+                if content_type and content_type.startswith("text/"):
+                    # Use guessed text type with charset
+                    return f"{content_type}; charset=utf-8"
+                else:
+                    # Default to text/plain with UTF-8
+                    return "text/plain; charset=utf-8"
+            except UnicodeDecodeError:
+                # Not UTF-8 text, use guessed type or default to binary
+                return content_type or "application/octet-stream"
+
+        # Use guessed type for non-text files
+        return content_type
 
     # === Content Operations (Path-based, not CAS) ===
 
@@ -168,9 +209,12 @@ class GCSConnectorBackend(Backend):
         gcs_path = self._get_gcs_path(context.backend_path)
 
         try:
-            # Write directly to actual path in GCS
+            # Detect appropriate Content-Type with charset for proper encoding
+            content_type = self._detect_content_type(context.backend_path, content)
+
+            # Write directly to actual path in GCS with proper Content-Type
             blob = self.bucket.blob(gcs_path)
-            blob.upload_from_string(content, timeout=60)
+            blob.upload_from_string(content, content_type=content_type, timeout=60)
 
             # If bucket has versioning enabled, return generation number
             # Otherwise, return content hash for metadata tracking

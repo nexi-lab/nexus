@@ -90,8 +90,13 @@ services:
       NEXUS_GCS_BUCKET: ${NEXUS_GCS_BUCKET:-}
       NEXUS_GCS_PROJECT: ${NEXUS_GCS_PROJECT:-}
 
-      # Optional: GCS credentials
-      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      # GCS credentials (automatically mounted at /app/gcs-credentials.json)
+      # Override with environment variable if using a different path
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcs-credentials.json}
+
+      # OAuth encryption key (for secure token storage)
+      # Generate with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      NEXUS_OAUTH_ENCRYPTION_KEY: ${NEXUS_OAUTH_ENCRYPTION_KEY:-}
 
       # Sandbox configuration
       # URL that sandboxes should use to connect back to Nexus server
@@ -110,7 +115,10 @@ services:
     volumes:
       # Persistent data directory (local backend)
       - nexus-data:/app/data
-      # Optional: Mount GCS credentials
+      # Configuration files (includes config.demo.yaml for auto-mounting backends)
+      - ./configs:/app/configs:ro
+      # GCS credentials (auto-detected - see docker-gcs-setup.sh)
+      # Automatically finds credentials from: gcloud, ./gcs-credentials.json, or GCS_CREDENTIALS_PATH
       - ${GCS_CREDENTIALS_PATH:-./gcs-credentials.json}:/app/gcs-credentials.json:ro
       # Docker socket for sandbox provider
       - /var/run/docker.sock:/var/run/docker.sock

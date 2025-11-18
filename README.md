@@ -436,6 +436,7 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 git clone https://github.com/nexi-lab/nexus.git
 cd nexus
 pip install -e ".[dev]"
+pre-commit install  # Install pre-commit hooks for code quality checks
 pytest tests/
 ```
 

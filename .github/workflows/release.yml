@@ -55,13 +55,19 @@ jobs:
         with:
           targets: ${{ matrix.platform.target }}
 
+      - name: Set up QEMU
+        if: matrix.platform.target == 'aarch64-unknown-linux-gnu'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Build wheels (Linux aarch64)
         if: matrix.platform.target == 'aarch64-unknown-linux-gnu'
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           manylinux: auto
-          args: --release --out dist
+          args: --release --out dist --find-interpreter
 
       - name: Build wheels (other platforms)
         if: matrix.platform.target != 'aarch64-unknown-linux-gnu'

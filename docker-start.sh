@@ -65,27 +65,30 @@ check_env_file() {
         production)
             ENV_FILE=".env.production"
             ENV_SECRETS=".env.production.secrets"
-            FRONTEND_ENV_FILE="../nexus-frontend/.env.production"
             ;;
         *)
             # Local development (default)
-            # Try .env.local first, fallback to .env for backwards compatibility
+            # Try .env.local first, then .env.example
             if [ -f ".env.local" ]; then
                 ENV_FILE=".env.local"
+            elif [ -f ".env.example" ]; then
+                ENV_FILE=".env.example"
+                echo "⚠️  Using .env.example (no .env.local found)"
+                echo "   💡 Tip: Create .env.local for your personal config"
+                echo "   Run: cp .env.example .env.local"
+                echo ""
             else
-                ENV_FILE=".env"
+                ENV_FILE=".env.local"
             fi
             ENV_SECRETS=""
-            FRONTEND_ENV_FILE="../nexus-frontend/.env.local"
             ;;
     esac
 
     echo "🎯 Environment mode: $ENV_MODE"
-    echo "   Backend config: $ENV_FILE"
+    echo "   Config file: $ENV_FILE"
     if [ -n "$ENV_SECRETS" ]; then
-        echo "   Backend secrets: $ENV_SECRETS"
+        echo "   Secrets file: $ENV_SECRETS"
     fi
-    echo "   Frontend config: $FRONTEND_ENV_FILE"
     echo ""
 
     # Check main env file
@@ -98,20 +101,17 @@ check_env_file() {
             echo "   Expected: $ENV_FILE"
             exit 1
         else
-            echo "Creating $ENV_FILE from .env.example..."
-            if [ -f ".env.example" ]; then
-                cp .env.example "$ENV_FILE"
-                echo "✅ Created $ENV_FILE"
-                echo ""
-                echo "⚠️  IMPORTANT: Edit $ENV_FILE and add your API keys:"
-                echo "   - ANTHROPIC_API_KEY (required for LangGraph)"
-                echo "   - OPENAI_API_KEY (required for LangGraph)"
-                echo ""
-                read -p "Press Enter to continue after editing $ENV_FILE..."
-            else
-                echo "❌ .env.example not found"
-                exit 1
-            fi
+            echo "❌ No environment file found!"
+            echo ""
+            echo "To get started, create .env.local:"
+            echo "   cp .env.example .env.local"
+            echo ""
+            echo "Then edit .env.local and add your API keys:"
+            echo "   - ANTHROPIC_API_KEY (required for LangGraph)"
+            echo "   - OPENAI_API_KEY (optional, for LangGraph)"
+            echo ""
+            echo "Or you can edit .env.example directly and the script will use it."
+            exit 1
         fi
     fi
 
@@ -130,19 +130,6 @@ check_env_file() {
         else
             echo "⚠️  Production secrets file not found: $ENV_SECRETS"
             echo "   This is OK for testing, but required for production deployment"
-        fi
-    fi
-
-    # Check for frontend env file
-    if [ -f "$FRONTEND_ENV_FILE" ]; then
-        echo "📦 Loading frontend config from $FRONTEND_ENV_FILE"
-        set -a
-        source "$FRONTEND_ENV_FILE"
-        set +a
-    else
-        echo "ℹ️  Frontend env file not found: $FRONTEND_ENV_FILE (using defaults)"
-        if [ "$ENV_MODE" != "production" ]; then
-            echo "   💡 Tip: Create $FRONTEND_ENV_FILE for custom frontend config"
         fi
     fi
     echo ""
@@ -175,6 +162,32 @@ check_gcs_credentials() {
     echo ""
 }
 
+check_frontend_repo() {
+    echo "🔍 Checking for nexus-frontend repository..."
+
+    FRONTEND_DIR="../nexus-frontend"
+
+    if [ -d "$FRONTEND_DIR" ]; then
+        echo "✅ Found nexus-frontend at: $FRONTEND_DIR"
+    else
+        echo "⚠️  nexus-frontend not found at: $FRONTEND_DIR"
+        echo ""
+        echo "Cloning nexus-frontend repository..."
+
+        # Clone the repository
+        git clone https://github.com/nexi-lab/nexus-frontend.git "$FRONTEND_DIR"
+
+        if [ $? -eq 0 ]; then
+            echo "✅ Successfully cloned nexus-frontend"
+        else
+            echo "❌ Failed to clone nexus-frontend"
+            echo "   Please manually clone: git clone https://github.com/nexi-lab/nexus-frontend.git $FRONTEND_DIR"
+            exit 1
+        fi
+    fi
+    echo ""
+}
+
 show_services() {
     cat << EOF
 📦 Services:
@@ -195,6 +208,7 @@ cmd_start() {
     check_docker
     check_env_file
     check_gcs_credentials
+    check_frontend_repo
 
     echo "🧹 Cleaning up old sandbox containers..."
     docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
@@ -220,6 +234,7 @@ cmd_build() {
     check_docker
     check_env_file
     check_gcs_credentials
+    check_frontend_repo
 
     echo "🧹 Cleaning up old sandbox containers..."
     docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
@@ -317,6 +332,7 @@ cmd_init() {
     print_banner
     check_docker
     check_env_file
+    check_frontend_repo
 
     echo "🔧 INITIALIZATION MODE"
     echo ""
@@ -423,7 +439,7 @@ cmd_urls() {
   📊 Health Checks:
      • Nexus:         curl http://localhost:8080/health
      • Frontend:      curl http://localhost:5173/health
-     • LangGraph:     curl http://localhost:2024/health
+     • LangGraph:     curl http://localhost:2024/ok
 
 ╔═══════════════════════════════════════════════════════════════════╗
 ║                      📚 Useful Commands                          ║

@@ -92,14 +92,14 @@ The agent can optionally use **E2B (Execute in Browser)** to run Python code and
 
 ### Enabling E2B Sandbox
 
-When running the demo with `--start_sandbox`, E2B will be automatically configured:
+When running with sandbox support, E2B can be automatically configured:
 
 ```bash
 cd nexus
-./demo.sh --start_sandbox --start_agent
+./docker-start.sh --init
 ```
 
-This will:
+E2B configuration will:
 1. Install E2B CLI if needed
 2. Authenticate with E2B (opens browser)
 3. Build/load the E2B sandbox template (if not exists)

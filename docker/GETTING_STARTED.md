@@ -20,7 +20,7 @@ Quick guide to using Docker-based sandboxes with Nexus.
 ### Step 1: Run the demo script
 
 The demo script will automatically:
-- Build the `nexus/runtime:latest` image (first run only)
+- Build the `nexus-runtime:latest` image (first run only)
 - Start a local Nexus server
 - Create a Docker sandbox
 - Demonstrate FUSE mounting and code execution
@@ -66,7 +66,7 @@ nexus sandbox stop $SANDBOX_ID
 
 ### The Nexus Runtime Image
 
-The demo automatically builds `nexus/runtime:latest` which includes:
+The demo automatically builds `nexus-runtime:latest` which includes:
 
 - **Python 3.11** - Latest Python runtime
 - **Node.js 20** - Latest LTS Node.js
@@ -88,7 +88,7 @@ The demo automatically builds `nexus/runtime:latest` which includes:
 ./docker/build.sh --version
 
 # Manual build
-docker build -f docker/nexus-runtime.Dockerfile -t nexus/runtime:latest .
+docker build -f docker/nexus-runtime.Dockerfile -t nexus-runtime:latest .
 ```
 
 ### Image Size
@@ -100,12 +100,12 @@ docker build -f docker/nexus-runtime.Dockerfile -t nexus/runtime:latest .
 
 ```bash
 # List images
-docker images nexus/runtime
+docker images nexus-runtime
 
 # Test image
-docker run --rm nexus/runtime:latest python --version
-docker run --rm nexus/runtime:latest node --version
-docker run --rm nexus/runtime:latest nexus --version
+docker run --rm nexus-runtime:latest python --version
+docker run --rm nexus-runtime:latest node --version
+docker run --rm nexus-runtime:latest nexus --version
 ```
 
 ## Usage Patterns
@@ -231,7 +231,7 @@ docker run hello-world
 ./docker/build.sh --force
 
 # Check logs
-docker build -f docker/nexus-runtime.Dockerfile -t nexus/runtime:latest . 2>&1 | tee build.log
+docker build -f docker/nexus-runtime.Dockerfile -t nexus-runtime:latest . 2>&1 | tee build.log
 ```
 
 ### FUSE mount fails

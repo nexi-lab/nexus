@@ -48,7 +48,7 @@ nexus sandbox stop <sandbox-id>
 ### Run Demo
 
 ```bash
-# Run demo (builds nexus/runtime:latest automatically on first run)
+# Run demo (builds nexus-runtime:latest automatically on first run)
 ./examples/cli/docker_sandbox_demo.sh
 
 # Subsequent runs use cached image (fast)
@@ -75,7 +75,7 @@ Build the pre-configured Nexus runtime image with all dependencies:
 ./docker/build.sh --force
 
 # Manual way
-docker build -f docker/nexus-runtime.Dockerfile -t nexus/runtime:latest .
+docker build -f docker/nexus-runtime.Dockerfile -t nexus-runtime:latest .
 ```
 
 The image includes:
@@ -91,10 +91,10 @@ The image includes:
 # Create sandbox with Nexus runtime
 nexus sandbox create my-sandbox \
   --provider docker \
-  --template nexus/runtime:latest
+  --template nexus-runtime:latest
 
 # Or set as default in environment
-export DOCKER_IMAGE=nexus/runtime:latest
+export DOCKER_IMAGE=nexus-runtime:latest
 ```
 
 ### Image Details
@@ -170,7 +170,7 @@ nx = NexusFilesystem(
     backend=LocalBackend(),
     sandbox_provider="docker",
     sandbox_config={
-        "docker_image": "nexus/runtime:latest",
+        "docker_image": "nexus-runtime:latest",
         "memory_limit": "1g",
         "cpu_limit": 2.0,
         "cleanup_interval": 120

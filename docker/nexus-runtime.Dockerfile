@@ -8,11 +8,11 @@
 # - FUSE support for mounting Nexus filesystem
 #
 # Build:
-#   docker build -f docker/nexus-runtime.Dockerfile -t nexus/runtime:latest .
+#   docker build -f docker/nexus-runtime.Dockerfile -t nexus-runtime:latest .
 #
 # Usage:
 #   Used automatically by DockerSandboxProvider
-#   Or manually: docker run -it --cap-add SYS_ADMIN nexus/runtime:latest
+#   Or manually: docker run -it --cap-add SYS_ADMIN nexus-runtime:latest
 
 FROM python:3.11-slim
 

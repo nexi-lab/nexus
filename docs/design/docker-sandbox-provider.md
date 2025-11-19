@@ -1042,7 +1042,7 @@ network_mode='host'    # Direct localhost access
 
 ---
 
-### Q3: Should we create an official `nexus/runtime` image?
+### Q3: Should we create an official `nexus-runtime` image?
 
 **Context:** Pre-built image with nexus CLI, common tools.
 
@@ -1165,10 +1165,10 @@ CMD ["sleep", "infinity"]
 
 Build and publish:
 ```bash
-docker build -f Dockerfile -t nexus/runtime:latest .
-docker tag nexus/runtime:latest nexus/runtime:0.1.0
-docker push nexus/runtime:latest
-docker push nexus/runtime:0.1.0
+docker build -f Dockerfile -t nexus-runtime:latest .
+docker tag nexus-runtime:latest nexus-runtime:0.1.0
+docker push nexus-runtime:latest
+docker push nexus-runtime:0.1.0
 ```
 
 ---

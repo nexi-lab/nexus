@@ -569,9 +569,10 @@ class NexusFS(
             OperationContext instance
         """
         from nexus.core.permissions import OperationContext
+        from nexus.core.permissions_enhanced import EnhancedOperationContext
 
-        # If already an OperationContext, return as-is
-        if isinstance(context, OperationContext):
+        # If already an OperationContext or EnhancedOperationContext, return as-is
+        if isinstance(context, (OperationContext, EnhancedOperationContext)):
             return context
 
         if context is None:

@@ -2,12 +2,12 @@
 #
 # Build Nexus Runtime Docker Image
 #
-# This script builds the nexus/runtime:latest image with all dependencies
+# This script builds the nexus-runtime:latest image with all dependencies
 # pre-installed for fast sandbox container startup.
 #
 # Usage:
-#   ./docker/build.sh           # Build production image (nexus/runtime:latest from PyPI)
-#   ./docker/build.sh --dev     # Build dev image (nexus/runtime:dev from local source)
+#   ./docker/build.sh           # Build production image (nexus-runtime:latest from PyPI)
+#   ./docker/build.sh --dev     # Build dev image (nexus-runtime:dev from local source)
 #   ./docker/build.sh --force   # Force rebuild (no cache)
 #   ./docker/build.sh --version # Show version info
 
@@ -19,7 +19,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-IMAGE_NAME="nexus/runtime"
+IMAGE_NAME="nexus-runtime"
 IMAGE_TAG="latest"
 DOCKERFILE="docker/nexus-runtime.Dockerfile"
 BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -69,7 +69,7 @@ for arg in "$@"; do
             echo "Usage: ./docker/build.sh [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --dev       Build dev image from local source (nexus/runtime:dev)"
+            echo "  --dev       Build dev image from local source (nexus-runtime:dev)"
             echo "  --force     Force rebuild without cache"
             echo "  --version   Show version info"
             echo "  --help      Show this help message"

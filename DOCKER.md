@@ -368,20 +368,6 @@ For production deployment, see the main [CLAUDE.md](../.claude/CLAUDE.md) for de
 - Docker images pushed to GCR
 - Deployment to VM instances
 
-## Comparison with demo.sh
-
-| Feature | demo.sh | docker-start.sh |
-|---------|---------|-----------------|
-| PostgreSQL | Local install | Docker container |
-| Nexus | Python venv | Docker container |
-| LangGraph | Python venv | Docker container |
-| Frontend | npm dev server | Docker container (Nginx) |
-| Ngrok | Required | Not needed (local) |
-| Dependencies | Manual install | Auto-installed in containers |
-| Cleanup | Kill processes | `docker compose down` |
-| Data persistence | Local files | Docker volumes |
-| Multi-platform | macOS/Linux | Any OS with Docker |
-
 ## Files
 
 - `docker-compose.demo.yml` - Main compose configuration

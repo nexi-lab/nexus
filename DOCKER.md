@@ -28,14 +28,22 @@ The Docker setup includes 4 services:
 ### 1. Setup Environment
 
 ```bash
-# Copy example environment file
-cp .env.example .env
+# Option 1: Create .env.local (recommended)
+cp .env.example .env.local
 
-# Edit .env and add your API keys
+# Edit .env.local and add your API keys
 # Required:
-#   - ANTHROPIC_API_KEY
-#   - OPENAI_API_KEY
-nano .env
+#   - ANTHROPIC_API_KEY (required for LangGraph)
+# Optional:
+#   - OPENAI_API_KEY (optional for LangGraph)
+#   - TAVILY_API_KEY (for web search)
+#   - E2B_API_KEY (for cloud sandboxes)
+#   - FIRECRAWL_API_KEY (for web scraping)
+nano .env.local
+
+# Option 2: Edit .env.example directly
+# The script will use .env.example if no .env.local or .env is found
+nano .env.example
 ```
 
 ### 2. Start Services
@@ -265,7 +273,7 @@ curl http://localhost:8080/health
 curl http://localhost:5173/health
 
 # Check LangGraph
-curl http://localhost:2024/health
+curl http://localhost:2024/ok
 
 # Check PostgreSQL
 docker exec nexus-postgres pg_isready -U postgres

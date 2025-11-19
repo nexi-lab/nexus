@@ -60,7 +60,7 @@ EXPOSE 2024
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-    CMD curl -f http://localhost:${LANGGRAPH_PORT}/health || exit 1
+    CMD curl -f http://localhost:${LANGGRAPH_PORT}/ok || exit 1
 
 # Run the LangGraph server
 CMD ["sh", "-c", "langgraph dev --allow-blocking --host ${LANGGRAPH_HOST} --port ${LANGGRAPH_PORT}"]

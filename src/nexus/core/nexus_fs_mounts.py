@@ -18,6 +18,7 @@ from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.core.mount_manager import MountManager
+    from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
 
 
@@ -29,6 +30,69 @@ class NexusFSMountsMixin:
         router: PathRouter
         mount_manager: MountManager | None
 
+    def _grant_mount_owner_permission(
+        self, mount_point: str, context: OperationContext | None
+    ) -> None:
+        """Grant direct_owner permission to the user who created the mount.
+
+        This helper function is called after successfully creating a mount to
+        automatically grant the creator full access to the mounted backend.
+        It also creates a directory entry for the mount point.
+
+        Args:
+            mount_point: The virtual path of the mount
+            context: Operation context containing user/subject information
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        logger.info(f"Setting up mount point: {mount_point}")
+
+        # Create directory entry for the mount point
+        try:
+            if hasattr(self, "mkdir"):
+                self.mkdir(mount_point, parents=True, exist_ok=True, context=context)
+                logger.info(f"✓ Created directory entry for mount point: {mount_point}")
+            else:
+                logger.warning(
+                    "[MOUNT-DIR] mkdir method not available, skipping directory creation"
+                )
+        except Exception as e:
+            # Log but don't fail the mount operation if directory creation fails
+            logger.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
+
+        # Grant direct_owner permission
+        if not context or not hasattr(context, "subject_id") or not context.subject_id:
+            logger.warning("[MOUNT-PERM] Skipping permission grant - no context or subject_id")
+            return
+
+        try:
+            # Get tenant and subject info from context
+            tenant_id = context.tenant_id if hasattr(context, "tenant_id") else "default"
+            subject_type = context.subject_type if hasattr(context, "subject_type") else "user"
+
+            # Create permission tuple using rebac_create method
+            if hasattr(self, "rebac_create"):
+                tuple_id = self.rebac_create(
+                    subject=(subject_type, context.subject_id),
+                    relation="direct_owner",
+                    object=("file", mount_point),
+                    tenant_id=tenant_id,
+                )
+
+                logger.info(
+                    f"✓ Granted direct_owner permission to {subject_type}:{context.subject_id} "
+                    f"for mount {mount_point} (tenant={tenant_id}, tuple_id={tuple_id})"
+                )
+            else:
+                logger.warning(
+                    "[MOUNT-PERM] rebac_create method not available, skipping permission grant"
+                )
+        except Exception as e:
+            # Log but don't fail the mount operation if permission grant fails
+            logger.warning(f"Failed to grant direct_owner permission for mount {mount_point}: {e}")
+
     @rpc_expose(description="Add dynamic backend mount")
     def add_mount(
         self,
@@ -37,11 +101,14 @@ class NexusFSMountsMixin:
         backend_config: dict[str, Any],
         priority: int = 0,
         readonly: bool = False,
+        context: OperationContext | None = None,
     ) -> str:
         """Add a dynamic backend mount to the filesystem.
 
         This adds a backend mount at runtime without requiring server restart.
         Useful for user-specific storage, temporary backends, or multi-tenant scenarios.
+
+        Automatically grants direct_owner permission to the user who creates the mount.
 
         Args:
             mount_point: Virtual path where backend is mounted (e.g., "/personal/alice")
@@ -49,6 +116,7 @@ class NexusFSMountsMixin:
             backend_config: Backend-specific configuration dict
             priority: Mount priority - higher values take precedence (default: 0)
             readonly: Whether mount is read-only (default: False)
+            context: Operation context (automatically provided by RPC server)
 
         Returns:
             Mount ID (unique identifier for this mount)
@@ -128,24 +196,112 @@ class NexusFSMountsMixin:
         self.router.add_mount(
             mount_point=mount_point, backend=backend, priority=priority, readonly=readonly
         )
+
+        # Grant direct_owner permission to the user who created the mount
+        self._grant_mount_owner_permission(mount_point, context)
+
         return mount_point  # Return mount_point as the mount ID
 
     @rpc_expose(description="Remove backend mount")
-    def remove_mount(self, mount_point: str) -> bool:
+    def remove_mount(
+        self,
+        mount_point: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
         """Remove a backend mount from the filesystem.
+
+        This removes the mount from the router and deletes the mount point directory.
+        Files inside the mount are NOT deleted - only the directory entry and permissions
+        for the mount point itself are cleaned up.
 
         Args:
             mount_point: Virtual path of mount to remove (e.g., "/personal/alice")
+            context: Operation context (automatically provided by RPC server)
 
         Returns:
-            True if mount was removed, False if mount not found
+            Dictionary with removal details:
+            - removed: bool - Whether mount was removed
+            - directory_deleted: bool - Whether mount point directory was deleted
+            - permissions_cleaned: int - Number of permission tuples removed
+            - errors: list[str] - Any errors encountered
 
         Examples:
-            >>> # Remove user's personal mount
-            >>> if nx.remove_mount("/personal/alice"):
-            ...     print("Mount removed successfully")
+            >>> # Remove mount and clean up directory
+            >>> result = nx.remove_mount("/personal/alice")
+            >>> print(f"Removed: {result['removed']}, Dir deleted: {result['directory_deleted']}")
         """
-        return self.router.remove_mount(mount_point)
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        result: dict[str, Any] = {
+            "removed": False,
+            "directory_deleted": False,
+            "permissions_cleaned": 0,
+            "errors": [],
+        }
+
+        # Check if mount exists and remove it
+        if not self.router.remove_mount(mount_point):
+            result["errors"].append(f"Mount not found: {mount_point}")
+            return result
+
+        result["removed"] = True
+        logger.info(f"Removed mount from router: {mount_point}")
+
+        # Delete the mount point directory (but not the files inside)
+        try:
+            if hasattr(self, "metadata") and hasattr(self.metadata, "delete"):
+                # Soft delete the directory entry from metadata
+                self.metadata.delete(mount_point)
+                result["directory_deleted"] = True
+                logger.info(f"Deleted mount point directory: {mount_point}")
+        except Exception as e:
+            error_msg = f"Failed to delete mount point directory {mount_point}: {e}"
+            result["errors"].append(error_msg)
+            logger.warning(error_msg)
+
+        # Clean up ReBAC permissions for the mount point
+        try:
+            if hasattr(self, "hierarchy_manager") and hasattr(
+                self.hierarchy_manager, "remove_parent_tuples"
+            ):
+                tenant_id = (
+                    context.tenant_id if context and hasattr(context, "tenant_id") else "default"
+                )
+                tuples_removed = self.hierarchy_manager.remove_parent_tuples(mount_point, tenant_id)
+                result["permissions_cleaned"] += tuples_removed
+                logger.info(f"Removed {tuples_removed} parent tuples for {mount_point}")
+        except Exception as e:
+            error_msg = f"Failed to clean up parent tuples: {e}"
+            result["errors"].append(error_msg)
+            logger.warning(error_msg)
+
+        # Remove direct_owner permission tuple for the mount point
+        try:
+            if hasattr(self, "rebac_delete_object_tuples"):
+                tenant_id = (
+                    context.tenant_id if context and hasattr(context, "tenant_id") else "default"
+                )
+                deleted = self.rebac_delete_object_tuples(
+                    object=("file", mount_point), tenant_id=tenant_id
+                )
+                result["permissions_cleaned"] += deleted
+                logger.info(f"Removed {deleted} permission tuples for {mount_point}")
+        except Exception as e:
+            error_msg = f"Failed to delete permission tuples: {e}"
+            result["errors"].append(error_msg)
+            logger.warning(error_msg)
+
+        if result["errors"]:
+            logger.warning(f"Mount removed with {len(result['errors'])} errors: {result['errors']}")
+        else:
+            logger.info(
+                f"Successfully removed mount {mount_point} "
+                f"(directory_deleted={result['directory_deleted']}, permissions_cleaned={result['permissions_cleaned']})"
+            )
+
+        return result
 
     @rpc_expose(description="List all backend mounts")
     def list_mounts(self) -> list[dict[str, Any]]:
@@ -231,11 +387,14 @@ class NexusFSMountsMixin:
         owner_user_id: str | None = None,
         tenant_id: str | None = None,
         description: str | None = None,
+        context: OperationContext | None = None,
     ) -> str:
         """Save a mount configuration to the database for persistence.
 
         This allows mounts to survive server restarts. The mount must still be
         activated using add_mount() - this only stores the configuration.
+
+        Automatically grants direct_owner permission to the user who saves the mount.
 
         Args:
             mount_point: Virtual path where backend is mounted
@@ -246,6 +405,7 @@ class NexusFSMountsMixin:
             owner_user_id: User who owns this mount (optional)
             tenant_id: Tenant ID for multi-tenant isolation (optional)
             description: Human-readable description (optional)
+            context: Operation context (automatically provided by RPC server)
 
         Returns:
             Mount ID (UUID string)
@@ -270,7 +430,7 @@ class NexusFSMountsMixin:
                 "Mount manager not available. Ensure NexusFS is initialized with a database."
             )
 
-        return self.mount_manager.save_mount(
+        mount_id = self.mount_manager.save_mount(
             mount_point=mount_point,
             backend_type=backend_type,
             backend_config=backend_config,
@@ -280,6 +440,11 @@ class NexusFSMountsMixin:
             tenant_id=tenant_id,
             description=description,
         )
+
+        # Grant direct_owner permission to the user who saved the mount
+        self._grant_mount_owner_permission(mount_point, context)
+
+        return mount_id
 
     @rpc_expose(description="List saved mount configurations")
     def list_saved_mounts(
@@ -398,7 +563,8 @@ class NexusFSMountsMixin:
 
         For connector backends (like gcs_connector), this scans the external storage
         and updates Nexus's metadata database with any files that were added externally
-        or existed before Nexus was configured.
+        or existed before Nexus was configured. It also removes files from metadata
+        that no longer exist in the backend.
 
         Args:
             mount_point: Virtual path of mount to sync (e.g., "/mnt/gcs_demo")
@@ -407,10 +573,10 @@ class NexusFSMountsMixin:
 
         Returns:
             Dictionary with sync results:
-                - files_found: Number of files found in backend
-                - files_added: Number of new files added to database
+                - files_scanned: Number of files scanned in backend
+                - files_created: Number of new files added to database
                 - files_updated: Number of existing files updated
-                - files_skipped: Number of files skipped (already up-to-date)
+                - files_deleted: Number of files deleted from database (no longer in backend)
                 - errors: List of error messages (if any)
 
         Raises:
@@ -420,11 +586,11 @@ class NexusFSMountsMixin:
         Examples:
             >>> # Sync GCS connector mount
             >>> result = nx.sync_mount("/mnt/gcs_demo")
-            >>> print(f"Added {result['files_added']} new files")
+            >>> print(f"Created {result['files_created']}, deleted {result['files_deleted']}")
 
             >>> # Dry run to see what would be synced
             >>> result = nx.sync_mount("/mnt/gcs_demo", dry_run=True)
-            >>> print(f"Would add {result['files_found']} files")
+            >>> print(f"Would scan {result['files_scanned']} files")
         """
         import logging
         from datetime import UTC, datetime
@@ -464,12 +630,15 @@ class NexusFSMountsMixin:
 
         # Track sync statistics
         stats: dict[str, int | list[str]] = {
-            "files_found": 0,
-            "files_added": 0,
+            "files_scanned": 0,
+            "files_created": 0,
             "files_updated": 0,
-            "files_skipped": 0,
+            "files_deleted": 0,
             "errors": [],
         }
+
+        # Track all files found in backend (for deletion detection)
+        files_found_in_backend: set[str] = set()
 
         # Recursive function to scan directories
         def scan_directory(virtual_path: str, backend_path: str) -> None:
@@ -499,9 +668,12 @@ class NexusFSMountsMixin:
                             scan_directory(entry_virtual_path, entry_backend_path)
                     else:
                         # Process file
-                        stats["files_found"] = (
-                            stats["files_found"] + 1  # type: ignore[operator]
+                        stats["files_scanned"] = (
+                            stats["files_scanned"] + 1  # type: ignore[operator]
                         )
+
+                        # Track this file as found in backend
+                        files_found_in_backend.add(entry_virtual_path)
 
                         if dry_run:
                             # Dry run: just count, don't modify database
@@ -513,11 +685,8 @@ class NexusFSMountsMixin:
                         )
 
                         if existing_meta:
-                            # File exists - check if it needs update
-                            # For now, we'll skip updates (could check size/mtime in future)
-                            stats["files_skipped"] = (
-                                stats["files_skipped"] + 1  # type: ignore[operator]
-                            )
+                            # File exists - already tracked, no action needed
+                            pass
 
                             # Still create parent relationships for permission inheritance
                             # (in case they're missing from previous syncs)
@@ -545,13 +714,16 @@ class NexusFSMountsMixin:
                                 now = datetime.now(UTC)
                                 # Use a placeholder hash for synced files - marks them as "discovered but not yet read"
                                 # This will be updated with the actual hash on first read operation
-                                placeholder_hash = "synced_" + entry_backend_path.replace("/", "_")
+                                # Hash the path to create a unique 64-character placeholder (fits in content_hash column)
+                                import hashlib
+
+                                path_hash = hashlib.sha256(entry_backend_path.encode()).hexdigest()
                                 meta = FileMetadata(
                                     path=entry_virtual_path,
                                     backend_name=backend.name,
                                     physical_path=entry_backend_path,
                                     size=0,  # Placeholder - will be updated on first access
-                                    etag=placeholder_hash,  # Placeholder hash - will be updated on first read
+                                    etag=path_hash,  # Placeholder hash - will be updated on first read
                                     created_at=now,
                                     modified_at=now,
                                     version=1,
@@ -559,8 +731,8 @@ class NexusFSMountsMixin:
 
                                 # Save to database
                                 self.metadata.put(meta)  # type: ignore[attr-defined]
-                                stats["files_added"] = (
-                                    stats["files_added"] + 1  # type: ignore[operator]
+                                stats["files_created"] = (
+                                    stats["files_created"] + 1  # type: ignore[operator]
                                 )
 
                                 # Create parent relationships for permission inheritance
@@ -595,5 +767,37 @@ class NexusFSMountsMixin:
         backend_path = ""  # Start from root (backend's prefix will be applied automatically)
 
         scan_directory(mount_point, backend_path)
+
+        # Handle file deletions - remove files from metadata that no longer exist in backend
+        if not dry_run:
+            try:
+                # List all files in metadata under this mount point
+                existing_files = self.metadata.list_prefix(mount_point)  # type: ignore[attr-defined]
+
+                for existing_path in existing_files:
+                    # Skip if it's a directory or if it was found in the backend scan
+                    if existing_path in files_found_in_backend:
+                        continue
+
+                    # Check if this is actually a file (not a directory)
+                    try:
+                        meta = self.metadata.get(existing_path)  # type: ignore[attr-defined]
+                        if meta:
+                            # File exists in metadata but not in backend - delete it
+                            logger.info(
+                                f"[SYNC_MOUNT] Deleting file no longer in backend: {existing_path}"
+                            )
+                            self.metadata.delete(existing_path)  # type: ignore[attr-defined]
+                            stats["files_deleted"] = (
+                                stats["files_deleted"] + 1  # type: ignore[operator]
+                            )
+                    except Exception as e:
+                        error_msg = f"Failed to delete {existing_path}: {e}"
+                        cast(list[str], stats["errors"]).append(error_msg)
+                        logger.warning(error_msg)
+            except Exception as e:
+                error_msg = f"Failed to check for deletions: {e}"
+                cast(list[str], stats["errors"]).append(error_msg)
+                logger.warning(error_msg)
 
         return stats

@@ -973,14 +973,18 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
-    def remove_mount(self, mount_point: str) -> bool:
+    def remove_mount(self, mount_point: str) -> dict[str, Any]:
         """Remove a backend mount from the filesystem.
 
         Args:
             mount_point: Virtual path of mount to remove
 
         Returns:
-            True if mount was removed, False if mount not found
+            Dictionary with removal details:
+            - removed: bool - Whether mount was removed
+            - directory_deleted: bool - Whether mount point directory was deleted
+            - permissions_cleaned: int - Number of permission tuples removed
+            - errors: list[str] - Any errors encountered
         """
         ...
 

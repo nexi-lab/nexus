@@ -192,6 +192,7 @@ def test_all_public_methods_are_exposed_or_excluded():
     INTERNAL_ONLY_METHODS = {
         # Lifecycle/infrastructure methods
         "close",  # Connection management - handled differently for remote
+        "load_all_saved_mounts",  # Internal initialization method - called automatically on startup
         # Async methods - TODO: Add async RPC support
         # Tracked in issue #XXX
         "semantic_search",  # Async - requires async RPC support

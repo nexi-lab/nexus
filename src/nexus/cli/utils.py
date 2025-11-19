@@ -296,8 +296,10 @@ def create_backend_from_config(backend_type: str, config: dict[str, Any]) -> Any
         return GCSConnectorBackend(
             bucket_name=bucket,
             project_id=config.get("project_id"),
-            credentials_path=config.get("credentials_path"),
             prefix=config.get("prefix", ""),
+            credentials_path=config.get("credentials_path"),
+            # OAuth access token (alternative to credentials_path)
+            access_token=config.get("access_token"),
         )
 
     elif backend_type == "s3":

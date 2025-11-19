@@ -72,6 +72,8 @@ class GCSConnectorBackend(Backend):
         project_id: str | None = None,
         credentials_path: str | None = None,
         prefix: str = "",
+        # OAuth access token (alternative to credentials_path)
+        access_token: str | None = None,
     ):
         """
         Initialize GCS connector backend.
@@ -81,9 +83,17 @@ class GCSConnectorBackend(Backend):
             project_id: Optional GCP project ID (inferred from credentials if not provided)
             credentials_path: Optional path to service account credentials JSON file
             prefix: Optional prefix for all paths in bucket (e.g., "data/")
+            access_token: OAuth access token (alternative to credentials_path)
         """
         try:
-            if credentials_path:
+            # Priority: access_token > credentials_path > ADC
+            if access_token:
+                # Use access token directly (no refresh capability)
+                from google.oauth2 import credentials as oauth2_credentials
+
+                creds = oauth2_credentials.Credentials(token=access_token)
+                self.client = storage.Client(project=project_id, credentials=creds)
+            elif credentials_path:
                 self.client = storage.Client.from_service_account_json(
                     credentials_path, project=project_id
                 )

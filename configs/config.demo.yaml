@@ -38,7 +38,6 @@ backends:
       bucket: nexus-connector-test-1763281655
       project_id: nexi-lab-888
       prefix: nexus-demo
-      # credentials_path is not needed here - uses GOOGLE_APPLICATION_CREDENTIALS env var
     priority: 10
     readonly: false
     description: "GCS test bucket for Nexus connector demo"

@@ -347,6 +347,28 @@ class NexusFS(
                 self.enable_workflows = False
                 self.workflow_engine = None
 
+        # Load all saved mounts from database and activate them
+        # This ensures persisted mounts are restored on server startup
+        try:
+            if hasattr(self, "load_all_saved_mounts"):
+                mount_result = self.load_all_saved_mounts()
+                if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.info(
+                        f"🔄 Mount restoration: {mount_result['loaded']} loaded, {mount_result['failed']} failed"
+                    )
+                    if mount_result["errors"]:
+                        for error in mount_result["errors"]:
+                            logger.error(f"  ❌ {error}")
+        except Exception as e:
+            # Log warning but don't fail initialization if mount loading fails
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to load saved mounts during initialization: {e}")
+
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
         """
         Dynamically load and register custom parsers from configuration.

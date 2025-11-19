@@ -186,9 +186,6 @@ gcloud auth application-default login
 ```bash
 cd nexus
 
-# Remove any placeholder credential files
-rm -rf ./gcs-credentials.json
-
 # Start/restart Docker services (auto-detects gcloud credentials)
 ./docker-start.sh --restart
 

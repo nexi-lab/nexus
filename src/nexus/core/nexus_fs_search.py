@@ -582,9 +582,10 @@ class NexusFSSearchMixin:
                 logger.warning(
                     f"[GREP-PERF] TOTAL (raw mode): {total_elapsed:.3f}s (list={list_elapsed:.3f}s, read={read_elapsed:.3f}s, rust={rust_elapsed:.3f}s)"
                 )
-                logger.warning(
-                    f"[GREP-PERF] Breakdown: list={list_elapsed / total_elapsed * 100:.1f}%, read={read_elapsed / total_elapsed * 100:.1f}%, rust={rust_elapsed / total_elapsed * 100:.1f}%"
-                )
+                if total_elapsed > 0:
+                    logger.warning(
+                        f"[GREP-PERF] Breakdown: list={list_elapsed / total_elapsed * 100:.1f}%, read={read_elapsed / total_elapsed * 100:.1f}%, rust={rust_elapsed / total_elapsed * 100:.1f}%"
+                    )
                 return rust_results
             # Fall through to Python implementation if Rust fails
 
@@ -692,9 +693,10 @@ class NexusFSSearchMixin:
         logger.warning(
             f"[GREP-PERF] TOTAL ({search_mode} mode): {total_elapsed:.3f}s (list={list_elapsed:.3f}s, python_loop={python_elapsed:.3f}s)"
         )
-        logger.warning(
-            f"[GREP-PERF] Breakdown: list={list_elapsed / total_elapsed * 100:.1f}%, read={read_time / total_elapsed * 100:.1f}%, search={search_time / total_elapsed * 100:.1f}%, decode={decode_time / total_elapsed * 100:.1f}%, other={other_time / total_elapsed * 100:.1f}%"
-        )
+        if total_elapsed > 0:
+            logger.warning(
+                f"[GREP-PERF] Breakdown: list={list_elapsed / total_elapsed * 100:.1f}%, read={read_time / total_elapsed * 100:.1f}%, search={search_time / total_elapsed * 100:.1f}%, decode={decode_time / total_elapsed * 100:.1f}%, other={other_time / total_elapsed * 100:.1f}%"
+            )
 
         return results
 

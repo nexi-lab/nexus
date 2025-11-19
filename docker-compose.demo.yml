@@ -126,10 +126,10 @@ services:
       - "${NEXUS_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
-      retries: 3
-      start_period: 15s
+      retries: 10
+      start_period: 60s
     networks:
       - nexus-network
     logging:

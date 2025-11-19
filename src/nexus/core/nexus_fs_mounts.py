@@ -552,6 +552,108 @@ class NexusFSMountsMixin:
 
         return self.mount_manager.remove_mount(mount_point)
 
+    def load_all_saved_mounts(self) -> dict[str, Any]:
+        """Load all saved mount configurations from database and activate them.
+
+        This method is called during NexusFS initialization to restore all
+        persisted mounts from the database. It retrieves all saved mount configs
+        via mount_manager.list_mounts() and activates each one. For connector
+        backends (like gcs_connector), it also automatically syncs metadata
+        to import existing files.
+
+        Returns:
+            Dictionary with loading results:
+                - loaded: Number of successfully loaded mounts
+                - synced: Number of connector mounts that were synced
+                - failed: Number of mounts that failed to load
+                - errors: List of error messages for failed mounts
+
+        Note:
+            - mount_manager.list_mounts() returns SAVED mounts from database
+            - self.list_mounts() returns ACTIVE mounts from router
+            - This method loads saved mounts to make them active
+            - Connector backends are automatically synced after loading
+
+        Examples:
+            >>> # Called during NexusFS initialization
+            >>> result = nx.load_all_saved_mounts()
+            >>> print(f"Loaded {result['loaded']} mounts, {result['synced']} synced, {result['failed']} failed")
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if not hasattr(self, "mount_manager") or self.mount_manager is None:
+            logger.warning("Mount manager not available, skipping mount restoration")
+            return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
+
+        # Get all saved mounts from database (NOT active mounts)
+        saved_mounts = self.mount_manager.list_mounts()
+
+        if not saved_mounts:
+            logger.info("No saved mounts found in database")
+            return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
+
+        logger.info(f"Found {len(saved_mounts)} saved mount(s) to load")
+
+        loaded = 0
+        failed = 0
+        synced = 0
+        errors = []
+
+        for mount in saved_mounts:
+            mount_point = mount["mount_point"]
+            try:
+                logger.info(f"Loading mount: {mount_point} ({mount['backend_type']})")
+
+                # Parse backend config from JSON (if it's a string)
+                import json
+
+                backend_config = mount["backend_config"]
+                if isinstance(backend_config, str):
+                    backend_config = json.loads(backend_config)
+
+                # Activate the mount using add_mount
+                self.add_mount(
+                    mount_point=mount_point,
+                    backend_type=mount["backend_type"],
+                    backend_config=backend_config,
+                    priority=mount["priority"],
+                    readonly=bool(mount["readonly"]),
+                )
+
+                loaded += 1
+                logger.info(f"✓ Successfully loaded mount: {mount_point}")
+
+                # Try to sync connector backends after loading
+                backend_type = mount["backend_type"]
+                if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
+                    try:
+                        logger.info(f"Syncing connector mount: {mount_point}")
+                        sync_result = self.sync_mount(mount_point, recursive=True, dry_run=False)
+                        synced += 1
+                        logger.info(
+                            f"✓ Synced {mount_point}: "
+                            f"{sync_result['files_scanned']} scanned, "
+                            f"{sync_result['files_created']} created, "
+                            f"{sync_result['files_updated']} updated, "
+                            f"{sync_result['files_deleted']} deleted"
+                        )
+                    except Exception as sync_e:
+                        # Log sync error but don't fail the mount
+                        logger.warning(f"Failed to sync {mount_point}: {str(sync_e)}")
+
+            except Exception as e:
+                failed += 1
+                error_msg = f"Failed to load mount {mount_point}: {str(e)}"
+                errors.append(error_msg)
+                logger.error(error_msg)
+                # Continue loading other mounts even if one fails
+
+        logger.info(f"Mount loading complete: {loaded} loaded, {synced} synced, {failed} failed")
+
+        return {"loaded": loaded, "synced": synced, "failed": failed, "errors": errors}
+
     @rpc_expose(description="Sync metadata from connector backend")
     def sync_mount(
         self,
@@ -772,7 +874,8 @@ class NexusFSMountsMixin:
         if not dry_run:
             try:
                 # List all files in metadata under this mount point
-                existing_files = self.metadata.list_prefix(mount_point)  # type: ignore[attr-defined]
+                existing_metas = self.metadata.list(prefix=mount_point, recursive=True)  # type: ignore[attr-defined]
+                existing_files = [meta.path for meta in existing_metas]
 
                 for existing_path in existing_files:
                     # Skip if it's a directory or if it was found in the backend scan

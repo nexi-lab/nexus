@@ -8,11 +8,11 @@
 # - FUSE support for mounting Nexus filesystem
 #
 # Build:
-#   docker build -f docker/nexus-runtime-dev.Dockerfile -t nexus/runtime:dev .
+#   docker build -f docker/nexus-runtime-dev.Dockerfile -t nexus-runtime:dev .
 #
 # Usage:
-#   Used automatically by DockerSandboxProvider when image is set to nexus/runtime:dev
-#   Or manually: docker run -it --cap-add SYS_ADMIN nexus/runtime:dev
+#   Used automatically by DockerSandboxProvider when image is set to nexus-runtime:dev
+#   Or manually: docker run -it --cap-add SYS_ADMIN nexus-runtime:dev
 
 FROM python:3.11-slim
 

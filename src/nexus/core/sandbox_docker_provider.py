@@ -72,7 +72,7 @@ class DockerSandboxProvider(SandboxProvider):
     def __init__(
         self,
         docker_client: Any | None = None,  # docker.DockerClient | None
-        default_image: str = "nexus/runtime:latest",
+        default_image: str = "nexus-runtime:latest",
         cleanup_interval: int = 60,
         auto_pull: bool = False,
         memory_limit: str = "512m",
@@ -83,7 +83,7 @@ class DockerSandboxProvider(SandboxProvider):
 
         Args:
             docker_client: Docker client (defaults to docker.from_env())
-            default_image: Default container image (default: nexus/runtime:latest with sudo)
+            default_image: Default container image (default: nexus-runtime:latest with sudo)
             cleanup_interval: Seconds between cleanup checks
             auto_pull: Auto-pull missing images (disabled by default for custom images)
             memory_limit: Memory limit (e.g., "512m", "1g")

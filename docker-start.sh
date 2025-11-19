@@ -197,7 +197,7 @@ cmd_start() {
     check_gcs_credentials
 
     echo "🧹 Cleaning up old sandbox containers..."
-    docker ps -a --filter "ancestor=nexus/runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
+    docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
     echo ""
 
     echo "🚀 Starting Nexus services..."
@@ -222,7 +222,7 @@ cmd_build() {
     check_gcs_credentials
 
     echo "🧹 Cleaning up old sandbox containers..."
-    docker ps -a --filter "ancestor=nexus/runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
+    docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
     echo ""
 
     echo "🔨 Building Docker images..."
@@ -323,10 +323,11 @@ cmd_init() {
     echo "This will:"
     echo "  1. Clean up old sandbox containers"
     echo "  2. Clean all existing data and containers"
-    echo "  3. Rebuild all Docker images"
-    echo "  4. Start all services fresh"
+    echo "  3. Build runtime image for sandboxes"
+    echo "  4. Rebuild all service Docker images"
+    echo "  5. Start all services fresh"
     if [ "$SKIP_PERMISSIONS" = true ]; then
-        echo "  5. Skip permission setup and disable runtime permission checks"
+        echo "  6. Skip permission setup and disable runtime permission checks"
     fi
     echo ""
     read -p "Are you sure you want to continue? (yes/no): " CONFIRM
@@ -338,19 +339,23 @@ cmd_init() {
     fi
 
     echo ""
-    echo "🧹 Step 1/4: Cleaning up old sandbox containers..."
-    docker ps -a --filter "ancestor=nexus/runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
+    echo "🧹 Step 1/5: Cleaning up old sandbox containers..."
+    docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
 
     echo ""
-    echo "🧹 Step 2/4: Cleaning Docker Compose resources..."
+    echo "🧹 Step 2/5: Cleaning Docker Compose resources..."
     docker compose -f "$COMPOSE_FILE" down -v
 
     echo ""
-    echo "🔨 Step 3/4: Building images..."
+    echo "🔨 Step 3/5: Building runtime image for sandboxes..."
+    ./docker/build.sh
+
+    echo ""
+    echo "🔨 Step 4/5: Building service images..."
     docker compose -f "$COMPOSE_FILE" build
 
     echo ""
-    echo "🚀 Step 4/4: Starting services..."
+    echo "🚀 Step 5/5: Starting services..."
     # Export SKIP_PERMISSIONS so Docker Compose can pass it to containers
     if [ "$SKIP_PERMISSIONS" = true ]; then
         export NEXUS_SKIP_PERMISSIONS=true

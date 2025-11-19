@@ -96,6 +96,7 @@ class PathRouter:
         backend: "Backend",
         priority: int = 0,
         readonly: bool = False,
+        replace: bool = False,
     ) -> None:
         """
         Add a mount to the router.
@@ -105,11 +106,16 @@ class PathRouter:
             backend: Backend instance to use for this mount
             priority: Priority for overlapping mounts (higher = preferred)
             readonly: Whether mount is readonly
+            replace: If True, remove any existing mount at this mount_point first (default: False)
 
         Raises:
             ValueError: If mount_point is invalid
         """
         mount_point = self._normalize_path(mount_point)
+
+        # Remove existing mount at this path if replace=True
+        if replace:
+            self._mounts = [m for m in self._mounts if m.mount_point != mount_point]
 
         mount = MountConfig(
             mount_point=mount_point, backend=backend, priority=priority, readonly=readonly

@@ -164,6 +164,102 @@ answer = asyncio.run(nx.llm_read(
 nx.close()
 ```
 
+### Mounting Google Cloud Storage Buckets
+
+Mount your Google Cloud Storage buckets to Nexus for unified access across local and cloud storage.
+
+**Prerequisites:**
+- Google Cloud account with a GCS bucket
+- [gcloud CLI](https://cloud.google.com/sdk/docs/install) installed
+
+**Step 1: Authenticate with Google Cloud**
+
+```bash
+# Authenticate and create application default credentials
+gcloud auth application-default login
+
+# This creates: ~/.config/gcloud/application_default_credentials.json
+```
+
+**Step 2: Start Nexus with GCS Credentials (Docker)**
+
+```bash
+cd nexus
+
+# Remove any placeholder credential files
+rm -rf ./gcs-credentials.json
+
+# Start/restart Docker services (auto-detects gcloud credentials)
+./docker-start.sh --restart
+
+# Verify credentials are mounted
+docker exec nexus-server ls -lh /app/gcs-credentials.json
+```
+
+**Step 3: Mount Your GCS Bucket**
+
+```python
+import nexus
+
+# Connect to Nexus server
+nx = nexus.connect(config={
+    "url": "http://localhost:8080",
+    "api_key": "your-api-key"
+})
+
+# Mount a GCS bucket at a virtual path
+mount_id = nx.mount_manager.add_mount(
+    mount_point="/cloud/my-bucket",
+    backend_type="gcs_connector",  # Use 'gcs' for CAS-based, 'gcs_connector' for direct path mapping
+    backend_config={
+        "bucket": "your-bucket-name",
+        "project_id": "your-gcp-project-id",
+        "prefix": "optional/path/prefix"  # Optional: mount a specific folder
+    },
+    priority=10,
+    readonly=False
+)
+
+# Access files in your GCS bucket through Nexus
+files = nx.list("/cloud/my-bucket")
+content = nx.read("/cloud/my-bucket/file.txt")
+
+# List all mounts
+mounts = nx.mount_manager.list_mounts()
+for mount in mounts:
+    print(f"{mount['mount_point']}: {mount['backend_type']} (priority={mount['priority']})")
+```
+
+**Alternative: Using curl to test the mount API**
+
+```bash
+curl -X POST http://localhost:8080/api/nfs/add_mount \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "add_mount",
+    "params": {
+      "mount_point": "/cloud/my-bucket",
+      "backend_type": "gcs_connector",
+      "backend_config": {
+        "bucket": "your-bucket-name",
+        "project_id": "your-gcp-project-id"
+      },
+      "priority": 10
+    }
+  }'
+```
+
+**Backend Types:**
+- **`gcs`**: Content-addressable storage (CAS) with deduplication - best for Nexus-managed files
+- **`gcs_connector`**: Direct path mapping to existing GCS buckets - preserves original file structure
+
+**See also:**
+- [Mount Management API Documentation](docs/api/mounts.md)
+- [Multi-Backend Setup Guide](docs/api/configuration.md#multi-backend-support)
+
 ### Permission System Example
 
 ```bash

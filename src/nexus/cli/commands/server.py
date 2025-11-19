@@ -494,7 +494,10 @@ def serve(
                                 backend = create_backend_from_config(backend_type, backend_cfg)
 
                                 # Add mount to router (nx is NexusFS at this point)
-                                nx.router.add_mount(mount_point, backend, priority, readonly)
+                                # If mount_point already exists, it will be replaced
+                                nx.router.add_mount(
+                                    mount_point, backend, priority, readonly, replace=True
+                                )
 
                                 readonly_str = " (read-only)" if readonly else ""
                                 console.print(

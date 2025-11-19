@@ -3,11 +3,12 @@
 
 FROM python:3.11-slim AS builder
 
-# Install build dependencies
+# Install build dependencies (including build-essential for Rust linking)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     git \
     curl \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for faster dependency installation

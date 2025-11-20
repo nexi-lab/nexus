@@ -823,6 +823,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 },
             )
         except NexusError as e:
+            logger.warning(f"NexusError in method {method}: {e}")
             self._send_error_response(request.id, RPCErrorCode.INTERNAL_ERROR, f"Nexus error: {e}")
         except Exception as e:
             logger.exception(f"Error executing method {method}")

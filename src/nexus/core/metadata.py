@@ -29,6 +29,7 @@ class FileMetadata:
     version: int = 1
     tenant_id: str | None = None  # P0 SECURITY: Defense-in-depth tenant isolation
     created_by: str | None = None  # User or agent ID who created/modified this version
+    is_directory: bool = False  # Whether this path represents a directory
 
     def validate(self) -> None:
         """Validate file metadata before database operations.

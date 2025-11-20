@@ -119,19 +119,26 @@ def create_mcp_server(
             return f"Error deleting file: {str(e)}"
 
     @mcp.tool()
-    def nexus_list_files(path: str = "/", recursive: bool = False) -> str:
+    def nexus_list_files(path: str = "/", recursive: bool = False, details: bool = True) -> str:
         """List files in a directory.
 
         Args:
             path: Directory path to list (default: "/")
             recursive: Whether to list recursively (default: False)
+            details: Whether to include detailed metadata including is_directory flag (default: True)
 
         Returns:
-            JSON string with list of files
+            JSON string with list of files. When details=True, each entry includes:
+            - path: File/directory path
+            - size: Size in bytes (0 for directories)
+            - is_directory: Boolean indicating if this is a directory
+            - modified_at: Last modification timestamp
+            - etag: Content hash
+            - mime_type: MIME type
         """
         try:
-            files = nx.list(path, recursive=recursive)
-            return json.dumps(files, indent=2)
+            files = nx.list(path, recursive=recursive, details=details)
+            return json.dumps(files, indent=2, default=str)
         except Exception as e:
             return f"Error listing files: {str(e)}"
 

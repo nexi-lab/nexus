@@ -5,7 +5,8 @@
     "graphs": {
         "agent": "./react_agent.py:agent",
         "quant_agent": "./quant_agent.py:agent",
-        "talent_agent": "./talent_agent.py:agent"
+        "talent_agent": "./talent_agent.py:agent",
+        "syntar-deepagent": "/Users/tafeng/syntar/backend/src/reasoning_engine/langgraph_agent.py:agent"
     },
     "env": ".env"
 }

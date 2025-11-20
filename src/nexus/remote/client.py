@@ -3699,6 +3699,208 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("sandbox_disconnect", params)
         return result  # type: ignore[no-any-return]
 
+    # ============================================================
+    # Skills Management Operations
+    # ============================================================
+
+    def skills_create(
+        self,
+        name: str,
+        description: str,
+        template: str = "basic",
+        tier: str = "agent",
+        author: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a new skill from template."""
+        params: dict[str, Any] = {
+            "name": name,
+            "description": description,
+            "template": template,
+            "tier": tier,
+        }
+        if author is not None:
+            params["author"] = author
+        result = self._call_rpc("skills_create", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_create_from_content(
+        self,
+        name: str,
+        description: str,
+        content: str,
+        tier: str = "agent",
+        author: str | None = None,
+        source_url: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a skill from custom content."""
+        params: dict[str, Any] = {
+            "name": name,
+            "description": description,
+            "content": content,
+            "tier": tier,
+        }
+        if author is not None:
+            params["author"] = author
+        if source_url is not None:
+            params["source_url"] = source_url
+        if metadata is not None:
+            params["metadata"] = metadata
+        result = self._call_rpc("skills_create_from_content", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_list(
+        self,
+        tier: str | None = None,
+        include_metadata: bool = True,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """List all skills."""
+        params: dict[str, Any] = {"include_metadata": include_metadata}
+        if tier is not None:
+            params["tier"] = tier
+        result = self._call_rpc("skills_list", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_info(
+        self,
+        skill_name: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Get detailed skill information."""
+        result = self._call_rpc("skills_info", {"skill_name": skill_name})
+        return result  # type: ignore[no-any-return]
+
+    def skills_fork(
+        self,
+        source_name: str,
+        target_name: str,
+        tier: str = "agent",
+        author: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Fork an existing skill."""
+        params: dict[str, Any] = {
+            "source_name": source_name,
+            "target_name": target_name,
+            "tier": tier,
+        }
+        if author is not None:
+            params["author"] = author
+        result = self._call_rpc("skills_fork", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_publish(
+        self,
+        skill_name: str,
+        source_tier: str = "agent",
+        target_tier: str = "tenant",
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Publish skill to another tier."""
+        params: dict[str, Any] = {
+            "skill_name": skill_name,
+            "source_tier": source_tier,
+            "target_tier": target_tier,
+        }
+        result = self._call_rpc("skills_publish", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_search(
+        self,
+        query: str,
+        tier: str | None = None,
+        limit: int = 10,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Search skills by description."""
+        params: dict[str, Any] = {"query": query, "limit": limit}
+        if tier is not None:
+            params["tier"] = tier
+        result = self._call_rpc("skills_search", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_submit_approval(
+        self,
+        skill_name: str,
+        submitted_by: str,
+        reviewers: builtins.list[str] | None = None,
+        comments: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Submit a skill for approval."""
+        params: dict[str, Any] = {
+            "skill_name": skill_name,
+            "submitted_by": submitted_by,
+        }
+        if reviewers is not None:
+            params["reviewers"] = reviewers
+        if comments is not None:
+            params["comments"] = comments
+        result = self._call_rpc("skills_submit_approval", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_approve(
+        self,
+        approval_id: str,
+        reviewed_by: str,
+        reviewer_type: str = "user",
+        comments: str | None = None,
+        tenant_id: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Approve a skill for publication."""
+        params: dict[str, Any] = {
+            "approval_id": approval_id,
+            "reviewed_by": reviewed_by,
+            "reviewer_type": reviewer_type,
+        }
+        if comments is not None:
+            params["comments"] = comments
+        if tenant_id is not None:
+            params["tenant_id"] = tenant_id
+        result = self._call_rpc("skills_approve", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_reject(
+        self,
+        approval_id: str,
+        reviewed_by: str,
+        reviewer_type: str = "user",
+        comments: str | None = None,
+        tenant_id: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Reject a skill for publication."""
+        params: dict[str, Any] = {
+            "approval_id": approval_id,
+            "reviewed_by": reviewed_by,
+            "reviewer_type": reviewer_type,
+        }
+        if comments is not None:
+            params["comments"] = comments
+        if tenant_id is not None:
+            params["tenant_id"] = tenant_id
+        result = self._call_rpc("skills_reject", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_list_approvals(
+        self,
+        status: str | None = None,
+        skill_name: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """List skill approval requests."""
+        params: dict[str, Any] = {}
+        if status is not None:
+            params["status"] = status
+        if skill_name is not None:
+            params["skill_name"] = skill_name
+        result = self._call_rpc("skills_list_approvals", params)
+        return result  # type: ignore[no-any-return]
+
     def close(self) -> None:
         """Close the client and release resources."""
         self.session.close()

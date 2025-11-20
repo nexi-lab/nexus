@@ -33,6 +33,7 @@ from nexus.core.nexus_fs_llm import NexusFSLLMMixin
 from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
 from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.core.nexus_fs_search import NexusFSSearchMixin
+from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
 from nexus.core.nexus_fs_versions import NexusFSVersionsMixin
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.permissions_enhanced import EnhancedOperationContext
@@ -50,6 +51,7 @@ class NexusFS(
     NexusFSReBACMixin,
     NexusFSVersionsMixin,
     NexusFSMountsMixin,
+    NexusFSSkillsMixin,
     NexusFSLLMMixin,
     NexusFilesystem,
 ):

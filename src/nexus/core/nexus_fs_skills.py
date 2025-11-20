@@ -1,0 +1,588 @@
+"""Skills management operations for NexusFS.
+
+This module contains skills management operations exposed via RPC:
+- skills_create: Create a new skill from template
+- skills_create_from_content: Create a skill from web content
+- skills_list: List all skills
+- skills_info: Get detailed skill information
+- skills_fork: Fork an existing skill
+- skills_publish: Publish skill to another tier
+- skills_search: Search skills by description
+- skills_export: Export skill to .zip package
+- skills_validate: Validate skill format
+- skills_submit_approval: Submit skill for approval
+- skills_approve: Approve a skill
+- skills_reject: Reject a skill
+- skills_list_approvals: List approval requests
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import TYPE_CHECKING, Any
+
+from nexus.core.rpc_decorator import rpc_expose
+
+if TYPE_CHECKING:
+    from nexus.core.permissions import OperationContext
+
+
+class NexusFSSkillsMixin:
+    """Mixin providing skills management operations for NexusFS."""
+
+    def _run_async_skill_operation(self, coro: Any) -> dict[str, Any]:
+        """Run an async skill operation in the current or new event loop.
+
+        Args:
+            coro: Coroutine to run
+
+        Returns:
+            Result from the coroutine
+        """
+        try:
+            # Try to get the current running loop
+            loop = asyncio.get_running_loop()
+            # If we're already in an async context, we can't use run_until_complete
+            # Instead, we need to schedule it differently
+            # For now, create a new thread with a new loop
+            import threading
+
+            result_holder: list[Any] = []
+            exception_holder: list[Exception] = []
+
+            def run_in_thread() -> None:
+                try:
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    result = new_loop.run_until_complete(coro)
+                    result_holder.append(result)
+                except Exception as e:
+                    exception_holder.append(e)
+                finally:
+                    new_loop.close()
+
+            thread = threading.Thread(target=run_in_thread)
+            thread.start()
+            thread.join()
+
+            if exception_holder:
+                raise exception_holder[0]
+            if result_holder:
+                return result_holder[0]  # type: ignore[no-any-return]
+            return {}
+
+        except RuntimeError:
+            # No running loop - create one and run
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+
+    def _get_skill_registry(self) -> Any:
+        """Get or create SkillRegistry instance.
+
+        Returns:
+            SkillRegistry instance
+        """
+        from typing import cast
+
+        from nexus.core.nexus_fs import NexusFilesystem
+        from nexus.skills import SkillRegistry
+
+        return SkillRegistry(cast(NexusFilesystem, self))
+
+    def _get_skill_manager(self) -> Any:
+        """Get or create SkillManager instance.
+
+        Returns:
+            SkillManager instance
+        """
+        from typing import cast
+
+        from nexus.core.nexus_fs import NexusFilesystem
+        from nexus.skills import SkillManager
+
+        registry = self._get_skill_registry()
+        return SkillManager(cast(NexusFilesystem, self), registry)
+
+    def _get_skill_governance(self) -> Any:
+        """Get or create SkillGovernance instance.
+
+        Returns:
+            SkillGovernance instance
+        """
+        from nexus.skills import SkillGovernance
+
+        # Get database connection if available
+        db_conn = None
+        if (
+            hasattr(self, "metadata_store")
+            and self.metadata_store
+            and hasattr(self.metadata_store, "session")
+        ):
+            from nexus.cli.commands.skills import SQLAlchemyDatabaseConnection
+
+            db_conn = SQLAlchemyDatabaseConnection(self.metadata_store.session)
+
+        return SkillGovernance(db_connection=db_conn)
+
+    @rpc_expose(description="Create a new skill from template")
+    def skills_create(
+        self,
+        name: str,
+        description: str,
+        template: str = "basic",
+        tier: str = "agent",
+        author: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a new skill from template.
+
+        Args:
+            name: Skill name
+            description: Skill description
+            template: Template name (default: "basic")
+            tier: Target tier (agent/tenant/system, default: "agent")
+            author: Optional author name
+            context: Operation context
+
+        Returns:
+            Dict with skill_path, name, tier, template
+        """
+        manager = self._get_skill_manager()
+
+        async def create() -> dict[str, Any]:
+            skill_path = await manager.create_skill(
+                name=name,
+                description=description,
+                template=template,
+                tier=tier,
+                author=author,
+            )
+            return {
+                "skill_path": skill_path,
+                "name": name,
+                "tier": tier,
+                "template": template,
+            }
+
+        return self._run_async_skill_operation(create())
+
+    @rpc_expose(description="Create a skill from web content")
+    def skills_create_from_content(
+        self,
+        name: str,
+        description: str,
+        content: str,
+        tier: str = "agent",
+        author: str | None = None,
+        source_url: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a skill from custom content.
+
+        Args:
+            name: Skill name
+            description: Skill description
+            content: Skill markdown content
+            tier: Target tier (default: "agent")
+            author: Optional author name
+            source_url: Optional source URL
+            metadata: Optional additional metadata
+            context: Operation context
+
+        Returns:
+            Dict with skill_path, name, tier, source_url
+        """
+        manager = self._get_skill_manager()
+
+        async def create() -> dict[str, Any]:
+            skill_path = await manager.create_skill_from_content(
+                name=name,
+                description=description,
+                content=content,
+                tier=tier,
+                author=author,
+                source_url=source_url,
+                metadata=metadata,
+            )
+            return {
+                "skill_path": skill_path,
+                "name": name,
+                "tier": tier,
+                "source_url": source_url,
+            }
+
+        return self._run_async_skill_operation(create())
+
+    @rpc_expose(description="List all skills")
+    def skills_list(
+        self,
+        tier: str | None = None,
+        include_metadata: bool = True,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """List all skills.
+
+        Args:
+            tier: Filter by tier (agent/tenant/system)
+            include_metadata: Include full metadata (default: True)
+            context: Operation context
+
+        Returns:
+            Dict with skills list
+        """
+        registry = self._get_skill_registry()
+
+        async def list_skills() -> dict[str, Any]:
+            await registry.discover()
+            skills = registry.list_skills(tier=tier, include_metadata=include_metadata)
+
+            # Convert SkillMetadata objects to dicts
+            skills_data = []
+            for skill in skills:
+                if hasattr(skill, "__dict__"):
+                    # It's a SkillMetadata object
+                    skill_dict = {
+                        "name": skill.name,
+                        "description": skill.description,
+                        "version": skill.version,
+                        "author": skill.author,
+                        "tier": skill.tier,
+                        "file_path": skill.file_path,
+                        "requires": skill.requires,
+                    }
+                    if skill.created_at:
+                        skill_dict["created_at"] = skill.created_at.isoformat()
+                    if skill.modified_at:
+                        skill_dict["modified_at"] = skill.modified_at.isoformat()
+                    skills_data.append(skill_dict)
+                else:
+                    # It's already a string (skill name)
+                    skills_data.append(skill)
+
+            return {"skills": skills_data, "count": len(skills_data)}
+
+        return self._run_async_skill_operation(list_skills())
+
+    @rpc_expose(description="Get detailed skill information")
+    def skills_info(
+        self,
+        skill_name: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Get detailed skill information.
+
+        Args:
+            skill_name: Name of the skill
+            context: Operation context
+
+        Returns:
+            Dict with skill metadata and dependencies
+        """
+        registry = self._get_skill_registry()
+
+        async def get_info() -> dict[str, Any]:
+            await registry.discover()
+            metadata = registry.get_metadata(skill_name)
+
+            skill_info = {
+                "name": metadata.name,
+                "description": metadata.description,
+                "version": metadata.version,
+                "author": metadata.author,
+                "tier": metadata.tier,
+                "file_path": metadata.file_path,
+                "requires": metadata.requires,
+            }
+
+            if metadata.created_at:
+                skill_info["created_at"] = metadata.created_at.isoformat()
+            if metadata.modified_at:
+                skill_info["modified_at"] = metadata.modified_at.isoformat()
+
+            # Add resolved dependencies
+            if metadata.requires:
+                resolved = await registry.resolve_dependencies(skill_name)
+                skill_info["resolved_dependencies"] = resolved
+
+            return skill_info
+
+        return self._run_async_skill_operation(get_info())
+
+    @rpc_expose(description="Fork an existing skill")
+    def skills_fork(
+        self,
+        source_name: str,
+        target_name: str,
+        tier: str = "agent",
+        author: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Fork an existing skill.
+
+        Args:
+            source_name: Source skill name
+            target_name: Target skill name
+            tier: Target tier (default: "agent")
+            author: Optional author name
+            context: Operation context
+
+        Returns:
+            Dict with forked_path, source_name, target_name, tier
+        """
+        manager = self._get_skill_manager()
+        registry = self._get_skill_registry()
+
+        async def fork() -> dict[str, Any]:
+            await registry.discover()
+            forked_path = await manager.fork_skill(
+                source_name=source_name,
+                target_name=target_name,
+                tier=tier,
+                author=author,
+            )
+            return {
+                "forked_path": forked_path,
+                "source_name": source_name,
+                "target_name": target_name,
+                "tier": tier,
+            }
+
+        return self._run_async_skill_operation(fork())
+
+    @rpc_expose(description="Publish skill to another tier")
+    def skills_publish(
+        self,
+        skill_name: str,
+        source_tier: str = "agent",
+        target_tier: str = "tenant",
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Publish skill to another tier.
+
+        Args:
+            skill_name: Skill name
+            source_tier: Source tier (default: "agent")
+            target_tier: Target tier (default: "tenant")
+            context: Operation context
+
+        Returns:
+            Dict with published_path, skill_name, source_tier, target_tier
+        """
+        manager = self._get_skill_manager()
+
+        async def publish() -> dict[str, Any]:
+            published_path = await manager.publish_skill(
+                name=skill_name,
+                source_tier=source_tier,
+                target_tier=target_tier,
+            )
+            return {
+                "published_path": published_path,
+                "skill_name": skill_name,
+                "source_tier": source_tier,
+                "target_tier": target_tier,
+            }
+
+        return self._run_async_skill_operation(publish())
+
+    @rpc_expose(description="Search skills by description")
+    def skills_search(
+        self,
+        query: str,
+        tier: str | None = None,
+        limit: int = 10,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Search skills by description.
+
+        Args:
+            query: Search query
+            tier: Filter by tier
+            limit: Maximum results (default: 10)
+            context: Operation context
+
+        Returns:
+            Dict with results list
+        """
+        manager = self._get_skill_manager()
+
+        async def search() -> dict[str, Any]:
+            results = await manager.search_skills(query=query, tier=tier, limit=limit)
+            # Convert to serializable format
+            results_data = [{"skill_name": name, "score": score} for name, score in results]
+            return {"results": results_data, "query": query, "count": len(results_data)}
+
+        return self._run_async_skill_operation(search())
+
+    @rpc_expose(description="Submit skill for approval")
+    def skills_submit_approval(
+        self,
+        skill_name: str,
+        submitted_by: str,
+        reviewers: list[str] | None = None,
+        comments: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Submit a skill for approval.
+
+        Args:
+            skill_name: Skill name
+            submitted_by: Submitter ID
+            reviewers: Optional list of reviewer IDs
+            comments: Optional submission comments
+            context: Operation context
+
+        Returns:
+            Dict with approval_id, skill_name, submitted_by
+        """
+        governance = self._get_skill_governance()
+
+        async def submit() -> dict[str, Any]:
+            approval_id = await governance.submit_for_approval(
+                skill_name=skill_name,
+                submitted_by=submitted_by,
+                reviewers=reviewers,
+                comments=comments,
+            )
+            return {
+                "approval_id": approval_id,
+                "skill_name": skill_name,
+                "submitted_by": submitted_by,
+                "reviewers": reviewers,
+            }
+
+        return self._run_async_skill_operation(submit())
+
+    @rpc_expose(description="Approve a skill")
+    def skills_approve(
+        self,
+        approval_id: str,
+        reviewed_by: str,
+        reviewer_type: str = "user",
+        comments: str | None = None,
+        tenant_id: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Approve a skill for publication.
+
+        Args:
+            approval_id: Approval request ID
+            reviewed_by: Reviewer ID
+            reviewer_type: Reviewer type (user/agent, default: "user")
+            comments: Optional review comments
+            tenant_id: Optional tenant ID
+            context: Operation context
+
+        Returns:
+            Dict with approval_id, reviewed_by, status
+        """
+        governance = self._get_skill_governance()
+
+        async def approve() -> dict[str, Any]:
+            await governance.approve_skill(
+                approval_id=approval_id,
+                reviewed_by=reviewed_by,
+                reviewer_type=reviewer_type,
+                comments=comments,
+                tenant_id=tenant_id,
+            )
+            return {
+                "approval_id": approval_id,
+                "reviewed_by": reviewed_by,
+                "reviewer_type": reviewer_type,
+                "status": "approved",
+            }
+
+        return self._run_async_skill_operation(approve())
+
+    @rpc_expose(description="Reject a skill")
+    def skills_reject(
+        self,
+        approval_id: str,
+        reviewed_by: str,
+        reviewer_type: str = "user",
+        comments: str | None = None,
+        tenant_id: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Reject a skill for publication.
+
+        Args:
+            approval_id: Approval request ID
+            reviewed_by: Reviewer ID
+            reviewer_type: Reviewer type (user/agent, default: "user")
+            comments: Optional rejection reason
+            tenant_id: Optional tenant ID
+            context: Operation context
+
+        Returns:
+            Dict with approval_id, reviewed_by, status
+        """
+        governance = self._get_skill_governance()
+
+        async def reject() -> dict[str, Any]:
+            await governance.reject_skill(
+                approval_id=approval_id,
+                reviewed_by=reviewed_by,
+                reviewer_type=reviewer_type,
+                comments=comments,
+                tenant_id=tenant_id,
+            )
+            return {
+                "approval_id": approval_id,
+                "reviewed_by": reviewed_by,
+                "reviewer_type": reviewer_type,
+                "status": "rejected",
+            }
+
+        return self._run_async_skill_operation(reject())
+
+    @rpc_expose(description="List approval requests")
+    def skills_list_approvals(
+        self,
+        status: str | None = None,
+        skill_name: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """List skill approval requests.
+
+        Args:
+            status: Filter by status (pending/approved/rejected)
+            skill_name: Filter by skill name
+            context: Operation context
+
+        Returns:
+            Dict with approvals list
+        """
+        governance = self._get_skill_governance()
+
+        async def list_approvals() -> dict[str, Any]:
+            approvals = await governance.list_approvals(status=status, skill_name=skill_name)
+
+            # Convert to serializable format
+            approvals_data = []
+            for approval in approvals:
+                approval_dict = {
+                    "approval_id": approval.approval_id,
+                    "skill_name": approval.skill_name,
+                    "status": approval.status.value,
+                    "submitted_by": approval.submitted_by,
+                }
+                if approval.submitted_at:
+                    approval_dict["submitted_at"] = approval.submitted_at.isoformat()
+                if approval.reviewed_by:
+                    approval_dict["reviewed_by"] = approval.reviewed_by
+                if approval.reviewed_at:
+                    approval_dict["reviewed_at"] = approval.reviewed_at.isoformat()
+                if approval.comments:
+                    approval_dict["comments"] = approval.comments
+                approvals_data.append(approval_dict)
+
+            return {"approvals": approvals_data, "count": len(approvals_data)}
+
+        return self._run_async_skill_operation(list_approvals())

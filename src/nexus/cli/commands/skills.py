@@ -138,10 +138,6 @@ def skills_list(
         nexus skills list --tier agent
     """
     try:
-        import asyncio
-
-        from nexus.skills import SkillRegistry
-
         nx = get_filesystem(backend_config, enforce_permissions=False)
 
         # Determine tier filter
@@ -154,42 +150,33 @@ def skills_list(
         else:
             tier_filter = None
 
-        registry = SkillRegistry(nx)
+        # Use RPC endpoint directly
+        result = nx.skills_list(tier=tier_filter, include_metadata=True)  # type: ignore[attr-defined]
 
-        async def list_skills_async() -> None:
-            # Discover skills
-            await registry.discover()
+        skills_data = result.get("skills", [])
 
-            # Get skills list with metadata
-            skills_metadata_raw = registry.list_skills(tier=tier_filter, include_metadata=True)
+        if not skills_data:
+            console.print("[yellow]No skills found[/yellow]")
+            nx.close()
+            return
 
-            # Type hint the return value
-            from nexus.skills.models import SkillMetadata
+        # Display skills in table
+        table = Table(title=f"Skills ({result['count']} found)")
+        table.add_column("Name", style="cyan", no_wrap=False)
+        table.add_column("Description", style="green")
+        table.add_column("Version", style="yellow")
+        table.add_column("Tier", style="magenta")
 
-            skills_metadata: list[SkillMetadata] = skills_metadata_raw  # type: ignore[assignment]
-
-            if not skills_metadata:
-                console.print("[yellow]No skills found[/yellow]")
-                return
-
-            # Display skills in table
-            table = Table(title=f"Skills ({len(skills_metadata)} found)")
-            table.add_column("Name", style="cyan", no_wrap=False)
-            table.add_column("Description", style="green")
-            table.add_column("Version", style="yellow")
-            table.add_column("Tier", style="magenta")
-
-            for metadata in skills_metadata:
+        for skill in skills_data:
+            if isinstance(skill, dict):
                 table.add_row(
-                    metadata.name,
-                    metadata.description or "N/A",
-                    metadata.version or "N/A",
-                    metadata.tier or "N/A",
+                    skill.get("name", "N/A"),
+                    skill.get("description", "N/A"),
+                    skill.get("version", "N/A"),
+                    skill.get("tier", "N/A"),
                 )
 
-            console.print(table)
-
-        asyncio.run(list_skills_async())
+        console.print(table)
         nx.close()
 
     except Exception as e:
@@ -221,30 +208,23 @@ def skills_create(
         nexus skills create analyzer --description "Code analyzer" --author Alice
     """
     try:
-        import asyncio
-
-        from nexus.skills import SkillManager, SkillRegistry
-
         # Get filesystem with permission enforcement disabled for skills operations
         nx = get_filesystem(backend_config, enforce_permissions=False)
-        registry = SkillRegistry(nx)
-        manager = SkillManager(nx, registry)
 
-        async def create_skill_async() -> None:
-            skill_path = await manager.create_skill(
-                name=name,
-                description=description,
-                template=template,
-                tier=tier,
-                author=author,
-            )
+        # Use RPC endpoint directly
+        result = nx.skills_create(  # type: ignore[attr-defined]
+            name=name,
+            description=description,
+            template=template,
+            tier=tier,
+            author=author,
+        )
 
-            console.print(f"[green]✓[/green] Created skill [cyan]{name}[/cyan]")
-            console.print(f"  Path: [dim]{skill_path}[/dim]")
-            console.print(f"  Tier: [yellow]{tier}[/yellow]")
-            console.print(f"  Template: [yellow]{template}[/yellow]")
+        console.print(f"[green]✓[/green] Created skill [cyan]{name}[/cyan]")
+        console.print(f"  Path: [dim]{result['skill_path']}[/dim]")
+        console.print(f"  Tier: [yellow]{tier}[/yellow]")
+        console.print(f"  Template: [yellow]{template}[/yellow]")
 
-        asyncio.run(create_skill_async())
         nx.close()
 
     except Exception as e:
@@ -442,31 +422,22 @@ def skills_fork(
         nexus skills fork data-analysis custom-analysis --author Bob
     """
     try:
-        import asyncio
-
-        from nexus.skills import SkillManager, SkillRegistry
-
         nx = get_filesystem(backend_config, enforce_permissions=False)
-        registry = SkillRegistry(nx)
-        manager = SkillManager(nx, registry)
 
-        async def fork_skill_async() -> None:
-            await registry.discover()
+        # Use RPC endpoint directly
+        result = nx.skills_fork(  # type: ignore[attr-defined]
+            source_name=source_skill,
+            target_name=target_skill,
+            tier=tier,
+            author=author,
+        )
 
-            forked_path = await manager.fork_skill(
-                source_name=source_skill,
-                target_name=target_skill,
-                tier=tier,
-                author=author,
-            )
+        console.print(
+            f"[green]✓[/green] Forked skill [cyan]{source_skill}[/cyan] → [cyan]{target_skill}[/cyan]"
+        )
+        console.print(f"  Path: [dim]{result['forked_path']}[/dim]")
+        console.print(f"  Tier: [yellow]{tier}[/yellow]")
 
-            console.print(
-                f"[green]✓[/green] Forked skill [cyan]{source_skill}[/cyan] → [cyan]{target_skill}[/cyan]"
-            )
-            console.print(f"  Path: [dim]{forked_path}[/dim]")
-            console.print(f"  Tier: [yellow]{tier}[/yellow]")
-
-        asyncio.run(fork_skill_async())
         nx.close()
 
     except Exception as e:
@@ -501,26 +472,19 @@ def skills_publish(
         nexus skills publish shared-skill --from-tier tenant --to-tier system
     """
     try:
-        import asyncio
-
-        from nexus.skills import SkillManager, SkillRegistry
-
         nx = get_filesystem(backend_config, enforce_permissions=False)
-        registry = SkillRegistry(nx)
-        manager = SkillManager(nx, registry)
 
-        async def publish_skill_async() -> None:
-            published_path = await manager.publish_skill(
-                name=skill_name,
-                source_tier=from_tier,
-                target_tier=to_tier,
-            )
+        # Use RPC endpoint directly
+        result = nx.skills_publish(  # type: ignore[attr-defined]
+            skill_name=skill_name,
+            source_tier=from_tier,
+            target_tier=to_tier,
+        )
 
-            console.print(f"[green]✓[/green] Published skill [cyan]{skill_name}[/cyan]")
-            console.print(f"  From: [yellow]{from_tier}[/yellow] → To: [yellow]{to_tier}[/yellow]")
-            console.print(f"  Path: [dim]{published_path}[/dim]")
+        console.print(f"[green]✓[/green] Published skill [cyan]{skill_name}[/cyan]")
+        console.print(f"  From: [yellow]{from_tier}[/yellow] → To: [yellow]{to_tier}[/yellow]")
+        console.print(f"  Path: [dim]{result['published_path']}[/dim]")
 
-        asyncio.run(publish_skill_async())
         nx.close()
 
     except Exception as e:
@@ -545,35 +509,30 @@ def skills_search(
         nexus skills search "code" --tier tenant --limit 5
     """
     try:
-        import asyncio
-
-        from nexus.skills import SkillManager, SkillRegistry
-
         nx = get_filesystem(backend_config, enforce_permissions=False)
-        registry = SkillRegistry(nx)
-        manager = SkillManager(nx, registry)
 
-        async def search_skills_async() -> None:
-            results = await manager.search_skills(query=query, tier=tier, limit=limit)
+        # Use RPC endpoint directly
+        result = nx.skills_search(query=query, tier=tier, limit=limit)  # type: ignore[attr-defined]
 
-            if not results:
-                console.print(f"[yellow]No skills match query:[/yellow] {query}")
-                return
+        results_data = result.get("results", [])
 
-            console.print(
-                f"[green]Found {len(results)} skills matching[/green] [cyan]{query}[/cyan]\n"
-            )
+        if not results_data:
+            console.print(f"[yellow]No skills match query:[/yellow] {query}")
+            nx.close()
+            return
 
-            table = Table(title=f"Search Results for '{query}'")
-            table.add_column("Skill Name", style="cyan")
-            table.add_column("Relevance Score", justify="right", style="yellow")
+        console.print(
+            f"[green]Found {result['count']} skills matching[/green] [cyan]{query}[/cyan]\n"
+        )
 
-            for skill_name, score in results:
-                table.add_row(skill_name, f"{score:.2f}")
+        table = Table(title=f"Search Results for '{query}'")
+        table.add_column("Skill Name", style="cyan")
+        table.add_column("Relevance Score", justify="right", style="yellow")
 
-            console.print(table)
+        for item in results_data:
+            table.add_row(item["skill_name"], f"{item['score']:.2f}")
 
-        asyncio.run(search_skills_async())
+        console.print(table)
         nx.close()
 
     except Exception as e:
@@ -594,53 +553,47 @@ def skills_info(
         nexus skills info data-analysis
     """
     try:
-        import asyncio
-
-        from nexus.skills import SkillRegistry
-
         nx = get_filesystem(backend_config, enforce_permissions=False)
-        registry = SkillRegistry(nx)
 
-        async def show_info_async() -> None:
-            await registry.discover()
+        # Use RPC endpoint directly
+        skill_info = nx.skills_info(skill_name=skill_name)  # type: ignore[attr-defined]
 
-            # Get metadata first
-            metadata = registry.get_metadata(skill_name)
+        # Display skill information
+        table = Table(title=f"Skill Information: {skill_name}")
+        table.add_column("Property", style="cyan")
+        table.add_column("Value", style="green")
 
-            # Load full skill to ensure it exists and cache it
-            await registry.get_skill(skill_name)
+        table.add_row("Name", skill_info.get("name", "N/A"))
+        table.add_row("Description", skill_info.get("description", "N/A"))
+        table.add_row("Version", skill_info.get("version", "N/A"))
+        table.add_row("Author", skill_info.get("author", "N/A"))
+        table.add_row("Tier", skill_info.get("tier", "N/A"))
+        table.add_row("File Path", skill_info.get("file_path", "N/A"))
 
-            # Display skill information
-            table = Table(title=f"Skill Information: {skill_name}")
-            table.add_column("Property", style="cyan")
-            table.add_column("Value", style="green")
+        if skill_info.get("created_at"):
+            from datetime import datetime
 
-            table.add_row("Name", metadata.name)
-            table.add_row("Description", metadata.description or "N/A")
-            table.add_row("Version", metadata.version or "N/A")
-            table.add_row("Author", metadata.author or "N/A")
-            table.add_row("Tier", metadata.tier or "N/A")
-            table.add_row("File Path", metadata.file_path or "N/A")
+            created = datetime.fromisoformat(skill_info["created_at"])
+            table.add_row("Created", created.strftime("%Y-%m-%d %H:%M:%S"))
+        if skill_info.get("modified_at"):
+            from datetime import datetime
 
-            if metadata.created_at:
-                table.add_row("Created", metadata.created_at.strftime("%Y-%m-%d %H:%M:%S"))
-            if metadata.modified_at:
-                table.add_row("Modified", metadata.modified_at.strftime("%Y-%m-%d %H:%M:%S"))
+            modified = datetime.fromisoformat(skill_info["modified_at"])
+            table.add_row("Modified", modified.strftime("%Y-%m-%d %H:%M:%S"))
 
-            # Show dependencies
-            if metadata.requires:
-                deps_str = ", ".join(metadata.requires)
-                table.add_row("Dependencies", deps_str)
+        # Show dependencies
+        if skill_info.get("requires"):
+            deps_str = ", ".join(skill_info["requires"])
+            table.add_row("Dependencies", deps_str)
 
-            console.print(table)
+        console.print(table)
 
-            # Show dependencies resolved
-            if metadata.requires:
-                console.print("\n[bold]Dependency Resolution:[/bold]")
-                resolved = await registry.resolve_dependencies(skill_name)
-                console.print(f"  Resolved order: [cyan]{' → '.join(resolved)}[/cyan]")
+        # Show dependencies resolved
+        if skill_info.get("resolved_dependencies"):
+            console.print("\n[bold]Dependency Resolution:[/bold]")
+            resolved = skill_info["resolved_dependencies"]
+            console.print(f"  Resolved order: [cyan]{' → '.join(resolved)}[/cyan]")
 
-        asyncio.run(show_info_async())
         nx.close()
 
     except Exception as e:
@@ -974,36 +927,28 @@ def skills_submit_approval(
         nexus skills submit-approval my-skill --submitted-by alice --comments "Ready for team use"
     """
     try:
-        import asyncio
-
-        from nexus.skills import SkillGovernance
+        nx = get_filesystem(backend_config, enforce_permissions=False)
 
         # Parse reviewers list
         reviewer_list = [r.strip() for r in reviewers.split(",")] if reviewers else None
 
-        # Get database connection
-        db_conn = _get_database_connection()
-        governance = SkillGovernance(db_connection=db_conn)
+        # Use RPC endpoint directly
+        result = nx.skills_submit_approval(  # type: ignore[attr-defined]
+            skill_name=skill_name,
+            submitted_by=submitted_by,
+            reviewers=reviewer_list,
+            comments=comments,
+        )
 
-        async def submit_async() -> None:
-            approval_id = await governance.submit_for_approval(
-                skill_name=skill_name,
-                submitted_by=submitted_by,
-                reviewers=reviewer_list,
-                comments=comments,
-            )
+        console.print(f"[green]✓[/green] Submitted skill [cyan]{skill_name}[/cyan] for approval")
+        console.print(f"  Approval ID: [yellow]{result['approval_id']}[/yellow]")
+        console.print(f"  Submitted by: [cyan]{submitted_by}[/cyan]")
+        if reviewer_list:
+            console.print(f"  Reviewers: [cyan]{', '.join(reviewer_list)}[/cyan]")
+        if comments:
+            console.print(f"  Comments: [dim]{comments}[/dim]")
 
-            console.print(
-                f"[green]✓[/green] Submitted skill [cyan]{skill_name}[/cyan] for approval"
-            )
-            console.print(f"  Approval ID: [yellow]{approval_id}[/yellow]")
-            console.print(f"  Submitted by: [cyan]{submitted_by}[/cyan]")
-            if reviewer_list:
-                console.print(f"  Reviewers: [cyan]{', '.join(reviewer_list)}[/cyan]")
-            if comments:
-                console.print(f"  Comments: [dim]{comments}[/dim]")
-
-        asyncio.run(submit_async())
+        nx.close()
 
     except Exception as e:
         handle_error(e)
@@ -1034,32 +979,23 @@ def skills_approve(
         nexus skills approve <approval-id> --reviewed-by manager-id --reviewer-type user --tenant-id acme-corp
     """
     try:
-        import asyncio
+        nx = get_filesystem(backend_config, enforce_permissions=False)
 
-        from nexus.skills import SkillGovernance
+        # Use RPC endpoint directly
+        nx.skills_approve(  # type: ignore[attr-defined]
+            approval_id=approval_id,
+            reviewed_by=reviewed_by,
+            reviewer_type=reviewer_type,
+            comments=comments,
+            tenant_id=tenant_id,
+        )
 
-        # Get database connection and rebac manager
-        db_conn = _get_database_connection()
-        # TODO: Add rebac_manager when needed for permission checks
-        governance = SkillGovernance(db_connection=db_conn, rebac_manager=None)
+        console.print(f"[green]✓[/green] Approved skill (Approval ID: [cyan]{approval_id}[/cyan])")
+        console.print(f"  Reviewed by: [cyan]{reviewed_by}[/cyan] ({reviewer_type})")
+        if comments:
+            console.print(f"  Comments: [dim]{comments}[/dim]")
 
-        async def approve_async() -> None:
-            await governance.approve_skill(
-                approval_id=approval_id,
-                reviewed_by=reviewed_by,
-                reviewer_type=reviewer_type,
-                comments=comments,
-                tenant_id=tenant_id,
-            )
-
-            console.print(
-                f"[green]✓[/green] Approved skill (Approval ID: [cyan]{approval_id}[/cyan])"
-            )
-            console.print(f"  Reviewed by: [cyan]{reviewed_by}[/cyan] ({reviewer_type})")
-            if comments:
-                console.print(f"  Comments: [dim]{comments}[/dim]")
-
-        asyncio.run(approve_async())
+        nx.close()
 
     except Exception as e:
         handle_error(e)
@@ -1089,30 +1025,23 @@ def skills_reject(
         nexus skills reject <approval-id> --reviewed-by manager-id --reviewer-type user --tenant-id acme-corp
     """
     try:
-        import asyncio
+        nx = get_filesystem(backend_config, enforce_permissions=False)
 
-        from nexus.skills import SkillGovernance
+        # Use RPC endpoint directly
+        nx.skills_reject(  # type: ignore[attr-defined]
+            approval_id=approval_id,
+            reviewed_by=reviewed_by,
+            reviewer_type=reviewer_type,
+            comments=comments,
+            tenant_id=tenant_id,
+        )
 
-        # Get database connection and rebac manager
-        db_conn = _get_database_connection()
-        # TODO: Add rebac_manager when needed for permission checks
-        governance = SkillGovernance(db_connection=db_conn, rebac_manager=None)
+        console.print(f"[red]✗[/red] Rejected skill (Approval ID: [cyan]{approval_id}[/cyan])")
+        console.print(f"  Reviewed by: [cyan]{reviewed_by}[/cyan] ({reviewer_type})")
+        if comments:
+            console.print(f"  Reason: [dim]{comments}[/dim]")
 
-        async def reject_async() -> None:
-            await governance.reject_skill(
-                approval_id=approval_id,
-                reviewed_by=reviewed_by,
-                reviewer_type=reviewer_type,
-                comments=comments,
-                tenant_id=tenant_id,
-            )
-
-            console.print(f"[red]✗[/red] Rejected skill (Approval ID: [cyan]{approval_id}[/cyan])")
-            console.print(f"  Reviewed by: [cyan]{reviewed_by}[/cyan] ({reviewer_type})")
-            if comments:
-                console.print(f"  Reason: [dim]{comments}[/dim]")
-
-        asyncio.run(reject_async())
+        nx.close()
 
     except Exception as e:
         handle_error(e)
@@ -1138,53 +1067,54 @@ def skills_list_approvals(
         nexus skills list-approvals --status approved --skill my-skill
     """
     try:
-        import asyncio
+        nx = get_filesystem(backend_config, enforce_permissions=False)
 
-        from nexus.skills import SkillGovernance
+        # Use RPC endpoint directly
+        result = nx.skills_list_approvals(status=status, skill_name=skill)  # type: ignore[attr-defined]
 
-        # Get database connection
-        db_conn = _get_database_connection()
-        governance = SkillGovernance(db_connection=db_conn)
+        approvals_data = result.get("approvals", [])
 
-        async def list_approvals_async() -> None:
-            approvals = await governance.list_approvals(status=status, skill_name=skill)
+        if not approvals_data:
+            console.print("[yellow]No approval requests found[/yellow]")
+            nx.close()
+            return
 
-            if not approvals:
-                console.print("[yellow]No approval requests found[/yellow]")
-                return
+        # Display approvals in table
+        table = Table(title=f"Skill Approvals ({result['count']} found)")
+        table.add_column("Approval ID", style="cyan")
+        table.add_column("Skill Name", style="green")
+        table.add_column("Status", style="yellow")
+        table.add_column("Submitted By", style="magenta")
+        table.add_column("Submitted At", style="dim")
 
-            # Display approvals in table
-            table = Table(title=f"Skill Approvals ({len(approvals)} found)")
-            table.add_column("Approval ID", style="cyan")
-            table.add_column("Skill Name", style="green")
-            table.add_column("Status", style="yellow")
-            table.add_column("Submitted By", style="magenta")
-            table.add_column("Submitted At", style="dim")
+        for approval in approvals_data:
+            status_value = approval.get("status", "unknown")
+            status_color = {
+                "pending": "yellow",
+                "approved": "green",
+                "rejected": "red",
+            }.get(status_value, "white")
 
-            for approval in approvals:
-                status_color = {
-                    "pending": "yellow",
-                    "approved": "green",
-                    "rejected": "red",
-                }.get(approval.status.value, "white")
+            submitted_at_str = approval.get("submitted_at", "N/A")
+            if submitted_at_str != "N/A":
+                from datetime import datetime
 
-                submitted_at_str = (
-                    approval.submitted_at.strftime("%Y-%m-%d %H:%M")
-                    if approval.submitted_at
-                    else "N/A"
-                )
+                submitted = datetime.fromisoformat(submitted_at_str)
+                submitted_at_str = submitted.strftime("%Y-%m-%d %H:%M")
 
-                table.add_row(
-                    approval.approval_id[:16] + "...",
-                    approval.skill_name,
-                    f"[{status_color}]{approval.status.value}[/{status_color}]",
-                    approval.submitted_by,
-                    submitted_at_str,
-                )
+            approval_id = approval.get("approval_id", "")
+            approval_id_display = approval_id[:16] + "..." if len(approval_id) > 16 else approval_id
 
-            console.print(table)
+            table.add_row(
+                approval_id_display,
+                approval.get("skill_name", "N/A"),
+                f"[{status_color}]{status_value}[/{status_color}]",
+                approval.get("submitted_by", "N/A"),
+                submitted_at_str,
+            )
 
-        asyncio.run(list_approvals_async())
+        console.print(table)
+        nx.close()
 
     except Exception as e:
         handle_error(e)

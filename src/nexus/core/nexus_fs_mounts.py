@@ -680,7 +680,8 @@ class NexusFSMountsMixin:
         return {"loaded": loaded, "synced": synced, "failed": failed, "errors": errors}
 
     @rpc_expose(description="Sync metadata from connector backend")
-    def sync_mount(
+    def 
+    (
         self,
         mount_point: str,
         recursive: bool = True,

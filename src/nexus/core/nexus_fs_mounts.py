@@ -176,8 +176,10 @@ class NexusFSMountsMixin:
             backend = GCSConnectorBackend(
                 bucket_name=backend_config["bucket"],
                 project_id=backend_config.get("project_id"),
-                credentials_path=backend_config.get("credentials_path"),
                 prefix=backend_config.get("prefix", ""),
+                credentials_path=backend_config.get("credentials_path"),
+                # OAuth access token (alternative to credentials_path)
+                access_token=backend_config.get("access_token"),
             )
         elif backend_type == "gdrive_connector":
             from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
@@ -630,7 +632,30 @@ class NexusFSMountsMixin:
                 if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
                     try:
                         logger.info(f"Syncing connector mount: {mount_point}")
-                        sync_result = self.sync_mount(mount_point, recursive=True, dry_run=False)
+                        # Create a minimal context from mount owner if available
+                        sync_context = None
+                        if mount.get("owner_user_id"):
+                            from nexus.core.permissions import OperationContext
+
+                            # Parse owner_user_id (format: "user:alice" or "agent:bot")
+                            owner_parts = mount["owner_user_id"].split(":", 1)
+                            if len(owner_parts) == 2:
+                                subject_type, subject_id = owner_parts
+                            else:
+                                subject_type, subject_id = "user", owner_parts[0]
+                            sync_context = OperationContext(
+                                user=subject_id,
+                                groups=[],
+                                tenant_id=mount.get("tenant_id", "default"),
+                                subject_type=subject_type,
+                                subject_id=subject_id,
+                            )
+                            logger.info(
+                                f"Using owner context for sync: {subject_type}:{subject_id}"
+                            )
+                        sync_result = self.sync_mount(
+                            mount_point, recursive=True, dry_run=False, context=sync_context
+                        )
                         synced += 1
                         logger.info(
                             f"✓ Synced {mount_point}: "
@@ -655,11 +680,13 @@ class NexusFSMountsMixin:
         return {"loaded": loaded, "synced": synced, "failed": failed, "errors": errors}
 
     @rpc_expose(description="Sync metadata from connector backend")
-    def sync_mount(
+    def 
+    (
         self,
         mount_point: str,
         recursive: bool = True,
         dry_run: bool = False,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Sync metadata from a connector backend to Nexus database.
 
@@ -672,6 +699,7 @@ class NexusFSMountsMixin:
             mount_point: Virtual path of mount to sync (e.g., "/mnt/gcs_demo")
             recursive: If True, sync all subdirectories recursively (default: True)
             dry_run: If True, only report what would be synced without making changes (default: False)
+            context: Operation context containing user/subject information (automatically provided by RPC server)
 
         Returns:
             Dictionary with sync results:
@@ -701,6 +729,18 @@ class NexusFSMountsMixin:
         from nexus.core.metadata import FileMetadata
 
         logger = logging.getLogger(__name__)
+
+        # Extract created_by from context
+        created_by: str | None = None
+        if context and hasattr(context, "subject_type") and hasattr(context, "subject_id"):
+            if context.subject_id:
+                subject_type = context.subject_type if context.subject_type else "user"
+                created_by = f"{subject_type}:{context.subject_id}"
+                logger.info(f"[SYNC_MOUNT] Using created_by from context: {created_by}")
+            else:
+                logger.warning("[SYNC_MOUNT] Context provided but subject_id is None")
+        else:
+            logger.warning("[SYNC_MOUNT] No context provided, created_by will be NULL")
 
         # Check hierarchy manager status
         has_hierarchy = hasattr(self, "_hierarchy_manager") and self._hierarchy_manager
@@ -829,6 +869,7 @@ class NexusFSMountsMixin:
                                     created_at=now,
                                     modified_at=now,
                                     version=1,
+                                    created_by=created_by,  # Set creator from context
                                 )
 
                                 # Save to database

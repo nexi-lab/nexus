@@ -42,6 +42,20 @@ backends:
     readonly: false
     description: "GCS test bucket for Nexus connector demo"
 
+  # AWS S3 Connector backend for external bucket access
+  # This provides direct path mapping to an S3 bucket, allowing external tools
+  # to browse the bucket as if it were a local filesystem.
+  # Uncomment and configure to enable S3 backend:
+  # - type: s3_connector
+  #   mount_point: /mnt/s3_demo
+  #   config:
+  #     bucket: nexus-s3-test-bucket
+  #     region_name: us-east-1
+  #     prefix: nexus-demo
+  #   priority: 10
+  #   readonly: false
+  #   description: "S3 test bucket for Nexus connector demo"
+
 # Cache configuration
 cache:
   type: memory

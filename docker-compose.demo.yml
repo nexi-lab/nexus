@@ -94,6 +94,11 @@ services:
       # Override with environment variable if using a different path
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcs-credentials.json}
 
+      # AWS credentials for S3 connector
+      AWS_SHARED_CREDENTIALS_FILE: ${AWS_SHARED_CREDENTIALS_FILE:-/app/aws-credentials}
+      AWS_CONFIG_FILE: ${AWS_CONFIG_FILE:-/app/aws-config}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+
       # OAuth encryption key (for secure token storage)
       # Generate with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
       NEXUS_OAUTH_ENCRYPTION_KEY: ${NEXUS_OAUTH_ENCRYPTION_KEY:-}
@@ -120,6 +125,10 @@ services:
       # GCS credentials (auto-detected - see docker-gcs-setup.sh)
       # Automatically finds credentials from: gcloud, ./gcs-credentials.json, or GCS_CREDENTIALS_PATH
       - ${GCS_CREDENTIALS_PATH:-./gcs-credentials.json}:/app/gcs-credentials.json:ro
+      # AWS credentials (auto-detected - see docker-start.sh)
+      # Automatically finds credentials from: ~/.aws/credentials or AWS_CREDENTIALS_PATH
+      - ${AWS_CREDENTIALS_PATH:-./aws-credentials}:/app/aws-credentials:ro
+      - ${AWS_CONFIG_PATH:-./aws-config}:/app/aws-config:ro
       # Docker socket for sandbox provider
       - /var/run/docker.sock:/var/run/docker.sock
     ports:

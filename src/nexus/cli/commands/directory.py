@@ -162,8 +162,8 @@ def list_files(
             # Get metadata with permissions
             if isinstance(nx, NexusFS):
                 for file in files:
-                    # Check if directory and add type indicator
-                    is_dir = nx.is_directory(file["path"])
+                    # Use is_directory from metadata if available, otherwise check via API
+                    is_dir = file.get("is_directory", False)
                     type_str = "dir" if is_dir else "file"
                     # Format permissions (UNIX permissions removed - using ReBAC)
                     perms_str = "---------"  # Placeholder since UNIX permissions are deprecated
@@ -187,7 +187,8 @@ def list_files(
             else:
                 # Remote FS - no permission support yet
                 for file in files:
-                    is_dir = nx.is_directory(file["path"])
+                    # Use is_directory from metadata if available, otherwise check via API
+                    is_dir = file.get("is_directory", False)
                     type_str = "dir" if is_dir else "file"
                     size_str = f"{file['size']:,} bytes" if not is_dir else "-"
                     modified_str = format_timestamp(file.get("modified_at"))
@@ -198,18 +199,19 @@ def list_files(
 
             console.print(table)
         else:
-            # Simple listing
-            files_raw = nx.list(path, recursive=recursive)
-            file_paths = cast(list[str], files_raw)
+            # Simple listing - use details to get is_directory information
+            files_raw = nx.list(path, recursive=recursive, details=True)
+            files = cast(list[dict[str, Any]], files_raw)
 
-            if not file_paths:
+            if not files:
                 console.print(f"[yellow]No files found in {path}[/yellow]")
                 nx.close()
                 return
 
-            for file_path in file_paths:
-                # Check if it's a directory and add visual indicator
-                is_dir = nx.is_directory(file_path)
+            for file in files:
+                # Use is_directory from metadata
+                is_dir = file.get("is_directory", False)
+                file_path = file["path"]
                 if is_dir:
                     console.print(f"  [bold cyan]{file_path}/[/bold cyan]")
                 else:

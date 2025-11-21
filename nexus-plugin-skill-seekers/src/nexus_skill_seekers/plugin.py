@@ -73,17 +73,18 @@ class SkillSeekersPlugin(NexusPlugin):
         """Return plugin metadata."""
         return PluginMetadata(
             name="skill-seekers",
-            version="0.2.0",
-            description="Generate skills from documentation using AI with Firecrawl and ReBAC integration",
+            version="0.3.0",
+            description="Generate skills from docs, PDFs, and GitHub using skill-seekers integration",
             author="Nexus Team",
             homepage="https://github.com/nexi-lab/nexus-plugin-skill-seekers",
-            requires=["nexus-plugin-firecrawl"],
+            requires=["nexus-plugin-firecrawl", "skill-seekers>=2.1.0"],
         )
 
     def commands(self) -> dict[str, Callable]:
         """Return plugin commands."""
         return {
             "generate": self.generate_skill,
+            "generate-from-pdf": self.generate_skill_from_pdf,
             "import": self.import_skill,
             "batch": self.batch_generate,
             "list": self.list_skills,
@@ -781,6 +782,268 @@ This skill can be used to understand and work with concepts from the source docu
         except Exception as e:
             console.print(f"[red]Batch generation failed: {e}[/red]")
 
+    async def generate_skill_from_pdf(
+        self,
+        pdf_path: str,
+        name: Optional[str] = None,
+        tier: str = "agent",
+        description: Optional[str] = None,
+        creator_id: Optional[str] = None,
+        creator_type: str = "agent",
+        tenant_id: Optional[str] = None,
+        use_ocr: bool = False,
+        extract_images: bool = False,
+        extract_tables: bool = False,
+        use_ai: bool = True,
+    ) -> Optional[str]:
+        """Generate a skill from a PDF file using skill-seekers integration.
+
+        Args:
+            pdf_path: Path to PDF file
+            name: Name for the skill (auto-generated if not provided)
+            tier: Target tier (agent, tenant, system). Default: agent
+            description: Skill description (optional)
+            creator_id: ID of the creator (for ReBAC)
+            creator_type: Type of creator (agent, user). Default: agent
+            tenant_id: Tenant ID for scoping (for ReBAC)
+            use_ocr: Use OCR for scanned PDFs (default: False)
+            extract_images: Extract images from PDF (default: False)
+            extract_tables: Extract tables from PDF (default: False)
+            use_ai: Use AI enhancement (default: True)
+
+        Returns:
+            Path to generated skill or None on failure
+        """
+        try:
+            # Import skill-seekers PDF extractor
+            from skill_seekers.cli.pdf_extractor_poc import PDFExtractor
+
+            # Check permissions based on tier
+            await self._check_tier_permissions(tier, creator_id, creator_type, tenant_id)
+
+            console.print(f"[cyan]Extracting from PDF:[/cyan] {pdf_path}")
+
+            # Auto-generate name if not provided
+            if not name:
+                name = Path(pdf_path).stem.replace(" ", "-").lower()
+                console.print(f"[dim]Auto-generated name: {name}[/dim]")
+
+            # Extract PDF content using skill-seekers
+            extractor = PDFExtractor(
+                pdf_path=pdf_path,
+                verbose=True,
+                extract_images=extract_images,
+                use_ocr=use_ocr,
+                extract_tables=extract_tables,
+                parallel=True,  # Enable parallel processing for faster extraction
+                use_cache=True,  # Enable caching
+            )
+
+            # Perform extraction
+            console.print("[cyan]→[/cyan] Extracting text, code, and metadata...")
+
+            try:
+                # Try using skill-seekers extractor
+                extracted_data = extractor.extract_all()
+            except (AssertionError, Exception) as e:
+                # Fallback to simple extraction if skill-seekers fails (version incompatibility)
+                console.print(f"[yellow]⚠ skill-seekers extraction failed: {e}[/yellow]")
+                console.print("[cyan]→[/cyan] Falling back to simple PDF extraction...")
+                extracted_data = self._extract_pdf_simple(pdf_path)
+
+            console.print(
+                f"[green]✓[/green] Extracted {len(extracted_data.get('pages', []))} pages"
+            )
+
+            # Generate skill content
+            console.print(f"[cyan]Generating skill:[/cyan] {name}")
+
+            # Build content from extracted data
+            content = self._build_content_from_pdf_data(extracted_data)
+
+            # Generate SKILL.md with optional AI enhancement
+            if use_ai:
+                console.print("[cyan]Enhancing with AI...[/cyan]")
+                skill_content = await self._generate_skill_md_with_ai(
+                    name, f"file://{pdf_path}", content, tier
+                )
+            else:
+                skill_content = self._generate_skill_md_from_pdf(
+                    name, pdf_path, content, tier, description, extracted_data
+                )
+
+            # Import to Nexus
+            if self.nx:
+                tier_paths = {
+                    "agent": "/workspace/.nexus/skills/",
+                    "tenant": "/shared/skills/",
+                    "system": "/system/skills/",
+                }
+                skill_dir = f"{tier_paths[tier]}{name}/"
+                skill_path = f"{skill_dir}SKILL.md"
+
+                # Create directory
+                try:
+                    self.nx.mkdir(skill_dir, parents=True)
+                except Exception:
+                    pass
+
+                # Write skill file
+                self.nx.write(skill_path, skill_content.encode("utf-8"))
+                console.print(f"[green]✓ Imported to Nexus:[/green] {skill_path}")
+
+                # Create ReBAC tuples
+                await self._create_rebac_tuples(name, tier, creator_id, creator_type, tenant_id)
+
+                # Handle approval workflow for tenant tier
+                if tier == "tenant":
+                    await self._submit_for_approval(name, creator_id, f"file://{pdf_path}")
+
+                return skill_path
+            else:
+                console.print("[yellow]Note: NexusFS not available[/yellow]")
+                return None
+
+        except ImportError as e:
+            console.print(f"[red]skill-seekers package not installed: {e}[/red]")
+            console.print("[yellow]Install with: pip install skill-seekers>=2.1.0[/yellow]")
+            return None
+        except PermissionDeniedError as e:
+            console.print(f"[red]Permission denied: {e}[/red]")
+            return None
+        except Exception as e:
+            console.print(f"[red]Failed to generate skill from PDF: {e}[/red]")
+            import traceback
+
+            traceback.print_exc()
+            return None
+
+    def _build_content_from_pdf_data(self, extracted_data: dict) -> str:
+        """Build markdown content from extracted PDF data.
+
+        Args:
+            extracted_data: Extracted data from PDFExtractor
+
+        Returns:
+            Markdown content string
+        """
+        content_parts = []
+
+        # Add text from pages
+        for page in extracted_data.get("pages", []):
+            page_num = page.get("page_num", 0)
+
+            # Add tables first
+            for table in page.get("tables", []):
+                headers = table.get("headers", [])
+                data = table.get("data", [])
+                if data:
+                    content_parts.append(f"### Table on Page {page_num}\n\n")
+                    # Format as markdown table
+                    if headers:
+                        content_parts.append("| " + " | ".join(str(h) for h in headers) + " |")
+                        content_parts.append("| " + " | ".join("---" for _ in headers) + " |")
+                    for row in data:
+                        content_parts.append("| " + " | ".join(str(cell) for cell in row) + " |")
+                    content_parts.append("\n")
+
+            text = page.get("text", "").strip()
+            if text:
+                content_parts.append(f"## Page {page_num}\n\n{text}\n")
+
+            # Add code blocks
+            for code_block in page.get("code_blocks", []):
+                language = code_block.get("language", "")
+                code = code_block.get("code", "")
+                if code:
+                    content_parts.append(f"```{language}\n{code}\n```\n")
+
+        # Add chapter information if available
+        chapters = extracted_data.get("chapters", [])
+        if chapters:
+            content_parts.insert(0, "## Table of Contents\n\n")
+            for chapter in chapters:
+                title = chapter.get("title", "Unknown")
+                page_range = chapter.get("page_range", [])
+                content_parts.insert(1, f"- {title} (Pages {page_range})\n")
+            content_parts.insert(len(chapters) + 1, "\n")
+
+        return "\n".join(content_parts)
+
+    def _generate_skill_md_from_pdf(
+        self,
+        name: str,
+        pdf_path: str,
+        content: str,
+        tier: str,
+        description: Optional[str],
+        extracted_data: dict,
+    ) -> str:
+        """Generate SKILL.md from PDF without AI enhancement.
+
+        Args:
+            name: Skill name
+            pdf_path: PDF file path
+            content: Extracted content
+            tier: Target tier
+            description: Optional description
+            extracted_data: Full extracted data
+
+        Returns:
+            Generated SKILL.md content
+        """
+        from datetime import datetime
+
+        # Generate description if not provided
+        if not description:
+            description = f"Skill generated from PDF: {Path(pdf_path).name}"
+
+        # Get statistics
+        stats = extracted_data.get("statistics", {})
+        page_count = len(extracted_data.get("pages", []))
+        code_blocks = sum(len(p.get("code_blocks", [])) for p in extracted_data.get("pages", []))
+
+        skill_md = f"""---
+name: {name}
+version: 1.0.0
+description: "{description}"
+author: "Skill Seekers (PDF Extraction)"
+created: {datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}
+source: "file://{pdf_path}"
+tier: {tier}
+metadata:
+  pages: {page_count}
+  code_blocks: {code_blocks}
+  extraction_method: skill-seekers
+---
+
+# {name.replace("-", " ").title()}
+
+## Overview
+
+This skill was automatically generated from PDF documentation using the skill-seekers integration.
+
+**Source:** `{Path(pdf_path).name}`
+**Pages:** {page_count}
+**Code Blocks Detected:** {code_blocks}
+
+## Content
+
+{content[:10000]}{"..." if len(content) > 10000 else ""}
+
+## Extraction Statistics
+
+- Total Pages: {page_count}
+- Code Blocks: {code_blocks}
+- Languages Detected: {", ".join(stats.get("languages", {}).keys()) if stats else "N/A"}
+
+---
+
+*Generated by Nexus Skill Seekers Plugin v0.3.0*
+*Using skill-seekers PDF extraction engine*
+"""
+        return skill_md
+
     async def list_skills(self) -> None:
         """List all generated skills."""
         if not self.nx:
@@ -895,3 +1158,155 @@ This skill can be used to understand and work with concepts from the source docu
                     break
 
         return unique_keywords or ["documentation", "reference"]
+
+    def _fix_numbered_lists(self, md_text: str) -> str:
+        """Fix numbered lists where numbers are separated from descriptions.
+
+        This handles PDFs with complex layouts where pymupdf4llm extracts numbers
+        on separate lines from their descriptions.
+
+        Args:
+            md_text: Raw markdown text from pymupdf4llm
+
+        Returns:
+            Cleaned markdown with numbered items properly formatted
+        """
+        import re
+
+        # Find sections with isolated numbers followed by paragraphs
+        # Pattern: multiple lines of just "N)" followed by content
+        lines = md_text.split("\n")
+
+        # Check if we have the problematic pattern: isolated numbers
+        isolated_numbers = []
+        for i, line in enumerate(lines):
+            if re.match(r"^\d+\)$", line.strip()):
+                isolated_numbers.append(i)
+
+        # If we found isolated numbers, reconstruct the list
+        if len(isolated_numbers) >= 3:  # At least 3 items suggests it's a real list
+            # Find where the descriptions start (after all the isolated numbers)
+            desc_start = isolated_numbers[-1] + 1
+
+            # Skip blank lines
+            while desc_start < len(lines) and not lines[desc_start].strip():
+                desc_start += 1
+
+            # Collect all description paragraphs
+            descriptions: list[str] = []
+            current_para: list[str] = []
+
+            for i in range(desc_start, len(lines)):
+                line = lines[i].strip()
+                if not line:
+                    if current_para:
+                        descriptions.append(" ".join(current_para))
+                        current_para = []
+                else:
+                    current_para.append(line)
+
+            if current_para:
+                descriptions.append(" ".join(current_para))
+
+            # Build the numbered list
+            numbered_list = []
+            for i, desc in enumerate(descriptions[: len(isolated_numbers)], 1):
+                numbered_list.append(f"\n**{i}) {desc}**\n")
+
+            # Reconstruct the markdown: keep everything before the numbers, replace with new list
+            before_numbers = "\n".join(lines[: isolated_numbers[0]])
+            after_list = "\n".join(lines[desc_start + len("\n".join(descriptions).split("\n")) :])
+
+            return before_numbers + "\n\n" + "\n".join(numbered_list) + "\n\n" + after_list
+
+        return md_text
+
+    def _extract_pdf_simple(self, pdf_path: str) -> dict:
+        """Simple PDF extraction fallback using PyMuPDF4LLM.
+
+        Args:
+            pdf_path: Path to PDF file
+
+        Returns:
+            Dictionary with extracted data in skill-seekers format
+        """
+        try:
+            import pymupdf4llm
+
+            # Use pymupdf4llm for better markdown extraction with structure preservation
+            console.print("[cyan]→[/cyan] Using pymupdf4llm for enhanced extraction...")
+            md_text = pymupdf4llm.to_markdown(pdf_path)
+
+            # Post-process: Fix isolated numbered lists that got separated from descriptions
+            # This handles PDFs with 2-column layouts where numbers and descriptions are separate
+            md_text = self._fix_numbered_lists(md_text)
+
+            # Parse markdown back into structured format
+            pages = [
+                {
+                    "page_num": 1,
+                    "text": md_text,
+                    "code_blocks": [],
+                    "tables": [],
+                }
+            ]
+
+            return {
+                "pages": pages,
+                "chapters": [],
+                "statistics": {
+                    "total_pages": 1,
+                    "total_chars": len(md_text),
+                    "languages": {},
+                },
+            }
+
+        except Exception as e:
+            console.print(f"[yellow]⚠ pymupdf4llm extraction failed: {e}[/yellow]")
+            console.print("[cyan]→[/cyan] Falling back to basic PyMuPDF extraction...")
+
+            # Ultimate fallback: basic PyMuPDF
+            import fitz
+
+            doc = fitz.open(pdf_path)
+            pages = []
+
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                text = page.get_text("text")
+
+                # Extract tables from this page
+                tables = []
+                try:
+                    table_finder = page.find_tables()
+                    for table in table_finder.tables:
+                        # Convert table to pandas DataFrame then to dict
+                        df = table.to_pandas()
+                        tables.append(
+                            {
+                                "data": df.values.tolist(),
+                                "headers": df.columns.tolist(),
+                            }
+                        )
+                except Exception:
+                    pass  # Silently skip table extraction errors in fallback
+
+                page_data = {
+                    "page_num": page_num + 1,
+                    "text": text,
+                    "code_blocks": [],
+                    "tables": tables,
+                }
+                pages.append(page_data)
+
+            doc.close()
+
+            return {
+                "pages": pages,
+                "chapters": [],
+                "statistics": {
+                    "total_pages": len(pages),
+                    "total_chars": sum(len(str(p.get("text", ""))) for p in pages),
+                    "languages": {},
+                },
+            }

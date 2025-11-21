@@ -615,7 +615,7 @@ class LocalBackend(Backend):
         except Exception:
             return False
 
-    def list_dir(self, path: str) -> list[str]:
+    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """List directory contents using local filesystem."""
         try:
             full_path = self.dir_root / path.lstrip("/")

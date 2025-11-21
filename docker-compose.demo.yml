@@ -98,6 +98,10 @@ services:
       # Generate with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
       NEXUS_OAUTH_ENCRYPTION_KEY: ${NEXUS_OAUTH_ENCRYPTION_KEY:-}
 
+      # Google OAuth credentials (for Google Drive connector)
+      NEXUS_OAUTH_GOOGLE_CLIENT_ID: ${NEXUS_OAUTH_GOOGLE_CLIENT_ID:-}
+      NEXUS_OAUTH_GOOGLE_CLIENT_SECRET: ${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
+
       # Sandbox configuration
       # URL that sandboxes should use to connect back to Nexus server
       # Use Docker service name for container-to-container communication

@@ -1328,6 +1328,12 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         # Call the method
         result = fn(**kwargs)
 
+        # Check if result is a coroutine (async method) and await it
+        import inspect
+
+        if inspect.iscoroutine(result):
+            result = self._run_async_safe(result)
+
         # Serialize the result
         return self._serialize_result(result)
 

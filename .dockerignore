@@ -1,0 +1,140 @@
+# .dockerignore - Controls what files are sent to Docker build context
+# This is different from .gitignore - we want to INCLUDE gcs-credentials.json for Docker builds
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+env/
+
+# Testing
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+htmlcov/
+
+# Nexus data directories (exclude from Docker build)
+nexus-data/
+nexus-workspace/
+nexus-test-*/
+.nexus-server-data/
+test-nexus-data/
+test-server-data/
+demo-data*/
+*-demo-data/
+test-fix-data/
+*-examples-data/
+*-examples-workspace/
+*-server-data/
+my-data/
+
+# Database files (should not be in Docker images)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+nexus-*.db
+
+# Logs (should not be in images)
+logs/
+*.log
+*.log.*
+
+# Git (not needed in container)
+.git/
+.gitignore
+.gitattributes
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# Documentation (can be excluded from production images)
+docs/
+*.md
+# But keep README for package metadata
+!README.md
+!GCS_SERVICE_ACCOUNT_SETUP.md
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Environment files (secrets should not be in images, use env vars instead)
+.env
+.env.*
+# IMPORTANT: Don't ignore gcs-credentials.json - we need it for builds
+# It will be mounted as a volume, not baked into the image
+
+# Frontend (not needed in backend image)
+nexus-frontend/
+
+# Examples (not needed in production)
+examples/
+
+# Scripts (dev-only)
+scripts/
+*.sh
+
+# Tests (not needed in production)
+tests/
+test_*.py
+*_test.py
+
+# Build artifacts
+target/
+Cargo.lock
+.ruff_cache/
+.mypy_cache/

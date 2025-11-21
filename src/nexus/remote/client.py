@@ -3751,6 +3751,53 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("skills_create_from_content", params)
         return result  # type: ignore[no-any-return]
 
+    def skills_create_from_file(
+        self,
+        source: str,
+        file_data: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        tier: str = "agent",
+        use_ai: bool = False,
+        use_ocr: bool = False,
+        extract_tables: bool = False,
+        extract_images: bool = False,
+        _author: str | None = None,  # Unused: plugin manages authorship
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a skill from file or URL (auto-detects type).
+
+        Args:
+            source: File path or URL
+            file_data: Base64 encoded file data (for remote calls)
+            name: Skill name (auto-generated if not provided)
+            description: Skill description
+            tier: Target tier (agent, tenant, system)
+            use_ai: Enable AI enhancement
+            use_ocr: Enable OCR for scanned PDFs
+            extract_tables: Extract tables from documents
+            extract_images: Extract images from documents
+            _author: Author name (unused: plugin manages authorship)
+        """
+        params: dict[str, Any] = {
+            "source": source,
+            "tier": tier,
+            "use_ai": use_ai,
+            "use_ocr": use_ocr,
+            "extract_tables": extract_tables,
+            "extract_images": extract_images,
+        }
+        if file_data is not None:
+            params["file_data"] = file_data
+        if name is not None:
+            params["name"] = name
+        if description is not None:
+            params["description"] = description
+        if _author is not None:
+            params["_author"] = _author
+        result = self._call_rpc("skills_create_from_file", params)
+        return result  # type: ignore[no-any-return]
+
     def skills_list(
         self,
         tier: str | None = None,

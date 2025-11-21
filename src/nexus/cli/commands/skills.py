@@ -357,6 +357,136 @@ def skills_create_from_web(
         handle_error(e)
 
 
+@skills.command(name="create-from-file")
+@click.argument("source", type=str)
+@click.option("--name", help="Skill name (auto-generated from source if not provided)")
+@click.option(
+    "--tier", type=click.Choice(["agent", "tenant", "system"]), default="agent", help="Target tier"
+)
+@click.option("--description", help="Skill description")
+@click.option("--ai", is_flag=True, help="Enable AI enhancement (requires API key)")
+@click.option("--no-tables", is_flag=True, help="Disable table extraction (enabled by default)")
+@click.option("--no-images", is_flag=True, help="Disable image extraction (enabled by default)")
+@click.option(
+    "--no-ocr", is_flag=True, help="Disable OCR for scanned PDFs (auto-detected by default)"
+)
+@click.option("--author", help="Author name")
+@add_backend_options
+def skills_create_from_file(
+    source: str,
+    name: str | None,
+    tier: str,
+    description: str | None,
+    ai: bool,
+    no_tables: bool,
+    no_images: bool,
+    no_ocr: bool,
+    author: str | None,
+    backend_config: BackendConfig,
+) -> None:
+    """Create skill from file or URL (auto-detects type).
+
+    Smart defaults: tables, images, and OCR are enabled automatically.
+    The tool intelligently extracts everything useful from your documents.
+
+    Automatically detects the source type and uses the appropriate extractor:
+    - PDF files (.pdf) - extracts text, tables, images
+    - URLs (http://, https://) - scrapes web content
+    - Markdown files (.md) - parses markdown
+    - Text files (.txt) - plain text
+
+    Examples:
+        # Simple - extract everything automatically
+        nexus skills create-from-file requirement.pdf
+
+        # From URL
+        nexus skills create-from-file https://docs.stripe.com/api
+
+        # With AI enhancement
+        export ANTHROPIC_API_KEY="sk-ant-..."
+        nexus skills create-from-file manual.pdf --ai
+
+        # Disable specific features if needed
+        nexus skills create-from-file doc.pdf --no-tables --no-images
+    """
+    try:
+        from pathlib import Path
+        from urllib.parse import urlparse
+
+        # Detect source type
+        is_url = source.startswith(("http://", "https://"))
+        is_pdf = source.lower().endswith(".pdf")
+
+        # Auto-generate skill name if not provided
+        if not name:
+            if is_url:
+                # Extract from URL
+                parsed = urlparse(source)
+                name = parsed.path.strip("/").split("/")[-1] or parsed.netloc
+                name = name.lower().replace(".", "-").replace("_", "-")
+            else:
+                # Extract from filename
+                name = Path(source).stem.lower().replace(" ", "-").replace("_", "-")
+
+        # Get filesystem
+        nx = get_filesystem(backend_config, enforce_permissions=False)
+
+        console.print(f"[cyan]Generating skill from:[/cyan] {source}")
+        console.print(
+            f"  Type: [yellow]{'URL' if is_url else 'PDF' if is_pdf else 'File'}[/yellow]"
+        )
+        console.print(f"  Name: [yellow]{name}[/yellow]")
+        console.print(f"  Tier: [yellow]{tier}[/yellow]")
+        console.print()
+
+        # Handle file upload for PDF
+        file_data = None
+        if is_pdf and Path(source).exists():
+            import base64
+
+            with open(source, "rb") as f:
+                file_data = base64.b64encode(f.read()).decode("utf-8")
+        elif is_pdf:
+            console.print(f"[red]Error: File not found: {source}[/red]")
+            sys.exit(1)
+
+        # Use RPC endpoint with smart defaults
+        try:
+            result = nx.skills_create_from_file(  # type: ignore[attr-defined]
+                source=source,
+                file_data=file_data,
+                name=name,
+                description=description,
+                tier=tier,
+                use_ai=ai,
+                use_ocr=not no_ocr,  # Smart default: enabled unless --no-ocr
+                extract_tables=not no_tables,  # Smart default: enabled unless --no-tables
+                extract_images=not no_images,  # Smart default: enabled unless --no-images
+                _author=author,
+            )
+
+            skill_path = result.get("skill_path")
+            if skill_path:
+                console.print()
+                console.print("[green]✓[/green] Skill generated successfully")
+                console.print(f"  Path: [cyan]{skill_path}[/cyan]")
+                console.print()
+                console.print("View with:")
+                console.print(f"  nexus cat {skill_path}")
+                console.print(f"  nexus skills info {name}")
+            else:
+                console.print("[red]✗ Failed to generate skill[/red]")
+                sys.exit(1)
+        except Exception as e:
+            console.print(f"[red]✗ Error: {e}[/red]")
+            sys.exit(1)
+        finally:
+            nx.close()
+
+    except Exception as e:
+        handle_error(e)
+
+
 def _generate_skill_name_from_url_or_title(url: str, title: str) -> str:
     """Generate a skill name from URL or title.
 

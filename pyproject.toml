@@ -57,6 +57,7 @@ dependencies = [
     "bcrypt>=4.0.0",  # Password hashing for local auth
     "cryptography>=41.0.0",  # OAuth token encryption (Fernet)
     # Cloud Storage Backends
+    "boto3>=1.34.0",  # AWS SDK for Python (S3 connector)
     "google-cloud-storage>=2.14.0",
     "google-api-python-client>=2.108.0",  # Google Drive API
     "google-auth>=2.25.0",  # Google authentication
@@ -272,6 +273,10 @@ disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.gcs_connector"
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.s3_connector"
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]

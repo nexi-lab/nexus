@@ -859,8 +859,54 @@ class GoogleDriveConnectorBackend(Backend):
                     raise FileExistsError(f"Directory already exists: {path}")
                 return
 
-            # Get or create folder (parents flag is respected in _get_or_create_folder)
-            self._get_or_create_folder(service, path, root_folder_id, context)
+            # Navigate through path components to create folder hierarchy
+            parts = path.split("/")
+            parent_id = root_folder_id
+
+            for i, folder_name in enumerate(parts):
+                if not folder_name:
+                    continue
+
+                # Check if this is the last component (the folder we want to create)
+                is_last = i == len(parts) - 1
+
+                if not is_last:
+                    # Intermediate folder - create if parents=True, otherwise fail if missing
+                    if parents:
+                        parent_id = self._get_or_create_folder(
+                            service, folder_name, parent_id, context
+                        )
+                    else:
+                        # Try to get existing folder
+                        query = f"name='{folder_name}' and '{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                        if self.use_shared_drives:
+                            results = (
+                                service.files()
+                                .list(
+                                    q=query,
+                                    spaces="drive",
+                                    fields="files(id)",
+                                    includeItemsFromAllDrives=True,
+                                    supportsAllDrives=True,
+                                )
+                                .execute()
+                            )
+                        else:
+                            results = (
+                                service.files()
+                                .list(q=query, spaces="drive", fields="files(id)")
+                                .execute()
+                            )
+
+                        files = results.get("files", [])
+                        if not files:
+                            raise FileNotFoundError(
+                                f"Parent directory does not exist: {'/'.join(parts[: i + 1])}"
+                            )
+                        parent_id = files[0]["id"]
+                else:
+                    # Last folder - create it
+                    parent_id = self._get_or_create_folder(service, folder_name, parent_id, context)
 
         except (FileExistsError, FileNotFoundError):
             raise
@@ -933,8 +979,154 @@ class GoogleDriveConnectorBackend(Backend):
             service = self._get_drive_service(None)
             root_folder_id = self._get_or_create_root_folder(service, None)
 
-            folder_id = self._resolve_path_to_folder_id(service, path, root_folder_id)
-            return folder_id is not None
+            # Split path into parent and target name
+            parts = path.split("/")
+            target_name = parts[-1]
+            parent_parts = parts[:-1]
+
+            # Navigate to parent folder (without creating missing folders)
+            parent_id = root_folder_id
+            for part in parent_parts:
+                if not part:
+                    continue
+
+                # Try to find existing folder (don't create it)
+                query = f"name='{part}' and '{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                if self.use_shared_drives:
+                    results = (
+                        service.files()
+                        .list(
+                            q=query,
+                            spaces="drive",
+                            fields="files(id)",
+                            includeItemsFromAllDrives=True,
+                            supportsAllDrives=True,
+                        )
+                        .execute()
+                    )
+                else:
+                    results = (
+                        service.files().list(q=query, spaces="drive", fields="files(id)").execute()
+                    )
+
+                files = results.get("files", [])
+                if not files:
+                    # Parent doesn't exist, so path doesn't exist
+                    return False
+                parent_id = files[0]["id"]
+
+            # Check if target exists as a folder
+            query = f"name='{target_name}' and '{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+
+            if self.use_shared_drives:
+                results = (
+                    service.files()
+                    .list(
+                        q=query,
+                        spaces="drive",
+                        fields="files(id)",
+                        includeItemsFromAllDrives=True,
+                        supportsAllDrives=True,
+                    )
+                    .execute()
+                )
+            else:
+                results = (
+                    service.files().list(q=query, spaces="drive", fields="files(id)").execute()
+                )
+
+            files = results.get("files", [])
+            return len(files) > 0
 
         except Exception:
             return False
+
+    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+        """
+        List directory contents from Google Drive.
+
+        Args:
+            path: Directory path to list (relative to backend root)
+            context: Operation context for authentication
+
+        Returns:
+            List of entry names (directories have trailing '/')
+
+        Raises:
+            FileNotFoundError: If directory doesn't exist
+            BackendError: If operation fails
+        """
+        try:
+            path = path.strip("/")
+
+            service = self._get_drive_service(context)
+            root_folder_id = self._get_or_create_root_folder(service, context)
+
+            # Navigate to target folder
+            if path:
+                # Split path and navigate
+                parts = path.split("/")
+                current_folder_id = root_folder_id
+                for part in parts:
+                    if not part:
+                        continue
+                    current_folder_id = self._get_or_create_folder(
+                        service, part, current_folder_id, context
+                    )
+                folder_id = current_folder_id
+            else:
+                # List root folder
+                folder_id = root_folder_id
+
+            # Query all files/folders in this directory
+            query = f"'{folder_id}' in parents and trashed=false"
+
+            if self.use_shared_drives:
+                results = (
+                    service.files()
+                    .list(
+                        q=query,
+                        spaces="drive",
+                        fields="files(id, name, mimeType)",
+                        includeItemsFromAllDrives=True,
+                        supportsAllDrives=True,
+                        pageSize=1000,
+                    )
+                    .execute()
+                )
+            else:
+                results = (
+                    service.files()
+                    .list(
+                        q=query,
+                        spaces="drive",
+                        fields="files(id, name, mimeType)",
+                        pageSize=1000,
+                    )
+                    .execute()
+                )
+
+            files = results.get("files", [])
+
+            # Build list of entries
+            entries = []
+            for file in files:
+                name = file["name"]
+                mime_type = file.get("mimeType", "")
+
+                # Add trailing '/' for folders
+                if mime_type == "application/vnd.google-apps.folder":
+                    entries.append(name + "/")
+                else:
+                    entries.append(name)
+
+            return sorted(entries)
+
+        except Exception as e:
+            if "not found" in str(e).lower():
+                raise FileNotFoundError(f"Directory not found: {path}") from e
+            raise BackendError(
+                f"Failed to list directory {path}: {e}",
+                backend="gdrive",
+                path=path,
+            ) from e

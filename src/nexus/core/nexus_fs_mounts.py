@@ -785,7 +785,7 @@ class NexusFSMountsMixin:
         def scan_directory(virtual_path: str, backend_path: str) -> None:
             try:
                 # List entries in this directory
-                entries = backend.list_dir(backend_path)
+                entries = backend.list_dir(backend_path, context=context)
 
                 for entry_name in entries:
                     is_dir = entry_name.endswith("/")

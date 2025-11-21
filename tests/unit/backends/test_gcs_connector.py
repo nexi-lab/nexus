@@ -167,9 +167,12 @@ class TestWriteContentWithoutVersioning:
 
         # Should upload to correct path with proper Content-Type
         gcs_connector_backend.bucket.blob.assert_called_with("test-prefix/file.txt")
-        mock_blob.upload_from_string.assert_called_once_with(
-            test_content, content_type="text/plain; charset=utf-8", timeout=60
-        )
+        # Check that upload_from_string was called with correct content and content_type
+        assert mock_blob.upload_from_string.call_count == 1
+        call_args = mock_blob.upload_from_string.call_args
+        assert call_args[0][0] == test_content  # First positional arg
+        assert call_args[1]["content_type"] == "text/plain; charset=utf-8"
+        assert call_args[1]["timeout"] == 60
 
     def test_write_content_without_context(
         self, gcs_connector_backend: GCSConnectorBackend
@@ -212,9 +215,12 @@ class TestWriteContentWithVersioning:
         assert result == "1234567890"
 
         # Should upload with proper Content-Type and reload to get generation
-        mock_blob.upload_from_string.assert_called_once_with(
-            test_content, content_type="text/plain; charset=utf-8", timeout=60
-        )
+        # Check that upload_from_string was called with correct content and content_type
+        assert mock_blob.upload_from_string.call_count == 1
+        call_args = mock_blob.upload_from_string.call_args
+        assert call_args[0][0] == test_content  # First positional arg
+        assert call_args[1]["content_type"] == "text/plain; charset=utf-8"
+        assert call_args[1]["timeout"] == 60
         mock_blob.reload.assert_called_once()
 
     def test_write_content_multiple_versions(

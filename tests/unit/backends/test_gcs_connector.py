@@ -428,16 +428,16 @@ class TestPathMapping:
 
     def test_get_gcs_path_with_prefix(self, gcs_connector_backend: GCSConnectorBackend) -> None:
         """Test path mapping with prefix."""
-        result = gcs_connector_backend._get_gcs_path("dir/file.txt")
+        result = gcs_connector_backend._get_blob_path("dir/file.txt")
         assert result == "test-prefix/dir/file.txt"
 
     def test_get_gcs_path_without_prefix(self, mock_storage_client: Mock) -> None:
         """Test path mapping without prefix."""
         backend = GCSConnectorBackend(bucket_name="test-bucket", prefix="")
-        result = backend._get_gcs_path("dir/file.txt")
+        result = backend._get_blob_path("dir/file.txt")
         assert result == "dir/file.txt"
 
     def test_get_gcs_path_leading_slash(self, gcs_connector_backend: GCSConnectorBackend) -> None:
         """Test path mapping strips leading slash."""
-        result = gcs_connector_backend._get_gcs_path("/dir/file.txt")
+        result = gcs_connector_backend._get_blob_path("/dir/file.txt")
         assert result == "test-prefix/dir/file.txt"

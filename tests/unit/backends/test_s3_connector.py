@@ -309,18 +309,18 @@ class TestPathMapping:
 
     def test_get_s3_path_with_prefix(self, s3_connector_backend: S3ConnectorBackend) -> None:
         """Test path mapping with prefix."""
-        result = s3_connector_backend._get_s3_path("dir/file.txt")
+        result = s3_connector_backend._get_blob_path("dir/file.txt")
         assert result == "test-prefix/dir/file.txt"
 
     def test_get_s3_path_without_prefix(self, mock_boto3: Mock) -> None:
         """Test path mapping without prefix."""
         backend = S3ConnectorBackend(bucket_name="test-bucket", prefix="")
-        result = backend._get_s3_path("dir/file.txt")
+        result = backend._get_blob_path("dir/file.txt")
         assert result == "dir/file.txt"
 
     def test_get_s3_path_leading_slash(self, s3_connector_backend: S3ConnectorBackend) -> None:
         """Test path mapping strips leading slash."""
-        result = s3_connector_backend._get_s3_path("/dir/file.txt")
+        result = s3_connector_backend._get_blob_path("/dir/file.txt")
         assert result == "test-prefix/dir/file.txt"
 
 

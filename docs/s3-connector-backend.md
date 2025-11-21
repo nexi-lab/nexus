@@ -13,6 +13,8 @@ Unlike CAS (Content Addressable Storage) backends that store files by content ha
 - **External tool compatibility**: Files are browsable via AWS Console, CLI, etc.
 - **Versioning support**: Leverages S3 versioning if enabled on the bucket
 - **Multiple authentication methods**: IAM roles, credentials file, environment variables
+- **Automatic retry**: Built-in retry logic for transient errors (503, throttling, network issues)
+- **Optimized operations**: Efficient rename/move operations using S3 native copy
 
 ### Use Cases
 
@@ -465,6 +467,57 @@ nx.write("/workspace/s3/result.json", b'{"status": "complete"}')
 nx.remove_mount("/workspace/s3")
 ```
 
+## Performance and Reliability
+
+### Automatic Retry
+
+The S3 connector includes built-in retry logic for transient errors:
+
+```python
+# Configured with adaptive retry mode
+- Max attempts: 3
+- Retry mode: adaptive (handles throttling intelligently)
+- Automatic backoff for 503 errors and throttling
+```
+
+This improves reliability when dealing with:
+- Temporary network issues
+- S3 service throttling (503 SlowDown)
+- Transient AWS infrastructure issues
+
+### Efficient Rename Operations
+
+The `rename_file` operation uses S3's native `copy_object` API for efficient file moves:
+
+1. Copy object to new location (metadata-only operation when possible)
+2. Delete old location
+3. No data transfer for same-region renames
+
+This is significantly faster than download-upload approaches, especially for large files.
+
+## Architecture
+
+### Base Class Design
+
+The S3 connector is built on the `BaseBlobStorageConnector` abstract base class, which provides:
+
+- Shared functionality for blob storage backends (S3, GCS, Azure, MinIO)
+- Content hash computation and Content-Type detection
+- Common directory operations and path mapping
+- Consistent error handling and retry patterns
+
+This architecture makes it easy to add support for additional blob storage providers:
+
+```python
+from nexus.backends.base_blob_connector import BaseBlobStorageConnector
+
+class AzureBlobConnectorBackend(BaseBlobStorageConnector):
+    # Implement cloud-specific operations
+    def _upload_blob(self, ...): ...
+    def _download_blob(self, ...): ...
+    # ... other abstract methods
+```
+
 ## Comparison with GCS Connector
 
 | Feature | S3 Connector | GCS Connector |
@@ -474,6 +527,8 @@ nx.remove_mount("/workspace/s3")
 | Versioning ID | String (opaque) | Integer (generation) |
 | Auth Methods | IAM, credentials file, env vars | ADC, service account, OAuth |
 | Regional Buckets | Yes | Yes |
+| Base Class | BaseBlobStorageConnector | BaseBlobStorageConnector |
+| Retry Logic | ✓ Adaptive (3 attempts) | ✓ Deadline-based (120s) |
 
 ## Related Documentation
 

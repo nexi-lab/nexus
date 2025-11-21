@@ -4,6 +4,9 @@
 # Deployment mode (embedded = single-process server with local backends)
 mode: embedded
 
+# Database path (for TokenManager and other components that need DB access)
+db_path: postgresql://postgres:nexus@postgres:5432/nexus
+
 # Server settings
 server:
   host: 0.0.0.0

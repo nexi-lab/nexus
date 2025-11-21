@@ -238,7 +238,7 @@ class TokenManager:
         Args:
             provider: Provider name (e.g., "google")
             user_email: User's email address
-            tenant_id: Optional tenant ID (defaults to 'default')
+            tenant_id: Optional tenant ID
 
         Returns:
             Valid access token (decrypted)
@@ -250,10 +250,6 @@ class TokenManager:
             >>> token = await manager.get_valid_token("google", "alice@example.com")
             >>> # Token is guaranteed to be valid (refreshed if needed)
         """
-        # Default tenant_id to 'default' if not provided
-        if tenant_id is None:
-            tenant_id = "default"
-
         with self.SessionLocal() as session:
             # Retrieve credential from database
             stmt = select(OAuthCredentialModel).where(

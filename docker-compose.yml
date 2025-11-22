@@ -14,12 +14,17 @@ services:
       - NEXUS_HOST=0.0.0.0
       - NEXUS_PORT=8080
       - NEXUS_DATA_DIR=/app/data
+      - NEXUS_DATABASE_URL=${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@postgres:5432/nexus}
       - NEXUS_API_KEY=${NEXUS_API_KEY:-}
       - NEXUS_BACKEND=${NEXUS_BACKEND:-local}
       # GCS Backend (if using)
       - NEXUS_GCS_BUCKET_NAME=${NEXUS_GCS_BUCKET_NAME:-}
       - NEXUS_GCS_PROJECT_ID=${NEXUS_GCS_PROJECT_ID:-}
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      # OAuth Configuration
+      - NEXUS_OAUTH_ENCRYPTION_KEY=${NEXUS_OAUTH_ENCRYPTION_KEY:-}
+      - NEXUS_OAUTH_GOOGLE_CLIENT_ID=${NEXUS_OAUTH_GOOGLE_CLIENT_ID:-}
+      - NEXUS_OAUTH_GOOGLE_CLIENT_SECRET=${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
     volumes:
       # Persistent data directory
       - nexus-data:/app/data

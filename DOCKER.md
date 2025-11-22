@@ -183,6 +183,7 @@ docker exec -it nexus-postgres psql -U postgres -d nexus
 - `NEXUS_API_KEY` - Admin API key (auto-generated if not provided)
 - `NEXUS_BACKEND` - Storage backend (local/gcs)
 - `NEXUS_GCS_BUCKET` - GCS bucket name (if backend=gcs)
+- `GOOGLE_APPLICATION_CREDENTIALS` - Path to GCS service account credentials
 
 **View logs:**
 ```bash
@@ -367,12 +368,76 @@ docker compose -f docker-compose.demo.yml down -v --rmi all
 ./docker-start.sh --init
 ```
 
+## Using GCS Backend (Google Cloud Storage)
+
+### Setup Service Account (One-time)
+
+Create a service account with long-lived credentials (no daily re-auth):
+
+```bash
+# Set your GCP project ID
+export PROJECT_ID="your-gcp-project-id"
+
+# Create service account
+gcloud iam service-accounts create nexus-storage-sa \
+    --display-name="Nexus Storage Service Account" \
+    --project=$PROJECT_ID
+
+# Grant Storage Admin permissions
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:nexus-storage-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --role="roles/storage.admin"
+
+# Download credentials to nexus directory
+gcloud iam service-accounts keys create ./gcs-credentials.json \
+    --iam-account=nexus-storage-sa@${PROJECT_ID}.iam.gserviceaccount.com
+
+# Verify file was created
+ls -lh ./gcs-credentials.json
+```
+
+### Configure Docker Environment
+
+Edit your `.env.local` or `.env` file:
+
+```bash
+# Enable GCS backend
+NEXUS_BACKEND=gcs
+
+# Set your GCS bucket and project
+NEXUS_GCS_BUCKET=your-bucket-name
+NEXUS_GCS_PROJECT=your-gcp-project-id
+
+# Credentials will be mounted automatically at /app/gcs-credentials.json
+GOOGLE_APPLICATION_CREDENTIALS=/app/gcs-credentials.json
+```
+
+### Start with GCS Backend
+
+```bash
+# The gcs-credentials.json file is automatically mounted by docker-compose
+./docker-start.sh --restart
+```
+
+The credentials file is:
+- ✅ Mounted from `./gcs-credentials.json` to `/app/gcs-credentials.json` in container
+- ✅ Excluded from git (in `.gitignore`)
+- ✅ Never expires (long-lived service account credentials)
+- ✅ No daily re-authentication needed
+
+**Important**: Keep `gcs-credentials.json` secure:
+- Never commit to git (already in `.gitignore`)
+- Restrict file permissions: `chmod 600 gcs-credentials.json`
+- Rotate keys every 90 days (see [GCS_SERVICE_ACCOUNT_SETUP.md](./GCS_SERVICE_ACCOUNT_SETUP.md))
+
+For detailed setup and troubleshooting, see [GCS_SERVICE_ACCOUNT_SETUP.md](./GCS_SERVICE_ACCOUNT_SETUP.md).
+
 ## Production Deployment
 
 For production deployment, see the main [CLAUDE.md](../.claude/CLAUDE.md) for deployment to GCP with:
 
 - Cloud SQL PostgreSQL
-- GCS backend for file storage
+- GCS backend for file storage (using service account)
 - Docker images pushed to GCR
 - Deployment to VM instances
 

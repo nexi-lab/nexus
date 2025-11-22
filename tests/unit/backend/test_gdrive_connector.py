@@ -672,5 +672,236 @@ class TestGDriveSharedDrives:
             assert call_args[1].get("supportsAllDrives") is True
 
 
+class TestOAuthProviderRegistration:
+    """Test suite for OAuth provider registration feature.
+
+    Tests the _register_oauth_provider() method that automatically registers
+    OAuth providers with the TokenManager during backend initialization.
+    """
+
+    @pytest.fixture
+    def mock_token_manager(self):
+        """Create a mock TokenManager."""
+        manager = Mock()
+        manager.register_provider = Mock()
+        return manager
+
+    def test_oauth_provider_registration_success(self, mock_token_manager):
+        """Test successful OAuth provider registration with valid credentials."""
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_ID": "test_client_id_123",
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET": "test_secret_456",
+                },
+            ),
+            patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
+            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
+        ):
+            MockTM.return_value = mock_token_manager
+            mock_oauth_provider = Mock()
+            MockProvider.return_value = mock_oauth_provider
+
+            # Create backend - should automatically register OAuth provider
+            _backend = GoogleDriveConnectorBackend(
+                token_manager_db=":memory:",
+                user_email="test@example.com",
+                root_folder="test_root",
+                provider="google",
+            )
+
+            # Verify TokenManager was created
+            MockTM.assert_called_once_with(db_path=":memory:")
+
+            # Verify GoogleOAuthProvider was created with correct parameters
+            MockProvider.assert_called_once()
+            provider_args = MockProvider.call_args[1]
+            assert provider_args["client_id"] == "test_client_id_123"
+            assert provider_args["client_secret"] == "test_secret_456"
+            assert "https://www.googleapis.com/auth/drive" in provider_args["scopes"]
+
+            # Verify provider was registered with TokenManager
+            mock_token_manager.register_provider.assert_called_once_with(
+                "google", mock_oauth_provider
+            )
+
+    def test_oauth_provider_registration_missing_credentials(self, mock_token_manager):
+        """Test OAuth provider registration skips gracefully when credentials missing."""
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
+            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
+        ):
+            MockTM.return_value = mock_token_manager
+
+            # Create backend without OAuth credentials in environment
+            _backend = GoogleDriveConnectorBackend(
+                token_manager_db=":memory:",
+                user_email="test@example.com",
+                root_folder="test_root",
+                provider="google",
+            )
+
+            # Verify GoogleOAuthProvider was never created
+            MockProvider.assert_not_called()
+
+            # Verify provider was never registered
+            mock_token_manager.register_provider.assert_not_called()
+
+    def test_oauth_provider_registration_partial_credentials(self, mock_token_manager):
+        """Test OAuth registration skips when only client_id is provided."""
+        with (
+            patch.dict(
+                "os.environ",
+                {"NEXUS_OAUTH_GOOGLE_CLIENT_ID": "test_client_id_123"},
+                clear=True,
+            ),
+            patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
+            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
+        ):
+            MockTM.return_value = mock_token_manager
+
+            # Create backend with only client_id (missing client_secret)
+            _backend = GoogleDriveConnectorBackend(
+                token_manager_db=":memory:",
+                user_email="test@example.com",
+                root_folder="test_root",
+                provider="google",
+            )
+
+            # Verify provider was not created or registered
+            MockProvider.assert_not_called()
+            mock_token_manager.register_provider.assert_not_called()
+
+    def test_oauth_provider_registration_handles_errors(self, mock_token_manager, capsys):
+        """Test OAuth provider registration handles errors gracefully."""
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_ID": "test_client_id_123",
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET": "test_secret_456",
+                },
+            ),
+            patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
+            patch(
+                "nexus.server.auth.google_oauth.GoogleOAuthProvider",
+                side_effect=Exception("OAuth initialization failed"),
+            ),
+        ):
+            MockTM.return_value = mock_token_manager
+
+            # Create backend - should handle the error without crashing
+            _backend = GoogleDriveConnectorBackend(
+                token_manager_db=":memory:",
+                user_email="test@example.com",
+                root_folder="test_root",
+                provider="google",
+            )
+
+            # Verify error was logged (captured in stdout)
+            captured = capsys.readouterr()
+            assert "Failed to register OAuth provider" in captured.out or "✗" in captured.out
+
+            # Verify provider was not registered
+            mock_token_manager.register_provider.assert_not_called()
+
+    def test_oauth_provider_registration_with_database_url(self, mock_token_manager):
+        """Test OAuth provider registration with database URL instead of file path."""
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_ID": "test_client_id_123",
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET": "test_secret_456",
+                },
+            ),
+            patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
+            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
+        ):
+            MockTM.return_value = mock_token_manager
+            mock_oauth_provider = Mock()
+            MockProvider.return_value = mock_oauth_provider
+
+            # Create backend with PostgreSQL URL
+            _backend = GoogleDriveConnectorBackend(
+                token_manager_db="postgresql://postgres:nexus@localhost:5432/nexus",
+                user_email="test@example.com",
+                root_folder="test_root",
+                provider="google",
+            )
+
+            # Verify TokenManager was created with db_url instead of db_path
+            MockTM.assert_called_once_with(
+                db_url="postgresql://postgres:nexus@localhost:5432/nexus"
+            )
+
+            # Verify provider was still registered
+            mock_token_manager.register_provider.assert_called_once_with(
+                "google", mock_oauth_provider
+            )
+
+    def test_oauth_provider_registration_non_google_provider(self, mock_token_manager):
+        """Test OAuth provider registration skips for non-Google providers."""
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_ID": "test_client_id_123",
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET": "test_secret_456",
+                },
+            ),
+            patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
+            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
+        ):
+            MockTM.return_value = mock_token_manager
+
+            # Create backend with a non-google provider (not yet implemented)
+            _backend = GoogleDriveConnectorBackend(
+                token_manager_db=":memory:",
+                user_email="test@example.com",
+                root_folder="test_root",
+                provider="microsoft",  # Not supported yet
+            )
+
+            # Verify GoogleOAuthProvider was never created
+            MockProvider.assert_not_called()
+
+            # Verify provider was never registered
+            mock_token_manager.register_provider.assert_not_called()
+
+    def test_oauth_provider_registration_print_statements(self, mock_token_manager, capsys):
+        """Test OAuth provider registration produces correct debug output."""
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_ID": "test_client_id_123",
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET": "test_secret_456",
+                },
+            ),
+            patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
+            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
+        ):
+            MockTM.return_value = mock_token_manager
+            mock_oauth_provider = Mock()
+            MockProvider.return_value = mock_oauth_provider
+
+            # Create backend
+            _backend = GoogleDriveConnectorBackend(
+                token_manager_db=":memory:",
+                user_email="test@example.com",
+                root_folder="test_root",
+                provider="google",
+            )
+
+            # Verify debug output was printed
+            captured = capsys.readouterr()
+            assert "[GDRIVE-INIT]" in captured.out
+            assert "✓ Registered Google OAuth provider" in captured.out
+            assert "test_client_id" in captured.out
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -138,26 +138,24 @@ check_env_file() {
 check_gcs_credentials() {
     echo "🔍 Checking for GCS credentials..."
 
-    # Priority order for finding credentials:
-    # 1. GCS_CREDENTIALS_PATH environment variable (if set)
-    # 2. ~/.config/gcloud/application_default_credentials.json (gcloud default)
-
-    # Remove any existing directory or file to ensure clean state
-    rm -rf ./gcs-credentials.json
-
-    if [ -n "$GCS_CREDENTIALS_PATH" ] && [ -f "$GCS_CREDENTIALS_PATH" ]; then
+    # Check if gcs-credentials.json exists (should be a service account key)
+    if [ -f "./gcs-credentials.json" ]; then
+        echo "✅ Found GCS credentials at: ./gcs-credentials.json"
+        # Verify it's a service account key (not OAuth user credentials)
+        if grep -q '"type": "service_account"' ./gcs-credentials.json 2>/dev/null; then
+            echo "   ✓ Valid service account key detected"
+        else
+            echo "   ⚠️  Warning: Not a service account key (found OAuth user credentials)"
+            echo "   Please replace with a service account key for better reliability"
+        fi
+    elif [ -n "$GCS_CREDENTIALS_PATH" ] && [ -f "$GCS_CREDENTIALS_PATH" ]; then
         echo "✅ Found GCS credentials at: $GCS_CREDENTIALS_PATH (from GCS_CREDENTIALS_PATH)"
         # Copy to local file for Docker mount
         cp "$GCS_CREDENTIALS_PATH" ./gcs-credentials.json
         echo "   Copied to ./gcs-credentials.json for Docker mount"
-    elif [ -f "$HOME/.config/gcloud/application_default_credentials.json" ]; then
-        echo "✅ Found GCS credentials at: ~/.config/gcloud/application_default_credentials.json"
-        # Copy gcloud credentials to local file for Docker mount
-        cp "$HOME/.config/gcloud/application_default_credentials.json" ./gcs-credentials.json
-        echo "   Copied to ./gcs-credentials.json for Docker mount"
     else
         echo "⚠️  No GCS credentials found - GCS mounts will not work"
-        echo "   To set up: gcloud auth application-default login"
+        echo "   Please create a service account key and save to ./gcs-credentials.json"
         echo "   Continuing without GCS support..."
         # Create empty placeholder to prevent mount errors
         touch ./gcs-credentials.json

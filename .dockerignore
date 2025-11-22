@@ -127,6 +127,8 @@ examples/
 # Scripts (dev-only)
 scripts/
 *.sh
+# But keep docker-entrypoint.sh for container startup
+!docker-entrypoint.sh
 
 # Tests (not needed in production)
 tests/

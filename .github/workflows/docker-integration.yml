@@ -1,5 +1,14 @@
 name: Docker Integration Test
 
+# Required GitHub Secrets:
+# - ANTHROPIC_API_KEY: Claude API key for AI integration testing
+# - NEXUS_GCS_CREDENTIALS: GCS service account JSON credentials (content of gcs-credentials.json)
+#
+# To add these secrets:
+# 1. Go to: Settings > Secrets and variables > Actions
+# 2. Click "New repository secret"
+# 3. Add each secret with the exact name and value shown above
+
 on:
   push:
     branches: [main]
@@ -33,24 +42,73 @@ jobs:
 
       - name: Create required credentials files
         run: |
-          # Create dummy GCS credentials (will be empty but needs to exist for volume mount)
-          echo '{}' > gcs-credentials.json
+          # Create GCS credentials from GitHub secret
+          echo '${{ secrets.NEXUS_GCS_CREDENTIALS }}' > gcs-credentials.json
 
-          # Create .env file with minimal config
+          # Create .env file with config from GitHub secrets
           cat > .env << 'EOF'
-          # PostgreSQL
+          # ============================================
+          # PostgreSQL Database
+          # ============================================
           POSTGRES_DB=nexus
           POSTGRES_USER=postgres
           POSTGRES_PASSWORD=nexus
+          POSTGRES_PORT=5432
 
+          # ============================================
           # Nexus Server
+          # ============================================
           NEXUS_PORT=8080
           NEXUS_DATABASE_URL=postgresql://postgres:nexus@postgres:5432/nexus
 
-          # Skip OAuth for CI testing
-          NEXUS_SKIP_PERMISSION=false
-          VITE_SKIP_AUTH=false
+          # Authentication - Dummy API Key for testing
+          NEXUS_API_KEY=sk-test-dummy-api-key-for-integration-testing
+
+          # Backend Storage
+          NEXUS_BACKEND=local
+
+          # GCS Backend (commented out - uncomment to test with GCS)
+          # NEXUS_GCS_BUCKET=nexi-lab-nexus-hub-integration-test
+          # NEXUS_GCS_PROJECT=nexi-lab-888
+          # GOOGLE_APPLICATION_CREDENTIALS=/app/gcs-credentials.json
+
+          # ============================================
+          # API Keys (from GitHub secrets)
+          # ============================================
           EOF
+
+          # Append secrets to .env
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env
+
+          # ============================================
+          # OAuth & Permissions
+          # ============================================
+          echo "NEXUS_SKIP_PERMISSIONS=false" >> .env
+          echo "VITE_SKIP_AUTH=false" >> .env
+
+      - name: Verify credentials setup
+        run: |
+          echo "✅ Verifying credentials files..."
+
+          # Check GCS credentials file exists
+          if [ -f gcs-credentials.json ]; then
+            echo "✅ gcs-credentials.json created ($(wc -c < gcs-credentials.json) bytes)"
+          else
+            echo "❌ gcs-credentials.json not found"
+            exit 1
+          fi
+
+          # Check .env file exists and has required keys
+          if [ -f .env ]; then
+            echo "✅ .env file created"
+            echo "   - Checking required variables..."
+            grep -q "ANTHROPIC_API_KEY" .env && echo "   ✅ ANTHROPIC_API_KEY present" || echo "   ❌ ANTHROPIC_API_KEY missing"
+            grep -q "POSTGRES_DB" .env && echo "   ✅ POSTGRES_DB present" || echo "   ❌ POSTGRES_DB missing"
+            grep -q "NEXUS_API_KEY" .env && echo "   ✅ NEXUS_API_KEY present" || echo "   ❌ NEXUS_API_KEY missing"
+          else
+            echo "❌ .env file not found"
+            exit 1
+          fi
 
       - name: Make docker-start.sh executable
         run: chmod +x docker-start.sh
@@ -65,18 +123,19 @@ jobs:
         run: |
           echo "⏳ Waiting for services to become healthy..."
 
-          MAX_WAIT=180  # 3 minutes
+          MAX_WAIT=300  # 5 minutes (increased for LangGraph build time)
           ELAPSED=0
 
           while [ $ELAPSED -lt $MAX_WAIT ]; do
-            # Check if all services are healthy
+            # Check if all core services are healthy
             NEXUS_STATUS=$(docker inspect nexus-server --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
             POSTGRES_STATUS=$(docker inspect nexus-postgres --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
+            LANGGRAPH_STATUS=$(docker inspect nexus-langgraph --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
 
-            echo "[$ELAPSED s] nexus-server: $NEXUS_STATUS, postgres: $POSTGRES_STATUS"
+            echo "[$ELAPSED s] nexus: $NEXUS_STATUS, postgres: $POSTGRES_STATUS, langgraph: $LANGGRAPH_STATUS"
 
-            if [ "$NEXUS_STATUS" = "healthy" ] && [ "$POSTGRES_STATUS" = "healthy" ]; then
-              echo "✅ All services are healthy!"
+            if [ "$NEXUS_STATUS" = "healthy" ] && [ "$POSTGRES_STATUS" = "healthy" ] && [ "$LANGGRAPH_STATUS" = "healthy" ]; then
+              echo "✅ All core services are healthy!"
               exit 0
             fi
 
@@ -88,6 +147,8 @@ jobs:
           docker ps -a
           echo "--- Nexus Server Logs ---"
           docker logs nexus-server
+          echo "--- LangGraph Logs ---"
+          docker logs nexus-langgraph
           exit 1
 
       - name: Verify service connectivity
@@ -115,6 +176,18 @@ jobs:
             docker logs nexus-server
             exit 1
           fi
+
+          # Test LangGraph health endpoint
+          echo "Testing LangGraph health endpoint..."
+          LANGGRAPH_RESPONSE=$(curl -sf http://localhost:2024/ok || echo "FAILED")
+
+          if [ "$LANGGRAPH_RESPONSE" = "FAILED" ]; then
+            echo "❌ LangGraph health endpoint failed"
+            docker logs nexus-langgraph
+            exit 1
+          fi
+
+          echo "✅ LangGraph health endpoint: $LANGGRAPH_RESPONSE"
 
       - name: Test API key creation
         run: |
@@ -158,6 +231,152 @@ jobs:
           echo "✅ RPC API call successful"
           echo "Response: $RESPONSE"
 
+      - name: End-to-End Integration Test
+        run: |
+          echo "🧪 Running comprehensive end-to-end integration test..."
+
+          # Extract API key
+          API_KEY=$(docker logs nexus-server 2>&1 | grep "API Key:" | head -1 | awk '{print $3}')
+          echo "Using API key: ${API_KEY:0:20}..."
+
+          # Step 1: Create directory /test
+          echo "📁 Step 1: Creating directory /test..."
+          MKDIR_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/mkdir \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"mkdir","params":{"path":"/test"}}' || echo "FAILED")
+
+          if [ "$MKDIR_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to create directory"
+            exit 1
+          fi
+          echo "✅ Directory created: $MKDIR_RESPONSE"
+
+          # Step 2: Write numbers.txt with "1, 5, 16"
+          echo "📝 Step 2: Writing /test/numbers.txt..."
+          WRITE_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/write \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d '{"jsonrpc":"2.0","id":2,"method":"write","params":{"path":"/test/numbers.txt","content":"1, 5, 16"}}' || echo "FAILED")
+
+          if [ "$WRITE_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to write file"
+            exit 1
+          fi
+          echo "✅ File written: $WRITE_RESPONSE"
+
+          # Step 3: List files to verify
+          echo "📋 Step 3: Listing files in /test..."
+          LIST_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/listdir \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d '{"jsonrpc":"2.0","id":3,"method":"listdir","params":{"path":"/test"}}' || echo "FAILED")
+
+          if [ "$LIST_RESPONSE" = "FAILED" ] || ! echo "$LIST_RESPONSE" | grep -q "numbers.txt"; then
+            echo "❌ Failed to list files or numbers.txt not found"
+            echo "Response: $LIST_RESPONSE"
+            exit 1
+          fi
+          echo "✅ Files listed: $LIST_RESPONSE"
+
+          # Step 4: Register langgraph agent
+          echo "🤖 Step 4: Registering LangGraph agent..."
+          REGISTER_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/register_agent \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d '{"jsonrpc":"2.0","id":4,"method":"register_agent","params":{"agent_id":"admin,nexus_assistant_1","name":"nexus_assistant_1","description":"A claude-code like general agent that connects to Nexus File System.","generate_api_key":false}}' || echo "FAILED")
+
+          if [ "$REGISTER_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to register agent"
+            exit 1
+          fi
+          echo "✅ Agent registered: $REGISTER_RESPONSE"
+
+          # Step 5: Create sandbox
+          echo "🐳 Step 5: Creating sandbox..."
+          SANDBOX_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/sandbox_get_or_create \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d '{"jsonrpc":"2.0","id":5,"method":"sandbox_get_or_create","params":{"name":"admin,nexus_assistant_1","ttl_minutes":60,"provider":"docker","verify_status":true}}' || echo "FAILED")
+
+          if [ "$SANDBOX_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to create sandbox"
+            exit 1
+          fi
+
+          # Extract sandbox_id from response
+          SANDBOX_ID=$(echo "$SANDBOX_RESPONSE" | grep -o '"sandbox_id":"[^"]*"' | cut -d'"' -f4)
+          if [ -z "$SANDBOX_ID" ]; then
+            echo "❌ Could not extract sandbox_id"
+            echo "Response: $SANDBOX_RESPONSE"
+            exit 1
+          fi
+          echo "✅ Sandbox created: $SANDBOX_ID"
+
+          # Wait for LangGraph to be ready
+          echo "⏳ Waiting for LangGraph service..."
+          sleep 10
+
+          # Step 6: Create LangGraph thread
+          echo "🧵 Step 6: Creating LangGraph thread..."
+          THREAD_RESPONSE=$(curl -sf http://localhost:2024/threads \
+            -H "Content-Type: application/json" \
+            -d "{\"nexus_server_url\":\"http://nexus:8080\",\"sandbox_id\":\"$SANDBOX_ID\",\"selectedAgentId\":\"admin,nexus_assistant_1\",\"user_id\":\"admin\",\"x_auth\":\"Bearer $API_KEY\"}" || echo "FAILED")
+
+          if [ "$THREAD_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to create thread"
+            exit 1
+          fi
+
+          # Extract thread_id
+          THREAD_ID=$(echo "$THREAD_RESPONSE" | grep -o '"thread_id":"[^"]*"' | cut -d'"' -f4)
+          if [ -z "$THREAD_ID" ]; then
+            echo "❌ Could not extract thread_id"
+            echo "Response: $THREAD_RESPONSE"
+            exit 1
+          fi
+          echo "✅ Thread created: $THREAD_ID"
+
+          # Step 7: Execute sum calculation task
+          echo "🔢 Step 7: Executing sum calculation task..."
+          TASK_RESPONSE=$(curl -sf http://localhost:2024/threads/$THREAD_ID/runs/stream \
+            -H "Content-Type: application/json" \
+            -d "{\"input\":{\"messages\":[{\"type\":\"human\",\"content\":\"calculate the sum of the numbers from numbers.txt and create sum.txt with just the sum in the same directory\"}]},\"metadata\":{\"user_id\":\"admin\",\"selectedAgentId\":\"admin,nexus_assistant_1\",\"x_auth\":\"Bearer $API_KEY\",\"nexus_server_url\":\"http://nexus:8080\",\"sandbox_id\":\"$SANDBOX_ID\"},\"stream_mode\":[\"messages-tuple\",\"values\"],\"stream_resumable\":false,\"assistant_id\":\"agent\",\"on_disconnect\":\"cancel\"}" \
+            --no-buffer || echo "FAILED")
+
+          if [ "$TASK_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to execute task"
+            exit 1
+          fi
+          echo "✅ Task executed"
+
+          # Wait for task completion
+          echo "⏳ Waiting for task completion..."
+          sleep 15
+
+          # Step 8: Verify sum.txt contains 22
+          echo "✅ Step 8: Verifying sum.txt..."
+          READ_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/read \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d '{"jsonrpc":"2.0","id":8,"method":"read","params":{"path":"/test/sum.txt"}}' || echo "FAILED")
+
+          if [ "$READ_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to read sum.txt"
+            exit 1
+          fi
+
+          # Extract content and verify it contains 22
+          if echo "$READ_RESPONSE" | grep -q "22"; then
+            echo "✅ sum.txt contains correct result (22)"
+          else
+            echo "❌ sum.txt does not contain expected result (22)"
+            echo "Response: $READ_RESPONSE"
+            exit 1
+          fi
+
+          echo "🎉 End-to-end integration test completed successfully!"
+
       - name: Display service logs on failure
         if: failure()
         run: |
@@ -170,8 +389,14 @@ jobs:
           echo "=== PostgreSQL Logs ==="
           docker logs nexus-postgres 2>&1 || true
 
+          echo "=== LangGraph Logs ==="
+          docker logs nexus-langgraph 2>&1 || true
+
           echo "=== Frontend Logs ==="
           docker logs nexus-frontend 2>&1 || true
+
+          echo "=== MCP Server Logs ==="
+          docker logs nexus-mcp-server 2>&1 || true
 
       - name: Cleanup
         if: always()

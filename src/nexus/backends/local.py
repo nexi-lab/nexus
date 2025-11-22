@@ -584,7 +584,12 @@ class LocalBackend(Backend):
                 f"Failed to create directory: {e}", backend="local", path=path
             ) from e
 
-    def rmdir(self, path: str, recursive: bool = False) -> None:
+    def rmdir(
+        self,
+        path: str,
+        recursive: bool = False,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
+    ) -> None:
         """Remove directory from virtual directory structure."""
         full_path = self.dir_root / path.lstrip("/")
 
@@ -607,7 +612,7 @@ class LocalBackend(Backend):
                 f"Failed to remove directory: {e}", backend="local", path=path
             ) from e
 
-    def is_directory(self, path: str) -> bool:
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         """Check if path is a directory."""
         try:
             full_path = self.dir_root / path.lstrip("/")

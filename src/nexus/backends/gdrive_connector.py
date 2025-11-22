@@ -973,12 +973,18 @@ class GoogleDriveConnectorBackend(Backend):
                 path=path,
             ) from e
 
-    def rmdir(self, path: str, recursive: bool = False) -> None:
+    def rmdir(
+        self,
+        path: str,
+        recursive: bool = False,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
+    ) -> None:
         """Remove directory from Google Drive.
 
         Args:
             path: Directory path
             recursive: Remove non-empty directory (moves to trash)
+            context: Operation context (not used, authentication handled internally)
 
         Raises:
             BackendError: If trying to remove root
@@ -1018,7 +1024,7 @@ class GoogleDriveConnectorBackend(Backend):
                 path=path,
             ) from e
 
-    def is_directory(self, path: str) -> bool:
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         """Check if path is a directory in Google Drive.
 
         Args:

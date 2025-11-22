@@ -297,13 +297,19 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def rmdir(self, path: str, recursive: bool = False) -> None:
+    def rmdir(
+        self,
+        path: str,
+        recursive: bool = False,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
+    ) -> None:
         """
         Remove a directory.
 
         Args:
             path: Directory path
             recursive: Remove non-empty directory (like rm -rf)
+            context: Operation context for authentication (optional)
 
         Raises:
             OSError: If directory not empty and recursive=False
@@ -313,12 +319,13 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def is_directory(self, path: str) -> bool:
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         """
         Check if path is a directory.
 
         Args:
             path: Path to check
+            context: Operation context for authentication (optional)
 
         Returns:
             True if path is a directory, False otherwise

@@ -1396,12 +1396,14 @@ class NexusFSCoreMixin:
                 # If metadata says it exists but storage doesn't, clean up stale metadata
                 try:
                     # Check if this is a GCS connector backend (has bucket attribute)
-                    if hasattr(new_route.backend, "bucket") and hasattr(
-                        new_route.backend, "_get_gcs_path"
+                    if (
+                        hasattr(new_route.backend, "bucket")
+                        and hasattr(new_route.backend, "_get_blob_path")
+                        and new_route.backend.name == "gcs_connector"
                     ):
                         # GCS-specific attributes (dynamically checked with hasattr above)
                         dest_blob = new_route.backend.bucket.blob(
-                            new_route.backend._get_gcs_path(new_route.backend_path)
+                            new_route.backend._get_blob_path(new_route.backend_path)
                         )
                         if not dest_blob.exists():
                             # Stale metadata - clean it up

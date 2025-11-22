@@ -231,16 +231,14 @@ def connect(
             data_dir = cfg.data_dir if cfg.data_dir is not None else "./nexus-data"
             backend = LocalBackend(root_path=Path(data_dir).resolve())
             # Default db_path for local backend
-            # Only use SQLite path if no database URL is configured
+            # Use PostgreSQL URL if configured, otherwise SQLite
             db_path = cfg.db_path
             import os
 
-            if (
-                db_path is None
-                and not os.getenv("NEXUS_DATABASE_URL")
-                and not os.getenv("POSTGRES_URL")
-            ):
-                db_path = str(Path(data_dir) / "metadata.db")
+            if db_path is None:
+                # Check for PostgreSQL URL first
+                postgres_url = os.getenv("NEXUS_DATABASE_URL") or os.getenv("POSTGRES_URL")
+                db_path = postgres_url or str(Path(data_dir) / "metadata.db")
 
         # Embedded mode: default to no permissions (like SQLite)
         # User can explicitly enable with config={"enforce_permissions": True}

@@ -21,7 +21,8 @@ Complete reference for all Nexus RPC server APIs (v0.5.1+)
 14. [ReBAC Permissions](#rebac-permissions)
 15. [Versioning Operations](#versioning-operations)
 16. [Namespace Management](#namespace-management)
-17. [Complete Method Reference](#complete-method-reference)
+17. [OAuth Management](#oauth-management)
+18. [Complete Method Reference](#complete-method-reference)
 
 ---
 
@@ -3194,6 +3195,246 @@ Get all available ReBAC namespaces.
   }
 }
 ```
+
+---
+
+## OAuth Management
+
+Nexus provides OAuth 2.0 authentication support for connecting to external services like Google Drive. These APIs allow you to manage OAuth credentials, get authorization URLs, and exchange authorization codes for access tokens.
+
+### oauth_get_drive_auth_url
+
+Get OAuth authorization URL for Google Drive.
+
+**Endpoint**: `POST /api/nfs/oauth_get_drive_auth_url`
+
+**Parameters:**
+- `redirect_uri` (string, optional): OAuth redirect URI. Default: `http://localhost:3000/oauth/callback`
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "oauth_get_drive_auth_url",
+  "params": {
+    "redirect_uri": "http://localhost:3000/oauth/callback"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=...&redirect_uri=...&scope=...&state=...",
+    "state": "csrf_state_token_abc123"
+  }
+}
+```
+
+**Usage:**
+1. Call this endpoint to get the authorization URL
+2. Direct the user to visit the URL in their browser
+3. User grants permission and is redirected with an authorization code
+4. Use `oauth_exchange_code` to complete the OAuth flow
+
+---
+
+### oauth_exchange_code
+
+Exchange OAuth authorization code for access tokens and store credentials.
+
+**Endpoint**: `POST /api/nfs/oauth_exchange_code`
+
+**Parameters:**
+- `provider` (string, required): OAuth provider name (e.g., "google")
+- `code` (string, required): Authorization code from OAuth callback
+- `user_email` (string, required): User email address for credential storage
+- `state` (string, optional): CSRF state token for validation
+- `redirect_uri` (string, optional): OAuth redirect URI (must match authorization request)
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "oauth_exchange_code",
+  "params": {
+    "provider": "google",
+    "code": "4/0AY0e-g5xyz...",
+    "user_email": "user@example.com",
+    "state": "csrf_state_token_abc123",
+    "redirect_uri": "http://localhost:3000/oauth/callback"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "credential_id": "cred_abc123",
+    "user_email": "user@example.com",
+    "expires_at": "2025-11-20T12:00:00Z",
+    "success": true
+  }
+}
+```
+
+**Notes:**
+- Authorization codes expire after ~10 minutes
+- Codes can only be used once
+- Tokens are encrypted and stored in the Nexus database
+- Refresh tokens enable automatic token renewal
+
+---
+
+### oauth_list_credentials
+
+List all OAuth credentials for the current user or tenant.
+
+**Endpoint**: `POST /api/nfs/oauth_list_credentials`
+
+**Parameters:**
+- `provider` (string, optional): Filter by provider (e.g., "google")
+- `include_revoked` (boolean, optional): Include revoked credentials. Default: false
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "oauth_list_credentials",
+  "params": {
+    "provider": "google",
+    "include_revoked": false
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "credential_id": "cred_abc123",
+      "provider": "google",
+      "user_email": "user@example.com",
+      "scopes": [
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive.file"
+      ],
+      "expires_at": "2025-11-20T12:00:00Z",
+      "created_at": "2025-11-19T10:00:00Z",
+      "last_used_at": "2025-11-19T11:30:00Z",
+      "revoked": false
+    }
+  ]
+}
+```
+
+---
+
+### oauth_revoke_credential
+
+Revoke an OAuth credential.
+
+**Endpoint**: `POST /api/nfs/oauth_revoke_credential`
+
+**Parameters:**
+- `provider` (string, required): OAuth provider name (e.g., "google")
+- `user_email` (string, required): User email address
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "oauth_revoke_credential",
+  "params": {
+    "provider": "google",
+    "user_email": "user@example.com"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "success": true
+  }
+}
+```
+
+**Notes:**
+- Revoked credentials cannot be used for API access
+- Mounts using revoked credentials will fail authentication
+- Users must re-authorize to restore access
+
+---
+
+### oauth_test_credential
+
+Test if an OAuth credential is valid and can be refreshed.
+
+**Endpoint**: `POST /api/nfs/oauth_test_credential`
+
+**Parameters:**
+- `provider` (string, required): OAuth provider name (e.g., "google")
+- `user_email` (string, required): User email address
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "oauth_test_credential",
+  "params": {
+    "provider": "google",
+    "user_email": "user@example.com"
+  }
+}
+```
+
+**Example Response (Valid):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "valid": true,
+    "refreshed": true,
+    "expires_at": "2025-11-20T12:00:00Z"
+  }
+}
+```
+
+**Example Response (Invalid):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "valid": false,
+    "error": "Refresh token revoked or expired"
+  }
+}
+```
+
+**Notes:**
+- Automatically attempts to refresh expired tokens
+- Returns `refreshed: true` if token was refreshed
+- Useful for verifying credentials before creating mounts
 
 ---
 

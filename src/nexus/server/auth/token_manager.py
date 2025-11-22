@@ -159,6 +159,10 @@ class TokenManager:
             ...     tenant_id="org_acme"
             ... )
         """
+        # Default tenant_id to 'default' if not provided
+        if tenant_id is None:
+            tenant_id = "default"
+
         if provider not in ["google", "microsoft", "dropbox", "box"]:
             raise ValueError(f"Unsupported provider: {provider}")
 
@@ -330,6 +334,10 @@ class TokenManager:
         Returns:
             OAuthCredential or None if not found
         """
+        # Default tenant_id to 'default' if not provided
+        if tenant_id is None:
+            tenant_id = "default"
+
         with self.SessionLocal() as session:
             stmt = select(OAuthCredentialModel).where(
                 OAuthCredentialModel.provider == provider,
@@ -360,6 +368,10 @@ class TokenManager:
         Example:
             >>> await manager.revoke_credential("google", "alice@example.com")
         """
+        # Default tenant_id to 'default' if not provided
+        if tenant_id is None:
+            tenant_id = "default"
+
         with self.SessionLocal() as session:
             stmt = select(OAuthCredentialModel).where(
                 OAuthCredentialModel.provider == provider,

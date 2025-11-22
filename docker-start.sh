@@ -11,6 +11,7 @@
 #   ./docker-start.sh --clean            # Stop and remove all data (volumes)
 #   ./docker-start.sh --init             # Initialize (clean + build + start)
 #   ./docker-start.sh --init --skip_permission  # Initialize with permissions disabled
+#   ./docker-start.sh --init --yes       # Initialize without confirmation (CI)
 #   ./docker-start.sh --env=production   # Use production environment files
 #
 # Services:
@@ -27,6 +28,7 @@ cd "$SCRIPT_DIR"
 COMPOSE_FILE="docker-compose.demo.yml"
 ENV_MODE="local"  # Default: local development
 SKIP_PERMISSIONS=false  # Default: set up permissions
+SKIP_CONFIRM=false  # Default: ask for confirmation on destructive operations
 
 # ============================================
 # Banner
@@ -312,12 +314,17 @@ cmd_clean() {
     echo "  • All Docker volumes (PostgreSQL data, Nexus data)"
     echo "  • All Docker images"
     echo ""
-    read -p "Are you sure you want to continue? (yes/no): " CONFIRM
 
-    if [ "$CONFIRM" != "yes" ]; then
-        echo ""
-        echo "❌ Clean cancelled"
-        exit 0
+    if [ "$SKIP_CONFIRM" = false ]; then
+        read -p "Are you sure you want to continue? (yes/no): " CONFIRM
+
+        if [ "$CONFIRM" != "yes" ]; then
+            echo ""
+            echo "❌ Clean cancelled"
+            exit 0
+        fi
+    else
+        echo "⚡ Skipping confirmation (--yes flag provided)"
     fi
 
     echo ""
@@ -349,12 +356,17 @@ cmd_init() {
         echo "  6. Skip permission setup and disable runtime permission checks"
     fi
     echo ""
-    read -p "Are you sure you want to continue? (yes/no): " CONFIRM
 
-    if [ "$CONFIRM" != "yes" ]; then
-        echo ""
-        echo "❌ Initialization cancelled"
-        exit 0
+    if [ "$SKIP_CONFIRM" = false ]; then
+        read -p "Are you sure you want to continue? (yes/no): " CONFIRM
+
+        if [ "$CONFIRM" != "yes" ]; then
+            echo ""
+            echo "❌ Initialization cancelled"
+            exit 0
+        fi
+    else
+        echo "⚡ Skipping confirmation (--yes flag provided)"
     fi
 
     echo ""
@@ -482,6 +494,10 @@ while [ $# -gt 0 ]; do
             SKIP_PERMISSIONS=true
             shift
             ;;
+        --yes|-y)
+            SKIP_CONFIRM=true
+            shift
+            ;;
         --*)
             # This is a command argument
             if [ -z "$COMMAND" ]; then
@@ -531,7 +547,7 @@ case "$COMMAND" in
         ;;
     --help|-h)
         print_banner
-        echo "Usage: $0 [OPTION] [--env=MODE] [--skip_permission]"
+        echo "Usage: $0 [OPTION] [--env=MODE] [--skip_permission] [--yes]"
         echo ""
         echo "Options:"
         echo "  (none)          Start all services (detached)"
@@ -544,6 +560,7 @@ case "$COMMAND" in
         echo "  --init          Initialize (clean + build + start)"
         echo "  --env=MODE      Set environment mode (local|production)"
         echo "  --skip_permission  Skip permission setup and disable runtime checks (use with --init)"
+        echo "  --yes, -y       Skip confirmation prompts (for CI/automation)"
         echo "  --help, -h      Show this help message"
         echo ""
         echo "Environment Modes:"
@@ -555,6 +572,7 @@ case "$COMMAND" in
         echo "  ./docker-start.sh --env=production   # Start with production env"
         echo "  ./docker-start.sh --build --env=production  # Rebuild with production env"
         echo "  ./docker-start.sh --init --skip_permission  # Initialize with permissions disabled"
+        echo "  ./docker-start.sh --init --yes       # Initialize without confirmation (CI)"
         echo ""
         show_services
         ;;

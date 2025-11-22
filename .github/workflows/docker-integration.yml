@@ -57,8 +57,8 @@ jobs:
 
       - name: Test docker-start.sh --init --build
         run: |
-          echo "🚀 Testing docker-start.sh --init --build..."
-          ./docker-start.sh --init --build
+          echo "🚀 Testing docker-start.sh --init --build --yes..."
+          ./docker-start.sh --init --build --yes
         timeout-minutes: 20
 
       - name: Wait for services to be healthy

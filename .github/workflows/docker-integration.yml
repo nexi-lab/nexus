@@ -381,6 +381,20 @@ jobs:
 
           echo "🎉 End-to-end integration test completed successfully!"
 
+      - name: Authenticate gcloud with service account
+        run: |
+          echo "🔐 Authenticating gcloud with service account..."
+
+          # Authenticate using the service account credentials
+          gcloud auth activate-service-account --key-file=gcs-credentials.json
+
+          # Set the project
+          gcloud config set project nexi-lab-888
+
+          # Verify authentication
+          echo "✅ gcloud authenticated:"
+          gcloud auth list
+
       - name: Mount Integration Test
         run: |
           echo "🗄️ Running mount integration test..."

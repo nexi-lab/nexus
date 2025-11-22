@@ -116,6 +116,9 @@ services:
       # Runtime permission enforcement
       # Set to 'false' to disable permission checks at runtime
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
+
+      # Configuration file path (defaults to config.demo.yaml if not specified)
+      NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}
     volumes:
       # Persistent data directory (local backend)
       - nexus-data:/app/data

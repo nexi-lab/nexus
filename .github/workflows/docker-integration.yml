@@ -336,7 +336,7 @@ jobs:
           echo "🔢 Step 7: Executing sum calculation task..."
           TASK_RESPONSE=$(curl -sf http://localhost:2024/threads/$THREAD_ID/runs/stream \
             -H "Content-Type: application/json" \
-            -d "{\"input\":{\"messages\":[{\"type\":\"human\",\"content\":\"calculate the sum of the numbers from numbers.txt and create sum.txt with just the sum in the same directory\"}]},\"metadata\":{\"user_id\":\"admin\",\"selectedAgentId\":\"admin,nexus_assistant_1\",\"x_auth\":\"Bearer $API_KEY\",\"nexus_server_url\":\"http://nexus:8080\",\"sandbox_id\":\"$SANDBOX_ID\"},\"stream_mode\":[\"messages-tuple\",\"values\"],\"stream_resumable\":false,\"assistant_id\":\"agent\",\"on_disconnect\":\"cancel\"}" \
+            -d "{\"input\":{\"messages\":[{\"type\":\"human\",\"content\":\"Read the file /test/numbers.txt, calculate the sum of all the numbers in it, and write the sum to /test/sum.txt\"}]},\"metadata\":{\"user_id\":\"admin\",\"selectedAgentId\":\"admin,nexus_assistant_1\",\"x_auth\":\"Bearer $API_KEY\",\"nexus_server_url\":\"http://nexus:8080\",\"sandbox_id\":\"$SANDBOX_ID\"},\"stream_mode\":[\"messages-tuple\",\"values\"],\"stream_resumable\":false,\"assistant_id\":\"agent\",\"on_disconnect\":\"cancel\"}" \
             --no-buffer || echo "FAILED")
 
           if [ "$TASK_RESPONSE" = "FAILED" ]; then
@@ -361,8 +361,12 @@ jobs:
             exit 1
           fi
 
-          # Extract content and verify it contains 22
-          if echo "$READ_RESPONSE" | grep -q "22"; then
+          # Extract and decode base64 content
+          CONTENT=$(echo "$READ_RESPONSE" | python3 -c "import sys, json, base64; data=json.load(sys.stdin); print(base64.b64decode(data['result']['data']).decode('utf-8').strip())" 2>/dev/null || echo "")
+
+          echo "Content of sum.txt: $CONTENT"
+
+          if [ "$CONTENT" = "22" ]; then
             echo "✅ sum.txt contains correct result (22)"
           else
             echo "❌ sum.txt does not contain expected result (22)"

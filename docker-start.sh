@@ -140,6 +140,11 @@ check_env_file() {
 check_gcs_credentials() {
     echo "🔍 Checking for GCS credentials..."
 
+    # Priority order for finding credentials:
+    # 1. Existing ./gcs-credentials.json (check validity)
+    # 2. GCS_CREDENTIALS_PATH environment variable (if set)
+    # 3. ~/.config/gcloud/application_default_credentials.json (gcloud default)
+
     # Check if gcs-credentials.json exists (should be a service account key)
     if [ -f "./gcs-credentials.json" ]; then
         echo "✅ Found GCS credentials at: ./gcs-credentials.json"
@@ -154,6 +159,11 @@ check_gcs_credentials() {
         echo "✅ Found GCS credentials at: $GCS_CREDENTIALS_PATH (from GCS_CREDENTIALS_PATH)"
         # Copy to local file for Docker mount
         cp "$GCS_CREDENTIALS_PATH" ./gcs-credentials.json
+        echo "   Copied to ./gcs-credentials.json for Docker mount"
+    elif [ -f "$HOME/.config/gcloud/application_default_credentials.json" ]; then
+        echo "✅ Found GCS credentials at: ~/.config/gcloud/application_default_credentials.json"
+        # Copy gcloud credentials to local file for Docker mount
+        cp "$HOME/.config/gcloud/application_default_credentials.json" ./gcs-credentials.json
         echo "   Copied to ./gcs-credentials.json for Docker mount"
     else
         echo "⚠️  No GCS credentials found - GCS mounts will not work"

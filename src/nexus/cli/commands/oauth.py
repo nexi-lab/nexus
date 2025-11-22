@@ -185,7 +185,7 @@ def revoke_credential(
     manager = get_token_manager(db_path)
 
     async def _revoke() -> None:
-        success = await manager.revoke_credential(provider, user_email, tenant_id)
+        success = await manager.revoke_credential(provider, user_email, tenant_id or "default")
 
         if success:
             console.print(f"[green]✓[/green] Revoked credential: {provider}:{user_email}")
@@ -237,7 +237,7 @@ def test_credential(
     async def _test() -> None:
         try:
             # Try to get a valid token (will auto-refresh if needed)
-            token = await manager.get_valid_token(provider, user_email, tenant_id)
+            token = await manager.get_valid_token(provider, user_email, tenant_id or "default")
 
             console.print("[green]✓[/green] Credential is valid")
             console.print(f"[dim]Token length: {len(token)} chars[/dim]")
@@ -382,7 +382,7 @@ def setup_gdrive(
             provider="google",
             user_email=user_email,
             credential=credential,
-            tenant_id=tenant_id,
+            tenant_id=tenant_id or "default",
             created_by=user_email,
         )
         manager.close()

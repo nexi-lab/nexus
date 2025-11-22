@@ -32,6 +32,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Optional: Mount GCS credentials
       - ${GCS_CREDENTIALS_PATH:-./gcs-credentials.json}:/app/gcs-credentials.json:ro
+    # Add docker group for socket access (GID 999 is common, adjust if needed)
+    group_add:
+      - "999"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s

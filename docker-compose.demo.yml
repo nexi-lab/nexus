@@ -126,6 +126,9 @@ services:
       - ${GCS_CREDENTIALS_PATH:-./gcs-credentials.json}:/app/gcs-credentials.json:ro
       # Docker socket for sandbox provider
       - /var/run/docker.sock:/var/run/docker.sock
+    # Add docker group for socket access (GID 999 is common, adjust if needed)
+    group_add:
+      - "999"
     ports:
       - "${NEXUS_PORT:-8080}:8080"
     healthcheck:

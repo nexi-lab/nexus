@@ -195,7 +195,7 @@ jobs:
 
           # Since we provided a dummy key, verify the server is using it
           # Check if server started successfully (indicates key was accepted)
-          if docker logs nexus-server 2>&1 | grep -q "Uvicorn running"; then
+          if docker logs nexus-server 2>&1 | grep -q "Server initialization complete"; then
             echo "✅ Nexus server started with configured API key"
           else
             echo "❌ Server startup issue - check API key configuration"

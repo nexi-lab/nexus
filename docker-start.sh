@@ -11,6 +11,7 @@
 #   ./docker-start.sh --clean            # Stop and remove all data (volumes)
 #   ./docker-start.sh --init             # Initialize (clean + build + start)
 #   ./docker-start.sh --init --skip_permission  # Initialize with permissions disabled
+#   ./docker-start.sh --init --yes       # Initialize without confirmation (CI)
 #   ./docker-start.sh --env=production   # Use production environment files
 #
 # Services:
@@ -27,6 +28,7 @@ cd "$SCRIPT_DIR"
 COMPOSE_FILE="docker-compose.demo.yml"
 ENV_MODE="local"  # Default: local development
 SKIP_PERMISSIONS=false  # Default: set up permissions
+SKIP_CONFIRM=false  # Default: ask for confirmation on destructive operations
 
 # ============================================
 # Banner
@@ -139,13 +141,21 @@ check_gcs_credentials() {
     echo "🔍 Checking for GCS credentials..."
 
     # Priority order for finding credentials:
-    # 1. GCS_CREDENTIALS_PATH environment variable (if set)
-    # 2. ~/.config/gcloud/application_default_credentials.json (gcloud default)
+    # 1. Existing ./gcs-credentials.json (check validity)
+    # 2. GCS_CREDENTIALS_PATH environment variable (if set)
+    # 3. ~/.config/gcloud/application_default_credentials.json (gcloud default)
 
-    # Remove any existing directory or file to ensure clean state
-    rm -rf ./gcs-credentials.json
-
-    if [ -n "$GCS_CREDENTIALS_PATH" ] && [ -f "$GCS_CREDENTIALS_PATH" ]; then
+    # Check if gcs-credentials.json exists (should be a service account key)
+    if [ -f "./gcs-credentials.json" ]; then
+        echo "✅ Found GCS credentials at: ./gcs-credentials.json"
+        # Verify it's a service account key (not OAuth user credentials)
+        if grep -q '"type": "service_account"' ./gcs-credentials.json 2>/dev/null; then
+            echo "   ✓ Valid service account key detected"
+        else
+            echo "   ⚠️  Warning: Not a service account key (found OAuth user credentials)"
+            echo "   Please replace with a service account key for better reliability"
+        fi
+    elif [ -n "$GCS_CREDENTIALS_PATH" ] && [ -f "$GCS_CREDENTIALS_PATH" ]; then
         echo "✅ Found GCS credentials at: $GCS_CREDENTIALS_PATH (from GCS_CREDENTIALS_PATH)"
         # Copy to local file for Docker mount
         cp "$GCS_CREDENTIALS_PATH" ./gcs-credentials.json
@@ -157,7 +167,7 @@ check_gcs_credentials() {
         echo "   Copied to ./gcs-credentials.json for Docker mount"
     else
         echo "⚠️  No GCS credentials found - GCS mounts will not work"
-        echo "   To set up: gcloud auth application-default login"
+        echo "   Please create a service account key and save to ./gcs-credentials.json"
         echo "   Continuing without GCS support..."
         # Create empty placeholder to prevent mount errors
         touch ./gcs-credentials.json
@@ -314,12 +324,17 @@ cmd_clean() {
     echo "  • All Docker volumes (PostgreSQL data, Nexus data)"
     echo "  • All Docker images"
     echo ""
-    read -p "Are you sure you want to continue? (yes/no): " CONFIRM
 
-    if [ "$CONFIRM" != "yes" ]; then
-        echo ""
-        echo "❌ Clean cancelled"
-        exit 0
+    if [ "$SKIP_CONFIRM" = false ]; then
+        read -p "Are you sure you want to continue? (yes/no): " CONFIRM
+
+        if [ "$CONFIRM" != "yes" ]; then
+            echo ""
+            echo "❌ Clean cancelled"
+            exit 0
+        fi
+    else
+        echo "⚡ Skipping confirmation (--yes flag provided)"
     fi
 
     echo ""
@@ -351,12 +366,17 @@ cmd_init() {
         echo "  6. Skip permission setup and disable runtime permission checks"
     fi
     echo ""
-    read -p "Are you sure you want to continue? (yes/no): " CONFIRM
 
-    if [ "$CONFIRM" != "yes" ]; then
-        echo ""
-        echo "❌ Initialization cancelled"
-        exit 0
+    if [ "$SKIP_CONFIRM" = false ]; then
+        read -p "Are you sure you want to continue? (yes/no): " CONFIRM
+
+        if [ "$CONFIRM" != "yes" ]; then
+            echo ""
+            echo "❌ Initialization cancelled"
+            exit 0
+        fi
+    else
+        echo "⚡ Skipping confirmation (--yes flag provided)"
     fi
 
     echo ""
@@ -484,6 +504,10 @@ while [ $# -gt 0 ]; do
             SKIP_PERMISSIONS=true
             shift
             ;;
+        --yes|-y)
+            SKIP_CONFIRM=true
+            shift
+            ;;
         --*)
             # This is a command argument
             if [ -z "$COMMAND" ]; then
@@ -533,7 +557,7 @@ case "$COMMAND" in
         ;;
     --help|-h)
         print_banner
-        echo "Usage: $0 [OPTION] [--env=MODE] [--skip_permission]"
+        echo "Usage: $0 [OPTION] [--env=MODE] [--skip_permission] [--yes]"
         echo ""
         echo "Options:"
         echo "  (none)          Start all services (detached)"
@@ -546,6 +570,7 @@ case "$COMMAND" in
         echo "  --init          Initialize (clean + build + start)"
         echo "  --env=MODE      Set environment mode (local|production)"
         echo "  --skip_permission  Skip permission setup and disable runtime checks (use with --init)"
+        echo "  --yes, -y       Skip confirmation prompts (for CI/automation)"
         echo "  --help, -h      Show this help message"
         echo ""
         echo "Environment Modes:"
@@ -557,6 +582,7 @@ case "$COMMAND" in
         echo "  ./docker-start.sh --env=production   # Start with production env"
         echo "  ./docker-start.sh --build --env=production  # Rebuild with production env"
         echo "  ./docker-start.sh --init --skip_permission  # Initialize with permissions disabled"
+        echo "  ./docker-start.sh --init --yes       # Initialize without confirmation (CI)"
         echo ""
         show_services
         ;;

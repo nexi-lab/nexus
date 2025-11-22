@@ -1114,6 +1114,22 @@ class SkillsCreateFromContentParams:
 
 
 @dataclass
+class SkillsCreateFromFileParams:
+    """Parameters for skills_create_from_file method."""
+
+    source: str
+    file_data: str | None = None
+    name: str | None = None
+    description: str | None = None
+    tier: str = "agent"
+    use_ai: bool = False
+    use_ocr: bool = False
+    extract_tables: bool = False
+    extract_images: bool = False
+    _author: str | None = None  # Unused: plugin manages authorship
+
+
+@dataclass
 class SkillsListParams:
     """Parameters for skills_list method."""
 
@@ -1338,6 +1354,7 @@ METHOD_PARAMS = {
     # Skills management methods
     "skills_create": SkillsCreateParams,
     "skills_create_from_content": SkillsCreateFromContentParams,
+    "skills_create_from_file": SkillsCreateFromFileParams,
     "skills_list": SkillsListParams,
     "skills_info": SkillsInfoParams,
     "skills_fork": SkillsForkParams,

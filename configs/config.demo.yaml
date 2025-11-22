@@ -45,6 +45,20 @@ backends:
     readonly: false
     description: "GCS test bucket for Nexus connector demo"
 
+  # Google Drive Connector backend with OAuth authentication
+  # Provides access to Google Drive folders as a mounted filesystem
+  - type: gdrive_connector
+    mount_point: /mnt/gdrive/joezhoujinjing@gmail.com
+    config:
+      token_manager_db: postgresql://postgres:nexus@postgres:5432/nexus
+      user_email: joezhoujinjing@gmail.com
+      root_folder: pentest
+      use_shared_drives: false
+      provider: google
+    priority: 10
+    readonly: false
+    description: "Google Drive for joezhoujinjing@gmail.com"
+
 # Cache configuration
 cache:
   type: memory

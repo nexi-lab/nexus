@@ -218,6 +218,130 @@ class NexusFSSkillsMixin:
 
         return self._run_async_skill_operation(create())
 
+    @rpc_expose(description="Create skill from file or URL (auto-detects type)")
+    def skills_create_from_file(
+        self,
+        source: str,
+        file_data: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        tier: str = "agent",
+        use_ai: bool = False,
+        use_ocr: bool = False,
+        extract_tables: bool = False,
+        extract_images: bool = False,
+        _author: str | None = None,  # Unused: plugin manages authorship
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a skill from file or URL (auto-detects type).
+
+        Args:
+            source: File path or URL
+            file_data: Base64 encoded file data (for remote calls)
+            name: Skill name (auto-generated if not provided)
+            description: Skill description
+            tier: Target tier (agent, tenant, system)
+            use_ai: Enable AI enhancement
+            use_ocr: Enable OCR for scanned PDFs
+            extract_tables: Extract tables from documents
+            extract_images: Extract images from documents
+            author: Author name
+            context: Operation context
+
+        Returns:
+            Dict with skill_path, name, tier, source
+        """
+        import base64
+        import tempfile
+        from pathlib import Path
+        from urllib.parse import urlparse
+
+        # Load plugin
+        try:
+            from nexus_skill_seekers.plugin import SkillSeekersPlugin
+
+            plugin = SkillSeekersPlugin(nexus_fs=self)
+        except ImportError as e:
+            raise RuntimeError(
+                "skill-seekers plugin not installed. "
+                "Install with: pip install nexus-plugin-skill-seekers"
+            ) from e
+
+        # Detect source type
+        is_url = source.startswith(("http://", "https://"))
+        is_pdf = source.lower().endswith(".pdf")
+
+        # Auto-generate name if not provided
+        if not name:
+            if is_url:
+                parsed = urlparse(source)
+                name = parsed.path.strip("/").split("/")[-1] or parsed.netloc
+                name = name.lower().replace(".", "-").replace("_", "-")
+            else:
+                name = Path(source).stem.lower().replace(" ", "-").replace("_", "-")
+
+        async def create() -> dict[str, Any]:
+            skill_path: str | None = None
+
+            # Handle file data (for remote calls)
+            if file_data:
+                # Decode base64 and write to temp file
+                decoded = base64.b64decode(file_data)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=Path(source).suffix) as tmp:
+                    tmp.write(decoded)
+                    tmp_path = tmp.name
+
+                try:
+                    if is_pdf:
+                        skill_path = await plugin.generate_skill_from_pdf(
+                            pdf_path=tmp_path,
+                            name=name,
+                            tier=tier,
+                            description=description,
+                            use_ai=use_ai,
+                            use_ocr=use_ocr,
+                            extract_tables=extract_tables,
+                            extract_images=extract_images,
+                        )
+                finally:
+                    # Clean up temp file
+                    Path(tmp_path).unlink(missing_ok=True)
+            elif is_pdf:
+                # Local file path
+                skill_path = await plugin.generate_skill_from_pdf(
+                    pdf_path=source,
+                    name=name,
+                    tier=tier,
+                    description=description,
+                    use_ai=use_ai,
+                    use_ocr=use_ocr,
+                    extract_tables=extract_tables,
+                    extract_images=extract_images,
+                )
+            elif is_url:
+                # URL scraping
+                skill_path = await plugin.generate_skill(
+                    url=source,
+                    name=name,
+                    tier=tier,
+                    description=description,
+                    use_ai=use_ai,
+                )
+            else:
+                raise ValueError(f"Unsupported source type: {source}")
+
+            if not skill_path:
+                raise RuntimeError("Failed to generate skill")
+
+            return {
+                "skill_path": skill_path,
+                "name": name,
+                "tier": tier,
+                "source": source,
+            }
+
+        return self._run_async_skill_operation(create())
+
     @rpc_expose(description="List all skills")
     def skills_list(
         self,

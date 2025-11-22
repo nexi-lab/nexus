@@ -328,7 +328,7 @@ class TestNexusFSOAuthMixin:
         mock_token_manager.revoke_credential.assert_called_once_with(
             provider="google",
             user_email="test@example.com",
-            tenant_id=None,
+            tenant_id="default",
         )
 
     @pytest.mark.asyncio

@@ -3751,6 +3751,53 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("skills_create_from_content", params)
         return result  # type: ignore[no-any-return]
 
+    def skills_create_from_file(
+        self,
+        source: str,
+        file_data: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        tier: str = "agent",
+        use_ai: bool = False,
+        use_ocr: bool = False,
+        extract_tables: bool = False,
+        extract_images: bool = False,
+        _author: str | None = None,  # Unused: plugin manages authorship
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a skill from file or URL (auto-detects type).
+
+        Args:
+            source: File path or URL
+            file_data: Base64 encoded file data (for remote calls)
+            name: Skill name (auto-generated if not provided)
+            description: Skill description
+            tier: Target tier (agent, tenant, system)
+            use_ai: Enable AI enhancement
+            use_ocr: Enable OCR for scanned PDFs
+            extract_tables: Extract tables from documents
+            extract_images: Extract images from documents
+            _author: Author name (unused: plugin manages authorship)
+        """
+        params: dict[str, Any] = {
+            "source": source,
+            "tier": tier,
+            "use_ai": use_ai,
+            "use_ocr": use_ocr,
+            "extract_tables": extract_tables,
+            "extract_images": extract_images,
+        }
+        if file_data is not None:
+            params["file_data"] = file_data
+        if name is not None:
+            params["name"] = name
+        if description is not None:
+            params["description"] = description
+        if _author is not None:
+            params["_author"] = _author
+        result = self._call_rpc("skills_create_from_file", params)
+        return result  # type: ignore[no-any-return]
+
     def skills_list(
         self,
         tier: str | None = None,
@@ -3899,6 +3946,172 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         if skill_name is not None:
             params["skill_name"] = skill_name
         result = self._call_rpc("skills_list_approvals", params)
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # OAuth Operations
+    # ============================================================
+
+    def oauth_get_drive_auth_url(
+        self,
+        redirect_uri: str = "http://localhost:3000/oauth/callback",
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Get OAuth authorization URL for Google Drive.
+
+        Args:
+            redirect_uri: OAuth redirect URI (default: http://localhost:3000/oauth/callback)
+            context: Operation context (optional)
+
+        Returns:
+            Dictionary containing:
+                - url: Authorization URL for user to visit
+                - state: CSRF state token (should be verified in callback)
+
+        Raises:
+            RuntimeError: If OAuth credentials not configured
+        """
+        params: dict[str, Any] = {"redirect_uri": redirect_uri}
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("oauth_get_drive_auth_url", params)
+        return result  # type: ignore[no-any-return]
+
+    def oauth_exchange_code(
+        self,
+        provider: str,
+        code: str,
+        user_email: str,
+        state: str | None = None,
+        redirect_uri: str = "http://localhost:3000/oauth/callback",
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Exchange OAuth authorization code for tokens and store credentials.
+
+        Args:
+            provider: OAuth provider name (e.g., "google")
+            code: Authorization code from OAuth callback
+            user_email: User email address for credential storage
+            state: CSRF state token (optional, for validation)
+            redirect_uri: OAuth redirect URI (must match authorization request)
+            context: Operation context (optional)
+
+        Returns:
+            Dictionary containing:
+                - credential_id: Unique credential identifier
+                - user_email: User email
+                - expires_at: Token expiration timestamp (ISO format)
+                - success: True if successful
+
+        Raises:
+            RuntimeError: If OAuth credentials not configured
+            ValueError: If code exchange fails
+        """
+        params: dict[str, Any] = {
+            "provider": provider,
+            "code": code,
+            "user_email": user_email,
+            "redirect_uri": redirect_uri,
+        }
+        if state is not None:
+            params["state"] = state
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("oauth_exchange_code", params)
+        return result  # type: ignore[no-any-return]
+
+    def oauth_list_credentials(
+        self,
+        provider: str | None = None,
+        include_revoked: bool = False,
+        context: Any = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """List all OAuth credentials for the current user.
+
+        Args:
+            provider: Optional provider filter (e.g., "google")
+            include_revoked: Include revoked credentials (default: False)
+            context: Operation context (optional)
+
+        Returns:
+            List of credential dictionaries containing:
+                - credential_id: Unique identifier
+                - provider: OAuth provider name
+                - user_email: User email
+                - scopes: List of granted scopes
+                - expires_at: Token expiration timestamp (ISO format)
+                - created_at: Creation timestamp (ISO format)
+                - last_used_at: Last usage timestamp (ISO format)
+                - revoked: Whether credential is revoked
+        """
+        params: dict[str, Any] = {"include_revoked": include_revoked}
+        if provider is not None:
+            params["provider"] = provider
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("oauth_list_credentials", params)
+        return result  # type: ignore[no-any-return]
+
+    def oauth_revoke_credential(
+        self,
+        provider: str,
+        user_email: str,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Revoke an OAuth credential.
+
+        Args:
+            provider: OAuth provider name (e.g., "google")
+            user_email: User email address
+            context: Operation context (optional)
+
+        Returns:
+            Dictionary containing:
+                - success: True if revoked successfully
+                - credential_id: Revoked credential ID
+
+        Raises:
+            ValueError: If credential not found
+        """
+        params: dict[str, Any] = {
+            "provider": provider,
+            "user_email": user_email,
+        }
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("oauth_revoke_credential", params)
+        return result  # type: ignore[no-any-return]
+
+    def oauth_test_credential(
+        self,
+        provider: str,
+        user_email: str,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Test if an OAuth credential is valid and can be refreshed.
+
+        Args:
+            provider: OAuth provider name (e.g., "google")
+            user_email: User email address
+            context: Operation context (optional)
+
+        Returns:
+            Dictionary containing:
+                - valid: True if credential is valid
+                - refreshed: True if token was refreshed
+                - expires_at: Token expiration timestamp (ISO format)
+                - error: Error message if invalid
+
+        Raises:
+            ValueError: If credential not found
+        """
+        params: dict[str, Any] = {
+            "provider": provider,
+            "user_email": user_email,
+        }
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("oauth_test_credential", params)
         return result  # type: ignore[no-any-return]
 
     def close(self) -> None:

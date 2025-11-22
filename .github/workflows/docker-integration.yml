@@ -1,0 +1,181 @@
+name: Docker Integration Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'docker-compose*.yml'
+      - 'docker-start.sh'
+      - 'docker-entrypoint.sh'
+      - '.github/workflows/docker-integration.yml'
+
+jobs:
+  docker-build-and-init:
+    name: Docker Build & Init Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Docker Compose
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+          docker-compose --version
+
+      - name: Create required credentials files
+        run: |
+          # Create dummy GCS credentials (will be empty but needs to exist for volume mount)
+          echo '{}' > gcs-credentials.json
+
+          # Create .env file with minimal config
+          cat > .env << 'EOF'
+          # PostgreSQL
+          POSTGRES_DB=nexus
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=nexus
+
+          # Nexus Server
+          NEXUS_PORT=8080
+          NEXUS_DATABASE_URL=postgresql://postgres:nexus@postgres:5432/nexus
+
+          # Skip OAuth for CI testing
+          NEXUS_SKIP_PERMISSION=false
+          VITE_SKIP_AUTH=false
+          EOF
+
+      - name: Make docker-start.sh executable
+        run: chmod +x docker-start.sh
+
+      - name: Test docker-start.sh --init --build
+        run: |
+          echo "🚀 Testing docker-start.sh --init --build..."
+          ./docker-start.sh --init --build
+        timeout-minutes: 20
+
+      - name: Wait for services to be healthy
+        run: |
+          echo "⏳ Waiting for services to become healthy..."
+
+          MAX_WAIT=180  # 3 minutes
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            # Check if all services are healthy
+            NEXUS_STATUS=$(docker inspect nexus-server --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
+            POSTGRES_STATUS=$(docker inspect nexus-postgres --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
+
+            echo "[$ELAPSED s] nexus-server: $NEXUS_STATUS, postgres: $POSTGRES_STATUS"
+
+            if [ "$NEXUS_STATUS" = "healthy" ] && [ "$POSTGRES_STATUS" = "healthy" ]; then
+              echo "✅ All services are healthy!"
+              exit 0
+            fi
+
+            sleep 5
+            ELAPSED=$((ELAPSED + 5))
+          done
+
+          echo "❌ Services did not become healthy within $MAX_WAIT seconds"
+          docker ps -a
+          echo "--- Nexus Server Logs ---"
+          docker logs nexus-server
+          exit 1
+
+      - name: Verify service connectivity
+        run: |
+          echo "🔍 Testing service connectivity..."
+
+          # Test Nexus server health endpoint
+          echo "Testing Nexus health endpoint..."
+          HEALTH_RESPONSE=$(curl -sf http://localhost:8080/health || echo "FAILED")
+
+          if [ "$HEALTH_RESPONSE" = "FAILED" ]; then
+            echo "❌ Health endpoint failed"
+            docker logs nexus-server
+            exit 1
+          fi
+
+          echo "✅ Nexus health endpoint: $HEALTH_RESPONSE"
+
+          # Test database connection by checking server logs
+          echo "Checking database connection in logs..."
+          if docker logs nexus-server 2>&1 | grep -q "PostgreSQL is ready"; then
+            echo "✅ PostgreSQL connection successful"
+          else
+            echo "❌ PostgreSQL connection failed"
+            docker logs nexus-server
+            exit 1
+          fi
+
+      - name: Test API key creation
+        run: |
+          echo "🔑 Verifying admin API key creation..."
+
+          # Check if API key was created
+          if docker logs nexus-server 2>&1 | grep -q "ADMIN API KEY"; then
+            echo "✅ Admin API key created successfully"
+          else
+            echo "❌ Admin API key not found in logs"
+            docker logs nexus-server
+            exit 1
+          fi
+
+      - name: Test basic RPC API call
+        run: |
+          echo "📡 Testing basic RPC API functionality..."
+
+          # Extract API key from logs
+          API_KEY=$(docker logs nexus-server 2>&1 | grep "API Key:" | head -1 | awk '{print $3}')
+
+          if [ -z "$API_KEY" ]; then
+            echo "❌ Could not extract API key"
+            exit 1
+          fi
+
+          echo "Using API key: ${API_KEY:0:20}..."
+
+          # Test list_mounts endpoint
+          RESPONSE=$(curl -sf http://localhost:8080/api/nfs/list_mounts \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"list_mounts","params":{}}' || echo "FAILED")
+
+          if [ "$RESPONSE" = "FAILED" ]; then
+            echo "❌ RPC API call failed"
+            docker logs nexus-server
+            exit 1
+          fi
+
+          echo "✅ RPC API call successful"
+          echo "Response: $RESPONSE"
+
+      - name: Display service logs on failure
+        if: failure()
+        run: |
+          echo "=== Docker Compose PS ==="
+          docker-compose ps -a
+
+          echo "=== Nexus Server Logs ==="
+          docker logs nexus-server 2>&1 || true
+
+          echo "=== PostgreSQL Logs ==="
+          docker logs nexus-postgres 2>&1 || true
+
+          echo "=== Frontend Logs ==="
+          docker logs nexus-frontend 2>&1 || true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "🧹 Cleaning up containers..."
+          ./docker-start.sh --stop || true
+          docker system prune -af || true

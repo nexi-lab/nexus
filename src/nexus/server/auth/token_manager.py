@@ -133,7 +133,7 @@ class TokenManager:
         provider: str,
         user_email: str,
         credential: OAuthCredential,
-        tenant_id: str | None = None,
+        tenant_id: str = "default",
         created_by: str | None = None,
     ) -> str:
         """Store OAuth credential in database.
@@ -142,7 +142,7 @@ class TokenManager:
             provider: Provider name (e.g., "google")
             user_email: User's email address
             credential: OAuthCredential to store
-            tenant_id: Optional tenant ID
+            tenant_id: Tenant ID (defaults to "default")
             created_by: Optional creator user ID
 
         Returns:
@@ -223,7 +223,7 @@ class TokenManager:
                 return model.credential_id
 
     async def get_valid_token(
-        self, provider: str, user_email: str, tenant_id: str | None = None
+        self, provider: str, user_email: str, tenant_id: str = "default"
     ) -> str:
         """Get a valid access token (with automatic refresh if expired).
 
@@ -238,7 +238,7 @@ class TokenManager:
         Args:
             provider: Provider name (e.g., "google")
             user_email: User's email address
-            tenant_id: Optional tenant ID
+            tenant_id: Tenant ID (defaults to "default")
 
         Returns:
             Valid access token (decrypted)
@@ -314,14 +314,14 @@ class TokenManager:
             return credential.access_token
 
     async def get_credential(
-        self, provider: str, user_email: str, tenant_id: str | None = None
+        self, provider: str, user_email: str, tenant_id: str = "default"
     ) -> OAuthCredential | None:
         """Get credential (decrypted) without automatic refresh.
 
         Args:
             provider: Provider name
             user_email: User's email
-            tenant_id: Optional tenant ID
+            tenant_id: Tenant ID (defaults to "default")
 
         Returns:
             OAuthCredential or None if not found
@@ -341,14 +341,14 @@ class TokenManager:
             return self._model_to_credential(model)
 
     async def revoke_credential(
-        self, provider: str, user_email: str, tenant_id: str | None = None
+        self, provider: str, user_email: str, tenant_id: str = "default"
     ) -> bool:
         """Revoke an OAuth credential.
 
         Args:
             provider: Provider name
             user_email: User's email
-            tenant_id: Optional tenant ID
+            tenant_id: Tenant ID (defaults to "default")
 
         Returns:
             True if revoked successfully

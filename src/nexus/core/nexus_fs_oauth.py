@@ -191,7 +191,9 @@ class NexusFSOAuthMixin:
 
         # Store credential
         # Default to 'default' tenant if not specified to match mount configurations
-        tenant_id = context.tenant_id if context and hasattr(context, "tenant_id") else "default"
+        tenant_id = (
+            context.tenant_id if context and hasattr(context, "tenant_id") else None
+        ) or "default"
         created_by = context.user_id if context and hasattr(context, "user_id") else user_email
 
         try:
@@ -245,7 +247,9 @@ class NexusFSOAuthMixin:
         """
         token_manager = self._get_token_manager()
         # Default to 'default' tenant if not specified to match mount configurations
-        tenant_id = context.tenant_id if context and hasattr(context, "tenant_id") else "default"
+        tenant_id = (
+            context.tenant_id if context and hasattr(context, "tenant_id") else None
+        ) or "default"
 
         credentials = await token_manager.list_credentials(tenant_id=tenant_id)
 
@@ -285,7 +289,9 @@ class NexusFSOAuthMixin:
         """
         token_manager = self._get_token_manager()
         # Default to 'default' tenant if not specified to match mount configurations
-        tenant_id = context.tenant_id if context and hasattr(context, "tenant_id") else "default"
+        tenant_id = (
+            context.tenant_id if context and hasattr(context, "tenant_id") else None
+        ) or "default"
 
         try:
             success = await token_manager.revoke_credential(
@@ -330,7 +336,9 @@ class NexusFSOAuthMixin:
         """
         token_manager = self._get_token_manager()
         # Default to 'default' tenant if not specified to match mount configurations
-        tenant_id = context.tenant_id if context and hasattr(context, "tenant_id") else "default"
+        tenant_id = (
+            context.tenant_id if context and hasattr(context, "tenant_id") else None
+        ) or "default"
 
         try:
             # Try to get a valid token (will auto-refresh if needed)

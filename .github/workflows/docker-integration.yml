@@ -309,8 +309,8 @@ jobs:
             exit 1
           fi
 
-          # Extract sandbox_id from response
-          SANDBOX_ID=$(echo "$SANDBOX_RESPONSE" | grep -o '"sandbox_id":"[^"]*"' | cut -d'"' -f4)
+          # Extract sandbox_id from response using Python JSON parser
+          SANDBOX_ID=$(echo "$SANDBOX_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('result', {}).get('sandbox_id', ''))" 2>/dev/null || echo "")
           if [ -z "$SANDBOX_ID" ]; then
             echo "❌ Could not extract sandbox_id"
             echo "Response: $SANDBOX_RESPONSE"

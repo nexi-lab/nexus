@@ -262,10 +262,10 @@ jobs:
 
           # Step 3: List files to verify
           echo "📋 Step 3: Listing files in /test..."
-          LIST_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/listdir \
+          LIST_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/list \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
-            -d '{"jsonrpc":"2.0","id":3,"method":"listdir","params":{"path":"/test"}}' || echo "FAILED")
+            -d '{"jsonrpc":"2.0","id":3,"method":"list","params":{"path":"/test"}}' || echo "FAILED")
 
           if [ "$LIST_RESPONSE" = "FAILED" ] || ! echo "$LIST_RESPONSE" | grep -q "numbers.txt"; then
             echo "❌ Failed to list files or numbers.txt not found"

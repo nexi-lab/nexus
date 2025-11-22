@@ -234,12 +234,17 @@ jobs:
           API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
           echo "Using API key: ${API_KEY:0:20}..."
 
-          # Step 1: Create directory /test
-          echo "📁 Step 1: Creating directory /test..."
+          # Generate unique test directory with timestamp
+          TEST_DIR="/test_$(date +%s)"
+          echo "Test directory: $TEST_DIR"
+          echo ""
+
+          # Step 1: Create directory with timestamp
+          echo "📁 Step 1: Creating directory $TEST_DIR..."
           MKDIR_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/mkdir \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
-            -d '{"jsonrpc":"2.0","id":1,"method":"mkdir","params":{"path":"/test"}}' || echo "FAILED")
+            -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"mkdir\",\"params\":{\"path\":\"$TEST_DIR\"}}" || echo "FAILED")
 
           if [ "$MKDIR_RESPONSE" = "FAILED" ]; then
             echo "❌ Failed to create directory"
@@ -248,11 +253,11 @@ jobs:
           echo "✅ Directory created: $MKDIR_RESPONSE"
 
           # Step 2: Write numbers.txt with "1, 5, 16"
-          echo "📝 Step 2: Writing /test/numbers.txt..."
+          echo "📝 Step 2: Writing $TEST_DIR/numbers.txt..."
           WRITE_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/write \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
-            -d '{"jsonrpc":"2.0","id":2,"method":"write","params":{"path":"/test/numbers.txt","content":"1, 5, 16"}}' || echo "FAILED")
+            -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"write\",\"params\":{\"path\":\"$TEST_DIR/numbers.txt\",\"content\":\"1, 5, 16\"}}" || echo "FAILED")
 
           if [ "$WRITE_RESPONSE" = "FAILED" ]; then
             echo "❌ Failed to write file"
@@ -261,11 +266,11 @@ jobs:
           echo "✅ File written: $WRITE_RESPONSE"
 
           # Step 3: List files to verify
-          echo "📋 Step 3: Listing files in /test..."
+          echo "📋 Step 3: Listing files in $TEST_DIR..."
           LIST_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/list \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
-            -d '{"jsonrpc":"2.0","id":3,"method":"list","params":{"path":"/test"}}' || echo "FAILED")
+            -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"list\",\"params\":{\"path\":\"$TEST_DIR\"}}" || echo "FAILED")
 
           if [ "$LIST_RESPONSE" = "FAILED" ] || ! echo "$LIST_RESPONSE" | grep -q "numbers.txt"; then
             echo "❌ Failed to list files or numbers.txt not found"
@@ -336,7 +341,7 @@ jobs:
           echo "🔢 Step 7: Executing sum calculation task..."
           TASK_RESPONSE=$(curl -sf http://localhost:2024/threads/$THREAD_ID/runs/stream \
             -H "Content-Type: application/json" \
-            -d "{\"input\":{\"messages\":[{\"type\":\"human\",\"content\":\"Read the file /test/numbers.txt, calculate the sum of all the numbers in it, and write the sum to /test/sum.txt\"}]},\"metadata\":{\"user_id\":\"admin\",\"selectedAgentId\":\"admin,nexus_assistant_1\",\"x_auth\":\"Bearer $API_KEY\",\"nexus_server_url\":\"http://nexus:8080\",\"sandbox_id\":\"$SANDBOX_ID\"},\"stream_mode\":[\"messages-tuple\",\"values\"],\"stream_resumable\":false,\"assistant_id\":\"agent\",\"on_disconnect\":\"cancel\"}" \
+            -d "{\"input\":{\"messages\":[{\"type\":\"human\",\"content\":\"Read the file $TEST_DIR/numbers.txt, calculate the sum of all the numbers in it, and write the sum to $TEST_DIR/sum.txt\"}]},\"metadata\":{\"user_id\":\"admin\",\"selectedAgentId\":\"admin,nexus_assistant_1\",\"x_auth\":\"Bearer $API_KEY\",\"nexus_server_url\":\"http://nexus:8080\",\"sandbox_id\":\"$SANDBOX_ID\"},\"stream_mode\":[\"messages-tuple\",\"values\"],\"stream_resumable\":false,\"assistant_id\":\"agent\",\"on_disconnect\":\"cancel\"}" \
             --no-buffer || echo "FAILED")
 
           if [ "$TASK_RESPONSE" = "FAILED" ]; then
@@ -354,7 +359,7 @@ jobs:
           READ_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/read \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
-            -d '{"jsonrpc":"2.0","id":8,"method":"read","params":{"path":"/test/sum.txt"}}' || echo "FAILED")
+            -d "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"read\",\"params\":{\"path\":\"$TEST_DIR/sum.txt\"}}" || echo "FAILED")
 
           if [ "$READ_RESPONSE" = "FAILED" ]; then
             echo "❌ Failed to read sum.txt"

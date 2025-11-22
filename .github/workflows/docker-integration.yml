@@ -81,6 +81,11 @@ jobs:
           echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env
 
           # ============================================
+          # Configuration
+          # ============================================
+          echo "NEXUS_CONFIG_FILE=/app/configs/config.integration-test.yaml" >> .env
+
+          # ============================================
           # OAuth & Permissions
           # ============================================
           echo "NEXUS_SKIP_PERMISSIONS=false" >> .env

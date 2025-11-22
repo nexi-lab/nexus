@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nexus-plugin-skill-seekers"
-version = "0.1.0"
+version = "0.2.0"
 description = "Skill Seekers integration plugin for Nexus - generate skills from documentation"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,6 +29,7 @@ dependencies = [
     "requests>=2.31.0",
     "beautifulsoup4>=4.12.0",
     "markdown>=3.5.0",
+    "skill-seekers>=2.1.0",  # Integration with yusufkaraaslan/Skill_Seekers
 ]
 
 [project.optional-dependencies]

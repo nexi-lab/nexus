@@ -190,7 +190,8 @@ class NexusFSOAuthMixin:
             raise ValueError(f"Failed to exchange authorization code: {e}") from e
 
         # Store credential
-        tenant_id = context.tenant_id if context and hasattr(context, "tenant_id") else None
+        # Default to 'default' tenant if not specified to match mount configurations
+        tenant_id = context.tenant_id if context and hasattr(context, "tenant_id") else "default"
         created_by = context.user_id if context and hasattr(context, "user_id") else user_email
 
         try:
@@ -243,7 +244,8 @@ class NexusFSOAuthMixin:
                 - revoked: Whether credential is revoked
         """
         token_manager = self._get_token_manager()
-        tenant_id = context.tenant_id if context and hasattr(context, "tenant_id") else None
+        # Default to 'default' tenant if not specified to match mount configurations
+        tenant_id = context.tenant_id if context and hasattr(context, "tenant_id") else "default"
 
         credentials = await token_manager.list_credentials(tenant_id=tenant_id)
 
@@ -282,7 +284,8 @@ class NexusFSOAuthMixin:
             ValueError: If credential not found
         """
         token_manager = self._get_token_manager()
-        tenant_id = context.tenant_id if context and hasattr(context, "tenant_id") else None
+        # Default to 'default' tenant if not specified to match mount configurations
+        tenant_id = context.tenant_id if context and hasattr(context, "tenant_id") else "default"
 
         try:
             success = await token_manager.revoke_credential(
@@ -326,7 +329,8 @@ class NexusFSOAuthMixin:
             ValueError: If credential not found
         """
         token_manager = self._get_token_manager()
-        tenant_id = context.tenant_id if context and hasattr(context, "tenant_id") else None
+        # Default to 'default' tenant if not specified to match mount configurations
+        tenant_id = context.tenant_id if context and hasattr(context, "tenant_id") else "default"
 
         try:
             # Try to get a valid token (will auto-refresh if needed)

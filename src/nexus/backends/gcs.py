@@ -1,12 +1,15 @@
 """Google Cloud Storage backend with CAS and directory support.
 
-Authentication:
-    By default, uses Application Default Credentials (ADC):
-    - gcloud auth application-default login
-    - GOOGLE_APPLICATION_CREDENTIALS environment variable
-    - Compute Engine/Cloud Run service account
+Authentication (Recommended):
+    Use service account credentials for production (no daily re-auth):
+    1. Create service account: gcloud iam service-accounts create nexus-storage-sa
+    2. Grant permissions: gcloud projects add-iam-policy-binding PROJECT_ID
+    3. Download key: gcloud iam service-accounts keys create gcs-credentials.json
+    4. Set GOOGLE_APPLICATION_CREDENTIALS=/path/to/gcs-credentials.json
 
-    Alternatively, can use explicit service account credentials file.
+    Alternative (Development Only):
+    - gcloud auth application-default login (requires daily re-authentication)
+    - Compute Engine/Cloud Run service account (auto-detected)
 """
 
 import hashlib
@@ -55,12 +58,13 @@ class GCSBackend(Backend):
         """
         Initialize GCS backend.
 
-        Authentication priority:
-        1. If credentials_path is provided, use service account credentials
-        2. Otherwise, use Application Default Credentials (ADC)
-           - Checks GOOGLE_APPLICATION_CREDENTIALS environment variable
-           - Falls back to gcloud auth application-default credentials
-           - Falls back to compute engine/cloud run service account
+        Authentication priority (Recommended for Production):
+        1. Service account credentials (credentials_path parameter or GOOGLE_APPLICATION_CREDENTIALS)
+           - Long-lived credentials, no expiration
+           - No daily re-authentication needed
+        2. Application Default Credentials (ADC) - Development only
+           - gcloud auth application-default login (expires daily, requires re-auth)
+           - Compute Engine/Cloud Run service account (auto-detected)
 
         Args:
             bucket_name: GCS bucket name
@@ -449,7 +453,7 @@ class GCSBackend(Backend):
         except Exception:
             return False
 
-    def list_dir(self, path: str) -> list[str]:
+    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """List directory contents using GCS list_blobs with delimiter."""
         try:
             # Normalize path

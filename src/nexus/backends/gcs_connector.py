@@ -20,11 +20,14 @@ Key differences from GCSBackend:
 - External tools can browse bucket normally
 - Requires backend_path in OperationContext
 
-Authentication:
-    Same as GCSBackend - uses Application Default Credentials (ADC):
-    - gcloud auth application-default login
-    - GOOGLE_APPLICATION_CREDENTIALS environment variable
-    - Compute Engine/Cloud Run service account
+Authentication (Recommended):
+    Use service account credentials for production (no daily re-auth):
+    - Set GOOGLE_APPLICATION_CREDENTIALS to service account JSON key path
+    - Service accounts never expire and don't require daily re-authentication
+
+    Alternative (Development Only):
+    - gcloud auth application-default login (requires daily re-authentication)
+    - Compute Engine/Cloud Run service account (auto-detected)
 """
 
 import hashlib
@@ -589,7 +592,7 @@ class GCSConnectorBackend(Backend):
         except Exception:
             return False
 
-    def list_dir(self, path: str) -> list[str]:
+    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """
         List directory contents.
 

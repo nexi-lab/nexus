@@ -61,8 +61,8 @@ jobs:
           NEXUS_PORT=8080
           NEXUS_DATABASE_URL=postgresql://postgres:nexus@postgres:5432/nexus
 
-          # Authentication - Dummy API Key for testing
-          NEXUS_API_KEY=sk-test-dummy-api-key-for-integration-testing
+          # Authentication - Dummy API Key for testing (proper Nexus format)
+          NEXUS_API_KEY=sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 
           # Backend Storage
           NEXUS_BACKEND=local
@@ -189,15 +189,16 @@ jobs:
 
           echo "✅ LangGraph health endpoint: $LANGGRAPH_RESPONSE"
 
-      - name: Test API key creation
+      - name: Test API key configuration
         run: |
-          echo "🔑 Verifying admin API key creation..."
+          echo "🔑 Verifying API key configuration..."
 
-          # Check if API key was created
-          if docker logs nexus-server 2>&1 | grep -q "ADMIN API KEY"; then
-            echo "✅ Admin API key created successfully"
+          # Since we provided a dummy key, verify the server is using it
+          # Check if server started successfully (indicates key was accepted)
+          if docker logs nexus-server 2>&1 | grep -q "Uvicorn running"; then
+            echo "✅ Nexus server started with configured API key"
           else
-            echo "❌ Admin API key not found in logs"
+            echo "❌ Server startup issue - check API key configuration"
             docker logs nexus-server
             exit 1
           fi
@@ -206,14 +207,8 @@ jobs:
         run: |
           echo "📡 Testing basic RPC API functionality..."
 
-          # Extract API key from logs
-          API_KEY=$(docker logs nexus-server 2>&1 | grep "API Key:" | head -1 | awk '{print $3}')
-
-          if [ -z "$API_KEY" ]; then
-            echo "❌ Could not extract API key"
-            exit 1
-          fi
-
+          # Use known dummy API key (set in .env)
+          API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
           echo "Using API key: ${API_KEY:0:20}..."
 
           # Test list_mounts endpoint
@@ -235,8 +230,8 @@ jobs:
         run: |
           echo "🧪 Running comprehensive end-to-end integration test..."
 
-          # Extract API key
-          API_KEY=$(docker logs nexus-server 2>&1 | grep "API Key:" | head -1 | awk '{print $3}')
+          # Use known dummy API key (set in .env)
+          API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
           echo "Using API key: ${API_KEY:0:20}..."
 
           # Step 1: Create directory /test

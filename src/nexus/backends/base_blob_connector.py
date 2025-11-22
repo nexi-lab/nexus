@@ -563,13 +563,19 @@ class BaseBlobStorageConnector(Backend):
                 path=path,
             ) from e
 
-    def rmdir(self, path: str, recursive: bool = False) -> None:
+    def rmdir(
+        self,
+        path: str,
+        recursive: bool = False,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
+    ) -> None:
         """
         Remove directory from blob storage.
 
         Args:
             path: Directory path
             recursive: Remove non-empty directory
+            context: Operation context (not used for directory removal)
 
         Raises:
             BackendError: If trying to remove root
@@ -620,7 +626,7 @@ class BaseBlobStorageConnector(Backend):
                 path=path,
             ) from e
 
-    def is_directory(self, path: str) -> bool:
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         """
         Check if path is a directory.
 
@@ -630,6 +636,7 @@ class BaseBlobStorageConnector(Backend):
 
         Args:
             path: Path to check
+            context: Operation context (not used for directory check)
 
         Returns:
             True if path is a directory (has marker or has children), False otherwise
@@ -708,7 +715,12 @@ class BaseBlobStorageConnector(Backend):
                 path=path,
             ) from e
 
-    def rename_file(self, old_path: str, new_path: str) -> None:
+    def rename_file(
+        self,
+        old_path: str,
+        new_path: str,
+        context: "OperationContext | None" = None,
+    ) -> None:
         """
         Rename/move a file in blob storage.
 
@@ -718,6 +730,7 @@ class BaseBlobStorageConnector(Backend):
         Args:
             old_path: Current backend-relative path
             new_path: New backend-relative path
+            context: Operation context (not used for file rename)
 
         Raises:
             FileNotFoundError: If source file doesn't exist

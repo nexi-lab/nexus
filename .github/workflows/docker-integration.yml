@@ -381,6 +381,139 @@ jobs:
 
           echo "🎉 End-to-end integration test completed successfully!"
 
+      - name: Mount Integration Test
+        run: |
+          echo "🗄️ Running mount integration test..."
+
+          # Use known dummy API key (set in .env)
+          API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          echo "Using API key: ${API_KEY:0:20}..."
+          echo ""
+
+          # Generate timestamp for unique file and mount point
+          TIMESTAMP=$(date +%s)
+          MOUNT_POINT="/mnt_test_${TIMESTAMP}"
+          echo "Timestamp: $TIMESTAMP"
+          echo "Mount point: $MOUNT_POINT"
+          echo ""
+
+          # Step 1: Save mount
+          echo "💾 Step 1: Saving mount $MOUNT_POINT..."
+          SAVE_MOUNT_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/save_mount \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"save_mount\",\"params\":{\"mount_point\":\"$MOUNT_POINT\",\"backend_type\":\"gcs_connector\",\"backend_config\":{\"bucket\":\"nexi-lab-nexus-hub-integration-test\",\"project_id\":\"nexi-lab-888\",\"prefix\":\"\",\"access_token\":\"\"},\"priority\":10,\"readonly\":false,\"description\":\"Integration test mount\"},\"id\":1}" || echo "FAILED")
+
+          if [ "$SAVE_MOUNT_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to save mount"
+            exit 1
+          fi
+          echo "✅ Mount saved: $SAVE_MOUNT_RESPONSE"
+          echo ""
+
+          # Step 2: Load mount
+          echo "📂 Step 2: Loading mount $MOUNT_POINT..."
+          LOAD_MOUNT_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/load_mount \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"load_mount\",\"params\":{\"mount_point\":\"$MOUNT_POINT\"},\"id\":2}" || echo "FAILED")
+
+          if [ "$LOAD_MOUNT_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to load mount"
+            exit 1
+          fi
+          echo "✅ Mount loaded: $LOAD_MOUNT_RESPONSE"
+          echo ""
+
+          # Step 3: Sync mount
+          echo "🔄 Step 3: Syncing mount $MOUNT_POINT..."
+          SYNC_MOUNT_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/sync_mount \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"sync_mount\",\"params\":{\"mount_point\":\"$MOUNT_POINT\",\"recursive\":true},\"id\":3}" || echo "FAILED")
+
+          if [ "$SYNC_MOUNT_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to sync mount"
+            exit 1
+          fi
+          echo "✅ Mount synced: $SYNC_MOUNT_RESPONSE"
+          echo ""
+
+          # Step 4: Read CSV file and verify headers
+          echo "📄 Step 4: Reading $MOUNT_POINT/sample_customers.csv..."
+          READ_CSV_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/read \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"read\",\"params\":{\"path\":\"$MOUNT_POINT/sample_customers.csv\"},\"id\":4}" || echo "FAILED")
+
+          if [ "$READ_CSV_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to read CSV file"
+            exit 1
+          fi
+
+          # Extract and decode base64 content
+          CSV_CONTENT=$(echo "$READ_CSV_RESPONSE" | python3 -c "import sys, json, base64; data=json.load(sys.stdin); print(base64.b64decode(data['result']['data']).decode('utf-8'))" 2>/dev/null || echo "")
+
+          echo "CSV content (first 200 chars): ${CSV_CONTENT:0:200}"
+          echo ""
+
+          # Verify CSV headers
+          if echo "$CSV_CONTENT" | head -1 | grep -q "customer_name,contact_name,contact_phone,contact_email"; then
+            echo "✅ CSV headers verified: customer_name,contact_name,contact_phone,contact_email"
+          else
+            echo "❌ CSV headers don't match expected format"
+            echo "First line: $(echo "$CSV_CONTENT" | head -1)"
+            exit 1
+          fi
+          echo ""
+
+          # Step 5: Write timestamped file
+          echo "✍️  Step 5: Writing $MOUNT_POINT/test_${TIMESTAMP}.txt..."
+
+          # Encode timestamp as base64
+          TIMESTAMP_BASE64=$(echo -n "$TIMESTAMP" | base64)
+
+          WRITE_FILE_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/write \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"write\",\"params\":{\"path\":\"$MOUNT_POINT/test_${TIMESTAMP}.txt\",\"content\":{\"__type__\":\"bytes\",\"data\":\"$TIMESTAMP_BASE64\"}},\"id\":5}" || echo "FAILED")
+
+          if [ "$WRITE_FILE_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to write file"
+            exit 1
+          fi
+          echo "✅ File written: $WRITE_FILE_RESPONSE"
+          echo ""
+
+          # Step 6: Verify file in GCS bucket
+          echo "☁️  Step 6: Verifying file in GCS bucket..."
+
+          # Wait a moment for the write to propagate
+          sleep 3
+
+          # Use gcloud to read the file directly from GCS
+          GCS_FILE_CONTENT=$(gcloud storage cat gs://nexi-lab-nexus-hub-integration-test/test_${TIMESTAMP}.txt 2>/dev/null || echo "FAILED")
+
+          if [ "$GCS_FILE_CONTENT" = "FAILED" ]; then
+            echo "❌ Failed to read file from GCS bucket"
+            exit 1
+          fi
+
+          echo "GCS file content: $GCS_FILE_CONTENT"
+
+          # Verify content matches timestamp
+          if [ "$GCS_FILE_CONTENT" = "$TIMESTAMP" ]; then
+            echo "✅ GCS file content verified: matches timestamp $TIMESTAMP"
+          else
+            echo "❌ GCS file content doesn't match expected timestamp"
+            echo "Expected: $TIMESTAMP"
+            echo "Got: $GCS_FILE_CONTENT"
+            exit 1
+          fi
+          echo ""
+
+          echo "🎉 Mount integration test completed successfully!"
+
       - name: Display service logs on failure
         if: failure()
         run: |

@@ -143,7 +143,7 @@ class NexusConfig(BaseModel):
     @classmethod
     def validate_backend(cls, v: str) -> str:
         """Validate backend type."""
-        allowed = ["local", "gcs", "gcs_connector", "gdrive_connector"]
+        allowed = ["local", "gcs", "gcs_connector", "s3_connector", "gdrive_connector"]
         if v not in allowed:
             raise ValueError(f"backend must be one of {allowed}, got {v}")
         return v

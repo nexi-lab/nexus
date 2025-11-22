@@ -176,6 +176,48 @@ check_gcs_credentials() {
     echo ""
 }
 
+check_aws_credentials() {
+    echo "🔍 Checking for AWS credentials..."
+
+    # Priority order for finding credentials:
+    # 1. AWS_CREDENTIALS_PATH environment variable (if set)
+    # 2. ./aws-credentials (local file)
+    # 3. ~/.aws/credentials (AWS default)
+
+    if [ -n "$AWS_CREDENTIALS_PATH" ] && [ -f "$AWS_CREDENTIALS_PATH" ]; then
+        echo "✅ Found AWS credentials at: $AWS_CREDENTIALS_PATH (from AWS_CREDENTIALS_PATH)"
+    elif [ -f "./aws-credentials" ]; then
+        echo "✅ Found AWS credentials at: ./aws-credentials"
+        export AWS_CREDENTIALS_PATH="./aws-credentials"
+    elif [ -f "$HOME/.aws/credentials" ]; then
+        echo "✅ Found AWS credentials at: ~/.aws/credentials"
+        export AWS_CREDENTIALS_PATH="$HOME/.aws/credentials"
+    else
+        echo "⚠️  No AWS credentials found - S3 mounts will not work"
+        echo "   To set up: aws configure"
+        echo "   Continuing without S3 support..."
+        # Create empty placeholder to prevent mount errors
+        touch ./aws-credentials
+        export AWS_CREDENTIALS_PATH="./aws-credentials"
+    fi
+
+    # Also check for AWS config
+    if [ -n "$AWS_CONFIG_PATH" ] && [ -f "$AWS_CONFIG_PATH" ]; then
+        echo "✅ Found AWS config at: $AWS_CONFIG_PATH"
+    elif [ -f "./aws-config" ]; then
+        echo "✅ Found AWS config at: ./aws-config"
+        export AWS_CONFIG_PATH="./aws-config"
+    elif [ -f "$HOME/.aws/config" ]; then
+        echo "✅ Found AWS config at: ~/.aws/config"
+        export AWS_CONFIG_PATH="$HOME/.aws/config"
+    else
+        # Create empty placeholder to prevent mount errors
+        touch ./aws-config
+        export AWS_CONFIG_PATH="./aws-config"
+    fi
+    echo ""
+}
+
 check_frontend_repo() {
     echo "🔍 Checking for nexus-frontend repository..."
 
@@ -222,6 +264,7 @@ cmd_start() {
     check_docker
     check_env_file
     check_gcs_credentials
+    check_aws_credentials
     check_frontend_repo
 
     echo "🧹 Cleaning up old sandbox containers..."
@@ -248,6 +291,7 @@ cmd_build() {
     check_docker
     check_env_file
     check_gcs_credentials
+    check_aws_credentials
     check_frontend_repo
 
     echo "🧹 Cleaning up old sandbox containers..."

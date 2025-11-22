@@ -395,7 +395,12 @@ class GCSBackend(Backend):
         except Exception as e:
             raise BackendError(f"Failed to create directory: {e}", backend="gcs", path=path) from e
 
-    def rmdir(self, path: str, recursive: bool = False) -> None:
+    def rmdir(
+        self,
+        path: str,
+        recursive: bool = False,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
+    ) -> None:
         """Remove directory from GCS."""
         # Normalize path
         path = path.strip("/")
@@ -438,7 +443,7 @@ class GCSBackend(Backend):
         except Exception as e:
             raise BackendError(f"Failed to remove directory: {e}", backend="gcs", path=path) from e
 
-    def is_directory(self, path: str) -> bool:
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         """Check if path is a directory."""
         try:
             # Normalize path

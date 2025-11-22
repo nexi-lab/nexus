@@ -181,6 +181,18 @@ class NexusFSMountsMixin:
                 # OAuth access token (alternative to credentials_path)
                 access_token=backend_config.get("access_token"),
             )
+        elif backend_type == "s3_connector":
+            from nexus.backends.s3_connector import S3ConnectorBackend
+
+            backend = S3ConnectorBackend(
+                bucket_name=backend_config["bucket"],
+                region_name=backend_config.get("region_name"),
+                prefix=backend_config.get("prefix", ""),
+                credentials_path=backend_config.get("credentials_path"),
+                access_key_id=backend_config.get("access_key_id"),
+                secret_access_key=backend_config.get("secret_access_key"),
+                session_token=backend_config.get("session_token"),
+            )
         elif backend_type == "gdrive_connector":
             from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
 

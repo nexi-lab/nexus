@@ -302,8 +302,25 @@ def create_backend_from_config(backend_type: str, config: dict[str, Any]) -> Any
             access_token=config.get("access_token"),
         )
 
+    elif backend_type == "s3_connector":
+        from nexus.backends.s3_connector import S3ConnectorBackend
+
+        bucket = config.get("bucket")
+        if not bucket:
+            raise ValueError("S3 connector backend requires 'bucket' in config")
+
+        return S3ConnectorBackend(
+            bucket_name=bucket,
+            region_name=config.get("region_name"),
+            prefix=config.get("prefix", ""),
+            credentials_path=config.get("credentials_path"),
+            access_key_id=config.get("access_key_id"),
+            secret_access_key=config.get("secret_access_key"),
+            session_token=config.get("session_token"),
+        )
+
     elif backend_type == "s3":
-        # TODO: Implement S3Backend
+        # TODO: Implement S3Backend (CAS-based)
         raise NotImplementedError(f"S3 backend not yet implemented (backend type: {backend_type})")
 
     elif backend_type == "gdrive":

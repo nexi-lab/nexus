@@ -652,12 +652,13 @@ class BaseBlobStorageConnector(Backend):
         except Exception:
             return False
 
-    def list_dir(self, path: str) -> list[str]:
+    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """
         List directory contents.
 
         Args:
             path: Directory path to list
+            context: Operation context (not used for directory listing)
 
         Returns:
             List of entry names (directories have trailing '/')

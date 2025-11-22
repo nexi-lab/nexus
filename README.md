@@ -172,13 +172,36 @@ Mount your Google Cloud Storage buckets to Nexus for unified access across local
 - Google Cloud account with a GCS bucket
 - [gcloud CLI](https://cloud.google.com/sdk/docs/install) installed
 
-**Step 1: Authenticate with Google Cloud**
+**Step 1: Create Service Account (Recommended - No Daily Re-auth)**
 
 ```bash
-# Authenticate and create application default credentials
-gcloud auth application-default login
+# Set your project ID
+export PROJECT_ID="your-gcp-project-id"
 
-# This creates: ~/.config/gcloud/application_default_credentials.json
+# Create service account
+gcloud iam service-accounts create nexus-storage-sa \
+    --display-name="Nexus Storage Service Account" \
+    --project=$PROJECT_ID
+
+# Grant Storage Admin permissions
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:nexus-storage-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --role="roles/storage.admin"
+
+# Download credentials (save to ./nexus/gcs-credentials.json)
+gcloud iam service-accounts keys create ./gcs-credentials.json \
+    --iam-account=nexus-storage-sa@${PROJECT_ID}.iam.gserviceaccount.com
+
+# These credentials never expire - no daily re-authentication needed!
+```
+
+**Alternative: Use gcloud auth (Development Only)**
+
+For local development only, you can use your personal credentials (requires daily re-auth):
+
+```bash
+# NOT RECOMMENDED for production - requires daily re-authentication
+gcloud auth application-default login
 ```
 
 **Step 2: Start Nexus with GCS Credentials (Docker)**

@@ -1088,6 +1088,173 @@ class SyncMountParams:
     dry_run: bool = False
 
 
+# Skills management parameter dataclasses
+@dataclass
+class SkillsCreateParams:
+    """Parameters for skills_create method."""
+
+    name: str
+    description: str
+    template: str = "basic"
+    tier: str = "agent"
+    author: str | None = None
+
+
+@dataclass
+class SkillsCreateFromContentParams:
+    """Parameters for skills_create_from_content method."""
+
+    name: str
+    description: str
+    content: str
+    tier: str = "agent"
+    author: str | None = None
+    source_url: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+@dataclass
+class SkillsCreateFromFileParams:
+    """Parameters for skills_create_from_file method."""
+
+    source: str
+    file_data: str | None = None
+    name: str | None = None
+    description: str | None = None
+    tier: str = "agent"
+    use_ai: bool = False
+    use_ocr: bool = False
+    extract_tables: bool = False
+    extract_images: bool = False
+    _author: str | None = None  # Unused: plugin manages authorship
+
+
+@dataclass
+class SkillsListParams:
+    """Parameters for skills_list method."""
+
+    tier: str | None = None
+    include_metadata: bool = True
+
+
+@dataclass
+class SkillsInfoParams:
+    """Parameters for skills_info method."""
+
+    skill_name: str
+
+
+@dataclass
+class SkillsForkParams:
+    """Parameters for skills_fork method."""
+
+    source_name: str
+    target_name: str
+    tier: str = "agent"
+    author: str | None = None
+
+
+@dataclass
+class SkillsPublishParams:
+    """Parameters for skills_publish method."""
+
+    skill_name: str
+    source_tier: str = "agent"
+    target_tier: str = "tenant"
+
+
+@dataclass
+class SkillsSearchParams:
+    """Parameters for skills_search method."""
+
+    query: str
+    tier: str | None = None
+    limit: int = 10
+
+
+@dataclass
+class SkillsSubmitApprovalParams:
+    """Parameters for skills_submit_approval method."""
+
+    skill_name: str
+    submitted_by: str
+    reviewers: list[str] | None = None
+    comments: str | None = None
+
+
+@dataclass
+class SkillsApproveParams:
+    """Parameters for skills_approve method."""
+
+    approval_id: str
+    reviewed_by: str
+    reviewer_type: str = "user"
+    comments: str | None = None
+    tenant_id: str | None = None
+
+
+@dataclass
+class SkillsRejectParams:
+    """Parameters for skills_reject method."""
+
+    approval_id: str
+    reviewed_by: str
+    reviewer_type: str = "user"
+    comments: str | None = None
+    tenant_id: str | None = None
+
+
+@dataclass
+class SkillsListApprovalsParams:
+    """Parameters for skills_list_approvals method."""
+
+    status: str | None = None
+    skill_name: str | None = None
+
+
+# OAuth management methods (v0.9.0)
+@dataclass
+class OAuthGetDriveAuthUrlParams:
+    """Parameters for oauth_get_drive_auth_url method."""
+
+    redirect_uri: str = "http://localhost:3000/oauth/callback"
+
+
+@dataclass
+class OAuthExchangeCodeParams:
+    """Parameters for oauth_exchange_code method."""
+
+    provider: str
+    code: str
+    user_email: str
+    state: str | None = None
+    redirect_uri: str = "http://localhost:3000/oauth/callback"
+
+
+@dataclass
+class OAuthListCredentialsParams:
+    """Parameters for oauth_list_credentials method."""
+
+    provider: str | None = None
+    include_revoked: bool = False
+
+
+@dataclass
+class OAuthRevokeCredentialParams:
+    """Parameters for oauth_revoke_credential method."""
+
+    provider: str
+    user_email: str
+
+
+@dataclass
+class OAuthTestCredentialParams:
+    """Parameters for oauth_test_credential method."""
+
+    provider: str
+    user_email: str
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -1184,6 +1351,25 @@ METHOD_PARAMS = {
     "load_mount": LoadMountParams,
     "delete_saved_mount": DeleteSavedMountParams,
     "sync_mount": SyncMountParams,
+    # Skills management methods
+    "skills_create": SkillsCreateParams,
+    "skills_create_from_content": SkillsCreateFromContentParams,
+    "skills_create_from_file": SkillsCreateFromFileParams,
+    "skills_list": SkillsListParams,
+    "skills_info": SkillsInfoParams,
+    "skills_fork": SkillsForkParams,
+    "skills_publish": SkillsPublishParams,
+    "skills_search": SkillsSearchParams,
+    "skills_submit_approval": SkillsSubmitApprovalParams,
+    "skills_approve": SkillsApproveParams,
+    "skills_reject": SkillsRejectParams,
+    "skills_list_approvals": SkillsListApprovalsParams,
+    # OAuth management methods (v0.9.0)
+    "oauth_get_drive_auth_url": OAuthGetDriveAuthUrlParams,
+    "oauth_exchange_code": OAuthExchangeCodeParams,
+    "oauth_list_credentials": OAuthListCredentialsParams,
+    "oauth_revoke_credential": OAuthRevokeCredentialParams,
+    "oauth_test_credential": OAuthTestCredentialParams,
 }
 
 

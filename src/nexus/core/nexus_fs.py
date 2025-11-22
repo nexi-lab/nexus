@@ -31,8 +31,10 @@ from nexus.core.metadata import FileMetadata
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.nexus_fs_llm import NexusFSLLMMixin
 from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
+from nexus.core.nexus_fs_oauth import NexusFSOAuthMixin
 from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.core.nexus_fs_search import NexusFSSearchMixin
+from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
 from nexus.core.nexus_fs_versions import NexusFSVersionsMixin
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.permissions_enhanced import EnhancedOperationContext
@@ -50,6 +52,8 @@ class NexusFS(
     NexusFSReBACMixin,
     NexusFSVersionsMixin,
     NexusFSMountsMixin,
+    NexusFSOAuthMixin,
+    NexusFSSkillsMixin,
     NexusFSLLMMixin,
     NexusFilesystem,
 ):
@@ -157,6 +161,9 @@ class NexusFS(
 
         # Store backend
         self.backend = backend
+
+        # Store database path (needed for OAuth TokenManager and other components)
+        self.db_path: str | None = str(db_path) if db_path else None
 
         # Store admin flag and auto-parse setting
         self.is_admin = is_admin
@@ -284,6 +291,9 @@ class NexusFS(
         from nexus.core.mount_manager import MountManager
 
         self.mount_manager = MountManager(self.metadata.SessionLocal)
+
+        # Initialize OAuth token manager (lazy initialization in mixin)
+        self._token_manager = None
 
         # Load workspace/memory configs from custom config if provided
         if custom_namespaces and hasattr(custom_namespaces, "__iter__"):

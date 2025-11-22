@@ -325,7 +325,7 @@ class Backend(ABC):
         """
         pass
 
-    def list_dir(self, path: str) -> list[str]:
+    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """
         List immediate contents of a directory.
 
@@ -338,6 +338,7 @@ class Backend(ABC):
 
         Args:
             path: Directory path to list (relative to backend root)
+            context: Operation context for authentication (optional)
 
         Returns:
             List of entry names (directories have trailing '/')

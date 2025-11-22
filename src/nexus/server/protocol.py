@@ -1212,6 +1212,49 @@ class SkillsListApprovalsParams:
     skill_name: str | None = None
 
 
+# OAuth management methods (v0.9.0)
+@dataclass
+class OAuthGetDriveAuthUrlParams:
+    """Parameters for oauth_get_drive_auth_url method."""
+
+    redirect_uri: str = "http://localhost:3000/oauth/callback"
+
+
+@dataclass
+class OAuthExchangeCodeParams:
+    """Parameters for oauth_exchange_code method."""
+
+    provider: str
+    code: str
+    user_email: str
+    state: str | None = None
+    redirect_uri: str = "http://localhost:3000/oauth/callback"
+
+
+@dataclass
+class OAuthListCredentialsParams:
+    """Parameters for oauth_list_credentials method."""
+
+    provider: str | None = None
+    include_revoked: bool = False
+
+
+@dataclass
+class OAuthRevokeCredentialParams:
+    """Parameters for oauth_revoke_credential method."""
+
+    provider: str
+    user_email: str
+
+
+@dataclass
+class OAuthTestCredentialParams:
+    """Parameters for oauth_test_credential method."""
+
+    provider: str
+    user_email: str
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -1321,6 +1364,12 @@ METHOD_PARAMS = {
     "skills_approve": SkillsApproveParams,
     "skills_reject": SkillsRejectParams,
     "skills_list_approvals": SkillsListApprovalsParams,
+    # OAuth management methods (v0.9.0)
+    "oauth_get_drive_auth_url": OAuthGetDriveAuthUrlParams,
+    "oauth_exchange_code": OAuthExchangeCodeParams,
+    "oauth_list_credentials": OAuthListCredentialsParams,
+    "oauth_revoke_credential": OAuthRevokeCredentialParams,
+    "oauth_test_credential": OAuthTestCredentialParams,
 }
 
 

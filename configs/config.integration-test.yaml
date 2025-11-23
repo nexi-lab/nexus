@@ -1,0 +1,61 @@
+# Nexus Integration Test Configuration
+# Minimal configuration for CI integration tests
+# No external backends (gcs_connector, gdrive_connector) - those are tested separately via API
+
+# Deployment mode (embedded = single-process server with local backends)
+mode: embedded
+
+# Database path (for TokenManager and other components that need DB access)
+db_path: postgresql://postgres:nexus@postgres:5432/nexus
+
+# Server settings
+server:
+  host: 0.0.0.0
+  port: 8080
+  workers: 4
+  log_level: info
+
+# Database configuration (uses PostgreSQL from docker-compose)
+database:
+  url: postgresql://postgres:nexus@postgres:5432/nexus
+  pool_size: 10
+  max_overflow: 20
+  echo: false
+
+# Multi-backend storage configuration
+# Only local backend for integration tests
+backends:
+  # Default root backend (local storage)
+  - type: local
+    mount_point: /
+    config:
+      root_path: /app/data
+    priority: 0
+    readonly: false
+
+# Cache configuration
+cache:
+  type: memory
+  ttl: 3600
+  max_size_mb: 100
+
+# Authentication
+auth:
+  jwt_secret: ${JWT_SECRET:-integration-test-secret}
+  jwt_algorithm: HS256
+  token_expiry_hours: 24
+  api_key_expiry_days: 365
+
+# Features
+features:
+  semantic_search: false  # Disabled for integration tests
+  llm_read: false         # Disabled for integration tests
+  agent_memory: true
+  job_system: false       # Disabled for integration tests
+  mcp_server: true
+
+# Monitoring
+monitoring:
+  logging:
+    level: info
+    format: text

@@ -574,16 +574,16 @@ jobs:
           echo "MCP test directory: $MCP_TEST_DIR"
           echo ""
 
-          # Step 1: Wait for MCP server to be running
-          echo "⏳ Step 1: Waiting for MCP server to be running..."
+          # Step 1: Wait for MCP server to be healthy
+          echo "⏳ Step 1: Waiting for MCP server to be healthy..."
           MAX_WAIT=60
           ELAPSED=0
           while [ $ELAPSED -lt $MAX_WAIT ]; do
-            MCP_STATUS=$(docker inspect nexus-mcp-server --format='{{.State.Status}}' 2>/dev/null || echo "not_found")
-            echo "[$ELAPSED s] MCP server status: $MCP_STATUS"
+            MCP_STATUS=$(docker inspect nexus-mcp-server --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
+            echo "[$ELAPSED s] MCP server health: $MCP_STATUS"
 
-            if [ "$MCP_STATUS" = "running" ]; then
-              echo "✅ MCP server is running!"
+            if [ "$MCP_STATUS" = "healthy" ]; then
+              echo "✅ MCP server is healthy!"
               break
             fi
 
@@ -591,36 +591,8 @@ jobs:
             ELAPSED=$((ELAPSED + 5))
           done
 
-          if [ "$MCP_STATUS" != "running" ]; then
-            echo "❌ MCP server did not start within $MAX_WAIT seconds"
-            docker logs nexus-mcp-server
-            exit 1
-          fi
-
-          # Wait for MCP server to be ready to accept requests
-          echo "⏳ Waiting for MCP server to be ready..."
-          MAX_INIT_WAIT=60
-          INIT_ELAPSED=0
-          while [ $INIT_ELAPSED -lt $MAX_INIT_WAIT ]; do
-            # Try to call tools/list to check if server is ready
-            MCP_READY=$(curl -sf http://localhost:8081/mcp \
-              -H "Content-Type: application/json" \
-              -H "Accept: application/json, text/event-stream" \
-              -H "X-Nexus-API-Key: $API_KEY" \
-              -d '{"jsonrpc":"2.0","id":0,"method":"tools/list"}' 2>&1 || echo "NOT_READY")
-
-            if [ "$MCP_READY" != "NOT_READY" ] && echo "$MCP_READY" | grep -q "result"; then
-              echo "✅ MCP server is ready to accept requests!"
-              break
-            fi
-
-            echo "[$INIT_ELAPSED s] MCP server not ready yet..."
-            sleep 5
-            INIT_ELAPSED=$((INIT_ELAPSED + 5))
-          done
-
-          if [ $INIT_ELAPSED -ge $MAX_INIT_WAIT ]; then
-            echo "❌ MCP server did not become ready within $MAX_INIT_WAIT seconds"
+          if [ "$MCP_STATUS" != "healthy" ]; then
+            echo "❌ MCP server did not become healthy within $MAX_WAIT seconds"
             docker logs nexus-mcp-server
             exit 1
           fi

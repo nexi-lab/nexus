@@ -188,14 +188,17 @@ services:
         echo "   NEXUS_URL: $${NEXUS_URL}"
         exec nexus mcp serve --transport http --port 8081 --host 0.0.0.0
       '
-    # Health check disabled: MCP protocol requires JSON-RPC format, not simple GET
-    # The CI/CD workflow validates MCP functionality with actual JSON-RPC calls
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "-H", "Accept: text/event-stream", "http://localhost:8081/mcp"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 15s
+    healthcheck:
+      test: >
+        curl -sf http://localhost:8081/mcp
+        -H "Content-Type: application/json"
+        -H "Accept: application/json"
+        -d '{"jsonrpc":"2.0","id":0,"method":"tools/list"}'
+        | grep -q "result" || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     networks:
       - nexus-network
     logging:

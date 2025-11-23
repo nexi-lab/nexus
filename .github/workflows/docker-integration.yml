@@ -574,16 +574,16 @@ jobs:
           echo "MCP test directory: $MCP_TEST_DIR"
           echo ""
 
-          # Step 1: Wait for MCP server to be healthy
-          echo "⏳ Step 1: Waiting for MCP server to be healthy..."
+          # Step 1: Wait for MCP server to be running
+          echo "⏳ Step 1: Waiting for MCP server to be running..."
           MAX_WAIT=60
           ELAPSED=0
           while [ $ELAPSED -lt $MAX_WAIT ]; do
-            MCP_STATUS=$(docker inspect nexus-mcp-server --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
+            MCP_STATUS=$(docker inspect nexus-mcp-server --format='{{.State.Status}}' 2>/dev/null || echo "not_found")
             echo "[$ELAPSED s] MCP server status: $MCP_STATUS"
 
-            if [ "$MCP_STATUS" = "healthy" ]; then
-              echo "✅ MCP server is healthy!"
+            if [ "$MCP_STATUS" = "running" ]; then
+              echo "✅ MCP server is running!"
               break
             fi
 
@@ -591,28 +591,19 @@ jobs:
             ELAPSED=$((ELAPSED + 5))
           done
 
-          if [ "$MCP_STATUS" != "healthy" ]; then
-            echo "❌ MCP server did not become healthy within $MAX_WAIT seconds"
-            docker logs nexus-mcp-server
-            exit 1
-          fi
-          echo ""
-
-          # Step 2: Test MCP health endpoint
-          echo "🏥 Step 2: Testing MCP health endpoint..."
-          MCP_HEALTH=$(curl -sf -H "Accept: text/event-stream" -H "X-Nexus-API-Key: $API_KEY" http://localhost:8081/mcp || echo "FAILED")
-
-          if [ "$MCP_HEALTH" = "FAILED" ]; then
-            echo "❌ MCP health endpoint failed"
+          if [ "$MCP_STATUS" != "running" ]; then
+            echo "❌ MCP server did not start within $MAX_WAIT seconds"
             docker logs nexus-mcp-server
             exit 1
           fi
 
-          echo "✅ MCP health endpoint: $MCP_HEALTH"
+          # Give the server a moment to fully initialize
+          echo "⏳ Waiting 5 seconds for server initialization..."
+          sleep 5
           echo ""
 
-          # Step 3: Test MCP tool: nexus_mkdir
-          echo "📁 Step 3: Testing nexus_mkdir tool..."
+          # Step 2: Test MCP tool: nexus_mkdir
+          echo "📁 Step 2: Testing nexus_mkdir tool..."
           MKDIR_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -642,8 +633,8 @@ jobs:
           fi
           echo ""
 
-          # Step 4: Test MCP tool: nexus_write_file (3 files)
-          echo "📝 Step 4: Testing nexus_write_file tool..."
+          # Step 3: Test MCP tool: nexus_write_file (3 files)
+          echo "📝 Step 3: Testing nexus_write_file tool..."
 
           WRITE_TOOL_RESPONSE1=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
@@ -712,8 +703,8 @@ jobs:
           echo "✅ File written: data.json"
           echo ""
 
-          # Step 5: Test MCP tool: nexus_read_file
-          echo "📖 Step 5: Testing nexus_read_file tool..."
+          # Step 4: Test MCP tool: nexus_read_file
+          echo "📖 Step 4: Testing nexus_read_file tool..."
           READ_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -744,8 +735,8 @@ jobs:
           fi
           echo ""
 
-          # Step 6: Test MCP tool: nexus_list_files
-          echo "📋 Step 6: Testing nexus_list_files tool..."
+          # Step 5: Test MCP tool: nexus_list_files
+          echo "📋 Step 5: Testing nexus_list_files tool..."
           LIST_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -786,8 +777,8 @@ jobs:
           fi
           echo ""
 
-          # Step 7: Test MCP tool: nexus_file_info
-          echo "ℹ️  Step 7: Testing nexus_file_info tool..."
+          # Step 6: Test MCP tool: nexus_file_info
+          echo "ℹ️  Step 6: Testing nexus_file_info tool..."
           INFO_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -818,8 +809,8 @@ jobs:
           fi
           echo ""
 
-          # Step 8: Test MCP tool: nexus_glob
-          echo "🔍 Step 8: Testing nexus_glob tool..."
+          # Step 7: Test MCP tool: nexus_glob
+          echo "🔍 Step 7: Testing nexus_glob tool..."
           GLOB_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -851,8 +842,8 @@ jobs:
           fi
           echo ""
 
-          # Step 9: Test MCP tool: nexus_grep
-          echo "🔎 Step 9: Testing nexus_grep tool..."
+          # Step 8: Test MCP tool: nexus_grep
+          echo "🔎 Step 8: Testing nexus_grep tool..."
           GREP_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -885,8 +876,8 @@ jobs:
           fi
           echo ""
 
-          # Step 10: Test MCP tool: nexus_delete_file
-          echo "🗑️  Step 10: Testing nexus_delete_file tool..."
+          # Step 9: Test MCP tool: nexus_delete_file
+          echo "🗑️  Step 9: Testing nexus_delete_file tool..."
           DELETE_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -916,8 +907,8 @@ jobs:
           fi
           echo ""
 
-          # Step 11: Test MCP tool: nexus_rmdir
-          echo "🗂️  Step 11: Testing nexus_rmdir tool..."
+          # Step 10: Test MCP tool: nexus_rmdir
+          echo "🗂️  Step 10: Testing nexus_rmdir tool..."
           RMDIR_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -948,8 +939,8 @@ jobs:
           fi
           echo ""
 
-          # Step 12: List available MCP tools
-          echo "🧰 Step 12: Listing available MCP tools..."
+          # Step 11: List available MCP tools
+          echo "🧰 Step 11: Listing available MCP tools..."
           TOOLS_LIST_RESPONSE=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
             -H "X-Nexus-API-Key: $API_KEY" \

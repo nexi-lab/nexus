@@ -8,7 +8,7 @@ This module contains MCP-related CLI commands for:
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 
@@ -65,7 +65,7 @@ def _add_api_key_middleware(mcp_server: Any) -> None:
                 try:
                     # Process request
                     response = await call_next(request)
-                    return response
+                    return cast("Response", response)
                 finally:
                     # Clean up context
                     if token is not None:

@@ -8,6 +8,7 @@ This module contains MCP-related CLI commands for:
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING, Any
 
 import click
 
@@ -18,6 +19,64 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
+    from starlette.responses import Response
+
+
+def _add_api_key_middleware(mcp_server: Any) -> None:
+    """Add HTTP middleware to extract API keys from headers.
+
+    This middleware extracts the API key from the X-Nexus-API-Key header
+    and sets it in the request context for use by MCP tools.
+
+    Args:
+        mcp_server: FastMCP server instance
+    """
+    try:
+        # Import Starlette middleware components
+        from starlette.middleware.base import BaseHTTPMiddleware
+
+        from nexus.mcp import _request_api_key, set_request_api_key
+
+        class APIKeyMiddleware(BaseHTTPMiddleware):
+            """Middleware to extract API key from HTTP headers."""
+
+            async def dispatch(self, request: Request, call_next: Any) -> Response:
+                # Extract API key from header (try both formats)
+                api_key = request.headers.get("X-Nexus-API-Key") or request.headers.get(
+                    "x-nexus-api-key"
+                )
+
+                # Also support Authorization header format: "Bearer <api-key>"
+                if not api_key:
+                    auth_header = request.headers.get("Authorization") or request.headers.get(
+                        "authorization"
+                    )
+                    if auth_header and auth_header.startswith("Bearer "):
+                        api_key = auth_header[7:]  # Remove "Bearer " prefix
+
+                # Set API key in context if present
+                token = None
+                if api_key:
+                    token = set_request_api_key(api_key)
+
+                try:
+                    # Process request
+                    response = await call_next(request)
+                    return response
+                finally:
+                    # Clean up context
+                    if token is not None:
+                        _request_api_key.reset(token)
+
+        # Use FastMCP's built-in add_middleware method
+        mcp_server.add_middleware(APIKeyMiddleware)
+        console.print("[green]✓ API key middleware enabled (X-Nexus-API-Key header)[/green]")
+
+    except Exception as e:
+        console.print(f"[yellow]Warning: Failed to add API key middleware: {e}[/yellow]")
 
 
 @click.group(name="mcp")
@@ -246,6 +305,10 @@ def serve(
 
         # Create and run MCP server
         mcp_server = create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
+
+        # Add HTTP middleware for API key extraction (for http/sse transports)
+        if transport in ["http", "sse"]:
+            _add_api_key_middleware(mcp_server)
 
         # Run with appropriate transport
         if transport == "stdio":

@@ -7,11 +7,57 @@ Nexus functionality to AI agents and tools using the fastmcp framework.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import json
 
 from fastmcp import FastMCP
 
 from nexus.core.filesystem import NexusFilesystem
+
+# Context variable for per-request API key (set by infrastructure, not AI)
+_request_api_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "request_api_key", default=None
+)
+
+
+def set_request_api_key(api_key: str) -> contextvars.Token[str | None]:
+    """Set the API key for the current request context.
+
+    This function should be called by infrastructure (HTTP middleware, proxy,
+    gateway) to set a per-request API key without exposing it to AI agents.
+
+    Args:
+        api_key: The API key to use for this request
+
+    Returns:
+        A token that can be used to reset the context variable
+
+    Example:
+        >>> from nexus.mcp import set_request_api_key
+        >>> from nexus.mcp.server import _request_api_key
+        >>>
+        >>> # In middleware or proxy code:
+        >>> token = set_request_api_key("sk-user-api-key-xyz")
+        >>> try:
+        ...     # Make MCP tool calls here - they will use this API key
+        ...     result = mcp_server.call_tool("nexus_read_file", path="/data.txt")
+        ... finally:
+        ...     # Clean up context
+        ...     _request_api_key.reset(token)
+    """
+    return _request_api_key.set(api_key)
+
+
+def get_request_api_key() -> str | None:
+    """Get the current request API key from context.
+
+    This is primarily for testing and debugging. Infrastructure code should
+    use set_request_api_key() to set the key.
+
+    Returns:
+        The current request API key, or None if not set
+    """
+    return _request_api_key.get()
 
 
 def create_mcp_server(
@@ -26,10 +72,25 @@ def create_mcp_server(
         nx: NexusFilesystem instance (if None, will auto-connect)
         name: Server name (default: "nexus")
         remote_url: Remote Nexus URL for connecting to remote server
-        api_key: Optional API key for remote server authentication
+        api_key: Optional API key for remote server authentication (default)
 
     Returns:
         FastMCP server instance
+
+    Infrastructure API Key Support:
+        The MCP server supports per-request API keys set by infrastructure
+        (e.g., HTTP middleware, proxy, gateway) without exposing them to AI agents.
+
+        Infrastructure should set the API key using:
+            from nexus.mcp.server import set_request_api_key
+            token = set_request_api_key("sk-user-api-key-xyz")
+            try:
+                # Make MCP tool calls here
+                pass
+            finally:
+                token.reset()
+
+        The api_key parameter serves as the default when no per-request key is set.
 
     Examples:
         >>> from nexus import connect
@@ -59,6 +120,49 @@ def create_mcp_server(
 
             nx = connect()
 
+    # Store default connection and config for per-request API key support
+    _default_nx = nx
+    _remote_url = remote_url
+
+    # Connection pool for per-request API keys (cached by API key)
+    _connection_cache: dict[str, NexusFilesystem] = {}
+
+    def _get_nexus_instance() -> NexusFilesystem:
+        """Get Nexus instance for current request using context API key.
+
+        This function checks if infrastructure has set a per-request API key
+        in the context variable. If so, it creates/retrieves a connection with
+        that API key. Otherwise, it returns the default connection.
+
+        Returns:
+            NexusFilesystem instance (default or per-request based on context)
+
+        Note:
+            Per-request API keys are only supported when remote_url is configured.
+            For local connections, the default connection is always used.
+        """
+        # Get API key from context (set by infrastructure)
+        request_api_key = _request_api_key.get()
+
+        # If no API key in context, use default connection
+        if not request_api_key:
+            return _default_nx
+
+        # If remote_url not configured, can't use per-request API keys
+        if not _remote_url:
+            return _default_nx
+
+        # Check cache for existing connection
+        if request_api_key in _connection_cache:
+            return _connection_cache[request_api_key]
+
+        # Create new remote connection with API key from context
+        from nexus.remote import RemoteNexusFS
+
+        new_nx = RemoteNexusFS(_remote_url, api_key=request_api_key)
+        _connection_cache[request_api_key] = new_nx
+        return new_nx
+
     # Create FastMCP server
     mcp = FastMCP(name)
 
@@ -77,7 +181,8 @@ def create_mcp_server(
             File content as string
         """
         try:
-            content = nx.read(path)
+            nx_instance = _get_nexus_instance()
+            content = nx_instance.read(path)
             if isinstance(content, bytes):
                 return content.decode("utf-8", errors="replace")
             return str(content)
@@ -96,8 +201,9 @@ def create_mcp_server(
             Success message or error
         """
         try:
+            nx_instance = _get_nexus_instance()
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-            nx.write(path, content_bytes)
+            nx_instance.write(path, content_bytes)
             return f"Successfully wrote {len(content_bytes)} bytes to {path}"
         except Exception as e:
             return f"Error writing file: {str(e)}"
@@ -113,7 +219,8 @@ def create_mcp_server(
             Success message or error
         """
         try:
-            nx.delete(path)
+            nx_instance = _get_nexus_instance()
+            nx_instance.delete(path)
             return f"Successfully deleted {path}"
         except Exception as e:
             return f"Error deleting file: {str(e)}"
@@ -137,7 +244,8 @@ def create_mcp_server(
             - mime_type: MIME type
         """
         try:
-            files = nx.list(path, recursive=recursive, details=details)
+            nx_instance = _get_nexus_instance()
+            files = nx_instance.list(path, recursive=recursive, details=details)
             return json.dumps(files, indent=2, default=str)
         except Exception as e:
             return f"Error listing files: {str(e)}"
@@ -153,12 +261,13 @@ def create_mcp_server(
             JSON string with file metadata
         """
         try:
+            nx_instance = _get_nexus_instance()
             # Use exists and other methods to get file info
             # info() is not in base NexusFilesystem interface
-            if not nx.exists(path):
+            if not nx_instance.exists(path):
                 return f"File not found: {path}"
 
-            is_dir = nx.is_directory(path)
+            is_dir = nx_instance.is_directory(path)
             info_dict = {
                 "path": path,
                 "exists": True,
@@ -168,7 +277,7 @@ def create_mcp_server(
             # Try to get size if it's a file
             if not is_dir:
                 try:
-                    content = nx.read(path)
+                    content = nx_instance.read(path)
                     if isinstance(content, bytes):
                         info_dict["size"] = len(content)
                 except Exception:
@@ -193,7 +302,8 @@ def create_mcp_server(
             Success message or error
         """
         try:
-            nx.mkdir(path)
+            nx_instance = _get_nexus_instance()
+            nx_instance.mkdir(path)
             return f"Successfully created directory {path}"
         except Exception as e:
             return f"Error creating directory: {str(e)}"
@@ -210,7 +320,8 @@ def create_mcp_server(
             Success message or error
         """
         try:
-            nx.rmdir(path, recursive=recursive)
+            nx_instance = _get_nexus_instance()
+            nx_instance.rmdir(path, recursive=recursive)
             return f"Successfully removed directory {path}"
         except Exception as e:
             return f"Error removing directory: {str(e)}"
@@ -231,7 +342,8 @@ def create_mcp_server(
             JSON string with list of matching file paths
         """
         try:
-            matches = nx.glob(pattern, path)
+            nx_instance = _get_nexus_instance()
+            matches = nx_instance.glob(pattern, path)
             return json.dumps(matches, indent=2)
         except Exception as e:
             return f"Error in glob search: {str(e)}"
@@ -249,7 +361,8 @@ def create_mcp_server(
             JSON string with search results (file paths, line numbers, content)
         """
         try:
-            results = nx.grep(pattern, path, ignore_case=ignore_case)
+            nx_instance = _get_nexus_instance()
+            results = nx_instance.grep(pattern, path, ignore_case=ignore_case)
             # Limit results to first 100 matches
             if len(results) > 100:
                 results = results[:100]
@@ -269,10 +382,11 @@ def create_mcp_server(
             JSON string with search results
         """
         try:
+            nx_instance = _get_nexus_instance()
             # Check if nx has search method (only available in NexusFS)
-            if hasattr(nx, "search"):
+            if hasattr(nx_instance, "search"):
                 # Calling search() - available in NexusFS but not base interface
-                results = nx.search(query, limit=limit)
+                results = nx_instance.search(query, limit=limit)
                 return json.dumps(results, indent=2)
             return "Semantic search not available (requires NexusFS with search enabled)"
         except Exception as e:
@@ -299,24 +413,27 @@ def create_mcp_server(
             Success message or error
         """
         try:
+            nx_instance = _get_nexus_instance()
             # Check if nx has memory attribute (only available in NexusFS)
-            if not hasattr(nx, "memory"):
+            if not hasattr(nx_instance, "memory"):
                 return "Memory system not available (requires NexusFS)"
 
-            nx.memory.store(  # type: ignore[attr-defined]
+            nx_instance.memory.store(
                 content,
                 scope="user",
                 memory_type=memory_type,
                 importance=importance,
             )
-            # Commit the session to persist
-            nx.memory.session.commit()  # type: ignore[attr-defined]
+            # Commit the session to persist (only for local NexusFS)
+            # RemoteMemory handles commit/rollback server-side automatically
+            if hasattr(nx_instance.memory, "session"):
+                nx_instance.memory.session.commit()
             return f"Successfully stored memory: {content[:80]}..."
         except Exception as e:
-            # Rollback on error
-            if hasattr(nx, "memory"):
+            # Rollback on error (only for local NexusFS)
+            if hasattr(nx_instance, "memory") and hasattr(nx_instance.memory, "session"):
                 with contextlib.suppress(Exception):
-                    nx.memory.session.rollback()
+                    nx_instance.memory.session.rollback()
             return f"Error storing memory: {str(e)}"
 
     @mcp.tool()
@@ -336,11 +453,12 @@ def create_mcp_server(
             JSON string with matching memories
         """
         try:
+            nx_instance = _get_nexus_instance()
             # Check if nx has memory attribute (only available in NexusFS)
-            if not hasattr(nx, "memory"):
+            if not hasattr(nx_instance, "memory"):
                 return "Memory system not available (requires NexusFS)"
 
-            memories = nx.memory.search(  # type: ignore[attr-defined]
+            memories = nx_instance.memory.search(
                 query,
                 scope="user",
                 memory_type=memory_type,
@@ -362,11 +480,12 @@ def create_mcp_server(
             JSON string with list of workflows
         """
         try:
+            nx_instance = _get_nexus_instance()
             # Check if nx has workflows attribute (only available in NexusFS)
-            if not hasattr(nx, "workflows"):
+            if not hasattr(nx_instance, "workflows"):
                 return "Workflow system not available (requires NexusFS with workflows enabled)"
 
-            workflows = nx.workflows.list_workflows()  # type: ignore[attr-defined]
+            workflows = nx_instance.workflows.list_workflows()
             return json.dumps(workflows, indent=2)
         except Exception as e:
             return f"Error listing workflows: {str(e)}"
@@ -383,12 +502,13 @@ def create_mcp_server(
             Workflow execution result
         """
         try:
+            nx_instance = _get_nexus_instance()
             # Check if nx has workflows attribute (only available in NexusFS)
-            if not hasattr(nx, "workflows"):
+            if not hasattr(nx_instance, "workflows"):
                 return "Workflow system not available (requires NexusFS with workflows enabled)"
 
             input_dict = json.loads(inputs) if inputs else {}
-            result = nx.workflows.execute(name, **input_dict)  # type: ignore[attr-defined]
+            result = nx_instance.workflows.execute(name, **input_dict)
             return json.dumps(result, indent=2)
         except Exception as e:
             return f"Error executing workflow: {str(e)}"
@@ -397,13 +517,16 @@ def create_mcp_server(
     # SANDBOX EXECUTION TOOLS (Conditional Registration)
     # =========================================================================
 
-    # Check if sandbox support is available
+    # Check if sandbox support is available (use default connection for check)
     sandbox_available = False
     try:
-        if hasattr(nx, "_ensure_sandbox_manager"):
-            nx._ensure_sandbox_manager()
-            if hasattr(nx, "_sandbox_manager") and nx._sandbox_manager is not None:
-                sandbox_available = len(nx._sandbox_manager.providers) > 0
+        if hasattr(_default_nx, "_ensure_sandbox_manager"):
+            _default_nx._ensure_sandbox_manager()
+            if (
+                hasattr(_default_nx, "_sandbox_manager")
+                and _default_nx._sandbox_manager is not None
+            ):
+                sandbox_available = len(_default_nx._sandbox_manager.providers) > 0
     except Exception:
         sandbox_available = False
 
@@ -422,7 +545,8 @@ def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             try:
-                result = nx.sandbox_run(
+                nx_instance = _get_nexus_instance()
+                result = nx_instance.sandbox_run(
                     sandbox_id=sandbox_id, language="python", code=code, timeout=300
                 )
 
@@ -463,7 +587,8 @@ def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             try:
-                result = nx.sandbox_run(
+                nx_instance = _get_nexus_instance()
+                result = nx_instance.sandbox_run(
                     sandbox_id=sandbox_id, language="bash", code=command, timeout=300
                 )
 
@@ -504,7 +629,8 @@ def create_mcp_server(
                 JSON string with sandbox_id and metadata
             """
             try:
-                result = nx.sandbox_create(name=name, ttl_minutes=ttl_minutes)
+                nx_instance = _get_nexus_instance()
+                result = nx_instance.sandbox_create(name=name, ttl_minutes=ttl_minutes)
                 return json.dumps(result, indent=2)
             except Exception as e:
                 return f"Error creating sandbox: {str(e)}"
@@ -517,7 +643,8 @@ def create_mcp_server(
                 JSON string with list of sandboxes
             """
             try:
-                result = nx.sandbox_list()
+                nx_instance = _get_nexus_instance()
+                result = nx_instance.sandbox_list()
                 return json.dumps(result, indent=2)
             except Exception as e:
                 return f"Error listing sandboxes: {str(e)}"
@@ -533,7 +660,8 @@ def create_mcp_server(
                 Success message or error
             """
             try:
-                nx.sandbox_stop(sandbox_id)
+                nx_instance = _get_nexus_instance()
+                nx_instance.sandbox_stop(sandbox_id)
                 return f"Successfully stopped sandbox {sandbox_id}"
             except Exception as e:
                 return f"Error stopping sandbox: {str(e)}"
@@ -553,7 +681,8 @@ def create_mcp_server(
             File content
         """
         try:
-            content = nx.read(path)
+            nx_instance = _get_nexus_instance()
+            content = nx_instance.read(path)
             if isinstance(content, bytes):
                 return content.decode("utf-8", errors="replace")
             return str(content)

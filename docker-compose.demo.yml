@@ -189,7 +189,7 @@ services:
         exec nexus mcp serve --transport http --port 8081 --host 0.0.0.0
       '
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/mcp"]
+      test: ["CMD", "curl", "-f", "-H", "Accept: text/event-stream", "http://localhost:8081/mcp"]
       interval: 30s
       timeout: 10s
       retries: 3

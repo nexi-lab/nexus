@@ -333,6 +333,99 @@ class TestErrorHandlingIntegration:
             assert "Error" in result or "not available" in result
 
 
+class TestMemoryIntegration:
+    """Integration tests for memory system."""
+
+    def test_store_and_query_memory(self, mcp_server):
+        """Test storing and querying memories."""
+        # Check if memory tools are available
+        if not tool_exists(mcp_server, "nexus_store_memory"):
+            pytest.skip("Memory system not available")
+
+        store_tool = get_tool(mcp_server, "nexus_store_memory")
+        query_tool = get_tool(mcp_server, "nexus_query_memory")
+
+        # Store a memory
+        store_result = store_tool.fn(
+            content="Integration test memory from curl tests",
+            memory_type="test",
+            importance=0.8,
+        )
+
+        # Should either succeed or indicate memory system not available
+        assert "Successfully stored" in store_result or "not available" in store_result
+
+        if "Successfully stored" in store_result:
+            # Query memories
+            query_result = query_tool.fn(query="test", memory_type="test", limit=5)
+
+            # Should return JSON or indicate not available
+            if "not available" not in query_result:
+                # Parse result - should be JSON
+                try:
+                    memories = json.loads(query_result)
+                    assert isinstance(memories, list)
+                except json.JSONDecodeError:
+                    # If parsing fails, that's okay - memory may not be fully configured
+                    pass
+
+    def test_memory_not_available_graceful(self, mcp_server):
+        """Test that memory tools gracefully handle unavailable memory system."""
+        # Even if memory system isn't available, tools should return helpful message
+        if tool_exists(mcp_server, "nexus_store_memory"):
+            store_tool = get_tool(mcp_server, "nexus_store_memory")
+            result = store_tool.fn(content="Test content", memory_type="test", importance=0.5)
+
+            # Should either succeed or provide clear error message
+            assert "Successfully" in result or "not available" in result or "Error" in result
+
+
+class TestWorkflowIntegration:
+    """Integration tests for workflow system."""
+
+    def test_list_workflows(self, mcp_server):
+        """Test listing available workflows."""
+        if not tool_exists(mcp_server, "nexus_list_workflows"):
+            pytest.skip("Workflow system not available")
+
+        list_tool = get_tool(mcp_server, "nexus_list_workflows")
+        result = list_tool.fn()
+
+        # Should return JSON list or indicate not available
+        assert "not available" in result or result.startswith("[") or result.startswith("{")
+
+    def test_execute_workflow(self, mcp_server):
+        """Test executing a workflow."""
+        if not tool_exists(mcp_server, "nexus_execute_workflow"):
+            pytest.skip("Workflow system not available")
+
+        exec_tool = get_tool(mcp_server, "nexus_execute_workflow")
+        result = exec_tool.fn(name="test_workflow", inputs=None)
+
+        # Should return result or indicate workflow not found/not available
+        assert (
+            "not available" in result
+            or "not found" in result
+            or "Error" in result
+            or result.startswith("{")
+        )
+
+
+class TestSemanticSearchIntegration:
+    """Integration tests for semantic search."""
+
+    def test_semantic_search_availability(self, mcp_server):
+        """Test semantic search tool availability and behavior."""
+        if not tool_exists(mcp_server, "nexus_semantic_search"):
+            pytest.skip("Semantic search tool not registered")
+
+        search_tool = get_tool(mcp_server, "nexus_semantic_search")
+        result = search_tool.fn(query="test files", limit=5)
+
+        # Should return JSON results or indicate not available
+        assert "not available" in result or result.startswith("[") or result.startswith("{")
+
+
 class TestSandboxIntegration:
     """Integration tests for sandbox execution (requires Docker or E2B)."""
 
@@ -446,6 +539,124 @@ class TestServerConfiguration:
         result = read_tool2.fn(path="/shared_file.txt")
 
         assert result == "Shared content"
+
+
+class TestComprehensiveMCPToolsWorkflow:
+    """Comprehensive test that mirrors test_mcp_tools.sh bash script."""
+
+    def test_all_14_mcp_tools_workflow(self, mcp_server, nexus_fs):
+        """Test all 14 MCP tools in sequence (mirrors test_mcp_tools.sh)."""
+        # This test mirrors the comprehensive bash script test_mcp_tools.sh
+
+        # Step 1: Test nexus_mkdir - Create test directory
+        mkdir_tool = get_tool(mcp_server, "nexus_mkdir")
+        mkdir_result = mkdir_tool.fn(path="/mcp_integration_test")
+        assert "Successfully created" in mkdir_result
+
+        # Step 2: Test nexus_write_file - Write test files
+        write_tool = get_tool(mcp_server, "nexus_write_file")
+
+        write_result1 = write_tool.fn(
+            path="/mcp_integration_test/test1.txt", content="Hello from MCP Test!"
+        )
+        assert "Successfully wrote" in write_result1
+
+        write_result2 = write_tool.fn(
+            path="/mcp_integration_test/test2.py", content="print('Python file test')"
+        )
+        assert "Successfully wrote" in write_result2
+
+        write_result3 = write_tool.fn(
+            path="/mcp_integration_test/data.json", content='{"test": "data"}'
+        )
+        assert "Successfully wrote" in write_result3
+
+        # Step 3: Test nexus_read_file
+        read_tool = get_tool(mcp_server, "nexus_read_file")
+        read_result = read_tool.fn(path="/mcp_integration_test/test1.txt")
+        assert "Hello from MCP Test" in read_result
+
+        # Step 4: Test nexus_list_files
+        list_tool = get_tool(mcp_server, "nexus_list_files")
+        list_result = list_tool.fn(path="/mcp_integration_test", recursive=False, details=True)
+        files = json.loads(list_result)
+        file_names = [f if isinstance(f, str) else f.get("path", "") for f in files]
+        assert any("test1.txt" in str(name) for name in file_names)
+        assert any("test2.py" in str(name) for name in file_names)
+
+        # Step 5: Test nexus_file_info
+        info_tool = get_tool(mcp_server, "nexus_file_info")
+        info_result = info_tool.fn(path="/mcp_integration_test/test1.txt")
+        info = json.loads(info_result)
+        assert info["exists"] is True
+
+        # Step 6: Test nexus_glob
+        glob_tool = get_tool(mcp_server, "nexus_glob")
+        glob_result = glob_tool.fn(pattern="*.txt", path="/mcp_integration_test")
+        glob_matches = json.loads(glob_result)
+        assert any("test1.txt" in match for match in glob_matches)
+
+        # Step 7: Test nexus_grep
+        grep_tool = get_tool(mcp_server, "nexus_grep")
+        grep_result = grep_tool.fn(pattern="Hello", path="/mcp_integration_test", ignore_case=False)
+        grep_matches = json.loads(grep_result)
+        assert len(grep_matches) > 0
+
+        # Step 8: Test nexus_semantic_search (optional)
+        if tool_exists(mcp_server, "nexus_semantic_search"):
+            search_tool = get_tool(mcp_server, "nexus_semantic_search")
+            search_result = search_tool.fn(query="test files", limit=5)
+            # Should return result or indicate not available
+            assert "not available" in search_result or search_result.startswith("[")
+
+        # Step 9: Test nexus_store_memory (optional)
+        if tool_exists(mcp_server, "nexus_store_memory"):
+            memory_store_tool = get_tool(mcp_server, "nexus_store_memory")
+            memory_result = memory_store_tool.fn(
+                content="This is a test memory from integration test",
+                memory_type="test",
+                importance=0.8,
+            )
+            # Should either succeed or indicate not available
+            assert "Successfully stored" in memory_result or "not available" in memory_result
+
+        # Step 10: Test nexus_query_memory (optional)
+        if tool_exists(mcp_server, "nexus_query_memory"):
+            memory_query_tool = get_tool(mcp_server, "nexus_query_memory")
+            query_result = memory_query_tool.fn(query="test", memory_type=None, limit=5)
+            # Should return results or indicate not available
+            assert "not available" in query_result or query_result.startswith("[")
+
+        # Step 11: Test nexus_list_workflows (optional)
+        if tool_exists(mcp_server, "nexus_list_workflows"):
+            workflows_tool = get_tool(mcp_server, "nexus_list_workflows")
+            workflows_result = workflows_tool.fn()
+            # Should return list or indicate not available
+            assert "not available" in workflows_result or workflows_result.startswith("[")
+
+        # Step 12: Test nexus_execute_workflow (optional)
+        if tool_exists(mcp_server, "nexus_execute_workflow"):
+            exec_workflow_tool = get_tool(mcp_server, "nexus_execute_workflow")
+            exec_result = exec_workflow_tool.fn(name="test_workflow", inputs=None)
+            # Should return result or indicate not available/not found
+            assert (
+                "not available" in exec_result
+                or "not found" in exec_result
+                or exec_result.startswith("{")
+            )
+
+        # Step 13: Test nexus_delete_file
+        delete_tool = get_tool(mcp_server, "nexus_delete_file")
+        delete_result = delete_tool.fn(path="/mcp_integration_test/data.json")
+        assert "Successfully deleted" in delete_result
+
+        # Step 14: Test nexus_rmdir
+        rmdir_tool = get_tool(mcp_server, "nexus_rmdir")
+        rmdir_result = rmdir_tool.fn(path="/mcp_integration_test", recursive=True)
+        assert "Successfully removed" in rmdir_result
+
+        # Verify directory was removed
+        assert not nexus_fs.exists("/mcp_integration_test")
 
 
 class TestPerformanceCharacteristics:

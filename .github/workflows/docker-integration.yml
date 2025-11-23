@@ -605,6 +605,7 @@ jobs:
             # Try to call tools/list to check if server is ready
             MCP_READY=$(curl -sf http://localhost:8081/mcp \
               -H "Content-Type: application/json" \
+              -H "Accept: application/json, text/event-stream" \
               -H "X-Nexus-API-Key: $API_KEY" \
               -d '{"jsonrpc":"2.0","id":0,"method":"tools/list"}' 2>&1 || echo "NOT_READY")
 

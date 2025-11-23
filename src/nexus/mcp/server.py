@@ -394,6 +394,151 @@ def create_mcp_server(
             return f"Error executing workflow: {str(e)}"
 
     # =========================================================================
+    # SANDBOX EXECUTION TOOLS (Conditional Registration)
+    # =========================================================================
+
+    # Check if sandbox support is available
+    sandbox_available = False
+    try:
+        if hasattr(nx, "_ensure_sandbox_manager"):
+            nx._ensure_sandbox_manager()
+            if hasattr(nx, "_sandbox_manager") and nx._sandbox_manager is not None:
+                sandbox_available = len(nx._sandbox_manager.providers) > 0
+    except Exception:
+        sandbox_available = False
+
+    # Only register sandbox tools if available
+    if sandbox_available:
+
+        @mcp.tool()
+        def nexus_python(code: str, sandbox_id: str) -> str:
+            """Execute Python code in Nexus sandbox.
+
+            Args:
+                code: Python code to execute
+                sandbox_id: Sandbox ID (use nexus_sandbox_create to create one)
+
+            Returns:
+                Execution result with stdout, stderr, exit_code, and execution time
+            """
+            try:
+                result = nx.sandbox_run(
+                    sandbox_id=sandbox_id, language="python", code=code, timeout=300
+                )
+
+                # Format output
+                output_parts = []
+
+                stdout = result.get("stdout", "").strip()
+                if stdout:
+                    output_parts.append(f"Output:\n{stdout}")
+
+                stderr = result.get("stderr", "").strip()
+                if stderr:
+                    output_parts.append(f"Errors:\n{stderr}")
+
+                exit_code = result.get("exit_code", -1)
+                exec_time = result.get("execution_time", 0)
+                output_parts.append(f"Exit code: {exit_code}")
+                output_parts.append(f"Execution time: {exec_time:.3f}s")
+
+                return (
+                    "\n\n".join(output_parts)
+                    if output_parts
+                    else "Code executed successfully (no output)"
+                )
+
+            except Exception as e:
+                return f"Error executing Python code: {str(e)}"
+
+        @mcp.tool()
+        def nexus_bash(command: str, sandbox_id: str) -> str:
+            """Execute bash commands in Nexus sandbox.
+
+            Args:
+                command: Bash command to execute
+                sandbox_id: Sandbox ID (use nexus_sandbox_create to create one)
+
+            Returns:
+                Execution result with stdout, stderr, exit_code, and execution time
+            """
+            try:
+                result = nx.sandbox_run(
+                    sandbox_id=sandbox_id, language="bash", code=command, timeout=300
+                )
+
+                # Format output
+                output_parts = []
+
+                stdout = result.get("stdout", "").strip()
+                if stdout:
+                    output_parts.append(f"Output:\n{stdout}")
+
+                stderr = result.get("stderr", "").strip()
+                if stderr:
+                    output_parts.append(f"Errors:\n{stderr}")
+
+                exit_code = result.get("exit_code", -1)
+                exec_time = result.get("execution_time", 0)
+                output_parts.append(f"Exit code: {exit_code}")
+                output_parts.append(f"Execution time: {exec_time:.3f}s")
+
+                return (
+                    "\n\n".join(output_parts)
+                    if output_parts
+                    else "Command executed successfully (no output)"
+                )
+
+            except Exception as e:
+                return f"Error executing bash command: {str(e)}"
+
+        @mcp.tool()
+        def nexus_sandbox_create(name: str, ttl_minutes: int = 10) -> str:
+            """Create a new sandbox for code execution.
+
+            Args:
+                name: User-friendly sandbox name
+                ttl_minutes: Idle timeout in minutes (default: 10)
+
+            Returns:
+                JSON string with sandbox_id and metadata
+            """
+            try:
+                result = nx.sandbox_create(name=name, ttl_minutes=ttl_minutes)
+                return json.dumps(result, indent=2)
+            except Exception as e:
+                return f"Error creating sandbox: {str(e)}"
+
+        @mcp.tool()
+        def nexus_sandbox_list() -> str:
+            """List all active sandboxes.
+
+            Returns:
+                JSON string with list of sandboxes
+            """
+            try:
+                result = nx.sandbox_list()
+                return json.dumps(result, indent=2)
+            except Exception as e:
+                return f"Error listing sandboxes: {str(e)}"
+
+        @mcp.tool()
+        def nexus_sandbox_stop(sandbox_id: str) -> str:
+            """Stop and destroy a sandbox.
+
+            Args:
+                sandbox_id: Sandbox ID to stop
+
+            Returns:
+                Success message or error
+            """
+            try:
+                nx.sandbox_stop(sandbox_id)
+                return f"Successfully stopped sandbox {sandbox_id}"
+            except Exception as e:
+                return f"Error stopping sandbox: {str(e)}"
+
+    # =========================================================================
     # RESOURCES
     # =========================================================================
 

@@ -54,6 +54,9 @@ COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 # Verify Rust extension is available (optional debug step)
 RUN python3 -c "import nexus_fast; print('✓ Rust acceleration available')" || echo "⚠ Rust not available"
 
+# Verify Docker sandbox provider is available
+RUN python3 -c "import docker; print('✓ Docker Python package available')" || echo "⚠ Docker package not available"
+
 # Copy application files
 WORKDIR /app
 COPY src/ ./src/

@@ -121,6 +121,9 @@ services:
       # Runtime permission enforcement
       # Set to 'false' to disable permission checks at runtime
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
+
+      # Configuration file path (defaults to config.demo.yaml if not specified)
+      NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}
     volumes:
       # Persistent data directory (local backend)
       - nexus-data:/app/data
@@ -135,6 +138,9 @@ services:
       - ${AWS_CONFIG_PATH:-./aws-config}:/app/aws-config:ro
       # Docker socket for sandbox provider
       - /var/run/docker.sock:/var/run/docker.sock
+    # Run as root to access Docker socket (required for sandbox provider)
+    # The nexus user inside the container doesn't have socket permissions
+    user: root
     ports:
       - "${NEXUS_PORT:-8080}:8080"
     healthcheck:
@@ -227,7 +233,7 @@ services:
       FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
 
       # LangSmith tracing (optional)
-      LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-}
+      LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
       LANGCHAIN_ENDPOINT: ${LANGCHAIN_ENDPOINT:-}
       LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-}
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}

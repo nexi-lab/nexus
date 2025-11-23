@@ -218,6 +218,21 @@ jobs:
             exit 1
           fi
 
+          # Verify ANTHROPIC_API_KEY is set in LangGraph container
+          echo ""
+          echo "🔍 Checking ANTHROPIC_API_KEY in LangGraph container..."
+          LANG_KEY=$(docker exec nexus-langgraph printenv ANTHROPIC_API_KEY || echo "")
+          if [ -n "$LANG_KEY" ]; then
+            echo "✅ ANTHROPIC_API_KEY is set in LangGraph container (length: ${#LANG_KEY} chars)"
+          else
+            echo "❌ ANTHROPIC_API_KEY is NOT set in LangGraph container"
+            echo "   Checking .env file..."
+            grep "ANTHROPIC_API_KEY" .env || echo "   Not found in .env"
+            echo "   Checking docker-compose environment..."
+            docker-compose config | grep -A 5 "ANTHROPIC_API_KEY" || echo "   Not found in docker-compose config"
+            exit 1
+          fi
+
       - name: Test basic RPC API call
         run: |
           echo "📡 Testing basic RPC API functionality..."

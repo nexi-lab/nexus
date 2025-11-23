@@ -107,7 +107,17 @@ jobs:
           if [ -f .env ]; then
             echo "✅ .env file created"
             echo "   - Checking required variables..."
-            grep -q "ANTHROPIC_API_KEY" .env && echo "   ✅ ANTHROPIC_API_KEY present" || echo "   ❌ ANTHROPIC_API_KEY missing"
+
+            # Check ANTHROPIC_API_KEY has a value
+            if grep -q "^ANTHROPIC_API_KEY=" .env && [ -n "$(grep "^ANTHROPIC_API_KEY=" .env | cut -d'=' -f2-)" ]; then
+              KEY_VALUE=$(grep "^ANTHROPIC_API_KEY=" .env | cut -d'=' -f2-)
+              echo "   ✅ ANTHROPIC_API_KEY present (length: ${#KEY_VALUE} chars)"
+            else
+              echo "   ❌ ANTHROPIC_API_KEY missing or empty"
+              echo "   ERROR: ANTHROPIC_API_KEY must be set in GitHub secrets"
+              exit 1
+            fi
+
             grep -q "POSTGRES_DB" .env && echo "   ✅ POSTGRES_DB present" || echo "   ❌ POSTGRES_DB missing"
             grep -q "NEXUS_API_KEY" .env && echo "   ✅ NEXUS_API_KEY present" || echo "   ❌ NEXUS_API_KEY missing"
           else

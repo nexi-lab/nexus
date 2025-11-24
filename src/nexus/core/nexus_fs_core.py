@@ -278,12 +278,6 @@ class NexusFSCoreMixin:
             check_write=False,
         )
 
-        # Check if file exists in metadata
-        meta = self.metadata.get(path)
-        if meta is None or meta.etag is None:
-            raise NexusFileNotFoundError(path)
-
-        # Read from routed backend using content hash
         # Add backend_path to context for path-based connectors
         from dataclasses import replace
 
@@ -296,6 +290,37 @@ class NexusFSCoreMixin:
             read_context = OperationContext(
                 user="anonymous", groups=[], backend_path=route.backend_path
             )
+
+        # Check if backend is a dynamic API-backed connector (e.g., x_connector)
+        # These connectors don't use metadata - they fetch data directly from APIs
+        is_dynamic_connector = getattr(route.backend, "user_scoped", False) and hasattr(
+            route.backend, "token_manager"
+        )
+
+        if is_dynamic_connector:
+            # Dynamic connector - read directly from backend without metadata check
+            # The backend handles authentication and API calls
+            content = route.backend.read_content("", context=read_context)
+            if return_metadata:
+                # Generate synthetic metadata for dynamic content
+                import hashlib
+                from datetime import datetime
+
+                content_hash = hashlib.sha256(content).hexdigest()
+                return {
+                    "content": content,
+                    "etag": content_hash,
+                    "version": 1,
+                    "modified_at": datetime.now().isoformat(),
+                    "size": len(content),
+                }
+            return content
+
+        # Check if file exists in metadata (for regular backends)
+        meta = self.metadata.get(path)
+        if meta is None or meta.etag is None:
+            raise NexusFileNotFoundError(path)
+
         content = route.backend.read_content(meta.etag, context=read_context)
 
         # Apply dynamic_viewer filtering for CSV files

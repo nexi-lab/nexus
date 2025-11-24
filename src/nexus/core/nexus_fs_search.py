@@ -29,9 +29,11 @@ class NexusFSSearchMixin:
 
     # Type hints for attributes that will be provided by NexusFS parent class
     if TYPE_CHECKING:
+        from nexus.core.mount_router import MountRouter
         from nexus.core.permissions_enhanced import EnhancedPermissionEnforcer
 
         metadata: SQLAlchemyMetadataStore
+        router: MountRouter
         _enforce_permissions: bool
         _default_context: OperationContext
         _permission_enforcer: EnhancedPermissionEnforcer
@@ -39,6 +41,9 @@ class NexusFSSearchMixin:
 
         def _validate_path(self, path: str) -> str: ...
         def _get_backend_directory_entries(self, path: str) -> set[str]: ...
+        def _get_routing_params(
+            self, context: OperationContext | None
+        ) -> tuple[str | None, str | None, bool]: ...
         def read(
             self, path: str, context: OperationContext | None = None, return_metadata: bool = False
         ) -> bytes | dict[str, Any]: ...
@@ -112,6 +117,53 @@ class NexusFSSearchMixin:
 
         if path and MemoryViewRouter.is_memory_path(path):
             return self._list_memory_path(path, details)
+
+        # Check if path routes to a dynamic API-backed connector (e.g., x_connector)
+        # These connectors have virtual directories that don't exist in metadata
+        if path and path != "/":
+            try:
+                tenant_id, agent_id, is_admin = self._get_routing_params(context)
+                route = self.router.route(
+                    path,
+                    tenant_id=tenant_id,
+                    agent_id=agent_id,
+                    is_admin=is_admin,
+                    check_write=False,
+                )
+                # Check if backend is a dynamic API-backed connector
+                is_dynamic_connector = getattr(route.backend, "user_scoped", False) and hasattr(
+                    route.backend, "token_manager"
+                )
+                if is_dynamic_connector:
+                    # Use the backend's list_dir method directly
+                    from dataclasses import replace
+
+                    if context:
+                        list_context = replace(context, backend_path=route.backend_path)
+                    else:
+                        from nexus.core.permissions import OperationContext
+
+                        list_context = OperationContext(
+                            user="anonymous", groups=[], backend_path=route.backend_path
+                        )
+                    entries = route.backend.list_dir(route.backend_path, context=list_context)
+                    # Format results
+                    if details:
+                        from datetime import datetime
+
+                        return [
+                            {
+                                "path": f"{path.rstrip('/')}/{entry}",
+                                "size": 0,
+                                "modified_at": datetime.now().isoformat(),
+                                "etag": "",
+                            }
+                            for entry in entries
+                        ]
+                    return [f"{path.rstrip('/')}/{entry}" for entry in entries]
+            except Exception as e:
+                logger.debug(f"Dynamic connector check failed for {path}: {e}")
+                # Fall through to normal metadata-based listing
 
         # Handle backward compatibility with old 'prefix' parameter
         if prefix is not None:

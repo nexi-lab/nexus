@@ -1324,6 +1324,174 @@ jobs:
           echo "  ✅ Tested 2 search tools (glob, grep)"
           echo "  ℹ️  Optional tools: semantic search, memory, workflows (require additional setup)"
 
+      - name: Test docker-start.sh --restart
+        run: |
+          echo "🔄 Testing docker-start.sh --restart..."
+          echo ""
+
+          # Restart services
+          ./docker-start.sh --restart
+
+          echo "⏳ Waiting for services to become healthy after restart..."
+          MAX_WAIT=180  # 3 minutes
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            # Check if all core services are healthy
+            NEXUS_STATUS=$(docker inspect nexus-server --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
+            POSTGRES_STATUS=$(docker inspect nexus-postgres --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
+            LANGGRAPH_STATUS=$(docker inspect nexus-langgraph --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
+            MCP_STATUS=$(docker inspect nexus-mcp-server --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
+
+            echo "[$ELAPSED s] nexus: $NEXUS_STATUS, postgres: $POSTGRES_STATUS, langgraph: $LANGGRAPH_STATUS, mcp: $MCP_STATUS"
+
+            if [ "$NEXUS_STATUS" = "healthy" ] && [ "$POSTGRES_STATUS" = "healthy" ] && [ "$LANGGRAPH_STATUS" = "healthy" ] && [ "$MCP_STATUS" = "healthy" ]; then
+              echo "✅ All services are healthy after restart!"
+              break
+            fi
+
+            sleep 5
+            ELAPSED=$((ELAPSED + 5))
+          done
+
+          if [ "$NEXUS_STATUS" != "healthy" ] || [ "$POSTGRES_STATUS" != "healthy" ] || [ "$LANGGRAPH_STATUS" != "healthy" ] || [ "$MCP_STATUS" != "healthy" ]; then
+            echo "❌ Services did not become healthy after restart within $MAX_WAIT seconds"
+            docker ps -a
+            echo "--- Nexus Server Logs ---"
+            docker logs nexus-server 2>&1 | tail -100
+            echo "--- MCP Server Logs ---"
+            docker logs nexus-mcp-server 2>&1 | tail -100
+            exit 1
+          fi
+
+          # Verify basic API functionality after restart
+          echo ""
+          echo "🔍 Verifying API functionality after restart..."
+          API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+
+          # Test health endpoint
+          HEALTH_RESPONSE=$(curl -sf http://localhost:8080/health || echo "FAILED")
+          if [ "$HEALTH_RESPONSE" = "FAILED" ]; then
+            echo "❌ Health endpoint failed after restart"
+            exit 1
+          fi
+          echo "✅ Nexus health endpoint working: $HEALTH_RESPONSE"
+
+          # Test basic RPC call
+          LIST_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/list_mounts \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"list_mounts","params":{}}' || echo "FAILED")
+
+          if [ "$LIST_RESPONSE" = "FAILED" ]; then
+            echo "❌ RPC API call failed after restart"
+            exit 1
+          fi
+          echo "✅ RPC API working after restart"
+
+          # Test MCP server health
+          MCP_HEALTH=$(curl -sf http://localhost:8081/health || echo "FAILED")
+          if [ "$MCP_HEALTH" = "FAILED" ]; then
+            echo "❌ MCP health endpoint failed after restart"
+            exit 1
+          fi
+          echo "✅ MCP server health endpoint working"
+
+          echo ""
+          echo "🎉 Restart test completed successfully!"
+          echo "   All services recovered and are fully functional."
+
+      - name: Test docker-start.sh --status
+        run: |
+          echo "📊 Testing docker-start.sh --status..."
+          echo ""
+
+          # Run status command and capture output
+          STATUS_OUTPUT=$(./docker-start.sh --status 2>&1)
+          EXIT_CODE=$?
+
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ Status command failed with exit code $EXIT_CODE"
+            echo "$STATUS_OUTPUT"
+            exit 1
+          fi
+
+          echo "$STATUS_OUTPUT"
+          echo ""
+
+          # Verify output contains expected service names
+          EXPECTED_SERVICES=("nexus-server" "nexus-postgres" "nexus-langgraph" "nexus-mcp-server" "nexus-frontend")
+          for service in "${EXPECTED_SERVICES[@]}"; do
+            if echo "$STATUS_OUTPUT" | grep -q "$service"; then
+              echo "✅ Status shows: $service"
+            else
+              echo "❌ Status missing: $service"
+              exit 1
+            fi
+          done
+
+          echo ""
+          echo "🎉 Status test completed successfully!"
+
+      - name: Test docker-start.sh --logs
+        run: |
+          echo "📝 Testing docker-start.sh --logs..."
+          echo ""
+
+          # Run logs command in background and capture output for 5 seconds
+          timeout 5s ./docker-start.sh --logs > /tmp/docker_logs_test.txt 2>&1 || true
+
+          # Verify log file has content
+          if [ ! -s /tmp/docker_logs_test.txt ]; then
+            echo "❌ Logs command produced no output"
+            exit 1
+          fi
+
+          LOG_SIZE=$(wc -c < /tmp/docker_logs_test.txt)
+          echo "✅ Logs command produced output ($LOG_SIZE bytes)"
+
+          # Verify logs contain expected service names
+          if grep -q "nexus-server" /tmp/docker_logs_test.txt; then
+            echo "✅ Logs include nexus-server output"
+          else
+            echo "⚠️  Logs don't include nexus-server (may not have logged during test window)"
+          fi
+
+          echo ""
+          echo "🎉 Logs test completed successfully!"
+
+      - name: Test docker-start.sh --urls
+        run: |
+          echo "🌐 Testing docker-start.sh --urls..."
+          echo ""
+
+          # Run urls command and capture output
+          URLS_OUTPUT=$(./docker-start.sh --urls 2>&1)
+          EXIT_CODE=$?
+
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ URLs command failed with exit code $EXIT_CODE"
+            echo "$URLS_OUTPUT"
+            exit 1
+          fi
+
+          echo "$URLS_OUTPUT"
+          echo ""
+
+          # Verify output contains expected URLs and ports
+          EXPECTED_URLS=("localhost:8080" "localhost:5173" "localhost:2024" "localhost:5432")
+          for url in "${EXPECTED_URLS[@]}"; do
+            if echo "$URLS_OUTPUT" | grep -q "$url"; then
+              echo "✅ URLs shows: $url"
+            else
+              echo "❌ URLs missing: $url"
+              exit 1
+            fi
+          done
+
+          echo ""
+          echo "🎉 URLs test completed successfully!"
+
       - name: Display service logs on failure
         if: failure()
         run: |

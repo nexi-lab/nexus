@@ -8,6 +8,7 @@ This module contains MCP-related CLI commands for:
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 
@@ -18,6 +19,90 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
+    from starlette.responses import Response
+
+
+def _add_health_check_route(mcp_server: Any) -> None:
+    """Add health check route for HTTP transports.
+
+    This adds a GET /health endpoint for Docker health checks.
+
+    Args:
+        mcp_server: FastMCP server instance
+    """
+    try:
+        from starlette.responses import JSONResponse
+
+        @mcp_server.custom_route("/health", methods=["GET"])
+        async def health_check(_request: Any) -> Any:
+            """Health check endpoint for Docker and monitoring."""
+            return JSONResponse({"status": "healthy", "service": "nexus-mcp"})
+
+        console.print("[green]✓ Health check endpoint enabled (/health)[/green]")
+
+    except Exception as e:
+        console.print(f"[yellow]Warning: Failed to add health check route: {e}[/yellow]")
+
+
+def _add_api_key_middleware(mcp_server: Any) -> None:
+    """Add HTTP middleware to extract API keys from headers.
+
+    This middleware extracts the API key from the X-Nexus-API-Key header
+    and sets it in the request context for use by MCP tools.
+
+    Args:
+        mcp_server: FastMCP server instance
+    """
+    try:
+        from starlette.middleware.base import BaseHTTPMiddleware
+
+        from nexus.mcp import _request_api_key, set_request_api_key
+
+        class APIKeyMiddleware(BaseHTTPMiddleware):
+            """Middleware to extract API key from HTTP headers."""
+
+            async def dispatch(self, request: Request, call_next: Any) -> Response:
+                # Extract API key from header (try both formats)
+                api_key = request.headers.get("X-Nexus-API-Key") or request.headers.get(
+                    "x-nexus-api-key"
+                )
+
+                # Also support Authorization header format: "Bearer <api-key>"
+                if not api_key:
+                    auth_header = request.headers.get("Authorization") or request.headers.get(
+                        "authorization"
+                    )
+                    if auth_header and auth_header.startswith("Bearer "):
+                        api_key = auth_header[7:]  # Remove "Bearer " prefix
+
+                # Set API key in context if present
+                token = None
+                if api_key:
+                    token = set_request_api_key(api_key)
+
+                try:
+                    # Process request
+                    response = await call_next(request)
+                    return cast("Response", response)
+                finally:
+                    # Clean up context
+                    if token is not None:
+                        _request_api_key.reset(token)
+
+        # Add middleware to the underlying Starlette app
+        # FastMCP's http_app is a method that returns the Starlette application
+        if hasattr(mcp_server, "http_app"):
+            app = mcp_server.http_app()
+            app.add_middleware(APIKeyMiddleware)
+            console.print("[green]✓ API key middleware enabled (X-Nexus-API-Key header)[/green]")
+        else:
+            console.print("[yellow]Warning: http_app not available, middleware not added[/yellow]")
+
+    except Exception as e:
+        console.print(f"[yellow]Warning: Failed to add API key middleware: {e}[/yellow]")
 
 
 @click.group(name="mcp")
@@ -246,6 +331,12 @@ def serve(
 
         # Create and run MCP server
         mcp_server = create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
+
+        # Add HTTP middleware and routes (for http/sse transports)
+        if transport in ["http", "sse"]:
+            # Add health check route (already added in create_mcp_server, but ensure it's there)
+            _add_health_check_route(mcp_server)
+            _add_api_key_middleware(mcp_server)
 
         # Run with appropriate transport
         if transport == "stdio":

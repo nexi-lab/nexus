@@ -360,6 +360,23 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     # Use OperationContext for ReBAC/permission support
                     from nexus.core.permissions import OperationContext
 
+                    # P0-4: Grant admin capabilities to admin users
+                    admin_capabilities = set()
+                    if result.is_admin:
+                        from nexus.core.permissions_enhanced import AdminCapability
+
+                        # Grant full admin capabilities for admin users
+                        admin_capabilities = {
+                            AdminCapability.READ_ALL,
+                            AdminCapability.WRITE_ALL,
+                            AdminCapability.DELETE_ANY,
+                            AdminCapability.READ_SYSTEM,
+                            AdminCapability.WRITE_SYSTEM,
+                            AdminCapability.DELETE_SYSTEM,
+                            AdminCapability.MANAGE_REBAC,
+                            AdminCapability.MANAGE_TENANTS,
+                        }
+
                     return OperationContext(
                         user=user_id,  # Owner (human user) - LEGACY field
                         agent_id=agent_id,  # v0.5.0: Agent identity (if present)
@@ -368,7 +385,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         tenant_id=result.tenant_id,
                         is_admin=result.is_admin,
                         groups=[],  # TODO: Extract groups from auth result if available
-                        admin_capabilities=set(),  # P0-4: Admin capabilities
+                        admin_capabilities=admin_capabilities,  # P0-4: Admin capabilities
                     )
 
         # Check for explicit subject header (for backward compatibility)

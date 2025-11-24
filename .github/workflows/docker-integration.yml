@@ -576,6 +576,29 @@ jobs:
 
           # Step 1: Wait for MCP server to be healthy
           echo "⏳ Step 1: Waiting for MCP server to be healthy..."
+          echo "Note: Status may show 'unhealthy' during the 20s start_period - this is expected"
+
+          # First, wait for container to exist
+          echo "Waiting for MCP server container to start..."
+          MAX_WAIT_CONTAINER=30
+          ELAPSED_CONTAINER=0
+          while [ $ELAPSED_CONTAINER -lt $MAX_WAIT_CONTAINER ]; do
+            if docker ps -a --format '{{.Names}}' | grep -q "^nexus-mcp-server$"; then
+              echo "✅ MCP server container found"
+              break
+            fi
+            sleep 2
+            ELAPSED_CONTAINER=$((ELAPSED_CONTAINER + 2))
+          done
+
+          if ! docker ps -a --format '{{.Names}}' | grep -q "^nexus-mcp-server$"; then
+            echo "❌ MCP server container not found after ${MAX_WAIT_CONTAINER}s"
+            echo "Available containers:"
+            docker ps -a --format 'table {{.Names}}\t{{.Status}}'
+            exit 1
+          fi
+
+          # Now wait for health check to pass
           MAX_WAIT=60
           ELAPSED=0
           while [ $ELAPSED -lt $MAX_WAIT ]; do
@@ -593,7 +616,14 @@ jobs:
 
           if [ "$MCP_STATUS" != "healthy" ]; then
             echo "❌ MCP server did not become healthy within $MAX_WAIT seconds"
-            docker logs nexus-mcp-server
+            echo "Container status:"
+            docker ps -a --filter "name=nexus-mcp-server" --format 'table {{.Names}}\t{{.Status}}\t{{.Health}}'
+            echo ""
+            echo "MCP server logs:"
+            docker logs nexus-mcp-server 2>&1 | tail -50
+            echo ""
+            echo "Testing health endpoint directly:"
+            docker exec nexus-mcp-server curl -sf http://localhost:8081/health || echo "Health endpoint test failed"
             exit 1
           fi
           echo ""

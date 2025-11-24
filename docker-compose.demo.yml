@@ -189,12 +189,7 @@ services:
         exec nexus mcp serve --transport http --port 8081 --host 0.0.0.0
       '
     healthcheck:
-      test: >
-        curl -sf http://localhost:8081/mcp
-        -H "Content-Type: application/json"
-        -H "Accept: application/json"
-        -d '{"jsonrpc":"2.0","id":0,"method":"tools/list"}'
-        | grep -q "result" || exit 1
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -87,21 +87,28 @@ class TestPermissionEnforcer:
 
     def test_admin_bypass(self):
         """Test that admin users bypass all checks."""
-        enforcer = PermissionEnforcer()
-        ctx = OperationContext(user="admin", groups=[], is_admin=True)
+        enforcer = PermissionEnforcer(allow_admin_bypass=True)
+        ctx = OperationContext(
+            user="admin",
+            groups=[],
+            is_admin=True,
+            admin_capabilities={"admin:read:*", "admin:write:*", "admin:execute:*"},
+        )
 
         assert enforcer.check("/any/path", Permission.READ, ctx) is True
         assert enforcer.check("/any/path", Permission.WRITE, ctx) is True
         assert enforcer.check("/any/path", Permission.EXECUTE, ctx) is True
 
     def test_system_bypass(self):
-        """Test that system operations bypass all checks."""
+        """Test that system operations bypass all checks (scoped to /system/* for write/execute)."""
         enforcer = PermissionEnforcer()
         ctx = OperationContext(user="system", groups=[], is_system=True)
 
+        # Read operations allowed on any path
         assert enforcer.check("/any/path", Permission.READ, ctx) is True
-        assert enforcer.check("/any/path", Permission.WRITE, ctx) is True
-        assert enforcer.check("/any/path", Permission.EXECUTE, ctx) is True
+        # Write/execute operations only allowed on /system/* paths
+        assert enforcer.check("/system/any/path", Permission.WRITE, ctx) is True
+        assert enforcer.check("/system/any/path", Permission.EXECUTE, ctx) is True
 
     def test_no_rebac_manager_denies_all(self):
         """Test that without ReBAC manager, access is denied (secure by default)."""
@@ -187,8 +194,13 @@ class TestPermissionEnforcer:
 
     def test_filter_list_admin_sees_all(self):
         """Test that admins see all files in filter_list."""
-        enforcer = PermissionEnforcer()
-        ctx = OperationContext(user="admin", groups=[], is_admin=True)
+        enforcer = PermissionEnforcer(allow_admin_bypass=True)
+        ctx = OperationContext(
+            user="admin",
+            groups=[],
+            is_admin=True,
+            admin_capabilities={"admin:read:*"},
+        )
 
         paths = ["/file1.txt", "/file2.txt", "/secret.txt"]
         filtered = enforcer.filter_list(paths, ctx)

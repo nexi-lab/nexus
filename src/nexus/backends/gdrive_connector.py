@@ -43,7 +43,7 @@ from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
 
-    from nexus.core.permissions import EnhancedOperationContext, OperationContext
+    from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -211,9 +211,7 @@ class GoogleDriveConnectorBackend(Backend):
         """This backend requires per-user OAuth credentials."""
         return True
 
-    def _get_drive_service(
-        self, context: "OperationContext | EnhancedOperationContext | None" = None
-    ) -> "Resource":
+    def _get_drive_service(self, context: "OperationContext | None" = None) -> "Resource":
         """Get Google Drive service with user's OAuth credentials.
 
         Args:
@@ -281,7 +279,7 @@ class GoogleDriveConnectorBackend(Backend):
     def _get_or_create_root_folder(
         self,
         service: "Resource",
-        context: "OperationContext | EnhancedOperationContext | str | None",
+        context: "OperationContext | str | None",
     ) -> str:
         """Get or create root folder in Drive.
 
@@ -367,7 +365,7 @@ class GoogleDriveConnectorBackend(Backend):
         service: "Resource",
         path: str,
         parent_id: str,
-        context: "OperationContext | EnhancedOperationContext | str | None",
+        context: "OperationContext | str | None",
     ) -> str:
         """Get or create a folder by path.
 
@@ -880,7 +878,7 @@ class GoogleDriveConnectorBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Create directory in Google Drive.
 
@@ -977,7 +975,7 @@ class GoogleDriveConnectorBackend(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """Remove directory from Google Drive.
 

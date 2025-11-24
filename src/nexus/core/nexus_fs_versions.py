@@ -19,7 +19,6 @@ from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-    from nexus.core.permissions_enhanced import EnhancedOperationContext
     from nexus.core.router import PathRouter
     from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
@@ -54,7 +53,7 @@ class NexusFSVersionsMixin:
         self,
         path: str,
         version: int,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> bytes:
         """Get a specific version of a file.
 
@@ -115,7 +114,7 @@ class NexusFSVersionsMixin:
     def list_versions(
         self,
         path: str,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """List all versions of a file.
 
@@ -225,7 +224,7 @@ class NexusFSVersionsMixin:
         v1: int,
         v2: int,
         mode: str = "metadata",
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any] | str:
         """Compare two versions of a file.
 

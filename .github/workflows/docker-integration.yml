@@ -15,11 +15,19 @@ on:
   pull_request:
     branches: [main]
     paths:
+      # Docker-related files
       - 'Dockerfile'
       - 'docker-compose*.yml'
       - 'docker-start.sh'
       - 'docker-entrypoint.sh'
       - '.github/workflows/docker-integration.yml'
+      # Core source files that affect Docker integration
+      - 'src/nexus/core/**'
+      - 'src/nexus/server/**'
+      - 'src/nexus/storage/**'
+      - 'src/nexus/backends/**'
+      - 'configs/*.yaml'
+      - 'configs/*.yml'
 
 jobs:
   docker-build-and-init:
@@ -672,6 +680,20 @@ jobs:
             exit 1
           fi
           echo "✅ Mount synced: $SYNC_MOUNT_RESPONSE"
+          echo ""
+
+          # Step 3.5: Grant admin ownership of mount point for ReBAC permissions
+          echo "🔑 Step 3.5: Granting admin ownership of $MOUNT_POINT..."
+          GRANT_OWNERSHIP_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/rebac_create \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"$MOUNT_POINT\"],\"tenant_id\":\"default\"},\"id\":3.5}" || echo "FAILED")
+
+          if [ "$GRANT_OWNERSHIP_RESPONSE" = "FAILED" ]; then
+            echo "⚠️  Failed to grant ownership (may already exist, continuing...)"
+          else
+            echo "✅ Ownership granted: $GRANT_OWNERSHIP_RESPONSE"
+          fi
           echo ""
 
           # Step 4: Read CSV file and verify headers

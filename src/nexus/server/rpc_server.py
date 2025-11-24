@@ -357,10 +357,35 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         subject_type = result.subject_type
                         subject_id = result.subject_id
 
-                    # Use EnhancedOperationContext for ReBAC/permission support
-                    from nexus.core.permissions_enhanced import EnhancedOperationContext
+                    # Use OperationContext for ReBAC/permission support
+                    from nexus.core.permissions import OperationContext
 
-                    return EnhancedOperationContext(
+                    # P0-4: Grant tenant-scoped admin capabilities to admin users
+                    admin_capabilities = set()
+                    if result.is_admin:
+                        from nexus.core.permissions_enhanced import AdminCapability
+
+                        # Grant tenant-scoped admin capabilities for full tenant access
+                        # ReBAC enforces tenant isolation, so these capabilities are automatically
+                        # scoped to the admin's tenant (tenant_id from context)
+                        #
+                        # Tenant admins can:
+                        # - Read/write/delete any file in their tenant (READ_ALL, WRITE_ALL, DELETE_ANY)
+                        # - Manage ReBAC permissions within their tenant (MANAGE_REBAC)
+                        #
+                        # Tenant admins cannot:
+                        # - Access system paths (/system/*) - these are system-wide infrastructure
+                        # - Manage other tenants (MANAGE_TENANTS) - system admin only
+                        admin_capabilities = {
+                            AdminCapability.READ_ALL,  # Read any file in tenant (tenant-scoped via ReBAC)
+                            AdminCapability.WRITE_ALL,  # Write any file in tenant (tenant-scoped via ReBAC)
+                            AdminCapability.DELETE_ANY,  # Delete any file in tenant (tenant-scoped via ReBAC)
+                            AdminCapability.MANAGE_REBAC,  # Manage ReBAC permissions in tenant
+                            # Excluded: READ_SYSTEM, WRITE_SYSTEM, DELETE_SYSTEM (system paths are system-wide)
+                            # Excluded: MANAGE_TENANTS (managing other tenants is system admin only)
+                        }
+
+                    return OperationContext(
                         user=user_id,  # Owner (human user) - LEGACY field
                         agent_id=agent_id,  # v0.5.0: Agent identity (if present)
                         subject_type=subject_type,  # Subject for permission checks
@@ -368,7 +393,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         tenant_id=result.tenant_id,
                         is_admin=result.is_admin,
                         groups=[],  # TODO: Extract groups from auth result if available
-                        admin_capabilities=set(),  # P0-4: Admin capabilities
+                        admin_capabilities=admin_capabilities,  # P0-4: Admin capabilities
                     )
 
         # Check for explicit subject header (for backward compatibility)
@@ -376,10 +401,10 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         if subject_header:
             parts = subject_header.split(":", 1)
             if len(parts) == 2:
-                # Use EnhancedOperationContext for ReBAC/permission support
-                from nexus.core.permissions_enhanced import EnhancedOperationContext
+                # Use OperationContext for ReBAC/permission support
+                from nexus.core.permissions import OperationContext
 
-                return EnhancedOperationContext(
+                return OperationContext(
                     user=parts[1],  # Required
                     subject_type=parts[0],
                     subject_id=parts[1],

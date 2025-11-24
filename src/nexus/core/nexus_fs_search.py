@@ -29,12 +29,12 @@ class NexusFSSearchMixin:
 
     # Type hints for attributes that will be provided by NexusFS parent class
     if TYPE_CHECKING:
-        from nexus.core.permissions_enhanced import EnhancedPermissionEnforcer
+        from nexus.core.permissions import PermissionEnforcer
 
         metadata: SQLAlchemyMetadataStore
         _enforce_permissions: bool
         _default_context: OperationContext
-        _permission_enforcer: EnhancedPermissionEnforcer
+        _permission_enforcer: PermissionEnforcer
         _semantic_search: SemanticSearch | None
 
         def _validate_path(self, path: str) -> str: ...
@@ -153,13 +153,11 @@ class NexusFSSearchMixin:
             logger = logging.getLogger(__name__)
 
             perm_start = time.time()
-            from nexus.core.permissions_enhanced import EnhancedOperationContext
+            from nexus.core.permissions import OperationContext
 
             ctx_raw = context or self._default_context
-            assert isinstance(ctx_raw, EnhancedOperationContext), (
-                "Context must be EnhancedOperationContext"
-            )
-            ctx: EnhancedOperationContext = ctx_raw
+            assert isinstance(ctx_raw, OperationContext), "Context must be OperationContext"
+            ctx: OperationContext = ctx_raw
             result_paths = [meta.path for meta in results]
 
             logger.warning(
@@ -206,13 +204,13 @@ class NexusFSSearchMixin:
             # to only include files in the current directory (non-recursive), but we need to see
             # files in subdirectories to infer those subdirectories exist
             if self._enforce_permissions:
-                from nexus.core.permissions_enhanced import EnhancedOperationContext
+                from nexus.core.permissions import OperationContext
 
                 ctx_raw_glob = context or self._default_context
-                assert isinstance(ctx_raw_glob, EnhancedOperationContext), (
-                    "Context must be EnhancedOperationContext"
+                assert isinstance(ctx_raw_glob, OperationContext), (
+                    "Context must be OperationContext"
                 )
-                ctx_glob: EnhancedOperationContext = ctx_raw_glob
+                ctx_glob: OperationContext = ctx_raw_glob
 
                 # Check if we already have filtered results we can reuse
                 # If base_path matches our query path, we can use the already-filtered results
@@ -290,7 +288,7 @@ class NexusFSSearchMixin:
                     # Fallback to individual checks (for single directory or if method not available)
                     for dir_path in backend_dirs:
                         # Check if user has access to this directory or any of its descendants
-                        if self._has_descendant_access(dir_path, Permission.READ, ctx):
+                        if self._has_descendant_access(dir_path, Permission.READ, ctx):  # type: ignore[attr-defined]
                             directories.add(dir_path)
 
         if details:

@@ -362,7 +362,7 @@ class PermissionEnforcer:
         # Get backend-specific object type for ReBAC check
         # This allows different backends (Postgres, Redis, etc.) to have different permission models
         object_type = "file"  # Default
-        object_id = path  # Default
+        object_id = path  # Default - use virtual path for permission checks
 
         if self.router:
             try:
@@ -375,18 +375,26 @@ class PermissionEnforcer:
                 )
                 # Ask backend for its object type
                 object_type = route.backend.get_object_type(route.backend_path)
-                object_id = route.backend.get_object_id(route.backend_path)
 
-                # FIX: Normalize file paths to always have leading slash for ReBAC consistency
-                # Router strips leading slash by design (backend_path is relative)
-                # But ReBAC tuples are created with leading slash ("/workspace/alice")
-                if object_type == "file" and object_id and not object_id.startswith("/"):
-                    object_id = "/" + object_id
+                # CRITICAL FIX: For file objects, use the VIRTUAL path for permission checks,
+                # not the backend-relative path. ReBAC tuples are created with virtual paths
+                # (e.g., /mnt/gcs/file.csv), but backend.get_object_id() returns backend-relative
+                # paths (e.g., file.csv) which breaks permission inheritance for mounted backends.
+                # Non-file backends (DB tables, Redis keys, etc.) can still override object_id.
+                if object_type == "file":
+                    # Use virtual path for file permission checks (mount-aware)
+                    object_id = path
                     logger.info(
-                        f"[PermissionEnforcer] Normalized path: '{route.backend_path}' → '{object_id}'"
+                        f"[PermissionEnforcer] Using virtual path for file permission check: '{path}'"
+                    )
+                else:
+                    # For non-file backends, use backend-provided object_id
+                    object_id = route.backend.get_object_id(route.backend_path)
+                    logger.info(
+                        f"[PermissionEnforcer] Using backend object_id for {object_type}: '{object_id}'"
                     )
             except Exception as e:
-                # If routing fails, fall back to default "file" type
+                # If routing fails, fall back to default "file" type with virtual path
                 logger.warning(
                     f"[_check_rebac] Failed to route path for object type: {e}, using default 'file'"
                 )

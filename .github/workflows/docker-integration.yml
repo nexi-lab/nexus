@@ -559,6 +559,559 @@ jobs:
 
           echo "🎉 Mount integration test completed successfully!"
 
+      - name: MCP Server Integration Test
+        run: |
+          echo "🔧 Running MCP Server integration test..."
+
+          # Use known dummy API key (set in .env)
+          API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          echo "Using API key: ${API_KEY:0:20}..."
+          echo ""
+
+          # Generate timestamp for unique test directory
+          TIMESTAMP=$(date +%s)
+          MCP_TEST_DIR="/mcp_test_${TIMESTAMP}"
+          echo "MCP test directory: $MCP_TEST_DIR"
+          echo ""
+
+          # Step 1: Wait for MCP server to be healthy
+          echo "⏳ Step 1: Waiting for MCP server to be healthy..."
+          echo "Note: Status may show 'unhealthy' during the 20s start_period - this is expected"
+
+          # First, wait for container to exist
+          echo "Waiting for MCP server container to start..."
+          MAX_WAIT_CONTAINER=30
+          ELAPSED_CONTAINER=0
+          while [ $ELAPSED_CONTAINER -lt $MAX_WAIT_CONTAINER ]; do
+            if docker ps -a --format '{{.Names}}' | grep -q "^nexus-mcp-server$"; then
+              echo "✅ MCP server container found"
+              break
+            fi
+            sleep 2
+            ELAPSED_CONTAINER=$((ELAPSED_CONTAINER + 2))
+          done
+
+          if ! docker ps -a --format '{{.Names}}' | grep -q "^nexus-mcp-server$"; then
+            echo "❌ MCP server container not found after ${MAX_WAIT_CONTAINER}s"
+            echo "Available containers:"
+            docker ps -a --format 'table {{.Names}}\t{{.Status}}'
+            exit 1
+          fi
+
+          # Now wait for health check to pass
+          MAX_WAIT=60
+          ELAPSED=0
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            MCP_STATUS=$(docker inspect nexus-mcp-server --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
+            echo "[$ELAPSED s] MCP server health: $MCP_STATUS"
+
+            if [ "$MCP_STATUS" = "healthy" ]; then
+              echo "✅ MCP server is healthy!"
+              break
+            fi
+
+            sleep 5
+            ELAPSED=$((ELAPSED + 5))
+          done
+
+          if [ "$MCP_STATUS" != "healthy" ]; then
+            echo "❌ MCP server did not become healthy within $MAX_WAIT seconds"
+            echo "Container status:"
+            docker ps -a --filter "name=nexus-mcp-server" --format 'table {{.Names}}\t{{.Status}}\t{{.Health}}'
+            echo ""
+            echo "MCP server logs:"
+            docker logs nexus-mcp-server 2>&1 | tail -50
+            echo ""
+            echo "Testing health endpoint directly:"
+            docker exec nexus-mcp-server curl -sf http://localhost:8081/health || echo "Health endpoint test failed"
+            exit 1
+          fi
+          echo ""
+
+          # Step 2: Initialize MCP session
+          echo "🔐 Step 2: Initializing MCP session..."
+          INIT_RESPONSE=$(curl -sf -D /tmp/mcp_init_headers.txt http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 0,
+              \"method\": \"initialize\",
+              \"params\": {
+                \"protocolVersion\": \"2024-11-05\",
+                \"capabilities\": {},
+                \"clientInfo\": {
+                  \"name\": \"integration-test\",
+                  \"version\": \"1.0.0\"
+                }
+              }
+            }" || echo "FAILED")
+
+          if [ "$INIT_RESPONSE" = "FAILED" ]; then
+            echo "❌ MCP session initialization failed"
+            exit 1
+          fi
+
+          # Extract session ID from response headers
+          MCP_SESSION_ID=$(grep -i "mcp-session-id" /tmp/mcp_init_headers.txt | cut -d' ' -f2 | tr -d '\r\n' || echo "")
+          if [ -z "$MCP_SESSION_ID" ]; then
+            echo "❌ Failed to extract MCP session ID"
+            echo "Response headers:"
+            cat /tmp/mcp_init_headers.txt
+            exit 1
+          fi
+          echo "✅ MCP session initialized (session ID: ${MCP_SESSION_ID:0:8}...)"
+          echo ""
+
+          # Helper function to parse SSE response (extract JSON from data: line)
+          parse_sse_response() {
+            echo "$1" | grep "^data:" | head -1 | sed 's/^data: //' || echo "$1"
+          }
+
+          # Step 3: Test MCP tool: nexus_mkdir
+          echo "📁 Step 3: Testing nexus_mkdir tool..."
+          MKDIR_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 1,
+              \"method\": \"tools/call\",
+              \"params\": {
+                \"name\": \"nexus_mkdir\",
+                \"arguments\": {
+                  \"path\": \"$MCP_TEST_DIR\"
+                }
+              }
+            }" || echo "FAILED")
+
+          MKDIR_TOOL_RESPONSE=$(parse_sse_response "$MKDIR_TOOL_RESPONSE_RAW")
+
+          if [ "$MKDIR_TOOL_RESPONSE" = "FAILED" ]; then
+            echo "❌ nexus_mkdir tool call failed"
+            exit 1
+          fi
+
+          if echo "$MKDIR_TOOL_RESPONSE" | grep -q "Successfully created"; then
+            echo "✅ Directory created: $MCP_TEST_DIR"
+          else
+            echo "❌ mkdir didn't confirm directory creation"
+            echo "Response: $MKDIR_TOOL_RESPONSE"
+            exit 1
+          fi
+          echo ""
+
+          # Step 4: Test MCP tool: nexus_write_file (3 files)
+          echo "📝 Step 4: Testing nexus_write_file tool..."
+
+          WRITE_TOOL_RESPONSE1_RAW=$(curl -sf http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 2,
+              \"method\": \"tools/call\",
+              \"params\": {
+                \"name\": \"nexus_write_file\",
+                \"arguments\": {
+                  \"path\": \"$MCP_TEST_DIR/test1.txt\",
+                  \"content\": \"Hello from MCP Test!\"
+                }
+              }
+            }" || echo "FAILED")
+
+          WRITE_TOOL_RESPONSE1=$(parse_sse_response "$WRITE_TOOL_RESPONSE1_RAW")
+
+          if [ "$WRITE_TOOL_RESPONSE1" = "FAILED" ]; then
+            echo "❌ nexus_write_file tool call failed (test1.txt)"
+            exit 1
+          fi
+          echo "✅ File written: test1.txt"
+
+          WRITE_TOOL_RESPONSE2_RAW=$(curl -sf http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 3,
+              \"method\": \"tools/call\",
+              \"params\": {
+                \"name\": \"nexus_write_file\",
+                \"arguments\": {
+                  \"path\": \"$MCP_TEST_DIR/test2.py\",
+                  \"content\": \"print('Python file test')\"
+                }
+              }
+            }" || echo "FAILED")
+
+          WRITE_TOOL_RESPONSE2=$(parse_sse_response "$WRITE_TOOL_RESPONSE2_RAW")
+
+          if [ "$WRITE_TOOL_RESPONSE2" = "FAILED" ]; then
+            echo "❌ nexus_write_file tool call failed (test2.py)"
+            exit 1
+          fi
+          echo "✅ File written: test2.py"
+
+          WRITE_TOOL_RESPONSE3_RAW=$(curl -sf http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 4,
+              \"method\": \"tools/call\",
+              \"params\": {
+                \"name\": \"nexus_write_file\",
+                \"arguments\": {
+                  \"path\": \"$MCP_TEST_DIR/data.json\",
+                  \"content\": \"{\\\"test\\\": \\\"data\\\"}\"
+                }
+              }
+            }" || echo "FAILED")
+
+          WRITE_TOOL_RESPONSE3=$(parse_sse_response "$WRITE_TOOL_RESPONSE3_RAW")
+
+          if [ "$WRITE_TOOL_RESPONSE3" = "FAILED" ]; then
+            echo "❌ nexus_write_file tool call failed (data.json)"
+            exit 1
+          fi
+          echo "✅ File written: data.json"
+          echo ""
+
+          # Step 5: Test MCP tool: nexus_read_file
+          echo "📖 Step 5: Testing nexus_read_file tool..."
+          READ_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 5,
+              \"method\": \"tools/call\",
+              \"params\": {
+                \"name\": \"nexus_read_file\",
+                \"arguments\": {
+                  \"path\": \"$MCP_TEST_DIR/test1.txt\"
+                }
+              }
+            }" || echo "FAILED")
+
+          READ_TOOL_RESPONSE=$(parse_sse_response "$READ_TOOL_RESPONSE_RAW")
+
+          if [ "$READ_TOOL_RESPONSE" = "FAILED" ]; then
+            echo "❌ nexus_read_file tool call failed"
+            exit 1
+          fi
+
+          # Verify content matches what we wrote
+          if echo "$READ_TOOL_RESPONSE" | grep -q "Hello from MCP Test"; then
+            echo "✅ Read tool verified: content matches"
+          else
+            echo "❌ Read tool content doesn't match expected"
+            echo "Response: $READ_TOOL_RESPONSE"
+            exit 1
+          fi
+          echo ""
+
+          # Step 6: Test MCP tool: nexus_list_files
+          echo "📋 Step 6: Testing nexus_list_files tool..."
+          LIST_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 6,
+              \"method\": \"tools/call\",
+              \"params\": {
+                \"name\": \"nexus_list_files\",
+                \"arguments\": {
+                  \"path\": \"$MCP_TEST_DIR\",
+                  \"recursive\": false,
+                  \"details\": true
+                }
+              }
+            }" || echo "FAILED")
+
+          LIST_TOOL_RESPONSE=$(parse_sse_response "$LIST_TOOL_RESPONSE_RAW")
+
+          if [ "$LIST_TOOL_RESPONSE" = "FAILED" ]; then
+            echo "❌ nexus_list_files tool call failed"
+            exit 1
+          fi
+
+          # Verify test1.txt and test2.py are in the list
+          if echo "$LIST_TOOL_RESPONSE" | grep -q "test1.txt"; then
+            echo "✅ List tool verified: test1.txt found"
+          else
+            echo "❌ List tool doesn't show test1.txt"
+            echo "Response: $LIST_TOOL_RESPONSE"
+            exit 1
+          fi
+
+          if echo "$LIST_TOOL_RESPONSE" | grep -q "test2.py"; then
+            echo "✅ List tool verified: test2.py found"
+          else
+            echo "❌ List tool doesn't show test2.py"
+            echo "Response: $LIST_TOOL_RESPONSE"
+            exit 1
+          fi
+          echo ""
+
+          # Step 7: Test MCP tool: nexus_file_info
+          echo "ℹ️  Step 7: Testing nexus_file_info tool..."
+          INFO_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 7,
+              \"method\": \"tools/call\",
+              \"params\": {
+                \"name\": \"nexus_file_info\",
+                \"arguments\": {
+                  \"path\": \"$MCP_TEST_DIR/test1.txt\"
+                }
+              }
+            }" || echo "FAILED")
+
+          INFO_TOOL_RESPONSE=$(parse_sse_response "$INFO_TOOL_RESPONSE_RAW")
+
+          if [ "$INFO_TOOL_RESPONSE" = "FAILED" ]; then
+            echo "❌ nexus_file_info tool call failed"
+            exit 1
+          fi
+
+          # Verify file exists info is returned (using flexible pattern)
+          if echo "$INFO_TOOL_RESPONSE" | grep -q 'exists.*true'; then
+            echo "✅ File info tool verified: metadata returned"
+          else
+            echo "❌ File info tool doesn't return expected metadata"
+            echo "Response: $INFO_TOOL_RESPONSE"
+            exit 1
+          fi
+          echo ""
+
+          # Step 8: Test MCP tool: nexus_glob
+          echo "🔍 Step 8: Testing nexus_glob tool..."
+          GLOB_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 8,
+              \"method\": \"tools/call\",
+              \"params\": {
+                \"name\": \"nexus_glob\",
+                \"arguments\": {
+                  \"pattern\": \"*.txt\",
+                  \"path\": \"$MCP_TEST_DIR\"
+                }
+              }
+            }" || echo "FAILED")
+
+          GLOB_TOOL_RESPONSE=$(parse_sse_response "$GLOB_TOOL_RESPONSE_RAW")
+
+          if [ "$GLOB_TOOL_RESPONSE" = "FAILED" ]; then
+            echo "❌ nexus_glob tool call failed"
+            exit 1
+          fi
+
+          # Verify test1.txt matches the pattern
+          if echo "$GLOB_TOOL_RESPONSE" | grep -q "test1.txt"; then
+            echo "✅ Glob tool verified: *.txt pattern found test1.txt"
+          else
+            echo "❌ Glob tool doesn't find test1.txt"
+            echo "Response: $GLOB_TOOL_RESPONSE"
+            exit 1
+          fi
+          echo ""
+
+          # Step 9: Test MCP tool: nexus_grep
+          echo "🔎 Step 9: Testing nexus_grep tool..."
+          GREP_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 9,
+              \"method\": \"tools/call\",
+              \"params\": {
+                \"name\": \"nexus_grep\",
+                \"arguments\": {
+                  \"pattern\": \"Hello\",
+                  \"path\": \"$MCP_TEST_DIR\",
+                  \"ignore_case\": false
+                }
+              }
+            }" || echo "FAILED")
+
+          GREP_TOOL_RESPONSE=$(parse_sse_response "$GREP_TOOL_RESPONSE_RAW")
+
+          if [ "$GREP_TOOL_RESPONSE" = "FAILED" ]; then
+            echo "❌ nexus_grep tool call failed"
+            exit 1
+          fi
+
+          # Verify grep found 'Hello'
+          if echo "$GREP_TOOL_RESPONSE" | grep -q "Hello"; then
+            echo "✅ Grep tool verified: found 'Hello' pattern"
+          else
+            echo "❌ Grep tool doesn't find 'Hello'"
+            echo "Response: $GREP_TOOL_RESPONSE"
+            exit 1
+          fi
+          echo ""
+
+          # Step 10: Test MCP tool: nexus_delete_file
+          echo "🗑️  Step 10: Testing nexus_delete_file tool..."
+          DELETE_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 10,
+              \"method\": \"tools/call\",
+              \"params\": {
+                \"name\": \"nexus_delete_file\",
+                \"arguments\": {
+                  \"path\": \"$MCP_TEST_DIR/data.json\"
+                }
+              }
+            }" || echo "FAILED")
+
+          DELETE_TOOL_RESPONSE=$(parse_sse_response "$DELETE_TOOL_RESPONSE_RAW")
+
+          if [ "$DELETE_TOOL_RESPONSE" = "FAILED" ]; then
+            echo "❌ nexus_delete_file tool call failed"
+            exit 1
+          fi
+
+          if echo "$DELETE_TOOL_RESPONSE" | grep -q "Successfully deleted"; then
+            echo "✅ File deleted: data.json"
+          else
+            echo "❌ Delete tool didn't confirm deletion"
+            echo "Response: $DELETE_TOOL_RESPONSE"
+            exit 1
+          fi
+          echo ""
+
+          # Step 11: Test MCP tool: nexus_rmdir
+          echo "🗂️  Step 11: Testing nexus_rmdir tool..."
+          RMDIR_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 11,
+              \"method\": \"tools/call\",
+              \"params\": {
+                \"name\": \"nexus_rmdir\",
+                \"arguments\": {
+                  \"path\": \"$MCP_TEST_DIR\",
+                  \"recursive\": true
+                }
+              }
+            }" || echo "FAILED")
+
+          RMDIR_TOOL_RESPONSE=$(parse_sse_response "$RMDIR_TOOL_RESPONSE_RAW")
+
+          if [ "$RMDIR_TOOL_RESPONSE" = "FAILED" ]; then
+            echo "❌ nexus_rmdir tool call failed"
+            exit 1
+          fi
+
+          if echo "$RMDIR_TOOL_RESPONSE" | grep -q "Successfully removed"; then
+            echo "✅ Directory removed: $MCP_TEST_DIR"
+          else
+            echo "❌ rmdir tool didn't confirm removal"
+            echo "Response: $RMDIR_TOOL_RESPONSE"
+            exit 1
+          fi
+          echo ""
+
+          # Step 12: List available MCP tools
+          echo "🧰 Step 12: Listing available MCP tools..."
+          TOOLS_LIST_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
+            -d '{
+              "jsonrpc": "2.0",
+              "id": 12,
+              "method": "tools/list"
+            }' || echo "FAILED")
+
+          TOOLS_LIST_RESPONSE=$(parse_sse_response "$TOOLS_LIST_RESPONSE_RAW")
+
+          if [ "$TOOLS_LIST_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to list MCP tools"
+            exit 1
+          fi
+
+          # Count how many tools are available
+          TOOL_COUNT=$(echo "$TOOLS_LIST_RESPONSE" | grep -o '"name"' | wc -l || echo "0")
+          echo "✅ MCP server has $TOOL_COUNT tools available"
+
+          # Verify core tools are present (8 core file operations tested)
+          CORE_TOOLS=("nexus_mkdir" "nexus_write_file" "nexus_read_file" "nexus_list_files" "nexus_file_info" "nexus_glob" "nexus_grep" "nexus_delete_file" "nexus_rmdir")
+          MISSING_TOOLS=""
+
+          for tool in "${CORE_TOOLS[@]}"; do
+            if echo "$TOOLS_LIST_RESPONSE" | grep -q "\"$tool\""; then
+              echo "  ✅ $tool"
+            else
+              echo "  ❌ $tool (missing)"
+              MISSING_TOOLS="$MISSING_TOOLS $tool"
+            fi
+          done
+
+          if [ -n "$MISSING_TOOLS" ]; then
+            echo "❌ Some core tools are missing:$MISSING_TOOLS"
+            exit 1
+          fi
+
+          # Check for optional tools (don't fail if missing)
+          echo ""
+          echo "Checking optional tools:"
+          OPTIONAL_TOOLS=("nexus_semantic_search" "nexus_store_memory" "nexus_query_memory" "nexus_list_workflows" "nexus_execute_workflow")
+          for tool in "${OPTIONAL_TOOLS[@]}"; do
+            if echo "$TOOLS_LIST_RESPONSE" | grep -q "\"$tool\""; then
+              echo "  ✅ $tool (available)"
+            else
+              echo "  ℹ️  $tool (not available - requires additional configuration)"
+            fi
+          done
+          echo ""
+
+          echo "🎉 MCP Server integration test completed successfully!"
+          echo ""
+          echo "Summary:"
+          echo "  ✅ Tested 9 core file operation tools"
+          echo "  ✅ Tested 2 search tools (glob, grep)"
+          echo "  ℹ️  Optional tools: semantic search, memory, workflows (require additional setup)"
+
       - name: Display service logs on failure
         if: failure()
         run: |

@@ -1,6 +1,9 @@
 version: '3.8'
 
 services:
+  # ============================================================================
+  # Nexus RPC Server (Backend for MCP server or direct API access)
+  # ============================================================================
   nexus-server:
     build:
       context: .
@@ -48,6 +51,57 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    profiles:
+      - server  # Only run when explicitly requested
+
+  # ============================================================================
+  # MCP Server - HTTP Mode (Model Context Protocol for AI agents)
+  # ============================================================================
+  # Exposes Nexus functionality via MCP protocol for remote AI agent access
+  # Connects to nexus-server as backend
+  mcp-server:
+    image: nexus-server:latest  # Reuse same image
+    container_name: nexus-mcp-server
+    restart: unless-stopped
+    ports:
+      - "${MCP_PORT:-8081}:8081"
+    environment:
+      # MCP Transport Configuration
+      - MCP_TRANSPORT=${MCP_TRANSPORT:-http}
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8081
+
+      # Backend Connection (connect to nexus-server)
+      - NEXUS_URL=${NEXUS_URL:-http://nexus-server:8080}
+      - NEXUS_API_KEY=${NEXUS_API_KEY:-}
+
+      # Alternative: Local mode (comment out NEXUS_URL, uncomment below)
+      # - NEXUS_BACKEND=${NEXUS_BACKEND:-local}
+      # - NEXUS_DATA_DIR=/app/data
+    volumes:
+      # Only needed for local mode
+      # - mcp-data:/app/data
+      - ./logs:/app/logs:rw
+    entrypoint: []  # Override entrypoint to skip database initialization
+    command: ["nexus", "mcp", "serve", "--transport", "http", "--host", "0.0.0.0", "--port", "8081"]
+    depends_on:
+      nexus-server:
+        condition: service_healthy
+    networks:
+      - nexus-network
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    profiles:
+      - mcp  # Only run when explicitly requested
 
 volumes:
   nexus-data:

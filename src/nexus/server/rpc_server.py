@@ -360,21 +360,24 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     # Use OperationContext for ReBAC/permission support
                     from nexus.core.permissions import OperationContext
 
-                    # P0-4: Grant admin capabilities to admin users
+                    # P0-4: Grant tenant-scoped admin capabilities to admin users
                     admin_capabilities = set()
                     if result.is_admin:
                         from nexus.core.permissions_enhanced import AdminCapability
 
-                        # Grant full admin capabilities for admin users
+                        # Grant tenant-scoped admin capabilities (not system-wide)
+                        # Tenant admins can manage files in their tenant, but not:
+                        # - Manage other tenants (MANAGE_TENANTS)
+                        # - Write/delete system paths (WRITE_SYSTEM, DELETE_SYSTEM)
+                        # System admins would need additional capabilities granted separately
                         admin_capabilities = {
-                            AdminCapability.READ_ALL,
-                            AdminCapability.WRITE_ALL,
-                            AdminCapability.DELETE_ANY,
-                            AdminCapability.READ_SYSTEM,
-                            AdminCapability.WRITE_SYSTEM,
-                            AdminCapability.DELETE_SYSTEM,
-                            AdminCapability.MANAGE_REBAC,
-                            AdminCapability.MANAGE_TENANTS,
+                            AdminCapability.READ_ALL,  # Read any file in tenant
+                            AdminCapability.WRITE_ALL,  # Write any file in tenant
+                            AdminCapability.DELETE_ANY,  # Delete any file in tenant
+                            AdminCapability.READ_SYSTEM,  # Read system paths (for monitoring)
+                            AdminCapability.MANAGE_REBAC,  # Manage ReBAC permissions in tenant
+                            # Excluded: WRITE_SYSTEM, DELETE_SYSTEM (system admin only)
+                            # Excluded: MANAGE_TENANTS (system admin only)
                         }
 
                     return OperationContext(

@@ -310,7 +310,16 @@ class PermissionEnforcer:
             from nexus.core.permissions_enhanced import AdminCapability
 
             required_capability = AdminCapability.get_required_capability(path, permission_str)
-            if required_capability not in context.admin_capabilities:
+            wildcard_capability = f"admin:{permission_str}:*"
+
+            # Check if user has EITHER the path-specific capability OR the wildcard capability
+            # Wildcard capability (admin:read:*) grants access to ALL paths
+            has_capability = (
+                required_capability in context.admin_capabilities
+                or wildcard_capability in context.admin_capabilities
+            )
+
+            if not has_capability:
                 self._log_bypass_denied(
                     context,
                     path,
@@ -509,7 +518,8 @@ class PermissionEnforcer:
             return True
 
         # For other operations, only allow /system paths
-        if not path.startswith("/system"):
+        # Use strict matching: /system/ or exactly /system (not /systemdata, etc.)
+        if not (path.startswith("/system/") or path == "/system"):
             return False
 
         # Allow common operations on /system paths

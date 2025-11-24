@@ -365,19 +365,24 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     if result.is_admin:
                         from nexus.core.permissions_enhanced import AdminCapability
 
-                        # Grant tenant-scoped admin capabilities (not system-wide)
-                        # Tenant admins can manage files in their tenant, but not:
-                        # - Manage other tenants (MANAGE_TENANTS)
-                        # - Write/delete system paths (WRITE_SYSTEM, DELETE_SYSTEM)
-                        # System admins would need additional capabilities granted separately
+                        # Grant tenant-scoped admin capabilities for full tenant access
+                        # ReBAC enforces tenant isolation, so these capabilities are automatically
+                        # scoped to the admin's tenant (tenant_id from context)
+                        #
+                        # Tenant admins can:
+                        # - Read/write/delete any file in their tenant (READ_ALL, WRITE_ALL, DELETE_ANY)
+                        # - Manage ReBAC permissions within their tenant (MANAGE_REBAC)
+                        #
+                        # Tenant admins cannot:
+                        # - Access system paths (/system/*) - these are system-wide infrastructure
+                        # - Manage other tenants (MANAGE_TENANTS) - system admin only
                         admin_capabilities = {
-                            AdminCapability.READ_ALL,  # Read any file in tenant
-                            AdminCapability.WRITE_ALL,  # Write any file in tenant
-                            AdminCapability.DELETE_ANY,  # Delete any file in tenant
-                            AdminCapability.READ_SYSTEM,  # Read system paths (for monitoring)
+                            AdminCapability.READ_ALL,  # Read any file in tenant (tenant-scoped via ReBAC)
+                            AdminCapability.WRITE_ALL,  # Write any file in tenant (tenant-scoped via ReBAC)
+                            AdminCapability.DELETE_ANY,  # Delete any file in tenant (tenant-scoped via ReBAC)
                             AdminCapability.MANAGE_REBAC,  # Manage ReBAC permissions in tenant
-                            # Excluded: WRITE_SYSTEM, DELETE_SYSTEM (system admin only)
-                            # Excluded: MANAGE_TENANTS (system admin only)
+                            # Excluded: READ_SYSTEM, WRITE_SYSTEM, DELETE_SYSTEM (system paths are system-wide)
+                            # Excluded: MANAGE_TENANTS (managing other tenants is system admin only)
                         }
 
                     return OperationContext(

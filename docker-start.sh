@@ -271,6 +271,15 @@ cmd_start() {
     docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
     echo ""
 
+    echo "🧹 Stopping and removing all existing Nexus containers..."
+    # Stop and remove all containers with 'nexus' in the name (including manually started ones)
+    docker ps -a --filter "name=nexus" -q | xargs -r docker stop 2>/dev/null || true
+    docker ps -a --filter "name=nexus" -q | xargs -r docker rm 2>/dev/null || true
+
+    # Also use docker-compose down to clean up networks and volumes
+    docker compose -f "$COMPOSE_FILE" down
+    echo ""
+
     echo "🚀 Starting Nexus services..."
     echo ""
     show_services
@@ -296,6 +305,15 @@ cmd_build() {
 
     echo "🧹 Cleaning up old sandbox containers..."
     docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
+    echo ""
+
+    echo "🧹 Stopping and removing all existing Nexus containers..."
+    # Stop and remove all containers with 'nexus' in the name (including manually started ones)
+    docker ps -a --filter "name=nexus" -q | xargs -r docker stop 2>/dev/null || true
+    docker ps -a --filter "name=nexus" -q | xargs -r docker rm 2>/dev/null || true
+
+    # Also use docker-compose down to clean up networks and volumes
+    docker compose -f "$COMPOSE_FILE" down
     echo ""
 
     echo "🔨 Building Docker images..."

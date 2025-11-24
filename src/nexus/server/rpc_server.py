@@ -357,10 +357,10 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         subject_type = result.subject_type
                         subject_id = result.subject_id
 
-                    # Use EnhancedOperationContext for ReBAC/permission support
-                    from nexus.core.permissions_enhanced import EnhancedOperationContext
+                    # Use OperationContext for ReBAC/permission support
+                    from nexus.core.permissions import OperationContext
 
-                    return EnhancedOperationContext(
+                    return OperationContext(
                         user=user_id,  # Owner (human user) - LEGACY field
                         agent_id=agent_id,  # v0.5.0: Agent identity (if present)
                         subject_type=subject_type,  # Subject for permission checks
@@ -376,10 +376,10 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         if subject_header:
             parts = subject_header.split(":", 1)
             if len(parts) == 2:
-                # Use EnhancedOperationContext for ReBAC/permission support
-                from nexus.core.permissions_enhanced import EnhancedOperationContext
+                # Use OperationContext for ReBAC/permission support
+                from nexus.core.permissions import OperationContext
 
-                return EnhancedOperationContext(
+                return OperationContext(
                     user=parts[1],  # Required
                     subject_type=parts[0],
                     subject_id=parts[1],

@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-# Import Permission from the original module (don't duplicate)
-from nexus.core.permissions import Permission
+# Import Permission and OperationContext from the original module (don't duplicate)
+from nexus.core.permissions import OperationContext, Permission
 
 if TYPE_CHECKING:
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
@@ -394,70 +394,15 @@ class AuditStore:
 # ============================================================================
 # Enhanced Operation Context with Admin Capabilities (P0-4)
 # ============================================================================
+# DEPRECATED: EnhancedOperationContext is now an alias for OperationContext.
+# OperationContext now includes all features (admin_capabilities, request_id).
+# Use OperationContext directly instead of EnhancedOperationContext.
+# ============================================================================
 
 
-@dataclass
-class EnhancedOperationContext:
-    """Operation context with admin capabilities and subject identity (P0-2, P0-4).
-
-    P0-2: Subject-based identity (user, agent, service, session)
-    P0-4: Admin capabilities and audit trail
-
-    Attributes:
-        user: Subject ID (LEGACY: use subject_id)
-        subject_type: Type of subject (user, agent, service, session)
-        subject_id: Unique identifier for the subject
-        groups: List of group IDs
-        tenant_id: Tenant/organization ID
-        agent_id: DEPRECATED - use subject_type + subject_id
-        is_admin: Admin privileges flag
-        is_system: System operation flag
-        admin_capabilities: Set of granted admin capabilities (P0-4)
-        request_id: Unique ID for audit trail correlation (P0-4)
-    """
-
-    user: str  # LEGACY
-    groups: list[str]
-    tenant_id: str | None = None
-    agent_id: str | None = None  # DEPRECATED
-    is_admin: bool = False
-    is_system: bool = False
-    admin_capabilities: set[str] = field(default_factory=set)  # P0-4
-    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))  # P0-4
-
-    # P0-2: Subject-based identity
-    subject_type: str = "user"
-    subject_id: str | None = None
-
-    # Backend path for path-based connectors (GCS, Stripe, etc.)
-    backend_path: str | None = None  # Backend-relative path for connector backends
-
-    def __post_init__(self) -> None:
-        """Validate context and apply P0-2 subject defaults."""
-        # P0-2: If subject_id not provided, use user field for backward compatibility
-        if self.subject_id is None:
-            self.subject_id = self.user
-
-        if not self.user:
-            raise ValueError("user is required")
-        if not isinstance(self.groups, list):
-            raise TypeError(f"groups must be list, got {type(self.groups)}")
-
-    def get_subject(self) -> tuple[str, str]:
-        """Get subject as (type, id) tuple for ReBAC (P0-2).
-
-        Returns:
-            Tuple of (subject_type, subject_id)
-        """
-        return (self.subject_type, self.subject_id or self.user)
-
-    @property
-    def user_id(self) -> str:
-        """Get user ID for backward compatibility.
-
-        Returns the user field for compatibility with code expecting user_id.
-        """
-        return self.user
+# EnhancedOperationContext is now just an alias for OperationContext
+# This maintains backward compatibility while we migrate code to use OperationContext
+EnhancedOperationContext = OperationContext
 
 
 # ============================================================================
@@ -511,7 +456,7 @@ class EnhancedPermissionEnforcer:
         self,
         path: str,
         permission: Permission,
-        context: EnhancedOperationContext,
+        context: OperationContext,
     ) -> bool:
         """Check permission with scoped admin bypass and audit logging (P0-4).
 
@@ -614,7 +559,7 @@ class EnhancedPermissionEnforcer:
 
     def _log_bypass(
         self,
-        context: EnhancedOperationContext,
+        context: OperationContext,
         path: str,
         permission: str,
         bypass_type: str,
@@ -640,7 +585,7 @@ class EnhancedPermissionEnforcer:
 
     def _log_bypass_denied(
         self,
-        context: EnhancedOperationContext,
+        context: OperationContext,
         path: str,
         permission: str,
         bypass_type: str,
@@ -669,7 +614,7 @@ class EnhancedPermissionEnforcer:
         self,
         path: str,
         permission: Permission,
-        context: EnhancedOperationContext,
+        context: OperationContext,
     ) -> bool:
         """Check ReBAC relationships for permission."""
         import logging
@@ -859,7 +804,7 @@ class EnhancedPermissionEnforcer:
     def filter_list(
         self,
         paths: list[str],
-        context: EnhancedOperationContext,
+        context: OperationContext,
     ) -> list[str]:
         """Filter list of paths by read permission.
 

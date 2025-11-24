@@ -383,12 +383,10 @@ class NexusFSCoreMixin:
         try:
             # Use the existing bulk permission check from list()
             # Note: filter_list assumes READ permission, which is what we want
-            from nexus.core.permissions_enhanced import EnhancedOperationContext
+            from nexus.core.permissions import OperationContext
 
             ctx = context if context is not None else self._default_context
-            assert isinstance(ctx, EnhancedOperationContext), (
-                "Context must be EnhancedOperationContext"
-            )
+            assert isinstance(ctx, OperationContext), "Context must be OperationContext"
             allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
             allowed_set = set(allowed_paths)
         except Exception as e:

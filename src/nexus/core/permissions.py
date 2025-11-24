@@ -17,12 +17,12 @@ Use rebac_create() to grant permissions instead of chmod/chown.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from enum import IntFlag
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.permissions_enhanced import EnhancedOperationContext
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,8 @@ class OperationContext:
         tenant_id: Tenant/organization ID for multi-tenant isolation (optional)
         is_admin: Whether the subject has admin privileges
         is_system: Whether this is a system operation (bypasses all checks)
+        admin_capabilities: Set of granted admin capabilities (P0-4)
+        request_id: Unique ID for audit trail correlation (P0-4)
         backend_path: Backend-relative path for connector backends (optional)
 
     Examples:
@@ -115,6 +117,10 @@ class OperationContext:
     # P0-2: Subject-based identity
     subject_type: str = "user"  # Default to "user" for backward compatibility
     subject_id: str | None = None  # If None, uses self.user
+
+    # P0-4: Admin capabilities and audit trail
+    admin_capabilities: set[str] = field(default_factory=set)  # Scoped admin capabilities
+    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))  # Audit trail correlation ID
 
     # Backend path for path-based connectors (GCS, Stripe, etc.)
     backend_path: str | None = None  # Backend-relative path for connector backends
@@ -216,7 +222,7 @@ class PermissionEnforcer:
         self,
         path: str,
         permission: Permission,
-        context: OperationContext | EnhancedOperationContext,
+        context: OperationContext,
     ) -> bool:
         """Check if user has permission to perform operation on file.
 
@@ -256,7 +262,7 @@ class PermissionEnforcer:
         self,
         path: str,
         permission: Permission,
-        context: OperationContext | EnhancedOperationContext,
+        context: OperationContext,
     ) -> bool:
         """Check ReBAC relationships for permission.
 

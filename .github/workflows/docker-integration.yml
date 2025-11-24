@@ -15,11 +15,19 @@ on:
   pull_request:
     branches: [main]
     paths:
+      # Docker-related files
       - 'Dockerfile'
       - 'docker-compose*.yml'
       - 'docker-start.sh'
       - 'docker-entrypoint.sh'
       - '.github/workflows/docker-integration.yml'
+      # Core source files that affect Docker integration
+      - 'src/nexus/core/**'
+      - 'src/nexus/server/**'
+      - 'src/nexus/storage/**'
+      - 'src/nexus/backends/**'
+      - 'configs/*.yaml'
+      - 'configs/*.yml'
 
 jobs:
   docker-build-and-init:

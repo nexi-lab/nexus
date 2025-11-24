@@ -252,10 +252,10 @@ class NexusFS(
 
         self._entity_registry: EntityRegistry | None = EntityRegistry(self.metadata.SessionLocal)
 
-        # P0 Fixes: Initialize EnhancedPermissionEnforcer with audit logging
-        from nexus.core.permissions_enhanced import EnhancedPermissionEnforcer
+        # P0 Fixes: Initialize PermissionEnforcer with audit logging
+        from nexus.core.permissions import PermissionEnforcer
 
-        self._permission_enforcer = EnhancedPermissionEnforcer(
+        self._permission_enforcer = PermissionEnforcer(
             metadata_store=self.metadata,
             rebac_manager=self._rebac_manager,
             allow_admin_bypass=allow_admin_bypass,  # P0-4: Controlled by constructor parameter

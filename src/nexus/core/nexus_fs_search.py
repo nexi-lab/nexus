@@ -29,12 +29,12 @@ class NexusFSSearchMixin:
 
     # Type hints for attributes that will be provided by NexusFS parent class
     if TYPE_CHECKING:
-        from nexus.core.permissions_enhanced import EnhancedPermissionEnforcer
+        from nexus.core.permissions import PermissionEnforcer
 
         metadata: SQLAlchemyMetadataStore
         _enforce_permissions: bool
         _default_context: OperationContext
-        _permission_enforcer: EnhancedPermissionEnforcer
+        _permission_enforcer: PermissionEnforcer
         _semantic_search: SemanticSearch | None
 
         def _validate_path(self, path: str) -> str: ...

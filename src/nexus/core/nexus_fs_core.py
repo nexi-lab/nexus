@@ -40,7 +40,7 @@ class NexusFSCoreMixin:
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
-        from nexus.core.permissions_enhanced import EnhancedPermissionEnforcer
+        from nexus.core.permissions import PermissionEnforcer
 
         metadata: SQLAlchemyMetadataStore
         backend: Backend
@@ -52,7 +52,7 @@ class NexusFSCoreMixin:
         _default_context: OperationContext
         _parser_threads: list[threading.Thread]
         _parser_threads_lock: threading.Lock
-        _permission_enforcer: EnhancedPermissionEnforcer
+        _permission_enforcer: PermissionEnforcer
 
         @property
         def tenant_id(self) -> str | None: ...

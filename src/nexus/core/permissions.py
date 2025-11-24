@@ -23,6 +23,7 @@ from enum import IntFlag
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from nexus.core.permissions_enhanced import AuditStore
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
@@ -166,18 +167,22 @@ class OperationContext:
 
 
 class PermissionEnforcer:
-    """Pure ReBAC permission enforcement for Nexus filesystem (v0.6.0).
+    """Pure ReBAC permission enforcement for Nexus filesystem (v0.6.0+).
 
     Implements permission checking using ReBAC (Relationship-Based Access Control)
     based on Google Zanzibar principles.
 
     Permission checks:
-    1. Admin/system bypass - Always allow for admin and system users
+    1. Admin/system bypass - Scoped bypass with capabilities and audit logging (P0-4)
     2. ReBAC relationship check - Check permission graph for relationships
     3. v0.5.0 ACE: Agent inheritance from user (if entity_registry provided)
 
-    This is a simplified version that removed the legacy ACL and UNIX permission
-    layers. All permissions are now managed through ReBAC relationships.
+    P0-4 Features:
+    - Scoped admin bypass (requires capabilities)
+    - System bypass limited to /system paths (except read)
+    - Audit logging for all bypasses
+    - Kill-switch to disable bypasses
+    - Path-based allowlist for admin bypass
 
     Migration from v0.5.x:
         - ACL and UNIX permissions have been removed
@@ -192,6 +197,11 @@ class PermissionEnforcer:
         rebac_manager: EnhancedReBACManager | None = None,
         entity_registry: Any = None,  # v0.5.0 ACE: For agent inheritance
         router: Any = None,  # PathRouter for backend object type resolution
+        # P0-4: Enhanced features
+        allow_admin_bypass: bool = False,  # P0-4: Kill-switch DEFAULT OFF for production security
+        allow_system_bypass: bool = True,  # P0-4: System bypass still enabled (for service operations)
+        audit_store: AuditStore | None = None,  # P0-4: Audit logging
+        admin_bypass_paths: list[str] | None = None,  # P0-4: Scoped bypass (allowlist)
     ):
         """Initialize permission enforcer.
 
@@ -201,11 +211,21 @@ class PermissionEnforcer:
             rebac_manager: ReBAC manager for relationship-based permissions
             entity_registry: Entity registry for agent→user inheritance (v0.5.0)
             router: PathRouter for resolving backend object types (v0.5.0+)
+            allow_admin_bypass: Enable admin bypass (DEFAULT: False for security)
+            allow_system_bypass: Enable system bypass (for internal operations)
+            audit_store: Audit store for bypass logging
+            admin_bypass_paths: Optional path allowlist for admin bypass (e.g., ["/admin/*"])
         """
         self.metadata_store = metadata_store
         self.rebac_manager: EnhancedReBACManager | None = rebac_manager
         self.entity_registry = entity_registry  # v0.5.0 ACE
         self.router = router  # For backend object type resolution
+
+        # P0-4: Enhanced features
+        self.allow_admin_bypass = allow_admin_bypass
+        self.allow_system_bypass = allow_system_bypass
+        self.audit_store = audit_store
+        self.admin_bypass_paths = admin_bypass_paths or []
 
         # Warn if ACL store is provided (deprecated)
         if acl_store is not None:
@@ -226,9 +246,10 @@ class PermissionEnforcer:
     ) -> bool:
         """Check if user has permission to perform operation on file.
 
-        Pure ReBAC check:
-        1. Admin/system bypass - Always allow for admin/system
-        2. ReBAC relationship check - Check permission graph
+        Permission check with scoped admin/system bypass and audit logging (P0-4):
+        1. System bypass (limited scope) - Read: any path, Write/Delete: /system/* only
+        2. Admin bypass (capability-based) - Requires capabilities and optional path allowlist
+        3. ReBAC relationship check - Check permission graph
 
         Args:
             path: Virtual file path
@@ -248,15 +269,63 @@ class PermissionEnforcer:
             f"[PermissionEnforcer.check] path={path}, perm={permission.name}, user={context.user}, is_admin={context.is_admin}, is_system={context.is_system}"
         )
 
-        # 1. Admin/system bypass
-        if context.is_admin or context.is_system:
-            logger.info("  -> ALLOW (admin/system bypass)")
+        # Map Permission enum to string
+        permission_str = self._permission_to_string(permission)
+
+        # P0-4: System bypass (limited scope)
+        if context.is_system:
+            if not self.allow_system_bypass:
+                self._log_bypass_denied(
+                    context, path, permission_str, "system", "kill_switch_disabled"
+                )
+                raise PermissionError("System bypass disabled by configuration")
+
+            if not self._is_allowed_system_operation(path, permission_str):
+                self._log_bypass_denied(context, path, permission_str, "system", "scope_limit")
+                raise PermissionError(f"System bypass not allowed for {path}")
+
+            self._log_bypass(context, path, permission_str, "system", allowed=True)
             return True
 
-        # 2. ReBAC check (pure relationship-based permissions)
-        result = self._check_rebac(path, permission, context)
-        logger.info(f"  -> _check_rebac returned: {result}")
-        return result
+        # P0-4: Admin bypass (capability-based + path-scoped)
+        if context.is_admin:
+            if not self.allow_admin_bypass:
+                self._log_bypass_denied(
+                    context, path, permission_str, "admin", "kill_switch_disabled"
+                )
+                # Fall through to ReBAC check instead of denying
+                return self._check_rebac(path, permission, context)
+
+            # P0-4: Check path-based allowlist (scoped bypass)
+            if self.admin_bypass_paths and not self._path_matches_allowlist(
+                path, self.admin_bypass_paths
+            ):
+                self._log_bypass_denied(
+                    context, path, permission_str, "admin", "path_not_in_allowlist"
+                )
+                # Fall through to ReBAC check
+                return self._check_rebac(path, permission, context)
+
+            # Import AdminCapability here to avoid circular imports
+            from nexus.core.permissions_enhanced import AdminCapability
+
+            required_capability = AdminCapability.get_required_capability(path, permission_str)
+            if required_capability not in context.admin_capabilities:
+                self._log_bypass_denied(
+                    context,
+                    path,
+                    permission_str,
+                    "admin",
+                    f"missing_capability_{required_capability}",
+                )
+                # Fall through to ReBAC check
+                return self._check_rebac(path, permission, context)
+
+            self._log_bypass(context, path, permission_str, "admin", allowed=True)
+            return True
+
+        # Normal ReBAC check
+        return self._check_rebac(path, permission, context)
 
     def _check_rebac(
         self,
@@ -285,15 +354,8 @@ class PermissionEnforcer:
             return False
 
         # Map Permission flags to string permission names
-        permission_name: str
-        if permission & Permission.READ:
-            permission_name = "read"
-        elif permission & Permission.WRITE:
-            permission_name = "write"
-        elif permission & Permission.EXECUTE:
-            permission_name = "execute"
-        else:
-            # Unknown permission
+        permission_name = self._permission_to_string(permission)
+        if permission_name == "unknown":
             logger.info(f"  -> DENY (unknown permission: {permission})")
             return False
 
@@ -420,6 +482,121 @@ class PermissionEnforcer:
 
         return False
 
+    def _is_allowed_system_operation(self, path: str, permission: str) -> bool:
+        """Check if system bypass is allowed for this operation (P0-4).
+
+        System bypass is limited to:
+        - Read operations on any path (for auto-parse indexing)
+        - Read, write, execute, delete operations on /system/* paths only
+
+        Args:
+            path: File path
+            permission: Permission type
+
+        Returns:
+            True if system bypass is allowed
+        """
+        # Allow read operations on any path (for auto-parse and other system reads)
+        if permission == "read":
+            return True
+
+        # For other operations, only allow /system paths
+        if not path.startswith("/system"):
+            return False
+
+        # Allow common operations on /system paths
+        return permission in ["write", "execute", "delete"]
+
+    def _log_bypass(
+        self,
+        context: OperationContext,
+        path: str,
+        permission: str,
+        bypass_type: str,
+        allowed: bool,
+    ) -> None:
+        """Log admin/system bypass to audit store (P0-4)."""
+        if not self.audit_store:
+            return
+
+        from datetime import UTC, datetime
+
+        from nexus.core.permissions_enhanced import AuditLogEntry
+
+        entry = AuditLogEntry(
+            timestamp=datetime.now(UTC).isoformat(),
+            request_id=getattr(context, "request_id", str(uuid.uuid4())),
+            user=context.user,
+            tenant_id=context.tenant_id,
+            path=path,
+            permission=permission,
+            bypass_type=bypass_type,
+            allowed=allowed,
+            capabilities=sorted(getattr(context, "admin_capabilities", [])),
+        )
+
+        self.audit_store.log_bypass(entry)
+
+    def _log_bypass_denied(
+        self,
+        context: OperationContext,
+        path: str,
+        permission: str,
+        bypass_type: str,
+        reason: str,
+    ) -> None:
+        """Log denied bypass attempt (P0-4)."""
+        if not self.audit_store:
+            return
+
+        from datetime import UTC, datetime
+
+        from nexus.core.permissions_enhanced import AuditLogEntry
+
+        entry = AuditLogEntry(
+            timestamp=datetime.now(UTC).isoformat(),
+            request_id=getattr(context, "request_id", str(uuid.uuid4())),
+            user=context.user,
+            tenant_id=context.tenant_id,
+            path=path,
+            permission=permission,
+            bypass_type=bypass_type,
+            allowed=False,
+            capabilities=sorted(getattr(context, "admin_capabilities", [])),
+            denial_reason=reason,
+        )
+
+        self.audit_store.log_bypass(entry)
+
+    def _permission_to_string(self, permission: Permission) -> str:
+        """Convert Permission enum to string."""
+        if permission & Permission.READ:
+            return "read"
+        elif permission & Permission.WRITE:
+            return "write"
+        elif permission & Permission.EXECUTE:
+            return "execute"
+        elif permission & Permission.NONE:
+            return "none"
+        else:
+            return "unknown"
+
+    def _path_matches_allowlist(self, path: str, allowlist: list[str]) -> bool:
+        """Check if path matches any pattern in allowlist.
+
+        P0-4: Scoped admin bypass - only allow admin bypass for specific paths
+
+        Args:
+            path: File path to check
+            allowlist: List of path patterns (supports wildcards: /admin/*, /workspace/*)
+
+        Returns:
+            True if path matches any allowlist pattern
+        """
+        import fnmatch
+
+        return any(fnmatch.fnmatch(path, pattern) for pattern in allowlist)
+
     def filter_list(
         self,
         paths: list[str],
@@ -427,11 +604,15 @@ class PermissionEnforcer:
     ) -> list[str]:
         """Filter list of paths by read permission.
 
+        Performance optimized with bulk permission checking (issue #380).
+        Instead of checking each path individually (N queries), uses rebac_check_bulk()
+        to check all paths in a single batch (1-2 queries).
+
         This is used by list() operations to only return files
         the user has permission to read.
 
         Args:
-            paths: List of file paths to filter
+            paths: List of paths to filter
             context: Operation context
 
         Returns:
@@ -444,13 +625,89 @@ class PermissionEnforcer:
             >>> enforcer.filter_list(all_paths, ctx)
             ["/file1.txt", "/file2.txt"]  # /secret.txt filtered out
         """
-        # Admin/system sees all files
-        if context.is_admin or context.is_system:
+        # Admin/system bypass
+        if (context.is_admin and self.allow_admin_bypass) or (
+            context.is_system and self.allow_system_bypass
+        ):
             return paths
 
-        # Filter paths by read permission
-        filtered = []
+        # OPTIMIZATION: Use bulk permission checking for better performance
+        # This reduces N individual checks (each with 10-15 queries) to 1-2 bulk queries
+        if self.rebac_manager and hasattr(self.rebac_manager, "rebac_check_bulk"):
+            import time
+
+            overall_start = time.time()
+            logger.info(
+                f"[PERF-FILTER] filter_list START: {len(paths)} paths, subject={context.get_subject()}, tenant={context.tenant_id}"
+            )
+
+            # Build list of checks: (subject, "read", object) for each path
+            build_start = time.time()
+            checks = []
+            subject = context.get_subject()
+            tenant_id = context.tenant_id or "default"
+
+            for path in paths:
+                # PERFORMANCE FIX: Skip expensive router.route() call for each file
+                # For standard file paths, just use "file" as object type
+                # This avoids O(N) routing overhead during bulk permission checks
+                obj_type = "file"  # Default to file for all paths
+
+                # Only check router for special namespaces (non-file paths)
+                # This is much faster than routing every single file
+                if self.router and not path.startswith("/workspace"):
+                    try:
+                        # Use router to determine correct object type for special paths
+                        route = self.router.route(
+                            path,
+                            tenant_id=context.tenant_id,
+                            agent_id=context.agent_id,
+                            is_admin=context.is_admin,
+                        )
+                        # Get object type from namespace (if available)
+                        if hasattr(route, "namespace") and route.namespace:
+                            obj_type = route.namespace
+                    except Exception:
+                        # Fallback to "file" if routing fails
+                        pass
+
+                checks.append((subject, "read", (obj_type, path)))
+
+            build_elapsed = time.time() - build_start
+            logger.info(
+                f"[PERF-FILTER] Built {len(checks)} permission checks in {build_elapsed:.3f}s"
+            )
+
+            try:
+                # Perform bulk permission check
+                bulk_start = time.time()
+                results = self.rebac_manager.rebac_check_bulk(checks, tenant_id=tenant_id)
+                bulk_elapsed = time.time() - bulk_start
+                logger.info(f"[PERF-FILTER] Bulk check completed in {bulk_elapsed:.3f}s")
+
+                # Filter paths based on bulk results
+                filtered = []
+                for path, check in zip(paths, checks, strict=False):
+                    if results.get(check, False):
+                        filtered.append(path)
+
+                overall_elapsed = time.time() - overall_start
+                logger.info(
+                    f"[PERF-FILTER] filter_list DONE: {overall_elapsed:.3f}s total, allowed {len(filtered)}/{len(paths)} paths"
+                )
+                return filtered
+
+            except Exception as e:
+                # Fallback to individual checks if bulk fails
+                logger.warning(
+                    f"Bulk permission check failed, falling back to individual checks: {e}"
+                )
+                # Fall through to original implementation
+
+        # Fallback: Filter by ReBAC permissions individually (original implementation)
+        result = []
         for path in paths:
             if self.check(path, Permission.READ, context):
-                filtered.append(path)
-        return filtered
+                result.append(path)
+
+        return result

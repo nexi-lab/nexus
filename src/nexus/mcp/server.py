@@ -9,8 +9,9 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import json
+from typing import Any
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 from nexus.core.filesystem import NexusFilesystem
 
@@ -127,12 +128,15 @@ def create_mcp_server(
     # Connection pool for per-request API keys (cached by API key)
     _connection_cache: dict[str, NexusFilesystem] = {}
 
-    def _get_nexus_instance() -> NexusFilesystem:
+    def _get_nexus_instance(ctx: Context | None = None) -> NexusFilesystem:
         """Get Nexus instance for current request using context API key.
 
         This function checks if infrastructure has set a per-request API key
-        in the context variable. If so, it creates/retrieves a connection with
-        that API key. Otherwise, it returns the default connection.
+        in the context variable or FastMCP's context state. If so, it creates/retrieves
+        a connection with that API key. Otherwise, it returns the default connection.
+
+        Args:
+            ctx: Optional FastMCP Context object (if available from tool)
 
         Returns:
             NexusFilesystem instance (default or per-request based on context)
@@ -141,8 +145,15 @@ def create_mcp_server(
             Per-request API keys are only supported when remote_url is configured.
             For local connections, the default connection is always used.
         """
-        # Get API key from context (set by infrastructure)
-        request_api_key = _request_api_key.get()
+        # Try to get API key from FastMCP context state first (if Context is available)
+        request_api_key = None
+        if ctx and hasattr(ctx, "get_state"):
+            with contextlib.suppress(Exception):
+                request_api_key = ctx.get_state("api_key")
+
+        # Fallback to context variable (set by Starlette middleware)
+        if not request_api_key:
+            request_api_key = _request_api_key.get()
 
         # If no API key in context, use default connection
         if not request_api_key:
@@ -166,22 +177,80 @@ def create_mcp_server(
     # Create FastMCP server
     mcp = FastMCP(name)
 
+    # Add health check endpoint for HTTP transports
+    # This is added here so it's available when the server is created via create_mcp_server()
+    # The CLI command will also add it, but having it here ensures it works in all cases
+    @mcp.custom_route("/health", methods=["GET"])
+    async def health_check(_request: Any) -> Any:
+        """Health check endpoint for Docker and monitoring."""
+        from starlette.responses import JSONResponse
+
+        return JSONResponse({"status": "healthy", "service": "nexus-mcp"})
+
+    # Add FastMCP middleware to extract API key from HTTP headers and store in context state
+    # This allows tools to access the API key via Context.get_state()
+    from fastmcp.server.middleware import Middleware, MiddlewareContext
+
+    class APIKeyExtractionMiddleware(Middleware):
+        """Extract API key from HTTP headers and store in FastMCP context state."""
+
+        async def on_message(self, context: MiddlewareContext, call_next: Any) -> Any:
+            api_key = None
+
+            # Try to get API key from context variable (set by Starlette middleware)
+            # This bridges Starlette middleware (HTTP level) with FastMCP middleware (MCP message level)
+            with contextlib.suppress(LookupError):
+                api_key = _request_api_key.get()
+
+            # Also try to get from FastMCP context if available
+            # FastMCP's context might have access to HTTP request
+            if not api_key and context.fastmcp_context:
+                try:
+                    # Try to get HTTP request from FastMCP context
+                    # This might be available depending on FastMCP version
+                    if hasattr(context.fastmcp_context, "get_http_request"):
+                        http_request = context.fastmcp_context.get_http_request()
+                        if http_request:
+                            api_key = http_request.headers.get(
+                                "X-Nexus-API-Key"
+                            ) or http_request.headers.get("Authorization", "").replace(
+                                "Bearer ", ""
+                            )
+                except Exception:
+                    pass
+
+            # Store in FastMCP's context state so tools can access it via Context.get_state()
+            if api_key and context.fastmcp_context:
+                try:
+                    context.fastmcp_context.set_state("api_key", api_key)
+                    # Also set in context variable for backward compatibility
+                    _request_api_key.set(api_key)
+                except Exception:
+                    # If set_state fails, continue anyway
+                    pass
+
+            return await call_next(context)
+
+    # Add the middleware to FastMCP
+    mcp.add_middleware(APIKeyExtractionMiddleware())
+
     # =========================================================================
     # FILE OPERATIONS TOOLS
     # =========================================================================
 
     @mcp.tool()
-    def nexus_read_file(path: str) -> str:
+    def nexus_read_file(path: str, ctx: Context | None = None) -> str:
         """Read file content from Nexus filesystem.
 
         Args:
             path: File path to read (e.g., "/workspace/data.txt")
+            ctx: FastMCP Context (automatically injected, optional for backward compatibility)
 
         Returns:
             File content as string
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             content = nx_instance.read(path)
             if isinstance(content, bytes):
                 return content.decode("utf-8", errors="replace")
@@ -190,18 +259,19 @@ def create_mcp_server(
             return f"Error reading file: {str(e)}"
 
     @mcp.tool()
-    def nexus_write_file(path: str, content: str) -> str:
+    def nexus_write_file(path: str, content: str, ctx: Context | None = None) -> str:
         """Write content to a file in Nexus filesystem.
 
         Args:
             path: File path to write (e.g., "/workspace/data.txt")
             content: Content to write
+            ctx: FastMCP Context (automatically injected, optional for backward compatibility)
 
         Returns:
             Success message or error
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
             nx_instance.write(path, content_bytes)
             return f"Successfully wrote {len(content_bytes)} bytes to {path}"
@@ -209,7 +279,7 @@ def create_mcp_server(
             return f"Error writing file: {str(e)}"
 
     @mcp.tool()
-    def nexus_delete_file(path: str) -> str:
+    def nexus_delete_file(path: str, ctx: Context | None = None) -> str:
         """Delete a file from Nexus filesystem.
 
         Args:
@@ -219,14 +289,16 @@ def create_mcp_server(
             Success message or error
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             nx_instance.delete(path)
             return f"Successfully deleted {path}"
         except Exception as e:
             return f"Error deleting file: {str(e)}"
 
     @mcp.tool()
-    def nexus_list_files(path: str = "/", recursive: bool = False, details: bool = True) -> str:
+    def nexus_list_files(
+        path: str = "/", recursive: bool = False, details: bool = True, ctx: Context | None = None
+    ) -> str:
         """List files in a directory.
 
         Args:
@@ -244,14 +316,14 @@ def create_mcp_server(
             - mime_type: MIME type
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             files = nx_instance.list(path, recursive=recursive, details=details)
             return json.dumps(files, indent=2, default=str)
         except Exception as e:
             return f"Error listing files: {str(e)}"
 
     @mcp.tool()
-    def nexus_file_info(path: str) -> str:
+    def nexus_file_info(path: str, ctx: Context | None = None) -> str:
         """Get detailed information about a file.
 
         Args:
@@ -261,7 +333,7 @@ def create_mcp_server(
             JSON string with file metadata
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             # Use exists and other methods to get file info
             # info() is not in base NexusFilesystem interface
             if not nx_instance.exists(path):
@@ -292,7 +364,7 @@ def create_mcp_server(
     # =========================================================================
 
     @mcp.tool()
-    def nexus_mkdir(path: str) -> str:
+    def nexus_mkdir(path: str, ctx: Context | None = None) -> str:
         """Create a directory in Nexus filesystem.
 
         Args:
@@ -302,14 +374,14 @@ def create_mcp_server(
             Success message or error
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             nx_instance.mkdir(path)
             return f"Successfully created directory {path}"
         except Exception as e:
             return f"Error creating directory: {str(e)}"
 
     @mcp.tool()
-    def nexus_rmdir(path: str, recursive: bool = False) -> str:
+    def nexus_rmdir(path: str, recursive: bool = False, ctx: Context | None = None) -> str:
         """Remove a directory from Nexus filesystem.
 
         Args:
@@ -320,7 +392,7 @@ def create_mcp_server(
             Success message or error
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             nx_instance.rmdir(path, recursive=recursive)
             return f"Successfully removed directory {path}"
         except Exception as e:
@@ -331,7 +403,7 @@ def create_mcp_server(
     # =========================================================================
 
     @mcp.tool()
-    def nexus_glob(pattern: str, path: str = "/") -> str:
+    def nexus_glob(pattern: str, path: str = "/", ctx: Context | None = None) -> str:
         """Search files using glob pattern.
 
         Args:
@@ -342,14 +414,16 @@ def create_mcp_server(
             JSON string with list of matching file paths
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             matches = nx_instance.glob(pattern, path)
             return json.dumps(matches, indent=2)
         except Exception as e:
             return f"Error in glob search: {str(e)}"
 
     @mcp.tool()
-    def nexus_grep(pattern: str, path: str = "/", ignore_case: bool = False) -> str:
+    def nexus_grep(
+        pattern: str, path: str = "/", ignore_case: bool = False, ctx: Context | None = None
+    ) -> str:
         """Search file contents using regex pattern.
 
         Args:
@@ -361,7 +435,7 @@ def create_mcp_server(
             JSON string with search results (file paths, line numbers, content)
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             results = nx_instance.grep(pattern, path, ignore_case=ignore_case)
             # Limit results to first 100 matches
             if len(results) > 100:
@@ -371,7 +445,7 @@ def create_mcp_server(
             return f"Error in grep search: {str(e)}"
 
     @mcp.tool()
-    def nexus_semantic_search(query: str, limit: int = 10) -> str:
+    def nexus_semantic_search(query: str, limit: int = 10, ctx: Context | None = None) -> str:
         """Search files semantically using natural language query.
 
         Args:
@@ -382,7 +456,7 @@ def create_mcp_server(
             JSON string with search results
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             # Check if nx has search method (only available in NexusFS)
             if hasattr(nx_instance, "search"):
                 # Calling search() - available in NexusFS but not base interface
@@ -401,6 +475,7 @@ def create_mcp_server(
         content: str,
         memory_type: str | None = None,
         importance: float = 0.5,
+        ctx: Context | None = None,
     ) -> str:
         """Store a memory in Nexus memory system.
 
@@ -413,7 +488,7 @@ def create_mcp_server(
             Success message or error
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             # Check if nx has memory attribute (only available in NexusFS)
             if not hasattr(nx_instance, "memory"):
                 return "Memory system not available (requires NexusFS)"
@@ -441,6 +516,7 @@ def create_mcp_server(
         query: str,
         memory_type: str | None = None,
         limit: int = 5,
+        ctx: Context | None = None,
     ) -> str:
         """Query memories using semantic search.
 
@@ -453,7 +529,7 @@ def create_mcp_server(
             JSON string with matching memories
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             # Check if nx has memory attribute (only available in NexusFS)
             if not hasattr(nx_instance, "memory"):
                 return "Memory system not available (requires NexusFS)"
@@ -473,14 +549,14 @@ def create_mcp_server(
     # =========================================================================
 
     @mcp.tool()
-    def nexus_list_workflows() -> str:
+    def nexus_list_workflows(ctx: Context | None = None) -> str:
         """List available workflows in Nexus.
 
         Returns:
             JSON string with list of workflows
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             # Check if nx has workflows attribute (only available in NexusFS)
             if not hasattr(nx_instance, "workflows"):
                 return "Workflow system not available (requires NexusFS with workflows enabled)"
@@ -491,7 +567,9 @@ def create_mcp_server(
             return f"Error listing workflows: {str(e)}"
 
     @mcp.tool()
-    def nexus_execute_workflow(name: str, inputs: str | None = None) -> str:
+    def nexus_execute_workflow(
+        name: str, inputs: str | None = None, ctx: Context | None = None
+    ) -> str:
         """Execute a workflow by name.
 
         Args:
@@ -502,7 +580,7 @@ def create_mcp_server(
             Workflow execution result
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             # Check if nx has workflows attribute (only available in NexusFS)
             if not hasattr(nx_instance, "workflows"):
                 return "Workflow system not available (requires NexusFS with workflows enabled)"
@@ -534,7 +612,7 @@ def create_mcp_server(
     if sandbox_available:
 
         @mcp.tool()
-        def nexus_python(code: str, sandbox_id: str) -> str:
+        def nexus_python(code: str, sandbox_id: str, ctx: Context | None = None) -> str:
             """Execute Python code in Nexus sandbox.
 
             Args:
@@ -545,7 +623,7 @@ def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             try:
-                nx_instance = _get_nexus_instance()
+                nx_instance = _get_nexus_instance(ctx)
                 result = nx_instance.sandbox_run(
                     sandbox_id=sandbox_id, language="python", code=code, timeout=300
                 )
@@ -576,7 +654,7 @@ def create_mcp_server(
                 return f"Error executing Python code: {str(e)}"
 
         @mcp.tool()
-        def nexus_bash(command: str, sandbox_id: str) -> str:
+        def nexus_bash(command: str, sandbox_id: str, ctx: Context | None = None) -> str:
             """Execute bash commands in Nexus sandbox.
 
             Args:
@@ -587,7 +665,7 @@ def create_mcp_server(
                 Execution result with stdout, stderr, exit_code, and execution time
             """
             try:
-                nx_instance = _get_nexus_instance()
+                nx_instance = _get_nexus_instance(ctx)
                 result = nx_instance.sandbox_run(
                     sandbox_id=sandbox_id, language="bash", code=command, timeout=300
                 )
@@ -618,7 +696,9 @@ def create_mcp_server(
                 return f"Error executing bash command: {str(e)}"
 
         @mcp.tool()
-        def nexus_sandbox_create(name: str, ttl_minutes: int = 10) -> str:
+        def nexus_sandbox_create(
+            name: str, ttl_minutes: int = 10, ctx: Context | None = None
+        ) -> str:
             """Create a new sandbox for code execution.
 
             Args:
@@ -629,28 +709,28 @@ def create_mcp_server(
                 JSON string with sandbox_id and metadata
             """
             try:
-                nx_instance = _get_nexus_instance()
+                nx_instance = _get_nexus_instance(ctx)
                 result = nx_instance.sandbox_create(name=name, ttl_minutes=ttl_minutes)
                 return json.dumps(result, indent=2)
             except Exception as e:
                 return f"Error creating sandbox: {str(e)}"
 
         @mcp.tool()
-        def nexus_sandbox_list() -> str:
+        def nexus_sandbox_list(ctx: Context | None = None) -> str:
             """List all active sandboxes.
 
             Returns:
                 JSON string with list of sandboxes
             """
             try:
-                nx_instance = _get_nexus_instance()
+                nx_instance = _get_nexus_instance(ctx)
                 result = nx_instance.sandbox_list()
                 return json.dumps(result, indent=2)
             except Exception as e:
                 return f"Error listing sandboxes: {str(e)}"
 
         @mcp.tool()
-        def nexus_sandbox_stop(sandbox_id: str) -> str:
+        def nexus_sandbox_stop(sandbox_id: str, ctx: Context | None = None) -> str:
             """Stop and destroy a sandbox.
 
             Args:
@@ -660,7 +740,7 @@ def create_mcp_server(
                 Success message or error
             """
             try:
-                nx_instance = _get_nexus_instance()
+                nx_instance = _get_nexus_instance(ctx)
                 nx_instance.sandbox_stop(sandbox_id)
                 return f"Successfully stopped sandbox {sandbox_id}"
             except Exception as e:
@@ -671,7 +751,7 @@ def create_mcp_server(
     # =========================================================================
 
     @mcp.resource("nexus://files/{path}")
-    def get_file_resource(path: str) -> str:
+    def get_file_resource(path: str, ctx: Context | None = None) -> str:
         """Browse files as MCP resources.
 
         Args:
@@ -681,7 +761,7 @@ def create_mcp_server(
             File content
         """
         try:
-            nx_instance = _get_nexus_instance()
+            nx_instance = _get_nexus_instance(ctx)
             content = nx_instance.read(path)
             if isinstance(content, bytes):
                 return content.decode("utf-8", errors="replace")
@@ -739,7 +819,7 @@ Start by running the semantic search.
 def main() -> None:
     """Main entry point for running MCP server from command line."""
 
-    # Get remote URL and API key from environment if available
+    # Get configuration from environment
     import os
 
     from nexus import connect
@@ -747,13 +827,61 @@ def main() -> None:
     remote_url = os.getenv("NEXUS_URL")
     api_key = os.getenv("NEXUS_API_KEY")
 
+    # Transport configuration (supports both local and remote modes)
+    transport = os.getenv("MCP_TRANSPORT", "stdio")
+    host = os.getenv("MCP_HOST", "0.0.0.0")
+    port = int(os.getenv("MCP_PORT", "8081"))
+
     # Create and run server
     nx = None
     if not remote_url:
         nx = connect()
 
     mcp = create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
-    mcp.run(transport="stdio")
+
+    # Add API key middleware for HTTP transports
+    # Note: We add it to the underlying Starlette app, not FastMCP's middleware system
+    # because FastMCP's middleware works with MCP messages, not HTTP requests
+    if transport in ["http", "sse"]:
+        try:
+            from starlette.middleware.base import BaseHTTPMiddleware
+
+            class APIKeyMiddleware(BaseHTTPMiddleware):
+                """Extract API key from HTTP headers and set in context."""
+
+                async def dispatch(self, request: Any, call_next: Any) -> Any:
+                    api_key = request.headers.get("X-Nexus-API-Key") or request.headers.get(
+                        "Authorization", ""
+                    ).replace("Bearer ", "")
+                    token = set_request_api_key(api_key) if api_key else None
+                    try:
+                        response = await call_next(request)
+                        return response
+                    finally:
+                        if token:
+                            _request_api_key.reset(token)
+
+            # Add middleware to the underlying Starlette app
+            # FastMCP's http_app is a method that returns the Starlette application
+            if hasattr(mcp, "http_app"):
+                app = mcp.http_app()
+                app.add_middleware(APIKeyMiddleware)
+        except (ImportError, Exception) as e:
+            # If middleware addition fails, log but don't crash
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to add API key middleware: {e}")
+
+    # Run with selected transport
+    if transport == "stdio":
+        mcp.run(transport="stdio")
+    elif transport == "http":
+        mcp.run(transport="http", host=host, port=port)
+    elif transport == "sse":
+        mcp.run(transport="sse", host=host, port=port)
+    else:
+        raise ValueError(f"Unknown transport: {transport}")
 
 
 if __name__ == "__main__":

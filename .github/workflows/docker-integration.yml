@@ -598,11 +598,54 @@ jobs:
           fi
           echo ""
 
-          # Step 2: Test MCP tool: nexus_mkdir
-          echo "📁 Step 2: Testing nexus_mkdir tool..."
-          MKDIR_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
+          # Step 2: Initialize MCP session
+          echo "🔐 Step 2: Initializing MCP session..."
+          INIT_RESPONSE=$(curl -sf -D /tmp/mcp_init_headers.txt http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"id\": 0,
+              \"method\": \"initialize\",
+              \"params\": {
+                \"protocolVersion\": \"2024-11-05\",
+                \"capabilities\": {},
+                \"clientInfo\": {
+                  \"name\": \"integration-test\",
+                  \"version\": \"1.0.0\"
+                }
+              }
+            }" || echo "FAILED")
+
+          if [ "$INIT_RESPONSE" = "FAILED" ]; then
+            echo "❌ MCP session initialization failed"
+            exit 1
+          fi
+
+          # Extract session ID from response headers
+          MCP_SESSION_ID=$(grep -i "mcp-session-id" /tmp/mcp_init_headers.txt | cut -d' ' -f2 | tr -d '\r\n' || echo "")
+          if [ -z "$MCP_SESSION_ID" ]; then
+            echo "❌ Failed to extract MCP session ID"
+            echo "Response headers:"
+            cat /tmp/mcp_init_headers.txt
+            exit 1
+          fi
+          echo "✅ MCP session initialized (session ID: ${MCP_SESSION_ID:0:8}...)"
+          echo ""
+
+          # Helper function to parse SSE response (extract JSON from data: line)
+          parse_sse_response() {
+            echo "$1" | grep "^data:" | head -1 | sed 's/^data: //' || echo "$1"
+          }
+
+          # Step 3: Test MCP tool: nexus_mkdir
+          echo "📁 Step 3: Testing nexus_mkdir tool..."
+          MKDIR_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
             -d "{
               \"jsonrpc\": \"2.0\",
               \"id\": 1,
@@ -614,6 +657,8 @@ jobs:
                 }
               }
             }" || echo "FAILED")
+
+          MKDIR_TOOL_RESPONSE=$(parse_sse_response "$MKDIR_TOOL_RESPONSE_RAW")
 
           if [ "$MKDIR_TOOL_RESPONSE" = "FAILED" ]; then
             echo "❌ nexus_mkdir tool call failed"
@@ -629,12 +674,14 @@ jobs:
           fi
           echo ""
 
-          # Step 3: Test MCP tool: nexus_write_file (3 files)
-          echo "📝 Step 3: Testing nexus_write_file tool..."
+          # Step 4: Test MCP tool: nexus_write_file (3 files)
+          echo "📝 Step 4: Testing nexus_write_file tool..."
 
-          WRITE_TOOL_RESPONSE1=$(curl -sf http://localhost:8081/mcp \
+          WRITE_TOOL_RESPONSE1_RAW=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
             -d "{
               \"jsonrpc\": \"2.0\",
               \"id\": 2,
@@ -648,15 +695,19 @@ jobs:
               }
             }" || echo "FAILED")
 
+          WRITE_TOOL_RESPONSE1=$(parse_sse_response "$WRITE_TOOL_RESPONSE1_RAW")
+
           if [ "$WRITE_TOOL_RESPONSE1" = "FAILED" ]; then
             echo "❌ nexus_write_file tool call failed (test1.txt)"
             exit 1
           fi
           echo "✅ File written: test1.txt"
 
-          WRITE_TOOL_RESPONSE2=$(curl -sf http://localhost:8081/mcp \
+          WRITE_TOOL_RESPONSE2_RAW=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
             -d "{
               \"jsonrpc\": \"2.0\",
               \"id\": 3,
@@ -670,15 +721,19 @@ jobs:
               }
             }" || echo "FAILED")
 
+          WRITE_TOOL_RESPONSE2=$(parse_sse_response "$WRITE_TOOL_RESPONSE2_RAW")
+
           if [ "$WRITE_TOOL_RESPONSE2" = "FAILED" ]; then
             echo "❌ nexus_write_file tool call failed (test2.py)"
             exit 1
           fi
           echo "✅ File written: test2.py"
 
-          WRITE_TOOL_RESPONSE3=$(curl -sf http://localhost:8081/mcp \
+          WRITE_TOOL_RESPONSE3_RAW=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
             -d "{
               \"jsonrpc\": \"2.0\",
               \"id\": 4,
@@ -692,6 +747,8 @@ jobs:
               }
             }" || echo "FAILED")
 
+          WRITE_TOOL_RESPONSE3=$(parse_sse_response "$WRITE_TOOL_RESPONSE3_RAW")
+
           if [ "$WRITE_TOOL_RESPONSE3" = "FAILED" ]; then
             echo "❌ nexus_write_file tool call failed (data.json)"
             exit 1
@@ -699,11 +756,13 @@ jobs:
           echo "✅ File written: data.json"
           echo ""
 
-          # Step 4: Test MCP tool: nexus_read_file
-          echo "📖 Step 4: Testing nexus_read_file tool..."
-          READ_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
+          # Step 5: Test MCP tool: nexus_read_file
+          echo "📖 Step 5: Testing nexus_read_file tool..."
+          READ_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
             -d "{
               \"jsonrpc\": \"2.0\",
               \"id\": 5,
@@ -715,6 +774,8 @@ jobs:
                 }
               }
             }" || echo "FAILED")
+
+          READ_TOOL_RESPONSE=$(parse_sse_response "$READ_TOOL_RESPONSE_RAW")
 
           if [ "$READ_TOOL_RESPONSE" = "FAILED" ]; then
             echo "❌ nexus_read_file tool call failed"
@@ -731,11 +792,13 @@ jobs:
           fi
           echo ""
 
-          # Step 5: Test MCP tool: nexus_list_files
-          echo "📋 Step 5: Testing nexus_list_files tool..."
-          LIST_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
+          # Step 6: Test MCP tool: nexus_list_files
+          echo "📋 Step 6: Testing nexus_list_files tool..."
+          LIST_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
             -d "{
               \"jsonrpc\": \"2.0\",
               \"id\": 6,
@@ -749,6 +812,8 @@ jobs:
                 }
               }
             }" || echo "FAILED")
+
+          LIST_TOOL_RESPONSE=$(parse_sse_response "$LIST_TOOL_RESPONSE_RAW")
 
           if [ "$LIST_TOOL_RESPONSE" = "FAILED" ]; then
             echo "❌ nexus_list_files tool call failed"
@@ -773,11 +838,13 @@ jobs:
           fi
           echo ""
 
-          # Step 6: Test MCP tool: nexus_file_info
-          echo "ℹ️  Step 6: Testing nexus_file_info tool..."
-          INFO_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
+          # Step 7: Test MCP tool: nexus_file_info
+          echo "ℹ️  Step 7: Testing nexus_file_info tool..."
+          INFO_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
             -d "{
               \"jsonrpc\": \"2.0\",
               \"id\": 7,
@@ -789,6 +856,8 @@ jobs:
                 }
               }
             }" || echo "FAILED")
+
+          INFO_TOOL_RESPONSE=$(parse_sse_response "$INFO_TOOL_RESPONSE_RAW")
 
           if [ "$INFO_TOOL_RESPONSE" = "FAILED" ]; then
             echo "❌ nexus_file_info tool call failed"
@@ -805,11 +874,13 @@ jobs:
           fi
           echo ""
 
-          # Step 7: Test MCP tool: nexus_glob
-          echo "🔍 Step 7: Testing nexus_glob tool..."
-          GLOB_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
+          # Step 8: Test MCP tool: nexus_glob
+          echo "🔍 Step 8: Testing nexus_glob tool..."
+          GLOB_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
             -d "{
               \"jsonrpc\": \"2.0\",
               \"id\": 8,
@@ -822,6 +893,8 @@ jobs:
                 }
               }
             }" || echo "FAILED")
+
+          GLOB_TOOL_RESPONSE=$(parse_sse_response "$GLOB_TOOL_RESPONSE_RAW")
 
           if [ "$GLOB_TOOL_RESPONSE" = "FAILED" ]; then
             echo "❌ nexus_glob tool call failed"
@@ -838,11 +911,13 @@ jobs:
           fi
           echo ""
 
-          # Step 8: Test MCP tool: nexus_grep
-          echo "🔎 Step 8: Testing nexus_grep tool..."
-          GREP_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
+          # Step 9: Test MCP tool: nexus_grep
+          echo "🔎 Step 9: Testing nexus_grep tool..."
+          GREP_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
             -d "{
               \"jsonrpc\": \"2.0\",
               \"id\": 9,
@@ -856,6 +931,8 @@ jobs:
                 }
               }
             }" || echo "FAILED")
+
+          GREP_TOOL_RESPONSE=$(parse_sse_response "$GREP_TOOL_RESPONSE_RAW")
 
           if [ "$GREP_TOOL_RESPONSE" = "FAILED" ]; then
             echo "❌ nexus_grep tool call failed"
@@ -872,11 +949,13 @@ jobs:
           fi
           echo ""
 
-          # Step 9: Test MCP tool: nexus_delete_file
-          echo "🗑️  Step 9: Testing nexus_delete_file tool..."
-          DELETE_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
+          # Step 10: Test MCP tool: nexus_delete_file
+          echo "🗑️  Step 10: Testing nexus_delete_file tool..."
+          DELETE_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
             -d "{
               \"jsonrpc\": \"2.0\",
               \"id\": 10,
@@ -888,6 +967,8 @@ jobs:
                 }
               }
             }" || echo "FAILED")
+
+          DELETE_TOOL_RESPONSE=$(parse_sse_response "$DELETE_TOOL_RESPONSE_RAW")
 
           if [ "$DELETE_TOOL_RESPONSE" = "FAILED" ]; then
             echo "❌ nexus_delete_file tool call failed"
@@ -903,11 +984,13 @@ jobs:
           fi
           echo ""
 
-          # Step 10: Test MCP tool: nexus_rmdir
-          echo "🗂️  Step 10: Testing nexus_rmdir tool..."
-          RMDIR_TOOL_RESPONSE=$(curl -sf http://localhost:8081/mcp \
+          # Step 11: Test MCP tool: nexus_rmdir
+          echo "🗂️  Step 11: Testing nexus_rmdir tool..."
+          RMDIR_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
             -d "{
               \"jsonrpc\": \"2.0\",
               \"id\": 11,
@@ -920,6 +1003,8 @@ jobs:
                 }
               }
             }" || echo "FAILED")
+
+          RMDIR_TOOL_RESPONSE=$(parse_sse_response "$RMDIR_TOOL_RESPONSE_RAW")
 
           if [ "$RMDIR_TOOL_RESPONSE" = "FAILED" ]; then
             echo "❌ nexus_rmdir tool call failed"
@@ -935,16 +1020,20 @@ jobs:
           fi
           echo ""
 
-          # Step 11: List available MCP tools
-          echo "🧰 Step 11: Listing available MCP tools..."
-          TOOLS_LIST_RESPONSE=$(curl -sf http://localhost:8081/mcp \
+          # Step 12: List available MCP tools
+          echo "🧰 Step 12: Listing available MCP tools..."
+          TOOLS_LIST_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
+            -H "mcp-session-id: $MCP_SESSION_ID" \
             -d '{
               "jsonrpc": "2.0",
               "id": 12,
               "method": "tools/list"
             }' || echo "FAILED")
+
+          TOOLS_LIST_RESPONSE=$(parse_sse_response "$TOOLS_LIST_RESPONSE_RAW")
 
           if [ "$TOOLS_LIST_RESPONSE" = "FAILED" ]; then
             echo "❌ Failed to list MCP tools"

@@ -420,6 +420,196 @@ jobs:
 
           echo "🎉 End-to-end integration test completed successfully!"
 
+      - name: User Permission Grant Test
+        run: |
+          echo "🔐 Testing user permission grant workflow..."
+          echo ""
+
+          # Use known dummy API key (set in .env) for admin
+          ADMIN_API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          echo "Using admin API key: ${ADMIN_API_KEY:0:20}..."
+          echo ""
+
+          # Generate unique test user and file with timestamp
+          TIMESTAMP=$(date +%s)
+          TEST_USER="testuser_${TIMESTAMP}"
+          ADMIN_FILE="/workspace/admin_secret_${TIMESTAMP}.txt"
+          ADMIN_FILE_CONTENT="This is admin-only content"
+          echo "Test user: $TEST_USER"
+          echo "Admin file: $ADMIN_FILE"
+          echo ""
+
+          # Step 1: Create a new non-admin user
+          echo "👤 Step 1: Creating non-admin user $TEST_USER..."
+          CREATE_USER_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/admin_create_key \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $ADMIN_API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"admin_create_key\",\"params\":{\"user_id\":\"$TEST_USER\",\"name\":\"Test User Key\",\"is_admin\":false,\"tenant_id\":\"default\"}}" || echo "FAILED")
+
+          if [ "$CREATE_USER_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to create user"
+            exit 1
+          fi
+
+          # Extract API key from response
+          USER_API_KEY=$(echo "$CREATE_USER_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('result', {}).get('api_key', ''))" 2>/dev/null || echo "")
+          if [ -z "$USER_API_KEY" ]; then
+            echo "❌ Could not extract user API key"
+            echo "Response: $CREATE_USER_RESPONSE"
+            exit 1
+          fi
+          echo "✅ User created: $TEST_USER"
+          echo "   API key: ${USER_API_KEY:0:30}..."
+          echo ""
+
+          # Step 2: Ensure admin has ownership of /workspace (required for creating files)
+          echo "🔑 Step 2: Ensuring admin ownership of /workspace..."
+          # First, try to create /workspace directory if it doesn't exist
+          MKDIR_RESPONSE=$(curl -s http://localhost:8080/api/nfs/mkdir \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $ADMIN_API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"mkdir\",\"params\":{\"path\":\"/workspace\"}}" 2>&1 || echo "")
+
+          # Grant admin ownership of /workspace
+          OWNER_RESPONSE=$(curl -s http://localhost:8080/api/nfs/rebac_create \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $ADMIN_API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"/workspace\"],\"tenant_id\":\"default\"}}" 2>&1)
+
+          # Check for errors (it's okay if tuple already exists)
+          ERROR_CODE=$(echo "$OWNER_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
+          if [ -n "$ERROR_CODE" ] && [ "$ERROR_CODE" != "-32001" ]; then
+            # -32001 is FILE_EXISTS, which is okay for rebac_create (tuple might already exist)
+            ERROR_MESSAGE=$(echo "$OWNER_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
+            echo "⚠️  Warning: Could not grant admin ownership (may already exist)"
+            echo "   Error code: $ERROR_CODE"
+            echo "   Error message: $ERROR_MESSAGE"
+          else
+            echo "✅ Admin ownership of /workspace ensured"
+          fi
+          echo ""
+
+          # Step 3: Admin creates a file
+          echo "📝 Step 3: Admin creating file $ADMIN_FILE..."
+          WRITE_RESPONSE=$(curl -s http://localhost:8080/api/nfs/write \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $ADMIN_API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"write\",\"params\":{\"path\":\"$ADMIN_FILE\",\"content\":\"$ADMIN_FILE_CONTENT\"}}")
+
+          # Check for errors
+          ERROR_CODE=$(echo "$WRITE_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
+          if [ -n "$ERROR_CODE" ]; then
+            ERROR_MESSAGE=$(echo "$WRITE_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
+            echo "❌ Failed to create admin file"
+            echo "   Error code: $ERROR_CODE"
+            echo "   Error message: $ERROR_MESSAGE"
+            echo "   Response: $WRITE_RESPONSE"
+            exit 1
+          fi
+          echo "✅ Admin file created: $ADMIN_FILE"
+
+          # Verify file exists by trying to read it as admin
+          echo "🔍 Verifying file exists..."
+          VERIFY_RESPONSE=$(curl -s http://localhost:8080/api/nfs/read \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $ADMIN_API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"read\",\"params\":{\"path\":\"$ADMIN_FILE\"}}")
+
+          VERIFY_ERROR=$(echo "$VERIFY_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
+          if [ -n "$VERIFY_ERROR" ]; then
+            echo "❌ File was not created successfully (cannot read as admin)"
+            echo "   Response: $VERIFY_RESPONSE"
+            exit 1
+          fi
+          echo "✅ File verified (admin can read it)"
+          echo ""
+
+          # Step 4: Grant admin ownership of the file (required for permission management)
+          echo "🔑 Step 4: Granting admin ownership of $ADMIN_FILE..."
+          OWNER_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/rebac_create \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $ADMIN_API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"$ADMIN_FILE\"],\"tenant_id\":\"default\"}}" || echo "FAILED")
+
+          if [ "$OWNER_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to grant admin ownership"
+            exit 1
+          fi
+          echo "✅ Admin ownership granted"
+          echo ""
+
+          # Step 5: Try to read the file as non-admin user (should fail)
+          echo "🚫 Step 5: Attempting to read $ADMIN_FILE as $TEST_USER (should fail)..."
+          READ_RESPONSE=$(curl -s http://localhost:8080/api/nfs/read \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $USER_API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"read\",\"params\":{\"path\":\"$ADMIN_FILE\"}}" 2>&1)
+
+          # Check if response contains error (JSON-RPC error format)
+          ERROR_CODE=$(echo "$READ_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
+          ERROR_MESSAGE=$(echo "$READ_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
+
+          # Check for permission error (code -32004) or permission-related message
+          if [ "$ERROR_CODE" = "-32004" ] || echo "$ERROR_MESSAGE" | grep -qi "permission\|access denied"; then
+            echo "✅ Access correctly denied (user cannot read admin file)"
+            echo "   Error code: $ERROR_CODE"
+            echo "   Error message: $ERROR_MESSAGE"
+          else
+            echo "❌ Access should have been denied, but request succeeded or returned unexpected error"
+            echo "Response: $READ_RESPONSE"
+            exit 1
+          fi
+          echo ""
+
+          # Step 6: Admin grants read permission to the user
+          echo "🔓 Step 6: Admin granting read permission to $TEST_USER..."
+          GRANT_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/rebac_create \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $ADMIN_API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"$TEST_USER\"],\"relation\":\"direct_viewer\",\"object\":[\"file\",\"$ADMIN_FILE\"],\"tenant_id\":\"default\"}}" || echo "FAILED")
+
+          if [ "$GRANT_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to grant permission"
+            exit 1
+          fi
+          echo "✅ Permission granted: $TEST_USER can now read $ADMIN_FILE"
+          echo ""
+
+          # Step 7: Try to read the file as non-admin user again (should succeed)
+          echo "✅ Step 7: Attempting to read $ADMIN_FILE as $TEST_USER (should succeed)..."
+          READ_RESPONSE=$(curl -s http://localhost:8080/api/nfs/read \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $USER_API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"read\",\"params\":{\"path\":\"$ADMIN_FILE\"}}")
+
+          # Check for errors first
+          ERROR_CODE=$(echo "$READ_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
+          if [ -n "$ERROR_CODE" ]; then
+            ERROR_MESSAGE=$(echo "$READ_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
+            echo "❌ Failed to read file after permission grant"
+            echo "   Error code: $ERROR_CODE"
+            echo "   Error message: $ERROR_MESSAGE"
+            echo "   Response: $READ_RESPONSE"
+            exit 1
+          fi
+
+          # Extract and decode base64 content
+          CONTENT=$(echo "$READ_RESPONSE" | python3 -c "import sys, json, base64; data=json.load(sys.stdin); print(base64.b64decode(data['result']['data']).decode('utf-8').strip())" 2>/dev/null || echo "")
+
+          if [ "$CONTENT" = "$ADMIN_FILE_CONTENT" ]; then
+            echo "✅ User successfully read admin file after permission grant"
+            echo "   Content: $CONTENT"
+          else
+            echo "❌ File content doesn't match expected value"
+            echo "Expected: $ADMIN_FILE_CONTENT"
+            echo "Got: $CONTENT"
+            echo "Response: $READ_RESPONSE"
+            exit 1
+          fi
+          echo ""
+
+          echo "🎉 User permission grant test completed successfully!"
+
       - name: Authenticate gcloud with service account
         run: |
           echo "🔐 Authenticating gcloud with service account..."

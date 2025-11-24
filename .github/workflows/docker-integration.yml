@@ -454,12 +454,39 @@ jobs:
           echo "   API key: ${USER_API_KEY:0:30}..."
           echo ""
 
-          # Step 2: Admin creates a file
-          echo "📝 Step 2: Admin creating file $ADMIN_FILE..."
+          # Step 2: Ensure admin has ownership of /workspace (required for creating files)
+          echo "🔑 Step 2: Ensuring admin ownership of /workspace..."
+          # First, try to create /workspace directory if it doesn't exist
+          MKDIR_RESPONSE=$(curl -s http://localhost:8080/api/nfs/mkdir \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $ADMIN_API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"mkdir\",\"params\":{\"path\":\"/workspace\"}}" 2>&1 || echo "")
+
+          # Grant admin ownership of /workspace
+          OWNER_RESPONSE=$(curl -s http://localhost:8080/api/nfs/rebac_create \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $ADMIN_API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"/workspace\"],\"tenant_id\":\"default\"}}" 2>&1)
+
+          # Check for errors (it's okay if tuple already exists)
+          ERROR_CODE=$(echo "$OWNER_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
+          if [ -n "$ERROR_CODE" ] && [ "$ERROR_CODE" != "-32001" ]; then
+            # -32001 is FILE_EXISTS, which is okay for rebac_create (tuple might already exist)
+            ERROR_MESSAGE=$(echo "$OWNER_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
+            echo "⚠️  Warning: Could not grant admin ownership (may already exist)"
+            echo "   Error code: $ERROR_CODE"
+            echo "   Error message: $ERROR_MESSAGE"
+          else
+            echo "✅ Admin ownership of /workspace ensured"
+          fi
+          echo ""
+
+          # Step 3: Admin creates a file
+          echo "📝 Step 3: Admin creating file $ADMIN_FILE..."
           WRITE_RESPONSE=$(curl -s http://localhost:8080/api/nfs/write \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
-            -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"write\",\"params\":{\"path\":\"$ADMIN_FILE\",\"content\":\"$ADMIN_FILE_CONTENT\"}}")
+            -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"write\",\"params\":{\"path\":\"$ADMIN_FILE\",\"content\":\"$ADMIN_FILE_CONTENT\"}}")
 
           # Check for errors
           ERROR_CODE=$(echo "$WRITE_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
@@ -478,7 +505,7 @@ jobs:
           VERIFY_RESPONSE=$(curl -s http://localhost:8080/api/nfs/read \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
-            -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"read\",\"params\":{\"path\":\"$ADMIN_FILE\"}}")
+            -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"read\",\"params\":{\"path\":\"$ADMIN_FILE\"}}")
 
           VERIFY_ERROR=$(echo "$VERIFY_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
           if [ -n "$VERIFY_ERROR" ]; then
@@ -489,12 +516,12 @@ jobs:
           echo "✅ File verified (admin can read it)"
           echo ""
 
-          # Step 3: Grant admin ownership of the file (required for permission management)
-          echo "🔑 Step 3: Granting admin ownership of $ADMIN_FILE..."
+          # Step 4: Grant admin ownership of the file (required for permission management)
+          echo "🔑 Step 4: Granting admin ownership of $ADMIN_FILE..."
           OWNER_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/rebac_create \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
-            -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"$ADMIN_FILE\"],\"tenant_id\":\"default\"}}" || echo "FAILED")
+            -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"$ADMIN_FILE\"],\"tenant_id\":\"default\"}}" || echo "FAILED")
 
           if [ "$OWNER_RESPONSE" = "FAILED" ]; then
             echo "❌ Failed to grant admin ownership"
@@ -503,12 +530,12 @@ jobs:
           echo "✅ Admin ownership granted"
           echo ""
 
-          # Step 4: Try to read the file as non-admin user (should fail)
-          echo "🚫 Step 4: Attempting to read $ADMIN_FILE as $TEST_USER (should fail)..."
+          # Step 5: Try to read the file as non-admin user (should fail)
+          echo "🚫 Step 5: Attempting to read $ADMIN_FILE as $TEST_USER (should fail)..."
           READ_RESPONSE=$(curl -s http://localhost:8080/api/nfs/read \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $USER_API_KEY" \
-            -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"read\",\"params\":{\"path\":\"$ADMIN_FILE\"}}" 2>&1)
+            -d "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"read\",\"params\":{\"path\":\"$ADMIN_FILE\"}}" 2>&1)
 
           # Check if response contains error (JSON-RPC error format)
           ERROR_CODE=$(echo "$READ_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
@@ -526,12 +553,12 @@ jobs:
           fi
           echo ""
 
-          # Step 5: Admin grants read permission to the user
-          echo "🔓 Step 5: Admin granting read permission to $TEST_USER..."
+          # Step 6: Admin grants read permission to the user
+          echo "🔓 Step 6: Admin granting read permission to $TEST_USER..."
           GRANT_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/rebac_create \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
-            -d "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"$TEST_USER\"],\"relation\":\"direct_viewer\",\"object\":[\"file\",\"$ADMIN_FILE\"],\"tenant_id\":\"default\"}}" || echo "FAILED")
+            -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"$TEST_USER\"],\"relation\":\"direct_viewer\",\"object\":[\"file\",\"$ADMIN_FILE\"],\"tenant_id\":\"default\"}}" || echo "FAILED")
 
           if [ "$GRANT_RESPONSE" = "FAILED" ]; then
             echo "❌ Failed to grant permission"
@@ -540,12 +567,12 @@ jobs:
           echo "✅ Permission granted: $TEST_USER can now read $ADMIN_FILE"
           echo ""
 
-          # Step 6: Try to read the file as non-admin user again (should succeed)
-          echo "✅ Step 6: Attempting to read $ADMIN_FILE as $TEST_USER (should succeed)..."
+          # Step 7: Try to read the file as non-admin user again (should succeed)
+          echo "✅ Step 7: Attempting to read $ADMIN_FILE as $TEST_USER (should succeed)..."
           READ_RESPONSE=$(curl -s http://localhost:8080/api/nfs/read \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $USER_API_KEY" \
-            -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"read\",\"params\":{\"path\":\"$ADMIN_FILE\"}}")
+            -d "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"read\",\"params\":{\"path\":\"$ADMIN_FILE\"}}")
 
           # Check for errors first
           ERROR_CODE=$(echo "$READ_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")

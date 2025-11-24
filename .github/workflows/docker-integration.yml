@@ -425,7 +425,7 @@ jobs:
           # Generate unique test user and file with timestamp
           TIMESTAMP=$(date +%s)
           TEST_USER="testuser_${TIMESTAMP}"
-          ADMIN_FILE="/admin_secret_${TIMESTAMP}.txt"
+          ADMIN_FILE="/workspace/admin_secret_${TIMESTAMP}.txt"
           ADMIN_FILE_CONTENT="This is admin-only content"
           echo "Test user: $TEST_USER"
           echo "Admin file: $ADMIN_FILE"
@@ -456,18 +456,37 @@ jobs:
 
           # Step 2: Admin creates a file
           echo "📝 Step 2: Admin creating file $ADMIN_FILE..."
-          # Encode content as base64 for bytes format
-          ADMIN_FILE_CONTENT_B64=$(echo -n "$ADMIN_FILE_CONTENT" | base64)
-          WRITE_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/write \
+          WRITE_RESPONSE=$(curl -s http://localhost:8080/api/nfs/write \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
-            -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"write\",\"params\":{\"path\":\"$ADMIN_FILE\",\"content\":{\"__type__\":\"bytes\",\"data\":\"$ADMIN_FILE_CONTENT_B64\"}}}" || echo "FAILED")
+            -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"write\",\"params\":{\"path\":\"$ADMIN_FILE\",\"content\":\"$ADMIN_FILE_CONTENT\"}}")
 
-          if [ "$WRITE_RESPONSE" = "FAILED" ]; then
+          # Check for errors
+          ERROR_CODE=$(echo "$WRITE_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
+          if [ -n "$ERROR_CODE" ]; then
+            ERROR_MESSAGE=$(echo "$WRITE_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
             echo "❌ Failed to create admin file"
+            echo "   Error code: $ERROR_CODE"
+            echo "   Error message: $ERROR_MESSAGE"
+            echo "   Response: $WRITE_RESPONSE"
             exit 1
           fi
           echo "✅ Admin file created: $ADMIN_FILE"
+
+          # Verify file exists by trying to read it as admin
+          echo "🔍 Verifying file exists..."
+          VERIFY_RESPONSE=$(curl -s http://localhost:8080/api/nfs/read \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $ADMIN_API_KEY" \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"read\",\"params\":{\"path\":\"$ADMIN_FILE\"}}")
+
+          VERIFY_ERROR=$(echo "$VERIFY_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
+          if [ -n "$VERIFY_ERROR" ]; then
+            echo "❌ File was not created successfully (cannot read as admin)"
+            echo "   Response: $VERIFY_RESPONSE"
+            exit 1
+          fi
+          echo "✅ File verified (admin can read it)"
           echo ""
 
           # Step 3: Grant admin ownership of the file (required for permission management)
@@ -539,8 +558,8 @@ jobs:
             exit 1
           fi
 
-          # Extract and decode base64 content (bytes are serialized as {"__type__": "bytes", "data": "<base64>"})
-          CONTENT=$(echo "$READ_RESPONSE" | python3 -c "import sys, json, base64; data = json.load(sys.stdin); result = data.get('result', {}); content = base64.b64decode(result['data']).decode('utf-8').strip() if isinstance(result, dict) and result.get('__type__') == 'bytes' else (base64.b64decode(result['data']).decode('utf-8').strip() if isinstance(result, dict) and 'data' in result else ''); print(content)" 2>/dev/null || echo "")
+          # Extract and decode base64 content
+          CONTENT=$(echo "$READ_RESPONSE" | python3 -c "import sys, json, base64; data=json.load(sys.stdin); print(base64.b64decode(data['result']['data']).decode('utf-8').strip())" 2>/dev/null || echo "")
 
           if [ "$CONTENT" = "$ADMIN_FILE_CONTENT" ]; then
             echo "✅ User successfully read admin file after permission grant"

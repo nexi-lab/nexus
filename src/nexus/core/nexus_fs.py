@@ -37,7 +37,6 @@ from nexus.core.nexus_fs_search import NexusFSSearchMixin
 from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
 from nexus.core.nexus_fs_versions import NexusFSVersionsMixin
 from nexus.core.permissions import OperationContext, Permission
-from nexus.core.permissions_enhanced import EnhancedOperationContext
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.parsers import MarkItDownParser, ParserRegistry
@@ -217,12 +216,12 @@ class NexusFS(
         # v0.6.0: Policy system removed - use ReBAC for all permissions
         self.policy_matcher = None  # type: ignore[assignment]
 
-        # P0 Fixes: Use EnhancedOperationContext for GA features
-        from nexus.core.permissions_enhanced import EnhancedOperationContext
+        # P0 Fixes: Use OperationContext for GA features
+        from nexus.core.permissions import OperationContext
 
         # Create default context using provided tenant_id/agent_id
         # If tenant_id/agent_id are None, creates an unrestricted context for backward compatibility
-        self._default_context = EnhancedOperationContext(  # type: ignore[assignment]
+        self._default_context = OperationContext(
             user="anonymous",
             groups=[],
             tenant_id=tenant_id,
@@ -253,10 +252,10 @@ class NexusFS(
 
         self._entity_registry: EntityRegistry | None = EntityRegistry(self.metadata.SessionLocal)
 
-        # P0 Fixes: Initialize EnhancedPermissionEnforcer with audit logging
-        from nexus.core.permissions_enhanced import EnhancedPermissionEnforcer
+        # P0 Fixes: Initialize PermissionEnforcer with audit logging
+        from nexus.core.permissions import PermissionEnforcer
 
-        self._permission_enforcer = EnhancedPermissionEnforcer(
+        self._permission_enforcer = PermissionEnforcer(
             metadata_store=self.metadata,
             rebac_manager=self._rebac_manager,
             allow_admin_bypass=allow_admin_bypass,  # P0-4: Controlled by constructor parameter
@@ -465,9 +464,7 @@ class NexusFS(
 
         return self._memory_api
 
-    def _get_created_by(
-        self, context: OperationContext | EnhancedOperationContext | dict | None = None
-    ) -> str | None:
+    def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
         """Get the created_by value for version history tracking.
 
         Args:
@@ -601,10 +598,9 @@ class NexusFS(
             OperationContext instance
         """
         from nexus.core.permissions import OperationContext
-        from nexus.core.permissions_enhanced import EnhancedOperationContext
 
-        # If already an OperationContext or EnhancedOperationContext, return as-is
-        if isinstance(context, (OperationContext, EnhancedOperationContext)):
+        # If already an OperationContext, return as-is
+        if isinstance(context, OperationContext):
             return context
 
         if context is None:
@@ -781,13 +777,11 @@ class NexusFS(
             return
 
         # Use default context if none provided
-        from nexus.core.permissions_enhanced import EnhancedOperationContext
+        from nexus.core.permissions import OperationContext
 
         ctx_raw = context or self._default_context
-        assert isinstance(ctx_raw, EnhancedOperationContext), (
-            "Context must be EnhancedOperationContext"
-        )
-        ctx: EnhancedOperationContext = ctx_raw
+        assert isinstance(ctx_raw, OperationContext), "Context must be OperationContext"
+        ctx: OperationContext = ctx_raw
 
         logger.info(
             f"_check_permission: path={path}, permission={permission.name}, user={ctx.user}, tenant={getattr(ctx, 'tenant_id', None)}"
@@ -822,7 +816,7 @@ class NexusFS(
             )
 
     def _create_directory_metadata(
-        self, path: str, context: OperationContext | EnhancedOperationContext | None = None
+        self, path: str, context: OperationContext | None = None
     ) -> None:
         """
         Create metadata entry for a directory.
@@ -868,7 +862,7 @@ class NexusFS(
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> None:
         """
         Create a directory.
@@ -897,7 +891,7 @@ class NexusFS(
         # Skip check if parent will be created as part of this mkdir operation
         parent_path = self._get_parent_path(path)
         if parent_path and self.metadata.exists(parent_path) and not parents:
-            self._check_permission(parent_path, Permission.WRITE, ctx)  # type: ignore[arg-type]
+            self._check_permission(parent_path, Permission.WRITE, ctx)
 
         # Route to backend with write access check (mkdir requires write permission)
         route = self.router.route(
@@ -1024,7 +1018,7 @@ class NexusFS(
         path: str,
         recursive: bool = False,
         subject: tuple[str, str] | None = None,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
         tenant_id: str | None = None,
         agent_id: str | None = None,
         is_admin: bool | None = None,
@@ -1053,14 +1047,14 @@ class NexusFS(
 
         path = self._validate_path(path)
 
-        # P0 Fixes: Create EnhancedOperationContext
-        from nexus.core.permissions_enhanced import EnhancedOperationContext
+        # P0 Fixes: Create OperationContext
+        from nexus.core.permissions import OperationContext
 
         if context is not None:
             ctx = (
                 context
-                if isinstance(context, EnhancedOperationContext)
-                else EnhancedOperationContext(
+                if isinstance(context, OperationContext)
+                else OperationContext(
                     user=context.user,
                     groups=context.groups,
                     tenant_id=context.tenant_id or tenant_id,
@@ -1071,7 +1065,7 @@ class NexusFS(
                 )
             )
         elif subject is not None:
-            ctx = EnhancedOperationContext(
+            ctx = OperationContext(
                 user=subject[1],
                 groups=[],
                 tenant_id=tenant_id,
@@ -1083,8 +1077,8 @@ class NexusFS(
         else:
             ctx = (
                 self._default_context
-                if isinstance(self._default_context, EnhancedOperationContext)
-                else EnhancedOperationContext(
+                if isinstance(self._default_context, OperationContext)
+                else OperationContext(
                     user=self._default_context.user,
                     groups=self._default_context.groups,
                     tenant_id=tenant_id or self._default_context.tenant_id,
@@ -1102,7 +1096,7 @@ class NexusFS(
         logger.info(
             f"🗑️  RMDIR: path={path}, recursive={recursive}, user={ctx.user}, is_admin={ctx.is_admin}"
         )
-        self._check_permission(path, Permission.WRITE, ctx)  # type: ignore[arg-type]
+        self._check_permission(path, Permission.WRITE, ctx)
         logger.info(f"  -> Permission check PASSED for rmdir on {path}")
 
         # Route to backend with write access check (rmdir requires write permission)
@@ -1156,7 +1150,7 @@ class NexusFS(
         self,
         path: str,
         permission: Permission,
-        context: OperationContext | EnhancedOperationContext,
+        context: OperationContext,
     ) -> bool:
         """
         Check if user has access to a path OR any of its descendants.
@@ -1200,11 +1194,9 @@ class NexusFS(
 
         if not has_rebac:
             # Fallback to permission enforcer if no ReBAC
-            from nexus.core.permissions_enhanced import EnhancedOperationContext
+            from nexus.core.permissions import OperationContext
 
-            assert isinstance(context, EnhancedOperationContext), (
-                "Context must be EnhancedOperationContext"
-            )
+            assert isinstance(context, OperationContext), "Context must be OperationContext"
             return self._permission_enforcer.check(path, permission, context)
 
         # Validate subject_id (required for ReBAC checks)
@@ -1306,7 +1298,7 @@ class NexusFS(
         self,
         paths: list[str],
         permission: Permission,
-        context: OperationContext | EnhancedOperationContext,
+        context: OperationContext,
     ) -> dict[str, bool]:
         """Check if user has access to any descendant for multiple paths in bulk.
 
@@ -1425,7 +1417,7 @@ class NexusFS(
     def is_directory(
         self,
         path: str,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> bool:
         """
         Check if path is a directory (explicit or implicit).
@@ -2136,12 +2128,12 @@ class NexusFS(
 
         # Read file content with system bypass for background parsing
         # Auto-parse is a system operation that should not be subject to user permissions
-        from nexus.core.permissions_enhanced import EnhancedOperationContext
+        from nexus.core.permissions import OperationContext
 
-        parse_ctx = EnhancedOperationContext(
+        parse_ctx = OperationContext(
             user="system_parser", groups=[], tenant_id=None, is_system=True
         )
-        content = self.read(path, context=parse_ctx)  # type: ignore[arg-type]
+        content = self.read(path, context=parse_ctx)
 
         # Type narrowing: when return_metadata=False (default), result is bytes
         assert isinstance(content, bytes), "Expected bytes from read()"

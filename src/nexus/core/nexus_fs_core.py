@@ -293,8 +293,10 @@ class NexusFSCoreMixin:
 
         # Check if backend is a dynamic API-backed connector (e.g., x_connector)
         # These connectors don't use metadata - they fetch data directly from APIs
-        is_dynamic_connector = getattr(route.backend, "user_scoped", False) and hasattr(
-            route.backend, "token_manager"
+        # We check for user_scoped=True explicitly (not just truthy) to avoid Mock objects
+        is_dynamic_connector = (
+            getattr(route.backend, "user_scoped", None) is True
+            and getattr(route.backend, "token_manager", None) is not None
         )
 
         if is_dynamic_connector:

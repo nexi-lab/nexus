@@ -6,7 +6,9 @@ from nexus.server.auth.factory import create_auth_provider
 from nexus.server.auth.google_oauth import GoogleOAuthProvider
 from nexus.server.auth.local import LocalAuth
 from nexus.server.auth.microsoft_oauth import MicrosoftOAuthProvider
+from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
 from nexus.server.auth.oauth_crypto import OAuthCrypto
+from nexus.server.auth.oauth_factory import OAuthProviderFactory
 from nexus.server.auth.oauth_provider import OAuthCredential, OAuthError, OAuthProvider
 from nexus.server.auth.oidc import MultiOIDCAuth, OIDCAuth
 from nexus.server.auth.static_key import StaticAPIKeyAuth
@@ -26,7 +28,13 @@ __all__ = [
     "OAuthCredential",
     "OAuthError",
     "OAuthCrypto",
+    # OAuth configuration
+    "OAuthConfig",
+    "OAuthProviderConfig",
+    "OAuthProviderFactory",
+    # Google OAuth providers
     "GoogleOAuthProvider",
+    # Microsoft OAuth
     "MicrosoftOAuthProvider",
     "TokenManager",
 ]

@@ -71,30 +71,34 @@ class XOAuthProvider(OAuthProvider):
     def __init__(
         self,
         client_id: str,
+        redirect_uri: str,
+        scopes: list[str],
+        provider_name: str,
         client_secret: str | None = None,  # Optional for PKCE
-        redirect_uri: str | None = None,
-        scopes: list[str] | None = None,
     ):
         """Initialize X OAuth provider with PKCE support.
 
         Args:
             client_id: X OAuth client ID (from X Developer Portal)
-            client_secret: X OAuth client secret (optional for PKCE)
             redirect_uri: OAuth redirect URI (must match app config)
-            scopes: List of X OAuth scopes to request
+            scopes: List of X OAuth scopes to request (required)
+            provider_name: Provider name from config (e.g., "x", "twitter")
+            client_secret: X OAuth client secret (optional for PKCE)
 
         Example:
             >>> provider = XOAuthProvider(
             ...     client_id="your-client-id",
             ...     redirect_uri="http://localhost:5173/auth/callback",
-            ...     scopes=["tweet.read", "tweet.write", "users.read", "offline.access"]
+            ...     scopes=["tweet.read", "tweet.write", "users.read", "offline.access"],
+            ...     provider_name="x"
             ... )
         """
         super().__init__(
+            provider_name=provider_name,
             client_id=client_id,
             client_secret=client_secret or "",  # Empty string if not provided
             redirect_uri=redirect_uri,
-            scopes=scopes or self.DEFAULT_SCOPES,
+            scopes=scopes,
         )
 
     def get_authorization_url(self, state: str | None = None) -> str:
@@ -310,7 +314,7 @@ class XOAuthProvider(OAuthProvider):
             new_cred.refresh_token = credential.refresh_token
 
         # Preserve other metadata
-        new_cred.provider = "twitter"
+        new_cred.provider = self.provider_name
         new_cred.user_email = credential.user_email
         new_cred.scopes = credential.scopes or new_cred.scopes
         new_cred.metadata = credential.metadata
@@ -429,7 +433,7 @@ class XOAuthProvider(OAuthProvider):
             token_type=token_data.get("token_type", "bearer").capitalize(),
             expires_at=expires_at,
             scopes=scopes,
-            provider="twitter",
+            provider=self.provider_name,
             client_id=self.client_id,
             token_uri=self.TOKEN_ENDPOINT,
         )

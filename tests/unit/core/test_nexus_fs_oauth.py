@@ -8,7 +8,6 @@ This test suite covers OAuth operations in nexus_fs_oauth.py:
 - Credential testing
 """
 
-import contextlib
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -99,37 +98,55 @@ class TestNexusFSOAuthMixin:
         with pytest.raises(RuntimeError, match="no database path configured"):
             mixin._get_token_manager()
 
-    def test_oauth_get_drive_auth_url_success(self, mock_oauth_mixin, mock_token_manager):
-        """Test successful OAuth authorization URL generation."""
-        mock_oauth_mixin._token_manager = mock_token_manager
+    def test_oauth_list_providers(self, mock_oauth_mixin):
+        """Test listing all available OAuth providers."""
+        from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
 
-        with (
-            patch.dict(
-                "os.environ",
-                {
-                    "NEXUS_OAUTH_GOOGLE_CLIENT_ID": "test_client_id",
-                    "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET": "test_secret",
-                },
+        # Create mock OAuth config with providers
+        mock_providers = [
+            OAuthProviderConfig(
+                name="google-drive",
+                display_name="Google Drive",
+                provider_class="nexus.server.auth.google_oauth.GoogleOAuthProvider",
+                scopes=["https://www.googleapis.com/auth/drive"],
+                client_id_env="NEXUS_OAUTH_GOOGLE_CLIENT_ID",
+                client_secret_env="NEXUS_OAUTH_GOOGLE_CLIENT_SECRET",
+                requires_pkce=False,
+                icon_url="https://example.com/google-drive.png",
             ),
-            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
-        ):
-            mock_provider = Mock()
-            mock_provider.get_authorization_url = Mock(return_value="https://oauth.url?state=test")
-            MockProvider.return_value = mock_provider
+            OAuthProviderConfig(
+                name="x",
+                display_name="X (Twitter)",
+                provider_class="nexus.server.auth.x_oauth.XOAuthProvider",
+                scopes=["tweet.read"],
+                client_id_env="NEXUS_OAUTH_X_CLIENT_ID",
+                client_secret_env="NEXUS_OAUTH_X_CLIENT_SECRET",
+                requires_pkce=True,
+            ),
+        ]
+        mock_config = OAuthConfig(providers=mock_providers)
 
-            result = mock_oauth_mixin.oauth_get_drive_auth_url(
-                redirect_uri="http://localhost:3000/callback"
-            )
+        with patch(
+            "nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory"
+        ) as mock_factory:
+            mock_factory_instance = Mock()
+            mock_factory_instance._oauth_config = mock_config
+            mock_factory.return_value = mock_factory_instance
 
-            assert "url" in result
-            assert "state" in result
-            assert "https://oauth.url" in result["url"]
-            mock_token_manager.register_provider.assert_called_once()
+            result = mock_oauth_mixin.oauth_list_providers()
 
-    def test_oauth_get_drive_auth_url_missing_credentials(self, mock_oauth_mixin):
-        """Test OAuth URL generation fails without credentials."""
-        with pytest.raises(RuntimeError, match="OAuth credentials not configured"):
-            mock_oauth_mixin.oauth_get_drive_auth_url()
+            assert len(result) == 2
+            assert result[0]["name"] == "google-drive"
+            assert result[0]["display_name"] == "Google Drive"
+            assert result[0]["requires_pkce"] is False
+            assert result[1]["name"] == "x"
+            assert result[1]["display_name"] == "X (Twitter)"
+            assert result[1]["requires_pkce"] is True
+            assert "scopes" in result[0]
+            assert "metadata" in result[0]
+            assert result[0]["icon_url"] == "https://example.com/google-drive.png"
+            # X provider doesn't have icon_url in this test
+            assert "icon_url" not in result[1] or result[1].get("icon_url") is None
 
     @pytest.mark.asyncio
     async def test_oauth_exchange_code_success(self, mock_oauth_mixin, mock_token_manager):
@@ -170,7 +187,7 @@ class TestNexusFSOAuthMixin:
     @pytest.mark.asyncio
     async def test_oauth_exchange_code_invalid_provider(self, mock_oauth_mixin):
         """Test OAuth code exchange fails with invalid provider."""
-        with pytest.raises(ValueError, match="Unsupported OAuth provider"):
+        with pytest.raises(ValueError, match="not found in configuration"):
             await mock_oauth_mixin.oauth_exchange_code(
                 provider="invalid",
                 code="test_code",
@@ -397,34 +414,6 @@ class TestNexusFSOAuthMixin:
         assert result["valid"] is False
         assert "Token retrieval failed" in result["error"]
 
-    def test_oauth_get_drive_auth_url_with_context(self, mock_oauth_mixin, mock_token_manager):
-        """Test OAuth URL generation with operation context."""
-        mock_oauth_mixin._token_manager = mock_token_manager
-
-        mock_context = Mock()
-        mock_context.user_id = "test_user"
-        mock_context.tenant_id = "test_tenant"
-
-        with (
-            patch.dict(
-                "os.environ",
-                {
-                    "NEXUS_OAUTH_GOOGLE_CLIENT_ID": "test_client_id",
-                    "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET": "test_secret",
-                },
-            ),
-            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
-            contextlib.suppress(ValueError, TypeError),
-        ):
-            mock_provider = Mock()
-            mock_provider.get_authorization_url = Mock(return_value="https://oauth.url")
-            MockProvider.return_value = mock_provider
-
-            # Should not raise even with context parameter (context is accepted but ignored)
-            mock_oauth_mixin.oauth_get_drive_auth_url(context=mock_context)
-
-            # Test passes if no exception is raised
-
     @pytest.mark.asyncio
     async def test_oauth_exchange_code_with_state(self, mock_oauth_mixin, mock_token_manager):
         """Test OAuth code exchange with state parameter."""
@@ -458,6 +447,489 @@ class TestNexusFSOAuthMixin:
             )
 
             assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_oauth_exchange_code_store_credential_fails(
+        self, mock_oauth_mixin, mock_token_manager
+    ):
+        """Test OAuth code exchange when storing credential fails."""
+        mock_oauth_mixin._token_manager = mock_token_manager
+
+        mock_cred = Mock()
+        mock_cred.expires_at = datetime.now() + timedelta(hours=1)
+
+        mock_token_manager.store_credential.side_effect = Exception("Database error")
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_ID": "test_client_id",
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET": "test_secret",
+                },
+            ),
+            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
+        ):
+            mock_provider = Mock()
+            mock_provider.provider_name = "google-drive"
+            mock_provider.exchange_code = AsyncMock(return_value=mock_cred)
+            MockProvider.return_value = mock_provider
+
+            with pytest.raises(ValueError, match="Failed to store credential"):
+                await mock_oauth_mixin.oauth_exchange_code(
+                    provider="google",
+                    code="test_code",
+                    user_email="test@example.com",
+                )
+
+    def test_map_provider_name(self, mock_oauth_mixin):
+        """Test provider name mapping."""
+        assert mock_oauth_mixin._map_provider_name("google") == "google-drive"
+        assert mock_oauth_mixin._map_provider_name("twitter") == "x"
+        assert mock_oauth_mixin._map_provider_name("x") == "x"
+        assert mock_oauth_mixin._map_provider_name("microsoft") == "microsoft-onedrive"
+        assert mock_oauth_mixin._map_provider_name("microsoft-onedrive") == "microsoft-onedrive"
+        assert mock_oauth_mixin._map_provider_name("unknown") == "unknown"
+
+    def test_oauth_get_auth_url_success(self, mock_oauth_mixin):
+        """Test successful OAuth authorization URL generation."""
+        from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
+
+        mock_provider = Mock()
+        mock_provider.provider_name = "google-drive"
+        mock_provider.get_authorization_url = Mock(
+            return_value="https://accounts.google.com/o/oauth2/v2/auth?state=test"
+        )
+
+        mock_providers = [
+            OAuthProviderConfig(
+                name="google-drive",
+                display_name="Google Drive",
+                provider_class="nexus.server.auth.google_oauth.GoogleOAuthProvider",
+                scopes=["https://www.googleapis.com/auth/drive"],
+                client_id_env="NEXUS_OAUTH_GOOGLE_CLIENT_ID",
+                client_secret_env="NEXUS_OAUTH_GOOGLE_CLIENT_SECRET",
+                requires_pkce=False,
+            )
+        ]
+        mock_config = OAuthConfig(providers=mock_providers)
+
+        with (
+            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_token_manager") as mock_tm,
+        ):
+            mock_factory_instance = Mock()
+            mock_factory_instance._oauth_config = mock_config
+            mock_factory_instance.get_provider_config = Mock(return_value=mock_providers[0])
+            mock_factory_instance.create_provider = Mock(return_value=mock_provider)
+            mock_factory.return_value = mock_factory_instance
+
+            mock_tm_instance = Mock()
+            mock_tm_instance.register_provider = Mock()
+            mock_tm.return_value = mock_tm_instance
+
+            result = mock_oauth_mixin.oauth_get_auth_url(
+                provider="google",
+                redirect_uri="http://localhost:3000/callback",
+            )
+
+            assert "url" in result
+            assert "state" in result
+            assert len(result["state"]) > 0
+            assert "pkce_data" not in result  # No PKCE for Google
+
+    def test_oauth_get_auth_url_with_pkce(self, mock_oauth_mixin):
+        """Test OAuth authorization URL generation with PKCE."""
+        from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
+
+        mock_provider = Mock()
+        mock_provider.provider_name = "x"
+        mock_provider.get_authorization_url_with_pkce = Mock(
+            return_value=(
+                "https://twitter.com/i/oauth2/authorize?state=test",
+                {"code_verifier": "test_verifier", "code_challenge": "test_challenge"},
+            )
+        )
+
+        mock_providers = [
+            OAuthProviderConfig(
+                name="x",
+                display_name="X (Twitter)",
+                provider_class="nexus.server.auth.x_oauth.XOAuthProvider",
+                scopes=["tweet.read"],
+                client_id_env="NEXUS_OAUTH_X_CLIENT_ID",
+                client_secret_env="NEXUS_OAUTH_X_CLIENT_SECRET",
+                requires_pkce=True,
+            )
+        ]
+        mock_config = OAuthConfig(providers=mock_providers)
+
+        with (
+            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_token_manager") as mock_tm,
+        ):
+            mock_factory_instance = Mock()
+            mock_factory_instance._oauth_config = mock_config
+            mock_factory_instance.get_provider_config = Mock(return_value=mock_providers[0])
+            mock_factory_instance.create_provider = Mock(return_value=mock_provider)
+            mock_factory.return_value = mock_factory_instance
+
+            mock_tm_instance = Mock()
+            mock_tm_instance.register_provider = Mock()
+            mock_tm.return_value = mock_tm_instance
+
+            result = mock_oauth_mixin.oauth_get_auth_url(provider="x")
+
+            assert "url" in result
+            assert "state" in result
+            assert "pkce_data" in result
+            assert "code_verifier" in result["pkce_data"]
+
+    def test_create_provider_with_redirect_uri_parameter(self, mock_oauth_mixin):
+        """Test _create_provider uses redirect_uri parameter when provided."""
+        from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
+
+        mock_provider = Mock()
+        mock_provider.provider_name = "google-drive"
+
+        mock_providers = [
+            OAuthProviderConfig(
+                name="google-drive",
+                display_name="Google Drive",
+                provider_class="nexus.server.auth.google_oauth.GoogleOAuthProvider",
+                scopes=["https://www.googleapis.com/auth/drive"],
+                client_id_env="NEXUS_OAUTH_GOOGLE_CLIENT_ID",
+                client_secret_env="NEXUS_OAUTH_GOOGLE_CLIENT_SECRET",
+                requires_pkce=False,
+            )
+        ]
+        mock_config = OAuthConfig(providers=mock_providers)
+
+        with (
+            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+            patch.dict(
+                "os.environ",
+                {
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_ID": "test_client_id",
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET": "test_secret",
+                },
+            ),
+        ):
+            mock_factory_instance = Mock()
+            mock_factory_instance._oauth_config = mock_config
+            mock_factory_instance.create_provider = Mock(return_value=mock_provider)
+            mock_factory.return_value = mock_factory_instance
+
+            mock_oauth_mixin._create_provider(
+                provider="google",
+                redirect_uri="http://custom.com/callback",
+            )
+
+            # Verify factory was called with the provided redirect_uri
+            mock_factory_instance.create_provider.assert_called_once()
+            call_kwargs = mock_factory_instance.create_provider.call_args[1]
+            assert call_kwargs["redirect_uri"] == "http://custom.com/callback"
+
+    def test_create_provider_with_provider_config_redirect_uri(self, mock_oauth_mixin):
+        """Test _create_provider uses provider config redirect_uri when parameter is None."""
+        from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
+
+        mock_provider = Mock()
+        mock_provider.provider_name = "google-drive"
+
+        mock_providers = [
+            OAuthProviderConfig(
+                name="google-drive",
+                display_name="Google Drive",
+                provider_class="nexus.server.auth.google_oauth.GoogleOAuthProvider",
+                scopes=["https://www.googleapis.com/auth/drive"],
+                client_id_env="NEXUS_OAUTH_GOOGLE_CLIENT_ID",
+                client_secret_env="NEXUS_OAUTH_GOOGLE_CLIENT_SECRET",
+                requires_pkce=False,
+                redirect_uri="http://provider-config.com/callback",
+            )
+        ]
+        mock_config = OAuthConfig(providers=mock_providers)
+
+        with (
+            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+            patch.dict(
+                "os.environ",
+                {
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_ID": "test_client_id",
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET": "test_secret",
+                },
+            ),
+        ):
+            mock_factory_instance = Mock()
+            mock_factory_instance._oauth_config = mock_config
+            mock_factory_instance.create_provider = Mock(return_value=mock_provider)
+            mock_factory.return_value = mock_factory_instance
+
+            mock_oauth_mixin._create_provider(provider="google", redirect_uri=None)
+
+            # Verify factory was called with None redirect_uri (will use config)
+            mock_factory_instance.create_provider.assert_called_once()
+            call_kwargs = mock_factory_instance.create_provider.call_args[1]
+            assert call_kwargs["redirect_uri"] is None
+
+    def test_create_provider_with_global_config_redirect_uri(self, mock_oauth_mixin):
+        """Test _create_provider uses global config redirect_uri when provider doesn't have one."""
+        from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
+
+        mock_provider = Mock()
+        mock_provider.provider_name = "google-drive"
+
+        mock_providers = [
+            OAuthProviderConfig(
+                name="google-drive",
+                display_name="Google Drive",
+                provider_class="nexus.server.auth.google_oauth.GoogleOAuthProvider",
+                scopes=["https://www.googleapis.com/auth/drive"],
+                client_id_env="NEXUS_OAUTH_GOOGLE_CLIENT_ID",
+                client_secret_env="NEXUS_OAUTH_GOOGLE_CLIENT_SECRET",
+                requires_pkce=False,
+                redirect_uri=None,  # Provider doesn't have redirect_uri
+            )
+        ]
+        mock_config = OAuthConfig(
+            redirect_uri="http://global-config.com/callback",  # Global redirect_uri
+            providers=mock_providers,
+        )
+
+        with (
+            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+            patch.dict(
+                "os.environ",
+                {
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_ID": "test_client_id",
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET": "test_secret",
+                },
+            ),
+        ):
+            mock_factory_instance = Mock()
+            mock_factory_instance._oauth_config = mock_config
+            mock_factory_instance.create_provider = Mock(return_value=mock_provider)
+            mock_factory.return_value = mock_factory_instance
+
+            mock_oauth_mixin._create_provider(provider="google", redirect_uri=None)
+
+            # Verify factory was called with None redirect_uri (will use global config)
+            mock_factory_instance.create_provider.assert_called_once()
+            call_kwargs = mock_factory_instance.create_provider.call_args[1]
+            assert call_kwargs["redirect_uri"] is None
+
+    @pytest.mark.asyncio
+    async def test_oauth_exchange_code_with_pkce(self, mock_oauth_mixin, mock_token_manager):
+        """Test OAuth code exchange with PKCE."""
+        mock_oauth_mixin._token_manager = mock_token_manager
+
+        mock_cred = Mock()
+        mock_cred.expires_at = datetime.now() + timedelta(hours=1)
+
+        mock_token_manager.store_credential.return_value = "test_cred_id"
+
+        from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
+
+        mock_provider = Mock()
+        mock_provider.provider_name = "x"
+        mock_provider.exchange_code_pkce = AsyncMock(return_value=mock_cred)
+
+        mock_providers = [
+            OAuthProviderConfig(
+                name="x",
+                display_name="X (Twitter)",
+                provider_class="nexus.server.auth.x_oauth.XOAuthProvider",
+                scopes=["tweet.read"],
+                client_id_env="NEXUS_OAUTH_X_CLIENT_ID",
+                client_secret_env="NEXUS_OAUTH_X_CLIENT_SECRET",
+                requires_pkce=True,
+            )
+        ]
+        mock_config = OAuthConfig(providers=mock_providers)
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "NEXUS_OAUTH_X_CLIENT_ID": "test_client_id",
+                },
+            ),
+            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+        ):
+            mock_factory_instance = Mock()
+            mock_factory_instance._oauth_config = mock_config
+            mock_factory_instance.get_provider_config = Mock(return_value=mock_providers[0])
+            mock_factory_instance.create_provider = Mock(return_value=mock_provider)
+            mock_factory.return_value = mock_factory_instance
+
+            result = await mock_oauth_mixin.oauth_exchange_code(
+                provider="x",
+                code="test_code",
+                user_email="test@example.com",
+                code_verifier="test_verifier",
+            )
+
+            assert result["success"] is True
+            assert result["credential_id"] == "test_cred_id"
+            mock_provider.exchange_code_pkce.assert_called_once_with("test_code", "test_verifier")
+
+    @pytest.mark.asyncio
+    async def test_oauth_exchange_code_with_pkce_from_cache(
+        self, mock_oauth_mixin, mock_token_manager
+    ):
+        """Test OAuth code exchange with PKCE verifier from cache."""
+        mock_oauth_mixin._token_manager = mock_token_manager
+
+        mock_cred = Mock()
+        mock_cred.expires_at = datetime.now() + timedelta(hours=1)
+
+        mock_token_manager.store_credential.return_value = "test_cred_id"
+
+        from nexus.core.nexus_fs_oauth import _pkce_cache
+        from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
+
+        # Set up PKCE cache
+        test_state = "test_state_token"
+        _pkce_cache[test_state] = {"code_verifier": "cached_verifier"}
+
+        mock_provider = Mock()
+        mock_provider.provider_name = "x"
+        mock_provider.exchange_code_pkce = AsyncMock(return_value=mock_cred)
+
+        mock_providers = [
+            OAuthProviderConfig(
+                name="x",
+                display_name="X (Twitter)",
+                provider_class="nexus.server.auth.x_oauth.XOAuthProvider",
+                scopes=["tweet.read"],
+                client_id_env="NEXUS_OAUTH_X_CLIENT_ID",
+                client_secret_env="NEXUS_OAUTH_X_CLIENT_SECRET",
+                requires_pkce=True,
+            )
+        ]
+        mock_config = OAuthConfig(providers=mock_providers)
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "NEXUS_OAUTH_X_CLIENT_ID": "test_client_id",
+                },
+            ),
+            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+        ):
+            mock_factory_instance = Mock()
+            mock_factory_instance._oauth_config = mock_config
+            mock_factory_instance.get_provider_config = Mock(return_value=mock_providers[0])
+            mock_factory_instance.create_provider = Mock(return_value=mock_provider)
+            mock_factory.return_value = mock_factory_instance
+
+            result = await mock_oauth_mixin.oauth_exchange_code(
+                provider="x",
+                code="test_code",
+                user_email="test@example.com",
+                state=test_state,
+            )
+
+            assert result["success"] is True
+            # Verify PKCE verifier was retrieved from cache
+            mock_provider.exchange_code_pkce.assert_called_once_with("test_code", "cached_verifier")
+            # Verify cache was cleaned up
+            assert test_state not in _pkce_cache
+
+    @pytest.mark.asyncio
+    async def test_oauth_exchange_code_pkce_missing_verifier(
+        self, mock_oauth_mixin, mock_token_manager
+    ):
+        """Test OAuth code exchange with PKCE fails when verifier is missing."""
+        mock_oauth_mixin._token_manager = mock_token_manager
+
+        from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
+
+        mock_provider = Mock()
+        mock_provider.provider_name = "x"
+
+        mock_providers = [
+            OAuthProviderConfig(
+                name="x",
+                display_name="X (Twitter)",
+                provider_class="nexus.server.auth.x_oauth.XOAuthProvider",
+                scopes=["tweet.read"],
+                client_id_env="NEXUS_OAUTH_X_CLIENT_ID",
+                client_secret_env="NEXUS_OAUTH_X_CLIENT_SECRET",
+                requires_pkce=True,
+            )
+        ]
+        mock_config = OAuthConfig(providers=mock_providers)
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "NEXUS_OAUTH_X_CLIENT_ID": "test_client_id",
+                },
+            ),
+            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+        ):
+            mock_factory_instance = Mock()
+            mock_factory_instance._oauth_config = mock_config
+            mock_factory_instance.get_provider_config = Mock(return_value=mock_providers[0])
+            mock_factory_instance.create_provider = Mock(return_value=mock_provider)
+            mock_factory.return_value = mock_factory_instance
+
+            with pytest.raises(ValueError, match="requires PKCE"):
+                await mock_oauth_mixin.oauth_exchange_code(
+                    provider="x",
+                    code="test_code",
+                    user_email="test@example.com",
+                    # No code_verifier and no state
+                )
+
+    def test_get_oauth_factory_with_config(self, mock_oauth_mixin):
+        """Test _get_oauth_factory uses config when available."""
+        from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
+
+        mock_providers = [
+            OAuthProviderConfig(
+                name="google-drive",
+                display_name="Google Drive",
+                provider_class="nexus.server.auth.google_oauth.GoogleOAuthProvider",
+                scopes=["https://www.googleapis.com/auth/drive"],
+                client_id_env="NEXUS_OAUTH_GOOGLE_CLIENT_ID",
+                client_secret_env="NEXUS_OAUTH_GOOGLE_CLIENT_SECRET",
+                requires_pkce=False,
+            )
+        ]
+        mock_config = OAuthConfig(providers=mock_providers)
+
+        # Create a mock config object
+        mock_nexus_config = Mock()
+        mock_nexus_config.oauth = mock_config
+
+        mock_oauth_mixin._config = mock_nexus_config
+
+        with patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory:
+            mock_factory_instance = Mock()
+            MockFactory.return_value = mock_factory_instance
+
+            factory = mock_oauth_mixin._get_oauth_factory()
+
+            assert factory == mock_factory_instance
+            # Verify factory was created with the config
+            MockFactory.assert_called_once_with(config=mock_config)
+
+    def test_get_oauth_factory_without_config(self, mock_oauth_mixin):
+        """Test _get_oauth_factory uses default config when no config available."""
+        with patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory:
+            mock_factory_instance = Mock()
+            MockFactory.return_value = mock_factory_instance
+
+            factory = mock_oauth_mixin._get_oauth_factory()
+
+            assert factory == mock_factory_instance
+            # Verify factory was created with None (will use default)
+            MockFactory.assert_called_once_with(config=None)
 
 
 if __name__ == "__main__":

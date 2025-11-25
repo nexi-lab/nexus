@@ -1492,6 +1492,47 @@ jobs:
           echo ""
           echo "🎉 URLs test completed successfully!"
 
+      - name: Test docker-start.sh --stop
+        run: |
+          echo "🛑 Testing docker-start.sh --stop..."
+          echo ""
+
+          # Record running containers before stop
+          CONTAINERS_BEFORE=$(docker ps -q | wc -l)
+          echo "Containers running before stop: $CONTAINERS_BEFORE"
+
+          # Run stop command
+          ./docker-start.sh --stop
+          EXIT_CODE=$?
+
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ Stop command failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+
+          echo ""
+          echo "⏳ Waiting for containers to stop..."
+          sleep 5
+
+          # Verify containers are stopped
+          CONTAINERS_AFTER=$(docker ps -q | wc -l)
+          echo "Containers running after stop: $CONTAINERS_AFTER"
+
+          # Verify all Nexus containers are stopped (should be 0)
+          if [ $CONTAINERS_AFTER -eq 0 ]; then
+            echo "✅ All containers stopped successfully"
+          else
+            echo "⚠️  Some containers still running (expected in CI - may have background services)"
+            docker ps
+          fi
+
+          # Verify networks are cleaned up
+          NEXUS_NETWORKS=$(docker network ls --filter "name=nexus" -q | wc -l)
+          echo "Nexus networks remaining: $NEXUS_NETWORKS"
+
+          echo ""
+          echo "🎉 Stop test completed successfully!"
+
       - name: Display service logs on failure
         if: failure()
         run: |

@@ -320,6 +320,17 @@ class NexusFSOAuthMixin:
         ) or "default"
         created_by = context.user_id if context and hasattr(context, "user_id") else user_email
 
+        # Security: Ensure user_email matches context user (unless admin)
+        # This prevents users from storing credentials for other users
+        if context:
+            current_user = getattr(context, "user_id", None) or getattr(context, "user", None)
+            is_admin = getattr(context, "is_admin", False)
+            if not is_admin and current_user and user_email != current_user:
+                raise ValueError(
+                    f"Permission denied: Cannot store credentials for {user_email}. "
+                    f"Credentials can only be stored for your own account ({current_user})."
+                )
+
         # Use provider's actual name for storage
         provider_name = provider_instance.provider_name
 
@@ -501,6 +512,10 @@ class NexusFSOAuthMixin:
                 - created_at: Creation timestamp (ISO format)
                 - last_used_at: Last usage timestamp (ISO format)
                 - revoked: Whether credential is revoked
+
+        Note:
+            Only returns credentials for the current user (from context).
+            Admins can see all credentials in their tenant.
         """
         token_manager = self._get_token_manager()
         # Default to 'default' tenant if not specified to match mount configurations
@@ -508,18 +523,34 @@ class NexusFSOAuthMixin:
             context.tenant_id if context and hasattr(context, "tenant_id") else None
         ) or "default"
 
-        credentials = await token_manager.list_credentials(tenant_id=tenant_id)
+        # Extract current user's email from context
+        # Use user_id (preferred) or user (legacy) from context
+        current_user_email = None
+        if context:
+            current_user_email = getattr(context, "user_id", None) or getattr(context, "user", None)
+        is_admin = context and getattr(context, "is_admin", False)
+
+        # List credentials for tenant (and optionally user)
+        credentials = await token_manager.list_credentials(
+            tenant_id=tenant_id, user_email=current_user_email if not is_admin else None
+        )
 
         # Filter by provider and revoked status if needed
         result = []
         for cred in credentials:
+            # Per-user isolation: non-admins can only see their own credentials
+            if not is_admin and current_user_email and cred.get("user_email") != current_user_email:
+                continue
             if provider and cred["provider"] != provider:
                 continue
             if not include_revoked and cred.get("revoked", False):
                 continue
             result.append(cred)
 
-        logger.info(f"Listed {len(result)} OAuth credentials (provider={provider})")
+        logger.info(
+            f"Listed {len(result)} OAuth credentials for user={current_user_email}, "
+            f"tenant={tenant_id}, provider={provider}"
+        )
         return result
 
     @rpc_expose(description="Revoke OAuth credential")
@@ -542,13 +573,29 @@ class NexusFSOAuthMixin:
                 - credential_id: Revoked credential ID
 
         Raises:
-            ValueError: If credential not found
+            ValueError: If credential not found or user doesn't have permission
+
+        Note:
+            Users can only revoke their own credentials unless they are admin.
         """
         token_manager = self._get_token_manager()
         # Default to 'default' tenant if not specified to match mount configurations
         tenant_id = (
             context.tenant_id if context and hasattr(context, "tenant_id") else None
         ) or "default"
+
+        # Extract current user's email from context
+        current_user_email = None
+        if context:
+            current_user_email = getattr(context, "user_id", None) or getattr(context, "user", None)
+        is_admin = context and getattr(context, "is_admin", False)
+
+        # Permission check: users can only revoke their own credentials (unless admin)
+        if not is_admin and current_user_email and user_email != current_user_email:
+            raise ValueError(
+                f"Permission denied: Cannot revoke credentials for {user_email}. "
+                f"Only your own credentials can be revoked."
+            )
 
         try:
             success = await token_manager.revoke_credential(
@@ -589,13 +636,29 @@ class NexusFSOAuthMixin:
                 - error: Error message if invalid
 
         Raises:
-            ValueError: If credential not found
+            ValueError: If credential not found or user doesn't have permission
+
+        Note:
+            Users can only test their own credentials unless they are admin.
         """
         token_manager = self._get_token_manager()
         # Default to 'default' tenant if not specified to match mount configurations
         tenant_id = (
             context.tenant_id if context and hasattr(context, "tenant_id") else None
         ) or "default"
+
+        # Extract current user's email from context
+        current_user_email = None
+        if context:
+            current_user_email = getattr(context, "user_id", None) or getattr(context, "user", None)
+        is_admin = context and getattr(context, "is_admin", False)
+
+        # Permission check: users can only test their own credentials (unless admin)
+        if not is_admin and current_user_email and user_email != current_user_email:
+            raise ValueError(
+                f"Permission denied: Cannot test credentials for {user_email}. "
+                f"Only your own credentials can be tested."
+            )
 
         try:
             # Try to get a valid token (will auto-refresh if needed)
@@ -607,7 +670,9 @@ class NexusFSOAuthMixin:
 
             if token:
                 # Get credential details
-                credentials = await token_manager.list_credentials(tenant_id=tenant_id)
+                credentials = await token_manager.list_credentials(
+                    tenant_id=tenant_id, user_email=user_email
+                )
                 cred = next((c for c in credentials if c["user_email"] == user_email), None)
 
                 logger.info(f"OAuth credential test successful for {provider}:{user_email}")

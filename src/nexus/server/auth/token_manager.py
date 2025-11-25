@@ -389,25 +389,35 @@ class TokenManager:
             self._log_audit("credential_revoked", provider, user_email, tenant_id)
             return True
 
-    async def list_credentials(self, tenant_id: str | None = None) -> list[dict[str, Any]]:
+    async def list_credentials(
+        self, tenant_id: str | None = None, user_email: str | None = None
+    ) -> list[dict[str, Any]]:
         """List all credentials (metadata only, no tokens).
 
         Args:
             tenant_id: Optional tenant ID to filter by
+            user_email: Optional user email to filter by (for per-user isolation)
 
         Returns:
             List of credential metadata dicts
 
         Example:
-            >>> credentials = await manager.list_credentials()
-            >>> for cred in credentials:
-            ...     print(f"{cred['provider']}:{cred['user_email']}")
+            >>> # List all credentials for a tenant
+            >>> credentials = await manager.list_credentials(tenant_id="org_acme")
+            >>> # List credentials for a specific user
+            >>> credentials = await manager.list_credentials(
+            ...     tenant_id="org_acme",
+            ...     user_email="alice@example.com"
+            ... )
         """
         with self.SessionLocal() as session:
             stmt = select(OAuthCredentialModel).where(OAuthCredentialModel.revoked == 0)
 
             if tenant_id is not None:
                 stmt = stmt.where(OAuthCredentialModel.tenant_id == tenant_id)
+
+            if user_email is not None:
+                stmt = stmt.where(OAuthCredentialModel.user_email == user_email)
 
             models = session.execute(stmt).scalars().all()
 

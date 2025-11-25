@@ -94,22 +94,46 @@ class OAuthProviderFactory:
             ValueError: If the config file is invalid or cannot be loaded
         """
         # Load from default oauth.yaml file
-        # Path resolution: from nexus/src/nexus/server/auth/oauth_factory.py
-        # to nexus/configs/oauth.yaml
-        # Get the directory containing this file
-        current_file = Path(__file__)
-        # Navigate to nexus/configs/oauth.yaml
-        # From: nexus/src/nexus/server/auth/oauth_factory.py
-        # To: nexus/configs/oauth.yaml
-        # Structure: nexus/src/nexus/server/auth/oauth_factory.py
-        #           -> parent (auth/) -> parent (server/) -> parent (nexus/)
-        #           -> parent (src/) -> parent (nexus/) -> configs/oauth.yaml
-        configs_dir = current_file.parent.parent.parent.parent.parent / "configs"
-        oauth_yaml = configs_dir / "oauth.yaml"
+        # Try multiple possible locations:
+        # 1. Environment variable NEXUS_OAUTH_CONFIG_PATH
+        # 2. Docker container path: /app/configs/oauth.yaml
+        # 3. Relative to source file (Development: nexus/configs/oauth.yaml)
+        import os
 
-        if not oauth_yaml.exists():
+        oauth_yaml = None
+        tried_paths = []
+
+        # Try environment variable first
+        env_path = os.getenv("NEXUS_OAUTH_CONFIG_PATH")
+        if env_path:
+            tried_paths.append(env_path)
+            env_path_obj = Path(env_path)
+            if env_path_obj.exists():
+                oauth_yaml = env_path_obj
+
+        # Try /app/configs/oauth.yaml (Docker container)
+        if not oauth_yaml or not oauth_yaml.exists():
+            docker_path = Path("/app/configs/oauth.yaml")
+            tried_paths.append(str(docker_path))
+            if docker_path.exists():
+                oauth_yaml = docker_path
+
+        # Try relative to source file (Development)
+        if not oauth_yaml or not oauth_yaml.exists():
+            current_file = Path(__file__)
+            # Navigate to nexus/configs/oauth.yaml
+            # From: nexus/src/nexus/server/auth/oauth_factory.py
+            # To: nexus/configs/oauth.yaml
+            configs_dir = current_file.parent.parent.parent.parent.parent / "configs"
+            dev_path = configs_dir / "oauth.yaml"
+            tried_paths.append(str(dev_path))
+            if dev_path.exists():
+                oauth_yaml = dev_path
+
+        if not oauth_yaml or not oauth_yaml.exists():
+            paths_tried = "\n  - ".join(tried_paths)
             raise FileNotFoundError(
-                f"OAuth configuration file not found: {oauth_yaml}\n"
+                f"OAuth configuration file not found. Tried:\n  - {paths_tried}\n"
                 f"Please create the file or provide an OAuthConfig instance to OAuthProviderFactory."
             )
 

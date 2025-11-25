@@ -96,6 +96,8 @@ class NexusFS(
         workflow_engine: Any
         | None = None,  # v0.7.0: Optional workflow engine (auto-created if None)
     ):
+        # Store config for OAuth factory and other components that need it
+        self._config: Any | None = None
         """
         Initialize filesystem.
 

@@ -3952,29 +3952,27 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
     # OAuth Operations
     # ============================================================
 
-    def oauth_get_drive_auth_url(
+    def oauth_list_providers(
         self,
-        redirect_uri: str = "http://localhost:3000/oauth/callback",
         context: Any = None,
-    ) -> dict[str, Any]:
-        """Get OAuth authorization URL for Google Drive.
+    ) -> builtins.list[dict[str, Any]]:
+        """List all available OAuth providers from configuration.
 
         Args:
-            redirect_uri: OAuth redirect URI (default: http://localhost:3000/oauth/callback)
             context: Operation context (optional)
 
         Returns:
-            Dictionary containing:
-                - url: Authorization URL for user to visit
-                - state: CSRF state token (should be verified in callback)
-
-        Raises:
-            RuntimeError: If OAuth credentials not configured
+            List of provider dictionaries containing:
+                - name: Provider identifier (e.g., "google-drive", "gmail")
+                - display_name: Human-readable name (e.g., "Google Drive", "Gmail")
+                - scopes: List of OAuth scopes required
+                - requires_pkce: Whether provider requires PKCE
+                - metadata: Additional provider-specific metadata
         """
-        params: dict[str, Any] = {"redirect_uri": redirect_uri}
+        params: dict[str, Any] = {}
         if context is not None:
             params["context"] = context
-        result = self._call_rpc("oauth_get_drive_auth_url", params)
+        result = self._call_rpc("oauth_list_providers", params)
         return result  # type: ignore[no-any-return]
 
     def oauth_exchange_code(

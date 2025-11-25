@@ -19,10 +19,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
-from nexus import NexusFilesystem
+if TYPE_CHECKING:
+    from nexus import NexusFilesystem
+else:
+    from nexus.core.filesystem import NexusFilesystem
 from nexus.core.exceptions import (
     ConflictError,
     InvalidPathError,

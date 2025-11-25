@@ -159,8 +159,8 @@ class TokenManager:
             ...     tenant_id="org_acme"
             ... )
         """
-        if provider not in ["google", "microsoft", "dropbox", "box", "twitter"]:
-            raise ValueError(f"Unsupported provider: {provider}")
+        if not provider or not provider.strip():
+            raise ValueError("Provider name cannot be empty")
 
         # Encrypt tokens
         encrypted_access_token = self.crypto.encrypt_token(credential.access_token)

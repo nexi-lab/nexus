@@ -6,13 +6,13 @@ Based on MindsDB's encrypted_json_set/get pattern but with additional security f
 Security features:
 - Fernet symmetric encryption (AES-128 in CBC mode + HMAC-SHA256)
 - Key rotation support
-- Configurable key storage (environment variable or KMS)
+- Configurable key storage (environment variable, database, or KMS)
 - HMAC integrity protection
 - Time-to-live for encrypted data
 
 Example:
-    # Initialize crypto service
-    crypto = OAuthCrypto()
+    # Initialize crypto service with database URL for persistent key
+    crypto = OAuthCrypto(db_url="postgresql://user:pass@host/db")
 
     # Encrypt a token
     encrypted = crypto.encrypt_token("ya29.a0ARrdaM...")
@@ -21,10 +21,16 @@ Example:
     decrypted = crypto.decrypt_token(encrypted)
 """
 
+import logging
 import os
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
+
+logger = logging.getLogger(__name__)
+
+# Key name for storing OAuth encryption key in system_settings
+OAUTH_ENCRYPTION_KEY_NAME = "oauth_encryption_key"
 
 
 class OAuthCrypto:
@@ -35,41 +41,69 @@ class OAuthCrypto:
     - HMAC-SHA256 for integrity protection
     - Automatic timestamp verification
 
-    The encryption key can be:
-    1. Loaded from NEXUS_OAUTH_ENCRYPTION_KEY environment variable
-    2. Generated automatically (not recommended for production)
+    The encryption key is loaded in this order:
+    1. Explicitly provided encryption_key parameter
+    2. NEXUS_OAUTH_ENCRYPTION_KEY environment variable
+    3. From database system_settings table (if db_url provided)
+    4. Generated and stored in database (if db_url provided)
+    5. Generated randomly (WARNING: not persistent across restarts!)
     """
 
-    def __init__(self, encryption_key: str | None = None):
+    def __init__(
+        self,
+        encryption_key: str | None = None,
+        db_url: str | None = None,
+    ):
         """Initialize the crypto service.
 
         Args:
-            encryption_key: Base64-encoded Fernet key. If None, loads from:
-                          1. NEXUS_OAUTH_ENCRYPTION_KEY environment variable
-                          2. Generates a new random key (NOTE: not persistent!)
+            encryption_key: Base64-encoded Fernet key. If None, loads from
+                           environment or database.
+            db_url: Database URL for storing/retrieving encryption key.
+                   If provided and key not found, generates and stores a new key.
 
         Raises:
             ValueError: If the provided key is invalid
 
         Note:
-            When encryption_key is None and NEXUS_OAUTH_ENCRYPTION_KEY is not set,
-            a new random key is generated for each instance. This is secure but
-            means tokens encrypted by one instance cannot be decrypted by another.
-
-            For production deployments, ALWAYS set NEXUS_OAUTH_ENCRYPTION_KEY to
-            ensure consistent encryption/decryption across server restarts.
+            For production deployments, provide db_url to ensure the encryption
+            key is persisted and consistent across all processes/restarts.
         """
-        if encryption_key is None:
-            # Try to load from environment
-            encryption_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY")
+        # Priority 1: Explicit encryption key
+        if encryption_key is not None:
+            logger.debug("OAuthCrypto: Using explicit encryption key")
+            self._init_fernet(encryption_key)
+            return
 
-            if encryption_key is None:
-                # Generate a new random key for this instance
-                # Note: This means tokens are not portable between instances!
-                key_bytes: bytes = Fernet.generate_key()
-                encryption_key = key_bytes.decode("utf-8")
+        # Priority 2: Environment variable (must be non-empty)
+        env_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip()
+        if env_key:
+            logger.debug("OAuthCrypto: Using env var NEXUS_OAUTH_ENCRYPTION_KEY")
+            self._init_fernet(env_key)
+            return
 
-        # Convert to bytes if string
+        # Priority 3 & 4: Load from database or generate and store
+        if db_url:
+            logger.debug(f"OAuthCrypto: Trying to load key from db_url={db_url}")
+            db_key = self._load_or_create_key_from_db(db_url)
+            if db_key:
+                logger.debug(
+                    f"OAuthCrypto: Loaded key from database (starts with: {db_key[:10]}...)"
+                )
+                self._init_fernet(db_key)
+                return
+
+        # Priority 5: Generate random key (WARNING: not persistent!)
+        logger.warning(
+            "Generating random OAuth encryption key. This key will NOT persist "
+            "across restarts! Set NEXUS_OAUTH_ENCRYPTION_KEY or provide db_url "
+            "for production use."
+        )
+        key_bytes: bytes = Fernet.generate_key()
+        self._init_fernet(key_bytes.decode("utf-8"))
+
+    def _init_fernet(self, encryption_key: str) -> None:
+        """Initialize Fernet with the given key."""
         if isinstance(encryption_key, str):
             encryption_key_bytes = encryption_key.encode("utf-8")
         else:
@@ -79,6 +113,71 @@ class OAuthCrypto:
             self._fernet = Fernet(encryption_key_bytes)
         except Exception as e:
             raise ValueError(f"Invalid encryption key: {e}") from e
+
+    def _load_or_create_key_from_db(self, db_url: str) -> str | None:
+        """Load encryption key from database, or create and store a new one.
+
+        Args:
+            db_url: Database URL
+
+        Returns:
+            Encryption key string, or None if database access fails
+        """
+        try:
+            from sqlalchemy import create_engine, select
+            from sqlalchemy.orm import sessionmaker
+
+            from nexus.storage.models import Base, SystemSettingsModel
+
+            logger.debug(f"OAuthCrypto._load_or_create_key_from_db: Connecting to {db_url}")
+
+            # Create engine
+            connect_args = {}
+            if "sqlite" in db_url:
+                connect_args["check_same_thread"] = False
+
+            engine = create_engine(db_url, connect_args=connect_args)
+
+            # Ensure table exists
+            Base.metadata.create_all(engine)
+
+            Session = sessionmaker(bind=engine)
+
+            with Session() as session:
+                # Try to load existing key
+                stmt = select(SystemSettingsModel).where(
+                    SystemSettingsModel.key == OAUTH_ENCRYPTION_KEY_NAME
+                )
+                setting = session.execute(stmt).scalar_one_or_none()
+
+                if setting:
+                    logger.debug(
+                        f"OAuthCrypto: Loaded key from database (key={OAUTH_ENCRYPTION_KEY_NAME}, value starts with: {setting.value[:10]}...)"
+                    )
+                    return setting.value
+
+                # Generate new key and store it
+                logger.debug("OAuthCrypto: No key found in database, generating new one")
+                new_key = Fernet.generate_key().decode("utf-8")
+
+                new_setting = SystemSettingsModel(
+                    key=OAUTH_ENCRYPTION_KEY_NAME,
+                    value=new_key,
+                    description="Fernet encryption key for OAuth token encryption",
+                    is_sensitive=1,
+                )
+                session.add(new_setting)
+                session.commit()
+
+                logger.info("Generated and stored new OAuth encryption key in database")
+                return str(new_key)
+
+        except Exception as e:
+            import traceback
+
+            logger.warning(f"Failed to load/store encryption key from database: {e}")
+            logger.warning(f"Traceback: {traceback.format_exc()}")
+            return None
 
     @staticmethod
     def generate_key() -> str:
@@ -201,9 +300,9 @@ class OAuthCrypto:
             >>> new_encrypted = old_crypto.rotate_key(old_key, new_key, old_encrypted)
         """
         # Decrypt with old key
-        old_crypto = OAuthCrypto(old_key)
+        old_crypto = OAuthCrypto(encryption_key=old_key)
         decrypted = old_crypto.decrypt_token(encrypted_token)
 
         # Encrypt with new key
-        new_crypto = OAuthCrypto(new_key)
+        new_crypto = OAuthCrypto(encryption_key=new_key)
         return new_crypto.encrypt_token(decrypted)

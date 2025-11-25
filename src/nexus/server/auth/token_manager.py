@@ -109,8 +109,8 @@ class TokenManager:
         # Create tables if they don't exist
         Base.metadata.create_all(self.engine)
 
-        # Setup encryption
-        self.crypto = OAuthCrypto(encryption_key)
+        # Setup encryption - pass db_url so key can be stored/retrieved from database
+        self.crypto = OAuthCrypto(encryption_key=encryption_key, db_url=self.database_url)
 
         # Provider registry
         self.providers: dict[str, OAuthProvider] = {}

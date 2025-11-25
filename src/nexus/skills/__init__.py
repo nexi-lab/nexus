@@ -8,6 +8,7 @@ The Skills System provides:
 - Vendor-neutral skill export to .zip packages
 - Skill lifecycle management (create, fork, publish)
 - Template system for common skill patterns
+- MCP tool integration for dynamic tool discovery
 
 Example:
     >>> from nexus import connect
@@ -45,6 +46,23 @@ Example:
     >>> # Export skill
     >>> exporter = SkillExporter(registry)
     >>> await exporter.export_skill("analyze-code", "output.zip", format="claude")
+    >>>
+    >>> # MCP Tools Integration
+    >>> from nexus.skills import MCPToolExporter, MCPMountManager
+    >>>
+    >>> # Export Nexus MCP tools as skills
+    >>> mcp_exporter = MCPToolExporter(nx)
+    >>> await mcp_exporter.export_nexus_tools()
+    >>>
+    >>> # Mount external MCP servers
+    >>> mcp_manager = MCPMountManager(nx)
+    >>> await mcp_manager.mount(MCPMount(
+    ...     name="github",
+    ...     transport="stdio",
+    ...     command="npx",
+    ...     args=["-y", "@modelcontextprotocol/server-github"]
+    ... ))
+    >>> await mcp_manager.sync_tools("github")
 """
 
 from nexus.skills.analytics import (
@@ -62,6 +80,14 @@ from nexus.skills.governance import (
     SkillGovernance,
 )
 from nexus.skills.manager import SkillManager, SkillManagerError
+from nexus.skills.mcp_exporter import MCPToolExporter
+from nexus.skills.mcp_models import (
+    MCPMount,
+    MCPToolConfig,
+    MCPToolDefinition,
+    MCPToolExample,
+)
+from nexus.skills.mcp_mount import MCPMountError, MCPMountManager
 from nexus.skills.models import Skill, SkillExportManifest, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
 from nexus.skills.protocols import NexusFilesystem
@@ -116,4 +142,12 @@ __all__ = [
     "AuditAction",
     # Protocols
     "NexusFilesystem",
+    # MCP Integration
+    "MCPToolConfig",
+    "MCPToolDefinition",
+    "MCPToolExample",
+    "MCPMount",
+    "MCPMountManager",
+    "MCPMountError",
+    "MCPToolExporter",
 ]

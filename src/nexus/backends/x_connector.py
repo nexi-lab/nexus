@@ -50,7 +50,7 @@ from nexus.backends.backend import Backend
 from nexus.core.exceptions import BackendError
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import EnhancedOperationContext, OperationContext
+    from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +149,7 @@ class XConnectorBackend(Backend):
         return True
 
     async def _get_api_client_async(
-        self, context: "OperationContext | EnhancedOperationContext | None"
+        self, context: "OperationContext | None"
     ) -> Any:  # Returns XAPIClient but avoid circular import
         """Get authenticated X API client (async version).
 
@@ -194,7 +194,7 @@ class XConnectorBackend(Backend):
         return XAPIClient(access_token=access_token)
 
     def _get_api_client(
-        self, context: "OperationContext | EnhancedOperationContext | None"
+        self, context: "OperationContext | None"
     ) -> Any:  # Returns XAPIClient but avoid circular import
         """Get authenticated X API client (sync wrapper).
 
@@ -209,9 +209,7 @@ class XConnectorBackend(Backend):
         """
         return asyncio.run(self._get_api_client_async(context))
 
-    async def _get_user_id(
-        self, context: "OperationContext | EnhancedOperationContext | None"
-    ) -> str:
+    async def _get_user_id(self, context: "OperationContext | None") -> str:
         """Get X user ID for authenticated user.
 
         Args:
@@ -848,7 +846,7 @@ class XConnectorBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """
         Create directory (not supported for X connector).
@@ -866,7 +864,7 @@ class XConnectorBackend(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> None:
         """
         Remove directory (not supported for X connector).

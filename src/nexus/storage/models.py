@@ -2090,3 +2090,54 @@ class OAuthCredentialModel(Base):
 # - needs_relearning: BOOLEAN DEFAULT FALSE
 # - relearning_priority: INTEGER DEFAULT 0
 # - last_feedback_at: TIMESTAMP
+
+
+# ============================================================================
+# System Settings Table
+# ============================================================================
+
+
+class SystemSettingsModel(Base):
+    """System-wide settings stored in the database.
+
+    Provides persistent storage for system configuration that needs to be
+    consistent across all server instances, including:
+    - OAuth encryption key (auto-generated on first use)
+    - Feature flags
+    - System-wide defaults
+
+    Security note: The encryption key is stored in the database. While this
+    is not ideal from a pure security standpoint, it ensures consistency
+    across processes and restarts. For higher security deployments, use
+    NEXUS_OAUTH_ENCRYPTION_KEY environment variable instead.
+    """
+
+    __tablename__ = "system_settings"
+
+    # Primary key - setting name
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+
+    # Setting value (can be encrypted for sensitive data)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Metadata
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_sensitive: Mapped[int] = mapped_column(
+        Integer, default=0
+    )  # SQLite: bool as int, marks if value should be hidden in logs
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    def __repr__(self) -> str:
+        # Don't show value for sensitive settings
+        value_display = "***" if self.is_sensitive else self.value[:50]
+        return f"<SystemSettingsModel(key={self.key}, value={value_display})>"

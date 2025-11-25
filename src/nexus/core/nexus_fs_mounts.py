@@ -203,6 +203,15 @@ class NexusFSMountsMixin:
                     "user_email"
                 ),  # Optional - uses context.user_id if None
             )
+        elif backend_type == "x_connector":
+            from nexus.backends.x_connector import XConnectorBackend
+
+            backend = XConnectorBackend(
+                token_manager_db=backend_config["token_manager_db"],
+                user_email=backend_config.get("user_email"),
+                cache_ttl=backend_config.get("cache_ttl"),
+                cache_dir=backend_config.get("cache_dir"),
+            )
         else:
             raise RuntimeError(f"Unsupported backend type: {backend_type}")
 

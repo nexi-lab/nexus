@@ -37,6 +37,7 @@ from nexus.server.auth import (
     MicrosoftOAuthProvider,
     TokenManager,
 )
+from nexus.server.auth.x_oauth import XOAuthProvider
 
 # Rich console for output
 _console = Console()
@@ -400,6 +401,170 @@ def setup_gdrive(
         console.print("2. Use [cyan]nexus oauth test google {user_email}[/cyan] to verify")
     except Exception as e:
         console.print(f"\n[red]✗[/red] Failed to setup Google Drive: {e}")
+        sys.exit(1)
+
+
+@oauth.command("setup-x")
+@click.option(
+    "--client-id",
+    type=str,
+    default=lambda: os.getenv("NEXUS_OAUTH_X_CLIENT_ID"),
+    help="X (Twitter) OAuth client ID (default: $NEXUS_OAUTH_X_CLIENT_ID)",
+)
+@click.option(
+    "--client-secret",
+    type=str,
+    default=lambda: os.getenv("NEXUS_OAUTH_X_CLIENT_SECRET"),
+    help="X OAuth client secret (optional for PKCE, default: $NEXUS_OAUTH_X_CLIENT_SECRET)",
+)
+@click.option(
+    "--user-email",
+    type=str,
+    required=True,
+    help="User email address (for storing credentials)",
+)
+@click.option(
+    "--db-path",
+    type=str,
+    default=None,
+    help="Path to database (default: ~/.nexus/nexus.db)",
+)
+@click.option(
+    "--tenant-id",
+    type=str,
+    default=None,
+    help="Tenant ID (optional)",
+)
+def setup_x(
+    client_id: str | None,
+    client_secret: str | None,
+    user_email: str,
+    db_path: str | None,
+    tenant_id: str | None,
+) -> None:
+    """Setup X (Twitter) OAuth credentials for backend integration.
+
+    This command guides you through the OAuth 2.0 PKCE flow to authorize
+    Nexus to access your X (Twitter) account. The credentials are stored
+    encrypted in the database and used by the X connector backend.
+
+    OAuth credentials can be provided via:
+    - Command-line options: --client-id and --client-secret (optional)
+    - Environment variables: NEXUS_OAUTH_X_CLIENT_ID and NEXUS_OAUTH_X_CLIENT_SECRET
+    - Note: client_secret is optional for PKCE (public clients)
+
+    \b
+    Steps:
+    1. Creates OAuth authorization URL with PKCE challenge
+    2. Opens browser for user consent
+    3. User grants permission
+    4. Exchanges authorization code + PKCE verifier for tokens
+    5. Stores encrypted tokens in database
+
+    \b
+    Example (with client ID in command):
+        nexus oauth setup-x \\
+            --client-id "your-client-id" \\
+            --user-email "you@example.com"
+
+    \b
+    Example (with credentials in environment):
+        export NEXUS_OAUTH_X_CLIENT_ID="your-client-id"
+        nexus oauth setup-x --user-email "you@example.com"
+
+    \b
+    Get X API credentials:
+    1. Visit https://developer.twitter.com/
+    2. Create a new app (or use existing)
+    3. Setup OAuth 2.0 with redirect URI: http://localhost
+    4. Copy Client ID (and optionally Client Secret)
+    """
+
+    # Validate that client_id is provided
+    if not client_id:
+        console.print("[red]Error:[/red] X OAuth client ID not provided")
+        console.print("[yellow]Provide via:[/yellow]")
+        console.print("  --client-id option, OR")
+        console.print("  NEXUS_OAUTH_X_CLIENT_ID environment variable")
+        console.print("\n[bold]Get credentials at:[/bold] https://developer.twitter.com/")
+        sys.exit(1)
+
+    # Create provider with PKCE
+    provider = XOAuthProvider(
+        client_id=client_id,
+        client_secret=client_secret,  # Optional for PKCE
+        redirect_uri="http://localhost",  # Desktop app redirect URI
+        scopes=[
+            "tweet.read",
+            "tweet.write",
+            "tweet.moderate.write",
+            "users.read",
+            "follows.read",
+            "offline.access",
+            "bookmark.read",
+            "bookmark.write",
+            "list.read",
+            "like.read",
+            "like.write",
+        ],
+    )
+
+    # Generate authorization URL with PKCE
+    auth_url, pkce_data = provider.get_authorization_url_with_pkce()
+    code_verifier = pkce_data["code_verifier"]
+
+    console.print("\n[bold green]X (Twitter) OAuth Setup[/bold green]")
+    console.print(f"\n[bold]User:[/bold] {user_email}")
+    console.print(f"[bold]Client ID:[/bold] {client_id}")
+    console.print("[bold]Using PKCE:[/bold] Yes (enhanced security)")
+    console.print("\n[bold yellow]Step 1:[/bold yellow] Visit this URL to authorize:")
+    console.print(f"\n{auth_url}\n")
+    console.print(
+        "[bold yellow]Step 2:[/bold yellow] After granting permission, the browser will redirect to localhost (which will fail)."
+    )
+    console.print(
+        "[bold yellow]Step 3:[/bold yellow] Copy the 'code' parameter from the failed URL:"
+    )
+    console.print("[dim]Example: http://localhost/?code=ABCD...[/dim]")
+    console.print("[dim]Copy everything after 'code=' (the authorization code)[/dim]")
+
+    # Get authorization code from user
+    auth_code = click.prompt("\nEnter authorization code")
+
+    # Exchange code for tokens using PKCE
+    console.print("\n[dim]Exchanging code for tokens (using PKCE verifier)...[/dim]")
+
+    async def _exchange_and_store() -> str:
+        # Exchange code with PKCE verifier
+        credential = await provider.exchange_code_pkce(auth_code, code_verifier)
+
+        # Store in database
+        manager = get_token_manager(db_path)
+        cred_id = await manager.store_credential(
+            provider="twitter",
+            user_email=user_email,
+            credential=credential,
+            tenant_id=tenant_id or "default",
+            created_by=user_email,
+        )
+        manager.close()
+
+        console.print(f"[green]✓[/green] Stored credential with ID: {cred_id}")
+        return cred_id
+
+    try:
+        cred_id = asyncio.run(_exchange_and_store())
+        console.print(f"\n[green]✓[/green] Successfully stored credentials for {user_email}")
+        console.print(f"[dim]Credential ID: {cred_id}[/dim]")
+        console.print("\n[bold]Next steps:[/bold]")
+        console.print("1. Configure Nexus to use X connector backend")
+        console.print(f"2. Use [cyan]nexus oauth test twitter {user_email}[/cyan] to verify")
+        console.print("3. Try the example: [cyan]python examples/x_connector_example.py[/cyan]")
+    except Exception as e:
+        console.print(f"\n[red]✗[/red] Failed to setup X OAuth: {e}")
+        import traceback
+
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
         sys.exit(1)
 
 

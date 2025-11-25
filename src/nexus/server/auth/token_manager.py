@@ -159,7 +159,7 @@ class TokenManager:
             ...     tenant_id="org_acme"
             ... )
         """
-        if provider not in ["google", "microsoft", "dropbox", "box"]:
+        if provider not in ["google", "microsoft", "dropbox", "box", "twitter"]:
             raise ValueError(f"Unsupported provider: {provider}")
 
         # Encrypt tokens

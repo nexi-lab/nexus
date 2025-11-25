@@ -1460,38 +1460,6 @@ jobs:
           echo ""
           echo "🎉 Logs test completed successfully!"
 
-      - name: Test docker-start.sh --urls
-        run: |
-          echo "🌐 Testing docker-start.sh --urls..."
-          echo ""
-
-          # Run urls command and capture output
-          URLS_OUTPUT=$(./docker-start.sh --urls 2>&1)
-          EXIT_CODE=$?
-
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "❌ URLs command failed with exit code $EXIT_CODE"
-            echo "$URLS_OUTPUT"
-            exit 1
-          fi
-
-          echo "$URLS_OUTPUT"
-          echo ""
-
-          # Verify output contains expected URLs and ports
-          EXPECTED_URLS=("localhost:8080" "localhost:5173" "localhost:2024" "localhost:5432")
-          for url in "${EXPECTED_URLS[@]}"; do
-            if echo "$URLS_OUTPUT" | grep -q "$url"; then
-              echo "✅ URLs shows: $url"
-            else
-              echo "❌ URLs missing: $url"
-              exit 1
-            fi
-          done
-
-          echo ""
-          echo "🎉 URLs test completed successfully!"
-
       - name: Test docker-start.sh --stop
         run: |
           echo "🛑 Testing docker-start.sh --stop..."

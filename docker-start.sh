@@ -599,7 +599,7 @@ cmd_urls() {
 
   🎨 Frontend:        https://${EXTERNAL_ACCESS_ADDRESS}:15173
   🔧 Nexus API:       https://${EXTERNAL_ACCESS_ADDRESS}:18080
-  🔮 LangGraph:       https://:${EXTERNAL_ACCESS_ADDRESS}12024
+  🔮 LangGraph:       https://${EXTERNAL_ACCESS_ADDRESS}:12024
   🗄️   PostgreSQL:     localhost:5432
 
   📊 Health Checks:
@@ -685,6 +685,7 @@ case "$COMMAND" in
         cmd_logs
         ;;
     --status)
+	check_env_file
         print_banner
         cmd_status
         show_api_key

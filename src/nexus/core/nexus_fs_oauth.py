@@ -67,10 +67,30 @@ class NexusFSOAuthMixin:
         if not hasattr(self, "_token_manager") or self._token_manager is None:
             from nexus.server.auth.token_manager import TokenManager
 
-            db_path = str(self.db_path) if hasattr(self, "db_path") and self.db_path else None
-            if not db_path:
-                raise RuntimeError("Cannot initialize TokenManager: no database path configured")
+            # Priority: config.db_path > self.db_path > metadata.database_url
+            db_path = None
 
+            # First, try to get db_path from config (preferred)
+            if (
+                hasattr(self, "_config")
+                and self._config
+                and hasattr(self._config, "db_path")
+                and self._config.db_path
+            ):
+                db_path = self._config.db_path
+            # Second, try self.db_path (stored during initialization)
+            elif hasattr(self, "db_path") and self.db_path:
+                db_path = str(self.db_path)
+            # Fallback to metadata store database URL
+            elif hasattr(self, "metadata") and hasattr(self.metadata, "database_url"):
+                db_path = self.metadata.database_url
+
+            if not db_path:
+                raise RuntimeError(
+                    "Cannot initialize TokenManager: No database path configured in NexusFS config, db_path, or metadata store"
+                )
+
+            # TokenManager accepts db_url for any database type, or db_path for SQLite
             if db_path.startswith(("postgresql://", "mysql://", "sqlite://")):
                 self._token_manager = TokenManager(db_url=db_path)
             else:

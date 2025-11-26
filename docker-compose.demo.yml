@@ -269,6 +269,9 @@ services:
     image: nexus-frontend:latest
     container_name: nexus-frontend
     restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/ssl:/etc/nginx/ssl
     depends_on:
       nexus:
         condition: service_healthy
@@ -278,6 +281,10 @@ services:
       VITE_LANGGRAPH_API_URL: ${VITE_LANGGRAPH_API_URL:-http://localhost:2024}
     ports:
       - "${FRONTEND_PORT:-5173}:80"
+      - "${FRONTEND_SSL_PORT:-15173}:443"
+      - "${NEXUS_SSL_PORT:-18080}:18080"
+      - "${MCP_SSL_PORT:-18081}:18081"
+      - "${LANGGRAPH_SSL_PORT:-12024}:12024"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80"]
       interval: 30s

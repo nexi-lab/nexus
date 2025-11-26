@@ -135,15 +135,17 @@ class TokenManager:
         credential: OAuthCredential,
         tenant_id: str = "default",
         created_by: str | None = None,
+        user_id: str | None = None,
     ) -> str:
         """Store OAuth credential in database.
 
         Args:
             provider: Provider name (e.g., "google")
-            user_email: User's email address
+            user_email: User's email address (from OAuth provider)
             credential: OAuthCredential to store
             tenant_id: Tenant ID (defaults to "default")
             created_by: Optional creator user ID
+            user_id: Optional Nexus user ID (for permission checks, preferred over created_by)
 
         Returns:
             credential_id: Database credential ID
@@ -156,7 +158,8 @@ class TokenManager:
             ...     provider="google",
             ...     user_email="alice@example.com",
             ...     credential=credential,
-            ...     tenant_id="org_acme"
+            ...     tenant_id="org_acme",
+            ...     user_id="alice"
             ... )
         """
         if not provider or not provider.strip():
@@ -182,6 +185,11 @@ class TokenManager:
             )
             existing = session.execute(stmt).scalar_one_or_none()
 
+            # Use provided user_id, or fall back to created_by if it's not an email
+            # user_id parameter takes precedence (from context.user_id)
+            if user_id is None and created_by and created_by != user_email:
+                user_id = created_by
+
             if existing:
                 # Update existing credential
                 existing.encrypted_access_token = encrypted_access_token
@@ -191,11 +199,14 @@ class TokenManager:
                 existing.scopes = scopes_json
                 existing.client_id = credential.client_id
                 existing.token_uri = credential.token_uri
+                existing.user_id = user_id  # Update user_id if provided
                 existing.updated_at = datetime.now(UTC)
                 existing.revoked = 0  # Un-revoke if updating
                 session.commit()
 
-                logger.info(f"Updated OAuth credential: {provider}:{user_email}")
+                logger.info(
+                    f"Updated OAuth credential: {provider}:{user_email} (user_id={user_id})"
+                )
                 self._log_audit("credential_updated", provider, user_email, tenant_id)
                 return existing.credential_id
             else:
@@ -203,6 +214,7 @@ class TokenManager:
                 model = OAuthCredentialModel(
                     provider=provider,
                     user_email=user_email,
+                    user_id=user_id,  # Link to Nexus user_id for permission checks
                     tenant_id=tenant_id,
                     encrypted_access_token=encrypted_access_token,
                     encrypted_refresh_token=encrypted_refresh_token,
@@ -390,13 +402,17 @@ class TokenManager:
             return True
 
     async def list_credentials(
-        self, tenant_id: str | None = None, user_email: str | None = None
+        self,
+        tenant_id: str | None = None,
+        user_email: str | None = None,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """List all credentials (metadata only, no tokens).
 
         Args:
             tenant_id: Optional tenant ID to filter by
-            user_email: Optional user email to filter by (for per-user isolation)
+            user_email: Optional user email to filter by (OAuth provider email)
+            user_id: Optional user ID to filter by (Nexus user identity, preferred)
 
         Returns:
             List of credential metadata dicts
@@ -404,7 +420,12 @@ class TokenManager:
         Example:
             >>> # List all credentials for a tenant
             >>> credentials = await manager.list_credentials(tenant_id="org_acme")
-            >>> # List credentials for a specific user
+            >>> # List credentials for a specific user (by user_id, preferred)
+            >>> credentials = await manager.list_credentials(
+            ...     tenant_id="org_acme",
+            ...     user_id="alice"
+            ... )
+            >>> # List credentials for a specific user (by email, fallback)
             >>> credentials = await manager.list_credentials(
             ...     tenant_id="org_acme",
             ...     user_email="alice@example.com"
@@ -416,7 +437,10 @@ class TokenManager:
             if tenant_id is not None:
                 stmt = stmt.where(OAuthCredentialModel.tenant_id == tenant_id)
 
-            if user_email is not None:
+            # Prefer user_id over user_email for filtering (more reliable)
+            if user_id is not None:
+                stmt = stmt.where(OAuthCredentialModel.user_id == user_id)
+            elif user_email is not None:
                 stmt = stmt.where(OAuthCredentialModel.user_email == user_email)
 
             models = session.execute(stmt).scalars().all()
@@ -426,6 +450,7 @@ class TokenManager:
                     "credential_id": model.credential_id,
                     "provider": model.provider,
                     "user_email": model.user_email,
+                    "user_id": model.user_id,  # Nexus user identity (may differ from email)
                     "tenant_id": model.tenant_id,
                     "expires_at": model.expires_at.isoformat() if model.expires_at else None,
                     "is_expired": model.is_expired(),
@@ -462,7 +487,7 @@ class TokenManager:
         if expires_at is not None and expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=UTC)
 
-        return OAuthCredential(
+        cred = OAuthCredential(
             access_token=access_token,
             refresh_token=refresh_token,
             token_type=model.token_type,
@@ -473,6 +498,12 @@ class TokenManager:
             client_id=model.client_id,
             token_uri=model.token_uri,
         )
+        # Store user_id in metadata for permission checks
+        if model.user_id:
+            if cred.metadata is None:
+                cred.metadata = {}
+            cred.metadata["user_id"] = model.user_id
+        return cred
 
     def _log_audit(
         self, operation: str, provider: str, user_email: str, tenant_id: str | None

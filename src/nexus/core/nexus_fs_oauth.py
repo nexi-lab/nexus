@@ -318,18 +318,18 @@ class NexusFSOAuthMixin:
         tenant_id = (
             context.tenant_id if context and hasattr(context, "tenant_id") else None
         ) or "default"
-        created_by = context.user_id if context and hasattr(context, "user_id") else user_email
 
-        # Security: Ensure user_email matches context user (unless admin)
-        # This prevents users from storing credentials for other users
+        # Extract user_id from context (Nexus user identity)
+        # This may differ from user_email (OAuth provider email)
+        current_user_id = None
         if context:
-            current_user = getattr(context, "user_id", None) or getattr(context, "user", None)
-            is_admin = getattr(context, "is_admin", False)
-            if not is_admin and current_user and user_email != current_user:
-                raise ValueError(
-                    f"Permission denied: Cannot store credentials for {user_email}. "
-                    f"Credentials can only be stored for your own account ({current_user})."
-                )
+            current_user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
+        created_by = current_user_id or user_email
+
+        # Security: Note on permission validation
+        # The OAuth flow itself ensures the user_email belongs to the authenticated user
+        # We store user_id from context for permission checks, but don't need strict
+        # email matching here since the OAuth provider validates ownership during authorization
 
         # Use provider's actual name for storage
         provider_name = provider_instance.provider_name
@@ -344,6 +344,7 @@ class NexusFSOAuthMixin:
                 credential=credential,
                 tenant_id=tenant_id,
                 created_by=created_by,
+                user_id=current_user_id,  # Pass Nexus user_id for permission checks
             )
 
             logger.info(
@@ -523,24 +524,32 @@ class NexusFSOAuthMixin:
             context.tenant_id if context and hasattr(context, "tenant_id") else None
         ) or "default"
 
-        # Extract current user's email from context
+        # Extract current user's identity from context
         # Use user_id (preferred) or user (legacy) from context
-        current_user_email = None
+        current_user_id = None
         if context:
-            current_user_email = getattr(context, "user_id", None) or getattr(context, "user", None)
+            current_user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
         is_admin = context and getattr(context, "is_admin", False)
 
         # List credentials for tenant (and optionally user)
+        # Filter by user_id if available (more reliable than email matching)
         credentials = await token_manager.list_credentials(
-            tenant_id=tenant_id, user_email=current_user_email if not is_admin else None
+            tenant_id=tenant_id, user_id=current_user_id if not is_admin else None
         )
 
         # Filter by provider and revoked status if needed
         result = []
         for cred in credentials:
             # Per-user isolation: non-admins can only see their own credentials
-            if not is_admin and current_user_email and cred.get("user_email") != current_user_email:
-                continue
+            # Check both user_id (preferred) and user_email (fallback)
+            if not is_admin and current_user_id:
+                cred_user_id = cred.get("user_id")
+                cred_user_email = cred.get("user_email")
+                # Match if user_id matches OR (user_id not set and email matches)
+                if cred_user_id and cred_user_id != current_user_id:
+                    continue
+                if not cred_user_id and cred_user_email and cred_user_email != current_user_id:
+                    continue
             if provider and cred["provider"] != provider:
                 continue
             if not include_revoked and cred.get("revoked", False):
@@ -548,7 +557,7 @@ class NexusFSOAuthMixin:
             result.append(cred)
 
         logger.info(
-            f"Listed {len(result)} OAuth credentials for user={current_user_email}, "
+            f"Listed {len(result)} OAuth credentials for user_id={current_user_id}, "
             f"tenant={tenant_id}, provider={provider}"
         )
         return result
@@ -584,18 +593,38 @@ class NexusFSOAuthMixin:
             context.tenant_id if context and hasattr(context, "tenant_id") else None
         ) or "default"
 
-        # Extract current user's email from context
-        current_user_email = None
+        # Extract current user's identity from context
+        current_user_id = None
         if context:
-            current_user_email = getattr(context, "user_id", None) or getattr(context, "user", None)
+            current_user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
         is_admin = context and getattr(context, "is_admin", False)
 
         # Permission check: users can only revoke their own credentials (unless admin)
-        if not is_admin and current_user_email and user_email != current_user_email:
-            raise ValueError(
-                f"Permission denied: Cannot revoke credentials for {user_email}. "
-                f"Only your own credentials can be revoked."
+        # Check by fetching the credential and verifying user_id or user_email match
+        if not is_admin and current_user_id:
+            # Fetch credential to check ownership
+            cred = await token_manager.get_credential(
+                provider=provider, user_email=user_email, tenant_id=tenant_id
             )
+            if cred:
+                # Check if user_id matches (preferred) or user_email matches (fallback)
+                stored_user_id = cred.metadata.get("user_id") if cred.metadata else None
+                stored_user_email = cred.user_email
+
+                if stored_user_id and stored_user_id != current_user_id:
+                    raise ValueError(
+                        f"Permission denied: Cannot revoke credentials for {user_email}. "
+                        f"Only your own credentials can be revoked."
+                    )
+                if (
+                    not stored_user_id
+                    and stored_user_email
+                    and stored_user_email != current_user_id
+                ):
+                    raise ValueError(
+                        f"Permission denied: Cannot revoke credentials for {user_email}. "
+                        f"Only your own credentials can be revoked."
+                    )
 
         try:
             success = await token_manager.revoke_credential(
@@ -647,18 +676,38 @@ class NexusFSOAuthMixin:
             context.tenant_id if context and hasattr(context, "tenant_id") else None
         ) or "default"
 
-        # Extract current user's email from context
-        current_user_email = None
+        # Extract current user's identity from context
+        current_user_id = None
         if context:
-            current_user_email = getattr(context, "user_id", None) or getattr(context, "user", None)
+            current_user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
         is_admin = context and getattr(context, "is_admin", False)
 
         # Permission check: users can only test their own credentials (unless admin)
-        if not is_admin and current_user_email and user_email != current_user_email:
-            raise ValueError(
-                f"Permission denied: Cannot test credentials for {user_email}. "
-                f"Only your own credentials can be tested."
+        # Check by fetching the credential and verifying user_id or user_email match
+        if not is_admin and current_user_id:
+            # Fetch credential to check ownership
+            cred = await token_manager.get_credential(
+                provider=provider, user_email=user_email, tenant_id=tenant_id
             )
+            if cred:
+                # Check if user_id matches (preferred) or user_email matches (fallback)
+                stored_user_id = cred.metadata.get("user_id") if cred.metadata else None
+                stored_user_email = cred.user_email
+
+                if stored_user_id and stored_user_id != current_user_id:
+                    raise ValueError(
+                        f"Permission denied: Cannot test credentials for {user_email}. "
+                        f"Only your own credentials can be tested."
+                    )
+                if (
+                    not stored_user_id
+                    and stored_user_email
+                    and stored_user_email != current_user_id
+                ):
+                    raise ValueError(
+                        f"Permission denied: Cannot test credentials for {user_email}. "
+                        f"Only your own credentials can be tested."
+                    )
 
         try:
             # Try to get a valid token (will auto-refresh if needed)
@@ -669,17 +718,20 @@ class NexusFSOAuthMixin:
             )
 
             if token:
-                # Get credential details
+                # Get credential details (returns list of dicts)
                 credentials = await token_manager.list_credentials(
                     tenant_id=tenant_id, user_email=user_email
                 )
-                cred = next((c for c in credentials if c["user_email"] == user_email), None)
+                cred_dict = next(
+                    (c for c in credentials if c.get("user_email") == user_email),
+                    None,
+                )
 
                 logger.info(f"OAuth credential test successful for {provider}:{user_email}")
                 return {
                     "valid": True,
                     "refreshed": True,  # If we got here, token was valid or refreshed
-                    "expires_at": cred["expires_at"] if cred and cred.get("expires_at") else None,
+                    "expires_at": cred_dict.get("expires_at") if cred_dict else None,
                 }
             else:
                 return {

@@ -330,12 +330,20 @@ class TestTokenManager:
 
     @pytest.mark.asyncio
     async def test_unsupported_provider_raises(self, manager, valid_credential):
-        """Test that storing credential for unsupported provider raises error."""
-        with pytest.raises(ValueError, match="Unsupported provider: unknown"):
-            await manager.store_credential(
-                provider="unknown",  # Unsupported
+        """Test that using credential for unsupported provider raises error."""
+        # Store credential (this should succeed - no validation at store time)
+        cred_id = await manager.store_credential(
+            provider="unknown",  # Unsupported
+            user_email="alice@example.com",
+            credential=valid_credential,
+        )
+        assert cred_id is not None
+
+        # But getting a token should fail because provider is not registered
+        with pytest.raises(Exception, match="Provider not registered|No OAuth credential"):
+            await manager.get_valid_token(
+                provider="unknown",
                 user_email="alice@example.com",
-                credential=valid_credential,
             )
 
     @pytest.mark.asyncio

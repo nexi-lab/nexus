@@ -346,8 +346,11 @@ class TestOAuthFactoryDefaultConfig:
 
         # Mock Path(__file__) to return a path that resolves to non-existent directory
         with patch("nexus.server.auth.oauth_factory.Path") as mock_path_class:
-            mock_path_instance = Mock()
-            mock_path_instance.parent.parent.parent.parent.parent = tmp_path / "nonexistent"
+            # Create a proper Path-like mock
+            mock_path_instance = Mock(spec=Path)
+            mock_parent = Mock(spec=Path)
+            mock_parent.parent.parent.parent.parent = tmp_path / "nonexistent"
+            mock_path_instance.parent = mock_parent
             mock_path_class.return_value = mock_path_instance
 
             with pytest.raises(FileNotFoundError, match="OAuth configuration file not found"):
@@ -363,8 +366,11 @@ class TestOAuthFactoryDefaultConfig:
         factory = OAuthProviderFactory()
 
         with patch("nexus.server.auth.oauth_factory.Path") as mock_path_class:
-            mock_path_instance = Mock()
-            mock_path_instance.parent.parent.parent.parent.parent = tmp_path
+            # Create a proper Path-like mock
+            mock_path_instance = Mock(spec=Path)
+            mock_parent = Mock(spec=Path)
+            mock_parent.parent.parent.parent.parent = tmp_path
+            mock_path_instance.parent = mock_parent
             mock_path_class.return_value = mock_path_instance
 
             with pytest.raises(ValueError, match="OAuth configuration file is empty"):
@@ -380,8 +386,11 @@ class TestOAuthFactoryDefaultConfig:
         factory = OAuthProviderFactory()
 
         with patch("nexus.server.auth.oauth_factory.Path") as mock_path_class:
-            mock_path_instance = Mock()
-            mock_path_instance.parent.parent.parent.parent.parent = tmp_path
+            # Create a proper Path-like mock
+            mock_path_instance = Mock(spec=Path)
+            mock_parent = Mock(spec=Path)
+            mock_parent.parent.parent.parent.parent = tmp_path
+            mock_path_instance.parent = mock_parent
             mock_path_class.return_value = mock_path_instance
 
             with pytest.raises(ValueError, match="Failed to parse YAML"):

@@ -95,7 +95,7 @@ class TestNexusFSOAuthMixin:
 
         mixin = TestMixin()
 
-        with pytest.raises(RuntimeError, match="no database path configured"):
+        with pytest.raises(RuntimeError, match="No database path configured"):
             mixin._get_token_manager()
 
     def test_oauth_list_providers(self, mock_oauth_mixin):

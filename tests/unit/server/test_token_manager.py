@@ -340,7 +340,10 @@ class TestTokenManager:
         assert cred_id is not None
 
         # But getting a token should fail because provider is not registered
-        with pytest.raises(Exception, match="Provider not registered|No OAuth credential"):
+        # The error occurs when trying to refresh an expired token
+        from nexus.core.exceptions import AuthenticationError
+
+        with pytest.raises(AuthenticationError, match="Provider not registered"):
             await manager.get_valid_token(
                 provider="unknown",
                 user_email="alice@example.com",

@@ -697,7 +697,7 @@ class TestOAuthProviderRegistration:
                 },
             ),
             patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
-            patch("nexus.backends.gdrive_connector.OAuthProviderFactory") as MockFactory,
+            patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory,
         ):
             MockTM.return_value = mock_token_manager
             mock_oauth_provider = Mock()
@@ -729,7 +729,7 @@ class TestOAuthProviderRegistration:
         with (
             patch.dict("os.environ", {}, clear=True),
             patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
-            patch("nexus.backends.gdrive_connector.OAuthProviderFactory") as MockFactory,
+            patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory,
         ):
             MockTM.return_value = mock_token_manager
             mock_factory = Mock()
@@ -756,7 +756,7 @@ class TestOAuthProviderRegistration:
                 clear=True,
             ),
             patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
-            patch("nexus.backends.gdrive_connector.OAuthProviderFactory") as MockFactory,
+            patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory,
         ):
             MockTM.return_value = mock_token_manager
             mock_factory = Mock()
@@ -785,7 +785,7 @@ class TestOAuthProviderRegistration:
                 },
             ),
             patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
-            patch("nexus.backends.gdrive_connector.OAuthProviderFactory") as MockFactory,
+            patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory,
         ):
             MockTM.return_value = mock_token_manager
             mock_factory = Mock()
@@ -818,7 +818,7 @@ class TestOAuthProviderRegistration:
                 },
             ),
             patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
-            patch("nexus.backends.gdrive_connector.OAuthProviderFactory") as MockFactory,
+            patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory,
         ):
             MockTM.return_value = mock_token_manager
             mock_oauth_provider = Mock()
@@ -884,7 +884,7 @@ class TestOAuthProviderRegistration:
                 },
             ),
             patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
-            patch("nexus.backends.gdrive_connector.OAuthProviderFactory") as MockFactory,
+            patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory,
         ):
             MockTM.return_value = mock_token_manager
             mock_oauth_provider = Mock()

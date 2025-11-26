@@ -321,19 +321,34 @@ class TestOAuthFactoryDefaultConfig:
         with open(oauth_yaml, "w") as f:
             yaml.dump(config_data, f)
 
-        # Mock __file__ to point to a path that resolves to our temp directory
-        mock_file_path = tmp_path / "src" / "nexus" / "server" / "auth" / "oauth_factory.py"
-        mock_file_path.parent.mkdir(parents=True, exist_ok=True)
+        # Create a temporary oauth.yaml file
+        config_dir = tmp_path / "configs"
+        config_dir.mkdir()
+        oauth_yaml = config_dir / "oauth.yaml"
+
+        config_data = {
+            "providers": [
+                {
+                    "name": "test-provider",
+                    "display_name": "Test Provider",
+                    "provider_class": "nexus.server.auth.google_oauth.GoogleOAuthProvider",
+                    "scopes": ["https://www.googleapis.com/auth/drive"],
+                    "client_id_env": "TEST_CLIENT_ID",
+                    "client_secret_env": "TEST_CLIENT_SECRET",
+                }
+            ]
+        }
+
+        with open(oauth_yaml, "w") as f:
+            yaml.dump(config_data, f)
 
         factory = OAuthProviderFactory()
 
-        # Mock Path(__file__) to return our mock path
-        with patch("nexus.server.auth.oauth_factory.Path") as mock_path_class:
-            # When Path is called with __file__, return our mock path
-            mock_path_instance = Mock()
-            mock_path_instance.parent.parent.parent.parent.parent = tmp_path
-            mock_path_class.return_value = mock_path_instance
-
+        # Mock Path(__file__) to return a path that resolves to our temp directory
+        with patch(
+            "nexus.server.auth.oauth_factory.__file__",
+            str(tmp_path / "src" / "nexus" / "server" / "auth" / "oauth_factory.py"),
+        ):
             # Call _get_default_oauth_config
             config = factory._get_default_oauth_config()
 
@@ -344,17 +359,15 @@ class TestOAuthFactoryDefaultConfig:
         """Test that default config raises error if oauth.yaml doesn't exist."""
         factory = OAuthProviderFactory()
 
-        # Mock Path(__file__) to return a path that resolves to non-existent directory
-        with patch("nexus.server.auth.oauth_factory.Path") as mock_path_class:
-            # Create a proper Path-like mock
-            mock_path_instance = Mock(spec=Path)
-            mock_parent = Mock(spec=Path)
-            mock_parent.parent.parent.parent.parent = tmp_path / "nonexistent"
-            mock_path_instance.parent = mock_parent
-            mock_path_class.return_value = mock_path_instance
-
-            with pytest.raises(FileNotFoundError, match="OAuth configuration file not found"):
-                factory._get_default_oauth_config()
+        # Mock __file__ to point to a non-existent directory
+        with (
+            patch(
+                "nexus.server.auth.oauth_factory.__file__",
+                str(tmp_path / "nonexistent" / "oauth_factory.py"),
+            ),
+            pytest.raises(FileNotFoundError, match="OAuth configuration file not found"),
+        ):
+            factory._get_default_oauth_config()
 
     def test_get_default_oauth_config_raises_if_file_empty(self, tmp_path):
         """Test that default config raises error if oauth.yaml is empty."""
@@ -365,16 +378,15 @@ class TestOAuthFactoryDefaultConfig:
 
         factory = OAuthProviderFactory()
 
-        with patch("nexus.server.auth.oauth_factory.Path") as mock_path_class:
-            # Create a proper Path-like mock
-            mock_path_instance = Mock(spec=Path)
-            mock_parent = Mock(spec=Path)
-            mock_parent.parent.parent.parent.parent = tmp_path
-            mock_path_instance.parent = mock_parent
-            mock_path_class.return_value = mock_path_instance
-
-            with pytest.raises(ValueError, match="OAuth configuration file is empty"):
-                factory._get_default_oauth_config()
+        # Mock __file__ to point to our temp directory
+        with (
+            patch(
+                "nexus.server.auth.oauth_factory.__file__",
+                str(tmp_path / "src" / "nexus" / "server" / "auth" / "oauth_factory.py"),
+            ),
+            pytest.raises(ValueError, match="OAuth configuration file is empty"),
+        ):
+            factory._get_default_oauth_config()
 
     def test_get_default_oauth_config_raises_if_invalid_yaml(self, tmp_path):
         """Test that default config raises error if oauth.yaml is invalid."""
@@ -385,16 +397,15 @@ class TestOAuthFactoryDefaultConfig:
 
         factory = OAuthProviderFactory()
 
-        with patch("nexus.server.auth.oauth_factory.Path") as mock_path_class:
-            # Create a proper Path-like mock
-            mock_path_instance = Mock(spec=Path)
-            mock_parent = Mock(spec=Path)
-            mock_parent.parent.parent.parent.parent = tmp_path
-            mock_path_instance.parent = mock_parent
-            mock_path_class.return_value = mock_path_instance
-
-            with pytest.raises(ValueError, match="Failed to parse YAML"):
-                factory._get_default_oauth_config()
+        # Mock __file__ to point to our temp directory
+        with (
+            patch(
+                "nexus.server.auth.oauth_factory.__file__",
+                str(tmp_path / "src" / "nexus" / "server" / "auth" / "oauth_factory.py"),
+            ),
+            pytest.raises(ValueError, match="Failed to parse YAML"),
+        ):
+            factory._get_default_oauth_config()
 
     def test_factory_from_file(self, tmp_path):
         """Test creating factory from YAML file."""

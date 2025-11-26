@@ -1214,10 +1214,19 @@ class SkillsListApprovalsParams:
 
 # OAuth management methods (v0.9.0)
 @dataclass
-class OAuthGetDriveAuthUrlParams:
-    """Parameters for oauth_get_drive_auth_url method."""
+class OAuthListProvidersParams:
+    """Parameters for oauth_list_providers method."""
 
+    pass  # No parameters required
+
+
+@dataclass
+class OAuthGetAuthUrlParams:
+    """Parameters for oauth_get_auth_url method."""
+
+    provider: str
     redirect_uri: str = "http://localhost:3000/oauth/callback"
+    scopes: list[str] | None = None
 
 
 @dataclass
@@ -1226,7 +1235,7 @@ class OAuthExchangeCodeParams:
 
     provider: str
     code: str
-    user_email: str
+    user_email: str | None = None  # Optional: will be fetched from provider if not provided
     state: str | None = None
     redirect_uri: str = "http://localhost:3000/oauth/callback"
 
@@ -1365,7 +1374,8 @@ METHOD_PARAMS = {
     "skills_reject": SkillsRejectParams,
     "skills_list_approvals": SkillsListApprovalsParams,
     # OAuth management methods (v0.9.0)
-    "oauth_get_drive_auth_url": OAuthGetDriveAuthUrlParams,
+    "oauth_list_providers": OAuthListProvidersParams,
+    "oauth_get_auth_url": OAuthGetAuthUrlParams,
     "oauth_exchange_code": OAuthExchangeCodeParams,
     "oauth_list_credentials": OAuthListCredentialsParams,
     "oauth_revoke_credential": OAuthRevokeCredentialParams,

@@ -1642,6 +1642,11 @@ def skills_mcp_mount(
                             client_id=client_id,
                             client_secret=client_secret,
                             redirect_uri="http://localhost",
+                            scopes=[
+                                "https://www.googleapis.com/auth/drive",
+                                "https://www.googleapis.com/auth/drive.file",
+                            ],
+                            provider_name="google",
                         )
                         token_manager.register_provider("google", provider_instance)
 
@@ -1692,6 +1697,7 @@ def skills_mcp_mount(
                                 "https://www.googleapis.com/auth/drive",
                                 "https://www.googleapis.com/auth/drive.file",
                             ],
+                            provider_name="google",
                         )
                     elif oauth_provider in ("twitter", "x"):
                         from nexus.server.auth.x_oauth import XOAuthProvider
@@ -1710,6 +1716,14 @@ def skills_mcp_mount(
 
                         provider_instance = XOAuthProvider(
                             client_id=client_id,
+                            redirect_uri="http://localhost",
+                            scopes=[
+                                "tweet.read",
+                                "tweet.write",
+                                "users.read",
+                                "offline.access",
+                            ],
+                            provider_name="x",
                             client_secret=client_secret,
                         )
                     else:

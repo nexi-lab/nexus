@@ -149,21 +149,34 @@ class OAuthProvider(ABC):
         self,
         client_id: str,
         client_secret: str,
-        redirect_uri: str | None = None,
-        scopes: list[str] | None = None,
+        redirect_uri: str,
+        scopes: list[str],
+        provider_name: str,
     ):
         """Initialize OAuth provider.
 
         Args:
             client_id: OAuth client ID from provider console
             client_secret: OAuth client secret from provider console
-            redirect_uri: OAuth redirect URI (for web flows)
-            scopes: List of OAuth scopes to request
+            redirect_uri: OAuth redirect URI (required for web OAuth flows)
+            scopes: List of OAuth scopes to request (required, at least one scope needed)
+            provider_name: Provider name from config (e.g., "google-drive", "microsoft", "x") - required
+
+        Raises:
+            OAuthError: If redirect_uri is empty, scopes is empty, or provider_name is empty
         """
+        if not redirect_uri:
+            raise OAuthError("redirect_uri is required for OAuth provider")
+        if not scopes:
+            raise OAuthError("At least one scope is required for OAuth provider")
+        if not provider_name:
+            raise OAuthError("provider_name is required for OAuth provider")
+
         self.client_id = client_id
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
-        self.scopes = scopes or []
+        self.scopes = scopes
+        self.provider_name = provider_name
 
     @abstractmethod
     def get_authorization_url(self, state: str | None = None) -> str:

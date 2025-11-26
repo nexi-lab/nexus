@@ -1,6 +1,9 @@
 """Tests for OAuth TokenManager."""
 
+import gc
+import platform
 import tempfile
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -20,8 +23,27 @@ class TestTokenManager:
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name
         yield db_path
-        # Cleanup
-        Path(db_path).unlink(missing_ok=True)
+        # Cleanup with Windows-specific handling
+        gc.collect()  # Force garbage collection to release connections
+        if platform.system() == "Windows":
+            time.sleep(0.2)  # Give Windows time to release file handles
+
+        # Retry deletion on Windows if it fails
+        db_path_obj = Path(db_path)
+        if platform.system() == "Windows":
+            for attempt in range(5):
+                try:
+                    if db_path_obj.exists():
+                        db_path_obj.unlink(missing_ok=True)
+                    break
+                except PermissionError:
+                    if attempt < 4:
+                        time.sleep(0.2 * (attempt + 1))
+                        gc.collect()
+                    else:
+                        raise
+        else:
+            db_path_obj.unlink(missing_ok=True)
 
     @pytest.fixture
     def manager(self, temp_db):
@@ -29,6 +51,10 @@ class TestTokenManager:
         manager = TokenManager(db_path=temp_db)
         yield manager
         manager.close()
+        # Force cleanup on Windows
+        gc.collect()
+        if platform.system() == "Windows":
+            time.sleep(0.1)  # Small delay for Windows to release file handles
 
     @pytest.fixture
     def valid_credential(self):
@@ -330,12 +356,38 @@ class TestTokenManager:
 
     @pytest.mark.asyncio
     async def test_unsupported_provider_raises(self, manager, valid_credential):
-        """Test that storing credential for unsupported provider raises error."""
-        with pytest.raises(ValueError, match="Unsupported provider: unknown"):
-            await manager.store_credential(
-                provider="unknown",  # Unsupported
+        """Test that using credential for unsupported provider raises error."""
+        from datetime import UTC, datetime, timedelta
+
+        from nexus.core.exceptions import AuthenticationError
+        from nexus.server.auth.oauth_provider import OAuthCredential
+
+        # Create an expired credential so it tries to refresh
+        expired_credential = OAuthCredential(
+            access_token="ya29.expired_token",
+            refresh_token="1//0e_test_refresh",
+            token_type="Bearer",
+            expires_at=datetime.now(UTC) - timedelta(hours=1),  # Expired
+            scopes=["https://www.googleapis.com/auth/drive"],
+            provider="unknown",
+            user_email="alice@example.com",
+            client_id="test_client_id",
+        )
+
+        # Store credential (this should succeed - no validation at store time)
+        cred_id = await manager.store_credential(
+            provider="unknown",  # Unsupported
+            user_email="alice@example.com",
+            credential=expired_credential,
+        )
+        assert cred_id is not None
+
+        # Getting a token should fail because provider is not registered
+        # The error occurs when trying to refresh an expired token
+        with pytest.raises(AuthenticationError, match="Provider not registered"):
+            await manager.get_valid_token(
+                provider="unknown",
                 user_email="alice@example.com",
-                credential=valid_credential,
             )
 
     @pytest.mark.asyncio

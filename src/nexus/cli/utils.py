@@ -217,9 +217,18 @@ def get_filesystem(
                 }
                 if enforce_permissions is not None:
                     config_dict["enforce_permissions"] = enforce_permissions
-                return nexus.connect(config=config_dict)
+                nx_fs = nexus.connect(config=config_dict)
+                # Store full config object for OAuth factory access
+                if hasattr(nx_fs, "_config") or hasattr(nx_fs, "__dict__"):
+                    nx_fs._config = config_obj
+                return nx_fs
             else:
-                return nexus.connect(config=backend_config.config_path)
+                config_obj = load_config(Path(backend_config.config_path))
+                nx_fs = nexus.connect(config=config_obj)
+                # Store config object for OAuth factory access
+                if hasattr(nx_fs, "_config") or hasattr(nx_fs, "__dict__"):
+                    nx_fs._config = config_obj
+                return nx_fs
         elif backend_config.backend == "gcs":
             # Use GCS backend
             if not backend_config.gcs_bucket:
@@ -235,7 +244,9 @@ def get_filesystem(
             }
             if enforce_permissions is not None:
                 config["enforce_permissions"] = enforce_permissions
-            return nexus.connect(config=config)
+            nx_fs = nexus.connect(config=config)
+            # Note: For dict configs, _config is already set in nexus.connect()
+            return nx_fs
         else:
             # Use local backend (default)
             config = {
@@ -244,7 +255,9 @@ def get_filesystem(
             }
             if enforce_permissions is not None:
                 config["enforce_permissions"] = enforce_permissions
-            return nexus.connect(config=config)
+            nx_fs = nexus.connect(config=config)
+            # Note: For dict configs, _config is already set in nexus.connect()
+            return nx_fs
     except Exception as e:
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")
         sys.exit(1)
@@ -327,6 +340,22 @@ def create_backend_from_config(backend_type: str, config: dict[str, Any]) -> Any
         # TODO: Implement GDriveBackend
         raise NotImplementedError(
             f"Google Drive backend not yet implemented (backend type: {backend_type})"
+        )
+
+    elif backend_type == "gdrive_connector":
+        from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
+
+        token_manager_db = config.get("token_manager_db")
+        if not token_manager_db:
+            raise ValueError("gdrive_connector backend requires 'token_manager_db' in config")
+
+        return GoogleDriveConnectorBackend(
+            token_manager_db=token_manager_db,
+            root_folder=config.get("root_folder", "nexus-data"),
+            user_email=config.get("user_email"),
+            use_shared_drives=config.get("use_shared_drives", False),
+            shared_drive_id=config.get("shared_drive_id"),
+            provider=config.get("provider", "google-drive"),
         )
 
     else:

@@ -1,0 +1,93 @@
+# OAuth provider configuration
+# This file defines OAuth providers that can be used for authentication and API access.
+#
+# To use this configuration:
+#   - Set the required environment variables for each provider (client_id_env, client_secret_env)
+#   - Load this file using OAuthProviderFactory.from_file("configs/oauth.yaml")
+#
+# For more information, see the OAuth documentation.
+
+# Global default redirect URI (used if provider doesn't specify redirect_uri)
+redirect_uri: http://localhost:5173/oauth/callback
+
+providers:
+  # Google Drive OAuth
+  - name: google-drive
+    display_name: Google Drive
+    provider_class: nexus.server.auth.google_oauth.GoogleOAuthProvider
+    scopes:
+      - https://www.googleapis.com/auth/drive
+      - https://www.googleapis.com/auth/drive.file
+      - openid
+      - email
+    client_id_env: NEXUS_OAUTH_GOOGLE_CLIENT_ID
+    client_secret_env: NEXUS_OAUTH_GOOGLE_CLIENT_SECRET
+    requires_pkce: false
+    icon_url: https://www.gstatic.com/images/branding/product/1x/drive_48dp.png
+    # redirect_uri: Optional - uses global redirect_uri if not specified
+
+  # Gmail OAuth
+  - name: gmail
+    display_name: Gmail
+    provider_class: nexus.server.auth.google_oauth.GoogleOAuthProvider
+    scopes:
+      - https://www.googleapis.com/auth/gmail.readonly
+      - https://www.googleapis.com/auth/gmail.send
+      - openid
+      - email
+    client_id_env: NEXUS_OAUTH_GOOGLE_CLIENT_ID
+    client_secret_env: NEXUS_OAUTH_GOOGLE_CLIENT_SECRET
+    requires_pkce: false
+    icon_url: https://www.gstatic.com/images/branding/product/1x/gmail_48dp.png
+    # redirect_uri: Optional - uses global redirect_uri if not specified
+
+  # Google Cloud Storage OAuth
+  - name: google-cloud-storage
+    display_name: Google Cloud Storage
+    provider_class: nexus.server.auth.google_oauth.GoogleOAuthProvider
+    scopes:
+      - https://www.googleapis.com/auth/devstorage.read_write
+      - https://www.googleapis.com/auth/cloud-platform
+      - openid
+      - email
+    client_id_env: NEXUS_OAUTH_GOOGLE_CLIENT_ID
+    client_secret_env: NEXUS_OAUTH_GOOGLE_CLIENT_SECRET
+    requires_pkce: false
+    icon_url: https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/googlecloud.svg
+    # redirect_uri: Optional - uses global redirect_uri if not specified
+
+  # Microsoft OneDrive OAuth
+  - name: microsoft-onedrive
+    display_name: Microsoft OneDrive
+    provider_class: nexus.server.auth.microsoft_oauth.MicrosoftOAuthProvider
+    scopes:
+      - Files.ReadWrite.All
+      - User.Read
+      - offline_access
+    client_id_env: NEXUS_OAUTH_MICROSOFT_CLIENT_ID
+    client_secret_env: NEXUS_OAUTH_MICROSOFT_CLIENT_SECRET
+    requires_pkce: false
+    icon_url: https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/microsoftonedrive.svg
+    # redirect_uri: Optional - uses global redirect_uri if not specified
+
+  # X (Twitter) OAuth
+  - name: x
+    display_name: X (Twitter)
+    provider_class: nexus.server.auth.x_oauth.XOAuthProvider
+    scopes:
+      - tweet.read
+      - tweet.write
+      - tweet.moderate.write
+      - users.read
+      - follows.read
+      - offline.access
+      - bookmark.read
+      - bookmark.write
+      - list.read
+      - like.read
+      - like.write
+    client_id_env: NEXUS_OAUTH_X_CLIENT_ID
+    client_secret_env: NEXUS_OAUTH_X_CLIENT_SECRET
+    requires_pkce: true
+    icon_url: https://abs.twimg.com/favicons/twitter.3.ico
+    # redirect_uri: Optional - uses global redirect_uri if not specified

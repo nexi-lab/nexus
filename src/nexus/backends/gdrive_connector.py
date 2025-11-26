@@ -112,7 +112,7 @@ class GoogleDriveConnectorBackend(Backend):
         root_folder: str = "nexus-data",
         use_shared_drives: bool = False,
         shared_drive_id: str | None = None,
-        provider: str = "google",
+        provider: str = "google-drive",
     ):
         """
         Initialize Google Drive connector backend.
@@ -124,7 +124,7 @@ class GoogleDriveConnectorBackend(Backend):
             root_folder: Root folder name in Drive (default: "nexus-data")
             use_shared_drives: Whether to use shared drives
             shared_drive_id: Shared drive ID (if use_shared_drives=True)
-            provider: OAuth provider name (default: "google")
+            provider: OAuth provider name from config (default: "google-drive")
 
         Note:
             For single-user scenarios (demos), set user_email explicitly.
@@ -147,7 +147,7 @@ class GoogleDriveConnectorBackend(Backend):
         self.shared_drive_id = shared_drive_id
         self.provider = provider
 
-        # Register OAuth provider if credentials are available
+        # Register OAuth provider using factory (loads from config)
         self._register_oauth_provider()
 
         # Cache for folder IDs (path -> Drive folder ID)
@@ -157,49 +157,40 @@ class GoogleDriveConnectorBackend(Backend):
         self._drive_service = None
 
     def _register_oauth_provider(self) -> None:
-        """Register OAuth provider with TokenManager if credentials are available."""
+        """Register OAuth provider with TokenManager using OAuthProviderFactory."""
         import logging
-        import os
         import traceback
 
         logger = logging.getLogger(__name__)
 
-        # Check if OAuth credentials are available from environment
-        if self.provider == "google":
-            client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
-            client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
+        try:
+            from nexus.server.auth.oauth_factory import OAuthProviderFactory
 
-            if client_id and client_secret:
-                try:
-                    from nexus.server.auth.google_oauth import GoogleOAuthProvider
+            # Create factory (loads from oauth.yaml config)
+            factory = OAuthProviderFactory()
 
-                    # Create and register the provider
-                    provider = GoogleOAuthProvider(
-                        client_id=client_id,
-                        client_secret=client_secret,
-                        redirect_uri="http://localhost:5173/auth/callback",  # Default, can be overridden
-                        scopes=[
-                            "https://www.googleapis.com/auth/drive",
-                            "https://www.googleapis.com/auth/drive.file",
-                        ],
-                    )
-                    self.token_manager.register_provider("google", provider)
-                    logger.info("✓ Registered Google OAuth provider for Google Drive backend")
-                    print(
-                        f"[GDRIVE-INIT] ✓ Registered Google OAuth provider (client_id={client_id[:20]}...)"
-                    )
-                except Exception as e:
-                    error_msg = f"Failed to register OAuth provider: {e}\n{traceback.format_exc()}"
-                    logger.error(error_msg)
-                    print(f"[GDRIVE-INIT] ✗ {error_msg}")
-            else:
-                logger.debug(
-                    f"OAuth credentials not found in environment (client_id={bool(client_id)}, "
-                    f"client_secret={bool(client_secret)}). OAuth flow must be initiated manually."
+            # Create provider instance from config
+            try:
+                provider_instance = factory.create_provider(
+                    name=self.provider,
                 )
-                print(
-                    f"[GDRIVE-INIT] OAuth credentials not found (client_id={bool(client_id)}, client_secret={bool(client_secret)})"
+                # Register with TokenManager using the provider name from config
+                self.token_manager.register_provider(self.provider, provider_instance)
+                logger.info(
+                    f"✓ Registered OAuth provider '{self.provider}' for Google Drive backend"
                 )
+                print(f"[GDRIVE-INIT] ✓ Registered OAuth provider '{self.provider}' from config")
+            except ValueError as e:
+                # Provider not found in config or credentials not set
+                logger.warning(
+                    f"OAuth provider '{self.provider}' not available: {e}. "
+                    "OAuth flow must be initiated manually via the Integrations page."
+                )
+                print(f"[GDRIVE-INIT] ⚠ OAuth provider '{self.provider}' not available: {e}")
+        except Exception as e:
+            error_msg = f"Failed to register OAuth provider: {e}\n{traceback.format_exc()}"
+            logger.error(error_msg)
+            print(f"[GDRIVE-INIT] ✗ {error_msg}")
 
     @property
     def name(self) -> str:

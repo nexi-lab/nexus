@@ -697,33 +697,31 @@ class TestOAuthProviderRegistration:
                 },
             ),
             patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
-            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
+            patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory,
         ):
             MockTM.return_value = mock_token_manager
             mock_oauth_provider = Mock()
-            MockProvider.return_value = mock_oauth_provider
+            mock_factory = Mock()
+            mock_factory.create_provider.return_value = mock_oauth_provider
+            MockFactory.return_value = mock_factory
 
             # Create backend - should automatically register OAuth provider
             _backend = GoogleDriveConnectorBackend(
                 token_manager_db=":memory:",
                 user_email="test@example.com",
                 root_folder="test_root",
-                provider="google",
+                provider="google-drive",
             )
 
             # Verify TokenManager was created
             MockTM.assert_called_once_with(db_path=":memory:")
 
-            # Verify GoogleOAuthProvider was created with correct parameters
-            MockProvider.assert_called_once()
-            provider_args = MockProvider.call_args[1]
-            assert provider_args["client_id"] == "test_client_id_123"
-            assert provider_args["client_secret"] == "test_secret_456"
-            assert "https://www.googleapis.com/auth/drive" in provider_args["scopes"]
+            # Verify factory was used to create provider
+            mock_factory.create_provider.assert_called_once_with(name="google-drive")
 
             # Verify provider was registered with TokenManager
             mock_token_manager.register_provider.assert_called_once_with(
-                "google", mock_oauth_provider
+                "google-drive", mock_oauth_provider
             )
 
     def test_oauth_provider_registration_missing_credentials(self, mock_token_manager):
@@ -731,20 +729,20 @@ class TestOAuthProviderRegistration:
         with (
             patch.dict("os.environ", {}, clear=True),
             patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
-            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
+            patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory,
         ):
             MockTM.return_value = mock_token_manager
+            mock_factory = Mock()
+            mock_factory.create_provider.side_effect = ValueError("Provider not found")
+            MockFactory.return_value = mock_factory
 
             # Create backend without OAuth credentials in environment
             _backend = GoogleDriveConnectorBackend(
                 token_manager_db=":memory:",
                 user_email="test@example.com",
                 root_folder="test_root",
-                provider="google",
+                provider="google-drive",
             )
-
-            # Verify GoogleOAuthProvider was never created
-            MockProvider.assert_not_called()
 
             # Verify provider was never registered
             mock_token_manager.register_provider.assert_not_called()
@@ -758,20 +756,22 @@ class TestOAuthProviderRegistration:
                 clear=True,
             ),
             patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
-            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
+            patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory,
         ):
             MockTM.return_value = mock_token_manager
+            mock_factory = Mock()
+            mock_factory.create_provider.side_effect = ValueError("Provider not found")
+            MockFactory.return_value = mock_factory
 
             # Create backend with only client_id (missing client_secret)
             _backend = GoogleDriveConnectorBackend(
                 token_manager_db=":memory:",
                 user_email="test@example.com",
                 root_folder="test_root",
-                provider="google",
+                provider="google-drive",
             )
 
-            # Verify provider was not created or registered
-            MockProvider.assert_not_called()
+            # Verify provider was not registered
             mock_token_manager.register_provider.assert_not_called()
 
     def test_oauth_provider_registration_handles_errors(self, mock_token_manager, capsys):
@@ -785,19 +785,19 @@ class TestOAuthProviderRegistration:
                 },
             ),
             patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
-            patch(
-                "nexus.server.auth.google_oauth.GoogleOAuthProvider",
-                side_effect=Exception("OAuth initialization failed"),
-            ),
+            patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory,
         ):
             MockTM.return_value = mock_token_manager
+            mock_factory = Mock()
+            mock_factory.create_provider.side_effect = Exception("OAuth initialization failed")
+            MockFactory.return_value = mock_factory
 
             # Create backend - should handle the error without crashing
             _backend = GoogleDriveConnectorBackend(
                 token_manager_db=":memory:",
                 user_email="test@example.com",
                 root_folder="test_root",
-                provider="google",
+                provider="google-drive",
             )
 
             # Verify error was logged (captured in stdout)
@@ -818,18 +818,20 @@ class TestOAuthProviderRegistration:
                 },
             ),
             patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
-            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
+            patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory,
         ):
             MockTM.return_value = mock_token_manager
             mock_oauth_provider = Mock()
-            MockProvider.return_value = mock_oauth_provider
+            mock_factory = Mock()
+            mock_factory.create_provider.return_value = mock_oauth_provider
+            MockFactory.return_value = mock_factory
 
             # Create backend with PostgreSQL URL
             _backend = GoogleDriveConnectorBackend(
                 token_manager_db="postgresql://postgres:nexus@localhost:5432/nexus",
                 user_email="test@example.com",
                 root_folder="test_root",
-                provider="google",
+                provider="google-drive",
             )
 
             # Verify TokenManager was created with db_url instead of db_path
@@ -839,7 +841,7 @@ class TestOAuthProviderRegistration:
 
             # Verify provider was still registered
             mock_token_manager.register_provider.assert_called_once_with(
-                "google", mock_oauth_provider
+                "google-drive", mock_oauth_provider
             )
 
     def test_oauth_provider_registration_non_google_provider(self, mock_token_manager):
@@ -882,25 +884,29 @@ class TestOAuthProviderRegistration:
                 },
             ),
             patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
-            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
+            patch("nexus.server.auth.oauth_factory.OAuthProviderFactory") as MockFactory,
         ):
             MockTM.return_value = mock_token_manager
             mock_oauth_provider = Mock()
-            MockProvider.return_value = mock_oauth_provider
+            mock_factory = Mock()
+            mock_factory.create_provider.return_value = mock_oauth_provider
+            MockFactory.return_value = mock_factory
 
             # Create backend
             _backend = GoogleDriveConnectorBackend(
                 token_manager_db=":memory:",
                 user_email="test@example.com",
                 root_folder="test_root",
-                provider="google",
+                provider="google-drive",
             )
 
             # Verify debug output was printed
             captured = capsys.readouterr()
             assert "[GDRIVE-INIT]" in captured.out
-            assert "✓ Registered Google OAuth provider" in captured.out
-            assert "test_client_id" in captured.out
+            assert (
+                "✓ Registered OAuth provider" in captured.out
+                or "Registered OAuth provider" in captured.out
+            )
 
 
 if __name__ == "__main__":

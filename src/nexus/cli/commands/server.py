@@ -467,6 +467,9 @@ def serve(
 
             try:
                 cfg = load_config(PathlibPath(backend_config.config_path))
+                # Store config on NexusFS for OAuth factory and other components
+                if isinstance(nx, NexusFS):
+                    nx._config = cfg
                 if cfg.backends:
                     # Type check: backends can only be mounted on NexusFS, not RemoteNexusFS
                     if not isinstance(nx, NexusFS):
@@ -503,6 +506,41 @@ def serve(
                                 console.print(
                                     f"  [green]✓[/green] Mounted {backend_type} backend at {mount_point}{readonly_str}"
                                 )
+
+                                # Save mount to database if not already saved (for persistence across restarts)
+                                # Skip root mount "/" as it's the default and doesn't need to be saved
+                                if (
+                                    mount_point != "/"
+                                    and hasattr(nx, "mount_manager")
+                                    and nx.mount_manager is not None
+                                ):
+                                    try:
+                                        # Check if mount is already saved in database
+                                        existing_mount = nx.mount_manager.get_mount(mount_point)
+                                        if existing_mount is None:
+                                            # Save mount configuration to database
+                                            description = backend_def.get("description")
+                                            nx.mount_manager.save_mount(
+                                                mount_point=mount_point,
+                                                backend_type=backend_type,
+                                                backend_config=backend_cfg,
+                                                priority=priority,
+                                                readonly=readonly,
+                                                owner_user_id=admin_user,
+                                                description=description,
+                                            )
+                                            console.print(
+                                                "    [dim]→ Saved mount configuration to database[/dim]"
+                                            )
+                                        else:
+                                            console.print(
+                                                "    [dim]→ Mount already exists in database[/dim]"
+                                            )
+                                    except Exception as save_error:
+                                        # Don't fail startup if saving mount fails, just warn
+                                        console.print(
+                                            f"    [yellow]⚠️  Could not save mount to database: {save_error}[/yellow]"
+                                        )
 
                                 # Auto-grant permissions to admin user for this mount point
                                 # This ensures the admin can list/read/write files in config-mounted backends

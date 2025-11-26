@@ -284,6 +284,159 @@ nexus --version
 python -c "from nexus.mcp import create_mcp_server; print('OK')"
 ```
 
+## Testing with curl (HTTP/SSE Transport)
+
+The MCP server supports HTTP transport using Server-Sent Events (SSE) for testing and integration.
+
+### Start MCP Server with HTTP Transport
+
+```bash
+# Start with HTTP transport
+nexus mcp serve --transport http --port 8081
+
+# Or with Docker Compose
+docker compose -f docker-compose.demo.yml up -d mcp-server
+```
+
+### Initialize Session
+
+First, initialize the MCP session to get a session ID:
+
+```bash
+API_KEY="sk-your-api-key"
+
+# Initialize and get session ID
+curl -s -N -i -X POST http://localhost:8081/mcp \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2024-11-05",
+      "capabilities": {},
+      "clientInfo": {
+        "name": "curl-test",
+        "version": "1.0"
+      }
+    }
+  }' | grep -i "mcp-session-id"
+```
+
+Extract the session ID from the response headers:
+```bash
+SESSION_ID=$(curl -s -N -i -X POST http://localhost:8081/mcp \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' \
+  | grep -i "mcp-session-id" | cut -d' ' -f2 | tr -d '\r\n')
+```
+
+### List Available Tools
+
+```bash
+curl -s -N -X POST http://localhost:8081/mcp \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -H "mcp-session-id: $SESSION_ID" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/list",
+    "params": {}
+  }' | grep "^data:" | sed 's/^data: //' | python3 -m json.tool
+```
+
+### Call Tools
+
+**Write File:**
+```bash
+curl -s -N -X POST http://localhost:8081/mcp \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -H "mcp-session-id: $SESSION_ID" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "nexus_write_file",
+      "arguments": {
+        "path": "/test/example.txt",
+        "content": "Hello from MCP!"
+      }
+    }
+  }' | grep "^data:" | sed 's/^data: //' | python3 -m json.tool
+```
+
+**Read File:**
+```bash
+curl -s -N -X POST http://localhost:8081/mcp \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -H "mcp-session-id: $SESSION_ID" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "tools/call",
+    "params": {
+      "name": "nexus_read_file",
+      "arguments": {
+        "path": "/test/example.txt"
+      }
+    }
+  }' | grep "^data:" | sed 's/^data: //' | python3 -m json.tool
+```
+
+**List Files:**
+```bash
+curl -s -N -X POST http://localhost:8081/mcp \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -H "mcp-session-id: $SESSION_ID" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 5,
+    "method": "tools/call",
+    "params": {
+      "name": "nexus_list_files",
+      "arguments": {
+        "path": "/test",
+        "recursive": false
+      }
+    }
+  }' | grep "^data:" | sed 's/^data: //' | python3 -m json.tool
+```
+
+### Important Notes
+
+1. **Required Headers:**
+   - `Accept: application/json, text/event-stream` (both are required)
+   - `Content-Type: application/json`
+   - `X-API-Key: <your-api-key>` (for authentication)
+   - `mcp-session-id: <session-id>` (for all requests after initialization)
+
+2. **Response Format:**
+   - Responses use Server-Sent Events (SSE) format
+   - Extract JSON from `data:` lines: `grep "^data:" | sed 's/^data: //'`
+
+3. **Session Management:**
+   - Initialize once to get session ID
+   - Use the same session ID for all subsequent requests
+   - Session persists until the connection is closed
+
+4. **Health Check:**
+   ```bash
+   curl http://localhost:8081/health
+   ```
+
 ## Integration Guide
 
 For complete setup guide with authentication examples, see:

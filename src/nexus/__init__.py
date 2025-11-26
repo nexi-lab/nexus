@@ -276,6 +276,9 @@ def connect(
                 "agent_id": cfg.agent_id,
             }
 
+        # Store config for OAuth factory and other components that need it
+        nx_fs._config = cfg
+
         return nx_fs
     else:
         # This should never be reached as unimplemented modes are checked at the top

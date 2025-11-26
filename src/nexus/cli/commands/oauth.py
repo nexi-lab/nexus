@@ -348,6 +348,7 @@ def setup_gdrive(
             "https://www.googleapis.com/auth/drive",
             "https://www.googleapis.com/auth/drive.file",
         ],
+        provider_name="google-drive",
     )
 
     # Generate authorization URL
@@ -492,7 +493,6 @@ def setup_x(
     # Create provider with PKCE
     provider = XOAuthProvider(
         client_id=client_id,
-        client_secret=client_secret,  # Optional for PKCE
         redirect_uri="http://localhost",  # Desktop app redirect URI
         scopes=[
             "tweet.read",
@@ -507,6 +507,8 @@ def setup_x(
             "like.read",
             "like.write",
         ],
+        provider_name="x",
+        client_secret=client_secret,  # Optional for PKCE
     )
 
     # Generate authorization URL with PKCE
@@ -569,7 +571,7 @@ def setup_x(
 
 
 @oauth.command("init")
-@click.argument("provider", type=click.Choice(["google", "microsoft"]))
+@click.argument("provider", type=click.Choice(["google", "microsoft", "microsoft-onedrive"]))
 @click.option("--client-id", type=str, required=True, help="OAuth client ID")
 @click.option("--client-secret", type=str, required=True, help="OAuth client secret")
 @click.option(
@@ -584,19 +586,12 @@ def setup_x(
     multiple=True,
     help="OAuth scopes (can be specified multiple times)",
 )
-@click.option(
-    "--tenant-id",
-    type=str,
-    default="common",
-    help="Microsoft tenant ID (microsoft only, default: common)",
-)
 def init_oauth_flow(
     provider: str,
     client_id: str,
     client_secret: str,
     redirect_uri: str,
     scopes: tuple[str, ...],
-    tenant_id: str,
 ) -> None:
     """Initialize OAuth flow and get authorization URL.
 
@@ -612,11 +607,13 @@ def init_oauth_flow(
             --scopes "https://www.googleapis.com/auth/drive"
 
         # Microsoft OneDrive
-        nexus oauth init microsoft \\
+        nexus oauth init microsoft-onedrive \\
             --client-id "12345678-1234-1234-1234-123456789012" \\
             --client-secret "secret~..." \\
             --scopes "Files.ReadWrite.All" \\
             --scopes "offline_access"
+
+        # Note: 'microsoft' is also accepted as an alias for 'microsoft-onedrive'
     """
     scopes_list = list(scopes)
 
@@ -627,14 +624,16 @@ def init_oauth_flow(
             client_secret=client_secret,
             redirect_uri=redirect_uri,
             scopes=scopes_list,
+            provider_name="google-drive",
         )
-    elif provider == "microsoft":
+    elif provider in ("microsoft", "microsoft-onedrive"):
+        # Note: tenant_id is hardcoded to "common" in MicrosoftOAuthProvider
         oauth_provider = MicrosoftOAuthProvider(
             client_id=client_id,
             client_secret=client_secret,
-            tenant_id=tenant_id,
             redirect_uri=redirect_uri,
             scopes=scopes_list,
+            provider_name="microsoft-onedrive",
         )
     else:
         console.print(f"[red]Unsupported provider: {provider}[/red]")

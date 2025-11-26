@@ -1,14 +1,18 @@
 """Google OAuth 2.0 provider implementation.
 
-Implements OAuth flow for Google services (Drive, Gmail, Calendar, etc.).
-Based on MindsDB's GoogleUserOAuth2Manager pattern.
+Implements OAuth flow for all Google services (Drive, Gmail, Calendar, Cloud Storage, etc.).
+This provider can be used for any Google service by specifying the appropriate scopes.
+
+Different Google services are configured via the OAuth config system with different
+default scopes. See config.example.yaml for examples.
 
 Example:
     >>> provider = GoogleOAuthProvider(
     ...     client_id="123.apps.googleusercontent.com",
     ...     client_secret="secret",
     ...     redirect_uri="http://localhost:8080/oauth/callback",
-    ...     scopes=["https://www.googleapis.com/auth/drive"]
+    ...     scopes=["https://www.googleapis.com/auth/drive"],
+    ...     provider_name="google-drive"
     ... )
     >>> auth_url = provider.get_authorization_url()
     >>> # User visits auth_url, grants permission, gets redirected with code
@@ -25,22 +29,42 @@ from .oauth_provider import OAuthCredential, OAuthError, OAuthProvider
 
 
 class GoogleOAuthProvider(OAuthProvider):
-    """Google OAuth 2.0 provider.
+    """Google OAuth 2.0 provider for all Google services.
+
+    This provider can be used for any Google service (Drive, Gmail, Calendar,
+    Cloud Storage, etc.) by specifying the appropriate scopes.
 
     Supports OAuth flows for all Google services:
     - Google Drive: https://www.googleapis.com/auth/drive
     - Gmail: https://www.googleapis.com/auth/gmail.readonly
     - Calendar: https://www.googleapis.com/auth/calendar
+    - Cloud Storage: https://www.googleapis.com/auth/devstorage.read_write
     - etc.
 
-    OAuth endpoints:
+    Different Google services are configured via the OAuth config system with
+    different default scopes. See config.example.yaml for service-specific
+    configurations.
+
+    OAuth endpoints (shared across all Google services):
     - Authorization: https://accounts.google.com/o/oauth2/v2/auth
     - Token: https://oauth2.googleapis.com/token
     - Revoke: https://oauth2.googleapis.com/revoke
     - Token info: https://oauth2.googleapis.com/tokeninfo
+
+    Note: Scopes should be provided explicitly or from OAuth config.
+    For service-specific scopes, configure providers in the OAuth config.
+
+    Example:
+        >>> provider = GoogleOAuthProvider(
+        ...     client_id="123.apps.googleusercontent.com",
+        ...     client_secret="GOCSPX-...",
+        ...     redirect_uri="http://localhost:8080/oauth/callback",
+        ...     scopes=["https://www.googleapis.com/auth/drive"],
+        ...     provider_name="google-drive"
+        ... )
     """
 
-    # Google OAuth endpoints
+    # Google OAuth endpoints (shared across all services)
     AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
     TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
     REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke"
@@ -50,8 +74,9 @@ class GoogleOAuthProvider(OAuthProvider):
         self,
         client_id: str,
         client_secret: str,
-        redirect_uri: str | None = None,
-        scopes: list[str] | None = None,
+        redirect_uri: str,
+        scopes: list[str],
+        provider_name: str,
     ):
         """Initialize Google OAuth provider.
 
@@ -59,17 +84,10 @@ class GoogleOAuthProvider(OAuthProvider):
             client_id: Google OAuth client ID (from Google Cloud Console)
             client_secret: Google OAuth client secret
             redirect_uri: OAuth redirect URI (must match console config)
-            scopes: List of Google OAuth scopes to request
-
-        Example:
-            >>> provider = GoogleOAuthProvider(
-            ...     client_id="123.apps.googleusercontent.com",
-            ...     client_secret="GOCSPX-...",
-            ...     redirect_uri="http://localhost:8080/oauth/callback",
-            ...     scopes=["https://www.googleapis.com/auth/drive"]
-            ... )
+            scopes: List of Google OAuth scopes to request (required)
+            provider_name: Provider name from config (e.g., "google-drive", "gmail")
         """
-        super().__init__(client_id, client_secret, redirect_uri, scopes)
+        super().__init__(client_id, client_secret, redirect_uri, scopes, provider_name)
 
     def get_authorization_url(self, state: str | None = None) -> str:
         """Generate Google OAuth authorization URL.
@@ -79,6 +97,9 @@ class GoogleOAuthProvider(OAuthProvider):
 
         Returns:
             Authorization URL for user to visit
+
+        Raises:
+            OAuthError: If redirect_uri is None or scopes is empty
 
         Example:
             >>> provider = GoogleOAuthProvider(...)
@@ -110,7 +131,7 @@ class GoogleOAuthProvider(OAuthProvider):
             OAuthCredential with access_token, refresh_token, etc.
 
         Raises:
-            OAuthError: If code exchange fails
+            OAuthError: If code exchange fails or redirect_uri is None
 
         Example:
             >>> provider = GoogleOAuthProvider(...)
@@ -184,7 +205,7 @@ class GoogleOAuthProvider(OAuthProvider):
             new_cred.refresh_token = credential.refresh_token
 
         # Preserve other metadata
-        new_cred.provider = "google"
+        new_cred.provider = self.provider_name
         new_cred.user_email = credential.user_email
         new_cred.scopes = credential.scopes or new_cred.scopes
 
@@ -280,7 +301,7 @@ class GoogleOAuthProvider(OAuthProvider):
             token_type=token_data.get("token_type", "Bearer"),
             expires_at=expires_at,
             scopes=scopes,
-            provider="google",
+            provider=self.provider_name,
             client_id=self.client_id,
             token_uri=self.TOKEN_ENDPOINT,
         )

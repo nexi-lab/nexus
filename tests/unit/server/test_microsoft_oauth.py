@@ -20,6 +20,7 @@ class TestMicrosoftOAuthProvider:
             client_secret="test-secret",
             redirect_uri="http://localhost:8080/callback",
             scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
         assert provider.client_id == "test-client-id"
@@ -28,26 +29,28 @@ class TestMicrosoftOAuthProvider:
         assert "common" in provider.authorization_endpoint
         assert "common" in provider.token_endpoint
 
-    def test_init_with_specific_tenant(self):
-        """Test provider initialization with specific tenant ID."""
+    def test_init_uses_common_tenant(self):
+        """Test provider initialization always uses common tenant."""
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
-            tenant_id="12345-specific-tenant",
             redirect_uri="http://localhost/callback",
             scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
-        assert provider.tenant_id == "12345-specific-tenant"
-        assert "12345-specific-tenant" in provider.authorization_endpoint
-        assert "12345-specific-tenant" in provider.token_endpoint
+        assert provider.tenant_id == "common"
+        assert "common" in provider.authorization_endpoint
+        assert "common" in provider.token_endpoint
 
     def test_get_authorization_url_adds_offline_access(self):
         """Test that offline_access scope is automatically added."""
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
             scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
         url = provider.get_authorization_url()
@@ -60,7 +63,9 @@ class TestMicrosoftOAuthProvider:
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
             scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
         url = provider.get_authorization_url(state="csrf-token")
@@ -74,7 +79,9 @@ class TestMicrosoftOAuthProvider:
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
             scopes=["Files.ReadWrite.All", "offline_access"],
+            provider_name="microsoft-onedrive",
         )
 
         url = provider.get_authorization_url()
@@ -89,7 +96,9 @@ class TestMicrosoftOAuthProvider:
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
             scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
         mock_response = Mock()
@@ -112,7 +121,7 @@ class TestMicrosoftOAuthProvider:
             assert credential.access_token == "EwAoA8l6BAAU..."
             assert credential.refresh_token == "M.R3_BAY.-CfvKc..."
             assert credential.token_type == "Bearer"
-            assert credential.provider == "microsoft"
+            assert credential.provider == "microsoft-onedrive"
             assert "Files.ReadWrite.All" in credential.scopes
             assert credential.expires_at is not None
 
@@ -122,6 +131,9 @@ class TestMicrosoftOAuthProvider:
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
         mock_response = Mock()
@@ -144,7 +156,9 @@ class TestMicrosoftOAuthProvider:
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
             scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
         old_credential = OAuthCredential(
@@ -176,7 +190,7 @@ class TestMicrosoftOAuthProvider:
             assert new_credential.access_token == "new-token"
             assert new_credential.refresh_token == "new-refresh-token"
             assert new_credential.user_email == "test@example.com"
-            assert new_credential.provider == "microsoft"
+            assert new_credential.provider == "microsoft-onedrive"
 
     @pytest.mark.asyncio
     async def test_refresh_token_no_refresh_token(self):
@@ -184,6 +198,9 @@ class TestMicrosoftOAuthProvider:
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
         credential = OAuthCredential(
@@ -201,6 +218,9 @@ class TestMicrosoftOAuthProvider:
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
         old_credential = OAuthCredential(
@@ -232,6 +252,9 @@ class TestMicrosoftOAuthProvider:
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
         credential = OAuthCredential(
@@ -253,6 +276,9 @@ class TestMicrosoftOAuthProvider:
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
         mock_response = Mock()
@@ -277,6 +303,9 @@ class TestMicrosoftOAuthProvider:
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
         with patch("httpx.AsyncClient") as mock_client:
@@ -293,6 +322,9 @@ class TestMicrosoftOAuthProvider:
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
         token_data = {
@@ -308,7 +340,7 @@ class TestMicrosoftOAuthProvider:
         assert credential.access_token == "EwAoA8l6BAAU..."
         assert credential.refresh_token == "M.R3_BAY.-CfvKc..."
         assert credential.token_type == "Bearer"
-        assert credential.provider == "microsoft"
+        assert credential.provider == "microsoft-onedrive"
         assert "Files.ReadWrite.All" in credential.scopes
         assert "offline_access" in credential.scopes
 
@@ -317,6 +349,9 @@ class TestMicrosoftOAuthProvider:
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["Files.ReadWrite.All"],
+            provider_name="microsoft-onedrive",
         )
 
         token_data = {

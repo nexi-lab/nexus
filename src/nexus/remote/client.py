@@ -3952,29 +3952,62 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
     # OAuth Operations
     # ============================================================
 
-    def oauth_get_drive_auth_url(
+    def oauth_list_providers(
         self,
-        redirect_uri: str = "http://localhost:3000/oauth/callback",
         context: Any = None,
-    ) -> dict[str, Any]:
-        """Get OAuth authorization URL for Google Drive.
+    ) -> builtins.list[dict[str, Any]]:
+        """List all available OAuth providers from configuration.
 
         Args:
-            redirect_uri: OAuth redirect URI (default: http://localhost:3000/oauth/callback)
+            context: Operation context (optional)
+
+        Returns:
+            List of provider dictionaries containing:
+                - name: Provider identifier (e.g., "google-drive", "gmail")
+                - display_name: Human-readable name (e.g., "Google Drive", "Gmail")
+                - scopes: List of OAuth scopes required
+                - requires_pkce: Whether provider requires PKCE
+                - metadata: Additional provider-specific metadata
+        """
+        params: dict[str, Any] = {}
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("oauth_list_providers", params)
+        return result  # type: ignore[no-any-return]
+
+    def oauth_get_auth_url(
+        self,
+        provider: str,
+        redirect_uri: str = "http://localhost:3000/oauth/callback",
+        scopes: builtins.list[str] | None = None,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Get OAuth authorization URL for any provider.
+
+        Args:
+            provider: OAuth provider name (e.g., "google-drive", "gmail")
+            redirect_uri: OAuth redirect URI (default: "http://localhost:3000/oauth/callback")
+            scopes: Optional list of scopes to request
             context: Operation context (optional)
 
         Returns:
             Dictionary containing:
-                - url: Authorization URL for user to visit
-                - state: CSRF state token (should be verified in callback)
-
-        Raises:
-            RuntimeError: If OAuth credentials not configured
+                - url: Authorization URL to redirect user to
+                - state: CSRF state token for validation
+                - pkce_data: Optional PKCE data (if provider requires PKCE)
+                    - code_verifier: PKCE verifier
+                    - code_challenge: PKCE challenge
+                    - code_challenge_method: Challenge method (usually "S256")
         """
-        params: dict[str, Any] = {"redirect_uri": redirect_uri}
+        params: dict[str, Any] = {
+            "provider": provider,
+            "redirect_uri": redirect_uri,
+        }
+        if scopes is not None:
+            params["scopes"] = scopes
         if context is not None:
             params["context"] = context
-        result = self._call_rpc("oauth_get_drive_auth_url", params)
+        result = self._call_rpc("oauth_get_auth_url", params)
         return result  # type: ignore[no-any-return]
 
     def oauth_exchange_code(

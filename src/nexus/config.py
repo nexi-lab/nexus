@@ -7,6 +7,9 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# Import OAuthConfig - required for OAuth configuration
+from nexus.server.auth.oauth_config import OAuthConfig
+
 
 class NexusConfig(BaseModel):
     """
@@ -120,6 +123,12 @@ class NexusConfig(BaseModel):
         description="Multiple backend mount configurations (type, mount_point, config, priority, readonly)",
     )
 
+    # OAuth provider configuration
+    oauth: OAuthConfig | None = Field(
+        default=None,
+        description="OAuth provider configurations (providers list with name, display_name, provider_class, etc.)",
+    )
+
     # Remote mode settings (monolithic/distributed)
     url: str | None = Field(default=None, description="Nexus server URL for remote modes")
     api_key: str | None = Field(default=None, description="API key for authentication")
@@ -221,6 +230,13 @@ def _load_from_dict(config_dict: dict[str, Any]) -> NexusConfig:
     merged = _load_from_environment()
     merged_dict = merged.model_dump()
     merged_dict.update(config_dict)
+
+    # Convert oauth dict to OAuthConfig if present
+    if "oauth" in merged_dict and isinstance(merged_dict["oauth"], dict):
+        from nexus.server.auth.oauth_config import OAuthConfig as OAuthConfigType
+
+        merged_dict["oauth"] = OAuthConfigType(**merged_dict["oauth"])
+
     return NexusConfig(**merged_dict)
 
 

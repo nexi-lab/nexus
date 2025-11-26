@@ -537,6 +537,32 @@ class NexusFSMountsMixin:
         if isinstance(backend_config, str):
             backend_config = json.loads(backend_config)
 
+        # Normalize token_manager_db for OAuth-backed mounts (gdrive_connector, x_connector)
+        # According to docs, token_manager_db should come from NexusFS config db_path, not from saved config
+        backend_type = mount_config["backend_type"]
+        if backend_type in ("gdrive_connector", "x_connector"):
+            # Priority: config.db_path > metadata.database_url
+            database_url = None
+
+            # First, try to get db_path from config (preferred)
+            if (
+                hasattr(self, "_config")
+                and self._config
+                and hasattr(self._config, "db_path")
+                and self._config.db_path
+            ):
+                database_url = self._config.db_path
+            # Fallback to metadata store database URL
+            elif hasattr(self, "metadata") and hasattr(self.metadata, "database_url"):
+                database_url = self.metadata.database_url
+
+            if not database_url:
+                raise RuntimeError(
+                    f"Cannot load {backend_type} mount: No database path configured in NexusFS config or metadata store"
+                )
+
+            backend_config["token_manager_db"] = database_url
+
         # Activate the mount
         return self.add_mount(
             mount_point=mount_config["mount_point"],

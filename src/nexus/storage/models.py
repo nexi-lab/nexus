@@ -1986,7 +1986,10 @@ class OAuthCredentialModel(Base):
     provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
 
     # User identity
+    # user_email: Email from OAuth provider (required for token association)
+    # user_id: Nexus user identity (for permission checks, may differ from email)
     user_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     # Encrypted tokens (encrypted at rest)
@@ -2025,16 +2028,18 @@ class OAuthCredentialModel(Base):
     # Indexes
     __table_args__ = (
         # Unique constraint: one credential per (provider, user_email, tenant)
+        # Note: user_email is from OAuth provider, user_id is Nexus identity
         UniqueConstraint("provider", "user_email", "tenant_id", name="uq_oauth_credential"),
         Index("idx_oauth_provider", "provider"),
         Index("idx_oauth_user_email", "user_email"),
+        Index("idx_oauth_user_id", "user_id"),
         Index("idx_oauth_tenant", "tenant_id"),
         Index("idx_oauth_expires", "expires_at"),
         Index("idx_oauth_revoked", "revoked"),
     )
 
     def __repr__(self) -> str:
-        return f"<OAuthCredentialModel(credential_id={self.credential_id}, provider={self.provider}, user_email={self.user_email})>"
+        return f"<OAuthCredentialModel(credential_id={self.credential_id}, provider={self.provider}, user_email={self.user_email}, user_id={self.user_id})>"
 
     def is_expired(self) -> bool:
         """Check if the access token is expired."""
@@ -2066,9 +2071,12 @@ class OAuthCredentialModel(Base):
         if self.provider not in valid_providers:
             raise ValidationError(f"provider must be one of {valid_providers}, got {self.provider}")
 
-        # Validate user_email
+        # Validate user_email (required - comes from OAuth provider)
         if not self.user_email:
             raise ValidationError("user_email is required")
+
+        # user_id is optional but recommended for permission checks
+        # If not provided, it will be set from context during credential storage
 
         # Validate encrypted tokens
         if not self.encrypted_access_token:

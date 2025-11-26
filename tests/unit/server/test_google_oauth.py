@@ -20,12 +20,14 @@ class TestGoogleOAuthProvider:
             client_secret="test-secret",
             redirect_uri="http://localhost:8080/callback",
             scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         assert provider.client_id == "test-client-id"
         assert provider.client_secret == "test-secret"
         assert provider.redirect_uri == "http://localhost:8080/callback"
         assert provider.scopes == ["https://www.googleapis.com/auth/drive"]
+        assert provider.provider_name == "google-drive"
 
     def test_get_authorization_url_without_state(self):
         """Test authorization URL generation without state."""
@@ -34,6 +36,7 @@ class TestGoogleOAuthProvider:
             client_secret="secret",
             redirect_uri="http://localhost/callback",
             scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         url = provider.get_authorization_url()
@@ -54,6 +57,7 @@ class TestGoogleOAuthProvider:
             client_secret="secret",
             redirect_uri="http://localhost/callback",
             scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         url = provider.get_authorization_url(state="csrf-token-123")
@@ -70,6 +74,7 @@ class TestGoogleOAuthProvider:
                 "https://www.googleapis.com/auth/drive",
                 "https://www.googleapis.com/auth/calendar",
             ],
+            provider_name="google-drive",
         )
 
         url = provider.get_authorization_url()
@@ -85,6 +90,7 @@ class TestGoogleOAuthProvider:
             client_secret="secret",
             redirect_uri="http://localhost/callback",
             scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         mock_response = Mock()
@@ -107,7 +113,7 @@ class TestGoogleOAuthProvider:
             assert credential.access_token == "ya29.test-token"
             assert credential.refresh_token == "1//test-refresh"
             assert credential.token_type == "Bearer"
-            assert credential.provider == "google"
+            assert credential.provider == "google-drive"
             assert credential.scopes == ["https://www.googleapis.com/auth/drive"]
             assert credential.expires_at is not None
 
@@ -119,6 +125,7 @@ class TestGoogleOAuthProvider:
             client_secret="secret",
             redirect_uri="http://localhost/callback",
             scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         mock_response = Mock()
@@ -143,6 +150,7 @@ class TestGoogleOAuthProvider:
             client_secret="secret",
             redirect_uri="http://localhost/callback",
             scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         with patch("httpx.AsyncClient") as mock_client:
@@ -161,6 +169,7 @@ class TestGoogleOAuthProvider:
             client_secret="secret",
             redirect_uri="http://localhost/callback",
             scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         old_credential = OAuthCredential(
@@ -191,7 +200,7 @@ class TestGoogleOAuthProvider:
             assert new_credential.access_token == "new-token"
             assert new_credential.refresh_token == "refresh-token"  # Preserved
             assert new_credential.user_email == "test@example.com"  # Preserved
-            assert new_credential.provider == "google"
+            assert new_credential.provider == "google-drive"
             assert new_credential.scopes == ["https://www.googleapis.com/auth/drive"]
 
     @pytest.mark.asyncio
@@ -200,6 +209,9 @@ class TestGoogleOAuthProvider:
         provider = GoogleOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         credential = OAuthCredential(
@@ -217,6 +229,9 @@ class TestGoogleOAuthProvider:
         provider = GoogleOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         credential = OAuthCredential(
@@ -245,6 +260,9 @@ class TestGoogleOAuthProvider:
         provider = GoogleOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         credential = OAuthCredential(
@@ -271,6 +289,9 @@ class TestGoogleOAuthProvider:
         provider = GoogleOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         credential = OAuthCredential(
@@ -294,6 +315,9 @@ class TestGoogleOAuthProvider:
         provider = GoogleOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         credential = OAuthCredential(
@@ -312,6 +336,9 @@ class TestGoogleOAuthProvider:
         provider = GoogleOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         mock_response = Mock()
@@ -332,6 +359,9 @@ class TestGoogleOAuthProvider:
         provider = GoogleOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         with patch("httpx.AsyncClient") as mock_client:
@@ -349,6 +379,9 @@ class TestGoogleOAuthProvider:
         provider = GoogleOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         with patch("httpx.AsyncClient") as mock_client:
@@ -365,6 +398,9 @@ class TestGoogleOAuthProvider:
         provider = GoogleOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         token_data = {
@@ -380,7 +416,7 @@ class TestGoogleOAuthProvider:
         assert credential.access_token == "ya29.test"
         assert credential.refresh_token == "1//test"
         assert credential.token_type == "Bearer"
-        assert credential.provider == "google"
+        assert credential.provider == "google-drive"
         assert credential.scopes == [
             "https://www.googleapis.com/auth/drive",
             "https://www.googleapis.com/auth/calendar",
@@ -392,6 +428,9 @@ class TestGoogleOAuthProvider:
         provider = GoogleOAuthProvider(
             client_id="test-id",
             client_secret="secret",
+            redirect_uri="http://localhost/callback",
+            scopes=["https://www.googleapis.com/auth/drive"],
+            provider_name="google-drive",
         )
 
         token_data = {

@@ -358,6 +358,21 @@ def create_backend_from_config(backend_type: str, config: dict[str, Any]) -> Any
             provider=config.get("provider", "google-drive"),
         )
 
+    elif backend_type == "gmail_connector":
+        from nexus.backends.gmail_connector import GmailConnectorBackend
+
+        token_manager_db = config.get("token_manager_db")
+        if not token_manager_db:
+            raise ValueError(f"{backend_type} backend requires 'token_manager_db' in config")
+
+        return GmailConnectorBackend(
+            token_manager_db=token_manager_db,
+            user_email=config.get("user_email"),
+            sync_from_date=config.get("sync_from_date"),
+            last_history_id=config.get("last_history_id"),
+            provider=config.get("provider", "gmail"),
+        )
+
     else:
         raise ValueError(f"Unknown backend type: {backend_type}")
 

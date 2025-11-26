@@ -25,6 +25,11 @@ try:
 except ImportError:
     XConnectorBackend = None  # type: ignore
 
+try:
+    from nexus.backends.gmail_connector import GmailConnectorBackend
+except ImportError:
+    GmailConnectorBackend = None  # type: ignore
+
 __all__ = [
     "Backend",
     "BaseBlobStorageConnector",
@@ -33,4 +38,5 @@ __all__ = [
     "GCSConnectorBackend",
     "S3ConnectorBackend",
     "XConnectorBackend",
+    "GmailConnectorBackend",
 ]

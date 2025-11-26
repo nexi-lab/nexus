@@ -1,6 +1,9 @@
 """Tests for OAuth TokenManager."""
 
+import gc
+import platform
 import tempfile
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -20,8 +23,27 @@ class TestTokenManager:
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name
         yield db_path
-        # Cleanup
-        Path(db_path).unlink(missing_ok=True)
+        # Cleanup with Windows-specific handling
+        gc.collect()  # Force garbage collection to release connections
+        if platform.system() == "Windows":
+            time.sleep(0.2)  # Give Windows time to release file handles
+
+        # Retry deletion on Windows if it fails
+        db_path_obj = Path(db_path)
+        if platform.system() == "Windows":
+            for attempt in range(5):
+                try:
+                    if db_path_obj.exists():
+                        db_path_obj.unlink(missing_ok=True)
+                    break
+                except PermissionError:
+                    if attempt < 4:
+                        time.sleep(0.2 * (attempt + 1))
+                        gc.collect()
+                    else:
+                        raise
+        else:
+            db_path_obj.unlink(missing_ok=True)
 
     @pytest.fixture
     def manager(self, temp_db):
@@ -29,6 +51,10 @@ class TestTokenManager:
         manager = TokenManager(db_path=temp_db)
         yield manager
         manager.close()
+        # Force cleanup on Windows
+        gc.collect()
+        if platform.system() == "Windows":
+            time.sleep(0.1)  # Small delay for Windows to release file handles
 
     @pytest.fixture
     def valid_credential(self):

@@ -331,18 +331,33 @@ class TestTokenManager:
     @pytest.mark.asyncio
     async def test_unsupported_provider_raises(self, manager, valid_credential):
         """Test that using credential for unsupported provider raises error."""
+        from datetime import UTC, datetime, timedelta
+
+        from nexus.core.exceptions import AuthenticationError
+        from nexus.server.auth.oauth_provider import OAuthCredential
+
+        # Create an expired credential so it tries to refresh
+        expired_credential = OAuthCredential(
+            access_token="ya29.expired_token",
+            refresh_token="1//0e_test_refresh",
+            token_type="Bearer",
+            expires_at=datetime.now(UTC) - timedelta(hours=1),  # Expired
+            scopes=["https://www.googleapis.com/auth/drive"],
+            provider="unknown",
+            user_email="alice@example.com",
+            client_id="test_client_id",
+        )
+
         # Store credential (this should succeed - no validation at store time)
         cred_id = await manager.store_credential(
             provider="unknown",  # Unsupported
             user_email="alice@example.com",
-            credential=valid_credential,
+            credential=expired_credential,
         )
         assert cred_id is not None
 
-        # But getting a token should fail because provider is not registered
+        # Getting a token should fail because provider is not registered
         # The error occurs when trying to refresh an expired token
-        from nexus.core.exceptions import AuthenticationError
-
         with pytest.raises(AuthenticationError, match="Provider not registered"):
             await manager.get_valid_token(
                 provider="unknown",

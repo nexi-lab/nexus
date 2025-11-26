@@ -321,27 +321,6 @@ class TestOAuthFactoryDefaultConfig:
         with open(oauth_yaml, "w") as f:
             yaml.dump(config_data, f)
 
-        # Create a temporary oauth.yaml file
-        config_dir = tmp_path / "configs"
-        config_dir.mkdir()
-        oauth_yaml = config_dir / "oauth.yaml"
-
-        config_data = {
-            "providers": [
-                {
-                    "name": "test-provider",
-                    "display_name": "Test Provider",
-                    "provider_class": "nexus.server.auth.google_oauth.GoogleOAuthProvider",
-                    "scopes": ["https://www.googleapis.com/auth/drive"],
-                    "client_id_env": "TEST_CLIENT_ID",
-                    "client_secret_env": "TEST_CLIENT_SECRET",
-                }
-            ]
-        }
-
-        with open(oauth_yaml, "w") as f:
-            yaml.dump(config_data, f)
-
         factory = OAuthProviderFactory()
 
         # Mock Path(__file__) to return a path that resolves to our temp directory

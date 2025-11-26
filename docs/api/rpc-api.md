@@ -3202,47 +3202,6 @@ Get all available ReBAC namespaces.
 
 Nexus provides OAuth 2.0 authentication support for connecting to external services like Google Drive. These APIs allow you to manage OAuth credentials, get authorization URLs, and exchange authorization codes for access tokens.
 
-### oauth_get_drive_auth_url
-
-Get OAuth authorization URL for Google Drive.
-
-**Endpoint**: `POST /api/nfs/oauth_get_drive_auth_url`
-
-**Parameters:**
-- `redirect_uri` (string, optional): OAuth redirect URI. Default: `http://localhost:3000/oauth/callback`
-
-**Example Request:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "oauth_get_drive_auth_url",
-  "params": {
-    "redirect_uri": "http://localhost:3000/oauth/callback"
-  }
-}
-```
-
-**Example Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=...&redirect_uri=...&scope=...&state=...",
-    "state": "csrf_state_token_abc123"
-  }
-}
-```
-
-**Usage:**
-1. Call this endpoint to get the authorization URL
-2. Direct the user to visit the URL in their browser
-3. User grants permission and is redirected with an authorization code
-4. Use `oauth_exchange_code` to complete the OAuth flow
-
----
-
 ### oauth_exchange_code
 
 Exchange OAuth authorization code for access tokens and store credentials.

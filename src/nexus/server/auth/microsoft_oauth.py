@@ -46,36 +46,36 @@ class MicrosoftOAuthProvider(OAuthProvider):
         self,
         client_id: str,
         client_secret: str,
-        tenant_id: str = "common",
-        redirect_uri: str | None = None,
-        scopes: list[str] | None = None,
+        redirect_uri: str,
+        scopes: list[str],
+        provider_name: str,
     ):
         """Initialize Microsoft OAuth provider.
 
         Args:
             client_id: Microsoft app (client) ID from Azure Portal
             client_secret: Microsoft client secret from Azure Portal
-            tenant_id: Azure AD tenant ID or "common" for multi-tenant
             redirect_uri: OAuth redirect URI (must match Azure config)
-            scopes: List of Microsoft Graph scopes to request
+            scopes: List of Microsoft Graph scopes to request (required)
+            provider_name: Provider name from config (e.g., "microsoft", "microsoft-onedrive")
 
         Example:
             >>> provider = MicrosoftOAuthProvider(
             ...     client_id="12345678-1234-1234-1234-123456789012",
             ...     client_secret="secret~...",
-            ...     tenant_id="common",
             ...     redirect_uri="http://localhost:8080/oauth/callback",
-            ...     scopes=["Files.ReadWrite.All", "offline_access"]
+            ...     scopes=["Files.ReadWrite.All", "offline_access"],
+            ...     provider_name="microsoft-onedrive"
             ... )
         """
-        super().__init__(client_id, client_secret, redirect_uri, scopes)
-        self.tenant_id = tenant_id
+        super().__init__(client_id, client_secret, redirect_uri, scopes, provider_name)
 
-        # Microsoft OAuth endpoints (tenant-specific)
+        # Microsoft OAuth endpoints (using "common" for multi-tenant support)
+        self.tenant_id = "common"
         self.authorization_endpoint = (
-            f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
+            "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
         )
-        self.token_endpoint = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+        self.token_endpoint = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
         self.graph_endpoint = "https://graph.microsoft.com/v1.0"
 
     def get_authorization_url(self, state: str | None = None) -> str:
@@ -87,6 +87,9 @@ class MicrosoftOAuthProvider(OAuthProvider):
         Returns:
             Authorization URL for user to visit
 
+        Raises:
+            OAuthError: If redirect_uri is None or scopes is empty
+
         Example:
             >>> provider = MicrosoftOAuthProvider(...)
             >>> url = provider.get_authorization_url(state="random_state")
@@ -94,7 +97,7 @@ class MicrosoftOAuthProvider(OAuthProvider):
             Visit: https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=...
         """
         # Microsoft requires offline_access scope for refresh tokens
-        scopes = self.scopes.copy() if self.scopes else []
+        scopes = self.scopes.copy()
         if "offline_access" not in scopes:
             scopes.append("offline_access")
 
@@ -121,14 +124,14 @@ class MicrosoftOAuthProvider(OAuthProvider):
             OAuthCredential with access_token, refresh_token, etc.
 
         Raises:
-            OAuthError: If code exchange fails
+            OAuthError: If code exchange fails or redirect_uri is None
 
         Example:
             >>> provider = MicrosoftOAuthProvider(...)
             >>> cred = await provider.exchange_code("M.R3_BAY...")
             >>> print(cred.access_token)
         """
-        scopes = self.scopes.copy() if self.scopes else []
+        scopes = self.scopes.copy()
         if "offline_access" not in scopes:
             scopes.append("offline_access")
 
@@ -205,7 +208,7 @@ class MicrosoftOAuthProvider(OAuthProvider):
             new_cred.refresh_token = credential.refresh_token
 
         # Preserve other metadata
-        new_cred.provider = "microsoft"
+        new_cred.provider = self.provider_name
         new_cred.user_email = credential.user_email
         new_cred.scopes = credential.scopes or new_cred.scopes
 
@@ -290,7 +293,7 @@ class MicrosoftOAuthProvider(OAuthProvider):
             token_type=token_data.get("token_type", "Bearer"),
             expires_at=expires_at,
             scopes=scopes,
-            provider="microsoft",
+            provider=self.provider_name,
             client_id=self.client_id,
             token_uri=self.token_endpoint,
         )

@@ -255,6 +255,52 @@ EOF
     echo ""
 }
 
+clean_all_data() {
+    # Utility function to clean all Nexus-related Docker resources
+    # Args:
+    #   $1: Whether to remove images (default: false)
+    #   $2: Step prefix for logging (e.g., "Step 1/7:" or "Step 1/5:")
+
+    local REMOVE_IMAGES="${1:-false}"
+    local STEP_PREFIX="${2:-}"
+
+    if [ -n "$STEP_PREFIX" ]; then
+        STEP_PREFIX="$STEP_PREFIX "
+    fi
+
+    # Step 1: Remove sandbox containers
+    echo "${STEP_PREFIX}Removing sandbox containers..."
+    docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
+
+    # Step 2: Stop and remove all nexus-related containers
+    echo "${STEP_PREFIX}Removing all nexus-related containers..."
+    docker ps -a --filter "name=nexus" -q | xargs -r docker stop 2>/dev/null || true
+    docker ps -a --filter "name=nexus" -q | xargs -r docker rm 2>/dev/null || true
+
+    # Step 3: Stop and remove containers via docker-compose (this also removes volumes)
+    echo "${STEP_PREFIX}Stopping docker-compose services..."
+    docker compose -f "$COMPOSE_FILE" down -v 2>/dev/null || true
+
+    # Step 4: Remove all volumes explicitly (including those with project prefixes)
+    echo "${STEP_PREFIX}Removing all volumes (including PostgreSQL data)..."
+    # Remove volumes by exact name
+    docker volume rm postgres-data 2>/dev/null || true
+    docker volume rm nexus-data 2>/dev/null || true
+    # Remove volumes with project prefix (docker-compose may prefix volumes with project name)
+    # Common patterns: nexus_postgres-data, demo_postgres-data, etc.
+    # This ensures we catch volumes even if docker-compose used a project prefix
+    docker volume ls -q | grep -E "(postgres-data|nexus-data)" | xargs -r docker volume rm 2>/dev/null || true
+
+    # Step 5: Remove all nexus-related images (if requested)
+    if [ "$REMOVE_IMAGES" = "true" ]; then
+        echo "${STEP_PREFIX}Removing nexus-related images..."
+        docker images -q --filter "reference=nexus-server:*" | xargs -r docker rmi -f 2>/dev/null || true
+        docker images -q --filter "reference=nexus-langgraph:*" | xargs -r docker rmi -f 2>/dev/null || true
+        docker images -q --filter "reference=nexus-frontend:*" | xargs -r docker rmi -f 2>/dev/null || true
+        docker images -q --filter "reference=nexus-runtime:*" | xargs -r docker rmi -f 2>/dev/null || true
+    fi
+}
+
 # ============================================
 # Commands
 # ============================================
@@ -382,9 +428,10 @@ cmd_clean() {
     echo "⚠️  CLEAN MODE"
     echo ""
     echo "This will DELETE ALL data:"
-    echo "  • All Docker containers"
+    echo "  • All Docker containers (including sandbox containers)"
     echo "  • All Docker volumes (PostgreSQL data, Nexus data)"
-    echo "  • All Docker images"
+    echo "  • All Docker images (nexus-server, nexus-langgraph, nexus-frontend)"
+    echo "  • All Docker networks"
     echo ""
 
     if [ "$SKIP_CONFIRM" = false ]; then
@@ -401,10 +448,7 @@ cmd_clean() {
 
     echo ""
     echo "🧹 Cleaning up..."
-
-    # Stop and remove containers, volumes, and images
-    docker compose -f "$COMPOSE_FILE" down -v --rmi all
-
+    clean_all_data "true" "  Step"
     echo ""
     echo "✅ Cleanup complete!"
 }
@@ -419,13 +463,12 @@ cmd_init() {
     echo "🔧 INITIALIZATION MODE"
     echo ""
     echo "This will:"
-    echo "  1. Clean up old sandbox containers"
-    echo "  2. Clean all existing data and containers"
-    echo "  3. Build runtime image for sandboxes"
-    echo "  4. Rebuild all service Docker images"
-    echo "  5. Start all services fresh"
+    echo "  1. Clean all data (containers, volumes, sandboxes)"
+    echo "  2. Build runtime image for sandboxes"
+    echo "  3. Rebuild all service Docker images"
+    echo "  4. Start all services fresh"
     if [ "$SKIP_PERMISSIONS" = true ]; then
-        echo "  6. Skip permission setup and disable runtime permission checks"
+        echo "  (Skipping permission setup and disabling runtime permission checks)"
     fi
     echo ""
 
@@ -442,23 +485,20 @@ cmd_init() {
     fi
 
     echo ""
-    echo "🧹 Step 1/5: Cleaning up old sandbox containers..."
-    docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
+    echo "🧹 Step 1/4: Cleaning all data..."
+    clean_all_data "false" ""
+    echo ""
 
     echo ""
-    echo "🧹 Step 2/5: Cleaning Docker Compose resources..."
-    docker compose -f "$COMPOSE_FILE" down -v
-
-    echo ""
-    echo "🔨 Step 3/5: Building runtime image for sandboxes..."
+    echo "🔨 Step 2/4: Building runtime image for sandboxes..."
     ./docker/build.sh
 
     echo ""
-    echo "🔨 Step 4/5: Building service images..."
+    echo "🔨 Step 3/4: Building service images..."
     docker compose -f "$COMPOSE_FILE" build
 
     echo ""
-    echo "🚀 Step 5/5: Starting services..."
+    echo "🚀 Step 4/4: Starting services..."
     # Export SKIP_PERMISSIONS so Docker Compose can pass it to containers
     if [ "$SKIP_PERMISSIONS" = true ]; then
         export NEXUS_SKIP_PERMISSIONS=true

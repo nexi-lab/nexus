@@ -1339,3 +1339,767 @@ def skills_diff(
 
     except Exception as e:
         handle_error(e)
+
+
+# =============================================================================
+# MCP TOOLS COMMANDS
+# =============================================================================
+
+
+@skills.group(name="mcp")
+def skills_mcp() -> None:
+    """MCP Tools - Manage MCP tool skills.
+
+    Export, mount, and discover MCP tools as skills for dynamic tool discovery.
+
+    Examples:
+        nexus skills mcp export-tools
+        nexus skills mcp list-tools
+        nexus skills mcp mount github --command "npx -y @modelcontextprotocol/server-github"
+        nexus skills mcp list-mounts
+    """
+    pass
+
+
+@skills_mcp.command(name="export-tools")
+@click.option("--output", "-o", help="Output directory (default: /skills/system/mcp-tools/nexus/)")
+@click.option("--no-sandbox", is_flag=True, help="Exclude sandbox tools")
+@add_backend_options
+def skills_mcp_export_tools(
+    output: str | None,
+    no_sandbox: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """Export Nexus MCP tools to Skills format.
+
+    Exports all built-in Nexus MCP tools (file operations, search, memory, etc.)
+    to the /skills/system/mcp-tools/ directory as discoverable skills.
+
+    Examples:
+        nexus skills mcp export-tools
+        nexus skills mcp export-tools --output /custom/path/
+        nexus skills mcp export-tools --no-sandbox
+    """
+    try:
+        import asyncio
+
+        from nexus.skills.mcp_exporter import MCPToolExporter
+
+        nx = get_filesystem(backend_config, enforce_permissions=False)
+        exporter = MCPToolExporter(nx)
+
+        async def export_async() -> None:
+            with console.status("[yellow]Exporting MCP tools...[/yellow]", spinner="dots"):
+                count = await exporter.export_nexus_tools(
+                    output_path=output,
+                    include_sandbox=not no_sandbox,
+                )
+
+            console.print(f"[green]✓[/green] Exported [cyan]{count}[/cyan] MCP tools")
+            console.print(f"  Output: [dim]{output or exporter.OUTPUT_PATH}[/dim]")
+
+            # Show categories
+            categories = exporter.get_tool_categories()
+            console.print("\n[bold]Tool Categories:[/bold]")
+            for cat, tools in categories.items():
+                if no_sandbox and cat == "sandbox":
+                    continue
+                console.print(f"  [cyan]{cat}[/cyan]: {len(tools)} tools")
+
+        asyncio.run(export_async())
+        nx.close()
+
+    except Exception as e:
+        handle_error(e)
+
+
+@skills_mcp.command(name="list-tools")
+@click.option("--category", "-c", help="Filter by category (file_operations, search, memory, etc.)")
+def skills_mcp_list_tools(
+    category: str | None,
+) -> None:
+    """List available MCP tools.
+
+    Shows all Nexus MCP tools that can be exported as skills.
+
+    Examples:
+        nexus skills mcp list-tools
+        nexus skills mcp list-tools --category search
+    """
+    try:
+        from nexus.skills.mcp_exporter import NEXUS_TOOLS
+
+        # Filter by category if specified
+        tools = NEXUS_TOOLS
+        if category:
+            tools = [t for t in tools if t.get("category") == category]
+
+        if not tools:
+            console.print(f"[yellow]No tools found for category: {category}[/yellow]")
+            return
+
+        # Group by category
+        categories: dict[str, list[dict]] = {}
+        for tool in tools:
+            cat = tool.get("category", "other")
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(tool)
+
+        # Display tools
+        for cat, cat_tools in sorted(categories.items()):
+            console.print(f"\n[bold cyan]{cat.upper()}[/bold cyan]")
+            for tool in cat_tools:
+                console.print(f"  [green]{tool['name']}[/green]")
+                console.print(f"    [dim]{tool['description']}[/dim]")
+
+        console.print(f"\n[dim]Total: {len(tools)} tools[/dim]")
+
+    except Exception as e:
+        handle_error(e)
+
+
+@skills_mcp.command(name="mount")
+@click.argument("name", type=str)
+@click.option("--description", "-d", help="Mount description")
+@click.option("--command", "-c", help="Command to run MCP server (for local/stdio)")
+@click.option("--url", "-u", help="URL of remote MCP server (auto-selects SSE transport)")
+@click.option(
+    "--env",
+    "-e",
+    multiple=True,
+    help="Environment variables (KEY=VALUE). Can be used multiple times.",
+)
+@click.option(
+    "--env-file", type=click.Path(exists=True), help="Load env vars from file (.env format)"
+)
+@click.option(
+    "--header",
+    "-H",
+    multiple=True,
+    help="HTTP headers for remote MCP (KEY: VALUE). Can be used multiple times.",
+)
+@click.option(
+    "--oauth",
+    type=str,
+    help="Use OAuth credential from Nexus (format: provider:user_email, e.g., google:alice@example.com)",
+)
+@add_backend_options
+def skills_mcp_mount(
+    name: str,
+    description: str | None,
+    command: str | None,
+    url: str | None,
+    env: tuple[str, ...],
+    env_file: str | None,
+    header: tuple[str, ...],
+    oauth: str | None,
+    backend_config: BackendConfig,
+) -> None:
+    """Mount an MCP server (local or remote).
+
+    Transport is auto-detected:
+      - Use --command for local MCP servers (stdio)
+      - Use --url for remote MCP servers (SSE)
+
+    Authentication options:
+      - Use --env for API tokens/keys
+      - Use --env-file to load env vars from file
+      - Use --header for HTTP headers (remote MCP only)
+      - Use --oauth to use Nexus OAuth credentials (setup via 'nexus oauth')
+
+    Examples:
+        # Local filesystem MCP server
+        nexus skills mcp mount fs \\
+            --command "npx -y @modelcontextprotocol/server-filesystem /tmp"
+
+        # Local Python MCP server
+        nexus skills mcp mount my-tools --command "python my_mcp_server.py"
+
+        # GitHub MCP server (with Personal Access Token)
+        nexus skills mcp mount github \\
+            --command "npx -y @modelcontextprotocol/server-github" \\
+            --env GITHUB_PERSONAL_ACCESS_TOKEN=ghp_xxxxxxxxxxxx
+
+        # Slack MCP server (multiple env vars)
+        nexus skills mcp mount slack \\
+            --command "npx -y @modelcontextprotocol/server-slack" \\
+            --env SLACK_BOT_TOKEN=xoxb-xxxxxxxxxxxx \\
+            --env SLACK_TEAM_ID=T01234567
+
+        # Load env vars from file
+        nexus skills mcp mount github \\
+            --command "npx -y @modelcontextprotocol/server-github" \\
+            --env-file ~/.github-mcp.env
+
+        # Use Nexus OAuth credential (will prompt to setup if not found)
+        nexus skills mcp mount google-analytics \\
+            --command "npx -y @anthropic/mcp-server-google-analytics" \\
+            --oauth google:alice@example.com
+
+        # Remote MCP server via URL
+        nexus skills mcp mount remote-api --url http://localhost:8080/sse
+
+        # Remote hosted MCP server with auth header (Klavis, etc.)
+        nexus skills mcp mount klavis-github \\
+            --url "https://strata.klavis.ai/mcp/" \\
+            --header "Authorization: Bearer eyJhbGc..."
+    """
+    try:
+        import asyncio
+
+        from nexus.skills.mcp_models import MCPMount
+        from nexus.skills.mcp_mount import MCPMountManager
+
+        # Validate: need either command or url
+        if not command and not url:
+            console.print("[red]Error: Either --command or --url is required[/red]")
+            console.print("  Use --command for local MCP servers")
+            console.print("  Use --url for remote MCP servers")
+            return
+
+        if command and url:
+            console.print("[red]Error: Cannot specify both --command and --url[/red]")
+            return
+
+        nx = get_filesystem(backend_config, enforce_permissions=False)
+        manager = MCPMountManager(nx)
+
+        # Parse environment variables from file first (if provided)
+        env_dict: dict[str, str] = {}
+        if env_file:
+            try:
+                with open(env_file) as f:
+                    for line in f:
+                        line = line.strip()
+                        # Skip empty lines and comments
+                        if not line or line.startswith("#"):
+                            continue
+                        if "=" in line:
+                            key, value = line.split("=", 1)
+                            # Remove surrounding quotes if present
+                            value = value.strip().strip("'\"")
+                            env_dict[key.strip()] = value
+                console.print(f"[dim]Loaded {len(env_dict)} env vars from {env_file}[/dim]")
+            except Exception as e:
+                console.print(f"[red]Error reading env file: {e}[/red]")
+                nx.close()
+                return
+
+        # Parse command-line environment variables (override file)
+        for env_var in env:
+            if "=" in env_var:
+                key, value = env_var.split("=", 1)
+                env_dict[key] = value
+
+        # Parse HTTP headers (for remote MCP servers)
+        headers_dict: dict[str, str] = {}
+        for h in header:
+            if ":" in h:
+                key, value = h.split(":", 1)
+                headers_dict[key.strip()] = value.strip()
+            else:
+                console.print(
+                    f"[yellow]Warning: Invalid header format '{h}', expected 'Key: Value'[/yellow]"
+                )
+
+        # Handle OAuth credential if specified
+        oauth_provider = None
+        oauth_user = None
+        if oauth:
+            if ":" not in oauth:
+                console.print("[red]Error: --oauth format should be 'provider:user_email'[/red]")
+                console.print("  Example: --oauth google:alice@example.com")
+                nx.close()
+                return
+
+            oauth_provider, oauth_user = oauth.split(":", 1)
+
+            # Get OAuth token from Nexus TokenManager
+            try:
+                import os
+
+                from nexus.server.auth import TokenManager
+
+                # Get TokenManager (same logic as oauth CLI)
+                db_url = os.getenv("NEXUS_DATABASE_URL")
+                if db_url:
+                    token_manager = TokenManager(db_url=db_url)
+                else:
+                    home = os.path.expanduser("~")
+                    db_path = os.path.join(home, ".nexus", "nexus.db")
+                    token_manager = TokenManager(db_path=db_path)
+
+                # Register OAuth provider for automatic token refresh
+                if oauth_provider == "google":
+                    from nexus.server.auth import GoogleOAuthProvider
+                    from nexus.server.auth.oauth_provider import OAuthProvider
+
+                    client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
+                    client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
+                    if client_id and client_secret:
+                        provider_instance: OAuthProvider = GoogleOAuthProvider(
+                            client_id=client_id,
+                            client_secret=client_secret,
+                            redirect_uri="http://localhost",
+                        )
+                        token_manager.register_provider("google", provider_instance)
+
+                # First check if credential exists
+                async def check_credential() -> bool:
+                    cred = await token_manager.get_credential(oauth_provider, oauth_user, "default")
+                    return cred is not None
+
+                credential_exists = asyncio.run(check_credential())
+
+                if not credential_exists:
+                    console.print(
+                        f"[yellow]No OAuth credential found for {oauth_provider}:{oauth_user}[/yellow]"
+                    )
+                    console.print()
+
+                    # Ask if user wants to set up OAuth inline
+                    if not click.confirm("Would you like to set up OAuth now?", default=True):
+                        token_manager.close()
+                        nx.close()
+                        return
+
+                    # Inline OAuth flow
+                    console.print()
+                    console.print(f"[bold green]OAuth Setup for {oauth_provider}[/bold green]")
+
+                    # Get OAuth provider credentials from environment
+                    if oauth_provider == "google":
+                        from nexus.server.auth import GoogleOAuthProvider
+
+                        client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
+                        client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
+
+                        if not client_id or not client_secret:
+                            console.print("[red]Error: Google OAuth credentials not found[/red]")
+                            console.print("[yellow]Set these environment variables:[/yellow]")
+                            console.print("  export NEXUS_OAUTH_GOOGLE_CLIENT_ID='your-client-id'")
+                            console.print("  export NEXUS_OAUTH_GOOGLE_CLIENT_SECRET='your-secret'")
+                            token_manager.close()
+                            nx.close()
+                            return
+
+                        provider_instance = GoogleOAuthProvider(
+                            client_id=client_id,
+                            client_secret=client_secret,
+                            redirect_uri="http://localhost",
+                            scopes=[
+                                "https://www.googleapis.com/auth/drive",
+                                "https://www.googleapis.com/auth/drive.file",
+                            ],
+                        )
+                    elif oauth_provider in ("twitter", "x"):
+                        from nexus.server.auth.x_oauth import XOAuthProvider
+
+                        client_id = os.getenv("NEXUS_OAUTH_X_CLIENT_ID")
+                        client_secret = os.getenv("NEXUS_OAUTH_X_CLIENT_SECRET")
+
+                        if not client_id or not client_secret:
+                            console.print("[red]Error: X/Twitter OAuth credentials not found[/red]")
+                            console.print("[yellow]Set these environment variables:[/yellow]")
+                            console.print("  export NEXUS_OAUTH_X_CLIENT_ID='your-client-id'")
+                            console.print("  export NEXUS_OAUTH_X_CLIENT_SECRET='your-secret'")
+                            token_manager.close()
+                            nx.close()
+                            return
+
+                        provider_instance = XOAuthProvider(
+                            client_id=client_id,
+                            client_secret=client_secret,
+                        )
+                    else:
+                        console.print(
+                            f"[red]Inline OAuth setup not supported for provider: {oauth_provider}[/red]"
+                        )
+                        console.print(
+                            f"[yellow]Run: nexus oauth init {oauth_provider} ...[/yellow]"
+                        )
+                        token_manager.close()
+                        nx.close()
+                        return
+
+                    # Generate auth URL and prompt user
+                    auth_url = provider_instance.get_authorization_url()
+                    console.print(f"\n[bold]User:[/bold] {oauth_user}")
+                    console.print(
+                        "\n[bold yellow]Step 1:[/bold yellow] Visit this URL to authorize:"
+                    )
+                    console.print(f"\n{auth_url}\n")
+                    console.print(
+                        "[bold yellow]Step 2:[/bold yellow] After granting permission, copy the 'code' from the redirect URL"
+                    )
+                    console.print("[dim]Example: http://localhost/?code=4/0AdLI...[/dim]")
+
+                    # Get auth code from user
+                    auth_code = click.prompt("\nEnter authorization code")
+
+                    # Exchange code for tokens
+                    console.print("\n[dim]Exchanging code for tokens...[/dim]")
+
+                    async def _exchange_and_store() -> None:
+                        credential = await provider_instance.exchange_code(auth_code)
+                        await token_manager.store_credential(
+                            provider=oauth_provider if oauth_provider != "x" else "twitter",
+                            user_email=oauth_user,
+                            credential=credential,
+                            tenant_id="default",
+                            created_by=oauth_user,
+                        )
+
+                    try:
+                        asyncio.run(_exchange_and_store())
+                        console.print(f"[green]✓[/green] OAuth credentials stored for {oauth_user}")
+                    except Exception as e:
+                        console.print(f"[red]Error storing credentials: {e}[/red]")
+                        token_manager.close()
+                        nx.close()
+                        return
+
+                async def get_oauth_token() -> str:
+                    return await token_manager.get_valid_token(
+                        oauth_provider, oauth_user, "default"
+                    )
+
+                # Get the token
+                access_token = asyncio.run(get_oauth_token())
+                token_manager.close()
+
+                # Set appropriate env var based on provider
+                # Common patterns for OAuth-based MCP servers
+                if oauth_provider == "google":
+                    env_dict["GOOGLE_ACCESS_TOKEN"] = access_token
+                    env_dict["OAUTH_ACCESS_TOKEN"] = access_token
+                elif oauth_provider == "microsoft":
+                    env_dict["MICROSOFT_ACCESS_TOKEN"] = access_token
+                    env_dict["OAUTH_ACCESS_TOKEN"] = access_token
+                else:
+                    # Generic OAuth token
+                    env_dict["OAUTH_ACCESS_TOKEN"] = access_token
+                    env_dict[f"{oauth_provider.upper()}_ACCESS_TOKEN"] = access_token
+
+                console.print(f"[dim]Using OAuth credential: {oauth_provider}:{oauth_user}[/dim]")
+
+            except Exception as e:
+                console.print(f"[red]Error getting OAuth token: {e}[/red]")
+                console.print("[yellow]Make sure you've set up OAuth via 'nexus oauth'[/yellow]")
+                if oauth_provider == "google":
+                    console.print(f"  Example: nexus oauth setup-gdrive --user-email {oauth_user}")
+                elif oauth_provider in ("twitter", "x"):
+                    console.print(f"  Example: nexus oauth setup-x --user-email {oauth_user}")
+                nx.close()
+                return
+
+        # Auto-detect transport based on command vs url
+        if command:
+            transport = "stdio"
+            # Parse command and args
+            parts = command.split()
+            cmd = parts[0]
+            args = parts[1:] if len(parts) > 1 else []
+        else:
+            transport = "sse"
+            cmd = None
+            args = []
+
+        # Create mount configuration
+        mount_config = MCPMount(
+            name=name,
+            description=description or f"MCP server: {name}",
+            transport=transport,
+            command=cmd,
+            url=url,
+            args=args,
+            env=env_dict,
+            headers=headers_dict,
+        )
+
+        async def mount_async() -> None:
+            with console.status(f"[yellow]Mounting {name}...[/yellow]", spinner="dots"):
+                await manager.mount(mount_config)
+
+            console.print(f"[green]✓[/green] Mounted MCP server: [cyan]{name}[/cyan]")
+            console.print(f"  Transport: [yellow]{transport}[/yellow]")
+            if cmd:
+                console.print(f"  Command: [dim]{command}[/dim]")
+            if url:
+                console.print(f"  URL: [dim]{url}[/dim]")
+            if oauth_provider and oauth_user:
+                console.print(f"  OAuth: [dim]{oauth_provider}:{oauth_user}[/dim]")
+            if env_dict:
+                # Show env var names (not values for security)
+                env_keys = ", ".join(env_dict.keys())
+                console.print(f"  Env vars: [dim]{env_keys}[/dim]")
+            if headers_dict:
+                # Show header names (not values for security)
+                header_keys = ", ".join(headers_dict.keys())
+                console.print(f"  Headers: [dim]{header_keys}[/dim]")
+
+        asyncio.run(mount_async())
+        nx.close()
+
+    except Exception as e:
+        handle_error(e)
+
+
+@skills_mcp.command(name="unmount")
+@click.argument("name", type=str)
+@add_backend_options
+def skills_mcp_unmount(
+    name: str,
+    backend_config: BackendConfig,
+) -> None:
+    """Unmount an MCP server.
+
+    Disconnects from a mounted MCP server.
+
+    Examples:
+        nexus skills mcp unmount github
+    """
+    try:
+        import asyncio
+
+        from nexus.skills.mcp_mount import MCPMountManager
+
+        nx = get_filesystem(backend_config, enforce_permissions=False)
+        manager = MCPMountManager(nx)
+
+        async def unmount_async() -> None:
+            await manager.unmount(name)
+            console.print(f"[green]✓[/green] Unmounted MCP server: [cyan]{name}[/cyan]")
+
+        asyncio.run(unmount_async())
+        nx.close()
+
+    except Exception as e:
+        handle_error(e)
+
+
+@skills_mcp.command(name="list-mounts")
+@click.option("--all", "show_all", is_flag=True, help="Show all mounts including unmounted")
+@add_backend_options
+def skills_mcp_list_mounts(
+    show_all: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """List MCP server mounts.
+
+    Shows all configured MCP server connections.
+
+    Examples:
+        nexus skills mcp list-mounts
+        nexus skills mcp list-mounts --all
+    """
+    try:
+        from nexus.skills.mcp_mount import MCPMountManager
+
+        nx = get_filesystem(backend_config, enforce_permissions=False)
+        manager = MCPMountManager(nx)
+
+        mounts = manager.list_mounts(include_unmounted=show_all)
+
+        if not mounts:
+            console.print("[yellow]No MCP mounts configured[/yellow]")
+            console.print("[dim]Use 'nexus skills mcp mount <name> --command ...' to add one[/dim]")
+            nx.close()
+            return
+
+        # Display mounts in table
+        table = Table(title="MCP Server Mounts")
+        table.add_column("Name", style="cyan")
+        table.add_column("Status", style="green")
+        table.add_column("Transport", style="yellow")
+        table.add_column("Tools", justify="right")
+        table.add_column("Last Sync", style="dim")
+
+        for mount in mounts:
+            status = "[green]mounted[/green]" if mount.mounted else "[red]not mounted[/red]"
+            last_sync = mount.last_sync.strftime("%Y-%m-%d %H:%M") if mount.last_sync else "Never"
+
+            table.add_row(
+                mount.name,
+                status,
+                mount.transport,
+                str(mount.tool_count),
+                last_sync,
+            )
+
+        console.print(table)
+        nx.close()
+
+    except Exception as e:
+        handle_error(e)
+
+
+@skills_mcp.command(name="tools")
+@click.argument("name", type=str)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+@add_backend_options
+def skills_mcp_tools(
+    name: str,
+    json_output: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """List tools from a specific MCP mount.
+
+    Shows all tools discovered from a mounted MCP server.
+
+    Examples:
+        nexus skills mcp tools github
+        nexus skills mcp tools github --json
+    """
+    try:
+        from nexus.skills.mcp_mount import MCPMountManager
+
+        nx = get_filesystem(backend_config, enforce_permissions=False)
+        manager = MCPMountManager(nx)
+
+        mount = manager.get_mount(name)
+        if not mount:
+            console.print(f"[red]Mount not found: {name}[/red]")
+            console.print(
+                "[dim]Use 'nexus skills mcp list-mounts --all' to see available mounts[/dim]"
+            )
+            nx.close()
+            return
+
+        # Get tools from mount config or read from filesystem
+        tools = mount.tools or []
+
+        # If no tools in config, try to read from filesystem
+        if not tools and mount.tools_path:
+            try:
+                items = nx.list(mount.tools_path, recursive=False)
+                # Filter for .json files (tool definitions)
+                tools = [
+                    str(item).split("/")[-1].replace(".json", "")
+                    for item in items
+                    if isinstance(item, str)
+                    and item.endswith(".json")
+                    and not item.endswith(".mounts.json")
+                ]
+            except Exception:
+                pass
+
+        if not tools:
+            console.print(f"[yellow]No tools found for mount: {name}[/yellow]")
+            console.print("[dim]The mount may not have been synced yet[/dim]")
+            nx.close()
+            return
+
+        if json_output:
+            # JSON output
+            import json as json_module
+
+            tool_data = []
+            for tool_name in sorted(tools):
+                # New flat structure: /skills/system/mcp-tools/github/search_repositories.json
+                tool_path = f"{mount.tools_path}{tool_name}.json"
+                try:
+                    content = nx.read(tool_path)
+                    if isinstance(content, bytes):
+                        content_str = content.decode()
+                        tool_info = json_module.loads(content_str)
+                    elif isinstance(content, dict):
+                        tool_info = content
+                    else:
+                        tool_info = {"name": tool_name}
+                    tool_data.append(tool_info)
+                except Exception:
+                    tool_data.append({"name": tool_name})
+            print(json_module.dumps(tool_data, indent=2))
+        else:
+            # Table output
+            table = Table(title=f"Tools from '{name}' ({len(tools)} tools)")
+            table.add_column("Tool Name", style="cyan")
+            table.add_column("Description", style="green")
+            table.add_column("Endpoint", style="dim")
+
+            for tool_name in sorted(tools):
+                # Try to read tool.json for description
+                description = ""
+                endpoint = f"mcp://{name}/{tool_name}"
+                # New flat structure: /skills/system/mcp-tools/github/search_repositories.json
+                tool_path = f"{mount.tools_path}{tool_name}.json"
+                try:
+                    content = nx.read(tool_path)
+                    import json as json_module
+
+                    if isinstance(content, bytes):
+                        content_str = content.decode()
+                        tool_info = json_module.loads(content_str)
+                    elif isinstance(content, dict):
+                        tool_info = content
+                    else:
+                        tool_info = {}
+                    description = tool_info.get("description", "")
+                    if tool_info.get("mcp_config", {}).get("endpoint"):
+                        endpoint = tool_info["mcp_config"]["endpoint"]
+                except Exception:
+                    pass
+
+                # Truncate long descriptions
+                if len(description) > 50:
+                    description = description[:47] + "..."
+
+                table.add_row(tool_name, description, endpoint)
+
+            console.print(table)
+
+        nx.close()
+
+    except Exception as e:
+        handle_error(e)
+
+
+@skills_mcp.command(name="remove")
+@click.argument("name", type=str)
+@click.option("--force", "-f", is_flag=True, help="Force remove even if mounted")
+@add_backend_options
+def skills_mcp_remove(
+    name: str,
+    force: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """Remove an MCP mount configuration.
+
+    Removes the mount configuration and optionally its discovered tools.
+
+    Examples:
+        nexus skills mcp remove github
+        nexus skills mcp remove github --force
+    """
+    try:
+        import asyncio
+
+        from nexus.skills.mcp_mount import MCPMountManager
+
+        nx = get_filesystem(backend_config, enforce_permissions=False)
+        manager = MCPMountManager(nx)
+
+        mount = manager.get_mount(name)
+        if not mount:
+            console.print(f"[red]Mount not found: {name}[/red]")
+            nx.close()
+            return
+
+        async def remove_async() -> None:
+            # Unmount if needed
+            if mount.mounted:
+                if not force:
+                    console.print(f"[red]Mount {name} is active. Use --force to remove.[/red]")
+                    return
+                await manager.unmount(name)
+
+            manager.remove_mount(name)
+            console.print(f"[green]✓[/green] Removed mount configuration: [cyan]{name}[/cyan]")
+
+        asyncio.run(remove_async())
+        nx.close()
+
+    except Exception as e:
+        handle_error(e)

@@ -233,101 +233,93 @@ def serve(
         try:
             from nexus.mcp import create_mcp_server
         except ImportError:
-            console.print(
-                "[red]Error:[/red] MCP support not available. "
-                "Install with: pip install 'nexus-ai-fs' (fastmcp should be included)"
+            # For stdio mode, print errors to stderr
+            import sys as sys_module
+
+            print(
+                "Error: MCP support not available. "
+                "Install with: pip install 'nexus-ai-fs' (fastmcp should be included)",
+                file=sys_module.stderr,
             )
             sys.exit(1)
 
+        # For stdio transport, suppress all startup messages (they interfere with JSON-RPC)
+        # These messages should go to stderr, not stdout
+        is_stdio = transport == "stdio"
+
+        def log_msg(msg: str) -> None:
+            """Print message to stderr for stdio mode, console otherwise."""
+            if is_stdio:
+                print(msg, file=sys.stderr)
+            else:
+                console.print(msg)
+
         # Get filesystem instance
-        console.print("[green]Initializing Nexus MCP server...[/green]")
+        log_msg("Initializing Nexus MCP server...")
 
         # Check if using remote URL
         if backend_config.remote_url:
-            console.print(f"  Remote URL: [cyan]{backend_config.remote_url}[/cyan]")
+            log_msg(f"  Remote URL: {backend_config.remote_url}")
             if api_key:
-                console.print(f"  API Key: [cyan]{'*' * 8}[/cyan]")
+                log_msg(f"  API Key: {'*' * 8}")
             nx = None
             remote_url = backend_config.remote_url
         else:
-            console.print(f"  Backend: [cyan]{backend_config.backend}[/cyan]")
+            log_msg(f"  Backend: {backend_config.backend}")
             if backend_config.backend == "gcs":
-                console.print(f"  GCS Bucket: [cyan]{backend_config.gcs_bucket}[/cyan]")
+                log_msg(f"  GCS Bucket: {backend_config.gcs_bucket}")
             else:
-                console.print(f"  Data Dir: [cyan]{backend_config.data_dir}[/cyan]")
+                log_msg(f"  Data Dir: {backend_config.data_dir}")
             nx = get_filesystem(backend_config)
             remote_url = None
 
-        console.print(f"  Transport: [cyan]{transport}[/cyan]")
+        log_msg(f"  Transport: {transport}")
 
         if transport in ["http", "sse"]:
-            console.print(f"  Host: [cyan]{host}[/cyan]")
-            console.print(f"  Port: [cyan]{port}[/cyan]")
+            log_msg(f"  Host: {host}")
+            log_msg(f"  Port: {port}")
 
-        console.print()
-
-        # Display available tools
-        console.print("[bold cyan]Available Tools:[/bold cyan]")
-        tools = [
-            "nexus_read_file",
-            "nexus_write_file",
-            "nexus_delete_file",
-            "nexus_list_files",
-            "nexus_file_info",
-            "nexus_mkdir",
-            "nexus_rmdir",
-            "nexus_glob",
-            "nexus_grep",
-            "nexus_semantic_search",
-            "nexus_store_memory",
-            "nexus_query_memory",
-            "nexus_list_workflows",
-            "nexus_execute_workflow",
-        ]
-        for tool in tools:
-            console.print(f"  • [cyan]{tool}[/cyan]")
-
-        console.print()
-        console.print("[bold cyan]Resources:[/bold cyan]")
-        console.print("  • [cyan]nexus://files/{{path}}[/cyan] - Browse files")
-
-        console.print()
-        console.print("[bold cyan]Prompts:[/bold cyan]")
-        console.print("  • [cyan]file_analysis_prompt[/cyan] - Analyze a file")
-        console.print("  • [cyan]search_and_summarize_prompt[/cyan] - Search and summarize")
-
-        console.print()
-
-        if transport == "stdio":
-            console.print("[yellow]Running in stdio mode for Claude Desktop[/yellow]")
+        # Only show verbose info for non-stdio transports
+        if not is_stdio:
             console.print()
-            console.print("[bold cyan]Claude Desktop Configuration:[/bold cyan]")
-            console.print("Add to ~/.config/claude/claude_desktop_config.json:")
+
+            # Display available tools
+            console.print("[bold cyan]Available Tools:[/bold cyan]")
+            tools = [
+                "nexus_read_file",
+                "nexus_write_file",
+                "nexus_delete_file",
+                "nexus_list_files",
+                "nexus_file_info",
+                "nexus_mkdir",
+                "nexus_rmdir",
+                "nexus_glob",
+                "nexus_grep",
+                "nexus_semantic_search",
+                "nexus_store_memory",
+                "nexus_query_memory",
+                "nexus_list_workflows",
+                "nexus_execute_workflow",
+            ]
+            for tool in tools:
+                console.print(f"  • [cyan]{tool}[/cyan]")
+
             console.print()
-            console.print("{")
-            console.print('  "mcpServers": {')
-            console.print('    "nexus": {')
-            console.print('      "command": "nexus",')
-            console.print('      "args": ["mcp", "serve", "--transport", "stdio"],')
-            console.print('      "env": {')
-            if backend_config.remote_url:
-                console.print(f'        "NEXUS_URL": "{backend_config.remote_url}"')
-                if api_key:
-                    console.print('        "NEXUS_API_KEY": "your-api-key-here"')
-            else:
-                console.print(f'        "NEXUS_DATA_DIR": "{backend_config.data_dir}"')
-            console.print("      }")
-            console.print("    }")
-            console.print("  }")
-            console.print("}")
+            console.print("[bold cyan]Resources:[/bold cyan]")
+            console.print("  • [cyan]nexus://files/{{path}}[/cyan] - Browse files")
+
             console.print()
-        else:
+            console.print("[bold cyan]Prompts:[/bold cyan]")
+            console.print("  • [cyan]file_analysis_prompt[/cyan] - Analyze a file")
+            console.print("  • [cyan]search_and_summarize_prompt[/cyan] - Search and summarize")
+
+            console.print()
             console.print(f"[yellow]Starting HTTP server on http://{host}:{port}[/yellow]")
             console.print()
 
-        console.print("[green]Starting MCP server...[/green]")
-        console.print("[yellow]Press Ctrl+C to stop[/yellow]")
-        console.print()
+            console.print("[green]Starting MCP server...[/green]")
+            console.print("[yellow]Press Ctrl+C to stop[/yellow]")
+            console.print()
 
         # Create and run MCP server
         mcp_server = create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)

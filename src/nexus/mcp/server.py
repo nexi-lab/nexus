@@ -398,6 +398,24 @@ def create_mcp_server(
         except Exception as e:
             return f"Error removing directory: {str(e)}"
 
+    @mcp.tool()
+    def nexus_rename_file(old_path: str, new_path: str, ctx: Context | None = None) -> str:
+        """Rename or move a file or directory in Nexus filesystem.
+
+        Args:
+            old_path: Current path of the file or directory (e.g., "/workspace/old.txt")
+            new_path: New path for the file or directory (e.g., "/workspace/new.txt")
+
+        Returns:
+            Success message or error
+        """
+        try:
+            nx_instance = _get_nexus_instance(ctx)
+            nx_instance.rename(old_path, new_path)
+            return f"Successfully renamed {old_path} to {new_path}"
+        except Exception as e:
+            return f"Error renaming file: {str(e)}"
+
     # =========================================================================
     # SEARCH TOOLS
     # =========================================================================

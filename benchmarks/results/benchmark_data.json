@@ -1,0 +1,94 @@
+{
+  "metadata": {
+    "date": "2025-11-26",
+    "framework": "MCP-Bench",
+    "models": {
+      "agent": "claude-sonnet-4",
+      "judge": "claude-opus-4-5"
+    }
+  },
+  "results": {
+    "5_distractions_35_tools": {
+      "Static": {
+        "avg_prompt_tokens": 143058,
+        "avg_total_tokens": 146548,
+        "tool_call_success_rate": 1.0,
+        "valid_tool_name_rate": 1.0,
+        "avg_rounds": 4.0,
+        "avg_tool_calls": 15.5,
+        "task_completion_score": 6.5,
+        "tool_selection_score": 7.25,
+        "planning_score": 6.75,
+        "avg_execution_time_seconds": 171.16
+      },
+      "Dynamic_Discovery": {
+        "avg_prompt_tokens": 99345,
+        "avg_total_tokens": 103892,
+        "tool_call_success_rate": 1.0,
+        "valid_tool_name_rate": 1.0,
+        "avg_rounds": 6.5,
+        "avg_tool_calls": 25.0,
+        "task_completion_score": 5.75,
+        "tool_selection_score": 5.75,
+        "planning_score": 5.5,
+        "avg_execution_time_seconds": 202.70
+      },
+      "Anthropic_Tool_Search": {
+        "avg_prompt_tokens": 4983,
+        "avg_total_tokens": 6394,
+        "tool_call_success_rate": 1.0,
+        "valid_tool_name_rate": 1.0,
+        "avg_rounds": 2.5,
+        "avg_tool_calls": 1.5,
+        "task_completion_score": 1.25,
+        "tool_selection_score": 3.25,
+        "planning_score": 2.0,
+        "avg_execution_time_seconds": 37.96
+      }
+    },
+    "15_distractions_65_tools": {
+      "Static": {
+        "avg_prompt_tokens": 276415,
+        "avg_total_tokens": 281308,
+        "tool_call_success_rate": 1.0,
+        "valid_tool_name_rate": 1.0,
+        "avg_rounds": 7.0,
+        "avg_tool_calls": 28.5,
+        "task_completion_score": 5.75,
+        "tool_selection_score": 5.75,
+        "planning_score": 5.0,
+        "avg_execution_time_seconds": 266.21
+      },
+      "Dynamic_Discovery": {
+        "avg_prompt_tokens": 62084,
+        "avg_total_tokens": 66013,
+        "tool_call_success_rate": 1.0,
+        "valid_tool_name_rate": 1.0,
+        "avg_rounds": 5.5,
+        "avg_tool_calls": 18.0,
+        "task_completion_score": 6.0,
+        "tool_selection_score": 6.25,
+        "planning_score": 6.25,
+        "avg_execution_time_seconds": 172.47
+      },
+      "Anthropic_Tool_Search": {
+        "avg_prompt_tokens": 35262,
+        "avg_total_tokens": 36360,
+        "tool_call_success_rate": 0.5208,
+        "valid_tool_name_rate": 0.5208,
+        "avg_rounds": 11.5,
+        "avg_tool_calls": 13.0,
+        "task_completion_score": 1.0,
+        "tool_selection_score": 3.25,
+        "planning_score": 1.75,
+        "avg_execution_time_seconds": 48.01
+      }
+    }
+  },
+  "key_findings": {
+    "dynamic_discovery_token_reduction": "78% vs static at 65 tools",
+    "dynamic_discovery_reliability": "100% success rate maintained at scale",
+    "anthropic_tool_search_degradation": "52% success rate at 65 tools due to BM25 limitations",
+    "recommendation": "Use Dynamic Discovery for production deployments"
+  }
+}

@@ -125,7 +125,7 @@ nexus-plugin-*/
 *.sqlite
 *.sqlite3
 nexus-*.db
-
+benchmarks/LINKEDIN_POST.md
 # Logs
 logs/
 *.log

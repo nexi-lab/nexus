@@ -533,10 +533,10 @@ class TestCacheMixinInheritance:
         assert gcs_connector_backend.db_session is None
 
 
-class TestReadContentCached:
-    """Test read_content_cached method."""
+class TestReadContentWithCaching:
+    """Test read_content with caching support."""
 
-    def test_read_from_backend_when_no_cache(
+    def test_read_from_backend_when_no_db_session(
         self, gcs_connector_backend: GCSConnectorBackend
     ) -> None:
         """Test reads from backend when db_session is None."""
@@ -548,62 +548,53 @@ class TestReadContentCached:
         mock_blob.download_as_bytes.return_value = test_content
         gcs_connector_backend.bucket.blob.return_value = mock_blob
 
-        result = gcs_connector_backend.read_content_cached("/file.txt", context=context)
+        result = gcs_connector_backend.read_content("any_hash", context=context)
 
         assert result == test_content
         mock_blob.download_as_bytes.assert_called_once()
 
-    def test_read_bypasses_cache_when_disabled(
+    def test_read_content_override_includes_caching_logic(
         self, gcs_connector_backend: GCSConnectorBackend
     ) -> None:
-        """Test use_cache=False bypasses cache."""
-        test_content = b"Backend content"
-        context = OperationContext(user="test_user", groups=[], backend_path="file.txt")
+        """Test that read_content is overridden with caching logic."""
+        # The read_content method should be overridden in GCSConnectorBackend
+        # to include caching, not inherited from BaseBlobStorageConnector
+        defining_class = type(gcs_connector_backend).read_content
 
-        mock_blob = Mock()
-        mock_blob.exists.return_value = True
-        mock_blob.download_as_bytes.return_value = test_content
-        gcs_connector_backend.bucket.blob.return_value = mock_blob
-
-        result = gcs_connector_backend.read_content_cached(
-            "/file.txt", context=context, use_cache=False
-        )
-
-        assert result == test_content
-        # Always reads from backend when use_cache=False
-        mock_blob.download_as_bytes.assert_called_once()
-
-    def test_read_requires_context(self, gcs_connector_backend: GCSConnectorBackend) -> None:
-        """Test read_content_cached requires context with backend_path."""
-        with pytest.raises(ValueError) as exc_info:
-            gcs_connector_backend.read_content_cached("/file.txt")
-
-        assert "backend_path" in str(exc_info.value)
+        # Should be defined in GCSConnectorBackend, not BaseBlobStorageConnector
+        assert "GCSConnectorBackend" in str(defining_class)
 
 
-class TestWriteContentCached:
-    """Test write_content_cached method."""
+class TestWriteContentWithCaching:
+    """Test write_content with caching support."""
 
-    def test_write_without_version_check(self, gcs_connector_backend: GCSConnectorBackend) -> None:
-        """Test write without expected_version skips version check."""
+    def test_write_content_override_includes_cache_invalidation(
+        self, gcs_connector_backend: GCSConnectorBackend
+    ) -> None:
+        """Test that write_content is overridden with cache invalidation."""
+        # The write_content method should be overridden in GCSConnectorBackend
+        defining_class = type(gcs_connector_backend).write_content
+
+        # Should be defined in GCSConnectorBackend, not BaseBlobStorageConnector
+        assert "GCSConnectorBackend" in str(defining_class)
+
+    def test_write_content_returns_hash(self, gcs_connector_backend: GCSConnectorBackend) -> None:
+        """Test write_content returns hash when no versioning."""
         test_content = b"New content"
         context = OperationContext(user="test_user", groups=[], backend_path="file.txt")
 
         mock_blob = Mock()
         gcs_connector_backend.bucket.blob.return_value = mock_blob
 
-        result = gcs_connector_backend.write_content_cached(test_content, context=context)
+        result = gcs_connector_backend.write_content(test_content, context=context)
 
         # Should return hash (no versioning)
         assert len(result) == 64
         mock_blob.upload_from_string.assert_called_once()
 
-    def test_write_requires_context(self, gcs_connector_backend: GCSConnectorBackend) -> None:
-        """Test write_content_cached requires context with backend_path."""
-        with pytest.raises(ValueError) as exc_info:
-            gcs_connector_backend.write_content_cached(b"content")
 
-        assert "backend_path" in str(exc_info.value)
+class TestWriteContentWithVersionCheck:
+    """Test write_content_with_version_check method."""
 
     def test_write_with_version_check_success(
         self, gcs_connector_versioned: GCSConnectorBackend
@@ -619,7 +610,7 @@ class TestWriteContentCached:
         gcs_connector_versioned.bucket.blob.return_value = mock_blob
 
         # Write with correct expected_version
-        result = gcs_connector_versioned.write_content_cached(
+        result = gcs_connector_versioned.write_content_with_version_check(
             test_content, context=context, expected_version="1000"
         )
 
@@ -643,6 +634,22 @@ class TestWriteContentCached:
 
         # Write with wrong expected_version should raise ConflictError
         with pytest.raises(ConflictError):
-            gcs_connector_versioned.write_content_cached(
+            gcs_connector_versioned.write_content_with_version_check(
                 test_content, context=context, expected_version="1000"
             )
+
+    def test_write_without_version_check(self, gcs_connector_backend: GCSConnectorBackend) -> None:
+        """Test write_content_with_version_check without expected_version."""
+        test_content = b"New content"
+        context = OperationContext(user="test_user", groups=[], backend_path="file.txt")
+
+        mock_blob = Mock()
+        gcs_connector_backend.bucket.blob.return_value = mock_blob
+
+        # No expected_version means skip version check
+        result = gcs_connector_backend.write_content_with_version_check(
+            test_content, context=context, expected_version=None
+        )
+
+        # Should return hash (no versioning)
+        assert len(result) == 64

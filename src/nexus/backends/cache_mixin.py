@@ -474,11 +474,18 @@ class CacheConnectorMixin:
                 if context and hasattr(context, "tenant_id"):
                     tenant_id = context.tenant_id
 
+                # Parse content if supported (PDF, Excel, etc.)
+                parsed_text, parsed_from, parse_metadata = self._parse_content(file_path, content)
+
                 # Write to cache
                 self._write_to_cache(
                     path=file_path,
                     content=content,
+                    content_text=parsed_text,
+                    content_type="parsed" if parsed_text else "full",
                     backend_version=version,
+                    parsed_from=parsed_from,
+                    parse_metadata=parse_metadata,
                     tenant_id=tenant_id,
                 )
 
@@ -544,6 +551,55 @@ class CacheConnectorMixin:
             except Exception:
                 return None
         return None
+
+    def _parse_content(
+        self,
+        path: str,
+        content: bytes,
+    ) -> tuple[str | None, str | None, dict | None]:
+        """Parse content using the parser registry.
+
+        Args:
+            path: File path (used to determine file type)
+            content: Raw file content
+
+        Returns:
+            Tuple of (parsed_text, parsed_from, parse_metadata)
+            Returns (None, None, None) if parsing fails or not supported
+        """
+        try:
+            from nexus.parsers.markitdown_parser import MarkItDownParser
+        except ImportError:
+            return None, None, None
+
+        try:
+            # Get file extension
+            ext = "." + path.rsplit(".", 1)[-1].lower() if "." in path else ""
+
+            # Check if parser supports this format
+            parser = MarkItDownParser()
+            if ext not in parser.supported_formats:
+                return None, None, None
+
+            # Parse content
+            import asyncio
+
+            # Run async parse in sync context
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(
+                    parser.parse(content, {"path": path, "filename": path.split("/")[-1]})
+                )
+            finally:
+                loop.close()
+
+            if result and result.text:
+                return result.text, ext.lstrip("."), {"chunks": len(result.chunks)}
+
+        except Exception:
+            pass
+
+        return None, None, None
 
     def _generate_embeddings(self, path: str) -> None:
         """Generate embeddings for a file.

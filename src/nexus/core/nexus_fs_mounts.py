@@ -203,6 +203,21 @@ class NexusFSMountsMixin:
                     "user_email"
                 ),  # Optional - uses context.user_id if None
             )
+        elif backend_type == "gmail_connector":
+            from nexus.backends.gmail_connector import GmailConnectorBackend
+
+            backend = GmailConnectorBackend(
+                token_manager_db=backend_config["token_manager_db"],
+                user_email=backend_config.get(
+                    "user_email"
+                ),  # Optional - uses context.user_id if None
+                sync_from_date=backend_config.get(
+                    "sync_from_date"
+                ),  # Optional - defaults to 30 days ago
+                last_history_id=backend_config.get(
+                    "last_history_id"
+                ),  # Optional - for incremental sync
+            )
         elif backend_type == "x_connector":
             from nexus.backends.x_connector import XConnectorBackend
 
@@ -537,10 +552,10 @@ class NexusFSMountsMixin:
         if isinstance(backend_config, str):
             backend_config = json.loads(backend_config)
 
-        # Normalize token_manager_db for OAuth-backed mounts (gdrive_connector, x_connector)
+        # Normalize token_manager_db for OAuth-backed mounts (gdrive_connector, gmail_connector, x_connector)
         # According to docs, token_manager_db should come from NexusFS config db_path, not from saved config
         backend_type = mount_config["backend_type"]
-        if backend_type in ("gdrive_connector", "x_connector"):
+        if backend_type in ("gdrive_connector", "gmail_connector", "x_connector"):
             # Priority: config.db_path > metadata.database_url
             database_url = None
 
@@ -676,7 +691,11 @@ class NexusFSMountsMixin:
 
                 # Try to sync connector backends after loading
                 backend_type = mount["backend_type"]
-                if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
+                if "connector" in backend_type.lower() or backend_type.lower() in [
+                    "gcs",
+                    "s3",
+                    "gmail_connector",
+                ]:
                     try:
                         logger.info(f"Syncing connector mount: {mount_point}")
                         # Create a minimal context from mount owner if available
@@ -808,6 +827,10 @@ class NexusFSMountsMixin:
 
         backend = mount.backend
         backend_name = type(backend).__name__
+
+        # Set mount_point on backend if it supports it (for config updates)
+        if hasattr(backend, "set_mount_point"):
+            backend.set_mount_point(mount_point)
 
         # Check if backend supports list_dir (connector-style backends)
         if not hasattr(backend, "list_dir"):
@@ -987,6 +1010,24 @@ class NexusFSMountsMixin:
                         logger.warning(error_msg)
             except Exception as e:
                 error_msg = f"Failed to check for deletions: {e}"
+                cast(list[str], stats["errors"]).append(error_msg)
+                logger.warning(error_msg)
+
+        # Update backend config if backend provides updated config (e.g., new last_history_id)
+        if not dry_run and hasattr(backend, "get_updated_config"):
+            try:
+                updated_config = backend.get_updated_config()
+                if updated_config and hasattr(self, "mount_manager") and self.mount_manager:
+                    logger.info(
+                        f"[SYNC_MOUNT] Updating mount config for {mount_point} with new backend config"
+                    )
+                    self.mount_manager.update_mount(
+                        mount_point=mount_point,
+                        backend_config=updated_config,
+                    )
+                    logger.info(f"[SYNC_MOUNT] Successfully updated mount config for {mount_point}")
+            except Exception as e:
+                error_msg = f"Failed to update mount config: {e}"
                 cast(list[str], stats["errors"]).append(error_msg)
                 logger.warning(error_msg)
 

@@ -218,7 +218,10 @@ class TestSkillsCreateFromFile:
             )
 
     def test_skills_create_from_file_url(self, nx: NexusFS) -> None:
-        """Test creating skill from URL."""
+        """Test creating skill from URL when plugin is available."""
+        # Skip if nexus_skill_seekers is not installed
+        pytest.importorskip("nexus_skill_seekers")
+
         with patch("nexus_skill_seekers.plugin.SkillSeekersPlugin") as MockPlugin:
             mock_plugin = MagicMock()
             mock_plugin.generate_skill = AsyncMock(return_value="/skills/agent/url-skill.md")
@@ -234,6 +237,9 @@ class TestSkillsCreateFromFile:
 
     def test_skills_create_from_file_auto_name_generation(self, nx: NexusFS) -> None:
         """Test auto-generation of skill name from source."""
+        # Skip if nexus_skill_seekers is not installed
+        pytest.importorskip("nexus_skill_seekers")
+
         with patch("nexus_skill_seekers.plugin.SkillSeekersPlugin") as MockPlugin:
             mock_plugin = MagicMock()
             mock_plugin.generate_skill = AsyncMock(return_value="/skills/agent/example-com.md")

@@ -2,6 +2,7 @@
 
 from nexus.backends.backend import Backend
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
+from nexus.backends.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResult
 from nexus.backends.local import LocalBackend
 
 # Optional backends (require extra dependencies)
@@ -28,6 +29,9 @@ except ImportError:
 __all__ = [
     "Backend",
     "BaseBlobStorageConnector",
+    "CacheConnectorMixin",
+    "CacheEntry",
+    "SyncResult",
     "LocalBackend",
     "GoogleDriveConnectorBackend",
     "GCSConnectorBackend",

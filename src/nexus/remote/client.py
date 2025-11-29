@@ -32,15 +32,13 @@ from urllib.parse import urljoin
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
-import requests
-from requests.adapters import HTTPAdapter
+import httpx
 from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
-from urllib3.util.retry import Retry
 
 from nexus.core.exceptions import (
     ConflictError,
@@ -681,31 +679,34 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         # Initialize memory API as None (lazy initialization)
         self._memory_api: RemoteMemory | None = None
 
-        # Create HTTP session with connection pooling
-        self.session = requests.Session()
-
-        # Configure connection pooling with retry strategy
-        # Retry on connection errors, timeouts, and 5xx server errors
-        retry_strategy = Retry(
-            total=0,  # We'll handle retries with tenacity at RPC level
-            connect=0,
-            read=0,
-            status_forcelist=[500, 502, 503, 504],
-            backoff_factor=0,
+        # Create HTTP client with connection pooling (httpx)
+        # Configure connection limits for pooling
+        limits = httpx.Limits(
+            max_connections=pool_maxsize,
+            max_keepalive_connections=pool_connections,
         )
 
-        adapter = HTTPAdapter(
-            pool_connections=pool_connections,
-            pool_maxsize=pool_maxsize,
-            max_retries=retry_strategy,
+        # Configure timeouts
+        timeout = httpx.Timeout(
+            connect=self.connect_timeout,
+            read=self.timeout,
+            write=self.timeout,
+            pool=self.timeout,
         )
 
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
+        # Build headers
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        # Create sync httpx client
+        self.session = httpx.Client(
+            limits=limits,
+            timeout=timeout,
+            headers=headers,
+        )
 
         if api_key:
-            self.session.headers["Authorization"] = f"Bearer {api_key}"
-
             # Fetch authenticated user info to get tenant_id
             try:
                 self._fetch_auth_info()
@@ -771,7 +772,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type(
-            (requests.ConnectionError, requests.Timeout, RemoteConnectionError)
+            (httpx.ConnectError, httpx.TimeoutException, RemoteConnectionError)
         ),
         reraise=True,
     )
@@ -830,16 +831,21 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             if self.tenant_id:
                 headers["X-Tenant-ID"] = self.tenant_id
 
-            # Use tuple for timeout: (connect_timeout, read_timeout)
-            # Use custom read_timeout if provided, otherwise use default self.timeout
+            # Use custom read_timeout if provided, otherwise use client default
             actual_read_timeout = read_timeout if read_timeout is not None else self.timeout
+            request_timeout = httpx.Timeout(
+                connect=self.connect_timeout,
+                read=actual_read_timeout,
+                write=actual_read_timeout,
+                pool=actual_read_timeout,
+            )
 
             network_start = time.time()
             response = self.session.post(
                 url,
-                data=body,
+                content=body,  # httpx uses 'content' for bytes
                 headers=headers,
-                timeout=(self.connect_timeout, actual_read_timeout),
+                timeout=request_timeout,
             )
             network_time = time.time() - network_start
 
@@ -885,7 +891,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             logger.info(f"API call completed: {method} ({elapsed:.3f}s)")
             return rpc_response.result
 
-        except requests.ConnectionError as e:
+        except httpx.ConnectError as e:
             elapsed = time.time() - start_time
             logger.error(f"API call connection error: {method} - {e} ({elapsed:.3f}s)")
             raise RemoteConnectionError(
@@ -894,7 +900,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 method=method,
             ) from e
 
-        except requests.Timeout as e:
+        except httpx.TimeoutException as e:
             elapsed = time.time() - start_time
             logger.error(f"API call timeout: {method} - {e} ({elapsed:.3f}s)")
             raise RemoteTimeoutError(
@@ -906,7 +912,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 method=method,
             ) from e
 
-        except requests.RequestException as e:
+        except httpx.HTTPError as e:
             elapsed = time.time() - start_time
             logger.error(f"API call network error: {method} - {e} ({elapsed:.3f}s)")
             raise RemoteFilesystemError(

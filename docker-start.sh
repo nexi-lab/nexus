@@ -371,11 +371,13 @@ cmd_build() {
 
     echo ""
     echo "🔨 Building template images from config..."
-    # Use uv if available, otherwise fall back to python3
+    # Use uv if available, otherwise skip template building
     if command -v uv &> /dev/null; then
         uv run python docker/build-templates.py
     else
-        python3 docker/build-templates.py
+        echo "⚠️  uv not found - skipping template image builds"
+        echo "   Template images will be built on-demand when first used"
+        echo "   To enable pre-building, install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
     fi
 
     echo ""
@@ -510,11 +512,13 @@ cmd_init() {
 
     echo ""
     echo "🔨 Step 3/5: Building template images from config..."
-    # Use uv if available, otherwise fall back to python3
+    # Use uv if available, otherwise skip template building
     if command -v uv &> /dev/null; then
         uv run python docker/build-templates.py
     else
-        python3 docker/build-templates.py
+        echo "⚠️  uv not found - skipping template image builds"
+        echo "   Template images will be built on-demand when first used"
+        echo "   To enable pre-building, install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
     fi
 
     echo ""

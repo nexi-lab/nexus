@@ -176,6 +176,194 @@ class CacheConnectorMixin:
         row = result.scalar_one_or_none()
         return row
 
+    def _get_path_ids_bulk(self, paths: list[str], session: Session) -> dict[str, str]:
+        """Get path_ids for multiple virtual paths in a single query.
+
+        Args:
+            paths: List of virtual paths
+            session: Database session
+
+        Returns:
+            Dict mapping virtual_path -> path_id (only for paths that exist)
+        """
+        if not paths:
+            return {}
+
+        stmt = select(FilePathModel.virtual_path, FilePathModel.path_id).where(
+            FilePathModel.virtual_path.in_(paths),
+            FilePathModel.deleted_at.is_(None),
+        )
+        result = session.execute(stmt)
+        return {row[0]: row[1] for row in result.fetchall()}
+
+    def _read_bulk_from_cache(
+        self,
+        paths: list[str],
+        original: bool = False,
+    ) -> dict[str, CacheEntry]:
+        """Read multiple entries from cache in bulk (L1 + L2).
+
+        This is optimized for batch operations like grep where many files
+        need to be read. Uses a single DB query for L2 lookups instead of N queries.
+
+        Args:
+            paths: List of virtual file paths
+            original: If True, return binary content even for parsed files
+
+        Returns:
+            Dict mapping path -> CacheEntry (only for paths that are cached)
+        """
+        if not paths:
+            return {}
+
+        results: dict[str, CacheEntry] = {}
+        paths_needing_l2: list[str] = []
+
+        # L1: Check in-memory cache first
+        memory_cache = self._get_memory_cache()
+        for path in paths:
+            memory_key = f"cache_entry:{path}"
+            cached_bytes = memory_cache.get(memory_key)
+            if cached_bytes is not None:
+                with contextlib.suppress(Exception):
+                    import pickle
+
+                    entry: CacheEntry = pickle.loads(cached_bytes)
+                    results[path] = entry
+                    logger.debug(f"[CACHE-BULK] L1 HIT: {path}")
+                    continue
+            paths_needing_l2.append(path)
+
+        if not paths_needing_l2:
+            logger.info(f"[CACHE-BULK] All {len(paths)} paths from L1 memory")
+            return results
+
+        # L2: Bulk database lookup for remaining paths
+        session = self._get_db_session()
+
+        # Get path_ids in bulk
+        path_id_map = self._get_path_ids_bulk(paths_needing_l2, session)
+        if not path_id_map:
+            logger.info(
+                f"[CACHE-BULK] {len(results)} L1 hits, {len(paths_needing_l2)} not in file_paths"
+            )
+            return results
+
+        # Query cache entries in bulk
+        path_ids = list(path_id_map.values())
+        stmt = select(ContentCacheModel).where(ContentCacheModel.path_id.in_(path_ids))
+        db_result = session.execute(stmt)
+        cache_models = {cm.path_id: cm for cm in db_result.scalars().all()}
+
+        # Build reverse map: path_id -> virtual_path
+        path_id_to_path = {v: k for k, v in path_id_map.items()}
+
+        # Process cache models
+        l2_hits = 0
+        for path_id, cache_model in cache_models.items():
+            vpath = path_id_to_path.get(path_id)
+            if not vpath:
+                continue
+
+            # Decode binary if stored
+            content_binary = None
+            if original and cache_model.content_binary:
+                with contextlib.suppress(Exception):
+                    content_binary = base64.b64decode(cache_model.content_binary)
+
+            # Parse metadata if stored
+            parse_metadata = None
+            if cache_model.parse_metadata:
+                with contextlib.suppress(Exception):
+                    import json
+
+                    parse_metadata = json.loads(cache_model.parse_metadata)
+
+            entry = CacheEntry(
+                cache_id=cache_model.cache_id,
+                path_id=cache_model.path_id,
+                content_text=cache_model.content_text,
+                content_binary=content_binary,
+                content_hash=cache_model.content_hash,
+                content_type=cache_model.content_type,
+                original_size=cache_model.original_size_bytes,
+                cached_size=cache_model.cached_size_bytes,
+                backend_version=cache_model.backend_version,
+                synced_at=cache_model.synced_at,
+                stale=cache_model.stale,
+                parsed_from=cache_model.parsed_from,
+                parse_metadata=parse_metadata,
+            )
+            results[vpath] = entry
+            l2_hits += 1
+
+            # Populate L1 memory cache for future reads
+            with contextlib.suppress(Exception):
+                import pickle
+
+                memory_key = f"cache_entry:{vpath}"
+                memory_cache.put(memory_key, pickle.dumps(entry))
+
+        logger.info(
+            f"[CACHE-BULK] {len(results) - l2_hits} L1 hits, {l2_hits} L2 hits, "
+            f"{len(paths) - len(results)} misses (total {len(paths)} paths)"
+        )
+        return results
+
+    def read_content_bulk(
+        self,
+        paths: list[str],
+        context: OperationContext | None = None,
+    ) -> dict[str, bytes]:
+        """Read multiple files' content in bulk, using cache where available.
+
+        This method is optimized for batch operations like grep. It:
+        1. Checks L1 memory cache for all paths
+        2. Bulk queries L2 database cache for remaining paths
+        3. Falls back to backend for cache misses
+
+        Args:
+            paths: List of virtual file paths to read
+            context: Operation context
+
+        Returns:
+            Dict mapping path -> content bytes (only for successful reads)
+        """
+        if not paths:
+            return {}
+
+        results: dict[str, bytes] = {}
+
+        # Bulk cache lookup (L1 + L2)
+        cache_entries = self._read_bulk_from_cache(paths, original=True)
+
+        # Extract content from cache hits
+        paths_needing_backend: list[str] = []
+        for path in paths:
+            entry = cache_entries.get(path)
+            if entry and not entry.stale and entry.content_binary:
+                results[path] = entry.content_binary
+            else:
+                paths_needing_backend.append(path)
+
+        if not paths_needing_backend:
+            logger.info(f"[CACHE-BULK] All {len(paths)} files served from cache")
+            return results
+
+        # Read remaining from backend (one at a time for now)
+        # TODO: Could add backend bulk read if supported
+        for path in paths_needing_backend:
+            with contextlib.suppress(Exception):
+                content = self._read_content_from_backend(path, context)
+                if content:
+                    results[path] = content
+
+        logger.info(
+            f"[CACHE-BULK] {len(cache_entries)} cache hits, "
+            f"{len(paths_needing_backend)} backend reads"
+        )
+        return results
+
     def _read_from_cache(
         self,
         path: str,

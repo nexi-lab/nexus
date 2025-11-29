@@ -687,7 +687,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         )
 
         # Configure timeouts
-        timeout = httpx.Timeout(
+        timeout_config = httpx.Timeout(
             connect=self.connect_timeout,
             read=self.timeout,
             write=self.timeout,
@@ -702,7 +702,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         # Create sync httpx client
         self.session = httpx.Client(
             limits=limits,
-            timeout=timeout,
+            timeout=timeout_config,
             headers=headers,
         )
 

@@ -447,3 +447,209 @@ class TestPathMapping:
         """Test path mapping strips leading slash."""
         result = gcs_connector_backend._get_blob_path("/dir/file.txt")
         assert result == "test-prefix/dir/file.txt"
+
+
+class TestGetVersion:
+    """Test get_version method for GCS generation numbers."""
+
+    def test_get_version_returns_generation(
+        self, gcs_connector_backend: GCSConnectorBackend
+    ) -> None:
+        """Test get_version returns GCS generation number."""
+        mock_blob = Mock()
+        mock_blob.exists.return_value = True
+        mock_blob.generation = 1234567890
+        gcs_connector_backend.bucket.blob.return_value = mock_blob
+
+        context = OperationContext(user="test_user", groups=[], backend_path="file.txt")
+        result = gcs_connector_backend.get_version("/file.txt", context=context)
+
+        assert result == "1234567890"
+        gcs_connector_backend.bucket.blob.assert_called_with("test-prefix/file.txt")
+
+    def test_get_version_file_not_exists(self, gcs_connector_backend: GCSConnectorBackend) -> None:
+        """Test get_version returns None for non-existent file."""
+        mock_blob = Mock()
+        mock_blob.exists.return_value = False
+        gcs_connector_backend.bucket.blob.return_value = mock_blob
+
+        context = OperationContext(user="test_user", groups=[], backend_path="missing.txt")
+        result = gcs_connector_backend.get_version("/missing.txt", context=context)
+
+        assert result is None
+
+    def test_get_version_uses_backend_path_from_context(
+        self, gcs_connector_backend: GCSConnectorBackend
+    ) -> None:
+        """Test get_version prefers backend_path from context."""
+        mock_blob = Mock()
+        mock_blob.exists.return_value = True
+        mock_blob.generation = 9999
+        gcs_connector_backend.bucket.blob.return_value = mock_blob
+
+        context = OperationContext(user="test_user", groups=[], backend_path="context/path.txt")
+        result = gcs_connector_backend.get_version("/different/path.txt", context=context)
+
+        assert result == "9999"
+        # Should use backend_path from context, not the path argument
+        gcs_connector_backend.bucket.blob.assert_called_with("test-prefix/context/path.txt")
+
+    def test_get_version_without_context(self, gcs_connector_backend: GCSConnectorBackend) -> None:
+        """Test get_version uses path argument when no context."""
+        mock_blob = Mock()
+        mock_blob.exists.return_value = True
+        mock_blob.generation = 5555
+        gcs_connector_backend.bucket.blob.return_value = mock_blob
+
+        result = gcs_connector_backend.get_version("dir/file.txt")
+
+        assert result == "5555"
+        gcs_connector_backend.bucket.blob.assert_called_with("test-prefix/dir/file.txt")
+
+
+class TestCacheMixinInheritance:
+    """Test that GCSConnectorBackend inherits from CacheConnectorMixin."""
+
+    def test_has_cache_mixin_methods(self, gcs_connector_backend: GCSConnectorBackend) -> None:
+        """Test GCSConnectorBackend has CacheConnectorMixin methods."""
+        # Check mixin methods exist
+        assert hasattr(gcs_connector_backend, "_read_from_cache")
+        assert hasattr(gcs_connector_backend, "_write_to_cache")
+        assert hasattr(gcs_connector_backend, "_invalidate_cache")
+        assert hasattr(gcs_connector_backend, "_check_version")
+        assert hasattr(gcs_connector_backend, "sync")
+
+    def test_db_session_attribute(self, mock_storage_client: Mock) -> None:
+        """Test db_session is stored as attribute."""
+        mock_session = Mock()
+        backend = GCSConnectorBackend(
+            bucket_name="test-bucket",
+            db_session=mock_session,
+        )
+        assert backend.db_session is mock_session
+
+    def test_db_session_default_none(self, gcs_connector_backend: GCSConnectorBackend) -> None:
+        """Test db_session defaults to None."""
+        assert gcs_connector_backend.db_session is None
+
+
+class TestReadContentWithCaching:
+    """Test read_content with caching support."""
+
+    def test_read_from_backend_when_no_db_session(
+        self, gcs_connector_backend: GCSConnectorBackend
+    ) -> None:
+        """Test reads from backend when db_session is None."""
+        test_content = b"Backend content"
+        context = OperationContext(user="test_user", groups=[], backend_path="file.txt")
+
+        mock_blob = Mock()
+        mock_blob.exists.return_value = True
+        mock_blob.download_as_bytes.return_value = test_content
+        gcs_connector_backend.bucket.blob.return_value = mock_blob
+
+        result = gcs_connector_backend.read_content("any_hash", context=context)
+
+        assert result == test_content
+        mock_blob.download_as_bytes.assert_called_once()
+
+    def test_read_content_override_includes_caching_logic(
+        self, gcs_connector_backend: GCSConnectorBackend
+    ) -> None:
+        """Test that read_content is overridden with caching logic."""
+        # The read_content method should be overridden in GCSConnectorBackend
+        # to include caching, not inherited from BaseBlobStorageConnector
+        defining_class = type(gcs_connector_backend).read_content
+
+        # Should be defined in GCSConnectorBackend, not BaseBlobStorageConnector
+        assert "GCSConnectorBackend" in str(defining_class)
+
+
+class TestWriteContentWithCaching:
+    """Test write_content with caching support."""
+
+    def test_write_content_override_includes_cache_invalidation(
+        self, gcs_connector_backend: GCSConnectorBackend
+    ) -> None:
+        """Test that write_content is overridden with cache invalidation."""
+        # The write_content method should be overridden in GCSConnectorBackend
+        defining_class = type(gcs_connector_backend).write_content
+
+        # Should be defined in GCSConnectorBackend, not BaseBlobStorageConnector
+        assert "GCSConnectorBackend" in str(defining_class)
+
+    def test_write_content_returns_hash(self, gcs_connector_backend: GCSConnectorBackend) -> None:
+        """Test write_content returns hash when no versioning."""
+        test_content = b"New content"
+        context = OperationContext(user="test_user", groups=[], backend_path="file.txt")
+
+        mock_blob = Mock()
+        gcs_connector_backend.bucket.blob.return_value = mock_blob
+
+        result = gcs_connector_backend.write_content(test_content, context=context)
+
+        # Should return hash (no versioning)
+        assert len(result) == 64
+        mock_blob.upload_from_string.assert_called_once()
+
+
+class TestWriteContentWithVersionCheck:
+    """Test write_content_with_version_check method."""
+
+    def test_write_with_version_check_success(
+        self, gcs_connector_versioned: GCSConnectorBackend
+    ) -> None:
+        """Test write succeeds when version matches."""
+        test_content = b"Updated content"
+        context = OperationContext(user="test_user", groups=[], backend_path="file.txt")
+
+        # Mock get_version to return expected version
+        mock_blob = Mock()
+        mock_blob.exists.return_value = True
+        mock_blob.generation = 1000
+        gcs_connector_versioned.bucket.blob.return_value = mock_blob
+
+        # Write with correct expected_version
+        result = gcs_connector_versioned.write_content_with_version_check(
+            test_content, context=context, expected_version="1000"
+        )
+
+        # Should succeed and return new generation
+        assert result == "1000"
+
+    def test_write_with_version_check_conflict(
+        self, gcs_connector_versioned: GCSConnectorBackend
+    ) -> None:
+        """Test write fails when version doesn't match."""
+        from nexus.core.exceptions import ConflictError
+
+        test_content = b"Updated content"
+        context = OperationContext(user="test_user", groups=[], backend_path="file.txt")
+
+        # Mock get_version to return different version
+        mock_blob = Mock()
+        mock_blob.exists.return_value = True
+        mock_blob.generation = 2000  # Different from expected
+        gcs_connector_versioned.bucket.blob.return_value = mock_blob
+
+        # Write with wrong expected_version should raise ConflictError
+        with pytest.raises(ConflictError):
+            gcs_connector_versioned.write_content_with_version_check(
+                test_content, context=context, expected_version="1000"
+            )
+
+    def test_write_without_version_check(self, gcs_connector_backend: GCSConnectorBackend) -> None:
+        """Test write_content_with_version_check without expected_version."""
+        test_content = b"New content"
+        context = OperationContext(user="test_user", groups=[], backend_path="file.txt")
+
+        mock_blob = Mock()
+        gcs_connector_backend.bucket.blob.return_value = mock_blob
+
+        # No expected_version means skip version check
+        result = gcs_connector_backend.write_content_with_version_check(
+            test_content, context=context, expected_version=None
+        )
+
+        # Should return hash (no versioning)
+        assert len(result) == 64

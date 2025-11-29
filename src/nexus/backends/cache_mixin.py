@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import hashlib
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -20,12 +21,15 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from nexus.core.exceptions import ConflictError
+from nexus.core.permissions import OperationContext
 from nexus.storage.models import ContentCacheModel, FilePathModel
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from nexus.backends.backend import OperationContext
+    from nexus.storage.content_cache import ContentCache
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -69,12 +73,17 @@ class CacheEntry:
 class CacheConnectorMixin:
     """Mixin that adds cache support to connectors.
 
+    Provides a two-level cache:
+    - L1: In-memory LRU cache (fast, per-instance, lost on restart)
+    - L2: PostgreSQL content_cache table (slower, shared, persistent)
+
     Usage:
         class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             pass
 
     The connector must have:
-        - self.db_session: SQLAlchemy session
+        - self.session_factory: SQLAlchemy session factory (preferred)
+        - OR self.db_session: SQLAlchemy session (legacy)
         - self._read_from_backend(): Read content from actual backend
         - self._list_files(): List files from backend
 
@@ -85,6 +94,54 @@ class CacheConnectorMixin:
     # Maximum file size to cache (default 100MB)
     MAX_CACHE_FILE_SIZE: int = 100 * 1024 * 1024
 
+    # In-memory LRU cache (L1) - shared across all instances of this mixin
+    # Using class variable so all connectors share the same cache
+    _memory_cache: ContentCache | None = None
+    _memory_cache_size_mb: int = 256  # Default 256MB
+
+    @classmethod
+    def _get_memory_cache(cls) -> ContentCache:
+        """Get or create the shared in-memory cache."""
+        if cls._memory_cache is None:
+            from nexus.storage.content_cache import ContentCache
+
+            cls._memory_cache = ContentCache(max_size_mb=cls._memory_cache_size_mb)
+        return cls._memory_cache
+
+    @classmethod
+    def set_memory_cache_size(cls, size_mb: int) -> None:
+        """Configure the in-memory cache size. Must be called before first use.
+
+        Args:
+            size_mb: Maximum cache size in megabytes
+        """
+        cls._memory_cache_size_mb = size_mb
+        # Reset cache if already created
+        if cls._memory_cache is not None:
+            cls._memory_cache = None
+
+    @classmethod
+    def get_memory_cache_stats(cls) -> dict[str, int]:
+        """Get in-memory cache statistics.
+
+        Returns:
+            Dict with entries, size_bytes, size_mb, max_size_mb
+        """
+        if cls._memory_cache is None:
+            return {
+                "entries": 0,
+                "size_bytes": 0,
+                "size_mb": 0,
+                "max_size_mb": cls._memory_cache_size_mb,
+            }
+        return cls._memory_cache.get_stats()
+
+    @classmethod
+    def clear_memory_cache(cls) -> None:
+        """Clear the in-memory cache."""
+        if cls._memory_cache is not None:
+            cls._memory_cache.clear()
+
     # Maximum text size to store as 'full' (default 10MB)
     MAX_FULL_TEXT_SIZE: int = 10 * 1024 * 1024
 
@@ -92,7 +149,17 @@ class CacheConnectorMixin:
     SUMMARY_SIZE: int = 100 * 1024
 
     def _get_db_session(self) -> Session:
-        """Get database session. Override if session is stored differently."""
+        """Get database session. Override if session is stored differently.
+
+        Supports multiple patterns:
+        1. session_factory (SessionLocal) - creates new session each call
+        2. db_session - existing session instance
+        3. _db_session - existing session instance (alternate attribute)
+        """
+        # Prefer session factory pattern (creates session per operation)
+        if hasattr(self, "session_factory") and self.session_factory is not None:
+            return self.session_factory()  # type: ignore[no-any-return]
+        # Fall back to existing session
         if hasattr(self, "db_session") and self.db_session is not None:
             return self.db_session  # type: ignore[no-any-return]
         if hasattr(self, "_db_session") and self._db_session is not None:
@@ -114,7 +181,7 @@ class CacheConnectorMixin:
         path: str,
         original: bool = False,
     ) -> CacheEntry | None:
-        """Read content from cache.
+        """Read content from cache (L1 in-memory, then L2 database).
 
         Args:
             path: Virtual file path
@@ -123,6 +190,21 @@ class CacheConnectorMixin:
         Returns:
             CacheEntry if cached, None otherwise
         """
+        # L1: Check in-memory cache first (keyed by path)
+        memory_cache = self._get_memory_cache()
+        memory_key = f"cache_entry:{path}"
+        cached_bytes = memory_cache.get(memory_key)
+        if cached_bytes is not None:
+            # Deserialize CacheEntry from memory cache
+            with contextlib.suppress(Exception):
+                import pickle
+
+                logger.info(f"[CACHE] L1 HIT (memory): {path}")
+                entry: CacheEntry = pickle.loads(cached_bytes)
+                return entry
+        logger.debug(f"[CACHE] L1 MISS (memory): {path}")
+
+        # L2: Check database cache
         session = self._get_db_session()
 
         path_id = self._get_path_id(path, session)
@@ -134,7 +216,10 @@ class CacheConnectorMixin:
         cache_model = result.scalar_one_or_none()
 
         if not cache_model:
+            logger.debug(f"[CACHE] L2 MISS (database): {path}")
             return None
+
+        logger.info(f"[CACHE] L2 HIT (database): {path}")
 
         # Decode binary if stored
         content_binary = None
@@ -150,7 +235,7 @@ class CacheConnectorMixin:
 
                 parse_metadata = json.loads(cache_model.parse_metadata)
 
-        return CacheEntry(
+        entry = CacheEntry(
             cache_id=cache_model.cache_id,
             path_id=cache_model.path_id,
             content_text=cache_model.content_text,
@@ -165,6 +250,15 @@ class CacheConnectorMixin:
             parsed_from=cache_model.parsed_from,
             parse_metadata=parse_metadata,
         )
+
+        # Populate L1 memory cache for future reads
+        with contextlib.suppress(Exception):
+            import pickle
+
+            memory_cache.put(memory_key, pickle.dumps(entry))
+            logger.debug(f"[CACHE] L1 POPULATED from L2: {path}")
+
+        return entry
 
     def _write_to_cache(
         self,
@@ -278,7 +372,7 @@ class CacheConnectorMixin:
 
         session.commit()
 
-        return CacheEntry(
+        entry = CacheEntry(
             cache_id=cache_id,
             path_id=path_id,
             content_text=content_text,
@@ -294,13 +388,24 @@ class CacheConnectorMixin:
             parse_metadata=parse_metadata,
         )
 
+        # Update L1 memory cache (in-memory, per-process)
+        with contextlib.suppress(Exception):
+            import pickle
+
+            memory_cache = self._get_memory_cache()
+            memory_key = f"cache_entry:{path}"
+            memory_cache.put(memory_key, pickle.dumps(entry))
+            logger.info(f"[CACHE] WRITE to L1+L2: {path} (size={original_size})")
+
+        return entry
+
     def _invalidate_cache(
         self,
         path: str | None = None,
         mount_prefix: str | None = None,
         delete: bool = False,
     ) -> int:
-        """Invalidate cache entries.
+        """Invalidate cache entries (both L1 memory and L2 database).
 
         Args:
             path: Specific path to invalidate
@@ -310,6 +415,18 @@ class CacheConnectorMixin:
         Returns:
             Number of entries invalidated
         """
+        # Invalidate L1 memory cache
+        memory_cache = self._get_memory_cache()
+        if path:
+            # Remove specific path from memory cache
+            memory_key = f"cache_entry:{path}"
+            memory_cache.remove(memory_key)
+        elif mount_prefix:
+            # For prefix invalidation, clear entire memory cache
+            # (More targeted invalidation would require iterating all keys)
+            memory_cache.clear()
+
+        # Invalidate L2 database cache
         session = self._get_db_session()
 
         if path:
@@ -395,6 +512,7 @@ class CacheConnectorMixin:
     def sync(
         self,
         path: str | None = None,
+        mount_point: str | None = None,
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         max_file_size: int | None = None,
@@ -403,8 +521,13 @@ class CacheConnectorMixin:
     ) -> SyncResult:
         """Sync content from connector to cache.
 
+        This method reads files from the backend and populates the content_cache
+        table for fast grep/search operations.
+
         Args:
-            path: Specific path to sync, or None for entire mount
+            path: Specific path to sync (relative to mount), or None for entire mount
+            mount_point: Virtual mount point (e.g., "/mnt/gcs"). Required for proper
+                        path mapping between virtual paths and backend paths.
             include_patterns: Glob patterns to include (e.g., ["*.py", "*.md"])
             exclude_patterns: Glob patterns to exclude (e.g., ["*.pyc", ".git/*"])
             max_file_size: Maximum file size to cache (default: MAX_CACHE_FILE_SIZE)
@@ -413,20 +536,48 @@ class CacheConnectorMixin:
 
         Returns:
             SyncResult with statistics
+
+        Examples:
+            # Sync entire mount
+            connector.sync(mount_point="/mnt/gcs")
+
+            # Sync specific directory
+            connector.sync(path="reports/2024", mount_point="/mnt/gcs")
+
+            # Sync single file
+            connector.sync(path="data/report.pdf", mount_point="/mnt/gcs")
+
+            # Sync with patterns
+            connector.sync(mount_point="/mnt/gcs", include_patterns=["*.py"])
         """
         import fnmatch
 
         result = SyncResult()
         max_size = max_file_size or self.MAX_CACHE_FILE_SIZE
 
-        # Get files to sync
+        # Get files to sync (backend-relative paths)
         try:
             if path:
-                # Sync specific path
-                files = [path]
+                # Sync specific path - check if it's a file or directory
+                backend_path = path.lstrip("/")
+                try:
+                    entries = (
+                        self.list_dir(backend_path, context) if hasattr(self, "list_dir") else []
+                    )
+                    if entries:
+                        # It's a directory - list recursively
+                        files = self._list_files_recursive(backend_path, context)
+                    else:
+                        # It's a file (or empty dir with extension)
+                        import os.path as osp
+
+                        files = [backend_path] if osp.splitext(backend_path)[1] else []
+                except Exception:
+                    # list_dir failed - assume it's a file
+                    files = [backend_path]
             elif hasattr(self, "list_dir"):
-                # List all files recursively
-                files = self._list_files_recursive("/", context)
+                # List all files recursively from root
+                files = self._list_files_recursive("", context)
             else:
                 result.errors.append("Connector does not support list_dir")
                 return result
@@ -436,23 +587,56 @@ class CacheConnectorMixin:
 
         result.files_scanned = len(files)
 
-        for file_path in files:
+        for backend_path in files:
             try:
-                # Check include/exclude patterns
+                # Construct virtual path from mount_point + backend_path
+                if mount_point:
+                    virtual_path = f"{mount_point.rstrip('/')}/{backend_path.lstrip('/')}"
+                else:
+                    virtual_path = f"/{backend_path.lstrip('/')}"
+
+                # Check include/exclude patterns (match against virtual path)
                 if include_patterns and not any(
-                    fnmatch.fnmatch(file_path, p) for p in include_patterns
+                    fnmatch.fnmatch(virtual_path, p) for p in include_patterns
                 ):
                     result.files_skipped += 1
                     continue
 
                 if exclude_patterns and any(
-                    fnmatch.fnmatch(file_path, p) for p in exclude_patterns
+                    fnmatch.fnmatch(virtual_path, p) for p in exclude_patterns
                 ):
                     result.files_skipped += 1
                     continue
 
-                # Read content from backend
-                content = self._read_content_from_backend(file_path, context)
+                # Create context for reading with backend_path set
+                read_context = self._create_read_context(
+                    backend_path=backend_path,
+                    virtual_path=virtual_path,
+                    context=context,
+                )
+
+                # Check if cache already has fresh content (skip if up-to-date)
+                cached = self._read_from_cache(virtual_path)
+
+                # Get current backend version
+                version = None
+                if hasattr(self, "get_version"):
+                    with contextlib.suppress(Exception):
+                        version = self.get_version(backend_path, read_context)
+
+                # Skip if cache is fresh (not stale and version matches)
+                if cached and not cached.stale:
+                    if version is None or cached.backend_version == version:
+                        logger.info(f"[CACHE] SYNC SKIP (already cached): {virtual_path}")
+                        result.files_skipped += 1
+                        continue
+                    else:
+                        logger.info(
+                            f"[CACHE] SYNC STALE (version mismatch): {virtual_path} cached={cached.backend_version} current={version}"
+                        )
+
+                # Read content from backend (cache miss or stale)
+                content = self._read_content_from_backend(backend_path, read_context)
 
                 if content is None:
                     result.files_skipped += 1
@@ -463,23 +647,19 @@ class CacheConnectorMixin:
                     result.files_skipped += 1
                     continue
 
-                # Get version if supported
-                version = None
-                if hasattr(self, "get_version"):
-                    with contextlib.suppress(Exception):
-                        version = self.get_version(file_path, context)
-
                 # Get tenant_id from context
                 tenant_id = None
                 if context and hasattr(context, "tenant_id"):
                     tenant_id = context.tenant_id
 
                 # Parse content if supported (PDF, Excel, etc.)
-                parsed_text, parsed_from, parse_metadata = self._parse_content(file_path, content)
+                parsed_text, parsed_from, parse_metadata = self._parse_content(
+                    virtual_path, content
+                )
 
-                # Write to cache
+                # Write to cache using virtual_path (matches file_paths table)
                 self._write_to_cache(
-                    path=file_path,
+                    path=virtual_path,
                     content=content,
                     content_text=parsed_text,
                     content_type="parsed" if parsed_text else "full",
@@ -495,22 +675,59 @@ class CacheConnectorMixin:
                 # Generate embeddings if requested
                 if generate_embeddings:
                     try:
-                        self._generate_embeddings(file_path)
+                        self._generate_embeddings(virtual_path)
                         result.embeddings_generated += 1
                     except Exception as e:
-                        result.errors.append(f"Failed to generate embeddings for {file_path}: {e}")
+                        result.errors.append(
+                            f"Failed to generate embeddings for {virtual_path}: {e}"
+                        )
 
             except Exception as e:
-                result.errors.append(f"Failed to sync {file_path}: {e}")
+                result.errors.append(f"Failed to sync {backend_path}: {e}")
 
         return result
+
+    def _create_read_context(
+        self,
+        backend_path: str,
+        virtual_path: str,
+        context: OperationContext | None = None,
+    ) -> OperationContext:
+        """Create a context for reading content with proper backend_path set."""
+        if context:
+            # Clone context and set backend_path
+            new_context = OperationContext(
+                user=context.user,
+                groups=context.groups,
+                backend_path=backend_path,
+                tenant_id=getattr(context, "tenant_id", None),
+                is_system=True,  # Bypass permissions for sync
+            )
+        else:
+            new_context = OperationContext(
+                user="system",
+                groups=[],
+                backend_path=backend_path,
+                is_system=True,
+            )
+        # Set virtual_path as attribute
+        new_context.virtual_path = virtual_path  # type: ignore[attr-defined]
+        return new_context
 
     def _list_files_recursive(
         self,
         path: str,
         context: OperationContext | None = None,
     ) -> list[str]:
-        """Recursively list all files under a path."""
+        """Recursively list all files under a path.
+
+        Args:
+            path: Backend-relative path (e.g., "" for root, "subdir" for subdirectory)
+            context: Operation context
+
+        Returns:
+            List of backend-relative file paths
+        """
         files: list[str] = []
 
         if not hasattr(self, "list_dir"):
@@ -519,11 +736,13 @@ class CacheConnectorMixin:
         try:
             entries = self.list_dir(path, context)
             for entry in entries:
-                # Build full path
-                if path == "/":
-                    full_path = f"/{entry.rstrip('/')}"
+                entry_name = entry.rstrip("/")
+
+                # Build full backend-relative path
+                if path == "" or path == "/":
+                    full_path = entry_name
                 else:
-                    full_path = f"{path.rstrip('/')}/{entry.rstrip('/')}"
+                    full_path = f"{path.rstrip('/')}/{entry_name}"
 
                 if entry.endswith("/"):
                     # Directory - recurse
@@ -543,11 +762,27 @@ class CacheConnectorMixin:
     ) -> bytes | None:
         """Read content directly from backend (bypassing cache).
 
+        Args:
+            path: Backend-relative path
+            context: Operation context with backend_path set
+
         Override this if your connector has a different read method.
         """
+        # Try direct blob download first (bypasses cache in read_content)
+        if hasattr(self, "_download_blob") and hasattr(self, "_get_blob_path"):
+            try:
+                blob_path = self._get_blob_path(path)
+                content: bytes = self._download_blob(blob_path)
+                return content
+            except Exception:
+                pass
+
+        # Fall back to read_content (may use cache)
         if hasattr(self, "read_content"):
             try:
-                return self.read_content(path, context)  # type: ignore
+                # read_content expects (content_hash, context) for GCS connector
+                # Pass empty content_hash and let it use context.backend_path
+                return self.read_content("", context)  # type: ignore
             except Exception:
                 return None
         return None

@@ -35,6 +35,7 @@ Authentication (Recommended):
     - Compute Engine/Cloud Run service account (auto-detected)
 """
 
+import logging
 from typing import TYPE_CHECKING
 
 from google.api_core import retry
@@ -49,6 +50,8 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from nexus.core.permissions import OperationContext
+
+logger = logging.getLogger(__name__)
 
 
 class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
@@ -90,8 +93,10 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         prefix: str = "",
         # OAuth access token (alternative to credentials_path)
         access_token: str | None = None,
-        # Database session for caching support
+        # Database session for caching support (deprecated, use session_factory)
         db_session: "Session | None" = None,
+        # Session factory for caching support (preferred)
+        session_factory: "type[Session] | None" = None,
     ):
         """
         Initialize GCS connector backend.
@@ -102,7 +107,9 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             credentials_path: Optional path to service account credentials JSON file
             prefix: Optional prefix for all paths in bucket (e.g., "data/")
             access_token: OAuth access token (alternative to credentials_path)
-            db_session: Optional SQLAlchemy session for caching support
+            db_session: Optional SQLAlchemy session for caching (deprecated)
+            session_factory: Optional session factory (e.g., metadata_store.SessionLocal)
+                           for caching support. Preferred over db_session.
         """
         try:
             # Priority: access_token > credentials_path > ADC
@@ -141,8 +148,10 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                 versioning_enabled=versioning_enabled,
             )
 
-            # Store db_session for caching support (CacheConnectorMixin)
-            self.db_session = db_session
+            # Store session info for caching support (CacheConnectorMixin)
+            # Prefer session_factory (creates fresh sessions) over db_session
+            self.session_factory = session_factory
+            self.db_session = db_session  # Legacy support
 
         except Exception as e:
             if isinstance(e, BackendError):
@@ -157,6 +166,10 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     def name(self) -> str:
         """Backend identifier name."""
         return "gcs_connector"
+
+    def _has_caching(self) -> bool:
+        """Check if caching is enabled (session factory or db_session available)."""
+        return self.session_factory is not None or self.db_session is not None
 
     def _is_version_id(self, value: str) -> bool:
         """
@@ -529,19 +542,26 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             virtual_path = context.virtual_path
 
         # Check cache first if enabled
-        if self.db_session is not None:
-            cached = self._read_from_cache(virtual_path)
-            if cached and not cached.stale and cached.content_binary:
-                # Verify version matches if we have version info
-                if cached.backend_version and content_hash:
-                    if cached.backend_version == content_hash:
+        if self._has_caching():
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                cached = self._read_from_cache(virtual_path)
+                if cached and not cached.stale and cached.content_binary:
+                    # Verify version matches if we have version info
+                    if cached.backend_version and content_hash:
+                        if cached.backend_version == content_hash:
+                            logger.info(f"[GCS] Cache hit for {virtual_path}")
+                            return cached.content_binary
+                        # Version mismatch - cache is stale, read from backend
+                        logger.debug(f"[GCS] Cache version mismatch for {virtual_path}")
+                    else:
+                        # No version to compare, trust the cache
+                        logger.info(f"[GCS] Cache hit (no version) for {virtual_path}")
                         return cached.content_binary
-                    # Version mismatch - cache is stale, read from backend
-                else:
-                    # No version to compare, trust the cache
-                    return cached.content_binary
 
         # Read from GCS backend
+        logger.info(f"[GCS] Cache miss, reading from backend: {virtual_path}")
         blob_path = self._get_blob_path(context.backend_path)
 
         # Determine if we should use version ID
@@ -552,7 +572,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         content = self._download_blob(blob_path, version_id)
 
         # Cache the result if caching is enabled
-        if self.db_session is not None:
+        if self._has_caching():
             import contextlib
 
             with contextlib.suppress(Exception):
@@ -573,7 +593,11 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         context: "OperationContext | None" = None,
     ) -> str:
         """
-        Write content to GCS and invalidate cache.
+        Write content to GCS and update cache.
+
+        Per design doc (cache-layer.md), after successful write:
+        1. Write to GCS backend
+        2. Update cache with new content and version
 
         Args:
             content: File content as bytes
@@ -607,12 +631,19 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         # Upload blob
         new_version = self._upload_blob(blob_path, content, content_type)
 
-        # Invalidate cache after write if caching is enabled
-        if self.db_session is not None:
+        # Update cache after write if caching is enabled
+        # Per design doc: both GCS and cache should be updated when write succeeds
+        if self._has_caching():
             import contextlib
 
             with contextlib.suppress(Exception):
-                self._invalidate_cache(path=virtual_path, delete=False)
+                tenant_id = getattr(context, "tenant_id", None)
+                self._write_to_cache(
+                    path=virtual_path,
+                    content=content,
+                    backend_version=new_version,
+                    tenant_id=tenant_id,
+                )
 
         return new_version
 

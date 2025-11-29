@@ -1083,9 +1083,14 @@ class DeleteSavedMountParams:
 class SyncMountParams:
     """Parameters for sync_mount() method."""
 
-    mount_point: str
+    mount_point: str | None = None
+    path: str | None = None
     recursive: bool = True
     dry_run: bool = False
+    sync_content: bool = True
+    include_patterns: list[str] | None = None
+    exclude_patterns: list[str] | None = None
+    generate_embeddings: bool = False
 
 
 # Skills management parameter dataclasses

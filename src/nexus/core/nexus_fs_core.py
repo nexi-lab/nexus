@@ -437,9 +437,14 @@ class NexusFSCoreMixin:
         read_start = time.time()
         tenant_id, agent_id, is_admin = self._get_routing_params(context)
 
+        # Group paths by backend for potential bulk optimization
+        # First, get metadata and routes for all paths
+        # Note: meta is guaranteed non-None with non-None etag due to check below
+        path_info: dict[str, tuple[FileMetadata, Any]] = {}  # path -> (meta, route)
+        backend_paths: dict[Any, list[str]] = {}  # backend -> [paths]
+
         for path in allowed_set:
             try:
-                # Get metadata
                 meta = self.metadata.get(path)
                 if meta is None or meta.etag is None:
                     if skip_errors:
@@ -447,7 +452,6 @@ class NexusFSCoreMixin:
                         continue
                     raise NexusFileNotFoundError(path)
 
-                # Route to backend
                 route = self.router.route(
                     path,
                     tenant_id=tenant_id,
@@ -455,37 +459,155 @@ class NexusFSCoreMixin:
                     is_admin=is_admin,
                     check_write=False,
                 )
+                path_info[path] = (meta, route)
 
-                # Read content
-                # Add backend_path to context for path-based connectors
-                read_context = context
-                if context:
-                    from dataclasses import replace
-
-                    read_context = replace(context, backend_path=route.backend_path)
-                content = route.backend.read_content(meta.etag, context=read_context)
-
-                # Apply filtering if needed
-                content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
-
-                # Store result
-                if return_metadata:
-                    results[path] = {
-                        "content": content,
-                        "etag": meta.etag,
-                        "version": meta.version,
-                        "modified_at": meta.modified_at,
-                        "size": len(content),
-                    }
-                else:
-                    results[path] = content
-
+                # Group by backend
+                backend = route.backend
+                if backend not in backend_paths:
+                    backend_paths[backend] = []
+                backend_paths[backend].append(path)
             except Exception as e:
-                logger.warning(f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}")
+                logger.warning(f"[READ-BULK] Failed to route {path}: {type(e).__name__}: {e}")
                 if skip_errors:
                     results[path] = None
                 else:
                     raise
+
+        # Try bulk read for backends that support it (CacheConnectorMixin)
+        for backend, paths_for_backend in backend_paths.items():
+            if hasattr(backend, "_read_bulk_from_cache") and len(paths_for_backend) > 1:
+                # Use bulk cache lookup
+                logger.info(
+                    f"[READ-BULK] Using bulk cache for {len(paths_for_backend)} files on {type(backend).__name__}"
+                )
+                try:
+                    cache_entries = backend._read_bulk_from_cache(paths_for_backend, original=True)
+
+                    # Process cache hits
+                    paths_needing_backend: list[str] = []
+                    for path in paths_for_backend:
+                        entry = cache_entries.get(path)
+                        if entry and not entry.stale and entry.content_binary:
+                            content = entry.content_binary
+                            content = self._apply_dynamic_viewer_filter_if_needed(
+                                path, content, context
+                            )
+                            meta, route = path_info[path]
+                            assert meta.etag is not None  # Guaranteed by check above
+                            if return_metadata:
+                                results[path] = {
+                                    "content": content,
+                                    "etag": meta.etag,
+                                    "version": meta.version,
+                                    "modified_at": meta.modified_at,
+                                    "size": len(content),
+                                }
+                            else:
+                                results[path] = content
+                        else:
+                            paths_needing_backend.append(path)
+
+                    # Fall back to individual reads for cache misses
+                    for path in paths_needing_backend:
+                        try:
+                            meta, route = path_info[path]
+                            assert meta.etag is not None  # Guaranteed by check above
+                            read_context = context
+                            if context:
+                                from dataclasses import replace
+
+                                read_context = replace(context, backend_path=route.backend_path)
+                            content = route.backend.read_content(meta.etag, context=read_context)
+                            content = self._apply_dynamic_viewer_filter_if_needed(
+                                path, content, context
+                            )
+                            if return_metadata:
+                                results[path] = {
+                                    "content": content,
+                                    "etag": meta.etag,
+                                    "version": meta.version,
+                                    "modified_at": meta.modified_at,
+                                    "size": len(content),
+                                }
+                            else:
+                                results[path] = content
+                        except Exception as e:
+                            logger.warning(
+                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
+                            )
+                            if skip_errors:
+                                results[path] = None
+                            else:
+                                raise
+                except Exception as e:
+                    logger.warning(
+                        f"[READ-BULK] Bulk cache failed, falling back to individual reads: {e}"
+                    )
+                    # Fall back to individual reads
+                    for path in paths_for_backend:
+                        try:
+                            meta, route = path_info[path]
+                            assert meta.etag is not None  # Guaranteed by check above
+                            read_context = context
+                            if context:
+                                from dataclasses import replace
+
+                                read_context = replace(context, backend_path=route.backend_path)
+                            content = route.backend.read_content(meta.etag, context=read_context)
+                            content = self._apply_dynamic_viewer_filter_if_needed(
+                                path, content, context
+                            )
+                            if return_metadata:
+                                results[path] = {
+                                    "content": content,
+                                    "etag": meta.etag,
+                                    "version": meta.version,
+                                    "modified_at": meta.modified_at,
+                                    "size": len(content),
+                                }
+                            else:
+                                results[path] = content
+                        except Exception as e:
+                            logger.warning(
+                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
+                            )
+                            if skip_errors:
+                                results[path] = None
+                            else:
+                                raise
+            else:
+                # Individual reads for backends without bulk cache support
+                for path in paths_for_backend:
+                    try:
+                        meta, route = path_info[path]
+                        assert meta.etag is not None  # Guaranteed by check above
+                        read_context = context
+                        if context:
+                            from dataclasses import replace
+
+                            read_context = replace(context, backend_path=route.backend_path)
+                        content = route.backend.read_content(meta.etag, context=read_context)
+                        content = self._apply_dynamic_viewer_filter_if_needed(
+                            path, content, context
+                        )
+                        if return_metadata:
+                            results[path] = {
+                                "content": content,
+                                "etag": meta.etag,
+                                "version": meta.version,
+                                "modified_at": meta.modified_at,
+                                "size": len(content),
+                            }
+                        else:
+                            results[path] = content
+                    except Exception as e:
+                        logger.warning(
+                            f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
+                        )
+                        if skip_errors:
+                            results[path] = None
+                        else:
+                            raise
 
         read_elapsed = time.time() - read_start
         bulk_elapsed = time.time() - bulk_start

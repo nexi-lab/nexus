@@ -230,6 +230,10 @@ class LocalBackend(Backend):
         """Acquire lock on file."""
         return FileLock(path)
 
+    def _get_lock_path(self, content_hash: str) -> Path:
+        """Get the lock file path for a content hash."""
+        return self._get_meta_path(content_hash).with_suffix(".lock")
+
     def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
         """
         Write content to CAS storage and return its hash.
@@ -244,43 +248,17 @@ class LocalBackend(Backend):
         content_hash = self._compute_hash(content)
         content_path = self._hash_to_path(content_hash)
 
-        # Check if content already exists
-        if content_path.exists():
-            metadata = self._read_metadata(content_hash)
-            metadata["ref_count"] = metadata.get("ref_count", 0) + 1
-            self._write_metadata(content_hash, metadata)
-            # Add to cache since we have the content in memory
-            if self.content_cache is not None:
-                self.content_cache.put(content_hash, content)
-            return content_hash
+        # Fix #514: Acquire lock BEFORE checking if content exists
+        # This prevents TOCTOU race where multiple threads see "not exists"
+        # and all try to create initial metadata with ref_count=1
+        lock_path = self._get_lock_path(content_hash)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Content doesn't exist - write atomically
-        tmp_path = None
         try:
-            content_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Write to temp file first
-            with tempfile.NamedTemporaryFile(
-                mode="wb", dir=content_path.parent, delete=False
-            ) as tmp_file:
-                tmp_path = Path(tmp_file.name)
-                tmp_file.write(content)
-                tmp_file.flush()  # Flush Python buffers
-                os.fsync(tmp_file.fileno())  # Force OS to write to disk
-
-            # Move to final location (atomic on Unix, best-effort on Windows)
-            # On Windows, os.rename fails if destination exists, so we need to handle that
-            try:
-                # Try atomic rename first (works on Unix, fails on Windows if exists)
-                os.replace(str(tmp_path), str(content_path))
-            except OSError:
-                # Race condition: another thread created the file between our check and now
-                # This is expected in concurrent scenarios - just increment ref count
+            with self._lock_file(lock_path):
+                # Check if content already exists (inside lock)
                 if content_path.exists():
-                    # Clean up our temp file
-                    tmp_path.unlink(missing_ok=True)
-                    tmp_path = None
-                    # Increment ref count for the existing file
+                    # Content exists - increment ref_count
                     metadata = self._read_metadata(content_hash)
                     metadata["ref_count"] = metadata.get("ref_count", 0) + 1
                     self._write_metadata(content_hash, metadata)
@@ -288,26 +266,42 @@ class LocalBackend(Backend):
                     if self.content_cache is not None:
                         self.content_cache.put(content_hash, content)
                     return content_hash
-                else:
-                    # Some other error - re-raise
-                    raise
 
-            # Create metadata (only if we successfully wrote the file)
-            metadata = {"ref_count": 1, "size": len(content)}
-            self._write_metadata(content_hash, metadata)
+                # Content doesn't exist - write atomically
+                content_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Add to cache since we have the content in memory
-            if self.content_cache is not None:
-                self.content_cache.put(content_hash, content)
+                tmp_path = None
+                try:
+                    # Write to temp file first
+                    with tempfile.NamedTemporaryFile(
+                        mode="wb", dir=content_path.parent, delete=False
+                    ) as tmp_file:
+                        tmp_path = Path(tmp_file.name)
+                        tmp_file.write(content)
+                        tmp_file.flush()  # Flush Python buffers
+                        os.fsync(tmp_file.fileno())  # Force OS to write to disk
 
-            return content_hash
+                    # Move to final location (atomic on Unix)
+                    os.replace(str(tmp_path), str(content_path))
+                    tmp_path = None  # Successfully moved
+
+                    # Create metadata with ref_count=1
+                    metadata = {"ref_count": 1, "size": len(content)}
+                    self._write_metadata(content_hash, metadata)
+
+                    # Add to cache since we have the content in memory
+                    if self.content_cache is not None:
+                        self.content_cache.put(content_hash, content)
+
+                    return content_hash
+
+                finally:
+                    # Clean up temp file if it still exists
+                    if tmp_path is not None and tmp_path.exists():
+                        with contextlib.suppress(OSError):
+                            tmp_path.unlink()
 
         except OSError as e:
-            # Clean up temp file on any error
-            if tmp_path is not None and tmp_path.exists():
-                with contextlib.suppress(OSError):
-                    tmp_path.unlink()
-
             raise BackendError(
                 f"Failed to write content: {e}", backend="local", path=content_hash
             ) from e
@@ -469,24 +463,33 @@ class LocalBackend(Backend):
         if not content_path.exists():
             raise NexusFileNotFoundError(content_hash)
 
+        # Fix #514: Use file locking to prevent race condition on ref_count
+        lock_path = self._get_lock_path(content_hash)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+
         try:
-            metadata = self._read_metadata(content_hash)
-            ref_count = metadata.get("ref_count", 1)
+            with self._lock_file(lock_path):
+                metadata = self._read_metadata(content_hash)
+                ref_count = metadata.get("ref_count", 1)
 
-            if ref_count <= 1:
-                # Last reference - delete file and metadata
-                content_path.unlink()
+                if ref_count <= 1:
+                    # Last reference - delete file and metadata
+                    content_path.unlink()
 
-                meta_path = self._get_meta_path(content_hash)
-                if meta_path.exists():
-                    meta_path.unlink()
+                    meta_path = self._get_meta_path(content_hash)
+                    if meta_path.exists():
+                        meta_path.unlink()
 
-                # Clean up empty directories
-                self._cleanup_empty_dirs(content_path.parent)
-            else:
-                # Decrement reference count
-                metadata["ref_count"] = ref_count - 1
-                self._write_metadata(content_hash, metadata)
+                    # Clean up lock file
+                    if lock_path.exists():
+                        lock_path.unlink()
+
+                    # Clean up empty directories
+                    self._cleanup_empty_dirs(content_path.parent)
+                else:
+                    # Decrement reference count
+                    metadata["ref_count"] = ref_count - 1
+                    self._write_metadata(content_hash, metadata)
 
         except OSError as e:
             raise BackendError(

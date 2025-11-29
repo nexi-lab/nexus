@@ -20,6 +20,11 @@ Key differences from GCSBackend:
 - External tools can browse bucket normally
 - Requires backend_path in OperationContext
 
+Caching:
+    This connector supports the CacheConnectorMixin for caching content
+    in the local database. Enable caching by passing a db_session when
+    creating the connector.
+
 Authentication (Recommended):
     Use service account credentials for production (no daily re-auth):
     - Set GOOGLE_APPLICATION_CREDENTIALS to service account JSON key path
@@ -30,6 +35,7 @@ Authentication (Recommended):
     - Compute Engine/Cloud Run service account (auto-detected)
 """
 
+import logging
 from typing import TYPE_CHECKING
 
 from google.api_core import retry
@@ -37,13 +43,18 @@ from google.cloud import storage
 from google.cloud.exceptions import NotFound
 
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
+from nexus.backends.cache_mixin import CacheConnectorMixin
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
-    pass
+    from sqlalchemy.orm import Session
+
+    from nexus.core.permissions import OperationContext
+
+logger = logging.getLogger(__name__)
 
 
-class GCSConnectorBackend(BaseBlobStorageConnector):
+class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     """
     Google Cloud Storage connector backend with direct path mapping.
 
@@ -53,15 +64,21 @@ class GCSConnectorBackend(BaseBlobStorageConnector):
 
     Features:
     - Direct path mapping (file.txt → file.txt in GCS)
-    - Write-through storage (no local caching)
+    - Optional local caching via CacheConnectorMixin
     - Full workspace compatibility
     - External tool compatibility (bucket remains browsable)
     - Native GCS versioning support (if bucket has versioning enabled)
     - Automatic retry for transient errors (503, network issues)
+    - Optimistic locking via GCS generation numbers
 
     Versioning Behavior:
     - If bucket has versioning enabled: Uses GCS generation numbers for version tracking
     - If bucket has no versioning: Only current version retained (overwrites on update)
+
+    Caching:
+    - Pass db_session to enable local caching
+    - Use read_content() with use_cache=True to read from cache first
+    - Use sync() to bulk-sync files to cache
 
     Limitations:
     - No deduplication (same content stored multiple times)
@@ -76,6 +93,10 @@ class GCSConnectorBackend(BaseBlobStorageConnector):
         prefix: str = "",
         # OAuth access token (alternative to credentials_path)
         access_token: str | None = None,
+        # Database session for caching support (deprecated, use session_factory)
+        db_session: "Session | None" = None,
+        # Session factory for caching support (preferred)
+        session_factory: "type[Session] | None" = None,
     ):
         """
         Initialize GCS connector backend.
@@ -86,6 +107,9 @@ class GCSConnectorBackend(BaseBlobStorageConnector):
             credentials_path: Optional path to service account credentials JSON file
             prefix: Optional prefix for all paths in bucket (e.g., "data/")
             access_token: OAuth access token (alternative to credentials_path)
+            db_session: Optional SQLAlchemy session for caching (deprecated)
+            session_factory: Optional session factory (e.g., metadata_store.SessionLocal)
+                           for caching support. Preferred over db_session.
         """
         try:
             # Priority: access_token > credentials_path > ADC
@@ -124,6 +148,11 @@ class GCSConnectorBackend(BaseBlobStorageConnector):
                 versioning_enabled=versioning_enabled,
             )
 
+            # Store session info for caching support (CacheConnectorMixin)
+            # Prefer session_factory (creates fresh sessions) over db_session
+            self.session_factory = session_factory
+            self.db_session = db_session  # Legacy support
+
         except Exception as e:
             if isinstance(e, BackendError):
                 raise
@@ -137,6 +166,10 @@ class GCSConnectorBackend(BaseBlobStorageConnector):
     def name(self) -> str:
         """Backend identifier name."""
         return "gcs_connector"
+
+    def _has_caching(self) -> bool:
+        """Check if caching is enabled (session factory or db_session available)."""
+        return self.session_factory is not None or self.db_session is not None
 
     def _is_version_id(self, value: str) -> bool:
         """
@@ -429,3 +462,227 @@ class GCSConnectorBackend(BaseBlobStorageConnector):
                 backend="gcs_connector",
                 path=source_path,
             ) from e
+
+    # === Version Support for CacheConnectorMixin ===
+
+    def get_version(
+        self,
+        path: str,
+        context: "OperationContext | None" = None,
+    ) -> str | None:
+        """
+        Get GCS generation number for a file.
+
+        The generation number changes on every write and is used for:
+        - Optimistic locking (version checks before write)
+        - Cache invalidation (detect stale cache entries)
+
+        Args:
+            path: Virtual file path (or backend_path from context)
+            context: Operation context with optional backend_path
+
+        Returns:
+            GCS generation number as string, or None if file doesn't exist
+        """
+        try:
+            # Get backend path
+            if context and context.backend_path:
+                backend_path = context.backend_path
+            else:
+                backend_path = path.lstrip("/")
+
+            blob_path = self._get_blob_path(backend_path)
+            blob = self.bucket.blob(blob_path)
+
+            if not blob.exists():
+                return None
+
+            blob.reload()
+            return str(blob.generation) if blob.generation else None
+
+        except Exception:
+            return None
+
+    # === Override Content Operations with Caching ===
+
+    def read_content(
+        self,
+        content_hash: str,
+        context: "OperationContext | None" = None,
+    ) -> bytes:
+        """
+        Read content from GCS with caching support.
+
+        When caching is enabled (db_session provided):
+        1. Check cache for non-stale entry with matching version
+        2. If cache hit, return cached content
+        3. If cache miss, read from GCS and cache result
+
+        Args:
+            content_hash: Version ID (if versioning) or hash (if not)
+            context: Operation context with backend_path
+
+        Returns:
+            File content as bytes
+
+        Raises:
+            ValueError: If backend_path not provided
+            NexusFileNotFoundError: If file doesn't exist
+            BackendError: If read operation fails
+        """
+        if not context or not context.backend_path:
+            raise ValueError(
+                "GCS connector requires backend_path in OperationContext. "
+                "This backend reads files from actual paths, not CAS hashes."
+            )
+
+        # Get virtual path for cache lookup
+        virtual_path = context.backend_path
+        if hasattr(context, "virtual_path") and context.virtual_path:
+            virtual_path = context.virtual_path
+
+        # Check cache first if enabled
+        if self._has_caching():
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                cached = self._read_from_cache(virtual_path)
+                if cached and not cached.stale and cached.content_binary:
+                    # Verify version matches if we have version info
+                    if cached.backend_version and content_hash:
+                        if cached.backend_version == content_hash:
+                            logger.info(f"[GCS] Cache hit for {virtual_path}")
+                            return cached.content_binary
+                        # Version mismatch - cache is stale, read from backend
+                        logger.debug(f"[GCS] Cache version mismatch for {virtual_path}")
+                    else:
+                        # No version to compare, trust the cache
+                        logger.info(f"[GCS] Cache hit (no version) for {virtual_path}")
+                        return cached.content_binary
+
+        # Read from GCS backend
+        logger.info(f"[GCS] Cache miss, reading from backend: {virtual_path}")
+        blob_path = self._get_blob_path(context.backend_path)
+
+        # Determine if we should use version ID
+        version_id = None
+        if self.versioning_enabled and content_hash and self._is_version_id(content_hash):
+            version_id = content_hash
+
+        content = self._download_blob(blob_path, version_id)
+
+        # Cache the result if caching is enabled
+        if self._has_caching():
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                version = self.get_version(virtual_path, context)
+                tenant_id = getattr(context, "tenant_id", None)
+                self._write_to_cache(
+                    path=virtual_path,
+                    content=content,
+                    backend_version=version,
+                    tenant_id=tenant_id,
+                )
+
+        return content
+
+    def write_content(
+        self,
+        content: bytes,
+        context: "OperationContext | None" = None,
+    ) -> str:
+        """
+        Write content to GCS and update cache.
+
+        Per design doc (cache-layer.md), after successful write:
+        1. Write to GCS backend
+        2. Update cache with new content and version
+
+        Args:
+            content: File content as bytes
+            context: Operation context with backend_path
+
+        Returns:
+            If versioning enabled: GCS generation number
+            If no versioning: Content hash (for metadata compatibility)
+
+        Raises:
+            ValueError: If backend_path is not provided in context
+            BackendError: If write operation fails
+        """
+        if not context or not context.backend_path:
+            raise ValueError(
+                "GCS connector requires backend_path in OperationContext. "
+                "This backend stores files at actual paths, not CAS hashes."
+            )
+
+        # Get virtual path for cache operations
+        virtual_path = context.backend_path
+        if hasattr(context, "virtual_path") and context.virtual_path:
+            virtual_path = context.virtual_path
+
+        # Get actual blob path from backend_path
+        blob_path = self._get_blob_path(context.backend_path)
+
+        # Detect appropriate Content-Type with charset for proper encoding
+        content_type = self._detect_content_type(context.backend_path, content)
+
+        # Upload blob
+        new_version = self._upload_blob(blob_path, content, content_type)
+
+        # Update cache after write if caching is enabled
+        # Per design doc: both GCS and cache should be updated when write succeeds
+        if self._has_caching():
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                tenant_id = getattr(context, "tenant_id", None)
+                self._write_to_cache(
+                    path=virtual_path,
+                    content=content,
+                    backend_version=new_version,
+                    tenant_id=tenant_id,
+                )
+
+        return new_version
+
+    def write_content_with_version_check(
+        self,
+        content: bytes,
+        context: "OperationContext | None" = None,
+        expected_version: str | None = None,
+    ) -> str:
+        """
+        Write content with optimistic locking via version check.
+
+        Args:
+            content: File content as bytes
+            context: Operation context with backend_path
+            expected_version: Expected GCS generation for optimistic locking
+
+        Returns:
+            New GCS generation number (or content hash if no versioning)
+
+        Raises:
+            ValueError: If backend_path not provided
+            ConflictError: If version check fails
+            BackendError: If write operation fails
+        """
+        if not context or not context.backend_path:
+            raise ValueError(
+                "GCS connector requires backend_path in OperationContext. "
+                "This backend stores files at actual paths, not CAS hashes."
+            )
+
+        # Get virtual path for version check
+        virtual_path = context.backend_path
+        if hasattr(context, "virtual_path") and context.virtual_path:
+            virtual_path = context.virtual_path
+
+        # Version check if requested
+        if expected_version is not None:
+            self._check_version(virtual_path, expected_version, context)
+
+        # Perform the write
+        return self.write_content(content, context)

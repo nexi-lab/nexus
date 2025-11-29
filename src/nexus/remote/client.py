@@ -2685,50 +2685,90 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
     def sync_mount(
         self,
-        mount_point: str,
+        mount_point: str | None = None,
+        path: str | None = None,
         recursive: bool = True,
         dry_run: bool = False,
+        sync_content: bool = True,
+        include_patterns: builtins.list[str] | None = None,
+        exclude_patterns: builtins.list[str] | None = None,
+        generate_embeddings: bool = False,
     ) -> dict[str, Any]:
-        """Sync metadata from a connector backend to Nexus database.
+        """Sync metadata and content from connector backend(s) to Nexus database.
 
         For connector backends (like gcs_connector), this scans the external storage
         and updates Nexus's metadata database with any files that were added externally
-        or existed before Nexus was configured.
+        or existed before Nexus was configured. Also populates content cache for
+        fast grep/search operations.
 
         Args:
-            mount_point: Virtual path of mount to sync (e.g., "/mnt/gcs_demo")
+            mount_point: Virtual path of mount to sync (e.g., "/mnt/gcs_demo").
+                        If None, syncs ALL connector mounts.
+            path: Specific path within mount to sync (e.g., "/reports/2024/").
+                  If None, syncs entire mount. Supports file or directory granularity.
             recursive: If True, sync all subdirectories recursively (default: True)
             dry_run: If True, only report what would be synced without making changes (default: False)
+            sync_content: If True, also sync content to cache for grep/search (default: True)
+            include_patterns: Glob patterns to include (e.g., ["*.py", "*.md"])
+            exclude_patterns: Glob patterns to exclude (e.g., ["*.pyc", ".git/*"])
+            generate_embeddings: If True, generate embeddings for semantic search (default: False)
 
         Returns:
             Dictionary with sync results:
-                - files_found: Number of files found in backend
-                - files_added: Number of new files added to database
+                - files_scanned: Number of files scanned in backend
+                - files_created: Number of new files added to database
                 - files_updated: Number of existing files updated
-                - files_skipped: Number of files skipped (already up-to-date)
+                - files_deleted: Number of files deleted from database
+                - cache_synced: Number of files synced to content cache
+                - cache_bytes: Total bytes synced to cache
+                - embeddings_generated: Number of embeddings generated
                 - errors: List of error messages (if any)
+                - mounts_synced: Number of mounts synced (when mount_point=None)
+                - mounts_skipped: Number of mounts skipped (when mount_point=None)
 
         Raises:
             ValueError: If mount_point doesn't exist
             RemoteFilesystemError: If backend doesn't support listing (not a connector backend)
 
         Examples:
-            >>> # Sync GCS connector mount
-            >>> result = nx.sync_mount("/mnt/gcs_demo")
-            >>> print(f"Added {result['files_added']} new files")
+            >>> # Sync all connector mounts
+            >>> result = nx.sync_mount()
+            >>> print(f"Synced {result['mounts_synced']} mounts")
+
+            >>> # Sync specific mount
+            >>> result = nx.sync_mount("/mnt/gcs")
+            >>> print(f"Created {result['files_created']} files, cached {result['cache_synced']}")
+
+            >>> # Sync specific directory
+            >>> result = nx.sync_mount("/mnt/gcs", path="reports/2024")
+
+            >>> # Sync with patterns
+            >>> result = nx.sync_mount("/mnt/gcs", include_patterns=["*.py"])
 
             >>> # Dry run to see what would be synced
-            >>> result = nx.sync_mount("/mnt/gcs_demo", dry_run=True)
-            >>> print(f"Would add {result['files_found']} files")
+            >>> result = nx.sync_mount("/mnt/gcs", dry_run=True)
         """
-        result = self._call_rpc(
-            "sync_mount",
-            {
-                "mount_point": mount_point,
-                "recursive": recursive,
-                "dry_run": dry_run,
-            },
-        )
+        params: dict[str, Any] = {
+            "recursive": recursive,
+            "dry_run": dry_run,
+            "sync_content": sync_content,
+            "generate_embeddings": generate_embeddings,
+        }
+
+        # Only include mount_point if specified (None means sync all)
+        if mount_point is not None:
+            params["mount_point"] = mount_point
+
+        if path is not None:
+            params["path"] = path
+
+        if include_patterns is not None:
+            params["include_patterns"] = include_patterns
+
+        if exclude_patterns is not None:
+            params["exclude_patterns"] = exclude_patterns
+
+        result = self._call_rpc("sync_mount", params)
         return result  # type: ignore[no-any-return]
 
     # ============================================================

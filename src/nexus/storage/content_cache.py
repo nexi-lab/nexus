@@ -102,6 +102,26 @@ class ContentCache:
             self._cache[content_hash] = content
             self._current_size_bytes += content_size
 
+    def remove(self, content_hash: str) -> bool:
+        """
+        Remove a specific entry from cache.
+
+        Thread-safe operation that removes a single entry by key.
+
+        Args:
+            content_hash: Key of the entry to remove
+
+        Returns:
+            True if entry was removed, False if not found
+        """
+        with self._lock:
+            if content_hash not in self._cache:
+                return False
+
+            content = self._cache.pop(content_hash)
+            self._current_size_bytes -= len(content)
+            return True
+
     def clear(self) -> None:
         """
         Clear all cached content.

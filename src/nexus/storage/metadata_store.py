@@ -194,12 +194,14 @@ class SQLAlchemyMetadataStore(MetadataStore):
             config["connect_args"] = {"timeout": 30}
         elif self.db_type == "postgresql":
             # PostgreSQL-specific configuration
-            # Use QueuePool with reasonable defaults for production
+            # Use QueuePool with configurable settings for production scalability
+            # Environment variables allow tuning without code changes
             config["poolclass"] = pool.QueuePool
-            config["pool_size"] = 5  # Number of connections to maintain
-            config["max_overflow"] = 10  # Max connections above pool_size
-            config["pool_timeout"] = 30  # Seconds to wait for connection
-            config["pool_recycle"] = 3600  # Recycle connections after 1 hour
+            config["pool_size"] = int(os.getenv("NEXUS_DB_POOL_SIZE", "20"))
+            config["max_overflow"] = int(os.getenv("NEXUS_DB_MAX_OVERFLOW", "30"))
+            config["pool_timeout"] = int(os.getenv("NEXUS_DB_POOL_TIMEOUT", "10"))
+            config["pool_recycle"] = 1800  # Recycle connections every 30 min
+            config["pool_pre_ping"] = True  # Verify connections are alive before use
 
         return config
 

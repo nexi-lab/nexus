@@ -494,3 +494,185 @@ class TestDockerSandboxProvider:
         """Test building Bash execution command."""
         cmd = provider._build_command("bash", "ls -la")
         assert cmd == ["bash", "-c", "ls -la"]
+
+
+class TestDockerTemplateResolution:
+    """Test suite for Docker template resolution in sandbox provider."""
+
+    @pytest.fixture
+    def mock_docker_config(self):
+        """Create a mock Docker template config."""
+        from nexus.config import DockerImageTemplate, DockerTemplateConfig
+
+        return DockerTemplateConfig(
+            default_image="nexus-runtime:latest",
+            templates={
+                "base": DockerImageTemplate(image="nexus-runtime:latest"),
+                "ml-heavy": DockerImageTemplate(
+                    image="nexus-runtime-ml:latest",
+                    dockerfile_override="""FROM nexus-runtime:latest
+USER root
+RUN pip install torch tensorflow
+USER nexus
+""",
+                ),
+                "web-dev": DockerImageTemplate(
+                    image="nexus-runtime-web:latest",
+                    dockerfile_override="""FROM nexus-runtime:latest
+USER root
+RUN pip install fastapi uvicorn
+USER nexus
+""",
+                ),
+            },
+        )
+
+    @pytest.fixture
+    def provider_with_config(self, mock_docker_client, mock_docker_config):
+        """Create a Docker sandbox provider with template config."""
+        return DockerSandboxProvider(
+            docker_client=mock_docker_client,
+            docker_config=mock_docker_config,
+            network_name="bridge",
+        )
+
+    def test_resolve_image_with_template_name(self, provider_with_config):
+        """Test resolving template name to image."""
+        resolved = provider_with_config._resolve_image("ml-heavy")
+        assert resolved == "nexus-runtime-ml:latest"
+
+    def test_resolve_image_with_another_template(self, provider_with_config):
+        """Test resolving different template name."""
+        resolved = provider_with_config._resolve_image("web-dev")
+        assert resolved == "nexus-runtime-web:latest"
+
+    def test_resolve_image_with_base_template(self, provider_with_config):
+        """Test resolving base template."""
+        resolved = provider_with_config._resolve_image("base")
+        assert resolved == "nexus-runtime:latest"
+
+    def test_resolve_image_with_nonexistent_template(self, provider_with_config):
+        """Test resolving nonexistent template falls back to treating as image name."""
+        resolved = provider_with_config._resolve_image("custom-image:v1.0")
+        # Should return the input as-is when template not found
+        assert resolved == "custom-image:v1.0"
+
+    def test_resolve_image_with_none(self, provider_with_config):
+        """Test resolving None returns default image."""
+        resolved = provider_with_config._resolve_image(None)
+        assert resolved == "nexus-runtime:latest"
+
+    def test_resolve_image_without_config(self, provider):
+        """Test resolving image without config uses default."""
+        # Provider fixture doesn't have docker_config
+        resolved = provider._resolve_image(None)
+        assert resolved == "python:3.11-slim"  # Default from fixture
+
+    def test_resolve_image_direct_image_name_without_config(self, provider):
+        """Test using direct image name without config."""
+        resolved = provider._resolve_image("custom:latest")
+        # Without config, should treat as direct image name
+        assert resolved == "custom:latest"
+
+    def test_provider_initialization_with_config(self, mock_docker_client, mock_docker_config):
+        """Test provider initialization with Docker config."""
+        provider = DockerSandboxProvider(
+            docker_client=mock_docker_client,
+            docker_config=mock_docker_config,
+            default_image="base:latest",
+            network_name="bridge",
+        )
+
+        assert provider.docker_config == mock_docker_config
+        assert provider.default_image == "base:latest"
+
+    def test_provider_config_access(self, provider_with_config, mock_docker_config):
+        """Test accessing config from provider."""
+        assert provider_with_config.docker_config == mock_docker_config
+        assert len(provider_with_config.docker_config.templates) == 3
+        assert "ml-heavy" in provider_with_config.docker_config.templates
+
+    @pytest.mark.asyncio
+    async def test_create_sandbox_with_template_id(
+        self, provider_with_config, mock_docker_client, mock_container
+    ):
+        """Test creating sandbox with template_id resolves correctly."""
+        # Mock image exists
+        mock_docker_client.images.get.return_value = MagicMock()
+
+        # Mock container creation
+        mock_docker_client.containers.run.return_value = mock_container
+
+        sandbox_id = await provider_with_config.create(
+            template_id="ml-heavy", timeout_minutes=5, metadata={"test": "template"}
+        )
+
+        assert sandbox_id is not None
+
+        # Verify the correct image was used
+        mock_docker_client.containers.run.assert_called_once()
+        call_kwargs = mock_docker_client.containers.run.call_args[1]
+        assert call_kwargs["image"] == "nexus-runtime-ml:latest"
+
+    @pytest.mark.asyncio
+    async def test_create_sandbox_with_direct_image(
+        self, provider_with_config, mock_docker_client, mock_container
+    ):
+        """Test creating sandbox with direct image name (not in templates)."""
+        # Mock image exists
+        mock_docker_client.images.get.return_value = MagicMock()
+
+        # Mock container creation
+        mock_docker_client.containers.run.return_value = mock_container
+
+        sandbox_id = await provider_with_config.create(
+            template_id="custom-image:v2.0", timeout_minutes=5, metadata={"test": "direct"}
+        )
+
+        assert sandbox_id is not None
+
+        # Verify the direct image name was used
+        call_kwargs = mock_docker_client.containers.run.call_args[1]
+        assert call_kwargs["image"] == "custom-image:v2.0"
+
+    @pytest.mark.asyncio
+    async def test_create_sandbox_without_template_id(
+        self, provider_with_config, mock_docker_client, mock_container
+    ):
+        """Test creating sandbox without template_id uses default."""
+        # Mock image exists
+        mock_docker_client.images.get.return_value = MagicMock()
+
+        # Mock container creation
+        mock_docker_client.containers.run.return_value = mock_container
+
+        sandbox_id = await provider_with_config.create(
+            timeout_minutes=5, metadata={"test": "default"}
+        )
+
+        assert sandbox_id is not None
+
+        # Verify default image was used
+        call_kwargs = mock_docker_client.containers.run.call_args[1]
+        assert call_kwargs["image"] == "nexus-runtime:latest"
+
+    def test_template_with_dockerfile_override(self, mock_docker_config):
+        """Test accessing dockerfile_override from template."""
+        ml_template = mock_docker_config.templates["ml-heavy"]
+
+        assert ml_template.dockerfile_override is not None
+        assert "torch" in ml_template.dockerfile_override
+        assert "tensorflow" in ml_template.dockerfile_override
+
+    def test_multiple_template_resolution(self, provider_with_config):
+        """Test resolving multiple templates in sequence."""
+        templates_to_test = ["base", "ml-heavy", "web-dev"]
+        expected_images = [
+            "nexus-runtime:latest",
+            "nexus-runtime-ml:latest",
+            "nexus-runtime-web:latest",
+        ]
+
+        for template, expected in zip(templates_to_test, expected_images, strict=False):
+            resolved = provider_with_config._resolve_image(template)
+            assert resolved == expected

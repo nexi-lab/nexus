@@ -18,14 +18,17 @@ git clone https://github.com/yourusername/nexus.git
 cd nexus
 ```
 
-2. Run the setup script:
+2. Start the development environment:
 ```bash
-chmod +x scripts/setup.sh
-./scripts/setup.sh
+chmod +x docker-start.sh
+./docker-start.sh --init
 ```
 
-3. Activate the virtual environment:
+This will build Docker images and start all services (PostgreSQL, Nexus server, MCP server, LangGraph, and frontend).
+
+3. For local development without Docker, install dependencies:
 ```bash
+uv sync
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 

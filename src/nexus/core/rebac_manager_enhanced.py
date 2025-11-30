@@ -1064,7 +1064,17 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         import logging
 
         logger = logging.getLogger(__name__)
+        import time as time_module
+
+        bulk_start = time_module.perf_counter()
         logger.info(f"rebac_check_bulk: Checking {len(checks)} permissions in batch")
+
+        # Log sample of checks for debugging
+        if checks and len(checks) <= 10:
+            logger.info(f"[BULK-DEBUG] All checks: {checks}")
+        elif checks:
+            logger.info(f"[BULK-DEBUG] First 5 checks: {checks[:5]}")
+            logger.info(f"[BULK-DEBUG] Last 5 checks: {checks[-5:]}")
 
         if not checks:
             return {}
@@ -1099,8 +1109,21 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         cache_misses = []
 
         # PHASE 0: Check L1 in-memory cache first (very fast, <1ms for all checks)
+        l1_start = time_module.perf_counter()
         l1_hits = 0
-        if self._l1_cache is not None and consistency == ConsistencyLevel.EVENTUAL:
+        l1_cache_enabled = self._l1_cache is not None
+        logger.info(
+            f"[BULK-DEBUG] L1 cache enabled: {l1_cache_enabled}, consistency: {consistency}"
+        )
+
+        if (
+            l1_cache_enabled
+            and self._l1_cache is not None
+            and consistency == ConsistencyLevel.EVENTUAL
+        ):
+            l1_cache_stats = self._l1_cache.get_stats()
+            logger.info(f"[BULK-DEBUG] L1 cache stats before lookup: {l1_cache_stats}")
+
             for check in checks:
                 subject, permission, obj = check
                 cached = self._l1_cache.get(
@@ -1112,14 +1135,22 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 else:
                     cache_misses.append(check)
 
-            if l1_hits > 0:
-                logger.info(f"L1 cache: {l1_hits} hits, {len(cache_misses)} misses")
+            l1_elapsed = (time_module.perf_counter() - l1_start) * 1000
+            logger.info(
+                f"[BULK-PERF] L1 cache lookup: {l1_hits} hits, {len(cache_misses)} misses in {l1_elapsed:.1f}ms"
+            )
 
             if not cache_misses:
-                logger.info("All checks satisfied from L1 cache")
+                total_elapsed = (time_module.perf_counter() - bulk_start) * 1000
+                logger.info(
+                    f"[BULK-PERF] ✅ All {len(checks)} checks satisfied from L1 cache in {total_elapsed:.1f}ms"
+                )
                 return results
         else:
             cache_misses = list(checks)
+            logger.info(
+                f"[BULK-DEBUG] Skipping L1 cache (enabled={l1_cache_enabled}, consistency={consistency})"
+            )
 
         if not cache_misses:
             logger.info("All checks satisfied from cache")
@@ -1392,7 +1423,20 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         logger.info(f"Cache hit rate: {hit_rate:.1f}% ({memo_stats['hits']}/{total_accesses})")
         logger.info(f"Max traversal depth reached: {memo_stats.get('max_depth', 0)}")
 
-        logger.info(f"rebac_check_bulk completed: {len(results)} results")
+        # Summary timing
+        total_elapsed = (time_module.perf_counter() - bulk_start) * 1000
+        allowed_count = sum(1 for r in results.values() if r)
+        denied_count = len(results) - allowed_count
+        logger.info(
+            f"[BULK-PERF] rebac_check_bulk completed: {len(results)} results "
+            f"({allowed_count} allowed, {denied_count} denied) in {total_elapsed:.1f}ms"
+        )
+
+        # Log L1 cache stats after writes
+        if self._l1_cache is not None:
+            l1_stats_after = self._l1_cache.get_stats()
+            logger.info(f"[BULK-DEBUG] L1 cache stats after: {l1_stats_after}")
+
         return results
 
     def _compute_permission_bulk_helper(

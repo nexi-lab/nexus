@@ -2501,6 +2501,21 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("remove_mount", {"mount_point": mount_point})
         return result  # type: ignore[no-any-return]
 
+    def list_connectors(self, category: str | None = None) -> builtins.list[dict[str, Any]]:
+        """List all available connector types that can be used with add_mount().
+
+        Args:
+            category: Optional filter by category (storage, api, oauth, database)
+
+        Returns:
+            List of connector info dictionaries
+        """
+        params: dict[str, Any] = {}
+        if category:
+            params["category"] = category
+        result = self._call_rpc("list_connectors", params)
+        return result  # type: ignore[no-any-return]
+
     def list_mounts(self) -> builtins.list[dict[str, Any]]:
         """List all active backend mounts.
 

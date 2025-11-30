@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
+from nexus.backends.registry import register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.storage.content_cache import ContentCache
 
@@ -20,6 +21,11 @@ if TYPE_CHECKING:
     from nexus.core.permissions_enhanced import EnhancedOperationContext
 
 
+@register_connector(
+    "local",
+    description="Local filesystem with CAS deduplication",
+    category="storage",
+)
 class LocalBackend(Backend):
     """
     Unified local filesystem backend.

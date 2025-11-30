@@ -445,19 +445,19 @@ class TenantAwareReBACManager(ReBACManager):
         if namespace.has_permission(permission):
             # Permission defined explicitly - check all usersets that grant it
             usersets = namespace.get_permission_usersets(permission)
-            logger.info(
+            logger.debug(
                 f"  [depth={depth}] Permission '{permission}' expands to usersets: {usersets}"
             )
             for userset in usersets:
-                logger.info(f"  [depth={depth}] Checking userset '{userset}' for {obj}")
+                logger.debug(f"  [depth={depth}] Checking userset '{userset}' for {obj}")
                 if self._compute_permission_tenant_aware(
                     subject, userset, obj, tenant_id, visited.copy(), depth + 1
                 ):
-                    logger.info(f"  [depth={depth}] ✅ GRANTED via userset '{userset}'")
+                    logger.debug(f"  [depth={depth}] ✅ GRANTED via userset '{userset}'")
                     return True
                 else:
-                    logger.info(f"  [depth={depth}] ❌ DENIED via userset '{userset}'")
-            logger.info(f"  [depth={depth}] ❌ No usersets granted permission '{permission}'")
+                    logger.debug(f"  [depth={depth}] ❌ DENIED via userset '{userset}'")
+            logger.debug(f"  [depth={depth}] ❌ No usersets granted permission '{permission}'")
             return False
 
         # Fallback: Check if permission is defined as a relation (legacy)
@@ -487,24 +487,24 @@ class TenantAwareReBACManager(ReBACManager):
                 related_objects = self._find_related_objects_tenant_aware(
                     obj, tupleset_relation, tenant_id
                 )
-                logger.info(
+                logger.debug(
                     f"  [depth={depth}] tupleToUserset: {permission} - found {len(related_objects)} related objects via '{tupleset_relation}': {[str(o) for o in related_objects]}"
                 )
 
                 # Check if subject has computed_userset on any related object
                 for related_obj in related_objects:
-                    logger.info(
+                    logger.debug(
                         f"  [depth={depth}] Checking if {subject} has '{computed_userset}' on {related_obj}"
                     )
                     if self._compute_permission_tenant_aware(
                         subject, computed_userset, related_obj, tenant_id, visited.copy(), depth + 1
                     ):
-                        logger.info(f"  [depth={depth}] ✅ GRANTED via tupleToUserset")
+                        logger.debug(f"  [depth={depth}] ✅ GRANTED via tupleToUserset")
                         return True
                     else:
-                        logger.info(f"  [depth={depth}] ❌ DENIED for this related object")
+                        logger.debug(f"  [depth={depth}] ❌ DENIED for this related object")
 
-                logger.info(f"  [depth={depth}] ❌ No related objects granted access")
+                logger.debug(f"  [depth={depth}] ❌ No related objects granted access")
 
             return False
 

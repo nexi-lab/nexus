@@ -499,42 +499,63 @@ class AsyncRemoteNexusFS:
             True if file exists
         """
         result = await self._call_rpc("exists", {"path": path})
-        return result  # type: ignore[no-any-return]
+        return result["exists"]  # type: ignore[no-any-return]
 
     async def list(
         self,
         path: str = "/",
-        recursive: bool = False,
+        recursive: bool = True,
+        details: bool = False,
+        prefix: str | None = None,
+        show_parsed: bool = True,
         context: Any = None,  # noqa: ARG002
-    ) -> builtins.list[dict[str, Any]]:
+    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """List files in directory (async).
 
         Args:
             path: Directory path to list
-            recursive: If True, list recursively
+            recursive: If True, list recursively (default: True)
+            details: If True, return detailed metadata dicts
+            prefix: Filter by path prefix
+            show_parsed: Include parsed file attributes
             context: Unused in remote client
 
         Returns:
-            List of file metadata dicts
+            List of file paths (str) or metadata dicts if details=True
         """
-        result = await self._call_rpc("list", {"path": path, "recursive": recursive})
-        return result  # type: ignore[no-any-return]
+        result = await self._call_rpc(
+            "list",
+            {
+                "path": path,
+                "recursive": recursive,
+                "details": details,
+                "prefix": prefix,
+                "show_parsed": show_parsed,
+            },
+        )
+        return result["files"]  # type: ignore[no-any-return]
 
     async def mkdir(
         self,
         path: str,
+        parents: bool = False,
+        exist_ok: bool = False,
         context: Any = None,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Create directory (async).
 
         Args:
             path: Directory path to create
+            parents: Create parent directories if needed (like mkdir -p)
+            exist_ok: Don't raise error if directory exists
             context: Unused in remote client
 
         Returns:
             Directory metadata dict
         """
-        result = await self._call_rpc("mkdir", {"path": path})
+        result = await self._call_rpc(
+            "mkdir", {"path": path, "parents": parents, "exist_ok": exist_ok}
+        )
         return result  # type: ignore[no-any-return]
 
     async def glob(
@@ -554,7 +575,7 @@ class AsyncRemoteNexusFS:
             List of matching file paths
         """
         result = await self._call_rpc("glob", {"pattern": pattern, "path": path})
-        return result  # type: ignore[no-any-return]
+        return result["matches"]  # type: ignore[no-any-return]
 
     async def grep(
         self,

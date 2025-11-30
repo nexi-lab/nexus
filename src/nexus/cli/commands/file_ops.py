@@ -160,7 +160,7 @@ def cat(
             content = state["content"]
         elif metadata:
             # Read with metadata for OCC
-            data = nx.read(path, return_metadata=True, **operation_context)
+            data = nx.read(path, context=operation_context, return_metadata=True)
             nx.close()
 
             # Type narrowing: when return_metadata=True, result is always dict
@@ -198,7 +198,7 @@ def cat(
                 console.print(f"[dim]Streaming large file ({file_size:,} bytes)...[/dim]")
                 try:
                     for chunk in nx.stream(  # type: ignore[attr-defined]
-                        path, chunk_size=65536, **operation_context
+                        path, chunk_size=65536, context=operation_context
                     ):  # 64KB chunks
                         sys.stdout.buffer.write(chunk)
                     sys.stdout.buffer.flush()
@@ -209,7 +209,7 @@ def cat(
                     raise e
             else:
                 # Read normally for small files
-                content = nx.read(path, **operation_context)
+                content = nx.read(path, context=operation_context)
                 nx.close()
 
         # Try to detect file type for syntax highlighting
@@ -312,10 +312,10 @@ def write(
         result = nx.write(
             path,
             file_content,
+            context=operation_context,
             if_match=if_match,
             if_none_match=if_none_match,
             force=force,
-            **operation_context,  # Pass subject, tenant_id, etc.
         )
         nx.close()
 
@@ -404,9 +404,9 @@ def append(
         result = nx.append(
             path,
             file_content,
+            context=operation_context,
             if_match=if_match,
             force=force,
-            **operation_context,  # Pass subject, tenant_id, etc.
         )
         nx.close()
 

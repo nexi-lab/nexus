@@ -407,21 +407,25 @@ class NexusFSCoreMixin:
         # Batch permission check using filter_list
         perm_start = time.time()
         allowed_set: set[str]
-        try:
-            # Use the existing bulk permission check from list()
-            # Note: filter_list assumes READ permission, which is what we want
-            from nexus.core.permissions import OperationContext
+        if not self._enforce_permissions:  # type: ignore[attr-defined]
+            # Skip permission check if permissions are disabled
+            allowed_set = set(validated_paths)
+        else:
+            try:
+                # Use the existing bulk permission check from list()
+                # Note: filter_list assumes READ permission, which is what we want
+                from nexus.core.permissions import OperationContext
 
-            ctx = context if context is not None else self._default_context
-            assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-            allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
-            allowed_set = set(allowed_paths)
-        except Exception as e:
-            logger.error(f"[READ-BULK] Permission check failed: {e}")
-            if not skip_errors:
-                raise
-            # If skip_errors, assume no files are allowed
-            allowed_set = set()
+                ctx = context if context is not None else self._default_context
+                assert isinstance(ctx, OperationContext), "Context must be OperationContext"
+                allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
+                allowed_set = set(allowed_paths)
+            except Exception as e:
+                logger.error(f"[READ-BULK] Permission check failed: {e}")
+                if not skip_errors:
+                    raise
+                # If skip_errors, assume no files are allowed
+                allowed_set = set()
 
         perm_elapsed = time.time() - perm_start
         logger.info(

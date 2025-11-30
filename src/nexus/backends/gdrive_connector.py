@@ -38,6 +38,7 @@ import mimetypes
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
+from nexus.backends.registry import register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
@@ -84,6 +85,12 @@ EXPORT_FORMATS = {
 }
 
 
+@register_connector(
+    "gdrive_connector",
+    description="Google Drive with OAuth 2.0 authentication",
+    category="oauth",
+    requires=["google-api-python-client", "google-auth-oauthlib"],
+)
 class GoogleDriveConnectorBackend(Backend):
     """
     Google Drive connector backend with OAuth 2.0 authentication.

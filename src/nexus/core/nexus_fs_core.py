@@ -1411,7 +1411,9 @@ class NexusFSCoreMixin:
         # Delete from routed backend CAS (decrements ref count)
         # Content is only physically deleted when ref_count reaches 0
         # If other files reference the same content, it remains in CAS
-        if meta.etag:
+        # Skip content deletion for directories - they have no actual CAS content
+        # (directories are stored with empty hash but no actual CAS entry)
+        if meta.etag and meta.mime_type != "inode/directory":
             route.backend.delete_content(meta.etag, context=context)
 
         # Remove from metadata

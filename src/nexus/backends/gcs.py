@@ -20,6 +20,7 @@ from google.cloud import storage
 from google.cloud.exceptions import NotFound
 
 from nexus.backends.backend import Backend
+from nexus.backends.registry import register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
@@ -27,6 +28,12 @@ if TYPE_CHECKING:
     from nexus.core.permissions_enhanced import EnhancedOperationContext
 
 
+@register_connector(
+    "gcs",
+    description="Google Cloud Storage with CAS deduplication",
+    category="storage",
+    requires=["google-cloud-storage"],
+)
 class GCSBackend(Backend):
     """
     Google Cloud Storage backend.

@@ -1134,6 +1134,13 @@ class RemoveMountParams:
 
 
 @dataclass
+class ListConnectorsParams:
+    """Parameters for list_connectors() method."""
+
+    category: str | None = None
+
+
+@dataclass
 class ListMountsParams:
     """Parameters for list_mounts() method."""
 
@@ -1467,6 +1474,7 @@ METHOD_PARAMS = {
     # Mount management methods (v0.5.6 - Issue #313)
     "add_mount": AddMountParams,
     "remove_mount": RemoveMountParams,
+    "list_connectors": ListConnectorsParams,  # Issue #528 - Connector registry
     "list_mounts": ListMountsParams,
     "get_mount": GetMountParams,
     "has_mount": HasMountParams,

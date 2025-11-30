@@ -235,8 +235,8 @@ EMPTY_DIR="$BASE_PATH/empty-dir"
 nexus mkdir $EMPTY_DIR 2>/dev/null || true
 print_success "Created empty directory: $EMPTY_DIR"
 
-# Remove empty directory
-nexus rm $EMPTY_DIR
+# Remove empty directory (use rmdir for directories, rm is for files)
+nexus rmdir -f $EMPTY_DIR
 print_success "Removed empty directory: $EMPTY_DIR"
 
 # Verify it's gone

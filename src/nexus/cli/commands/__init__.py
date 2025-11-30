@@ -23,6 +23,7 @@ import click
 from nexus.cli.commands import (
     admin,
     agent,
+    connectors,
     directory,
     file_ops,
     llm,
@@ -66,6 +67,7 @@ def register_all_commands(cli: click.Group) -> None:
     operations.register_commands(cli)
     workflows.register_commands(cli)
     mounts.register_commands(cli)  # Mount management commands
+    connectors.register_commands(cli)  # Issue #528: Connector registry
     llm.register_commands(cli)  # v0.4.0: LLM document reading commands
     mcp.register_commands(cli)  # v0.7.0: MCP server commands
     cli.add_command(memory.memory)  # v0.4.0: Memory API commands (includes ACE trajectory/playbook)
@@ -79,6 +81,7 @@ __all__ = [
     "register_all_commands",
     "admin",
     "agent",
+    "connectors",
     "file_ops",
     "directory",
     "llm",

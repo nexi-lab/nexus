@@ -655,17 +655,43 @@ class PermissionEnforcer:
             import time
 
             overall_start = time.time()
+            tenant_id = context.tenant_id or "default"
             logger.info(
-                f"[PERF-FILTER] filter_list START: {len(paths)} paths, subject={context.get_subject()}, tenant={context.tenant_id}"
+                f"[PERF-FILTER] filter_list START: {len(paths)} paths, subject={context.get_subject()}, tenant={tenant_id}"
             )
+
+            # OPTIMIZATION: Pre-filter paths by tenant before permission checks
+            # This avoids checking permissions on paths the user can never access
+            # For /tenants/* paths, only keep paths matching the user's tenant
+            prefilter_start = time.time()
+            paths_to_check = []
+            paths_prefiltered = 0
+            for path in paths:
+                # Fast path: /tenants/X paths should only be checked for tenant X
+                if path.startswith("/tenants/"):
+                    # Extract tenant from path: /tenants/tenant_name/...
+                    path_parts = path.split("/")
+                    if len(path_parts) >= 3:
+                        path_tenant = path_parts[2]  # /tenants/<tenant_name>/...
+                        if path_tenant != tenant_id:
+                            # Skip paths for other tenants entirely
+                            paths_prefiltered += 1
+                            continue
+                paths_to_check.append(path)
+
+            prefilter_elapsed = time.time() - prefilter_start
+            if paths_prefiltered > 0:
+                logger.info(
+                    f"[PERF-FILTER] Tenant pre-filter: {paths_prefiltered} paths skipped "
+                    f"(not in tenant {tenant_id}), {len(paths_to_check)} remaining in {prefilter_elapsed:.3f}s"
+                )
 
             # Build list of checks: (subject, "read", object) for each path
             build_start = time.time()
             checks = []
             subject = context.get_subject()
-            tenant_id = context.tenant_id or "default"
 
-            for path in paths:
+            for path in paths_to_check:
                 # PERFORMANCE FIX: Skip expensive router.route() call for each file
                 # For standard file paths, just use "file" as object type
                 # This avoids O(N) routing overhead during bulk permission checks
@@ -705,13 +731,14 @@ class PermissionEnforcer:
 
                 # Filter paths based on bulk results
                 filtered = []
-                for path, check in zip(paths, checks, strict=False):
+                for path, check in zip(paths_to_check, checks, strict=False):
                     if results.get(check, False):
                         filtered.append(path)
 
                 overall_elapsed = time.time() - overall_start
                 logger.info(
-                    f"[PERF-FILTER] filter_list DONE: {overall_elapsed:.3f}s total, allowed {len(filtered)}/{len(paths)} paths"
+                    f"[PERF-FILTER] filter_list DONE: {overall_elapsed:.3f}s total, "
+                    f"allowed {len(filtered)}/{len(paths)} paths (prefiltered {paths_prefiltered})"
                 )
                 return filtered
 

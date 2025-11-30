@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
+from nexus.backends.registry import register_connector
 from nexus.core.exceptions import BackendError
 
 if TYPE_CHECKING:
@@ -73,6 +74,12 @@ CACHE_TTL = {
 }
 
 
+@register_connector(
+    "x_connector",
+    description="X (Twitter) API with OAuth 2.0 PKCE",
+    category="api",
+    requires=["requests-oauthlib"],
+)
 class XConnectorBackend(Backend):
     """
     X (Twitter) connector backend with OAuth 2.0 PKCE authentication.

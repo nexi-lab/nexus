@@ -939,6 +939,24 @@ class AsyncRemoteNexusFS:
         result = await self._call_rpc("remove_mount", {"mount_point": mount_point})
         return result  # type: ignore[no-any-return]
 
+    async def list_connectors(
+        self,
+        category: str | None = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """List all available connector types (async).
+
+        Args:
+            category: Optional filter by category (storage, api, oauth, database)
+
+        Returns:
+            List of connector info dictionaries
+        """
+        params: dict[str, Any] = {}
+        if category:
+            params["category"] = category
+        result = await self._call_rpc("list_connectors", params)
+        return result  # type: ignore[no-any-return]
+
     async def list_mounts(
         self,
         context: Any = None,  # noqa: ARG002

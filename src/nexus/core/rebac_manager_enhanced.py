@@ -1064,7 +1064,17 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         import logging
 
         logger = logging.getLogger(__name__)
+        import time as time_module
+
+        bulk_start = time_module.perf_counter()
         logger.info(f"rebac_check_bulk: Checking {len(checks)} permissions in batch")
+
+        # Log sample of checks for debugging
+        if checks and len(checks) <= 10:
+            logger.info(f"[BULK-DEBUG] All checks: {checks}")
+        elif checks:
+            logger.info(f"[BULK-DEBUG] First 5 checks: {checks[:5]}")
+            logger.info(f"[BULK-DEBUG] Last 5 checks: {checks[-5:]}")
 
         if not checks:
             return {}
@@ -1094,38 +1104,53 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 logger.warning("rebac_check_bulk called without tenant_id, defaulting to 'default'")
                 tenant_id = "default"
 
-        # STRATEGY: For EVENTUAL consistency, check cache first for all checks
-        # For any cache misses, fetch all relevant tuples in bulk and compute
+        # STRATEGY: Check L1 in-memory cache first (fast), then L2 DB cache, then compute
         results = {}
         cache_misses = []
 
-        # OPTIMIZATION: Skip cache check for bulk operations (adds 323ms overhead)
-        # For large batches (>100), cache checking is slower than just computing with Rust
-        # TODO: Implement batch cache lookup for better performance
-        if len(checks) > 100:
-            logger.info(
-                f"[CACHE-OPT] Skipping cache check for {len(checks)} items (would add ~{len(checks) * 0.5:.0f}ms)"
-            )
-            cache_misses = checks
-        elif consistency == ConsistencyLevel.EVENTUAL:
-            # Try to get results from cache first (only for small batches)
+        # PHASE 0: Check L1 in-memory cache first (very fast, <1ms for all checks)
+        l1_start = time_module.perf_counter()
+        l1_hits = 0
+        l1_cache_enabled = self._l1_cache is not None
+        logger.info(
+            f"[BULK-DEBUG] L1 cache enabled: {l1_cache_enabled}, consistency: {consistency}"
+        )
+
+        if (
+            l1_cache_enabled
+            and self._l1_cache is not None
+            and consistency == ConsistencyLevel.EVENTUAL
+        ):
+            l1_cache_stats = self._l1_cache.get_stats()
+            logger.info(f"[BULK-DEBUG] L1 cache stats before lookup: {l1_cache_stats}")
+
             for check in checks:
                 subject, permission, obj = check
-                subject_entity = Entity(subject[0], subject[1])
-                obj_entity = Entity(obj[0], obj[1])
-
-                cached = self._get_cached_check_tenant_aware(
-                    subject_entity, permission, obj_entity, tenant_id
+                cached = self._l1_cache.get(
+                    subject[0], subject[1], permission, obj[0], obj[1], tenant_id
                 )
                 if cached is not None:
                     results[check] = cached
-                    logger.debug(f"Cache HIT for {check}")
+                    l1_hits += 1
                 else:
                     cache_misses.append(check)
-                    logger.debug(f"Cache MISS for {check}")
+
+            l1_elapsed = (time_module.perf_counter() - l1_start) * 1000
+            logger.info(
+                f"[BULK-PERF] L1 cache lookup: {l1_hits} hits, {len(cache_misses)} misses in {l1_elapsed:.1f}ms"
+            )
+
+            if not cache_misses:
+                total_elapsed = (time_module.perf_counter() - bulk_start) * 1000
+                logger.info(
+                    f"[BULK-PERF] ✅ All {len(checks)} checks satisfied from L1 cache in {total_elapsed:.1f}ms"
+                )
+                return results
         else:
-            # For BOUNDED/STRONG consistency, skip cache
-            cache_misses = checks
+            cache_misses = list(checks)
+            logger.info(
+                f"[BULK-DEBUG] Skipping L1 cache (enabled={l1_cache_enabled}, consistency={consistency})"
+            )
 
         if not cache_misses:
             logger.info("All checks satisfied from cache")
@@ -1324,19 +1349,25 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     f"[RUST-TIMING] {len(cache_misses)} checks in {rust_elapsed * 1000:.1f}ms = {per_check_us:.1f}µs/check"
                 )
 
-                # Convert results (skip caching in loop for speed)
+                # Convert results and cache in L1 (in-memory cache is fast)
+                l1_cache_writes = 0
                 for check in cache_misses:
                     subject, permission, obj = check
                     key = (subject[0], subject[1], permission, obj[0], obj[1])
                     result = rust_results_dict.get(key, False)
                     results[check] = result
 
-                # Cache results in batch after loop (avoid 679 individual cache writes)
-                # TODO: Implement batch cache write for better performance
-                # For now, skip caching to avoid the 425ms overhead
-                logger.info(
-                    f"[RUST-PERF] Skipping individual cache writes (would add ~{len(cache_misses) * 0.6:.0f}ms overhead)"
-                )
+                    # Write to L1 in-memory cache (fast, ~0.01ms per write)
+                    if self._l1_cache is not None:
+                        self._l1_cache.set(
+                            subject[0], subject[1], permission, obj[0], obj[1], result, tenant_id
+                        )
+                        l1_cache_writes += 1
+
+                if l1_cache_writes > 0:
+                    logger.info(
+                        f"[RUST-PERF] Wrote {l1_cache_writes} results to L1 in-memory cache"
+                    )
 
                 rust_success = True
                 logger.info(f"✅ Rust acceleration successful for {len(cache_misses)} checks")
@@ -1392,7 +1423,20 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         logger.info(f"Cache hit rate: {hit_rate:.1f}% ({memo_stats['hits']}/{total_accesses})")
         logger.info(f"Max traversal depth reached: {memo_stats.get('max_depth', 0)}")
 
-        logger.info(f"rebac_check_bulk completed: {len(results)} results")
+        # Summary timing
+        total_elapsed = (time_module.perf_counter() - bulk_start) * 1000
+        allowed_count = sum(1 for r in results.values() if r)
+        denied_count = len(results) - allowed_count
+        logger.info(
+            f"[BULK-PERF] rebac_check_bulk completed: {len(results)} results "
+            f"({allowed_count} allowed, {denied_count} denied) in {total_elapsed:.1f}ms"
+        )
+
+        # Log L1 cache stats after writes
+        if self._l1_cache is not None:
+            l1_stats_after = self._l1_cache.get_stats()
+            logger.info(f"[BULK-DEBUG] L1 cache stats after: {l1_stats_after}")
+
         return results
 
     def _compute_permission_bulk_helper(

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
-from nexus.backends.registry import register_connector
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.storage.content_cache import ContentCache
 
@@ -52,6 +52,14 @@ class LocalBackend(Backend):
     - Thread-safe file locking
     - Directory support for compatibility
     """
+
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "root_path": ConnectionArg(
+            type=ArgType.PATH,
+            description="Root directory for storage",
+            required=True,
+        ),
+    }
 
     def __init__(self, root_path: str | Path, content_cache: ContentCache | None = None):
         """

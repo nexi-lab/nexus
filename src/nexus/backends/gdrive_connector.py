@@ -38,7 +38,7 @@ import mimetypes
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
-from nexus.backends.registry import register_connector
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
@@ -111,6 +111,44 @@ class GoogleDriveConnectorBackend(Backend):
     - Requires OAuth tokens for each user
     - Rate limited by Google Drive API quotas
     """
+
+    user_scoped = True
+
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "token_manager_db": ConnectionArg(
+            type=ArgType.PATH,
+            description="Path to TokenManager database or database URL",
+            required=True,
+        ),
+        "user_email": ConnectionArg(
+            type=ArgType.STRING,
+            description="User email for OAuth lookup (None for multi-user from context)",
+            required=False,
+        ),
+        "root_folder": ConnectionArg(
+            type=ArgType.STRING,
+            description="Root folder name in Google Drive",
+            required=False,
+            default="nexus-data",
+        ),
+        "use_shared_drives": ConnectionArg(
+            type=ArgType.BOOLEAN,
+            description="Whether to use shared drives",
+            required=False,
+            default=False,
+        ),
+        "shared_drive_id": ConnectionArg(
+            type=ArgType.STRING,
+            description="Shared drive ID (if use_shared_drives=True)",
+            required=False,
+        ),
+        "provider": ConnectionArg(
+            type=ArgType.STRING,
+            description="OAuth provider name from config",
+            required=False,
+            default="google-drive",
+        ),
+    }
 
     def __init__(
         self,
@@ -203,11 +241,6 @@ class GoogleDriveConnectorBackend(Backend):
     def name(self) -> str:
         """Backend identifier name."""
         return "gdrive"
-
-    @property
-    def user_scoped(self) -> bool:
-        """This backend requires per-user OAuth credentials."""
-        return True
 
     def _get_drive_service(self, context: "OperationContext | None" = None) -> "Resource":
         """Get Google Drive service with user's OAuth credentials.

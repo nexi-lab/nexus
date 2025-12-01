@@ -220,6 +220,35 @@ def connector_info(connector_name: str, backend_config: BackendConfig) -> None:
         if "class" in info:
             console.print(f"  [dim]Class:[/dim] {info['class']}")
 
+        # Show connection arguments (local mode only)
+        if not backend_config.remote_url:
+            from nexus.backends import ConnectorRegistry
+
+            connection_args = ConnectorRegistry.get_connection_args(connector_name)
+            if connection_args:
+                console.print("\n  [bold]Connection Arguments:[/bold]")
+
+                # Create table for args
+                args_table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+                args_table.add_column("Name", style="green")
+                args_table.add_column("Type", style="yellow")
+                args_table.add_column("Required", style="cyan")
+                args_table.add_column("Description")
+
+                for arg_name, arg in connection_args.items():
+                    required_str = "[red]Yes[/red]" if arg.required else "No"
+                    type_str = arg.type.value
+                    if arg.secret:
+                        type_str += " [dim](secret)[/dim]"
+                    desc = arg.description
+                    if arg.default is not None:
+                        desc += f" [dim](default: {arg.default})[/dim]"
+                    if arg.env_var:
+                        desc += f" [dim](env: {arg.env_var})[/dim]"
+                    args_table.add_row(arg_name, type_str, required_str, desc)
+
+                console.print(args_table)
+
         console.print()
 
     except Exception as e:

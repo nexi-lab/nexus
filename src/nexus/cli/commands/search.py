@@ -414,15 +414,10 @@ def search_init(
     try:
         nx = get_filesystem(backend_config)
 
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Semantic search is only available in embedded mode")
-            nx.close()
-            sys.exit(1)
-
         with console.status("[yellow]Initializing search engine...[/yellow]", spinner="dots"):
 
             async def init_search() -> None:
-                await nx.initialize_semantic_search(
+                await nx.initialize_semantic_search(  # type: ignore[attr-defined]
                     embedding_provider=provider,
                     embedding_model=model,
                     api_key=api_key,
@@ -433,7 +428,10 @@ def search_init(
             asyncio.run(init_search())
 
         console.print("[green]✓ Search engine initialized successfully![/green]")
-        console.print(f"  Database: [cyan]{nx.metadata.engine.dialect.name}[/cyan]")
+        if isinstance(nx, NexusFS):
+            console.print(f"  Database: [cyan]{nx.metadata.engine.dialect.name}[/cyan]")
+        else:
+            console.print("  Mode: [cyan]Remote (server-side)[/cyan]")
         console.print(f"  Provider: [cyan]{provider or 'None (keyword-only)'}[/cyan]")
         console.print(f"  Chunk size: [cyan]{chunk_size}[/cyan] tokens")
         console.print(f"  Chunk strategy: [cyan]{chunk_strategy}[/cyan]")
@@ -477,18 +475,16 @@ def search_index(
     try:
         nx = get_filesystem(backend_config)
 
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Semantic search is only available in embedded mode")
-            nx.close()
-            sys.exit(1)
-
         with console.status(f"[yellow]Indexing {path}...[/yellow]", spinner="dots"):
 
             async def do_index() -> dict[str, int]:
-                # Auto-initialize semantic search if not already initialized
-                if not hasattr(nx, "_semantic_search") or nx._semantic_search is None:
+                # Auto-initialize semantic search if not already initialized (embedded mode)
+                if isinstance(nx, NexusFS) and (
+                    not hasattr(nx, "_semantic_search") or nx._semantic_search is None
+                ):
                     await nx.initialize_semantic_search()
-                return await nx.semantic_search_index(path, recursive=recursive)
+                result: dict[str, int] = await nx.semantic_search_index(path, recursive=recursive)  # type: ignore[attr-defined]
+                return result
 
             results = asyncio.run(do_index())
 
@@ -505,7 +501,8 @@ def search_index(
 
         # Show stats
         async def get_stats() -> dict[str, Any]:
-            return await nx.semantic_search_stats()
+            result: dict[str, Any] = await nx.semantic_search_stats()  # type: ignore[attr-defined]
+            return result
 
         stats = asyncio.run(get_stats())
         console.print("\n[bold cyan]Index Statistics:[/bold cyan]")
@@ -567,20 +564,20 @@ def search_query(
     try:
         nx = get_filesystem(backend_config)
 
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Semantic search is only available in embedded mode")
-            nx.close()
-            sys.exit(1)
-
         with console.status(f"[yellow]Searching for: {query}[/yellow]", spinner="dots"):
 
             async def do_search() -> list[dict[str, Any]]:
-                # Auto-initialize semantic search if not already initialized
-                if not hasattr(nx, "_semantic_search") or nx._semantic_search is None:
+                # Auto-initialize semantic search if not already initialized (embedded mode)
+                if isinstance(nx, NexusFS) and (
+                    not hasattr(nx, "_semantic_search") or nx._semantic_search is None
+                ):
                     await nx.initialize_semantic_search(
                         embedding_provider=provider, api_key=api_key
                     )
-                return await nx.semantic_search(query, path=path, limit=limit, search_mode=mode)
+                result: list[dict[str, Any]] = await nx.semantic_search(  # type: ignore[attr-defined]
+                    query, path=path, limit=limit, search_mode=mode
+                )
+                return result
 
             results = asyncio.run(do_search())
 
@@ -630,16 +627,14 @@ def search_stats(backend_config: BackendConfig) -> None:
     try:
         nx = get_filesystem(backend_config)
 
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Semantic search is only available in embedded mode")
-            nx.close()
-            sys.exit(1)
-
         async def get_stats() -> dict[str, Any]:
-            # Auto-initialize semantic search if not already initialized
-            if not hasattr(nx, "_semantic_search") or nx._semantic_search is None:
+            # Auto-initialize semantic search if not already initialized (embedded mode)
+            if isinstance(nx, NexusFS) and (
+                not hasattr(nx, "_semantic_search") or nx._semantic_search is None
+            ):
                 await nx.initialize_semantic_search()
-            return await nx.semantic_search_stats()
+            result: dict[str, Any] = await nx.semantic_search_stats()  # type: ignore[attr-defined]
+            return result
 
         stats = asyncio.run(get_stats())
 

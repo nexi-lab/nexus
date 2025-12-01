@@ -7,6 +7,8 @@ from nexus.backends.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResu
 # Core backends (always available)
 from nexus.backends.local import LocalBackend
 from nexus.backends.registry import (
+    ArgType,
+    ConnectionArg,
     ConnectorInfo,
     ConnectorRegistry,
     create_connector,
@@ -51,6 +53,8 @@ __all__ = [
     # Registry
     "ConnectorRegistry",
     "ConnectorInfo",
+    "ConnectionArg",
+    "ArgType",
     "register_connector",
     "create_connector",
     "create_connector_from_config",

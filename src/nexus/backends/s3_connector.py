@@ -35,7 +35,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
-from nexus.backends.registry import register_connector
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
@@ -72,6 +72,53 @@ class S3ConnectorBackend(BaseBlobStorageConnector):
     - No deduplication (same content stored multiple times)
     - Requires backend_path in OperationContext
     """
+
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "bucket_name": ConnectionArg(
+            type=ArgType.STRING,
+            description="S3 bucket name",
+            required=True,
+        ),
+        "region_name": ConnectionArg(
+            type=ArgType.STRING,
+            description="AWS region (e.g., 'us-east-1')",
+            required=False,
+            env_var="AWS_REGION",
+        ),
+        "credentials_path": ConnectionArg(
+            type=ArgType.PATH,
+            description="Path to AWS credentials file (JSON format)",
+            required=False,
+            secret=True,
+        ),
+        "prefix": ConnectionArg(
+            type=ArgType.STRING,
+            description="Path prefix for all files in bucket",
+            required=False,
+            default="",
+        ),
+        "access_key_id": ConnectionArg(
+            type=ArgType.SECRET,
+            description="AWS access key ID",
+            required=False,
+            secret=True,
+            env_var="AWS_ACCESS_KEY_ID",
+        ),
+        "secret_access_key": ConnectionArg(
+            type=ArgType.PASSWORD,
+            description="AWS secret access key",
+            required=False,
+            secret=True,
+            env_var="AWS_SECRET_ACCESS_KEY",
+        ),
+        "session_token": ConnectionArg(
+            type=ArgType.SECRET,
+            description="AWS session token (for temporary credentials)",
+            required=False,
+            secret=True,
+            env_var="AWS_SESSION_TOKEN",
+        ),
+    }
 
     def __init__(
         self,

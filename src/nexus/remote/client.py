@@ -1215,6 +1215,97 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         return result["results"]  # type: ignore[no-any-return]
 
     # ============================================================
+    # Semantic Search Operations
+    # ============================================================
+
+    async def initialize_semantic_search(
+        self,
+        embedding_provider: str | None = None,
+        embedding_model: str | None = None,
+        api_key: str | None = None,
+        chunk_size: int = 1024,
+        chunk_strategy: str = "semantic",
+    ) -> None:
+        """Initialize semantic search engine on the server.
+
+        Args:
+            embedding_provider: Provider name ("openai", "voyage") or None for keyword-only
+            embedding_model: Model name (uses provider default if None)
+            api_key: API key for the embedding provider
+            chunk_size: Chunk size in tokens (default: 1024)
+            chunk_strategy: Chunking strategy ("fixed", "semantic", "overlapping")
+        """
+        self._call_rpc(
+            "initialize_semantic_search",
+            {
+                "embedding_provider": embedding_provider,
+                "embedding_model": embedding_model,
+                "api_key": api_key,
+                "chunk_size": chunk_size,
+                "chunk_strategy": chunk_strategy,
+            },
+        )
+
+    async def semantic_search(
+        self,
+        query: str,
+        path: str = "/",
+        limit: int = 10,
+        filters: dict[str, Any] | None = None,
+        search_mode: str = "semantic",
+    ) -> builtins.list[dict[str, Any]]:
+        """Search documents using natural language queries.
+
+        Args:
+            query: Natural language query
+            path: Root path to search (default: all files)
+            limit: Maximum number of results (default: 10)
+            filters: Optional filters (file_type, etc.)
+            search_mode: Search mode - "keyword", "semantic", or "hybrid"
+
+        Returns:
+            List of search results with path, chunk_text, score, etc.
+        """
+        result = self._call_rpc(
+            "semantic_search",
+            {
+                "query": query,
+                "path": path,
+                "limit": limit,
+                "filters": filters,
+                "search_mode": search_mode,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    async def semantic_search_index(
+        self, path: str = "/", recursive: bool = True
+    ) -> dict[str, int]:
+        """Index documents for semantic search.
+
+        Args:
+            path: Path to index (file or directory)
+            recursive: If True, index directory recursively
+
+        Returns:
+            Dictionary mapping file paths to number of chunks indexed
+        """
+        result = self._call_rpc(
+            "semantic_search_index",
+            {"path": path, "recursive": recursive},
+        )
+        return result  # type: ignore[no-any-return]
+
+    async def semantic_search_stats(self) -> dict[str, Any]:
+        """Get semantic search indexing statistics.
+
+        Returns:
+            Dictionary with statistics (total_chunks, indexed_files, etc.)
+        """
+        result = self._call_rpc("semantic_search_stats", {})
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
     # Directory Operations
     # ============================================================
 

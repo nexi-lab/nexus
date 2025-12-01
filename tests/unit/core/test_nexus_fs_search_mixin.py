@@ -325,12 +325,13 @@ class TestGrep:
         # This is an implementation detail - we just verify the function works
         assert isinstance(results, list)
 
-    def test_grep_search_mode_invalid(self, nx: NexusFS) -> None:
-        """Test grep with invalid search mode."""
-        nx.write("/file.txt", b"Content")
+    def test_grep_search_mode_backward_compat(self, nx: NexusFS) -> None:
+        """Test grep ignores search_mode parameter (backward compatibility)."""
+        nx.write("/file.txt", b"Content test here")
 
-        with pytest.raises(ValueError, match="Invalid search_mode"):
-            nx.grep("test", search_mode="invalid")
+        # search_mode is deprecated and ignored, should still work
+        results = nx.grep("test", search_mode="invalid")
+        assert len(results) == 1
 
 
 class TestGrepPerformance:
@@ -531,15 +532,19 @@ class TestGrepWithParsedContent:
         # Should find content regardless of parsing status
         assert len(results) >= 1
 
-    def test_grep_search_mode_parsed(self, nx: NexusFS) -> None:
-        """Test grep with parsed search mode."""
+    def test_grep_uses_cached_text_first(self, nx: NexusFS) -> None:
+        """Test grep uses cached/parsed text when available, falls back to raw."""
         nx.write("/file.txt", b"Hello World")
 
-        # In parsed mode, files without parsed content are skipped
-        results = nx.grep("Hello", search_mode="parsed")
+        # search_mode is deprecated - grep now automatically:
+        # 1. Checks content_cache.content_text (connector files)
+        # 2. Checks file_metadata.parsed_text (local files)
+        # 3. Falls back to raw file content
+        results = nx.grep("Hello")
 
-        # Without auto_parse=True, should find no results
-        assert len(results) == 0
+        # Should find result via raw content fallback
+        assert len(results) == 1
+        assert results[0]["match"] == "Hello"
 
 
 class TestGlobWithPermissions:

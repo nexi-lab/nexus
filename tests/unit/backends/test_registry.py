@@ -4,6 +4,8 @@ import pytest
 
 from nexus.backends.backend import Backend
 from nexus.backends.registry import (
+    ArgType,
+    ConnectionArg,
     ConnectorInfo,
     ConnectorRegistry,
     create_connector_from_config,
@@ -283,3 +285,132 @@ class TestBuiltinConnectorRegistration:
             assert info.connector_class == LocalBackend
             assert info.category == "storage"
             assert "local" in info.name.lower() or "Local" in info.description
+
+
+class TestConnectionArgs:
+    """Test CONNECTION_ARGS functionality."""
+
+    def test_connection_arg_dataclass(self):
+        """Test ConnectionArg dataclass creation."""
+        arg = ConnectionArg(
+            type=ArgType.STRING,
+            description="Test argument",
+            required=True,
+            default="default_value",
+            secret=False,
+            env_var="TEST_VAR",
+        )
+
+        assert arg.type == ArgType.STRING
+        assert arg.description == "Test argument"
+        assert arg.required is True
+        assert arg.default == "default_value"
+        assert arg.secret is False
+        assert arg.env_var == "TEST_VAR"
+
+    def test_connection_arg_to_dict(self):
+        """Test ConnectionArg serialization to dict."""
+        arg = ConnectionArg(
+            type=ArgType.SECRET,
+            description="Secret value",
+            required=False,
+            secret=True,
+            env_var="SECRET_VAR",
+        )
+
+        d = arg.to_dict()
+
+        assert d["type"] == "secret"
+        assert d["description"] == "Secret value"
+        assert d["required"] is False
+        assert d["secret"] is True
+        assert d["env_var"] == "SECRET_VAR"
+
+    def test_arg_types(self):
+        """Test all ArgType enum values."""
+        assert ArgType.STRING.value == "string"
+        assert ArgType.SECRET.value == "secret"
+        assert ArgType.PASSWORD.value == "password"
+        assert ArgType.INTEGER.value == "integer"
+        assert ArgType.BOOLEAN.value == "boolean"
+        assert ArgType.PATH.value == "path"
+        assert ArgType.OAUTH.value == "oauth"
+
+    def test_connector_with_connection_args(self):
+        """Test registering connector with CONNECTION_ARGS."""
+
+        @register_connector("test_with_args", description="Test with args")
+        class BackendWithArgs(DummyBackend):
+            CONNECTION_ARGS = {
+                "bucket_name": ConnectionArg(
+                    type=ArgType.STRING,
+                    description="Bucket name",
+                    required=True,
+                ),
+                "secret_key": ConnectionArg(
+                    type=ArgType.SECRET,
+                    description="Secret key",
+                    required=False,
+                    secret=True,
+                    env_var="SECRET_KEY",
+                ),
+            }
+
+        info = ConnectorRegistry.get_info("test_with_args")
+
+        # Test connection_args property
+        args = info.connection_args
+        assert "bucket_name" in args
+        assert "secret_key" in args
+        assert args["bucket_name"].required is True
+        assert args["secret_key"].secret is True
+
+        # Test get_required_args
+        required = info.get_required_args()
+        assert "bucket_name" in required
+        assert "secret_key" not in required
+
+        # Test get_secret_args
+        secrets = info.get_secret_args()
+        assert "secret_key" in secrets
+        assert "bucket_name" not in secrets
+
+    def test_connector_without_connection_args(self):
+        """Test connector without CONNECTION_ARGS returns empty dict."""
+
+        @register_connector("test_no_args", description="No args")
+        class BackendNoArgs(DummyBackend):
+            pass
+
+        info = ConnectorRegistry.get_info("test_no_args")
+
+        assert info.connection_args == {}
+        assert info.get_required_args() == []
+        assert info.get_secret_args() == []
+
+    def test_get_connection_args_method(self):
+        """Test ConnectorRegistry.get_connection_args method."""
+
+        @register_connector("test_get_args", description="Get args test")
+        class BackendGetArgs(DummyBackend):
+            CONNECTION_ARGS = {
+                "config_path": ConnectionArg(
+                    type=ArgType.PATH,
+                    description="Config path",
+                    required=True,
+                ),
+            }
+
+        args = ConnectorRegistry.get_connection_args("test_get_args")
+
+        assert "config_path" in args
+        assert args["config_path"].type == ArgType.PATH
+
+    def test_builtin_connectors_have_connection_args(self):
+        """Test that builtin connectors have CONNECTION_ARGS defined."""
+        from nexus.backends.local import LocalBackend
+
+        # LocalBackend should have CONNECTION_ARGS
+        assert hasattr(LocalBackend, "CONNECTION_ARGS")
+        assert "root_path" in LocalBackend.CONNECTION_ARGS
+        assert LocalBackend.CONNECTION_ARGS["root_path"].required is True

@@ -85,6 +85,11 @@ class SemanticSearch:
     async def index_document(self, path: str) -> int:
         """Index a document for semantic search.
 
+        Uses cached/parsed text when available:
+        - For connector files (GCS, S3, etc.): Uses content_cache.content_text
+        - For local files: Uses file_metadata.parsed_text
+        - Falls back to raw file content if no cached text available
+
         Args:
             path: Path to the document
 
@@ -94,12 +99,16 @@ class SemanticSearch:
         Raises:
             NexusFileNotFoundError: If file doesn't exist
         """
-        # Read document content
-        content_raw = self.nx.read(path)
-        if isinstance(content_raw, bytes):
-            content = content_raw.decode("utf-8", errors="ignore")
-        else:
-            content = str(content_raw)  # Handle dict or other types
+        # Try to get searchable text from cache first (content_cache or file_metadata)
+        content = self.nx.metadata.get_searchable_text(path)
+
+        # Fall back to reading raw content if no cached text
+        if content is None:
+            content_raw = self.nx.read(path)
+            if isinstance(content_raw, bytes):
+                content = content_raw.decode("utf-8", errors="ignore")
+            else:
+                content = str(content_raw)  # Handle dict or other types
 
         # Get path_id from database
         with self.nx.metadata.SessionLocal() as session:

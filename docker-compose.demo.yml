@@ -122,6 +122,10 @@ services:
       # Set to 'false' to disable permission checks at runtime
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
 
+      # Mount auto-sync behavior
+      # Set to 'true' to skip automatic sync on mount loading (faster startup)
+      NEXUS_SKIP_AUTO_SYNC: ${NEXUS_SKIP_AUTO_SYNC:-true}
+
       # Configuration file path (defaults to config.demo.yaml if not specified)
       NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}
     volumes:

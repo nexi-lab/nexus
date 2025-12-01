@@ -219,6 +219,22 @@ class NexusFSMountsMixin:
                 cache_ttl=backend_config.get("cache_ttl"),
                 cache_dir=backend_config.get("cache_dir"),
             )
+        elif backend_type == "gmail_connector":
+            from nexus.backends.gmail_connector import GmailConnectorBackend
+
+            # Get session factory for caching support if available
+            session_factory = None
+            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
+                session_factory = self.metadata.SessionLocal
+
+            backend = GmailConnectorBackend(
+                token_manager_db=backend_config["token_manager_db"],
+                user_email=backend_config.get("user_email"),
+                # Session factory for caching support
+                session_factory=session_factory,
+                max_results=backend_config.get("max_results", 100),
+                labels=backend_config.get("labels", ["INBOX"]),
+            )
         else:
             raise RuntimeError(f"Unsupported backend type: {backend_type}")
 
@@ -660,6 +676,7 @@ class NexusFSMountsMixin:
         for mount in saved_mounts:
             mount_point = mount["mount_point"]
             try:
+                print(f"[DEBUG-MOUNT-LOOP] Processing mount: {mount_point}")
                 logger.info(f"Loading mount: {mount_point} ({mount['backend_type']})")
 
                 # Parse backend config from JSON (if it's a string)
@@ -669,6 +686,7 @@ class NexusFSMountsMixin:
                 if isinstance(backend_config, str):
                     backend_config = json.loads(backend_config)
 
+                print(f"[DEBUG-MOUNT-LOOP] Calling add_mount for {mount_point}...")
                 # Activate the mount using add_mount
                 self.add_mount(
                     mount_point=mount_point,
@@ -677,14 +695,20 @@ class NexusFSMountsMixin:
                     priority=mount["priority"],
                     readonly=bool(mount["readonly"]),
                 )
+                print(f"[DEBUG-MOUNT-LOOP] add_mount completed for {mount_point}")
 
                 loaded += 1
                 logger.info(f"✓ Successfully loaded mount: {mount_point}")
 
                 # Try to sync connector backends after loading
+                # Skip if NEXUS_SKIP_AUTO_SYNC is set to 'true' (for faster startup)
+                import os
+                skip_auto_sync = os.getenv("NEXUS_SKIP_AUTO_SYNC", "false").lower() == "true"
                 backend_type = mount["backend_type"]
-                if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
+                print(f"[DEBUG-MOUNT-LOOP] Checking if {mount_point} needs sync (backend_type={backend_type}, skip_auto_sync={skip_auto_sync})...")
+                if not skip_auto_sync and ("connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]):
                     try:
+                        print(f"[DEBUG-MOUNT-LOOP] Starting sync for {mount_point} with timeout...")
                         logger.info(f"Syncing connector mount: {mount_point}")
                         # Create a minimal context from mount owner if available
                         sync_context = None
@@ -707,28 +731,78 @@ class NexusFSMountsMixin:
                             logger.info(
                                 f"Using owner context for sync: {subject_type}:{subject_id}"
                             )
-                        sync_result = self.sync_mount(
-                            mount_point, recursive=True, dry_run=False, context=sync_context
-                        )
-                        synced += 1
-                        logger.info(
-                            f"✓ Synced {mount_point}: "
-                            f"{sync_result['files_scanned']} scanned, "
-                            f"{sync_result['files_created']} created, "
-                            f"{sync_result['files_updated']} updated, "
-                            f"{sync_result['files_deleted']} deleted"
-                        )
+
+                        # Run sync with timeout to prevent blocking startup
+                        import os
+                        import queue
+                        import threading
+
+                        # Get timeout from environment (default: 30 seconds for startup sync)
+                        sync_timeout = int(os.getenv("NEXUS_MOUNT_SYNC_TIMEOUT", "30"))
+
+                        result_queue: queue.Queue = queue.Queue()
+
+                        def _sync_worker():
+                            try:
+                                result = self.sync_mount(
+                                    mount_point, recursive=True, dry_run=False, context=sync_context
+                                )
+                                result_queue.put(("success", result))
+                            except Exception as e:
+                                result_queue.put(("error", str(e)))
+
+                        print(f"[DEBUG-MOUNT-LOOP] Calling sync_mount for {mount_point} with {sync_timeout}s timeout...")
+                        sync_thread = threading.Thread(target=_sync_worker, daemon=True)
+                        sync_thread.start()
+                        sync_thread.join(timeout=sync_timeout)
+
+                        if sync_thread.is_alive():
+                            # Timeout occurred
+                            print(f"[DEBUG-MOUNT-LOOP] Sync timeout for {mount_point} after {sync_timeout}s, skipping...")
+                            logger.warning(
+                                f"Sync timeout for {mount_point} after {sync_timeout}s. "
+                                "Mount is loaded but not fully synced. Run sync_mount() manually to complete sync."
+                            )
+                        else:
+                            # Sync completed within timeout
+                            try:
+                                status, result = result_queue.get_nowait()
+                                if status == "success":
+                                    print(f"[DEBUG-MOUNT-LOOP] Sync completed for {mount_point}")
+                                    synced += 1
+                                    logger.info(
+                                        f"✓ Synced {mount_point}: "
+                                        f"{result['files_scanned']} scanned, "
+                                        f"{result['files_created']} created, "
+                                        f"{result['files_updated']} updated, "
+                                        f"{result['files_deleted']} deleted"
+                                    )
+                                else:
+                                    print(f"[DEBUG-MOUNT-LOOP] Sync failed for {mount_point}: {result}")
+                                    logger.warning(f"Failed to sync {mount_point}: {result}")
+                            except queue.Empty:
+                                logger.warning(f"Sync for {mount_point} completed but no result available")
+
                     except Exception as sync_e:
                         # Log sync error but don't fail the mount
+                        print(f"[DEBUG-MOUNT-LOOP] Sync exception for {mount_point}: {sync_e}")
                         logger.warning(f"Failed to sync {mount_point}: {str(sync_e)}")
+                else:
+                    if skip_auto_sync:
+                        print(f"[DEBUG-MOUNT-LOOP] Skipping auto-sync for {mount_point} (NEXUS_SKIP_AUTO_SYNC=true)")
+                        logger.info(f"⏭️  Skipped auto-sync for {mount_point} (disabled via NEXUS_SKIP_AUTO_SYNC)")
+                    else:
+                        print(f"[DEBUG-MOUNT-LOOP] Skipping sync for {mount_point} (not a connector)")
 
             except Exception as e:
                 failed += 1
                 error_msg = f"Failed to load mount {mount_point}: {str(e)}"
                 errors.append(error_msg)
                 logger.error(error_msg)
+                print(f"[DEBUG-MOUNT-LOOP] Exception caught for {mount_point}, continuing...")
                 # Continue loading other mounts even if one fails
 
+        print("[DEBUG-MOUNT-LOOP] All mounts processed, returning result...")
         logger.info(f"Mount loading complete: {loaded} loaded, {synced} synced, {failed} failed")
 
         return {"loaded": loaded, "synced": synced, "failed": failed, "errors": errors}
@@ -1220,6 +1294,19 @@ class NexusFSMountsMixin:
                         else:
                             cache_sync_path = path.lstrip("/")
 
+                    # Retrieve history_id from backend_config (for Gmail incremental sync)
+                    history_id = None
+                    if hasattr(self, "mount_manager") and self.mount_manager:
+                        try:
+                            mount_config = self.mount_manager.get_mount(mount_point)
+                            if mount_config and "backend_config" in mount_config:
+                                backend_config = mount_config["backend_config"]
+                                history_id = backend_config.get("history_id")
+                                if history_id:
+                                    logger.info(f"[SYNC_MOUNT] Using history_id from backend_config: {history_id}")
+                        except Exception as e:
+                            logger.warning(f"[SYNC_MOUNT] Failed to retrieve history_id: {e}")
+
                     cache_result: CacheSyncResult = backend.sync(
                         path=cache_sync_path,
                         mount_point=mount_point,
@@ -1227,6 +1314,7 @@ class NexusFSMountsMixin:
                         exclude_patterns=exclude_patterns,
                         generate_embeddings=generate_embeddings,
                         context=context,
+                        history_id=history_id,  # Pass history_id for incremental sync
                     )
 
                     stats["cache_synced"] = cache_result.files_synced
@@ -1238,6 +1326,26 @@ class NexusFSMountsMixin:
                     if cache_result.errors:
                         for error in cache_result.errors:
                             cast(list[str], stats["errors"]).append(f"[cache] {error}")
+
+                    # Update backend_config with new history_id (for Gmail incremental sync)
+                    if hasattr(cache_result, "history_id") and cache_result.history_id:
+                        if hasattr(self, "mount_manager") and self.mount_manager:
+                            try:
+                                # Get current backend_config and merge in new history_id
+                                mount_config = self.mount_manager.get_mount(mount_point)
+                                if mount_config and "backend_config" in mount_config:
+                                    updated_config = mount_config["backend_config"].copy()
+                                    updated_config["history_id"] = cache_result.history_id
+                                    self.mount_manager.update_mount(
+                                        mount_point=mount_point,
+                                        backend_config=updated_config
+                                    )
+                                    logger.info(
+                                        f"[SYNC_MOUNT] Updated backend_config with new history_id: "
+                                        f"{cache_result.history_id}"
+                                    )
+                            except Exception as e:
+                                logger.warning(f"[SYNC_MOUNT] Failed to update history_id: {e}")
 
                     logger.info(
                         f"[SYNC_MOUNT] Content cache sync complete: "

@@ -360,25 +360,37 @@ class NexusFS(
 
         # Load all saved mounts from database and activate them
         # This ensures persisted mounts are restored on server startup
-        try:
-            if hasattr(self, "load_all_saved_mounts"):
-                mount_result = self.load_all_saved_mounts()
-                if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
-                    import logging
+        # Skip if NEXUS_SKIP_MOUNT_LOADING is set (e.g., during schema initialization)
+        import os
+        skip_mount_loading = os.getenv("NEXUS_SKIP_MOUNT_LOADING", "").lower() in ("true", "1", "yes")
 
-                    logger = logging.getLogger(__name__)
-                    logger.info(
-                        f"🔄 Mount restoration: {mount_result['loaded']} loaded, {mount_result['failed']} failed"
-                    )
-                    if mount_result["errors"]:
-                        for error in mount_result["errors"]:
-                            logger.error(f"  ❌ {error}")
-        except Exception as e:
-            # Log warning but don't fail initialization if mount loading fails
-            import logging
+        if skip_mount_loading:
+            print("[DEBUG-MOUNT] Skipping mount loading (NEXUS_SKIP_MOUNT_LOADING=true)")
+        else:
+            try:
+                import logging
+                logger = logging.getLogger(__name__)
 
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to load saved mounts during initialization: {e}")
+                print("[DEBUG-MOUNT] Starting saved mount loading...")
+                if hasattr(self, "load_all_saved_mounts"):
+                    print("[DEBUG-MOUNT] Calling load_all_saved_mounts()...")
+                    mount_result = self.load_all_saved_mounts()
+                    print(f"[DEBUG-MOUNT] load_all_saved_mounts() completed with result: {mount_result}")
+                    if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
+                        logger.info(
+                            f"🔄 Mount restoration: {mount_result['loaded']} loaded, {mount_result['failed']} failed"
+                        )
+                        if mount_result["errors"]:
+                            for error in mount_result["errors"]:
+                                logger.error(f"  ❌ {error}")
+                print("[DEBUG-MOUNT] Saved mount loading finished")
+            except Exception as e:
+                # Log warning but don't fail initialization if mount loading fails
+                import logging
+
+                logger = logging.getLogger(__name__)
+                print(f"[DEBUG-MOUNT] Exception during saved mount loading: {e}")
+                logger.warning(f"Failed to load saved mounts during initialization: {e}")
 
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
         """

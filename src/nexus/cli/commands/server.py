@@ -494,17 +494,21 @@ def serve(
 
                             try:
                                 # Create backend instance
-                                console.print(f"  [dim]→ Creating {backend_type} backend for {mount_point}...[/dim]")
+                                console.print(
+                                    f"  [dim]→ Creating {backend_type} backend for {mount_point}...[/dim]"
+                                )
                                 backend = create_backend_from_config(backend_type, backend_cfg)
-                                console.print(f"  [dim]→ Backend instance created successfully[/dim]")
+                                console.print(
+                                    "  [dim]→ Backend instance created successfully[/dim]"
+                                )
 
                                 # Add mount to router (nx is NexusFS at this point)
                                 # If mount_point already exists, it will be replaced
-                                console.print(f"  [dim]→ Adding mount to router...[/dim]")
+                                console.print("  [dim]→ Adding mount to router...[/dim]")
                                 nx.router.add_mount(
                                     mount_point, backend, priority, readonly, replace=True
                                 )
-                                console.print(f"  [dim]→ Mount added to router successfully[/dim]")
+                                console.print("  [dim]→ Mount added to router successfully[/dim]")
 
                                 readonly_str = " (read-only)" if readonly else ""
                                 console.print(
@@ -550,7 +554,9 @@ def serve(
                                 # This ensures the admin can list/read/write files in config-mounted backends
                                 if mount_point != "/":  # Skip root mount (already has permissions)
                                     try:
-                                        console.print(f"  [dim]→ Granting permissions to {admin_user}...[/dim]")
+                                        console.print(
+                                            f"  [dim]→ Granting permissions to {admin_user}...[/dim]"
+                                        )
                                         # Grant direct_owner to admin for full access
                                         nx.rebac_create(
                                             subject=("user", admin_user),
@@ -574,9 +580,13 @@ def serve(
                                             console.print(
                                                 f"    [dim]→ Syncing metadata from {backend_type}...[/dim]"
                                             )
-                                            console.print(f"    [dim]→ Calling nx.sync_mount({mount_point}, recursive=True)...[/dim]")
+                                            console.print(
+                                                f"    [dim]→ Calling nx.sync_mount({mount_point}, recursive=True)...[/dim]"
+                                            )
                                             sync_result = nx.sync_mount(mount_point, recursive=True)
-                                            console.print(f"    [dim]→ Sync completed successfully[/dim]")
+                                            console.print(
+                                                "    [dim]→ Sync completed successfully[/dim]"
+                                            )
                                             if sync_result["files_added"] > 0:
                                                 console.print(
                                                     f"    [dim]→ Discovered {sync_result['files_added']} files[/dim]"

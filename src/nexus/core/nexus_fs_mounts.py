@@ -703,10 +703,15 @@ class NexusFSMountsMixin:
                 # Try to sync connector backends after loading
                 # Skip if NEXUS_SKIP_AUTO_SYNC is set to 'true' (for faster startup)
                 import os
+
                 skip_auto_sync = os.getenv("NEXUS_SKIP_AUTO_SYNC", "false").lower() == "true"
                 backend_type = mount["backend_type"]
-                print(f"[DEBUG-MOUNT-LOOP] Checking if {mount_point} needs sync (backend_type={backend_type}, skip_auto_sync={skip_auto_sync})...")
-                if not skip_auto_sync and ("connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]):
+                print(
+                    f"[DEBUG-MOUNT-LOOP] Checking if {mount_point} needs sync (backend_type={backend_type}, skip_auto_sync={skip_auto_sync})..."
+                )
+                if not skip_auto_sync and (
+                    "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]
+                ):
                     try:
                         print(f"[DEBUG-MOUNT-LOOP] Starting sync for {mount_point} with timeout...")
                         logger.info(f"Syncing connector mount: {mount_point}")
@@ -751,14 +756,18 @@ class NexusFSMountsMixin:
                             except Exception as e:
                                 result_queue.put(("error", str(e)))
 
-                        print(f"[DEBUG-MOUNT-LOOP] Calling sync_mount for {mount_point} with {sync_timeout}s timeout...")
+                        print(
+                            f"[DEBUG-MOUNT-LOOP] Calling sync_mount for {mount_point} with {sync_timeout}s timeout..."
+                        )
                         sync_thread = threading.Thread(target=_sync_worker, daemon=True)
                         sync_thread.start()
                         sync_thread.join(timeout=sync_timeout)
 
                         if sync_thread.is_alive():
                             # Timeout occurred
-                            print(f"[DEBUG-MOUNT-LOOP] Sync timeout for {mount_point} after {sync_timeout}s, skipping...")
+                            print(
+                                f"[DEBUG-MOUNT-LOOP] Sync timeout for {mount_point} after {sync_timeout}s, skipping..."
+                            )
                             logger.warning(
                                 f"Sync timeout for {mount_point} after {sync_timeout}s. "
                                 "Mount is loaded but not fully synced. Run sync_mount() manually to complete sync."
@@ -778,10 +787,14 @@ class NexusFSMountsMixin:
                                         f"{result['files_deleted']} deleted"
                                     )
                                 else:
-                                    print(f"[DEBUG-MOUNT-LOOP] Sync failed for {mount_point}: {result}")
+                                    print(
+                                        f"[DEBUG-MOUNT-LOOP] Sync failed for {mount_point}: {result}"
+                                    )
                                     logger.warning(f"Failed to sync {mount_point}: {result}")
                             except queue.Empty:
-                                logger.warning(f"Sync for {mount_point} completed but no result available")
+                                logger.warning(
+                                    f"Sync for {mount_point} completed but no result available"
+                                )
 
                     except Exception as sync_e:
                         # Log sync error but don't fail the mount
@@ -789,10 +802,16 @@ class NexusFSMountsMixin:
                         logger.warning(f"Failed to sync {mount_point}: {str(sync_e)}")
                 else:
                     if skip_auto_sync:
-                        print(f"[DEBUG-MOUNT-LOOP] Skipping auto-sync for {mount_point} (NEXUS_SKIP_AUTO_SYNC=true)")
-                        logger.info(f"⏭️  Skipped auto-sync for {mount_point} (disabled via NEXUS_SKIP_AUTO_SYNC)")
+                        print(
+                            f"[DEBUG-MOUNT-LOOP] Skipping auto-sync for {mount_point} (NEXUS_SKIP_AUTO_SYNC=true)"
+                        )
+                        logger.info(
+                            f"⏭️  Skipped auto-sync for {mount_point} (disabled via NEXUS_SKIP_AUTO_SYNC)"
+                        )
                     else:
-                        print(f"[DEBUG-MOUNT-LOOP] Skipping sync for {mount_point} (not a connector)")
+                        print(
+                            f"[DEBUG-MOUNT-LOOP] Skipping sync for {mount_point} (not a connector)"
+                        )
 
             except Exception as e:
                 failed += 1
@@ -1303,7 +1322,9 @@ class NexusFSMountsMixin:
                                 backend_config = mount_config["backend_config"]
                                 history_id = backend_config.get("history_id")
                                 if history_id:
-                                    logger.info(f"[SYNC_MOUNT] Using history_id from backend_config: {history_id}")
+                                    logger.info(
+                                        f"[SYNC_MOUNT] Using history_id from backend_config: {history_id}"
+                                    )
                         except Exception as e:
                             logger.warning(f"[SYNC_MOUNT] Failed to retrieve history_id: {e}")
 
@@ -1337,8 +1358,7 @@ class NexusFSMountsMixin:
                                     updated_config = mount_config["backend_config"].copy()
                                     updated_config["history_id"] = cache_result.history_id
                                     self.mount_manager.update_mount(
-                                        mount_point=mount_point,
-                                        backend_config=updated_config
+                                        mount_point=mount_point, backend_config=updated_config
                                     )
                                     logger.info(
                                         f"[SYNC_MOUNT] Updated backend_config with new history_id: "

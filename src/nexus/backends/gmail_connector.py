@@ -46,10 +46,7 @@ Authentication:
 
 import base64
 import email
-import hashlib
 import logging
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
@@ -180,9 +177,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                 )
                 # Register with TokenManager
                 self.token_manager.register_provider(self.provider, provider_instance)
-                logger.info(
-                    f"✓ Registered OAuth provider '{self.provider}' for Gmail backend"
-                )
+                logger.info(f"✓ Registered OAuth provider '{self.provider}' for Gmail backend")
             except ValueError as e:
                 logger.warning(
                     f"OAuth provider '{self.provider}' not available: {e}. "
@@ -205,7 +200,9 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         """Check if caching is enabled (session factory or db_session available)."""
         return self.session_factory is not None or self.db_session is not None
 
-    def _create_yaml_content(self, headers: dict[str, str], text_body: str, labels: list[str] | None = None) -> str:
+    def _create_yaml_content(
+        self, headers: dict[str, str], text_body: str, labels: list[str] | None = None
+    ) -> str:
         """
         Create YAML content with literal block scalar style for text_body.
 
@@ -226,19 +223,20 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         # This forces text_body to use literal block scalar style (|)
         class LiteralString(str):
             """String subclass to force literal block scalar style in YAML."""
+
             pass
 
         def literal_representer(dumper: yaml.Dumper, data: LiteralString) -> yaml.Node:
             """Represent LiteralString as literal block scalar (|)."""
-            if '\n' in data:
-                return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
-            return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+            if "\n" in data:
+                return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+            return dumper.represent_scalar("tag:yaml.org,2002:str", data)
 
         yaml.add_representer(LiteralString, literal_representer)
 
         # Normalize line endings (CRLF -> LF) before creating LiteralString
         # Email content uses RFC 822 format with CRLF, but we want clean LF for YAML
-        normalized_text = text_body.replace('\r\n', '\n').replace('\r', '\n')
+        normalized_text = text_body.replace("\r\n", "\n").replace("\r", "\n")
 
         # Create YAML structure with LiteralString for text_body
         yaml_data = {
@@ -375,7 +373,9 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
 
                 params["pageToken"] = next_page_token
 
-            logger.info(f"Initial sync: Fetched {len(messages)} messages from Gmail (historyId: {latest_history_id})")
+            logger.info(
+                f"Initial sync: Fetched {len(messages)} messages from Gmail (historyId: {latest_history_id})"
+            )
             return messages, latest_history_id
 
         except Exception as e:
@@ -504,7 +504,10 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             else:
                 # Fallback: fetch raw format separately
                 raw_message = (
-                    service.users().messages().get(userId="me", id=message_id, format="raw").execute()
+                    service.users()
+                    .messages()
+                    .get(userId="me", id=message_id, format="raw")
+                    .execute()
                 )
                 raw_data = raw_message.get("raw", "")
                 raw_bytes = base64.urlsafe_b64decode(raw_data)
@@ -585,9 +588,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
 
         return "\n\n".join(text_parts)
 
-    def _extract_text_and_html_from_message(
-        self, msg: email.message.Message
-    ) -> tuple[str, str]:
+    def _extract_text_and_html_from_message(self, msg: email.message.Message) -> tuple[str, str]:
         """Extract both plain text and HTML from email message.
 
         Args:
@@ -680,7 +681,9 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
 
         # Validate that mount_point is provided (required for cache path consistency)
         if not mount_point:
-            raise ValueError("mount_point is required for Gmail sync (needed for cache path consistency)")
+            raise ValueError(
+                "mount_point is required for Gmail sync (needed for cache path consistency)"
+            )
 
         try:
             service = self._get_gmail_service(context)
@@ -692,7 +695,9 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             else:
                 labels_to_sync = self.labels
 
-            logger.info(f"[GMAIL-SYNC] path={repr(path)}, self.labels={self.labels}, labels_to_sync={labels_to_sync}")
+            logger.info(
+                f"[GMAIL-SYNC] path={repr(path)}, self.labels={self.labels}, labels_to_sync={labels_to_sync}"
+            )
 
             for label in labels_to_sync:
                 logger.info(f"[GMAIL-SYNC] Processing label: {repr(label)}")
@@ -703,10 +708,12 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                 if history_id:
                     # Incremental sync: fetch only changes since last sync
                     logger.info(f"Incremental sync for {label} (historyId: {history_id})")
-                    messages_added, messages_deleted, label_history_id = self._fetch_messages_incremental(
-                        service,
-                        start_history_id=history_id,
-                        label_ids=[label],
+                    messages_added, messages_deleted, label_history_id = (
+                        self._fetch_messages_incremental(
+                            service,
+                            start_history_id=history_id,
+                            label_ids=[label],
+                        )
                     )
 
                     # If incremental sync failed (e.g., history too old), fall back to full sync
@@ -739,11 +746,15 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                     # Construct full virtual paths with mount point for cache consistency
                     virtual_path = f"{mount_point}/{label.lower()}/{msg_id}.yaml"
                     html_path = f"{mount_point}/{label.lower()}/.{msg_id}.html"
-                    logger.info(f"[GMAIL-SYNC] Constructed paths: virtual_path={virtual_path}, html_path={html_path}")
+                    logger.info(
+                        f"[GMAIL-SYNC] Constructed paths: virtual_path={virtual_path}, html_path={html_path}"
+                    )
 
                     try:
                         # Fetch full message content
-                        headers, text_body, html_body, labels, raw_bytes = self._get_message_content(service, msg_id)
+                        headers, text_body, html_body, labels, raw_bytes = (
+                            self._get_message_content(service, msg_id)
+                        )
 
                         # Check size
                         max_size = max_file_size or self.MAX_CACHE_FILE_SIZE
@@ -798,7 +809,11 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                                         content_type="full",
                                         backend_version=None,
                                         parsed_from="gmail",
-                                        parse_metadata={"message_id": msg_id, "label": label, "type": "html_body"},
+                                        parse_metadata={
+                                            "message_id": msg_id,
+                                            "label": label,
+                                            "type": "html_body",
+                                        },
                                         tenant_id=tenant_id,
                                     )
 
@@ -889,7 +904,9 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             BackendError: If read operation fails
         """
         # Get virtual path for cache lookup
-        virtual_path = context.backend_path if context and hasattr(context, "backend_path") else content_hash
+        virtual_path = (
+            context.backend_path if context and hasattr(context, "backend_path") else content_hash
+        )
         if context and hasattr(context, "virtual_path") and context.virtual_path:
             virtual_path = context.virtual_path
 
@@ -911,6 +928,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             # Extract message ID from virtual path if needed
             # Format: /{label}/{msg_id}.yaml or /{label}/.{msg_id}.html
             import os
+
             filename = os.path.basename(virtual_path) if virtual_path else content_hash
             is_html = filename.startswith(".") and filename.endswith(".html")
             is_yaml = filename.endswith(".yaml")
@@ -924,7 +942,9 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                 msg_id = content_hash  # Fallback to content_hash
 
             # Fetch message content
-            headers, text_body, html_body, labels, raw_bytes = self._get_message_content(service, msg_id)
+            headers, text_body, html_body, labels, raw_bytes = self._get_message_content(
+                service, msg_id
+            )
 
             # Determine what to return based on file type
             if is_html:
@@ -1043,7 +1063,10 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
 
             # Get message metadata
             message = (
-                service.users().messages().get(userId="me", id=content_hash, format="minimal").execute()
+                service.users()
+                .messages()
+                .get(userId="me", id=content_hash, format="minimal")
+                .execute()
             )
 
             size = message.get("sizeEstimate", 0)

@@ -1,7 +1,7 @@
 """Unit tests for Gmail connector backend with OAuth and caching support."""
 
-from unittest.mock import Mock, patch, MagicMock
 import warnings
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -121,7 +121,9 @@ class TestGmailConnectorInitialization:
             assert backend.session_factory is mock_session_factory
             assert backend.db_session is None
 
-    def test_init_with_db_session_shows_deprecation_warning(self, mock_token_manager, mock_db_session):
+    def test_init_with_db_session_shows_deprecation_warning(
+        self, mock_token_manager, mock_db_session
+    ):
         """Test that using db_session shows deprecation warning."""
         with patch("nexus.server.auth.oauth_factory.OAuthProviderFactory"):
             with warnings.catch_warnings(record=True) as w:
@@ -221,7 +223,9 @@ class TestReadContent:
     ):
         """Test read_content fetches from Gmail on cache miss."""
         # Mock cache miss
-        with patch.object(gmail_connector_with_cache, "_read_from_cache", side_effect=Exception("Not in cache")):
+        with patch.object(
+            gmail_connector_with_cache, "_read_from_cache", side_effect=Exception("Not in cache")
+        ):
             with patch.object(gmail_connector_with_cache, "_get_gmail_service") as mock_service:
                 # Mock Gmail API response
                 mock_gmail = Mock()
@@ -230,13 +234,17 @@ class TestReadContent:
                 mock_service.return_value = mock_gmail
 
                 with patch.object(gmail_connector_with_cache, "_write_to_cache"):
-                    result = gmail_connector_with_cache.read_content("message123", operation_context)
+                    result = gmail_connector_with_cache.read_content(
+                        "message123", operation_context
+                    )
 
                     assert result == b"Hello World!"
                     # Should cache the result
                     gmail_connector_with_cache._write_to_cache.assert_called_once()
 
-    def test_read_content_no_cache_fetches_from_gmail(self, gmail_connector_no_cache, operation_context):
+    def test_read_content_no_cache_fetches_from_gmail(
+        self, gmail_connector_no_cache, operation_context
+    ):
         """Test read_content without caching fetches directly from Gmail."""
         with patch.object(gmail_connector_no_cache, "_get_gmail_service") as mock_service:
             # Mock Gmail API response
@@ -251,11 +259,15 @@ class TestReadContent:
 
     def test_read_content_not_found(self, gmail_connector_with_cache, operation_context):
         """Test read_content raises error when message not found."""
-        with patch.object(gmail_connector_with_cache, "_read_from_cache", side_effect=Exception("Not in cache")):
+        with patch.object(
+            gmail_connector_with_cache, "_read_from_cache", side_effect=Exception("Not in cache")
+        ):
             with patch.object(gmail_connector_with_cache, "_get_gmail_service") as mock_service:
                 # Mock Gmail API 404
                 mock_gmail = Mock()
-                mock_gmail.users().messages().get().execute.side_effect = Exception("404: Not found")
+                mock_gmail.users().messages().get().execute.side_effect = Exception(
+                    "404: Not found"
+                )
                 mock_service.return_value = mock_gmail
 
                 with pytest.raises(NexusFileNotFoundError):
@@ -292,7 +304,9 @@ class TestSync:
                     assert mock_cache.called
                     assert result.files_synced > 0
 
-    def test_sync_without_cache_skips_cache_operations(self, gmail_connector_no_cache, operation_context):
+    def test_sync_without_cache_skips_cache_operations(
+        self, gmail_connector_no_cache, operation_context
+    ):
         """Test that sync skips cache operations when caching is disabled."""
         with patch.object(gmail_connector_no_cache, "_get_gmail_service") as mock_service:
             # Mock Gmail API responses
@@ -348,9 +362,7 @@ class TestSync:
             # Mock Gmail History API response with deleted message
             mock_gmail = Mock()
             mock_gmail.users().history().list().execute.return_value = {
-                "history": [
-                    {"messagesDeleted": [{"message": {"id": "deleted_msg"}}]}
-                ],
+                "history": [{"messagesDeleted": [{"message": {"id": "deleted_msg"}}]}],
                 "historyId": "67890",
             }
             mock_service.return_value = mock_gmail
@@ -552,10 +564,11 @@ class TestListDir:
 class TestYAMLFormatting:
     """Test YAML formatting with literal block scalars for text_body."""
 
-    def test_text_body_uses_literal_block_scalar(self, gmail_connector_with_cache, operation_context):
+    def test_text_body_uses_literal_block_scalar(
+        self, gmail_connector_with_cache, operation_context
+    ):
         """Test that text_body field uses YAML literal block scalar (|) to preserve newlines."""
         import base64
-        import email
 
         # Create a realistic email with newlines in the text body
         email_content = """From: sender@example.com
@@ -595,11 +608,14 @@ Test Sender"""
 
             # Mock _write_to_cache to capture what's being written
             written_yaml_content = None
+
             def capture_write(*args, **kwargs):
                 nonlocal written_yaml_content
                 written_yaml_content = kwargs.get("content")
 
-            with patch.object(gmail_connector_with_cache, "_write_to_cache", side_effect=capture_write):
+            with patch.object(
+                gmail_connector_with_cache, "_write_to_cache", side_effect=capture_write
+            ):
                 # Sync to write the message
                 gmail_connector_with_cache.sync(
                     path="INBOX",
@@ -627,6 +643,7 @@ Test Sender"""
 
             # Parse the YAML to verify structure
             import yaml
+
             parsed = yaml.safe_load(yaml_str)
 
             # Verify the structure
@@ -644,7 +661,6 @@ Test Sender"""
     def test_yaml_includes_cc_bcc_and_labels(self, gmail_connector_with_cache, operation_context):
         """Test that YAML includes cc, bcc, and labels fields when present."""
         import base64
-        import email
 
         # Create an email with cc, bcc, and labels
         email_content = """From: sender@example.com
@@ -681,11 +697,14 @@ Test email body."""
 
             # Mock _write_to_cache to capture what's being written
             written_yaml_content = None
+
             def capture_write(*args, **kwargs):
                 nonlocal written_yaml_content
                 written_yaml_content = kwargs.get("content")
 
-            with patch.object(gmail_connector_with_cache, "_write_to_cache", side_effect=capture_write):
+            with patch.object(
+                gmail_connector_with_cache, "_write_to_cache", side_effect=capture_write
+            ):
                 # Sync to write the message
                 gmail_connector_with_cache.sync(
                     path="INBOX",
@@ -698,6 +717,7 @@ Test email body."""
 
             # Decode and parse the YAML content
             import yaml
+
             yaml_str = written_yaml_content.decode("utf-8")
             parsed = yaml.safe_load(yaml_str)
 
@@ -718,7 +738,6 @@ Test email body."""
         Uses actual content from LinkedIn message 19ad169a81e10dcd fetched via Gmail API.
         """
         import base64
-        import email
 
         # Actual LinkedIn email with CRLF line endings (RFC 822 format)
         # Extracted from real Gmail message ID 19ad169a81e10dcd
@@ -728,8 +747,8 @@ Test email body."""
             "Subject: The problem with 'device hoarding'\r\n"
             "MIME-Version: 1.0\r\n"
             "Content-Type: multipart/alternative; \r\n"
-            "\tboundary=\"----=_Part_19257947_1644883092.1764449946483\"\r\n"
-            "To: \"Joe (Jinjing) Zhou\" <jinjing@multifi.ai>\r\n"
+            '\tboundary="----=_Part_19257947_1644883092.1764449946483"\r\n'
+            'To: "Joe (Jinjing) Zhou" <jinjing@multifi.ai>\r\n'
             "Date: Sat, 29 Nov 2025 20:59:06 +0000 (UTC)\r\n"
             "X-LinkedIn-Class: EMAIL-DEFAULT\r\n"
             "X-LinkedIn-Template: email_editorial_suggested_top_conversations_01\r\n"
@@ -784,6 +803,7 @@ Test email body."""
 
             # Mock _write_to_cache to capture what's being written
             written_yaml_content = None
+
             def capture_write(*args, **kwargs):
                 nonlocal written_yaml_content
                 # Only capture the YAML file, not the HTML file
@@ -791,7 +811,9 @@ Test email body."""
                 if path.endswith(".yaml"):
                     written_yaml_content = kwargs.get("content")
 
-            with patch.object(gmail_connector_with_cache, "_write_to_cache", side_effect=capture_write):
+            with patch.object(
+                gmail_connector_with_cache, "_write_to_cache", side_effect=capture_write
+            ):
                 # Sync to write the message
                 gmail_connector_with_cache.sync(
                     path="INBOX",
@@ -819,12 +841,16 @@ Test email body."""
 
             # Parse the YAML to verify content
             import yaml
+
             parsed = yaml.safe_load(yaml_str)
 
             # Verify the text body was properly parsed
             text_body = parsed["text_body"]
             # Check for content from the actual LinkedIn email
-            assert "This email was intended for Joe (Jinjing) Zhou (Co-Founder @ MultiFi.ai)" in text_body
+            assert (
+                "This email was intended for Joe (Jinjing) Zhou (Co-Founder @ MultiFi.ai)"
+                in text_body
+            )
             assert "https://www.linkedin.com/help/linkedin/answer/4788" in text_body
             assert "You are receiving Suggested Top Conversations emails" in text_body
             assert "2025 LinkedIn Corporation" in text_body
@@ -918,8 +944,7 @@ class TestGmailCachePathFix:
             yaml_paths = [p for p in written_paths if p.endswith(".yaml")]
             assert len(yaml_paths) >= 1, "Should have written YAML cache entry"
             assert yaml_paths[0] == f"{mount_point}/inbox/msg123.yaml", (
-                f"YAML path should be '{mount_point}/inbox/msg123.yaml', "
-                f"got '{yaml_paths[0]}'"
+                f"YAML path should be '{mount_point}/inbox/msg123.yaml', got '{yaml_paths[0]}'"
             )
 
     def test_virtual_path_includes_label_folder(
@@ -1036,15 +1061,13 @@ class TestGmailCachePathFix:
                 # If read succeeds, verify it used the correct path
                 assert len(read_paths) > 0
                 assert read_paths[0] == full_path, (
-                    f"read_content should use full path '{full_path}', "
-                    f"got '{read_paths[0]}'"
+                    f"read_content should use full path '{full_path}', got '{read_paths[0]}'"
                 )
             except NexusFileNotFoundError:
                 # If file not found, still verify the path attempted was correct
                 assert len(read_paths) > 0
                 assert read_paths[0] == full_path, (
-                    f"Cache lookup should use full path '{full_path}', "
-                    f"got '{read_paths[0]}'"
+                    f"Cache lookup should use full path '{full_path}', got '{read_paths[0]}'"
                 )
 
 

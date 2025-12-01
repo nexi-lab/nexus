@@ -362,20 +362,28 @@ class NexusFS(
         # This ensures persisted mounts are restored on server startup
         # Skip if NEXUS_SKIP_MOUNT_LOADING is set (e.g., during schema initialization)
         import os
-        skip_mount_loading = os.getenv("NEXUS_SKIP_MOUNT_LOADING", "").lower() in ("true", "1", "yes")
+
+        skip_mount_loading = os.getenv("NEXUS_SKIP_MOUNT_LOADING", "").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
 
         if skip_mount_loading:
             print("[DEBUG-MOUNT] Skipping mount loading (NEXUS_SKIP_MOUNT_LOADING=true)")
         else:
             try:
                 import logging
+
                 logger = logging.getLogger(__name__)
 
                 print("[DEBUG-MOUNT] Starting saved mount loading...")
                 if hasattr(self, "load_all_saved_mounts"):
                     print("[DEBUG-MOUNT] Calling load_all_saved_mounts()...")
                     mount_result = self.load_all_saved_mounts()
-                    print(f"[DEBUG-MOUNT] load_all_saved_mounts() completed with result: {mount_result}")
+                    print(
+                        f"[DEBUG-MOUNT] load_all_saved_mounts() completed with result: {mount_result}"
+                    )
                     if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
                         logger.info(
                             f"🔄 Mount restoration: {mount_result['loaded']} loaded, {mount_result['failed']} failed"

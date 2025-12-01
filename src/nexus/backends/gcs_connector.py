@@ -44,7 +44,7 @@ from google.cloud.exceptions import NotFound
 
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
-from nexus.backends.registry import register_connector
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
@@ -91,6 +91,39 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     - No deduplication (same content stored multiple times)
     - Requires backend_path in OperationContext
     """
+
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "bucket_name": ConnectionArg(
+            type=ArgType.STRING,
+            description="GCS bucket name",
+            required=True,
+        ),
+        "project_id": ConnectionArg(
+            type=ArgType.STRING,
+            description="GCP project ID (inferred from credentials if not provided)",
+            required=False,
+            env_var="GCP_PROJECT_ID",
+        ),
+        "credentials_path": ConnectionArg(
+            type=ArgType.PATH,
+            description="Path to service account credentials JSON file",
+            required=False,
+            secret=True,
+            env_var="GOOGLE_APPLICATION_CREDENTIALS",
+        ),
+        "prefix": ConnectionArg(
+            type=ArgType.STRING,
+            description="Path prefix for all files in bucket",
+            required=False,
+            default="",
+        ),
+        "access_token": ConnectionArg(
+            type=ArgType.SECRET,
+            description="OAuth access token (alternative to credentials_path)",
+            required=False,
+            secret=True,
+        ),
+    }
 
     def __init__(
         self,

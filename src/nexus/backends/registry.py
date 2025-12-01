@@ -5,11 +5,16 @@ This module provides a registry pattern for connectors, enabling:
 - Runtime discovery of available connectors
 - CLI command for listing connectors (`nexus connectors list`)
 - Cleaner factory pattern (lookup by name instead of if/elif)
+- Standardized connection argument definitions
 
 Usage:
-    # Register a connector
+    # Register a connector with CONNECTION_ARGS
     @register_connector("my_connector")
     class MyConnector(Backend):
+        CONNECTION_ARGS = {
+            'bucket_name': ConnectionArg(ArgType.STRING, 'Bucket name'),
+            'secret_key': ConnectionArg(ArgType.SECRET, 'API secret', secret=True),
+        }
         ...
 
     # Get a connector class by name
@@ -18,9 +23,12 @@ Usage:
     # List available connectors
     available = ConnectorRegistry.list_available()
 
+    # Get connection args for a connector
+    args = ConnectorRegistry.get_connection_args("my_connector")
+
 Inspired by:
-- MindsDB handler registry pattern
-- n8n node discovery system
+- MindsDB handler registry pattern (connection_args.py)
+- n8n node discovery system and credentials separation
 """
 
 from __future__ import annotations
@@ -28,12 +36,90 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
 
 logger = logging.getLogger(__name__)
+
+
+class ArgType(Enum):
+    """Types for connection arguments.
+
+    Used to indicate how arguments should be handled in UI/CLI and validation.
+    """
+
+    STRING = "string"
+    """Regular string value."""
+
+    SECRET = "secret"
+    """Sensitive value that should be masked in logs/UI."""
+
+    PASSWORD = "password"
+    """Password field, never displayed after entry."""
+
+    INTEGER = "integer"
+    """Integer value."""
+
+    BOOLEAN = "boolean"
+    """Boolean flag."""
+
+    PATH = "path"
+    """File system path (validated for existence optionally)."""
+
+    OAUTH = "oauth"
+    """OAuth credential reference (handled by TokenManager)."""
+
+
+@dataclass
+class ConnectionArg:
+    """Definition of a connection argument for a connector.
+
+    This class describes a single configuration parameter that a connector
+    accepts. It provides metadata for:
+    - CLI help generation
+    - UI form generation
+    - Validation
+    - Secret masking in logs
+
+    Example:
+        >>> ConnectionArg(
+        ...     type=ArgType.STRING,
+        ...     description="GCS bucket name",
+        ...     required=True,
+        ... )
+    """
+
+    type: ArgType
+    """The type of this argument."""
+
+    description: str
+    """Human-readable description of this argument."""
+
+    required: bool = True
+    """Whether this argument is required."""
+
+    default: Any = None
+    """Default value if not provided."""
+
+    secret: bool = False
+    """Whether this value should be masked in logs/UI."""
+
+    env_var: str | None = None
+    """Environment variable to read from if not provided."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "type": self.type.value,
+            "description": self.description,
+            "required": self.required,
+            "default": self.default,
+            "secret": self.secret,
+            "env_var": self.env_var,
+        }
 
 
 @dataclass
@@ -57,6 +143,31 @@ class ConnectorInfo:
 
     user_scoped: bool = False
     """Whether this connector requires per-user OAuth credentials."""
+
+    @property
+    def connection_args(self) -> dict[str, ConnectionArg]:
+        """Get CONNECTION_ARGS from the connector class if defined.
+
+        Returns:
+            Dictionary of argument name to ConnectionArg, or empty dict if not defined.
+        """
+        return getattr(self.connector_class, "CONNECTION_ARGS", {})
+
+    def get_required_args(self) -> list[str]:
+        """Get names of required connection arguments.
+
+        Returns:
+            List of required argument names.
+        """
+        return [name for name, arg in self.connection_args.items() if arg.required]
+
+    def get_secret_args(self) -> list[str]:
+        """Get names of secret connection arguments.
+
+        Returns:
+            List of argument names that should be masked.
+        """
+        return [name for name, arg in self.connection_args.items() if arg.secret]
 
 
 class ConnectorRegistry:
@@ -163,6 +274,22 @@ class ConnectorRegistry:
             available = ", ".join(sorted(cls._connectors.keys()))
             raise KeyError(f"Unknown connector '{name}'. Available: {available}")
         return cls._connectors[name]
+
+    @classmethod
+    def get_connection_args(cls, name: str) -> dict[str, ConnectionArg]:
+        """Get connection arguments for a connector.
+
+        Args:
+            name: Connector identifier
+
+        Returns:
+            Dictionary of argument name to ConnectionArg
+
+        Raises:
+            KeyError: If connector is not found
+        """
+        info = cls.get_info(name)
+        return info.connection_args
 
     @classmethod
     def list_available(cls) -> list[str]:

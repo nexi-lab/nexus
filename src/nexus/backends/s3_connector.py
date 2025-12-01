@@ -35,12 +35,19 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
+from nexus.backends.registry import register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
     pass
 
 
+@register_connector(
+    "s3_connector",
+    description="AWS S3 with direct path mapping",
+    category="storage",
+    requires=["boto3"],
+)
 class S3ConnectorBackend(BaseBlobStorageConnector):
     """
     AWS S3 connector backend with direct path mapping.

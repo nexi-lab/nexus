@@ -349,6 +349,39 @@ class NexusFSMountsMixin:
 
         return result
 
+    @rpc_expose(description="List available connector types")
+    def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
+        """List all available connector types that can be used with add_mount().
+
+        Args:
+            category: Optional filter by category (storage, api, oauth, database)
+
+        Returns:
+            List of connector info dictionaries, each containing:
+                - name: Connector identifier (str)
+                - description: Human-readable description (str)
+                - category: Category for grouping (str)
+                - requires: List of optional dependencies (list[str])
+                - user_scoped: Whether connector requires per-user OAuth (bool)
+        """
+        from nexus.backends.registry import ConnectorRegistry
+
+        if category:
+            connectors = ConnectorRegistry.list_by_category(category)
+        else:
+            connectors = ConnectorRegistry.list_all()
+
+        return [
+            {
+                "name": c.name,
+                "description": c.description,
+                "category": c.category,
+                "requires": c.requires,
+                "user_scoped": c.user_scoped,
+            }
+            for c in connectors
+        ]
+
     @rpc_expose(description="List all backend mounts")
     def list_mounts(self) -> list[dict[str, Any]]:
         """List all active backend mounts.

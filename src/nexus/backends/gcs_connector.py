@@ -44,6 +44,7 @@ from google.cloud.exceptions import NotFound
 
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
+from nexus.backends.registry import register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
@@ -54,6 +55,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@register_connector(
+    "gcs_connector",
+    description="Google Cloud Storage with direct path mapping",
+    category="storage",
+    requires=["google-cloud-storage"],
+)
 class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     """
     Google Cloud Storage connector backend with direct path mapping.

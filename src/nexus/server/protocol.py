@@ -753,6 +753,117 @@ class DeleteMemoryParams:
     memory_id: str
 
 
+# ========== ACE (Adaptive Concurrency Engine) Parameters ==========
+
+
+@dataclass
+class AceStartTrajectoryParams:
+    """Parameters for ace_start_trajectory() method."""
+
+    task_description: str
+    task_type: str | None = None
+    context: dict | None = None
+
+
+@dataclass
+class AceLogTrajectoryStepParams:
+    """Parameters for ace_log_trajectory_step() method."""
+
+    trajectory_id: str
+    step_type: str
+    description: str
+    result: Any = None
+    context: dict | None = None
+
+
+@dataclass
+class AceCompleteTrajectoryParams:
+    """Parameters for ace_complete_trajectory() method."""
+
+    trajectory_id: str
+    status: str
+    success_score: float | None = None
+    error_message: str | None = None
+    context: dict | None = None
+
+
+@dataclass
+class AceAddFeedbackParams:
+    """Parameters for ace_add_feedback() method."""
+
+    trajectory_id: str
+    feedback_type: str
+    score: float | None = None
+    source: str | None = None
+    message: str | None = None
+    metrics: dict | None = None
+    context: dict | None = None
+
+
+@dataclass
+class AceGetTrajectoryFeedbackParams:
+    """Parameters for ace_get_trajectory_feedback() method."""
+
+    trajectory_id: str
+    context: dict | None = None
+
+
+@dataclass
+class AceGetEffectiveScoreParams:
+    """Parameters for ace_get_effective_score() method."""
+
+    trajectory_id: str
+    strategy: str = "latest"
+    context: dict | None = None
+
+
+@dataclass
+class AceMarkForRelearningParams:
+    """Parameters for ace_mark_for_relearning() method."""
+
+    trajectory_id: str
+    reason: str
+    priority: int = 5
+    context: dict | None = None
+
+
+@dataclass
+class AceQueryTrajectoriesParams:
+    """Parameters for ace_query_trajectories() method."""
+
+    task_type: str | None = None
+    status: str | None = None
+    limit: int = 50
+    context: dict | None = None
+
+
+@dataclass
+class AceCreatePlaybookParams:
+    """Parameters for ace_create_playbook() method."""
+
+    name: str
+    description: str | None = None
+    scope: str = "agent"
+    context: dict | None = None
+
+
+@dataclass
+class AceGetPlaybookParams:
+    """Parameters for ace_get_playbook() method."""
+
+    playbook_id: str
+    context: dict | None = None
+
+
+@dataclass
+class AceQueryPlaybooksParams:
+    """Parameters for ace_query_playbooks() method."""
+
+    scope: str | None = None
+    limit: int = 50
+    context: dict | None = None
+
+
 @dataclass
 class ApproveMemoryParams:
     """Parameters for approve_memory() method (#368)."""
@@ -1020,6 +1131,13 @@ class RemoveMountParams:
     """Parameters for remove_mount() method."""
 
     mount_point: str
+
+
+@dataclass
+class ListConnectorsParams:
+    """Parameters for list_connectors() method."""
+
+    category: str | None = None
 
 
 @dataclass
@@ -1356,6 +1474,7 @@ METHOD_PARAMS = {
     # Mount management methods (v0.5.6 - Issue #313)
     "add_mount": AddMountParams,
     "remove_mount": RemoveMountParams,
+    "list_connectors": ListConnectorsParams,  # Issue #528 - Connector registry
     "list_mounts": ListMountsParams,
     "get_mount": GetMountParams,
     "has_mount": HasMountParams,
@@ -1385,6 +1504,18 @@ METHOD_PARAMS = {
     "oauth_list_credentials": OAuthListCredentialsParams,
     "oauth_revoke_credential": OAuthRevokeCredentialParams,
     "oauth_test_credential": OAuthTestCredentialParams,
+    # ACE (Adaptive Concurrency Engine) methods
+    "ace_start_trajectory": AceStartTrajectoryParams,
+    "ace_log_trajectory_step": AceLogTrajectoryStepParams,
+    "ace_complete_trajectory": AceCompleteTrajectoryParams,
+    "ace_add_feedback": AceAddFeedbackParams,
+    "ace_get_trajectory_feedback": AceGetTrajectoryFeedbackParams,
+    "ace_get_effective_score": AceGetEffectiveScoreParams,
+    "ace_mark_for_relearning": AceMarkForRelearningParams,
+    "ace_query_trajectories": AceQueryTrajectoriesParams,
+    "ace_create_playbook": AceCreatePlaybookParams,
+    "ace_get_playbook": AceGetPlaybookParams,
+    "ace_query_playbooks": AceQueryPlaybooksParams,
 }
 
 

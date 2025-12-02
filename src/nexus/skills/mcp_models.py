@@ -154,12 +154,17 @@ class MCPMount:
     description: str
 
     # Connection configuration
-    transport: str  # "stdio" | "http" | "sse"
+    transport: str  # "stdio" | "http" | "sse" | "klavis_rest"
     command: str | None = None  # For stdio transport
-    url: str | None = None  # For http/sse transport
+    url: str | None = None  # For http/sse/klavis_rest transport
     args: list[str] = field(default_factory=list)  # Command arguments
     env: dict[str, str] = field(default_factory=dict)  # Environment variables
     headers: dict[str, str] = field(default_factory=dict)  # HTTP headers for http/sse
+
+    # Klavis-specific configuration (for klavis_rest transport)
+    klavis_api_key: str | None = None  # Klavis API key (or from env KLAVIS_API_KEY)
+    klavis_strata_id: str | None = None  # Strata server ID
+    klavis_connection_type: str = "StreamableHttp"  # "SSE" or "StreamableHttp"
 
     # Authentication
     auth_type: str | None = None  # "oauth" | "api_key" | "none"
@@ -197,6 +202,12 @@ class MCPMount:
             result["env"] = self.env
         if self.headers:
             result["headers"] = self.headers
+        if self.klavis_api_key:
+            result["klavis_api_key"] = self.klavis_api_key
+        if self.klavis_strata_id:
+            result["klavis_strata_id"] = self.klavis_strata_id
+        if self.klavis_connection_type and self.klavis_connection_type != "StreamableHttp":
+            result["klavis_connection_type"] = self.klavis_connection_type
         if self.auth_type:
             result["auth_type"] = self.auth_type
         if self.auth_config:
@@ -232,6 +243,9 @@ class MCPMount:
             args=data.get("args", []),
             env=data.get("env", {}),
             headers=data.get("headers", {}),
+            klavis_api_key=data.get("klavis_api_key"),
+            klavis_strata_id=data.get("klavis_strata_id"),
+            klavis_connection_type=data.get("klavis_connection_type", "StreamableHttp"),
             auth_type=data.get("auth_type"),
             auth_config=data.get("auth_config", {}),
             tools_path=data.get("tools_path"),

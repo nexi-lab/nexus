@@ -40,6 +40,18 @@ class MCPMountManager:
     - Execute tools on mounted servers
     - Manage authentication (OAuth, API keys)
 
+    Storage Structure (per-folder):
+        /skills/system/mcp-tools/
+        ├── github/
+        │   ├── mount.json              # Connection info for this mount
+        │   ├── SKILL.md                # Human-readable docs
+        │   ├── search_repositories.json
+        │   └── create_issue.json
+        └── slack/
+            ├── mount.json
+            ├── SKILL.md
+            └── send_message.json
+
     Example:
         >>> from nexus import connect
         >>> from nexus.skills.mcp_mount import MCPMountManager
@@ -67,8 +79,11 @@ class MCPMountManager:
     # Base path for MCP tools in skills system
     MCP_TOOLS_PATH = "/skills/system/mcp-tools/"
 
-    # Mount configuration storage
-    MOUNTS_CONFIG_PATH = "/skills/system/mcp-tools/.mounts.json"
+    # Mount configuration filename (per-folder)
+    MOUNT_CONFIG_FILENAME = "mount.json"
+
+    # Legacy global mounts config (for migration)
+    LEGACY_MOUNTS_CONFIG_PATH = "/skills/system/mcp-tools/.mounts.json"
 
     def __init__(self, filesystem: NexusFilesystem | None = None):
         """Initialize MCP mount manager.
@@ -88,11 +103,92 @@ class MCPMountManager:
         self._load_mounts_config()
 
     def _load_mounts_config(self) -> None:
-        """Load mount configurations from storage."""
+        """Load mount configurations from per-folder mount.json files.
+
+        New structure: Each mount has its own folder with mount.json
+        /skills/system/mcp-tools/{mount_name}/mount.json
+
+        Also supports legacy .mounts.json for migration.
+        """
+        try:
+            # First, try to load from per-folder mount.json files (new structure)
+            loaded_from_folders = self._load_mounts_from_folders()
+
+            # If no mounts found, try legacy .mounts.json
+            if not loaded_from_folders:
+                self._load_legacy_mounts_config()
+
+        except Exception as e:
+            logger.warning(f"Failed to load mount configurations: {e}")
+
+    def _load_mounts_from_folders(self) -> bool:
+        """Load mounts from per-folder mount.json files.
+
+        Returns:
+            True if any mounts were loaded
+        """
+        loaded_any = False
+
         try:
             if self._filesystem:
-                if self._filesystem.exists(self.MOUNTS_CONFIG_PATH):
-                    raw_content = self._filesystem.read(self.MOUNTS_CONFIG_PATH)
+                # Check if base path exists
+                if not self._filesystem.exists(self.MCP_TOOLS_PATH):
+                    return False
+
+                # List directories in MCP_TOOLS_PATH
+                items = self._filesystem.list(self.MCP_TOOLS_PATH)
+                for item in items:
+                    # Skip files at root level
+                    item_path = f"{self.MCP_TOOLS_PATH}{item}"
+                    mount_json_path = f"{item_path}/mount.json"
+
+                    try:
+                        if self._filesystem.exists(mount_json_path):
+                            raw_content = self._filesystem.read(mount_json_path)
+                            content_str = (
+                                raw_content.decode("utf-8")
+                                if isinstance(raw_content, bytes)
+                                else str(raw_content)
+                            )
+                            mount_data = json.loads(content_str)
+                            mount = MCPMount.from_dict(mount_data)
+                            mount.mounted = False
+                            self._mounts[mount.name] = mount
+                            loaded_any = True
+                            logger.debug(f"Loaded mount config from {mount_json_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to load mount from {mount_json_path}: {e}")
+            else:
+                # Local filesystem
+                base_path = Path(self.MCP_TOOLS_PATH.lstrip("/"))
+                if not base_path.exists():
+                    return False
+
+                for mount_dir in base_path.iterdir():
+                    if mount_dir.is_dir():
+                        mount_json_file = mount_dir / "mount.json"
+                        if mount_json_file.exists():
+                            try:
+                                mount_data = json.loads(mount_json_file.read_text())
+                                mount = MCPMount.from_dict(mount_data)
+                                mount.mounted = False
+                                self._mounts[mount.name] = mount
+                                loaded_any = True
+                                logger.debug(f"Loaded mount config from {mount_json_file}")
+                            except Exception as e:
+                                logger.warning(f"Failed to load mount from {mount_json_file}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Error scanning for mount configs: {e}")
+
+        return loaded_any
+
+    def _load_legacy_mounts_config(self) -> None:
+        """Load from legacy .mounts.json and migrate to per-folder structure."""
+        try:
+            if self._filesystem:
+                if self._filesystem.exists(self.LEGACY_MOUNTS_CONFIG_PATH):
+                    raw_content = self._filesystem.read(self.LEGACY_MOUNTS_CONFIG_PATH)
                     content_str = (
                         raw_content.decode("utf-8")
                         if isinstance(raw_content, bytes)
@@ -101,41 +197,66 @@ class MCPMountManager:
                     config = json.loads(content_str)
                     for mount_data in config.get("mounts", []):
                         mount = MCPMount.from_dict(mount_data)
-                        # Reset mounted state on load (connections are not persistent)
                         mount.mounted = False
                         self._mounts[mount.name] = mount
+
+                    # Migrate to new structure
+                    if self._mounts:
+                        logger.info("Migrating from legacy .mounts.json to per-folder mount.json")
+                        self._save_mounts_config()
+                        # Optionally delete legacy file after migration
+                        # self._filesystem.delete(self.LEGACY_MOUNTS_CONFIG_PATH)
             else:
-                # Local filesystem
-                config_path = Path(self.MOUNTS_CONFIG_PATH.lstrip("/"))
+                config_path = Path(self.LEGACY_MOUNTS_CONFIG_PATH.lstrip("/"))
                 if config_path.exists():
                     config = json.loads(config_path.read_text())
                     for mount_data in config.get("mounts", []):
                         mount = MCPMount.from_dict(mount_data)
                         mount.mounted = False
                         self._mounts[mount.name] = mount
+
+                    # Migrate to new structure
+                    if self._mounts:
+                        logger.info("Migrating from legacy .mounts.json to per-folder mount.json")
+                        self._save_mounts_config()
+
         except Exception as e:
-            logger.warning(f"Failed to load mount configurations: {e}")
+            logger.warning(f"Failed to load legacy mount config: {e}")
 
     def _save_mounts_config(self) -> None:
-        """Save mount configurations to storage."""
+        """Save mount configurations to per-folder mount.json files.
+
+        Each mount is saved to its own folder:
+        /skills/system/mcp-tools/{mount_name}/mount.json
+        """
+        for mount in self._mounts.values():
+            self._save_mount_config(mount)
+
+    def _save_mount_config(self, mount: MCPMount) -> None:
+        """Save a single mount's configuration to its folder.
+
+        Args:
+            mount: Mount configuration to save
+        """
         try:
-            config = {"mounts": [mount.to_dict() for mount in self._mounts.values()]}
-            content = json.dumps(config, indent=2)
+            mount_json_path = f"{self.MCP_TOOLS_PATH}{mount.name}/{self.MOUNT_CONFIG_FILENAME}"
+            content = json.dumps(mount.to_dict(), indent=2)
 
             if self._filesystem:
-                # Ensure directory exists
+                # Ensure mount directory exists
+                mount_dir = f"{self.MCP_TOOLS_PATH}{mount.name}/"
                 with contextlib.suppress(Exception):
-                    self._filesystem.mkdir(self.MCP_TOOLS_PATH, parents=True)
+                    self._filesystem.mkdir(mount_dir, parents=True)
 
-                self._filesystem.write(self.MOUNTS_CONFIG_PATH, content.encode("utf-8"))
+                self._filesystem.write(mount_json_path, content.encode("utf-8"))
             else:
-                config_path = Path(self.MOUNTS_CONFIG_PATH.lstrip("/"))
-                config_path.parent.mkdir(parents=True, exist_ok=True)
-                config_path.write_text(content)
+                mount_path = Path(mount_json_path.lstrip("/"))
+                mount_path.parent.mkdir(parents=True, exist_ok=True)
+                mount_path.write_text(content)
 
-            logger.debug("Saved mount configurations")
+            logger.debug(f"Saved mount config: {mount.name}")
         except Exception as e:
-            logger.error(f"Failed to save mount configurations: {e}")
+            logger.error(f"Failed to save mount config for {mount.name}: {e}")
 
     async def mount(self, mount_config: MCPMount) -> bool:
         """Mount an external MCP server.
@@ -159,14 +280,14 @@ class MCPMountManager:
         if not mount_config.name:
             raise MCPMountError("Mount name is required")
 
-        if mount_config.transport not in ("stdio", "http", "sse"):
+        if mount_config.transport not in ("stdio", "http", "sse", "klavis_rest"):
             raise MCPMountError(f"Unsupported transport: {mount_config.transport}")
 
         if mount_config.transport == "stdio" and not mount_config.command:
             raise MCPMountError("Command is required for stdio transport")
 
-        if mount_config.transport in ("http", "sse") and not mount_config.url:
-            raise MCPMountError("URL is required for http/sse transport")
+        if mount_config.transport in ("http", "sse", "klavis_rest") and not mount_config.url:
+            raise MCPMountError("URL is required for http/sse/klavis_rest transport")
 
         # Set tools path
         mount_config.tools_path = f"{self.MCP_TOOLS_PATH}{mount_config.name}/"
@@ -391,6 +512,10 @@ class MCPMountManager:
         # Otherwise, spawn a temporary process to list tools
         if mount.transport == "stdio":
             return await self._list_tools_stdio(mount)
+        elif mount.transport in ("sse", "http"):
+            return await self._list_tools_sse(mount)
+        elif mount.transport == "klavis_rest":
+            return await self._list_tools_klavis(mount)
 
         return []
 
@@ -439,6 +564,200 @@ class MCPMountManager:
             raise
 
         return tools
+
+    async def _list_tools_sse(self, mount: MCPMount) -> list[dict[str, Any]]:
+        """List tools using SSE/HTTP transport.
+
+        Args:
+            mount: Mount configuration
+
+        Returns:
+            List of tool definitions
+        """
+        try:
+            from mcp import ClientSession
+            from mcp.client.sse import sse_client
+        except ImportError as e:
+            raise MCPMountError(
+                "MCP client library not installed. Install with: pip install mcp"
+            ) from e
+
+        if not mount.url:
+            raise MCPMountError("URL is required for SSE/HTTP transport")
+
+        # Start with custom headers from mount config
+        headers: dict[str, str] = dict(mount.headers) if mount.headers else {}
+
+        # Add authentication headers if needed
+        if mount.auth_type == "api_key" and mount.auth_config:
+            api_key = mount.auth_config.get("api_key")
+            header_name = mount.auth_config.get("header_name", "Authorization")
+            if api_key:
+                headers[header_name] = f"Bearer {api_key}"
+
+        tools = []
+
+        try:
+            async with (
+                sse_client(mount.url, headers=headers) as (read, write),
+                ClientSession(read, write) as session,
+            ):
+                await session.initialize()
+                result = await session.list_tools()
+                tools = [
+                    {
+                        "name": tool.name,
+                        "description": tool.description or "",
+                        "inputSchema": (tool.inputSchema if hasattr(tool, "inputSchema") else {}),
+                    }
+                    for tool in result.tools
+                ]
+        except Exception as e:
+            logger.error(f"Failed to list tools via SSE: {e}")
+            raise
+
+        return tools
+
+    async def _list_tools_klavis(self, mount: MCPMount) -> list[dict[str, Any]]:
+        """List tools using Klavis REST API.
+
+        Klavis uses a REST API instead of direct MCP SSE connection.
+        Tools are listed via POST /mcp-server/list-tools.
+
+        Args:
+            mount: Mount configuration with klavis_rest transport
+
+        Returns:
+            List of tool definitions
+        """
+        try:
+            import httpx
+        except ImportError as e:
+            raise MCPMountError(
+                "httpx library not installed. Install with: pip install httpx"
+            ) from e
+
+        if not mount.url:
+            raise MCPMountError("URL (Strata server URL) is required for Klavis transport")
+
+        # Get API key from mount config or environment
+        import os
+
+        api_key = mount.klavis_api_key or os.getenv("KLAVIS_API_KEY")
+        if not api_key:
+            raise MCPMountError(
+                "Klavis API key not configured. Set klavis_api_key in mount config "
+                "or KLAVIS_API_KEY environment variable."
+            )
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        tools = []
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    "https://api.klavis.ai/mcp-server/list-tools",
+                    json={"serverUrl": mount.url},
+                    headers=headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                if not data.get("success"):
+                    raise MCPMountError(f"Klavis API error: {data.get('error')}")
+
+                tools = [
+                    {
+                        "name": tool.get("name", ""),
+                        "description": tool.get("description", ""),
+                        "inputSchema": tool.get("inputSchema", {}),
+                    }
+                    for tool in data.get("tools", [])
+                ]
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Klavis API HTTP error: {e}")
+            raise MCPMountError(f"Klavis API error: {e}") from e
+        except Exception as e:
+            logger.error(f"Failed to list tools via Klavis: {e}")
+            raise
+
+        return tools
+
+    async def call_tool_klavis(
+        self,
+        mount: MCPMount,
+        tool_name: str,
+        tool_args: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Call a tool via Klavis REST API.
+
+        This is the unified method for calling tools on Klavis-hosted MCP servers.
+
+        Args:
+            mount: Mount configuration with klavis_rest transport
+            tool_name: Name of the tool to call
+            tool_args: Arguments to pass to the tool
+
+        Returns:
+            Tool execution result
+
+        Raises:
+            MCPMountError: If tool call fails
+        """
+        try:
+            import httpx
+        except ImportError as e:
+            raise MCPMountError(
+                "httpx library not installed. Install with: pip install httpx"
+            ) from e
+
+        if not mount.url:
+            raise MCPMountError("URL (Strata server URL) is required for Klavis transport")
+
+        # Get API key from mount config or environment
+        import os
+
+        api_key = mount.klavis_api_key or os.getenv("KLAVIS_API_KEY")
+        if not api_key:
+            raise MCPMountError("Klavis API key not configured")
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    "https://api.klavis.ai/mcp-server/call-tool",
+                    json={
+                        "serverUrl": mount.url,
+                        "toolName": tool_name,
+                        "toolArgs": tool_args,
+                        "connectionType": mount.klavis_connection_type or "StreamableHttp",
+                    },
+                    headers=headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                if not data.get("success"):
+                    raise MCPMountError(f"Klavis tool call failed: {data.get('error')}")
+
+                call_result: dict[str, Any] = data.get("result", {})
+                return call_result
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Klavis API HTTP error: {e}")
+            raise MCPMountError(f"Klavis API error: {e}") from e
+        except Exception as e:
+            logger.error(f"Failed to call tool via Klavis: {e}")
+            raise MCPMountError(f"Klavis tool call failed: {e}") from e
 
     def _create_tool_definition(
         self, tool_data: dict[str, Any], mount: MCPMount
@@ -615,6 +934,10 @@ class MCPMountManager:
     async def execute_tool(self, mount_name: str, tool_name: str, args: dict[str, Any]) -> Any:
         """Execute a tool from a mounted MCP server.
 
+        Automatically routes to the correct transport:
+        - stdio/sse/http: Use MCP client
+        - klavis_rest: Use Klavis REST API
+
         Args:
             mount_name: Mount name
             tool_name: Tool name
@@ -631,6 +954,11 @@ class MCPMountManager:
 
         mount = self._mounts[mount_name]
 
+        # For Klavis REST transport, use the Klavis API directly
+        if mount.transport == "klavis_rest":
+            return await self.call_tool_klavis(mount, tool_name, args)
+
+        # For standard MCP transports, require active client
         if not mount.mounted:
             raise MCPMountError(f"Mount {mount_name} is not active. Call mount() first.")
 

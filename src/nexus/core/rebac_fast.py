@@ -255,6 +255,124 @@ def get_performance_stats() -> dict[str, Any]:
     }
 
 
+def check_permission_single_rust(
+    subject_type: str,
+    subject_id: str,
+    permission: str,
+    object_type: str,
+    object_id: str,
+    tuples: list[dict[str, Any]],
+    namespace_configs: dict[str, Any],
+) -> bool:
+    """
+    Check a single permission using Rust implementation with memoization.
+
+    This function provides the same memoization benefits as bulk checks but for
+    single permission checks. It's particularly useful for operations like read()
+    where only one file permission needs to be checked.
+
+    The Rust implementation has proper memoization across recursive calls, which
+    prevents the exponential time complexity that causes timeouts in the Python
+    implementation for deep path hierarchies.
+
+    Args:
+        subject_type: Type of subject (e.g., "user", "agent")
+        subject_id: Subject identifier
+        permission: Permission to check (e.g., "read", "write")
+        object_type: Type of object (e.g., "file")
+        object_id: Object identifier (e.g., file path)
+        tuples: List of ReBAC relationship dictionaries
+        namespace_configs: Dict mapping object_type -> namespace config
+
+    Returns:
+        True if permission is granted, False otherwise
+
+    Raises:
+        RuntimeError: If Rust extension is not available
+    """
+    if not RUST_AVAILABLE:
+        raise RuntimeError(
+            "Rust acceleration not available. Install with: "
+            "cd rust/nexus_fast && maturin develop --release"
+        )
+
+    try:
+        import time
+
+        start = time.perf_counter()
+        result: bool = nexus_fast.compute_permission_single(
+            subject_type,
+            subject_id,
+            permission,
+            object_type,
+            object_id,
+            tuples,
+            namespace_configs,
+        )
+        elapsed = time.perf_counter() - start
+        logger.debug(
+            f"[RUST-SINGLE] Permission check: {subject_type}:{subject_id} "
+            f"{permission} {object_type}:{object_id} = {result} ({elapsed * 1000:.2f}ms)"
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Rust single permission check failed: {e}", exc_info=True)
+        raise
+
+
+def check_permission_single_with_fallback(
+    subject_type: str,
+    subject_id: str,
+    permission: str,
+    object_type: str,
+    object_id: str,
+    tuples: list[dict[str, Any]],
+    namespace_configs: dict[str, Any],
+    force_python: bool = False,
+) -> bool:
+    """
+    Check a single permission with automatic fallback to Python.
+
+    This is the recommended interface for single permission checks. It uses Rust
+    if available (with proper memoization), falling back to Python bulk check
+    as a single-item batch if Rust is unavailable.
+
+    Args:
+        subject_type: Type of subject
+        subject_id: Subject identifier
+        permission: Permission to check
+        object_type: Type of object
+        object_id: Object identifier
+        tuples: List of ReBAC relationship dictionaries
+        namespace_configs: Dict mapping object_type -> namespace config
+        force_python: Force use of Python implementation
+
+    Returns:
+        True if permission is granted, False otherwise
+    """
+    if RUST_AVAILABLE and not force_python:
+        try:
+            return check_permission_single_rust(
+                subject_type,
+                subject_id,
+                permission,
+                object_type,
+                object_id,
+                tuples,
+                namespace_configs,
+            )
+        except Exception as e:
+            logger.warning(f"Rust single check failed, falling back to Python: {e}")
+            # Fall through to Python
+
+    # Fallback: use Python bulk check with single item
+    # This still benefits from memoization within the bulk operation
+    checks = [((subject_type, subject_id), permission, (object_type, object_id))]
+    results = _check_permissions_bulk_python(checks, tuples, namespace_configs)
+    key = (subject_type, subject_id, permission, object_type, object_id)
+    return results.get(key, False)
+
+
 def estimate_speedup(num_checks: int) -> float:
     """
     Estimate speedup factor for given number of checks.

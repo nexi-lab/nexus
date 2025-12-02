@@ -10,6 +10,7 @@ Key Features:
 - Workflow execution
 - Resource browsing
 - Infrastructure-level API key management
+- Unified MCP connection management (Klavis + local providers)
 
 Usage:
     # Start MCP server
@@ -32,8 +33,24 @@ Usage:
         pass
     finally:
         token.reset()
+
+    # Unified MCP connection (Klavis or local)
+    from nexus.mcp import KlavisClient, MCPProviderRegistry
+
+    registry = MCPProviderRegistry.load_default()
+    klavis = KlavisClient(api_key="...")
 """
 
+from nexus.mcp.connection_manager import MCPConnection, MCPConnectionError, MCPConnectionManager
+from nexus.mcp.klavis_client import KlavisClient, KlavisError, KlavisMCPInstance, KlavisOAuthResult
+from nexus.mcp.provider_registry import (
+    BackendConfig,
+    MCPConfig,
+    MCPProviderRegistry,
+    OAuthConfig,
+    ProviderConfig,
+    ProviderType,
+)
 from nexus.mcp.server import (
     _request_api_key,
     create_mcp_server,
@@ -41,4 +58,26 @@ from nexus.mcp.server import (
     set_request_api_key,
 )
 
-__all__ = ["create_mcp_server", "set_request_api_key", "get_request_api_key", "_request_api_key"]
+__all__ = [
+    # Server
+    "create_mcp_server",
+    "set_request_api_key",
+    "get_request_api_key",
+    "_request_api_key",
+    # Connection manager
+    "MCPConnectionManager",
+    "MCPConnection",
+    "MCPConnectionError",
+    # Klavis client
+    "KlavisClient",
+    "KlavisError",
+    "KlavisOAuthResult",
+    "KlavisMCPInstance",
+    # Provider registry
+    "MCPProviderRegistry",
+    "ProviderConfig",
+    "ProviderType",
+    "OAuthConfig",
+    "MCPConfig",
+    "BackendConfig",
+]

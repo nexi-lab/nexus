@@ -112,7 +112,7 @@ class GraphLimits:
 
     MAX_DEPTH = 50  # Max recursion depth (increased for deep directory hierarchies)
     MAX_FAN_OUT = 1000  # Max edges per union/expand
-    MAX_EXECUTION_TIME_MS = 1000  # Hard timeout (1000ms = 1 second, increased for deep hierarchies with parent traversal)
+    MAX_EXECUTION_TIME_MS = 1000  # 1 second timeout for permission computation
     MAX_VISITED_NODES = 10000  # Memory bound
     MAX_TUPLE_QUERIES = 100  # DB query limit
 
@@ -447,6 +447,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
     ) -> bool:
         """Compute permission with graph limits enforced (P0-5).
 
+        This method first tries to use Rust acceleration (which has proper memoization
+        to prevent exponential recursion). If Rust is unavailable or fails, it falls
+        back to the Python implementation.
+
         Args:
             subject: Subject entity
             permission: Permission to check
@@ -458,8 +462,44 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         Raises:
             GraphLimitExceeded: If any limit is exceeded during traversal
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
         start_time = time.perf_counter()
 
+        # Try Rust acceleration first (has proper memoization, prevents timeout)
+        try:
+            from nexus.core.rebac_fast import check_permission_single_rust, is_rust_available
+
+            if is_rust_available():
+                # Fetch tuples and namespace configs for Rust
+                tuples = self._fetch_tuples_for_rust(tenant_id)
+                namespace_configs = self._get_namespace_configs_for_rust()
+
+                result = check_permission_single_rust(
+                    subject_type=subject.entity_type,
+                    subject_id=subject.entity_id,
+                    permission=permission,
+                    object_type=obj.entity_type,
+                    object_id=obj.entity_id,
+                    tuples=tuples,
+                    namespace_configs=namespace_configs,
+                )
+
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                stats.duration_ms = elapsed_ms
+                logger.debug(
+                    f"[RUST-SINGLE] Permission check completed in {elapsed_ms:.2f}ms: "
+                    f"{subject.entity_type}:{subject.entity_id} {permission} "
+                    f"{obj.entity_type}:{obj.entity_id} = {result}"
+                )
+                return result
+
+        except Exception as e:
+            logger.warning(f"Rust single permission check failed, falling back to Python: {e}")
+            # Fall through to Python implementation
+
+        # Fallback to Python implementation
         result = self._compute_permission_tenant_aware_with_limits(
             subject=subject,
             permission=permission,
@@ -473,6 +513,63 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         )
 
         return result
+
+    def _fetch_tuples_for_rust(self, tenant_id: str) -> list[dict[str, Any]]:
+        """Fetch ReBAC tuples for Rust permission computation.
+
+        Args:
+            tenant_id: Tenant ID to scope tuples
+
+        Returns:
+            List of tuple dictionaries for Rust
+        """
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            # Fetch all tuples for this tenant (Rust will do the graph traversal)
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    SELECT subject_type, subject_id, subject_relation, relation,
+                           object_type, object_id
+                    FROM rebac_tuples
+                    WHERE tenant_id = ?
+                    """
+                ),
+                (tenant_id,),
+            )
+
+            tuples = []
+            for row in cursor.fetchall():
+                tuples.append(
+                    {
+                        "subject_type": row["subject_type"],
+                        "subject_id": row["subject_id"],
+                        "subject_relation": row["subject_relation"],
+                        "relation": row["relation"],
+                        "object_type": row["object_type"],
+                        "object_id": row["object_id"],
+                    }
+                )
+
+            return tuples
+
+    def _get_namespace_configs_for_rust(self) -> dict[str, Any]:
+        """Get namespace configurations for Rust permission computation.
+
+        Returns:
+            Dict mapping object_type -> namespace config
+        """
+        # Get the standard object types that we need namespace configs for
+        # These are the common object types used in permission checks
+        object_types = ["file", "tenant", "user", "group", "agent", "memory"]
+
+        configs = {}
+        for obj_type in object_types:
+            namespace = self.get_namespace(obj_type)
+            if namespace:
+                configs[obj_type] = namespace.config
+        return configs
 
     def _compute_permission_tenant_aware_with_limits(
         self,

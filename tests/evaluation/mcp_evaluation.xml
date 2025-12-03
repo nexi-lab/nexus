@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Nexus MCP Server Evaluation Questions
+
+These questions test whether an LLM can effectively use the Nexus MCP server
+tools to accomplish real-world tasks. Each question requires multiple tool
+calls and tests different aspects of the MCP server.
+
+Guidelines:
+- Questions must be READ-ONLY (no destructive operations)
+- Answers must be stable (won't change over time)
+- Questions should require multiple tool calls
+- Answers must be single, verifiable values
+
+To add new questions:
+1. Use the mcp-builder skill to explore the MCP server
+2. Create realistic, complex questions based on actual data
+3. Verify answers by solving questions yourself
+4. Ensure answers won't change over time
+-->
+<evaluation>
+    <!-- Example questions - replace with real questions after exploring actual data -->
+
+    <qa_pair>
+        <question>Using the Nexus MCP server, create a test directory at /eval_test, write a file named "hello.txt" with content "Hello World", then read it back. What is the exact content of the file?</question>
+        <answer>Hello World</answer>
+    </qa_pair>
+
+    <qa_pair>
+        <question>Create three files in /eval_search: "a.py" containing "def foo(): pass", "b.py" containing "def bar(): pass", and "c.txt" containing "text only". Using glob search, how many .py files are in /eval_search?</question>
+        <answer>2</answer>
+    </qa_pair>
+
+    <qa_pair>
+        <question>Write a file at /eval_grep/code.py with content "# TODO: implement\ndef main():\n    # TODO: fix\n    pass". Using grep search for "TODO", how many matches are found in this file?</question>
+        <answer>2</answer>
+    </qa_pair>
+
+    <!--
+    TODO: Add more complex questions after exploring real Nexus data:
+
+    <qa_pair>
+        <question>Find all Python files in the workspace that define a class. Which file has the most class definitions? Provide the filename only.</question>
+        <answer>models.py</answer>
+    </qa_pair>
+
+    <qa_pair>
+        <question>Search for files containing "async def" and count how many unique files have async functions. What is the count?</question>
+        <answer>15</answer>
+    </qa_pair>
+    -->
+</evaluation>

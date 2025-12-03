@@ -238,7 +238,14 @@ def create_mcp_server(
     # FILE OPERATIONS TOOLS
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_read_file(path: str, ctx: Context | None = None) -> str:
         """Read file content from Nexus filesystem.
 
@@ -255,10 +262,23 @@ def create_mcp_server(
             if isinstance(content, bytes):
                 return content.decode("utf-8", errors="replace")
             return str(content)
+        except FileNotFoundError:
+            return (
+                f"Error: File not found at '{path}'. Use nexus_list_files to check available files."
+            )
+        except PermissionError:
+            return f"Error: Permission denied for '{path}'. Check file permissions."
         except Exception as e:
             return f"Error reading file: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,  # Can overwrite existing files
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
+    )
     def nexus_write_file(path: str, content: str, ctx: Context | None = None) -> str:
         """Write content to a file in Nexus filesystem.
 
@@ -275,10 +295,19 @@ def create_mcp_server(
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
             nx_instance.write(path, content_bytes)
             return f"Successfully wrote {len(content_bytes)} bytes to {path}"
+        except PermissionError:
+            return f"Error: Permission denied for '{path}'. Check write permissions."
         except Exception as e:
             return f"Error writing file: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,  # Deleting already-deleted file is idempotent
+            "openWorldHint": True,
+        }
+    )
     def nexus_delete_file(path: str, ctx: Context | None = None) -> str:
         """Delete a file from Nexus filesystem.
 
@@ -292,10 +321,21 @@ def create_mcp_server(
             nx_instance = _get_nexus_instance(ctx)
             nx_instance.delete(path)
             return f"Successfully deleted {path}"
+        except FileNotFoundError:
+            return f"Error: File not found at '{path}'. It may have already been deleted."
+        except PermissionError:
+            return f"Error: Permission denied for '{path}'. Check delete permissions."
         except Exception as e:
             return f"Error deleting file: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_list_files(
         path: str = "/", recursive: bool = False, details: bool = True, ctx: Context | None = None
     ) -> str:
@@ -319,10 +359,19 @@ def create_mcp_server(
             nx_instance = _get_nexus_instance(ctx)
             files = nx_instance.list(path, recursive=recursive, details=details)
             return json.dumps(files, indent=2, default=str)
+        except FileNotFoundError:
+            return f"Error: Directory not found at '{path}'. Use nexus_list_files('/') to see root contents."
         except Exception as e:
             return f"Error listing files: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_file_info(path: str, ctx: Context | None = None) -> str:
         """Get detailed information about a file.
 
@@ -337,7 +386,7 @@ def create_mcp_server(
             # Use exists and other methods to get file info
             # info() is not in base NexusFilesystem interface
             if not nx_instance.exists(path):
-                return f"File not found: {path}"
+                return f"Error: File not found at '{path}'. Use nexus_list_files to check available files."
 
             is_dir = nx_instance.is_directory(path)
             info_dict = {
@@ -363,7 +412,14 @@ def create_mcp_server(
     # DIRECTORY OPERATIONS TOOLS
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,  # Creating existing dir is typically idempotent
+            "openWorldHint": True,
+        }
+    )
     def nexus_mkdir(path: str, ctx: Context | None = None) -> str:
         """Create a directory in Nexus filesystem.
 
@@ -377,10 +433,21 @@ def create_mcp_server(
             nx_instance = _get_nexus_instance(ctx)
             nx_instance.mkdir(path)
             return f"Successfully created directory {path}"
+        except FileExistsError:
+            return f"Directory already exists at '{path}'."
+        except PermissionError:
+            return f"Error: Permission denied for '{path}'. Check write permissions."
         except Exception as e:
             return f"Error creating directory: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,  # Removing already-removed dir is idempotent
+            "openWorldHint": True,
+        }
+    )
     def nexus_rmdir(path: str, recursive: bool = False, ctx: Context | None = None) -> str:
         """Remove a directory from Nexus filesystem.
 
@@ -395,10 +462,25 @@ def create_mcp_server(
             nx_instance = _get_nexus_instance(ctx)
             nx_instance.rmdir(path, recursive=recursive)
             return f"Successfully removed directory {path}"
+        except FileNotFoundError:
+            return f"Error: Directory not found at '{path}'. It may have already been removed."
+        except OSError as e:
+            if "not empty" in str(e).lower():
+                return f"Error: Directory '{path}' is not empty. Use recursive=True to remove non-empty directories."
+            return f"Error removing directory: {str(e)}"
         except Exception as e:
             return f"Error removing directory: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,  # Can overwrite target if exists
+            # idempotentHint=False: Second call fails (source gone after first rename),
+            # which produces different behavior/errors even if final state is the same
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
+    )
     def nexus_rename_file(old_path: str, new_path: str, ctx: Context | None = None) -> str:
         """Rename or move a file or directory in Nexus filesystem.
 
@@ -413,6 +495,10 @@ def create_mcp_server(
             nx_instance = _get_nexus_instance(ctx)
             nx_instance.rename(old_path, new_path)
             return f"Successfully renamed {old_path} to {new_path}"
+        except FileNotFoundError:
+            return f"Error: Source path '{old_path}' not found. Use nexus_list_files to check available files."
+        except FileExistsError:
+            return f"Error: Target path '{new_path}' already exists."
         except Exception as e:
             return f"Error renaming file: {str(e)}"
 
@@ -420,7 +506,14 @@ def create_mcp_server(
     # SEARCH TOOLS
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_glob(pattern: str, path: str = "/", ctx: Context | None = None) -> str:
         """Search files using glob pattern.
 
@@ -436,9 +529,16 @@ def create_mcp_server(
             matches = nx_instance.glob(pattern, path)
             return json.dumps(matches, indent=2)
         except Exception as e:
-            return f"Error in glob search: {str(e)}"
+            return f"Error in glob search: {str(e)}. Check pattern syntax (e.g., '**/*.py' for recursive Python files)."
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_grep(
         pattern: str, path: str = "/", ignore_case: bool = False, ctx: Context | None = None
     ) -> str:
@@ -460,9 +560,16 @@ def create_mcp_server(
                 results = results[:100]
             return json.dumps(results, indent=2)
         except Exception as e:
-            return f"Error in grep search: {str(e)}"
+            return f"Error in grep search: {str(e)}. Check regex pattern syntax."
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_semantic_search(query: str, limit: int = 10, ctx: Context | None = None) -> str:
         """Search files semantically using natural language query.
 
@@ -488,7 +595,14 @@ def create_mcp_server(
     # MEMORY TOOLS
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,  # Each store creates a new memory entry
+            "openWorldHint": True,
+        }
+    )
     def nexus_store_memory(
         content: str,
         memory_type: str | None = None,
@@ -529,7 +643,14 @@ def create_mcp_server(
                     nx_instance.memory.session.rollback()
             return f"Error storing memory: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_query_memory(
         query: str,
         memory_type: str | None = None,
@@ -566,7 +687,14 @@ def create_mcp_server(
     # WORKFLOW TOOLS
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_list_workflows(ctx: Context | None = None) -> str:
         """List available workflows in Nexus.
 
@@ -584,7 +712,14 @@ def create_mcp_server(
         except Exception as e:
             return f"Error listing workflows: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,  # Workflows can modify state
+            "idempotentHint": False,  # Workflow execution may have side effects
+            "openWorldHint": True,
+        }
+    )
     def nexus_execute_workflow(
         name: str, inputs: str | None = None, ctx: Context | None = None
     ) -> str:
@@ -606,6 +741,8 @@ def create_mcp_server(
             input_dict = json.loads(inputs) if inputs else {}
             result = nx_instance.workflows.execute(name, **input_dict)
             return json.dumps(result, indent=2)
+        except json.JSONDecodeError:
+            return "Error: Invalid JSON in inputs parameter. Provide valid JSON string."
         except Exception as e:
             return f"Error executing workflow: {str(e)}"
 

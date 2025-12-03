@@ -201,6 +201,7 @@ addopts = [
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-report=xml",
+    "--ignore=tests/evaluation",  # Exclude LLM evaluation tests from default runs
 ]
 testpaths = ["tests"]
 asyncio_mode = "auto"
@@ -212,6 +213,7 @@ markers = [
     "integration: marks tests as integration tests",
     "e2e: marks tests as end-to-end tests",
     "benchmark: marks tests as benchmarks",
+    "evaluation: marks tests as LLM evaluation tests (requires ANTHROPIC_API_KEY)",
 ]
 
 [tool.coverage.run]

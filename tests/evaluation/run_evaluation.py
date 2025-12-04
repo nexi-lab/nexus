@@ -193,7 +193,9 @@ async def evaluate_question_with_mcp(
                     tool_response = str(tool_result)
                 tool_call_count += 1
             except Exception as e:
-                tool_response = f"Error executing tool {tool_name}: {str(e)}\n{traceback.format_exc()}"
+                tool_response = (
+                    f"Error executing tool {tool_name}: {str(e)}\n{traceback.format_exc()}"
+                )
 
             tool_results.append(
                 {
@@ -352,7 +354,12 @@ async def run_evaluation_async(
                         print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
 
                         start_time = time.time()
-                        actual_answer, tool_calls, summary, feedback = await evaluate_question_with_mcp(
+                        (
+                            actual_answer,
+                            tool_calls,
+                            summary,
+                            feedback,
+                        ) = await evaluate_question_with_mcp(
                             client, qa.question, model, session, tools
                         )
                         duration = time.time() - start_time
@@ -406,7 +413,12 @@ async def run_evaluation_async(
                         print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
 
                         start_time = time.time()
-                        actual_answer, tool_calls, summary, feedback = await evaluate_question_with_mcp(
+                        (
+                            actual_answer,
+                            tool_calls,
+                            summary,
+                            feedback,
+                        ) = await evaluate_question_with_mcp(
                             client, qa.question, model, session, tools
                         )
                         duration = time.time() - start_time
@@ -449,7 +461,9 @@ async def run_evaluation_async(
             print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
 
             start_time = time.time()
-            actual_answer, tool_calls, summary, feedback = evaluate_question_prompt_based(client, qa.question, model)
+            actual_answer, tool_calls, summary, feedback = evaluate_question_prompt_based(
+                client, qa.question, model
+            )
             duration = time.time() - start_time
 
             is_correct = actual_answer.lower().strip() == qa.answer.lower().strip()

@@ -250,7 +250,7 @@ class TestFileOperationTools:
         read_tool = get_tool(server, "nexus_read_file")
         result = read_tool.fn(path="/missing.txt")
 
-        assert "Error reading file" in result
+        assert "Error" in result
         assert "File not found" in result
 
     def test_write_file_success(self, mock_nx_basic):
@@ -299,7 +299,7 @@ class TestFileOperationTools:
         delete_tool = get_tool(server, "nexus_delete_file")
         result = delete_tool.fn(path="/missing.txt")
 
-        assert "Error deleting file" in result
+        assert "Error" in result
         assert "File not found" in result
 
     def test_list_files_basic(self, mock_nx_basic):

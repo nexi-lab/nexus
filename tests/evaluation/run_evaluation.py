@@ -23,9 +23,13 @@ Requirements:
 from __future__ import annotations
 
 import argparse
+import asyncio
+import json
 import os
+import re
 import sys
 import time
+import traceback
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,15 +40,16 @@ except ImportError:
     print("Error: anthropic package not installed. Run: pip install anthropic")
     sys.exit(1)
 
-# MCP client imports - will be used for full MCP integration
-# Currently using simplified prompt-based approach
-# TODO: Integrate with actual MCP server via stdio transport
-# try:
-#     from mcp import ClientSession, StdioServerParameters
-#     from mcp.client.stdio import stdio_client
-#     MCP_AVAILABLE = True
-# except ImportError:
-#     MCP_AVAILABLE = False
+# MCP client imports for full MCP integration
+try:
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    MCP_AVAILABLE = True
+except ImportError:
+    MCP_AVAILABLE = False
+    print("Warning: mcp package not installed. Falling back to prompt-based evaluation.")
+    print("For full MCP integration, run: pip install mcp")
 
 
 @dataclass
@@ -66,6 +71,49 @@ class EvaluationResult:
     duration_seconds: float
     tool_calls: int
     summary: str
+    feedback: str = ""
+
+
+EVALUATION_PROMPT = """You are an AI assistant with access to tools.
+
+When given a task, you MUST:
+1. Use the available tools to complete the task
+2. Provide summary of each step in your approach, wrapped in <summary> tags
+3. Provide feedback on the tools provided, wrapped in <feedback> tags
+4. Provide your final response, wrapped in <response> tags
+
+Summary Requirements:
+- In your <summary> tags, you must explain:
+  - The steps you took to complete the task
+  - Which tools you used, in what order, and why
+  - The inputs you provided to each tool
+  - The outputs you received from each tool
+  - A summary for how you arrived at the response
+
+Feedback Requirements:
+- In your <feedback> tags, provide constructive feedback on the tools:
+  - Comment on tool names: Are they clear and descriptive?
+  - Comment on input parameters: Are they well-documented? Are required vs optional parameters clear?
+  - Comment on descriptions: Do they accurately describe what the tool does?
+  - Comment on any errors encountered during tool usage
+  - Identify specific areas for improvement and explain WHY they would help
+  - Be specific and actionable in your suggestions
+
+Response Requirements:
+- Your response should be concise and directly address what was asked
+- Always wrap your final response in <response> tags
+- If you cannot solve the task return <response>NOT_FOUND</response>
+- For numeric responses, provide just the number
+- For IDs, provide just the ID
+- For names or text, provide the exact text requested
+- Your response should go last"""
+
+
+def extract_xml_content(text: str, tag: str) -> str | None:
+    """Extract content from XML tags."""
+    pattern = rf"<{tag}>(.*?)</{tag}>"
+    matches = re.findall(pattern, text, re.DOTALL)
+    return matches[-1].strip() if matches else None
 
 
 def load_evaluation_file(path: Path) -> list[QAPair]:
@@ -87,19 +135,96 @@ def load_evaluation_file(path: Path) -> list[QAPair]:
     return qa_pairs
 
 
-def evaluate_question(
+async def evaluate_question_with_mcp(
     client: anthropic.Anthropic,
     question: str,
     model: str,
-) -> tuple[str, int, str]:
-    """Evaluate a single question using Claude with MCP tools.
+    mcp_session: ClientSession,
+    tools: list[dict],
+) -> tuple[str, int, str, str]:
+    """Evaluate a single question using real MCP tools.
 
     Returns:
-        Tuple of (answer, tool_call_count, summary)
+        Tuple of (answer, tool_call_count, summary, feedback)
     """
-    # For now, use a simple prompt-based approach
-    # TODO: Integrate with actual MCP server via stdio transport
+    messages = [{"role": "user", "content": question}]
+    tool_call_count = 0
 
+    # Initial request
+    response = await asyncio.to_thread(
+        client.messages.create,
+        model=model,
+        max_tokens=4096,
+        system=EVALUATION_PROMPT,
+        messages=messages,
+        tools=tools,
+    )
+
+    messages.append({"role": "assistant", "content": response.content})
+
+    # Tool use loop
+    while response.stop_reason == "tool_use":
+        tool_use = next(block for block in response.content if block.type == "tool_use")
+        tool_name = tool_use.name
+        tool_input = tool_use.input
+
+        try:
+            tool_result = await mcp_session.call_tool(tool_name, arguments=tool_input)
+            tool_response = json.dumps(tool_result.content) if hasattr(tool_result, "content") else str(tool_result)
+            tool_call_count += 1
+        except Exception as e:
+            tool_response = f"Error executing tool {tool_name}: {str(e)}\n{traceback.format_exc()}"
+
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use.id,
+                        "content": tool_response,
+                    }
+                ],
+            }
+        )
+
+        response = await asyncio.to_thread(
+            client.messages.create,
+            model=model,
+            max_tokens=4096,
+            system=EVALUATION_PROMPT,
+            messages=messages,
+            tools=tools,
+        )
+        messages.append({"role": "assistant", "content": response.content})
+
+    # Extract final response text
+    response_text = next(
+        (block.text for block in response.content if hasattr(block, "text")),
+        None,
+    )
+
+    if not response_text:
+        return "NOT_FOUND", tool_call_count, "No response text", "No feedback"
+
+    # Parse XML tags
+    answer = extract_xml_content(response_text, "response") or "NOT_FOUND"
+    summary = extract_xml_content(response_text, "summary") or "No summary provided"
+    feedback = extract_xml_content(response_text, "feedback") or "No feedback provided"
+
+    return answer, tool_call_count, summary, feedback
+
+
+def evaluate_question_prompt_based(
+    client: anthropic.Anthropic,
+    question: str,
+    model: str,
+) -> tuple[str, int, str, str]:
+    """Evaluate a single question using prompt-based approach (fallback).
+
+    Returns:
+        Tuple of (answer, tool_call_count, summary, feedback)
+    """
     system_prompt = """You are evaluating a Nexus MCP server. You have access to these tools:
 - nexus_read_file: Read file content
 - nexus_write_file: Write content to file
@@ -143,15 +268,15 @@ SUMMARY: [brief explanation]"""
             tools_str = line.replace("TOOLS_USED:", "").strip()
             tool_calls = len([t for t in tools_str.split(",") if t.strip()])
 
-    return answer, tool_calls, summary
+    return answer, tool_calls, summary, "Prompt-based evaluation (no feedback)"
 
 
-def run_evaluation(
+async def run_evaluation_async(
     eval_file: Path,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "claude-opus-4-5-20251101",
     output_file: Path | None = None,
 ) -> list[EvaluationResult]:
-    """Run evaluation on all QA pairs."""
+    """Run evaluation on all QA pairs using MCP integration."""
     # Check for API key
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -166,29 +291,107 @@ def run_evaluation(
 
     results: list[EvaluationResult] = []
 
-    for i, qa in enumerate(qa_pairs, 1):
-        print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
+    if MCP_AVAILABLE:
+        # Use real MCP integration
+        print("Using MCP stdio transport for evaluation...")
 
-        start_time = time.time()
-        actual_answer, tool_calls, summary = evaluate_question(client, qa.question, model)
-        duration = time.time() - start_time
+        # Get Nexus connection details
+        nexus_url = os.environ.get("NEXUS_URL", "http://localhost:8080")
+        nexus_api_key = os.environ.get("NEXUS_API_KEY")
 
-        # Check if answer matches (case-insensitive, whitespace-normalized)
-        is_correct = actual_answer.lower().strip() == qa.answer.lower().strip()
+        if not nexus_api_key:
+            print("Warning: NEXUS_API_KEY not set. MCP server may not work correctly.")
 
-        result = EvaluationResult(
-            question=qa.question,
-            expected_answer=qa.answer,
-            actual_answer=actual_answer,
-            is_correct=is_correct,
-            duration_seconds=duration,
-            tool_calls=tool_calls,
-            summary=summary,
+        # Setup MCP server parameters
+        server_params = StdioServerParameters(
+            command="python",
+            args=["-m", "nexus.mcp.cli"],
+            env={
+                "NEXUS_URL": nexus_url,
+                "NEXUS_API_KEY": nexus_api_key or "",
+            },
         )
-        results.append(result)
 
-        status = "\u2705" if is_correct else "\u274c"
-        print(f"  {status} Expected: {qa.answer}, Got: {actual_answer}")
+        try:
+            async with stdio_client(server_params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+
+                    # List available tools
+                    tools_response = await session.list_tools()
+                    tools = [
+                        {
+                            "name": tool.name,
+                            "description": tool.description or "",
+                            "input_schema": tool.inputSchema,
+                        }
+                        for tool in tools_response.tools
+                    ]
+                    print(f"Connected to MCP server with {len(tools)} tools")
+
+                    # Evaluate each question
+                    for i, qa in enumerate(qa_pairs, 1):
+                        print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
+
+                        start_time = time.time()
+                        actual_answer, tool_calls, summary, feedback = await evaluate_question_with_mcp(
+                            client, qa.question, model, session, tools
+                        )
+                        duration = time.time() - start_time
+
+                        # Check if answer matches
+                        is_correct = actual_answer.lower().strip() == qa.answer.lower().strip()
+
+                        result = EvaluationResult(
+                            question=qa.question,
+                            expected_answer=qa.answer,
+                            actual_answer=actual_answer,
+                            is_correct=is_correct,
+                            duration_seconds=duration,
+                            tool_calls=tool_calls,
+                            summary=summary,
+                            feedback=feedback,
+                        )
+                        results.append(result)
+
+                        status = "✅" if is_correct else "❌"
+                        print(f"  {status} Expected: {qa.answer}, Got: {actual_answer}")
+
+        except Exception as e:
+            print(f"Error connecting to MCP server: {e}")
+            print("Falling back to prompt-based evaluation...")
+            MCP_AVAILABLE_LOCAL = False
+        else:
+            MCP_AVAILABLE_LOCAL = True
+    else:
+        MCP_AVAILABLE_LOCAL = False
+
+    # Fallback to prompt-based evaluation
+    if not MCP_AVAILABLE_LOCAL:
+        print("Using prompt-based evaluation (fallback)...")
+        for i, qa in enumerate(qa_pairs, 1):
+            print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
+
+            start_time = time.time()
+            actual_answer, tool_calls, summary, feedback = evaluate_question_prompt_based(client, qa.question, model)
+            duration = time.time() - start_time
+
+            is_correct = actual_answer.lower().strip() == qa.answer.lower().strip()
+
+            result = EvaluationResult(
+                question=qa.question,
+                expected_answer=qa.answer,
+                actual_answer=actual_answer,
+                is_correct=is_correct,
+                duration_seconds=duration,
+                tool_calls=tool_calls,
+                summary=summary,
+                feedback=feedback,
+            )
+            results.append(result)
+
+            status = "✅" if is_correct else "❌"
+            print(f"  {status} Expected: {qa.answer}, Got: {actual_answer}")
 
     # Generate report
     report = generate_report(results, model)
@@ -201,6 +404,15 @@ def run_evaluation(
         print(report)
 
     return results
+
+
+def run_evaluation(
+    eval_file: Path,
+    model: str = "claude-opus-4-5-20251101",
+    output_file: Path | None = None,
+) -> list[EvaluationResult]:
+    """Run evaluation (synchronous wrapper)."""
+    return asyncio.run(run_evaluation_async(eval_file, model, output_file))
 
 
 def generate_report(results: list[EvaluationResult], model: str) -> str:
@@ -242,6 +454,8 @@ def generate_report(results: list[EvaluationResult], model: str) -> str:
                 "",
                 f"**Summary**: {r.summary}",
                 "",
+                f"**Feedback**: {r.feedback}",
+                "",
                 "---",
                 "",
             ]
@@ -257,8 +471,8 @@ def main() -> None:
     parser.add_argument(
         "--model",
         "-m",
-        default="claude-sonnet-4-20250514",
-        help="Claude model to use (default: claude-sonnet-4-20250514)",
+        default="claude-opus-4-5-20251101",
+        help="Claude model to use (default: claude-opus-4-5-20251101)",
     )
     parser.add_argument(
         "--output",

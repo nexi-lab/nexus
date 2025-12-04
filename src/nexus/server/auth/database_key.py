@@ -129,7 +129,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 else api_key.user_id
             )
 
-            logger.info(
+            logger.debug(
                 f"Authenticated subject: ({subject_type}, {subject_id}) "
                 f"[key: {api_key.key_id}, tenant: {api_key.tenant_id}]"
             )

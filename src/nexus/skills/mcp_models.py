@@ -182,6 +182,9 @@ class MCPMount:
     tool_count: int = 0
     tools: list[str] = field(default_factory=list)  # List of tool names
 
+    # Tier info (set during discovery)
+    tier: str | None = None  # "user" | "tenant" | "system"
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         result: dict[str, Any] = {
@@ -220,6 +223,8 @@ class MCPMount:
             result["last_sync"] = self.last_sync.isoformat()
         if self.tools:
             result["tools"] = self.tools
+        if self.tier:
+            result["tier"] = self.tier
 
         return result
 
@@ -254,6 +259,7 @@ class MCPMount:
             last_sync=last_sync,
             tool_count=data.get("tool_count", 0),
             tools=data.get("tools", []),
+            tier=data.get("tier"),
         )
 
 

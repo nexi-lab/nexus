@@ -40,11 +40,16 @@ __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
-from nexus.backends.gcs import GCSBackend
 from nexus.backends.local import LocalBackend
 from nexus.config import NexusConfig, load_config
+
+# Lazy import GCSBackend to avoid loading google.cloud.storage + opentelemetry on startup
+# This significantly speeds up CLI startup when GCS is not used
+if TYPE_CHECKING:
+    from nexus.backends.gcs import GCSBackend as _GCSBackend
 from nexus.core.exceptions import (
     BackendError,
     InvalidPathError,
@@ -210,7 +215,9 @@ def connect(
         # Create backend based on configuration
         backend: Backend
         if cfg.backend == "gcs":
-            # GCS backend
+            # GCS backend - import lazily to avoid loading google.cloud.storage on startup
+            from nexus.backends.gcs import GCSBackend
+
             if not cfg.gcs_bucket_name:
                 raise ValueError(
                     "gcs_bucket_name is required when backend='gcs'. "
@@ -324,3 +331,12 @@ __all__ = [
     "SkillParseError",
     "SkillExportError",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy import for heavy dependencies like GCSBackend."""
+    if name == "GCSBackend":
+        from nexus.backends.gcs import GCSBackend
+
+        return GCSBackend
+    raise AttributeError(f"module 'nexus' has no attribute {name!r}")

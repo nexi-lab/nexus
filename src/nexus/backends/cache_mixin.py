@@ -148,6 +148,39 @@ class CacheConnectorMixin:
     # Summary size for large files (default 100KB)
     SUMMARY_SIZE: int = 100 * 1024
 
+    def _has_caching(self) -> bool:
+        """Check if caching is enabled (session factory or db_session available).
+
+        This is the standard implementation. Connectors can override if needed.
+        """
+        return (
+            getattr(self, "session_factory", None) is not None
+            or getattr(self, "db_session", None) is not None
+            or getattr(self, "_db_session", None) is not None
+        )
+
+    def _get_cache_path(self, context: OperationContext | None) -> str | None:
+        """Get the cache key path from context.
+
+        Prefers virtual_path (full path like /mnt/s3/file.txt) over backend_path.
+        This ensures cache keys match the file_paths table entries.
+
+        Args:
+            context: Operation context with virtual_path and/or backend_path
+
+        Returns:
+            The path to use as cache key, or None if no path available
+        """
+        if context is None:
+            return None
+        # Prefer virtual_path (full path with mount prefix)
+        if hasattr(context, "virtual_path") and context.virtual_path:
+            return context.virtual_path
+        # Fall back to backend_path
+        if hasattr(context, "backend_path") and context.backend_path:
+            return context.backend_path
+        return None
+
     def _get_db_session(self) -> Session:
         """Get database session. Override if session is stored differently.
 
@@ -812,23 +845,42 @@ class CacheConnectorMixin:
                     with contextlib.suppress(Exception):
                         version = self.get_version(backend_path, read_context)
 
-                # Skip if cache is fresh (not stale and version matches)
-                if cached and not cached.stale:
-                    if version is None or cached.backend_version == version:
-                        logger.info(f"[CACHE] SYNC SKIP (already cached): {virtual_path}")
-                        result.files_skipped += 1
-                        continue
-                    else:
-                        logger.info(
-                            f"[CACHE] SYNC STALE (version mismatch): {virtual_path} cached={cached.backend_version} current={version}"
-                        )
-
-                # Read content from backend (cache miss or stale)
+                # Read content from backend (needed for version check if no versioning)
                 content = self._read_content_from_backend(backend_path, read_context)
 
                 if content is None:
                     result.files_skipped += 1
                     continue
+
+                # Skip if cache is fresh (not stale and version/content matches)
+                if cached and not cached.stale:
+                    if version is not None:
+                        # Backend supports versioning - compare version IDs
+                        if cached.backend_version == version:
+                            logger.info(f"[CACHE] SYNC SKIP (version match): {virtual_path}")
+                            result.files_skipped += 1
+                            continue
+                        else:
+                            logger.info(
+                                f"[CACHE] SYNC STALE (version mismatch): {virtual_path} "
+                                f"cached={cached.backend_version} current={version}"
+                            )
+                    else:
+                        # No versioning - compare content hashes
+                        if cached.content_binary:
+                            content_hash = hashlib.sha256(content).hexdigest()
+                            cached_hash = hashlib.sha256(cached.content_binary).hexdigest()
+                            if content_hash == cached_hash:
+                                logger.info(
+                                    f"[CACHE] SYNC SKIP (hash match, no versioning): {virtual_path}"
+                                )
+                                result.files_skipped += 1
+                                continue
+                            else:
+                                logger.info(
+                                    f"[CACHE] SYNC STALE (hash mismatch, no versioning): {virtual_path}"
+                                )
+                        # No cached binary to compare - will re-cache
 
                 # Check size
                 if len(content) > max_size:
@@ -899,7 +951,7 @@ class CacheConnectorMixin:
                 is_system=True,
             )
         # Set virtual_path as attribute
-        new_context.virtual_path = virtual_path  # type: ignore[attr-defined]
+        new_context.virtual_path = virtual_path
         return new_context
 
     def _list_files_recursive(

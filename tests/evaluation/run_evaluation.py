@@ -5,11 +5,17 @@ This script runs LLM-driven evaluations against the Nexus MCP server to test
 whether AI agents can effectively use the tools to accomplish real-world tasks.
 
 Usage:
-    # Basic usage (requires ANTHROPIC_API_KEY)
+    # Basic usage with Docker MCP server (requires ANTHROPIC_API_KEY)
     python run_evaluation.py mcp_evaluation.xml
 
+    # Use local stdio transport
+    python run_evaluation.py mcp_evaluation.xml --transport stdio
+
+    # Use HTTP transport with custom URL
+    python run_evaluation.py mcp_evaluation.xml --transport http --mcp-url http://remote:8081/mcp
+
     # With custom model
-    python run_evaluation.py mcp_evaluation.xml --model claude-sonnet-4-20250514
+    python run_evaluation.py mcp_evaluation.xml --model claude-opus-4-5-20251101
 
     # Save report to file
     python run_evaluation.py mcp_evaluation.xml --output report.md
@@ -44,6 +50,7 @@ except ImportError:
 try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
+    from mcp.client.streamable_http import streamablehttp_client
 
     MCP_AVAILABLE = True
 except ImportError:
@@ -170,7 +177,17 @@ async def evaluate_question_with_mcp(
 
         try:
             tool_result = await mcp_session.call_tool(tool_name, arguments=tool_input)
-            tool_response = json.dumps(tool_result.content) if hasattr(tool_result, "content") else str(tool_result)
+            # Extract text from TextContent objects
+            if hasattr(tool_result, "content"):
+                content_items = []
+                for item in tool_result.content:
+                    if hasattr(item, "text"):
+                        content_items.append(item.text)
+                    else:
+                        content_items.append(str(item))
+                tool_response = "\n".join(content_items) if content_items else str(tool_result)
+            else:
+                tool_response = str(tool_result)
             tool_call_count += 1
         except Exception as e:
             tool_response = f"Error executing tool {tool_name}: {str(e)}\n{traceback.format_exc()}"
@@ -275,6 +292,8 @@ async def run_evaluation_async(
     eval_file: Path,
     model: str = "claude-opus-4-5-20251101",
     output_file: Path | None = None,
+    transport: str = "http",
+    mcp_url: str = "http://localhost:8081/mcp",
 ) -> list[EvaluationResult]:
     """Run evaluation on all QA pairs using MCP integration."""
     # Check for API key
@@ -293,69 +312,109 @@ async def run_evaluation_async(
 
     if MCP_AVAILABLE:
         # Use real MCP integration
-        print("Using MCP stdio transport for evaluation...")
-
-        # Get Nexus connection details
-        nexus_url = os.environ.get("NEXUS_URL", "http://localhost:8080")
-        nexus_api_key = os.environ.get("NEXUS_API_KEY")
-
-        if not nexus_api_key:
-            print("Warning: NEXUS_API_KEY not set. MCP server may not work correctly.")
-
-        # Setup MCP server parameters
-        server_params = StdioServerParameters(
-            command="python",
-            args=["-m", "nexus.mcp.cli"],
-            env={
-                "NEXUS_URL": nexus_url,
-                "NEXUS_API_KEY": nexus_api_key or "",
-            },
-        )
+        print(f"Using MCP {transport} transport for evaluation...")
 
         try:
-            async with stdio_client(server_params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
+            if transport == "http":
+                # HTTP transport - connect to remote MCP server
+                async with streamablehttp_client(mcp_url) as (read, write, _):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
 
-                    # List available tools
-                    tools_response = await session.list_tools()
-                    tools = [
-                        {
-                            "name": tool.name,
-                            "description": tool.description or "",
-                            "input_schema": tool.inputSchema,
-                        }
-                        for tool in tools_response.tools
-                    ]
-                    print(f"Connected to MCP server with {len(tools)} tools")
+                        # List available tools
+                        tools_response = await session.list_tools()
+                        tools = [
+                            {
+                                "name": tool.name,
+                                "description": tool.description or "",
+                                "input_schema": tool.inputSchema,
+                            }
+                            for tool in tools_response.tools
+                        ]
+                        print(f"Connected to MCP server with {len(tools)} tools")
 
-                    # Evaluate each question
-                    for i, qa in enumerate(qa_pairs, 1):
-                        print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
+                        # Evaluate each question
+                        for i, qa in enumerate(qa_pairs, 1):
+                            print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
 
-                        start_time = time.time()
-                        actual_answer, tool_calls, summary, feedback = await evaluate_question_with_mcp(
-                            client, qa.question, model, session, tools
-                        )
-                        duration = time.time() - start_time
+                            start_time = time.time()
+                            actual_answer, tool_calls, summary, feedback = await evaluate_question_with_mcp(
+                                client, qa.question, model, session, tools
+                            )
+                            duration = time.time() - start_time
 
-                        # Check if answer matches
-                        is_correct = actual_answer.lower().strip() == qa.answer.lower().strip()
+                            # Check if answer matches
+                            is_correct = actual_answer.lower().strip() == qa.answer.lower().strip()
 
-                        result = EvaluationResult(
-                            question=qa.question,
-                            expected_answer=qa.answer,
-                            actual_answer=actual_answer,
-                            is_correct=is_correct,
-                            duration_seconds=duration,
-                            tool_calls=tool_calls,
-                            summary=summary,
-                            feedback=feedback,
-                        )
-                        results.append(result)
+                            result = EvaluationResult(
+                                question=qa.question,
+                                expected_answer=qa.answer,
+                                actual_answer=actual_answer,
+                                is_correct=is_correct,
+                                duration_seconds=duration,
+                                tool_calls=tool_calls,
+                                summary=summary,
+                                feedback=feedback,
+                            )
+                            results.append(result)
 
-                        status = "✅" if is_correct else "❌"
-                        print(f"  {status} Expected: {qa.answer}, Got: {actual_answer}")
+                            status = "✅" if is_correct else "❌"
+                            print(f"  {status} Expected: {qa.answer}, Got: {actual_answer}")
+
+            elif transport == "stdio":
+                # Stdio transport - connect to local MCP server
+                server_params = StdioServerParameters(
+                    command="nexus",
+                    args=["mcp", "serve"],
+                    env=None,
+                )
+
+                async with stdio_client(server_params) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+
+                        # List available tools
+                        tools_response = await session.list_tools()
+                        tools = [
+                            {
+                                "name": tool.name,
+                                "description": tool.description or "",
+                                "input_schema": tool.inputSchema,
+                            }
+                            for tool in tools_response.tools
+                        ]
+                        print(f"Connected to MCP server with {len(tools)} tools")
+
+                        # Evaluate each question
+                        for i, qa in enumerate(qa_pairs, 1):
+                            print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
+
+                            start_time = time.time()
+                            actual_answer, tool_calls, summary, feedback = await evaluate_question_with_mcp(
+                                client, qa.question, model, session, tools
+                            )
+                            duration = time.time() - start_time
+
+                            # Check if answer matches
+                            is_correct = actual_answer.lower().strip() == qa.answer.lower().strip()
+
+                            result = EvaluationResult(
+                                question=qa.question,
+                                expected_answer=qa.answer,
+                                actual_answer=actual_answer,
+                                is_correct=is_correct,
+                                duration_seconds=duration,
+                                tool_calls=tool_calls,
+                                summary=summary,
+                                feedback=feedback,
+                            )
+                            results.append(result)
+
+                            status = "✅" if is_correct else "❌"
+                            print(f"  {status} Expected: {qa.answer}, Got: {actual_answer}")
+
+            else:
+                raise ValueError(f"Unsupported transport: {transport}")
 
         except Exception as e:
             print(f"Error connecting to MCP server: {e}")
@@ -410,9 +469,11 @@ def run_evaluation(
     eval_file: Path,
     model: str = "claude-opus-4-5-20251101",
     output_file: Path | None = None,
+    transport: str = "http",
+    mcp_url: str = "http://localhost:8081/mcp",
 ) -> list[EvaluationResult]:
     """Run evaluation (synchronous wrapper)."""
-    return asyncio.run(run_evaluation_async(eval_file, model, output_file))
+    return asyncio.run(run_evaluation_async(eval_file, model, output_file, transport, mcp_url))
 
 
 def generate_report(results: list[EvaluationResult], model: str) -> str:
@@ -480,6 +541,18 @@ def main() -> None:
         type=Path,
         help="Output file for report (default: print to stdout)",
     )
+    parser.add_argument(
+        "--transport",
+        "-t",
+        choices=["http", "stdio"],
+        default="http",
+        help="MCP transport type: http (Docker/remote) or stdio (local)",
+    )
+    parser.add_argument(
+        "--mcp-url",
+        default="http://localhost:8081/mcp",
+        help="MCP server URL (for http transport, default: http://localhost:8081/mcp)",
+    )
 
     args = parser.parse_args()
 
@@ -487,7 +560,7 @@ def main() -> None:
         print(f"Error: Evaluation file not found: {args.eval_file}")
         sys.exit(1)
 
-    run_evaluation(args.eval_file, args.model, args.output)
+    run_evaluation(args.eval_file, args.model, args.output, args.transport, args.mcp_url)
 
 
 if __name__ == "__main__":

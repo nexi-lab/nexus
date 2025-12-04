@@ -272,6 +272,7 @@ def connect(
             auto_parse=cfg.auto_parse,
             custom_parsers=cfg.parsers,
             enforce_permissions=enforce_permissions,
+            allow_admin_bypass=cfg.allow_admin_bypass,  # P0-4: Admin bypass setting
             enable_workflows=cfg.enable_workflows,  # v0.7.0: Workflow automation
         )
 

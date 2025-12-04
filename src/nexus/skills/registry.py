@@ -147,14 +147,18 @@ class SkillRegistry:
         """
         tier_paths = self.get_tier_paths(context)
 
+        # Merge with static TIER_PATHS for backward compatibility
+        # Context-aware paths take precedence over static paths
+        merged_paths = {**self.TIER_PATHS, **tier_paths}
+
         if tiers is None:
-            tiers = list(tier_paths.keys())
+            tiers = list(merged_paths.keys())
 
         discovered_count = 0
 
         # Discover from each tier (in priority order - higher priority first)
         for tier in sorted(tiers, key=lambda t: self.TIER_PRIORITY.get(t, 0), reverse=True):
-            tier_path = tier_paths.get(tier)
+            tier_path = merged_paths.get(tier)
             if not tier_path:
                 logger.debug(f"Tier {tier} not available for context")
                 continue

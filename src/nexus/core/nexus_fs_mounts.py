@@ -191,6 +191,11 @@ class NexusFSMountsMixin:
         elif backend_type == "s3_connector":
             from nexus.backends.s3_connector import S3ConnectorBackend
 
+            # Get session factory for caching support if available
+            session_factory = None
+            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
+                session_factory = self.metadata.SessionLocal
+
             backend = S3ConnectorBackend(
                 bucket_name=backend_config["bucket"],
                 region_name=backend_config.get("region_name"),
@@ -199,6 +204,8 @@ class NexusFSMountsMixin:
                 access_key_id=backend_config.get("access_key_id"),
                 secret_access_key=backend_config.get("secret_access_key"),
                 session_token=backend_config.get("session_token"),
+                # Session factory for caching support
+                session_factory=session_factory,
             )
         elif backend_type == "gdrive_connector":
             from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend

@@ -134,7 +134,7 @@ class NexusFSSkillsMixin:
         name: str,
         description: str,
         template: str = "basic",
-        tier: str = "agent",
+        tier: str = "user",
         author: str | None = None,
         _context: OperationContext | None = None,
     ) -> dict[str, Any]:
@@ -144,9 +144,9 @@ class NexusFSSkillsMixin:
             name: Skill name
             description: Skill description
             template: Template name (default: "basic")
-            tier: Target tier (agent/tenant/system, default: "agent")
+            tier: Target tier (agent/user/tenant/system, default: "user")
             author: Optional author name
-            context: Operation context
+            context: Operation context with user_id, tenant_id
 
         Returns:
             Dict with skill_path, name, tier, template
@@ -160,6 +160,7 @@ class NexusFSSkillsMixin:
                 template=template,
                 tier=tier,
                 author=author,
+                context=_context,
             )
             return {
                 "skill_path": skill_path,
@@ -176,7 +177,7 @@ class NexusFSSkillsMixin:
         name: str,
         description: str,
         content: str,
-        tier: str = "agent",
+        tier: str = "user",
         author: str | None = None,
         source_url: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -188,11 +189,11 @@ class NexusFSSkillsMixin:
             name: Skill name
             description: Skill description
             content: Skill markdown content
-            tier: Target tier (default: "agent")
+            tier: Target tier (default: "user")
             author: Optional author name
             source_url: Optional source URL
             metadata: Optional additional metadata
-            context: Operation context
+            context: Operation context with user_id, tenant_id
 
         Returns:
             Dict with skill_path, name, tier, source_url
@@ -208,6 +209,7 @@ class NexusFSSkillsMixin:
                 author=author,
                 source_url=source_url,
                 metadata=metadata,
+                context=_context,
             )
             return {
                 "skill_path": skill_path,
@@ -362,7 +364,7 @@ class NexusFSSkillsMixin:
         registry = self._get_skill_registry()
 
         async def list_skills() -> dict[str, Any]:
-            await registry.discover()
+            await registry.discover(context=_context)
             skills = registry.list_skills(tier=tier, include_metadata=include_metadata)
 
             # Convert SkillMetadata objects to dicts
@@ -410,7 +412,7 @@ class NexusFSSkillsMixin:
         registry = self._get_skill_registry()
 
         async def get_info() -> dict[str, Any]:
-            await registry.discover()
+            await registry.discover(context=_context)
             metadata = registry.get_metadata(skill_name)
 
             skill_info = {
@@ -462,7 +464,7 @@ class NexusFSSkillsMixin:
         registry = self._get_skill_registry()
 
         async def fork() -> dict[str, Any]:
-            await registry.discover()
+            await registry.discover(context=_context)
             forked_path = await manager.fork_skill(
                 source_name=source_name,
                 target_name=target_name,

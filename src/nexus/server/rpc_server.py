@@ -894,7 +894,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         in_exposed = method in self.exposed_methods if is_dict else False
         not_manual = method not in MANUAL_DISPATCH_METHODS
 
-        logger.warning(
+        logger.debug(
             f"[DISPATCH-DEBUG] method={method}, has_exposed={has_exposed}, is_dict={is_dict}, in_exposed={in_exposed}, not_manual={not_manual}"
         )
 
@@ -904,10 +904,10 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             and method in self.exposed_methods
             and method not in MANUAL_DISPATCH_METHODS
         ):
-            logger.warning(f"[DISPATCH-DEBUG] Using AUTO-DISPATCH for {method}")
+            logger.debug(f"[DISPATCH-DEBUG] Using AUTO-DISPATCH for {method}")
             return self._auto_dispatch(method, params)
 
-        logger.warning(f"[DISPATCH-DEBUG] Using MANUAL-DISPATCH for {method}")
+        logger.debug(f"[DISPATCH-DEBUG] Using MANUAL-DISPATCH for {method}")
 
         # Extract authentication context for manual dispatch
         context = self._get_operation_context()
@@ -984,9 +984,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 context=context,
             )
             # Debug: Check what we got
-            logger.info(f"List returned {len(files)} items, type={type(files)}")
+            logger.debug(f"List returned {len(files)} items, type={type(files)}")
             if files:
-                logger.info(f"First item type: {type(files[0])}, value: {files[0]!r}")
+                logger.debug(f"First item type: {type(files[0])}, value: {files[0]!r}")
 
             # Convert to serializable format (handle dataclass objects)
             serializable_files = []
@@ -1341,17 +1341,23 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         import inspect
 
         sig = inspect.signature(fn)
-        accepts_context = "context" in sig.parameters
+        # Check for both "context" and "_context" parameter names
+        # Skills methods use "_context" to avoid Python shadowing issues
+        context_param_name = None
+        if "context" in sig.parameters:
+            context_param_name = "context"
+        elif "_context" in sig.parameters:
+            context_param_name = "_context"
 
-        if accepts_context:
+        if context_param_name:
             context = self._get_operation_context()
             logger.warning(
-                f"[CONTEXT-DEBUG] _auto_dispatch: method={method}, accepts_context=True, context={context}"
+                f"[CONTEXT-DEBUG] _auto_dispatch: method={method}, context_param={context_param_name}, context={context}"
             )
             if context is not None:
                 # Pass the OperationContext object directly
                 # Most methods expect OperationContext, not dict
-                kwargs["context"] = context
+                kwargs[context_param_name] = context
 
         # Call the method
         result = fn(**kwargs)
@@ -1450,14 +1456,14 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         if "gzip" in accept_encoding and len(body) > 1024:  # Only compress if > 1KB
             body = gzip.compress(body, compresslevel=6)  # Level 6 is good balance of speed/size
             content_encoding = "gzip"
-            logger.info(
+            logger.debug(
                 f"[RPC-PERF] gzip: {original_size} bytes → {len(body)} bytes ({len(body) / original_size * 100:.1f}%)"
             )
         else:
             content_encoding = None
             if len(body) > 1024:
-                logger.warning(
-                    f"[RPC-PERF] No gzip! Body size: {original_size} bytes, Accept-Encoding: {accept_encoding}"
+                logger.debug(
+                    f"[RPC-PERF] No gzip: Body size: {original_size} bytes, Accept-Encoding: {accept_encoding}"
                 )
 
         self.send_response(200)
@@ -1564,12 +1570,12 @@ class NexusRPCServer:
         """
         exposed = {}
 
-        logger.info(f"Starting method discovery on {type(self.nexus_fs).__name__}")
-        logger.info(f"NexusFS type: {type(self.nexus_fs)}")
+        logger.debug(f"Starting method discovery on {type(self.nexus_fs).__name__}")
+        logger.debug(f"NexusFS type: {type(self.nexus_fs)}")
 
         # Iterate through all attributes of the NexusFS instance
         dir_names = dir(self.nexus_fs)
-        logger.info(f"Total attributes to check: {len(dir_names)}")
+        logger.debug(f"Total attributes to check: {len(dir_names)}")
 
         for name in dir_names:
             # Skip private methods
@@ -1581,7 +1587,7 @@ class NexusRPCServer:
 
                 # Log rebac methods specifically
                 if name.startswith("rebac"):
-                    logger.info(
+                    logger.debug(
                         f"Checking {name}: callable={callable(attr)}, has_marker={hasattr(attr, '_rpc_exposed')}"
                     )
 
@@ -1589,14 +1595,14 @@ class NexusRPCServer:
                 if callable(attr) and hasattr(attr, "_rpc_exposed"):
                     method_name = getattr(attr, "_rpc_name", name)
                     exposed[method_name] = attr
-                    logger.info(f"✓ Discovered RPC method: {method_name}")
+                    logger.debug(f"Discovered RPC method: {method_name}")
 
             except Exception as e:
                 # Some attributes might raise exceptions when accessed
                 logger.debug(f"Skipping attribute {name}: {e}")
                 continue
 
-        logger.info(f"Auto-discovered {len(exposed)} RPC methods")
+        logger.debug(f"Auto-discovered {len(exposed)} RPC methods")
         return exposed
 
     def serve_forever(self) -> None:

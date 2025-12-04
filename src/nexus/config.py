@@ -101,6 +101,13 @@ class NexusConfig(BaseModel):
         description="Enable permission enforcement on file operations (P0-6: default True for security)",
     )
 
+    # Admin bypass setting (P0-4)
+    # Default: False for security - admin keys go through normal permission checks
+    allow_admin_bypass: bool = Field(
+        default=False,
+        description="Allow admin keys to bypass permission checks (P0-4: default False for security)",
+    )
+
     # Workspace and Memory registry (v0.7.0)
     workspaces: list[dict[str, Any]] | None = Field(
         default=None,
@@ -279,6 +286,7 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_AUTO_PARSE": "auto_parse",
         "NEXUS_IS_ADMIN": "is_admin",
         "NEXUS_ENFORCE_PERMISSIONS": "enforce_permissions",
+        "NEXUS_ALLOW_ADMIN_BYPASS": "allow_admin_bypass",
         "NEXUS_URL": "url",
         "NEXUS_API_KEY": "api_key",
         "NEXUS_TIMEOUT": "timeout",
@@ -311,6 +319,7 @@ def _load_from_environment() -> NexusConfig:
                 "auto_parse",
                 "is_admin",
                 "enforce_permissions",
+                "allow_admin_bypass",
             ]:
                 converted_value = value.lower() in ["true", "1", "yes", "on"]
             else:

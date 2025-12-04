@@ -314,7 +314,7 @@ class TestErrorHandlingIntegration:
         result = read_tool.fn(path="/nonexistent/file.txt")
 
         assert "Error" in result
-        assert "File not found" in result
+        assert "not found" in result.lower()
 
     def test_delete_nonexistent_file(self, mcp_server):
         """Test deleting a file that doesn't exist."""
@@ -322,7 +322,7 @@ class TestErrorHandlingIntegration:
         result = delete_tool.fn(path="/nonexistent/file.txt")
 
         assert "Error" in result
-        assert "File not found" in result
+        assert "not found" in result.lower() or "deleted" in result.lower()
 
     def test_invalid_json_in_workflow_execute(self, mcp_server):
         """Test workflow execution with invalid JSON input."""

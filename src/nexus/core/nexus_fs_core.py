@@ -282,13 +282,13 @@ class NexusFSCoreMixin:
         from dataclasses import replace
 
         if context:
-            read_context = replace(context, backend_path=route.backend_path)
+            read_context = replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
             # Create minimal context with just backend_path for connectors
             from nexus.core.permissions import OperationContext
 
             read_context = OperationContext(
-                user="anonymous", groups=[], backend_path=route.backend_path
+                user="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
 
         # Check if backend is a dynamic API-backed connector (e.g., x_connector)
@@ -836,13 +836,15 @@ class NexusFSCoreMixin:
         from dataclasses import replace
 
         if context:
-            # Create new context with backend_path populated
-            context = replace(context, backend_path=route.backend_path)
+            # Create new context with backend_path and virtual_path populated
+            context = replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
             # Create minimal context with just backend_path for connectors
             from nexus.core.permissions import OperationContext
 
-            context = OperationContext(user="anonymous", groups=[], backend_path=route.backend_path)
+            context = OperationContext(
+                user="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+            )
         content_hash = route.backend.write_content(content, context=context)
 
         # NOTE: Do NOT delete old content when updating a file!

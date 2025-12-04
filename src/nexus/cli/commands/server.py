@@ -449,12 +449,24 @@ def serve(
             if has_auth:
                 console.print("[green]✓ Permissions enabled (authentication configured)[/green]")
 
+        # Check NEXUS_ALLOW_ADMIN_BYPASS environment variable
+        # Default: False for security (P0-4)
+        allow_admin_bypass = False
+        allow_admin_bypass_env = os.getenv("NEXUS_ALLOW_ADMIN_BYPASS", "").lower()
+        if allow_admin_bypass_env in ("true", "1", "yes", "on"):
+            allow_admin_bypass = True
+            console.print(
+                "[yellow]⚠️  Admin bypass ENABLED by NEXUS_ALLOW_ADMIN_BYPASS "
+                "environment variable[/yellow]"
+            )
+
         # IMPORTANT: Server must always use local NexusFS, never RemoteNexusFS
         # Use force_local=True to prevent circular dependency even if NEXUS_URL is set
         nx = get_filesystem(
             backend_config,
             enforce_permissions=enforce_permissions,
             force_local=True,  # Force local mode to prevent RemoteNexusFS
+            allow_admin_bypass=allow_admin_bypass,
         )
 
         # Load backends from config file if specified

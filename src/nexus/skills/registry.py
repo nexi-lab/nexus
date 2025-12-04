@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nexus.core.exceptions import PermissionDeniedError, ValidationError
+from nexus.core.permissions import OperationContext
 from nexus.skills.models import Skill, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
 from nexus.skills.protocols import NexusFilesystem
@@ -47,19 +48,55 @@ class SkillRegistry:
         >>> deps = await registry.resolve_dependencies("analyze-code")
     """
 
-    # Tier directories (relative to root)
-    TIER_PATHS = {
-        "agent": "/workspace/.nexus/skills/",
-        "tenant": "/shared/skills/",
-        "system": "/system/skills/",
-    }
-
-    # Tier priority (higher = checked first)
+    # Tier priority (higher = checked first, wins on name conflict)
+    # agent (under user) > user > tenant > system
     TIER_PRIORITY = {
-        "agent": 3,
+        "agent": 4,
+        "user": 3,
         "tenant": 2,
         "system": 1,
     }
+
+    # Default tier paths (without context) - for backward compatibility
+    # Use get_tier_paths(context) for context-aware paths
+    TIER_PATHS = {
+        "agent": "/skills/agent/",  # Legacy path, prefer user paths with context
+        "user": "/skills/user/",  # Legacy path, prefer /skills/users/{user_id}/
+        "tenant": "/skills/tenant/",  # Legacy path, prefer /skills/tenants/{tenant_id}/
+        "system": "/skills/system/",
+    }
+
+    @staticmethod
+    def get_tier_paths(context: OperationContext | None = None) -> dict[str, str]:
+        """Get context-aware tier paths for skill discovery.
+
+        Structure:
+            /skills/system/                           - System-wide skills (priority 1)
+            /skills/tenants/{tenant_id}/              - Tenant shared skills (priority 2)
+            /skills/users/{user_id}/                  - User personal skills (priority 3)
+            /skills/users/{user_id}/agents/{agent_id}/ - Agent-specific skills (priority 4)
+
+        Args:
+            context: Operation context with user_id, tenant_id, agent_id
+
+        Returns:
+            Dict mapping tier name to path (only tiers available for this context)
+        """
+        paths = {"system": "/skills/system/"}
+
+        if context:
+            if context.tenant_id:
+                paths["tenant"] = f"/skills/tenants/{context.tenant_id}/"
+
+            # Check user_id first (v0.5.0+), then fall back to user (legacy field)
+            user_id = context.user_id or getattr(context, "user", None)
+            if user_id:
+                paths["user"] = f"/skills/users/{user_id}/"
+
+                if context.agent_id:
+                    paths["agent"] = f"/skills/users/{user_id}/agents/{context.agent_id}/"
+
+        return paths
 
     def __init__(
         self, filesystem: NexusFilesystem | None = None, rebac_manager: "ReBACManager | None" = None
@@ -85,33 +122,45 @@ class SkillRegistry:
         # Tier index: tier -> list of skill names
         self._tier_index: dict[str, list[str]] = defaultdict(list)
 
-    async def discover(self, tiers: list[str] | None = None) -> int:
+    async def discover(
+        self, context: OperationContext | None = None, tiers: list[str] | None = None
+    ) -> int:
         """Discover skills from filesystem (metadata only).
 
         Progressive disclosure: Only loads metadata during discovery.
         Full content is loaded on-demand when get_skill() is called.
 
+        Uses context-aware paths based on user_id, tenant_id, agent_id.
+
         Args:
-            tiers: Optional list of tiers to discover from (default: all)
+            context: Operation context for context-aware path resolution
+            tiers: Optional list of tiers to discover from (default: all available for context)
 
         Returns:
             Number of skills discovered
 
         Example:
             >>> registry = SkillRegistry(nx)
-            >>> count = await registry.discover()  # Discover from all tiers
-            >>> count = await registry.discover(["agent", "tenant"])  # Specific tiers
+            >>> ctx = OperationContext(user_id="alice", tenant_id="acme")
+            >>> count = await registry.discover(ctx)  # Discover from all tiers for alice
+            >>> count = await registry.discover(ctx, ["user", "tenant"])  # Specific tiers
         """
+        tier_paths = self.get_tier_paths(context)
+
+        # Merge with static TIER_PATHS for backward compatibility
+        # Context-aware paths take precedence over static paths
+        merged_paths = {**self.TIER_PATHS, **tier_paths}
+
         if tiers is None:
-            tiers = list(self.TIER_PATHS.keys())
+            tiers = list(merged_paths.keys())
 
         discovered_count = 0
 
-        # Discover from each tier (in priority order)
+        # Discover from each tier (in priority order - higher priority first)
         for tier in sorted(tiers, key=lambda t: self.TIER_PRIORITY.get(t, 0), reverse=True):
-            tier_path = self.TIER_PATHS.get(tier)
+            tier_path = merged_paths.get(tier)
             if not tier_path:
-                logger.warning(f"Unknown tier: {tier}")
+                logger.debug(f"Tier {tier} not available for context")
                 continue
 
             count = await self._discover_tier(tier, tier_path)
@@ -259,21 +308,18 @@ class SkillRegistry:
     async def get_skill(
         self,
         name: str,
+        context: OperationContext | None = None,
         load_dependencies: bool = False,
-        subject_id: str | None = None,
-        subject_type: str = "agent",
-        tenant_id: str | None = None,
     ) -> Skill:
         """Get a skill by name (loads full content on-demand).
 
         Lazy loading: Loads full content only when requested.
+        Uses context for permission checks.
 
         Args:
             name: Skill name
+            context: Operation context for permission checks
             load_dependencies: If True, also load all dependencies
-            subject_id: ID of the requesting agent/user (for ReBAC)
-            subject_type: Type of subject (agent, user) - default: agent
-            tenant_id: Tenant ID for scoping (for ReBAC)
 
         Returns:
             Complete Skill object (metadata + content)
@@ -283,7 +329,8 @@ class SkillRegistry:
             PermissionDeniedError: If subject lacks read permission
 
         Example:
-            >>> skill = await registry.get_skill("analyze-code")
+            >>> ctx = OperationContext(user_id="alice", tenant_id="acme")
+            >>> skill = await registry.get_skill("analyze-code", ctx)
             >>> print(skill.content)  # Full markdown content
         """
         # Check cache first
@@ -295,26 +342,29 @@ class SkillRegistry:
         if name not in self._metadata_index:
             raise SkillNotFoundError(f"Skill not found: {name}")
 
-        # Check read permission
-        if subject_id and self._rebac:
-            try:
-                has_permission = self._rebac.rebac_check(
-                    subject=(subject_type, subject_id),
-                    permission="read",
-                    object=("skill", name),
-                    tenant_id=tenant_id,
-                )
-                if not has_permission:
-                    raise PermissionDeniedError(
-                        f"No permission to read skill '{name}'. "
-                        f"Subject ({subject_type}:{subject_id}) lacks 'read' permission."
+        # Check read permission using context
+        if context and self._rebac:
+            subject_type = "agent" if context.agent_id else "user"
+            subject_id = context.agent_id or context.user_id
+            if subject_id:
+                try:
+                    has_permission = self._rebac.rebac_check(
+                        subject=(subject_type, subject_id),
+                        permission="read",
+                        object=("skill", name),
+                        tenant_id=context.tenant_id,
                     )
-            except PermissionDeniedError:
-                # Re-raise permission errors
-                raise
-            except Exception as e:
-                logger.warning(f"ReBAC check failed for skill '{name}': {e}")
-                # Continue if ReBAC check fails (backward compatibility)
+                    if not has_permission:
+                        raise PermissionDeniedError(
+                            f"No permission to read skill '{name}'. "
+                            f"Subject ({subject_type}:{subject_id}) lacks 'read' permission."
+                        )
+                except PermissionDeniedError:
+                    # Re-raise permission errors
+                    raise
+                except Exception as e:
+                    logger.warning(f"ReBAC check failed for skill '{name}': {e}")
+                    # Continue if ReBAC check fails (backward compatibility)
 
         metadata = self._metadata_index[name]
 
@@ -419,18 +469,23 @@ class SkillRegistry:
     def list_skills(
         self, tier: str | None = None, include_metadata: bool = False
     ) -> list[str] | list[SkillMetadata]:
-        """List available skills.
+        """List available skills from discovered index.
+
+        Note: Call discover(context) first to populate the index with
+        context-aware skills.
 
         Args:
-            tier: Optional tier filter (agent, tenant, system)
+            tier: Optional tier filter (agent, user, tenant, system)
             include_metadata: If True, return SkillMetadata instead of names
 
         Returns:
             List of skill names or SkillMetadata objects
 
         Example:
-            >>> names = registry.list_skills()  # All skills
-            >>> names = registry.list_skills(tier="agent")  # Agent skills only
+            >>> ctx = OperationContext(user_id="alice", tenant_id="acme")
+            >>> await registry.discover(ctx)  # Discover skills for alice
+            >>> names = registry.list_skills()  # All skills alice can see
+            >>> names = registry.list_skills(tier="user")  # User-level skills only
             >>> metadata = registry.list_skills(include_metadata=True)
         """
         skill_names = self._tier_index.get(tier, []) if tier else list(self._metadata_index.keys())

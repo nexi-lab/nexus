@@ -114,7 +114,7 @@ async def test_create_skill_basic_template() -> None:
         "test-skill", description="Test skill", template="basic", tier="agent"
     )
 
-    assert path == "/workspace/.nexus/skills/test-skill/SKILL.md"
+    assert path == "/skills/agent/test-skill/SKILL.md"
     assert fs.exists(path)
 
     # Parse the created skill
@@ -143,7 +143,7 @@ async def test_create_skill_with_author() -> None:
         author="Alice",
     )
 
-    path = "/workspace/.nexus/skills/test-skill/SKILL.md"
+    path = "/skills/agent/test-skill/SKILL.md"
     content = fs.read(path).decode("utf-8")
     parser = SkillParser()
     skill = parser.parse_content(content)
@@ -219,9 +219,9 @@ async def test_create_skill_different_tiers() -> None:
 
     tiers = ["agent", "tenant", "system"]
     expected_paths = [
-        "/workspace/.nexus/skills/skill-agent/SKILL.md",
-        "/shared/skills/skill-tenant/SKILL.md",
-        "/system/skills/skill-system/SKILL.md",
+        "/skills/agent/skill-agent/SKILL.md",
+        "/skills/tenant/skill-tenant/SKILL.md",
+        "/skills/system/skill-system/SKILL.md",
     ]
 
     for tier, expected_path in zip(tiers, expected_paths, strict=False):
@@ -236,7 +236,7 @@ async def test_fork_skill() -> None:
     fs = MockFilesystem()
 
     # Add existing skill
-    fs.write("/workspace/.nexus/skills/existing-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/agent/existing-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover(tiers=["agent"])
@@ -246,7 +246,7 @@ async def test_fork_skill() -> None:
     # Fork the skill
     path = await manager.fork_skill("existing-skill", "forked-skill", tier="agent")
 
-    assert path == "/workspace/.nexus/skills/forked-skill/SKILL.md"
+    assert path == "/skills/agent/forked-skill/SKILL.md"
     assert fs.exists(path)
 
     # Parse forked skill
@@ -271,7 +271,7 @@ async def test_fork_skill() -> None:
 async def test_fork_skill_with_author() -> None:
     """Test forking with custom author."""
     fs = MockFilesystem()
-    fs.write("/workspace/.nexus/skills/existing-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/agent/existing-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover(tiers=["agent"])
@@ -280,7 +280,7 @@ async def test_fork_skill_with_author() -> None:
 
     await manager.fork_skill("existing-skill", "forked-skill", tier="agent", author="Bob")
 
-    content = fs.read("/workspace/.nexus/skills/forked-skill/SKILL.md").decode("utf-8")
+    content = fs.read("/skills/agent/forked-skill/SKILL.md").decode("utf-8")
     assert "author: Bob" in content
 
 
@@ -288,7 +288,7 @@ async def test_fork_skill_with_author() -> None:
 async def test_fork_skill_preserves_dependencies() -> None:
     """Test that forking preserves dependencies."""
     fs = MockFilesystem()
-    fs.write("/workspace/.nexus/skills/existing-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/agent/existing-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover(tiers=["agent"])
@@ -297,7 +297,7 @@ async def test_fork_skill_preserves_dependencies() -> None:
 
     await manager.fork_skill("existing-skill", "forked-skill")
 
-    content = fs.read("/workspace/.nexus/skills/forked-skill/SKILL.md").decode("utf-8")
+    content = fs.read("/skills/agent/forked-skill/SKILL.md").decode("utf-8")
     parser = SkillParser()
     skill = parser.parse_content(content)
 
@@ -319,8 +319,8 @@ async def test_fork_skill_not_found() -> None:
 async def test_fork_skill_target_exists() -> None:
     """Test that forking to existing name raises error."""
     fs = MockFilesystem()
-    fs.write("/workspace/.nexus/skills/existing-skill/SKILL.md", EXISTING_SKILL)
-    fs.write("/workspace/.nexus/skills/forked-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/agent/existing-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/agent/forked-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover(tiers=["agent"])
@@ -335,7 +335,7 @@ async def test_fork_skill_target_exists() -> None:
 async def test_fork_skill_invalid_target_name() -> None:
     """Test that forking to invalid name raises error."""
     fs = MockFilesystem()
-    fs.write("/workspace/.nexus/skills/existing-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/agent/existing-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover(tiers=["agent"])
@@ -350,7 +350,7 @@ async def test_fork_skill_invalid_target_name() -> None:
 async def test_publish_skill() -> None:
     """Test publishing a skill from agent to tenant tier."""
     fs = MockFilesystem()
-    fs.write("/workspace/.nexus/skills/my-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/agent/my-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover(tiers=["agent"])
@@ -360,7 +360,7 @@ async def test_publish_skill() -> None:
     # Publish to tenant tier
     path = await manager.publish_skill("existing-skill", source_tier="agent", target_tier="tenant")
 
-    assert path == "/shared/skills/existing-skill/SKILL.md"
+    assert path == "/skills/tenant/existing-skill/SKILL.md"
     assert fs.exists(path)
 
     # Parse published skill
@@ -382,7 +382,7 @@ async def test_publish_skill() -> None:
 async def test_publish_skill_preserves_content() -> None:
     """Test that publishing preserves skill content."""
     fs = MockFilesystem()
-    fs.write("/workspace/.nexus/skills/my-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/agent/my-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover(tiers=["agent"])
@@ -391,7 +391,7 @@ async def test_publish_skill_preserves_content() -> None:
 
     await manager.publish_skill("existing-skill", source_tier="agent", target_tier="tenant")
 
-    content = fs.read("/shared/skills/existing-skill/SKILL.md").decode("utf-8")
+    content = fs.read("/skills/tenant/existing-skill/SKILL.md").decode("utf-8")
     assert "This is the content of the existing skill" in content
 
 
@@ -512,9 +512,9 @@ description: Generates code from specifications
 Content
 """
 
-    fs.write("/workspace/.nexus/skills/code-analyzer/SKILL.md", skill1)
-    fs.write("/workspace/.nexus/skills/data-processor/SKILL.md", skill2)
-    fs.write("/workspace/.nexus/skills/code-generator/SKILL.md", skill3)
+    fs.write("/skills/agent/code-analyzer/SKILL.md", skill1)
+    fs.write("/skills/agent/data-processor/SKILL.md", skill2)
+    fs.write("/skills/agent/code-generator/SKILL.md", skill3)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover(tiers=["agent"])
@@ -548,8 +548,8 @@ description: Analyzes data quality
 Content
 """
 
-    fs.write("/workspace/.nexus/skills/skill1/SKILL.md", skill1)
-    fs.write("/workspace/.nexus/skills/skill2/SKILL.md", skill2)
+    fs.write("/skills/agent/skill1/SKILL.md", skill1)
+    fs.write("/skills/agent/skill2/SKILL.md", skill2)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover(tiers=["agent"])
@@ -576,7 +576,7 @@ description: General purpose tool
 Content
 """
 
-    fs.write("/workspace/.nexus/skills/data-analyzer/SKILL.md", skill)
+    fs.write("/skills/agent/data-analyzer/SKILL.md", skill)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover(tiers=["agent"])
@@ -609,8 +609,8 @@ description: Tenant skill for testing
 Content
 """
 
-    fs.write("/workspace/.nexus/skills/agent-skill/SKILL.md", agent_skill)
-    fs.write("/shared/skills/tenant-skill/SKILL.md", tenant_skill)
+    fs.write("/skills/agent/agent-skill/SKILL.md", agent_skill)
+    fs.write("/skills/tenant/tenant-skill/SKILL.md", tenant_skill)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover()
@@ -637,7 +637,7 @@ description: Test skill number {i}
 ---
 Content
 """.encode()
-        fs.write(f"/workspace/.nexus/skills/skill-{i}/SKILL.md", skill)
+        fs.write(f"/skills/agent/skill-{i}/SKILL.md", skill)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover(tiers=["agent"])
@@ -662,7 +662,7 @@ description: Something completely different
 Content
 """
 
-    fs.write("/workspace/.nexus/skills/test-skill/SKILL.md", skill)
+    fs.write("/skills/agent/test-skill/SKILL.md", skill)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover(tiers=["agent"])
@@ -702,9 +702,9 @@ description: Training documentation generator
 Content
 """
 
-    fs.write("/workspace/.nexus/skills/skill1/SKILL.md", skill1)
-    fs.write("/workspace/.nexus/skills/skill2/SKILL.md", skill2)
-    fs.write("/workspace/.nexus/skills/skill3/SKILL.md", skill3)
+    fs.write("/skills/agent/skill1/SKILL.md", skill1)
+    fs.write("/skills/agent/skill2/SKILL.md", skill2)
+    fs.write("/skills/agent/skill3/SKILL.md", skill3)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover(tiers=["agent"])

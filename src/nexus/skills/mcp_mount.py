@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.exceptions import ValidationError
+from nexus.core.permissions import OperationContext
 from nexus.skills.mcp_models import MCPMount, MCPToolConfig, MCPToolDefinition
 
 if TYPE_CHECKING:
@@ -76,7 +77,42 @@ class MCPMountManager:
         >>> mounts = manager.list_mounts()
     """
 
-    # Base path for MCP tools in skills system
+    # Tier priority for MCP mounts (higher = checked first, wins on name conflict)
+    # MCP mounts have 3 levels: user > tenant > system (no agent level)
+    TIER_PRIORITY = {
+        "user": 3,
+        "tenant": 2,
+        "system": 1,
+    }
+
+    @staticmethod
+    def get_mcp_tier_paths(context: OperationContext | None = None) -> dict[str, str]:
+        """Get context-aware tier paths for MCP tool discovery.
+
+        Structure:
+            /skills/system/mcp-tools/               - System-wide MCP tools (priority 1)
+            /skills/tenants/{tenant_id}/mcp-tools/  - Tenant shared MCP tools (priority 2)
+            /skills/users/{user_id}/mcp-tools/      - User personal MCP tools (priority 3)
+
+        Args:
+            context: Operation context with user_id, tenant_id
+
+        Returns:
+            Dict mapping tier name to mcp-tools path (only tiers available for this context)
+        """
+        paths = {"system": "/skills/system/mcp-tools/"}
+
+        if context:
+            if context.tenant_id:
+                paths["tenant"] = f"/skills/tenants/{context.tenant_id}/mcp-tools/"
+
+            if context.user_id:
+                paths["user"] = f"/skills/users/{context.user_id}/mcp-tools/"
+
+        return paths
+
+    # Legacy: Base path for MCP tools (system level only)
+    # Use get_mcp_tier_paths(context) for context-aware paths
     MCP_TOOLS_PATH = "/skills/system/mcp-tools/"
 
     # Mount configuration filename (per-folder)
@@ -93,13 +129,16 @@ class MCPMountManager:
         """
         self._filesystem = filesystem
 
-        # Active mount configurations
+        # Active mount configurations (keyed by name, may include tier info)
         self._mounts: dict[str, MCPMount] = {}
+
+        # Tier index: tier -> list of mount names (for context-aware lookup)
+        self._tier_index: dict[str, list[str]] = {}
 
         # Active MCP client connections
         self._clients: dict[str, Any] = {}
 
-        # Load existing mount configurations
+        # Load existing mount configurations (system tier only at init)
         self._load_mounts_config()
 
     def _load_mounts_config(self) -> None:
@@ -973,29 +1012,206 @@ class MCPMountManager:
         except Exception as e:
             raise MCPMountError(f"Tool execution failed: {e}") from e
 
-    def list_mounts(self, include_unmounted: bool = True) -> list[MCPMount]:
-        """List all mount configurations.
+    def discover_mounts(self, context: OperationContext | None = None) -> int:
+        """Discover mounts from context-aware tier paths.
+
+        Scans all available tiers for the given context and loads mount configurations.
+        Uses tier priority: user (3) > tenant (2) > system (1).
+        When same mount name exists at multiple tiers, higher priority wins.
+
+        Args:
+            context: Operation context with user_id, tenant_id
+
+        Returns:
+            Number of mounts discovered
+        """
+        tier_paths = self.get_mcp_tier_paths(context)
+        discovered_count = 0
+
+        # Clear existing index (but keep _mounts for active connections)
+        self._tier_index = {}
+
+        # Track which names we've seen at which priority
+        seen_names: dict[str, int] = {}  # name -> priority
+
+        # Discover from each tier (in priority order - higher first)
+        for tier in sorted(
+            tier_paths.keys(), key=lambda t: self.TIER_PRIORITY.get(t, 0), reverse=True
+        ):
+            tier_path = tier_paths[tier]
+            count = self._discover_mounts_from_tier(tier, tier_path, seen_names)
+            discovered_count += count
+
+        logger.info(f"Discovered {discovered_count} mounts from {len(tier_paths)} tiers")
+        return discovered_count
+
+    def _discover_mounts_from_tier(
+        self, tier: str, tier_path: str, seen_names: dict[str, int]
+    ) -> int:
+        """Discover mounts from a single tier path.
+
+        Args:
+            tier: Tier name (user, tenant, system)
+            tier_path: Path to mcp-tools directory for this tier
+            seen_names: Dict of mount names already seen with their priorities
+
+        Returns:
+            Number of mounts discovered from this tier
+        """
+        count = 0
+        tier_priority = self.TIER_PRIORITY.get(tier, 0)
+
+        if tier not in self._tier_index:
+            self._tier_index[tier] = []
+
+        try:
+            if self._filesystem:
+                # Check if path exists
+                if not self._filesystem.exists(tier_path):
+                    logger.debug(f"MCP tier path does not exist: {tier_path}")
+                    return 0
+
+                # List directories in tier_path
+                items = self._filesystem.list(tier_path)
+                for item in items:
+                    item_path = f"{tier_path}{item}"
+                    mount_json_path = f"{item_path}/mount.json"
+
+                    try:
+                        if self._filesystem.exists(mount_json_path):
+                            raw_content = self._filesystem.read(mount_json_path)
+                            content_str = (
+                                raw_content.decode("utf-8")
+                                if isinstance(raw_content, bytes)
+                                else str(raw_content)
+                            )
+                            mount_data = json.loads(content_str)
+                            mount = MCPMount.from_dict(mount_data)
+                            mount.mounted = False
+
+                            # Check if we've seen this name at a higher priority
+                            if mount.name in seen_names:
+                                existing_priority = seen_names[mount.name]
+                                if tier_priority <= existing_priority:
+                                    logger.debug(
+                                        f"Skipping mount '{mount.name}' from {tier} "
+                                        f"(already loaded from higher priority tier)"
+                                    )
+                                    continue
+
+                            # Store mount with tier info
+                            mount.tier = tier
+                            self._mounts[mount.name] = mount
+                            self._tier_index[tier].append(mount.name)
+                            seen_names[mount.name] = tier_priority
+                            count += 1
+                            logger.debug(
+                                f"Discovered mount '{mount.name}' from {tier}: {mount_json_path}"
+                            )
+
+                    except Exception as e:
+                        logger.warning(f"Failed to load mount from {mount_json_path}: {e}")
+
+            else:
+                # Local filesystem
+                base_path = Path(tier_path.lstrip("/"))
+                if not base_path.exists():
+                    logger.debug(f"MCP tier path does not exist: {tier_path}")
+                    return 0
+
+                for mount_dir in base_path.iterdir():
+                    if mount_dir.is_dir():
+                        mount_json_file = mount_dir / "mount.json"
+                        if mount_json_file.exists():
+                            try:
+                                mount_data = json.loads(mount_json_file.read_text())
+                                mount = MCPMount.from_dict(mount_data)
+                                mount.mounted = False
+
+                                # Check priority
+                                if mount.name in seen_names:
+                                    existing_priority = seen_names[mount.name]
+                                    if tier_priority <= existing_priority:
+                                        logger.debug(
+                                            f"Skipping mount '{mount.name}' from {tier} "
+                                            f"(already loaded from higher priority tier)"
+                                        )
+                                        continue
+
+                                mount.tier = tier
+                                self._mounts[mount.name] = mount
+                                self._tier_index[tier].append(mount.name)
+                                seen_names[mount.name] = tier_priority
+                                count += 1
+                                logger.debug(
+                                    f"Discovered mount '{mount.name}' from {tier}: {mount_json_file}"
+                                )
+
+                            except Exception as e:
+                                logger.warning(f"Failed to load mount from {mount_json_file}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Error scanning MCP tier {tier} at {tier_path}: {e}")
+
+        return count
+
+    def list_mounts(
+        self,
+        include_unmounted: bool = True,
+        tier: str | None = None,
+        context: OperationContext | None = None,
+    ) -> list[MCPMount]:
+        """List mount configurations.
+
+        If context is provided, discovers mounts from context-aware paths first.
+        Optionally filter by tier.
 
         Args:
             include_unmounted: Include unmounted configurations
+            tier: Optional tier filter (user, tenant, system)
+            context: Optional operation context for discovery
 
         Returns:
             List of MCPMount configurations
         """
-        if include_unmounted:
-            return list(self._mounts.values())
-        else:
-            return [m for m in self._mounts.values() if m.mounted]
+        # If context provided, re-discover mounts for that context
+        if context:
+            self.discover_mounts(context)
 
-    def get_mount(self, name: str) -> MCPMount | None:
+        # Filter by tier if specified
+        if tier:
+            mount_names = self._tier_index.get(tier, [])
+            mounts = [self._mounts[name] for name in mount_names if name in self._mounts]
+        else:
+            mounts = list(self._mounts.values())
+
+        # Filter by mounted status
+        if not include_unmounted:
+            mounts = [m for m in mounts if m.mounted]
+
+        return mounts
+
+    def get_mount(
+        self,
+        name: str,
+        context: OperationContext | None = None,
+    ) -> MCPMount | None:
         """Get mount configuration by name.
+
+        If context is provided, discovers mounts from context-aware paths first.
+        Returns the highest priority mount matching the name.
 
         Args:
             name: Mount name
+            context: Optional operation context for discovery
 
         Returns:
             MCPMount or None if not found
         """
+        # If context provided, re-discover mounts for that context
+        if context:
+            self.discover_mounts(context)
+
         return self._mounts.get(name)
 
     def remove_mount(self, name: str) -> bool:

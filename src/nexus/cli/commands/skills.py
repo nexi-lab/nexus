@@ -119,11 +119,15 @@ def skills() -> None:
 
 
 @skills.command(name="list")
+@click.option("--user", is_flag=True, help="Show user-level skills")
 @click.option("--tenant", is_flag=True, help="Show tenant-wide skills")
 @click.option("--system", is_flag=True, help="Show system skills")
-@click.option("--tier", type=click.Choice(["agent", "tenant", "system"]), help="Filter by tier")
+@click.option(
+    "--tier", type=click.Choice(["agent", "user", "tenant", "system"]), help="Filter by tier"
+)
 @add_backend_options
 def skills_list(
+    user: bool,
     tenant: bool,
     system: bool,
     tier: str | None,
@@ -133,6 +137,7 @@ def skills_list(
 
     Examples:
         nexus skills list
+        nexus skills list --user
         nexus skills list --tenant
         nexus skills list --system
         nexus skills list --tier agent
@@ -143,6 +148,8 @@ def skills_list(
         # Determine tier filter
         if tier:
             tier_filter = tier
+        elif user:
+            tier_filter = "user"
         elif tenant:
             tier_filter = "tenant"
         elif system:
@@ -188,7 +195,10 @@ def skills_list(
 @click.option("--description", required=True, help="Skill description")
 @click.option("--template", default="basic", help="Template to use (basic, data-analysis, etc.)")
 @click.option(
-    "--tier", type=click.Choice(["agent", "tenant", "system"]), default="agent", help="Target tier"
+    "--tier",
+    type=click.Choice(["agent", "user", "tenant", "system"]),
+    default="user",
+    help="Target tier",
 )
 @click.option("--author", help="Author name")
 @add_backend_options
@@ -234,7 +244,10 @@ def skills_create(
 @skills.command(name="create-from-web")
 @click.option("--name", help="Skill name (auto-generated from URL/title if not provided)")
 @click.option(
-    "--tier", type=click.Choice(["agent", "tenant", "system"]), default="agent", help="Target tier"
+    "--tier",
+    type=click.Choice(["agent", "user", "tenant", "system"]),
+    default="user",
+    help="Target tier",
 )
 @click.option("--stdin", is_flag=True, help="Read JSON input from stdin (for piping)")
 @click.option("--json", "json_output", is_flag=True, help="Output JSON for piping to next command")
@@ -361,7 +374,10 @@ def skills_create_from_web(
 @click.argument("source", type=str)
 @click.option("--name", help="Skill name (auto-generated from source if not provided)")
 @click.option(
-    "--tier", type=click.Choice(["agent", "tenant", "system"]), default="agent", help="Target tier"
+    "--tier",
+    type=click.Choice(["agent", "user", "tenant", "system"]),
+    default="user",
+    help="Target tier",
 )
 @click.option("--description", help="Skill description")
 @click.option("--ai", is_flag=True, help="Enable AI enhancement (requires API key)")
@@ -534,7 +550,10 @@ def _generate_skill_name_from_url_or_title(url: str, title: str) -> str:
 @click.argument("source_skill", type=str)
 @click.argument("target_skill", type=str)
 @click.option(
-    "--tier", type=click.Choice(["agent", "tenant", "system"]), default="agent", help="Target tier"
+    "--tier",
+    type=click.Choice(["agent", "user", "tenant", "system"]),
+    default="user",
+    help="Target tier",
 )
 @click.option("--author", help="Author name for the fork")
 @add_backend_options
@@ -623,7 +642,9 @@ def skills_publish(
 
 @skills.command(name="search")
 @click.argument("query", type=str)
-@click.option("--tier", type=click.Choice(["agent", "tenant", "system"]), help="Filter by tier")
+@click.option(
+    "--tier", type=click.Choice(["agent", "user", "tenant", "system"]), help="Filter by tier"
+)
 @click.option("--limit", default=10, type=int, help="Maximum results")
 @add_backend_options
 def skills_search(

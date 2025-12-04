@@ -94,7 +94,7 @@ async def test_export_skill_to_bytes() -> None:
     """Test exporting a skill to bytes."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 
@@ -119,7 +119,7 @@ async def test_export_skill_to_file() -> None:
     """Test exporting a skill to a file."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 
@@ -148,8 +148,8 @@ async def test_export_skill_with_dependencies() -> None:
     """Test exporting a skill with its dependencies."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/simple-skill/SKILL.md": SKILL_SIMPLE,
-            "/workspace/.nexus/skills/complex-skill/SKILL.md": SKILL_WITH_DEPS,
+            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/agent/complex-skill/SKILL.md": SKILL_WITH_DEPS,
         }
     )
 
@@ -174,8 +174,8 @@ async def test_export_skill_without_dependencies() -> None:
     """Test exporting a skill without its dependencies."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/simple-skill/SKILL.md": SKILL_SIMPLE,
-            "/workspace/.nexus/skills/complex-skill/SKILL.md": SKILL_WITH_DEPS,
+            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/agent/complex-skill/SKILL.md": SKILL_WITH_DEPS,
         }
     )
 
@@ -200,7 +200,7 @@ async def test_export_manifest_content() -> None:
     """Test that manifest.json contains correct information."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 
@@ -238,7 +238,7 @@ async def test_export_invalid_format() -> None:
     """Test that exporting with invalid format raises error."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 
@@ -264,7 +264,7 @@ description: A very large skill
 
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/large-skill/SKILL.md": large_content,
+            "/skills/agent/large-skill/SKILL.md": large_content,
         }
     )
 
@@ -290,7 +290,7 @@ description: A very large skill
 
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/large-skill/SKILL.md": large_content,
+            "/skills/agent/large-skill/SKILL.md": large_content,
         }
     )
 
@@ -309,7 +309,7 @@ async def test_validate_export() -> None:
     """Test validating export without creating package."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 
@@ -338,7 +338,7 @@ description: A very large skill
 
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/large-skill/SKILL.md": large_content,
+            "/skills/agent/large-skill/SKILL.md": large_content,
         }
     )
 
@@ -360,7 +360,7 @@ async def test_import_skill() -> None:
     # Create a skill package
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 
@@ -389,7 +389,7 @@ async def test_import_skill_from_bytes() -> None:
     """Test importing skills from bytes (file-like object)."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 

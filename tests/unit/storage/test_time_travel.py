@@ -30,6 +30,7 @@ class TestTimeTravelDebug:
             config={
                 "data_dir": str(data_dir),
                 "enforce_permissions": False,  # Disable permissions for tests
+                "backend": "local",
             }
         )
         yield nx
@@ -279,12 +280,13 @@ class TestTimeTravelDebug:
             assert len(ops) == 1
             assert ops[0].agent_id == "agent-1"
             op_id = ops[0].operation_id
+            op_tenant_id = ops[0].tenant_id
 
             # Create time-travel reader
             time_travel = TimeTravelReader(session, nx.backend)
 
-            # Read file at operation
-            state = time_travel.get_file_at_operation(path, op_id, tenant_id=nx.tenant_id)
+            # Read file at operation (use the operation's tenant_id)
+            state = time_travel.get_file_at_operation(path, op_id, tenant_id=op_tenant_id)
             assert state["content"] == b"Agent 1 content"
 
     def test_time_travel_nonexistent_operation(self, nx):

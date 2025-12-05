@@ -708,12 +708,17 @@ def create_mcp_server(
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
-            # Check if nx has search method (only available in NexusFS)
-            if hasattr(nx_instance, "search"):
+            # Check if nx has semantic_search method (only available in NexusFS)
+            if hasattr(nx_instance, "semantic_search"):
+                import asyncio
+
                 # Get results with high limit to support pagination
                 # Note: We fetch offset+limit*2 to efficiently check if there are more results
                 fetch_limit = offset + limit * 2
-                all_results = nx_instance.search(query, limit=fetch_limit)
+                # Call async semantic_search method
+                all_results = asyncio.run(
+                    nx_instance.semantic_search(query, path="/", limit=fetch_limit)
+                )
                 total = len(all_results)
 
                 # Apply pagination
@@ -730,7 +735,7 @@ def create_mcp_server(
                 }
 
                 return format_response(result, response_format)
-            return "Semantic search not available (requires NexusFS with search enabled)"
+            return "Semantic search not available (requires NexusFS with semantic search initialized)"
         except Exception as e:
             return f"Error in semantic search: {str(e)}"
 

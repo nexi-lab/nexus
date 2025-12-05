@@ -303,7 +303,33 @@ async def run_evaluation_async(
     transport: str = "http",
     mcp_url: str = "http://localhost:8081/mcp",
 ) -> list[EvaluationResult]:
-    """Run evaluation on all QA pairs using MCP integration."""
+    """Run evaluation on all QA pairs using MCP integration.
+
+    **Testing Principle**: This evaluation is designed to test the local Docker
+    Nexus MCP server. The MCP URL is constructed from environment variables to
+    ensure consistency across all environments (local dev, CI, production).
+
+    **Environment Variables**:
+    - MCP_HOST: MCP server hostname (default: localhost)
+    - MCP_PORT: MCP server port (default: 8081)
+    - These match the variables used by docker-compose.yml and MCP server
+
+    **Before running evaluations**:
+    1. Start Docker containers: ./docker-start.sh
+    2. Verify MCP server: curl http://${MCP_HOST}:${MCP_PORT}/health
+    3. Set NEXUS_API_KEY if authentication is enabled
+    4. Override MCP_HOST/MCP_PORT for remote testing if needed
+
+    **Example**:
+        # Default (localhost:8081)
+        python run_evaluation.py eval.xml
+
+        # Custom port
+        MCP_PORT=9000 python run_evaluation.py eval.xml
+
+        # Remote server
+        MCP_HOST=remote.server.com MCP_PORT=8081 python run_evaluation.py eval.xml
+    """
     # Check for API key
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -579,10 +605,15 @@ def main() -> None:
         default="http",
         help="MCP transport type: http (Docker/remote) or stdio (local)",
     )
+    # Construct default MCP URL from environment variables (consistent with docker-compose.yml)
+    mcp_host = os.environ.get("MCP_HOST", "localhost")
+    mcp_port = os.environ.get("MCP_PORT", "8081")
+    default_mcp_url = f"http://{mcp_host}:{mcp_port}/mcp"
+
     parser.add_argument(
         "--mcp-url",
-        default="http://localhost:8081/mcp",
-        help="MCP server URL (for http transport, default: http://localhost:8081/mcp)",
+        default=default_mcp_url,
+        help=f"MCP server URL (for http transport, default: http://$MCP_HOST:$MCP_PORT/mcp or {default_mcp_url})",
     )
 
     args = parser.parse_args()

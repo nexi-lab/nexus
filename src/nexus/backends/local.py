@@ -481,6 +481,7 @@ class LocalBackend(Backend):
         lock_path = self._get_lock_path(content_hash)
         lock_path.parent.mkdir(parents=True, exist_ok=True)
 
+        should_delete_lock = False
         try:
             with self._lock_file(lock_path):
                 metadata = self._read_metadata(content_hash)
@@ -494,9 +495,8 @@ class LocalBackend(Backend):
                     if meta_path.exists():
                         meta_path.unlink()
 
-                    # Clean up lock file
-                    if lock_path.exists():
-                        lock_path.unlink()
+                    # Mark lock file for deletion after context manager releases it
+                    should_delete_lock = True
 
                     # Clean up empty directories
                     self._cleanup_empty_dirs(content_path.parent)
@@ -504,6 +504,29 @@ class LocalBackend(Backend):
                     # Decrement reference count
                     metadata["ref_count"] = ref_count - 1
                     self._write_metadata(content_hash, metadata)
+
+            # Clean up lock file AFTER releasing the lock (fixes #562 - Windows PermissionError)
+            # Retry logic for Windows file locking semantics
+            if should_delete_lock and lock_path.exists():
+                import time
+
+                for attempt in range(3):
+                    try:
+                        lock_path.unlink()
+                        break
+                    except PermissionError:
+                        if attempt < 2:
+                            # Exponential backoff: 10ms, 20ms
+                            time.sleep(0.01 * (2**attempt))
+                        else:
+                            # Last attempt failed - log warning but don't fail the operation
+                            # Lock file will be orphaned but this is better than failing deletion
+                            import logging
+
+                            logging.warning(
+                                f"Failed to delete lock file {lock_path} after 3 attempts. "
+                                "File will be orphaned but content deletion succeeded."
+                            )
 
         except OSError as e:
             raise BackendError(

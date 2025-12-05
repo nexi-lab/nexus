@@ -35,6 +35,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    # Environment variables for consistent port configuration across all test steps
+    # ⚠️ IMPORTANT: These values are used by ALL CI runs
+    # Do NOT change unless you intend to change the default ports for the entire project
+    # Local development can override these in .env (not committed to git)
+    env:
+      MCP_HOST: localhost
+      MCP_PORT: 8081
+      NEXUS_HOST: localhost
+      NEXUS_PORT: 8080
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -835,14 +845,14 @@ jobs:
             docker logs nexus-mcp-server 2>&1 | tail -50
             echo ""
             echo "Testing health endpoint directly:"
-            docker exec nexus-mcp-server curl -sf http://localhost:8081/health || echo "Health endpoint test failed"
+            docker exec nexus-mcp-server curl -sf http://${MCP_HOST}:${MCP_PORT}/health || echo "Health endpoint test failed"
             exit 1
           fi
           echo ""
 
           # Step 2: Initialize MCP session
           echo "🔐 Step 2: Initializing MCP session..."
-          INIT_RESPONSE=$(curl -sf -D /tmp/mcp_init_headers.txt http://localhost:8081/mcp \
+          INIT_RESPONSE=$(curl -sf -D /tmp/mcp_init_headers.txt http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -883,7 +893,7 @@ jobs:
 
           # Step 3: Test MCP tool: nexus_mkdir
           echo "📁 Step 3: Testing nexus_mkdir tool..."
-          MKDIR_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+          MKDIR_TOOL_RESPONSE_RAW=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -919,7 +929,7 @@ jobs:
           # Step 4: Test MCP tool: nexus_write_file (3 files)
           echo "📝 Step 4: Testing nexus_write_file tool..."
 
-          WRITE_TOOL_RESPONSE1_RAW=$(curl -sf http://localhost:8081/mcp \
+          WRITE_TOOL_RESPONSE1_RAW=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -945,7 +955,7 @@ jobs:
           fi
           echo "✅ File written: test1.txt"
 
-          WRITE_TOOL_RESPONSE2_RAW=$(curl -sf http://localhost:8081/mcp \
+          WRITE_TOOL_RESPONSE2_RAW=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -971,7 +981,7 @@ jobs:
           fi
           echo "✅ File written: test2.py"
 
-          WRITE_TOOL_RESPONSE3_RAW=$(curl -sf http://localhost:8081/mcp \
+          WRITE_TOOL_RESPONSE3_RAW=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -1000,7 +1010,7 @@ jobs:
 
           # Step 5: Test MCP tool: nexus_read_file
           echo "📖 Step 5: Testing nexus_read_file tool..."
-          READ_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+          READ_TOOL_RESPONSE_RAW=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -1036,7 +1046,7 @@ jobs:
 
           # Step 6: Test MCP tool: nexus_list_files
           echo "📋 Step 6: Testing nexus_list_files tool..."
-          LIST_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+          LIST_TOOL_RESPONSE_RAW=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -1082,7 +1092,7 @@ jobs:
 
           # Step 7: Test MCP tool: nexus_file_info
           echo "ℹ️  Step 7: Testing nexus_file_info tool..."
-          INFO_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+          INFO_TOOL_RESPONSE_RAW=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -1118,7 +1128,7 @@ jobs:
 
           # Step 8: Test MCP tool: nexus_glob
           echo "🔍 Step 8: Testing nexus_glob tool..."
-          GLOB_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+          GLOB_TOOL_RESPONSE_RAW=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -1155,7 +1165,7 @@ jobs:
 
           # Step 9: Test MCP tool: nexus_grep
           echo "🔎 Step 9: Testing nexus_grep tool..."
-          GREP_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+          GREP_TOOL_RESPONSE_RAW=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -1193,7 +1203,7 @@ jobs:
 
           # Step 10: Test MCP tool: nexus_delete_file
           echo "🗑️  Step 10: Testing nexus_delete_file tool..."
-          DELETE_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+          DELETE_TOOL_RESPONSE_RAW=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -1228,7 +1238,7 @@ jobs:
 
           # Step 11: Test MCP tool: nexus_rmdir
           echo "🗂️  Step 11: Testing nexus_rmdir tool..."
-          RMDIR_TOOL_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+          RMDIR_TOOL_RESPONSE_RAW=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -1264,7 +1274,7 @@ jobs:
 
           # Step 12: List available MCP tools
           echo "🧰 Step 12: Listing available MCP tools..."
-          TOOLS_LIST_RESPONSE_RAW=$(curl -sf http://localhost:8081/mcp \
+          TOOLS_LIST_RESPONSE_RAW=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
             -H "X-Nexus-API-Key: $API_KEY" \
@@ -1390,7 +1400,7 @@ jobs:
           echo "✅ RPC API working after restart"
 
           # Test MCP server health
-          MCP_HEALTH=$(curl -sf http://localhost:8081/health || echo "FAILED")
+          MCP_HEALTH=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/health || echo "FAILED")
           if [ "$MCP_HEALTH" = "FAILED" ]; then
             echo "❌ MCP health endpoint failed after restart"
             exit 1

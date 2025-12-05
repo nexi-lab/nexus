@@ -509,6 +509,7 @@ class LocalBackend(Backend):
             # Retry logic for Windows file locking semantics
             if should_delete_lock and lock_path.exists():
                 import time
+
                 for attempt in range(3):
                     try:
                         lock_path.unlink()
@@ -516,11 +517,12 @@ class LocalBackend(Backend):
                     except PermissionError:
                         if attempt < 2:
                             # Exponential backoff: 10ms, 20ms
-                            time.sleep(0.01 * (2 ** attempt))
+                            time.sleep(0.01 * (2**attempt))
                         else:
                             # Last attempt failed - log warning but don't fail the operation
                             # Lock file will be orphaned but this is better than failing deletion
                             import logging
+
                             logging.warning(
                                 f"Failed to delete lock file {lock_path} after 3 attempts. "
                                 "File will be orphaned but content deletion succeeded."

@@ -739,7 +739,11 @@ def create_mcp_server(
                 "Semantic search not available (requires NexusFS with semantic search initialized)"
             )
         except Exception as e:
-            return f"Error in semantic search: {str(e)}"
+            # If semantic search is not initialized, return a consistent "not available" message
+            error_msg = str(e)
+            if "not initialized" in error_msg.lower():
+                return "Semantic search not available (not initialized)"
+            return f"Error in semantic search: {error_msg}"
 
     # =========================================================================
     # MEMORY TOOLS

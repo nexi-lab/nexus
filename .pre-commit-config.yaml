@@ -1,6 +1,11 @@
+# Pre-commit hooks optimized for speed (<5s)
+# Slow checks (tests, mypy, clippy) are disabled but kept as comments for future reference
+# These slow checks still run in CI
+
 repos:
+  # Fast file checks (< 1s)
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -11,37 +16,45 @@ repos:
       - id: check-toml
       - id: debug-statements
 
+  # Fast Python lint + format (2-3s) - CRITICAL for avoiding CI format failures
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.0
+    rev: v0.14.8
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
-    hooks:
-      - id: mypy
-        additional_dependencies: [pydantic, types-PyYAML, alembic, sqlalchemy, cachetools, types-cachetools, types-requests]
-        args: [--ignore-missing-imports]
-        exclude: ^(tests/|alembic/|examples/)
+  # DISABLED: Type checking (10-30s) - runs in CI instead
+  # Uncomment to re-enable:
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.8.0
+  #   hooks:
+  #     - id: mypy
+  #       additional_dependencies: [pydantic, types-PyYAML, alembic, sqlalchemy, cachetools, types-cachetools, types-requests]
+  #       args: [--ignore-missing-imports]
+  #       exclude: ^(tests/|alembic/|examples/)
 
   - repo: local
     hooks:
-      - id: rpc-parity
-        name: RPC Parity Check
-        entry: bash -c 'uv run pytest tests/unit/server/test_rpc_parity.py::test_all_public_methods_are_exposed_or_excluded -v'
-        language: system
-        pass_filenames: false
-        files: ^src/nexus/core/nexus_fs.*\.py$
+      # DISABLED: RPC Parity test (pytest, slow) - runs in CI instead
+      # Uncomment to re-enable:
+      # - id: rpc-parity
+      #   name: RPC Parity Check
+      #   entry: bash -c 'uv run pytest tests/unit/server/test_rpc_parity.py::test_all_public_methods_are_exposed_or_excluded -v'
+      #   language: system
+      #   pass_filenames: false
+      #   files: ^src/nexus/core/nexus_fs.*\.py$
 
-      - id: version-consistency
-        name: Version Consistency Check
-        entry: bash -c '.venv/bin/python -m pytest tests/unit/test_version_consistency.py::test_version_consistency -v --tb=short'
-        language: system
-        pass_filenames: false
-        files: ^(pyproject\.toml|src/nexus/__init__\.py)$
+      # DISABLED: Version consistency test (pytest, slow) - runs in CI instead
+      # Uncomment to re-enable:
+      # - id: version-consistency
+      #   name: Version Consistency Check
+      #   entry: bash -c '.venv/bin/python -m pytest tests/unit/test_version_consistency.py::test_version_consistency -v --tb=short'
+      #   language: system
+      #   pass_filenames: false
+      #   files: ^(pyproject\.toml|src/nexus/__init__\.py)$
 
+      # Fast Rust format check (< 2s)
       - id: rust-fmt
         name: Rust Format Check
         entry: bash -c 'cd rust/nexus_fast && cargo fmt --check'
@@ -49,9 +62,11 @@ repos:
         pass_filenames: false
         files: ^rust/nexus_fast/.*\.rs$
 
-      - id: rust-clippy
-        name: Rust Clippy
-        entry: bash -c 'cd rust/nexus_fast && cargo clippy -- -D warnings'
-        language: system
-        pass_filenames: false
-        files: ^rust/nexus_fast/.*\.rs$
+      # DISABLED: Rust clippy (requires compilation, slow) - runs in CI instead
+      # Uncomment to re-enable:
+      # - id: rust-clippy
+      #   name: Rust Clippy
+      #   entry: bash -c 'cd rust/nexus_fast && cargo clippy -- -D warnings'
+      #   language: system
+      #   pass_filenames: false
+      #   files: ^rust/nexus_fast/.*\.rs$

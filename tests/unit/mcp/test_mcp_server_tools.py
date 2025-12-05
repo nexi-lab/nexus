@@ -104,14 +104,17 @@ def mock_nx_with_workflows():
 @pytest.fixture
 def mock_nx_with_search():
     """Create mock NexusFS with semantic search."""
+    from unittest.mock import AsyncMock
+
     nx = Mock()
     nx.read = Mock(return_value=b"test")
     nx.write = Mock()
 
-    # Add search method
-    nx.search = Mock(
-        return_value=[{"path": "/file1.txt", "score": 0.95, "snippet": "relevant content"}]
-    )
+    # Add async semantic_search method
+    async def mock_semantic_search(query, path="/", limit=10, **kwargs):
+        return [{"path": "/file1.txt", "score": 0.95, "snippet": "relevant content"}]
+
+    nx.semantic_search = AsyncMock(side_effect=mock_semantic_search)
 
     return nx
 
@@ -547,13 +550,15 @@ class TestSearchTools:
         assert "total" in response
         assert isinstance(response["items"], list)
         # Note: With pagination, we now fetch limit*2 to check for more results
-        mock_nx_with_search.search.assert_called_once_with("authentication code", limit=10)
+        mock_nx_with_search.semantic_search.assert_called_once_with(
+            "authentication code", path="/", limit=10
+        )
 
     def test_semantic_search_not_available(self, mock_nx_basic):
         """Test semantic search when not available."""
-        # Remove search method
-        if hasattr(mock_nx_basic, "search"):
-            delattr(mock_nx_basic, "search")
+        # Remove semantic_search method
+        if hasattr(mock_nx_basic, "semantic_search"):
+            delattr(mock_nx_basic, "semantic_search")
 
         server = create_mcp_server(nx=mock_nx_basic)
 
@@ -564,7 +569,7 @@ class TestSearchTools:
 
     def test_semantic_search_error(self, mock_nx_with_search):
         """Test semantic search error handling."""
-        mock_nx_with_search.search.side_effect = RuntimeError("Search service down")
+        mock_nx_with_search.semantic_search.side_effect = RuntimeError("Search service down")
         server = create_mcp_server(nx=mock_nx_with_search)
 
         search_tool = get_tool(server, "nexus_semantic_search")

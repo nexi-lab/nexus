@@ -337,28 +337,61 @@ def create_mcp_server(
         }
     )
     def nexus_list_files(
-        path: str = "/", recursive: bool = False, details: bool = True, ctx: Context | None = None
+        path: str = "/",
+        recursive: bool = False,
+        details: bool = True,
+        limit: int = 50,
+        offset: int = 0,
+        ctx: Context | None = None,
     ) -> str:
-        """List files in a directory.
+        """List files in a directory with pagination support.
 
         Args:
             path: Directory path to list (default: "/")
             recursive: Whether to list recursively (default: False)
             details: Whether to include detailed metadata including is_directory flag (default: True)
+            limit: Maximum number of files to return (default: 50)
+            offset: Number of files to skip (default: 0)
+            ctx: FastMCP Context (automatically injected, optional for backward compatibility)
 
         Returns:
-            JSON string with list of files. When details=True, each entry includes:
-            - path: File/directory path
-            - size: Size in bytes (0 for directories)
-            - is_directory: Boolean indicating if this is a directory
-            - modified_at: Last modification timestamp
-            - etag: Content hash
-            - mime_type: MIME type
+            JSON string with paginated file list and metadata:
+            - total: Total number of files available
+            - count: Number of files in this response
+            - offset: Starting position of this page
+            - items: Array of file objects (when details=True, each includes):
+              - path: File/directory path
+              - size: Size in bytes (0 for directories)
+              - is_directory: Boolean indicating if this is a directory
+              - modified_at: Last modification timestamp
+              - etag: Content hash
+              - mime_type: MIME type
+            - has_more: Whether more files are available
+            - next_offset: Offset for next page (null if no more results)
+
+        Example:
+            >>> nexus_list_files("/workspace", limit=10, offset=0)
+            {"total": 150, "count": 10, "offset": 0, "items": [...], "has_more": true, "next_offset": 10}
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
-            files = nx_instance.list(path, recursive=recursive, details=details)
-            return json.dumps(files, indent=2, default=str)
+            all_files = nx_instance.list(path, recursive=recursive, details=details)
+            total = len(all_files)
+
+            # Apply pagination
+            paginated_files = all_files[offset : offset + limit]
+            has_more = (offset + limit) < total
+
+            result = {
+                "total": total,
+                "count": len(paginated_files),
+                "offset": offset,
+                "items": paginated_files,
+                "has_more": has_more,
+                "next_offset": offset + limit if has_more else None,
+            }
+
+            return json.dumps(result, indent=2, default=str)
         except FileNotFoundError:
             return f"Error: Directory not found at '{path}'. Use nexus_list_files('/') to see root contents."
         except Exception as e:
@@ -514,20 +547,49 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
-    def nexus_glob(pattern: str, path: str = "/", ctx: Context | None = None) -> str:
-        """Search files using glob pattern.
+    def nexus_glob(
+        pattern: str, path: str = "/", limit: int = 100, offset: int = 0, ctx: Context | None = None
+    ) -> str:
+        """Search files using glob pattern with pagination.
 
         Args:
             pattern: Glob pattern (e.g., "**/*.py", "*.txt")
             path: Base path to search from (default: "/")
+            limit: Maximum number of results to return (default: 100)
+            offset: Number of results to skip (default: 0)
 
         Returns:
-            JSON string with list of matching file paths
+            JSON string with paginated search results containing:
+            - total: Total number of matches found
+            - count: Number of matches in this page
+            - offset: Current offset
+            - items: List of matching file paths
+            - has_more: Whether more results are available
+            - next_offset: Offset for next page (if has_more is true)
+
+        Example:
+            To find all Python files: nexus_glob("**/*.py", "/workspace")
+            With pagination: nexus_glob("**/*.py", "/workspace", limit=50, offset=0)
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
-            matches = nx_instance.glob(pattern, path)
-            return json.dumps(matches, indent=2)
+            all_matches = nx_instance.glob(pattern, path)
+            total = len(all_matches)
+
+            # Apply pagination
+            paginated_matches = all_matches[offset : offset + limit]
+            has_more = (offset + limit) < total
+
+            result = {
+                "total": total,
+                "count": len(paginated_matches),
+                "offset": offset,
+                "items": paginated_matches,
+                "has_more": has_more,
+                "next_offset": offset + limit if has_more else None,
+            }
+
+            return json.dumps(result, indent=2)
         except Exception as e:
             return f"Error in glob search: {str(e)}. Check pattern syntax (e.g., '**/*.py' for recursive Python files)."
 
@@ -540,25 +602,54 @@ def create_mcp_server(
         }
     )
     def nexus_grep(
-        pattern: str, path: str = "/", ignore_case: bool = False, ctx: Context | None = None
+        pattern: str,
+        path: str = "/",
+        ignore_case: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+        ctx: Context | None = None,
     ) -> str:
-        """Search file contents using regex pattern.
+        """Search file contents using regex pattern with pagination.
 
         Args:
             pattern: Regex pattern to search for
             path: Base path to search from (default: "/")
             ignore_case: Whether to ignore case (default: False)
+            limit: Maximum number of results to return (default: 100)
+            offset: Number of results to skip (default: 0)
 
         Returns:
-            JSON string with search results (file paths, line numbers, content)
+            JSON string with paginated search results containing:
+            - total: Total number of matches found
+            - count: Number of matches in this page
+            - offset: Current offset
+            - items: List of matches (file paths, line numbers, content)
+            - has_more: Whether more results are available
+            - next_offset: Offset for next page (if has_more is true)
+
+        Example:
+            To get first 50 matches: nexus_grep("TODO", "/workspace", limit=50)
+            To get next 50 matches: nexus_grep("TODO", "/workspace", limit=50, offset=50)
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
-            results = nx_instance.grep(pattern, path, ignore_case=ignore_case)
-            # Limit results to first 100 matches
-            if len(results) > 100:
-                results = results[:100]
-            return json.dumps(results, indent=2)
+            all_results = nx_instance.grep(pattern, path, ignore_case=ignore_case)
+            total = len(all_results)
+
+            # Apply pagination
+            paginated_results = all_results[offset : offset + limit]
+            has_more = (offset + limit) < total
+
+            result = {
+                "total": total,
+                "count": len(paginated_results),
+                "offset": offset,
+                "items": paginated_results,
+                "has_more": has_more,
+                "next_offset": offset + limit if has_more else None,
+            }
+
+            return json.dumps(result, indent=2)
         except Exception as e:
             return f"Error in grep search: {str(e)}. Check regex pattern syntax."
 
@@ -570,23 +661,53 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
-    def nexus_semantic_search(query: str, limit: int = 10, ctx: Context | None = None) -> str:
-        """Search files semantically using natural language query.
+    def nexus_semantic_search(
+        query: str, limit: int = 10, offset: int = 0, ctx: Context | None = None
+    ) -> str:
+        """Search files semantically using natural language query with pagination.
 
         Args:
             query: Natural language search query
-            limit: Maximum number of results (default: 10)
+            limit: Maximum number of results to return (default: 10)
+            offset: Number of results to skip (default: 0)
 
         Returns:
-            JSON string with search results
+            JSON string with paginated search results containing:
+            - total: Total number of results found
+            - count: Number of results in this page
+            - offset: Current offset
+            - items: List of search results
+            - has_more: Whether more results are available
+            - next_offset: Offset for next page (if has_more is true)
+
+        Example:
+            First page: nexus_semantic_search("machine learning algorithms", limit=10)
+            Next page: nexus_semantic_search("machine learning algorithms", limit=10, offset=10)
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
             # Check if nx has search method (only available in NexusFS)
             if hasattr(nx_instance, "search"):
-                # Calling search() - available in NexusFS but not base interface
-                results = nx_instance.search(query, limit=limit)
-                return json.dumps(results, indent=2)
+                # Get results with high limit to support pagination
+                # Note: We fetch offset+limit*2 to efficiently check if there are more results
+                fetch_limit = offset + limit * 2
+                all_results = nx_instance.search(query, limit=fetch_limit)
+                total = len(all_results)
+
+                # Apply pagination
+                paginated_results = all_results[offset : offset + limit]
+                has_more = (offset + limit) < total
+
+                result = {
+                    "total": total,
+                    "count": len(paginated_results),
+                    "offset": offset,
+                    "items": paginated_results,
+                    "has_more": has_more,
+                    "next_offset": offset + limit if has_more else None,
+                }
+
+                return json.dumps(result, indent=2)
             return "Semantic search not available (requires NexusFS with search enabled)"
         except Exception as e:
             return f"Error in semantic search: {str(e)}"

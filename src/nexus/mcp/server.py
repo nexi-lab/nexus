@@ -14,6 +14,7 @@ from typing import Any
 from fastmcp import Context, FastMCP
 
 from nexus.core.filesystem import NexusFilesystem
+from nexus.mcp.formatters import format_response
 
 # Context variable for per-request API key (set by infrastructure, not AI)
 _request_api_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -342,6 +343,7 @@ def create_mcp_server(
         details: bool = True,
         limit: int = 50,
         offset: int = 0,
+        response_format: str = "json",
         ctx: Context | None = None,
     ) -> str:
         """List files in a directory with pagination support.
@@ -352,10 +354,11 @@ def create_mcp_server(
             details: Whether to include detailed metadata including is_directory flag (default: True)
             limit: Maximum number of files to return (default: 50)
             offset: Number of files to skip (default: 0)
+            response_format: Output format - "json" (structured) or "markdown" (readable) (default: "json")
             ctx: FastMCP Context (automatically injected, optional for backward compatibility)
 
         Returns:
-            JSON string with paginated file list and metadata:
+            Formatted string (JSON or Markdown) with paginated file list and metadata:
             - total: Total number of files available
             - count: Number of files in this response
             - offset: Starting position of this page
@@ -372,6 +375,12 @@ def create_mcp_server(
         Example:
             >>> nexus_list_files("/workspace", limit=10, offset=0)
             {"total": 150, "count": 10, "offset": 0, "items": [...], "has_more": true, "next_offset": 10}
+            >>> nexus_list_files("/workspace", limit=10, response_format="markdown")
+            **Total**: 150 | **Count**: 10 | **Offset**: 0
+            _More results available (next offset: 10)_
+            ### 1. /workspace/file1.txt
+            - **size**: 1024
+            ...
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
@@ -391,7 +400,7 @@ def create_mcp_server(
                 "next_offset": offset + limit if has_more else None,
             }
 
-            return json.dumps(result, indent=2, default=str)
+            return format_response(result, response_format)
         except FileNotFoundError:
             return f"Error: Directory not found at '{path}'. Use nexus_list_files('/') to see root contents."
         except Exception as e:
@@ -548,7 +557,12 @@ def create_mcp_server(
         }
     )
     def nexus_glob(
-        pattern: str, path: str = "/", limit: int = 100, offset: int = 0, ctx: Context | None = None
+        pattern: str,
+        path: str = "/",
+        limit: int = 100,
+        offset: int = 0,
+        response_format: str = "json",
+        ctx: Context | None = None,
     ) -> str:
         """Search files using glob pattern with pagination.
 
@@ -557,9 +571,10 @@ def create_mcp_server(
             path: Base path to search from (default: "/")
             limit: Maximum number of results to return (default: 100)
             offset: Number of results to skip (default: 0)
+            response_format: Output format - "json" or "markdown" (default: "json")
 
         Returns:
-            JSON string with paginated search results containing:
+            Formatted string with paginated search results containing:
             - total: Total number of matches found
             - count: Number of matches in this page
             - offset: Current offset
@@ -589,7 +604,7 @@ def create_mcp_server(
                 "next_offset": offset + limit if has_more else None,
             }
 
-            return json.dumps(result, indent=2)
+            return format_response(result, response_format)
         except Exception as e:
             return f"Error in glob search: {str(e)}. Check pattern syntax (e.g., '**/*.py' for recursive Python files)."
 
@@ -607,6 +622,7 @@ def create_mcp_server(
         ignore_case: bool = False,
         limit: int = 100,
         offset: int = 0,
+        response_format: str = "json",
         ctx: Context | None = None,
     ) -> str:
         """Search file contents using regex pattern with pagination.
@@ -617,9 +633,10 @@ def create_mcp_server(
             ignore_case: Whether to ignore case (default: False)
             limit: Maximum number of results to return (default: 100)
             offset: Number of results to skip (default: 0)
+            response_format: Output format - "json" or "markdown" (default: "json")
 
         Returns:
-            JSON string with paginated search results containing:
+            Formatted string with paginated search results containing:
             - total: Total number of matches found
             - count: Number of matches in this page
             - offset: Current offset
@@ -649,7 +666,7 @@ def create_mcp_server(
                 "next_offset": offset + limit if has_more else None,
             }
 
-            return json.dumps(result, indent=2)
+            return format_response(result, response_format)
         except Exception as e:
             return f"Error in grep search: {str(e)}. Check regex pattern syntax."
 
@@ -662,7 +679,11 @@ def create_mcp_server(
         }
     )
     def nexus_semantic_search(
-        query: str, limit: int = 10, offset: int = 0, ctx: Context | None = None
+        query: str,
+        limit: int = 10,
+        offset: int = 0,
+        response_format: str = "json",
+        ctx: Context | None = None,
     ) -> str:
         """Search files semantically using natural language query with pagination.
 
@@ -670,9 +691,10 @@ def create_mcp_server(
             query: Natural language search query
             limit: Maximum number of results to return (default: 10)
             offset: Number of results to skip (default: 0)
+            response_format: Output format - "json" or "markdown" (default: "json")
 
         Returns:
-            JSON string with paginated search results containing:
+            Formatted string with paginated search results containing:
             - total: Total number of results found
             - count: Number of results in this page
             - offset: Current offset
@@ -707,7 +729,7 @@ def create_mcp_server(
                     "next_offset": offset + limit if has_more else None,
                 }
 
-                return json.dumps(result, indent=2)
+                return format_response(result, response_format)
             return "Semantic search not available (requires NexusFS with search enabled)"
         except Exception as e:
             return f"Error in semantic search: {str(e)}"

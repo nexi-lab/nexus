@@ -253,6 +253,7 @@ class MCPConnectionManager:
             mcp_instance = await self.klavis.create_mcp_instance(
                 provider=klavis_name,
                 user_id=user_id,
+                connection_type="StreamableHttp",
             )
 
             # 2. If OAuth is required, do the OAuth flow
@@ -279,7 +280,7 @@ class MCPConnectionManager:
             mount = MCPMount(
                 name=config.name,
                 description=config.description or f"{config.display_name} via Klavis",
-                transport="sse",
+                transport="klavis_rest",
                 url=mcp_instance.url,
             )
             await self.mount_manager.mount(mount)

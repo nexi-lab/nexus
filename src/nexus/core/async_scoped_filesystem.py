@@ -50,6 +50,16 @@ class AsyncScopedFilesystem:
         # Normalize root: remove trailing slash, ensure leading slash
         self._root = "/" + root.strip("/") if root.strip("/") else ""
 
+    # Global namespaces that should not be scoped - these are shared resources
+    # with their own ownership/permission structures
+    GLOBAL_NAMESPACES = (
+        "/skills/",  # Shared skills namespace
+        "/system/",  # System-wide resources
+        "/mnt/",  # Mount points (shared connectors)
+        "/memory/",  # Memory router paths (/memory/by-user/, etc.)
+        "/objs/",  # Object references (/objs/memory/, etc.)
+    )
+
     def _scope_path(self, path: str) -> str:
         """Rebase a path to the scoped root.
 
@@ -61,6 +71,12 @@ class AsyncScopedFilesystem:
         """
         if not path.startswith("/"):
             path = "/" + path
+
+        # Global namespaces - don't scope, pass through as-is
+        for ns in self.GLOBAL_NAMESPACES:
+            if path.startswith(ns):
+                return path
+
         return f"{self._root}{path}"
 
     def _unscope_path(self, path: str) -> str:
@@ -72,6 +88,11 @@ class AsyncScopedFilesystem:
         Returns:
             Virtual path (e.g., "/workspace/file.txt")
         """
+        # Global namespaces - don't unscope, return as-is
+        for ns in self.GLOBAL_NAMESPACES:
+            if path.startswith(ns):
+                return path
+
         if self._root and path.startswith(self._root):
             result = path[len(self._root) :]
             return result if result else "/"

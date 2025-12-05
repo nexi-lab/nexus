@@ -340,7 +340,7 @@ try:
             chunk_strategy="semantic"
         )
 
-        await nx.close()
+        nx.close()
         print("✓ Semantic search initialized (keyword-only mode)")
 
     asyncio.run(init_semantic_search())

@@ -183,8 +183,9 @@ class VectorDatabase:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             conn.commit()
             vec_available = True
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, Exception):
             # pgvector not available - will only support keyword search
+            # Catches psycopg2.errors.FeatureNotSupported and other database errors
             import warnings
 
             warnings.warn(

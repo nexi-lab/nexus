@@ -291,13 +291,14 @@ class NexusFSCoreMixin:
                 user="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
 
-        # Check if backend is a dynamic API-backed connector (e.g., x_connector)
+        # Check if backend is a dynamic API-backed connector (e.g., x_connector) or virtual filesystem
         # These connectors don't use metadata - they fetch data directly from APIs
         # We check for user_scoped=True explicitly (not just truthy) to avoid Mock objects
+        # Also check has_virtual_filesystem for connectors like HN that have virtual directories
         is_dynamic_connector = (
             getattr(route.backend, "user_scoped", None) is True
             and getattr(route.backend, "token_manager", None) is not None
-        )
+        ) or getattr(route.backend, "has_virtual_filesystem", None) is True
 
         if is_dynamic_connector:
             # Dynamic connector - read directly from backend without metadata check

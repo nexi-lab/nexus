@@ -421,6 +421,12 @@ _CONFIG_MAPPINGS: dict[str, dict[str, str]] = {
         "cache_ttl": "cache_ttl",
         "cache_dir": "cache_dir",
     },
+    "hn_connector": {
+        "cache_ttl": "cache_ttl",
+        "stories_per_feed": "stories_per_feed",
+        "include_comments": "include_comments",
+        "session_factory": "session_factory",
+    },
 }
 
 

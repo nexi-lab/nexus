@@ -11,6 +11,33 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from nexus.server.auth.oauth_config import OAuthConfig
 
 
+class FeaturesConfig(BaseModel):
+    """Feature flags for optional Nexus functionality."""
+
+    semantic_search: bool = Field(
+        default=False,
+        description="Enable semantic search (requires vector database)",
+    )
+    llm_read: bool = Field(
+        default=False,
+        description="Enable LLM-powered document reading",
+    )
+    agent_memory: bool = Field(
+        default=True,
+        description="Enable agent memory API",
+    )
+    job_system: bool = Field(
+        default=False,
+        description="Enable asynchronous job system",
+    )
+    mcp_server: bool = Field(
+        default=True,
+        description="Enable Model Context Protocol server",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class NexusConfig(BaseModel):
     """
     Unified configuration for all Nexus deployment modes.
@@ -134,6 +161,12 @@ class NexusConfig(BaseModel):
     oauth: OAuthConfig | None = Field(
         default=None,
         description="OAuth provider configurations (providers list with name, display_name, provider_class, etc.)",
+    )
+
+    # Feature flags (v0.9.0+)
+    features: FeaturesConfig = Field(
+        default_factory=FeaturesConfig,
+        description="Feature flags for optional functionality (semantic search, LLM read, etc.)",
     )
 
     # Remote mode settings (monolithic/distributed)

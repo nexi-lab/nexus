@@ -409,7 +409,12 @@ class CacheConnectorMixin:
             original: If True, return binary content even for parsed files
 
         Returns:
-            CacheEntry if cached, None otherwise
+            CacheEntry if cached, None otherwise (or if TTL expired)
+
+        Note:
+            If the connector defines `cache_ttl` (in seconds), entries older
+            than TTL are treated as cache misses. This is used by API connectors
+            (HN, etc.) that need time-based expiration instead of version-based.
         """
         # L1: Check in-memory cache first (keyed by path)
         memory_cache = self._get_memory_cache()
@@ -420,8 +425,20 @@ class CacheConnectorMixin:
             with contextlib.suppress(Exception):
                 import pickle
 
-                logger.info(f"[CACHE] L1 HIT (memory): {path}")
                 entry: CacheEntry = pickle.loads(cached_bytes)
+
+                # Check TTL if connector defines cache_ttl
+                if hasattr(self, "cache_ttl") and self.cache_ttl:
+                    age = (datetime.now(UTC) - entry.synced_at).total_seconds()
+                    if age > self.cache_ttl:
+                        logger.info(
+                            f"[CACHE] L1 TTL EXPIRED: {path} "
+                            f"(age={age:.0f}s > ttl={self.cache_ttl}s)"
+                        )
+                        memory_cache.remove(memory_key)
+                        return None
+
+                logger.info(f"[CACHE] L1 HIT (memory): {path}")
                 return entry
         logger.debug(f"[CACHE] L1 MISS (memory): {path}")
 
@@ -471,6 +488,15 @@ class CacheConnectorMixin:
             parsed_from=cache_model.parsed_from,
             parse_metadata=parse_metadata,
         )
+
+        # Check TTL if connector defines cache_ttl
+        if hasattr(self, "cache_ttl") and self.cache_ttl:
+            age = (datetime.now(UTC) - entry.synced_at).total_seconds()
+            if age > self.cache_ttl:
+                logger.info(
+                    f"[CACHE] L2 TTL EXPIRED: {path} (age={age:.0f}s > ttl={self.cache_ttl}s)"
+                )
+                return None
 
         # Populate L1 memory cache for future reads
         with contextlib.suppress(Exception):

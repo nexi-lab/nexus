@@ -309,10 +309,14 @@ class TestFileOperationTools:
         list_tool = get_tool(server, "nexus_list_files")
         result = list_tool.fn(path="/data")
 
-        # Result should be JSON
-        files = json.loads(result)
-        assert isinstance(files, list)
-        assert "/file1.txt" in files
+        # Result should be JSON with pagination metadata
+        response = json.loads(result)
+        assert isinstance(response, dict)
+        assert "items" in response
+        assert "total" in response
+        assert "count" in response
+        assert isinstance(response["items"], list)
+        assert "/file1.txt" in response["items"]
         mock_nx_basic.list.assert_called_once_with("/data", recursive=False, details=True)
 
     def test_list_files_recursive(self, mock_nx_basic):
@@ -450,9 +454,12 @@ class TestSearchTools:
         glob_tool = get_tool(server, "nexus_glob")
         result = glob_tool.fn(pattern="*.py", path="/src")
 
-        matches = json.loads(result)
-        assert isinstance(matches, list)
-        assert "test.py" in matches
+        response = json.loads(result)
+        assert isinstance(response, dict)
+        assert "items" in response
+        assert "total" in response
+        assert isinstance(response["items"], list)
+        assert "test.py" in response["items"]
         mock_nx_basic.glob.assert_called_once_with("*.py", "/src")
 
     def test_glob_default_path(self, mock_nx_basic):
@@ -482,8 +489,11 @@ class TestSearchTools:
         grep_tool = get_tool(server, "nexus_grep")
         result = grep_tool.fn(pattern="TODO", path="/src")
 
-        matches = json.loads(result)
-        assert isinstance(matches, list)
+        response = json.loads(result)
+        assert isinstance(response, dict)
+        assert "items" in response
+        assert "total" in response
+        assert isinstance(response["items"], list)
         mock_nx_basic.grep.assert_called_once_with("TODO", "/src", ignore_case=False)
 
     def test_grep_ignore_case(self, mock_nx_basic):
@@ -496,7 +506,7 @@ class TestSearchTools:
         mock_nx_basic.grep.assert_called_once_with("error", "/logs", ignore_case=True)
 
     def test_grep_result_limiting(self, mock_nx_basic):
-        """Test grep limits results to 100 matches."""
+        """Test grep pagination with default limit of 100 matches."""
         # Create 150 fake results
         large_results = [{"file": f"file{i}.py", "line": i, "content": "match"} for i in range(150)]
         mock_nx_basic.grep.return_value = large_results
@@ -505,8 +515,13 @@ class TestSearchTools:
         grep_tool = get_tool(server, "nexus_grep")
         result = grep_tool.fn(pattern="test")
 
-        matches = json.loads(result)
-        assert len(matches) == 100  # Should be limited to 100
+        response = json.loads(result)
+        assert isinstance(response, dict)
+        assert response["total"] == 150  # Total results found
+        assert response["count"] == 100  # First page limited to 100
+        assert len(response["items"]) == 100
+        assert response["has_more"] is True
+        assert response["next_offset"] == 100
 
     def test_grep_error(self, mock_nx_basic):
         """Test grep error handling."""
@@ -526,9 +541,13 @@ class TestSearchTools:
         search_tool = get_tool(server, "nexus_semantic_search")
         result = search_tool.fn(query="authentication code", limit=5)
 
-        results = json.loads(result)
-        assert isinstance(results, list)
-        mock_nx_with_search.search.assert_called_once_with("authentication code", limit=5)
+        response = json.loads(result)
+        assert isinstance(response, dict)
+        assert "items" in response
+        assert "total" in response
+        assert isinstance(response["items"], list)
+        # Note: With pagination, we now fetch limit*2 to check for more results
+        mock_nx_with_search.search.assert_called_once_with("authentication code", limit=10)
 
     def test_semantic_search_not_available(self, mock_nx_basic):
         """Test semantic search when not available."""

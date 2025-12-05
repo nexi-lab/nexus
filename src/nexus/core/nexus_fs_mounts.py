@@ -226,6 +226,20 @@ class NexusFSMountsMixin:
                 cache_ttl=backend_config.get("cache_ttl"),
                 cache_dir=backend_config.get("cache_dir"),
             )
+        elif backend_type == "hn_connector":
+            from nexus.backends.hn_connector import HNConnectorBackend
+
+            # Get session factory for caching support if available
+            hn_session_factory = None
+            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
+                hn_session_factory = self.metadata.SessionLocal
+
+            backend = HNConnectorBackend(
+                cache_ttl=backend_config.get("cache_ttl", 300),
+                stories_per_feed=backend_config.get("stories_per_feed", 10),
+                include_comments=backend_config.get("include_comments", True),
+                session_factory=hn_session_factory,
+            )
         else:
             raise RuntimeError(f"Unsupported backend type: {backend_type}")
 

@@ -43,6 +43,11 @@ try:
 except ImportError:
     XConnectorBackend = None  # type: ignore
 
+try:
+    from nexus.backends.hn_connector import HNConnectorBackend
+except ImportError:
+    HNConnectorBackend = None  # type: ignore
+
 __all__ = [
     # Base classes
     "Backend",
@@ -65,4 +70,5 @@ __all__ = [
     "GCSConnectorBackend",
     "S3ConnectorBackend",
     "XConnectorBackend",
+    "HNConnectorBackend",
 ]

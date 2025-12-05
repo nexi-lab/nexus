@@ -43,6 +43,26 @@ def tool_exists(server, tool_name: str) -> bool:
     return tool_name in server._tool_manager._tools
 
 
+def extract_items(result: str | list | dict) -> list:
+    """Extract items from a potentially paginated response.
+
+    The MCP API can return either:
+    - A plain list: [item1, item2, ...]
+    - A paginated dict: {"count": N, "items": [...], "has_more": false, ...}
+
+    This helper extracts the items list in either case.
+    """
+    if isinstance(result, str):
+        result = json.loads(result)
+
+    if isinstance(result, list):
+        return result
+    elif isinstance(result, dict) and "items" in result:
+        return result["items"]
+    else:
+        return result
+
+
 # ============================================================================
 # FIXTURES
 # ============================================================================
@@ -123,7 +143,7 @@ class TestFileOperationsIntegration:
         # List files
         list_tool = get_tool(mcp_server, "nexus_list_files")
         list_result = list_tool.fn(path="/workflow")
-        files = json.loads(list_result)
+        files = extract_items(list_result)
 
         assert len(files) >= 3
         file_paths = [f if isinstance(f, str) else f.get("path", f) for f in files]
@@ -191,7 +211,7 @@ class TestSearchIntegration:
 
         # Search for .txt files
         result = glob_tool.fn(pattern="**/*.txt", path="/")
-        matches = json.loads(result)
+        matches = extract_items(result)
 
         assert isinstance(matches, list)
         assert len(matches) >= 4  # At least 4 test files
@@ -208,14 +228,14 @@ class TestSearchIntegration:
 
         # Search for TODO comments
         result = grep_tool.fn(pattern="TODO", path="/search")
-        matches = json.loads(result)
+        matches = extract_items(result)
 
         assert isinstance(matches, list)
         assert len(matches) >= 2  # Should find 2 files with TODO
 
         # Search case-insensitively
         result_case = grep_tool.fn(pattern="hello", path="/search", ignore_case=True)
-        matches_case = json.loads(result_case)
+        matches_case = extract_items(result_case)
 
         assert len(matches_case) >= 1
 
@@ -266,7 +286,7 @@ class TestMultiToolWorkflows:
 
         # Step 2: Search for Python files
         glob_result = glob_tool.fn(pattern="**/*.py", path="/project")
-        py_files = json.loads(glob_result)
+        py_files = extract_items(glob_result)
         assert len(py_files) == 3
 
         # Step 3: Read and modify one file
@@ -292,7 +312,7 @@ class TestMultiToolWorkflows:
 
         # List all files
         list_result = list_tool.fn(path="/bulk", recursive=False)
-        files = json.loads(list_result)
+        files = extract_items(list_result)
         assert len(files) >= 20
 
         # Delete every other file
@@ -301,7 +321,7 @@ class TestMultiToolWorkflows:
 
         # Verify remaining files
         list_result_after = list_tool.fn(path="/bulk")
-        files_after = json.loads(list_result_after)
+        files_after = extract_items(list_result_after)
         assert len(files_after) == 10  # Half deleted
 
 
@@ -581,7 +601,7 @@ class TestComprehensiveMCPToolsWorkflow:
         # Step 4: Test nexus_list_files
         list_tool = get_tool(mcp_server, "nexus_list_files")
         list_result = list_tool.fn(path="/mcp_integration_test", recursive=False, details=True)
-        files = json.loads(list_result)
+        files = extract_items(list_result)
         file_names = [f if isinstance(f, str) else f.get("path", "") for f in files]
         assert any("test1.txt" in str(name) for name in file_names)
         assert any("test2.py" in str(name) for name in file_names)
@@ -595,13 +615,13 @@ class TestComprehensiveMCPToolsWorkflow:
         # Step 6: Test nexus_glob
         glob_tool = get_tool(mcp_server, "nexus_glob")
         glob_result = glob_tool.fn(pattern="*.txt", path="/mcp_integration_test")
-        glob_matches = json.loads(glob_result)
+        glob_matches = extract_items(glob_result)
         assert any("test1.txt" in match for match in glob_matches)
 
         # Step 7: Test nexus_grep
         grep_tool = get_tool(mcp_server, "nexus_grep")
         grep_result = grep_tool.fn(pattern="Hello", path="/mcp_integration_test", ignore_case=False)
-        grep_matches = json.loads(grep_result)
+        grep_matches = extract_items(grep_result)
         assert len(grep_matches) > 0
 
         # Step 8: Test nexus_semantic_search (optional)
@@ -691,7 +711,7 @@ class TestPerformanceCharacteristics:
 
         # Search for them all
         result = glob_tool.fn(pattern="**/*.txt", path="/many")
-        files = json.loads(result)
+        files = extract_items(result)
 
         assert len(files) == 100
 

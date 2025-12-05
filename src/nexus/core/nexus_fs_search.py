@@ -15,6 +15,7 @@ import re
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core import glob_fast, grep_fast
+from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 
@@ -31,6 +32,7 @@ class NexusFSSearchMixin:
     if TYPE_CHECKING:
         from nexus.core.mount_router import MountRouter
         from nexus.core.permissions import PermissionEnforcer
+        from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
         metadata: SQLAlchemyMetadataStore
         router: MountRouter
@@ -38,6 +40,7 @@ class NexusFSSearchMixin:
         _default_context: OperationContext
         _permission_enforcer: PermissionEnforcer
         _semantic_search: SemanticSearch | None
+        _rebac_manager: EnhancedReBACManager
 
         def _validate_path(self, path: str) -> str: ...
         def _get_backend_directory_entries(self, path: str) -> set[str]: ...
@@ -121,8 +124,12 @@ class NexusFSSearchMixin:
         # Check if path routes to a dynamic API-backed connector (e.g., x_connector)
         # These connectors have virtual directories that don't exist in metadata
         if path and path != "/":
+            logger.warning(f"[LIST-DEBUG] Entering dynamic connector check for path={path}")
             try:
                 tenant_id, agent_id, is_admin = self._get_routing_params(context)
+                logger.warning(
+                    f"[LIST-DEBUG] routing_params: tenant_id={tenant_id}, is_admin={is_admin}"
+                )
                 route = self.router.route(
                     path,
                     tenant_id=tenant_id,
@@ -130,13 +137,40 @@ class NexusFSSearchMixin:
                     is_admin=is_admin,
                     check_write=False,
                 )
-                # Check if backend is a dynamic API-backed connector
+                # Check if backend is a dynamic API-backed connector or virtual filesystem
                 # We check for user_scoped=True explicitly (not just truthy) to avoid Mock objects
+                # Also check has_virtual_filesystem for connectors like HN that have virtual directories
                 is_dynamic_connector = (
                     getattr(route.backend, "user_scoped", None) is True
                     and getattr(route.backend, "token_manager", None) is not None
-                )
+                ) or getattr(route.backend, "has_virtual_filesystem", None) is True
+
                 if is_dynamic_connector:
+                    # Check permission on the mount path BEFORE listing
+                    # This ensures user has access to the virtual filesystem mount
+                    if self._enforce_permissions and context:
+                        mount_path = route.mount_point.rstrip("/")
+                        if not mount_path:
+                            mount_path = path.rstrip("/")
+                        # Admin users always have access
+                        if context.is_admin:
+                            has_permission = True
+                        elif context.subject_id is None:
+                            # No subject_id means we can't verify permissions
+                            has_permission = False
+                        else:
+                            # Use rebac_check with correct signature: (subject_tuple, permission, object_tuple, context, tenant_id)
+                            has_permission = self._rebac_manager.rebac_check(
+                                subject=(context.subject_type, context.subject_id),
+                                permission="read",
+                                object=("file", mount_path),
+                                tenant_id=context.tenant_id,
+                            )
+                        if not has_permission:
+                            raise PermissionDeniedError(
+                                f"Access denied: User '{context.user}' does not have READ permission for '{path}'"
+                            )
+
                     # Use the backend's list_dir method directly
                     from dataclasses import replace
 
@@ -163,8 +197,15 @@ class NexusFSSearchMixin:
                             for entry in entries
                         ]
                     return [f"{path.rstrip('/')}/{entry}" for entry in entries]
+            except PermissionDeniedError:
+                # Re-raise permission errors - don't fall through to metadata listing
+                raise
             except Exception as e:
-                logger.debug(f"Dynamic connector check failed for {path}: {e}")
+                import traceback
+
+                logger.warning(
+                    f"[LIST-DEBUG] Dynamic connector list_dir failed for {path}: {e}\n{traceback.format_exc()}"
+                )
                 # Fall through to normal metadata-based listing
 
         # Handle backward compatibility with old 'prefix' parameter

@@ -195,6 +195,8 @@ class VectorDatabase:
                 "https://github.com/pgvector/pgvector",
                 stacklevel=2,
             )
+            # Rollback the failed transaction so subsequent commands can execute
+            conn.rollback()
 
         self.vec_available = vec_available
 

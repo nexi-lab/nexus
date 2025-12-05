@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import re
 import sys
@@ -169,39 +168,48 @@ async def evaluate_question_with_mcp(
 
     messages.append({"role": "assistant", "content": response.content})
 
-    # Tool use loop
+    # Tool use loop - handle all tool_use blocks (including parallel tool calls)
     while response.stop_reason == "tool_use":
-        tool_use = next(block for block in response.content if block.type == "tool_use")
-        tool_name = tool_use.name
-        tool_input = tool_use.input
+        tool_uses = [block for block in response.content if block.type == "tool_use"]
+        tool_results = []
 
-        try:
-            tool_result = await mcp_session.call_tool(tool_name, arguments=tool_input)
-            # Extract text from TextContent objects
-            if hasattr(tool_result, "content"):
-                content_items = []
-                for item in tool_result.content:
-                    if hasattr(item, "text"):
-                        content_items.append(item.text)
-                    else:
-                        content_items.append(str(item))
-                tool_response = "\n".join(content_items) if content_items else str(tool_result)
-            else:
-                tool_response = str(tool_result)
-            tool_call_count += 1
-        except Exception as e:
-            tool_response = f"Error executing tool {tool_name}: {str(e)}\n{traceback.format_exc()}"
+        # Execute all tool calls
+        for tool_use in tool_uses:
+            tool_name = tool_use.name
+            tool_input = tool_use.input
 
+            try:
+                tool_result = await mcp_session.call_tool(tool_name, arguments=tool_input)
+                # Extract text from TextContent objects
+                if hasattr(tool_result, "content"):
+                    content_items = []
+                    for item in tool_result.content:
+                        if hasattr(item, "text"):
+                            content_items.append(item.text)
+                        else:
+                            content_items.append(str(item))
+                    tool_response = "\n".join(content_items) if content_items else str(tool_result)
+                else:
+                    tool_response = str(tool_result)
+                tool_call_count += 1
+            except Exception as e:
+                tool_response = (
+                    f"Error executing tool {tool_name}: {str(e)}\n{traceback.format_exc()}"
+                )
+
+            tool_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use.id,
+                    "content": tool_response,
+                }
+            )
+
+        # Send all tool results in a single message
         messages.append(
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_use.id,
-                        "content": tool_response,
-                    }
-                ],
+                "content": tool_results,
             }
         )
 
@@ -317,49 +325,62 @@ async def run_evaluation_async(
         try:
             if transport == "http":
                 # HTTP transport - connect to remote MCP server
-                async with streamablehttp_client(mcp_url) as (read, write, _):
-                    async with ClientSession(read, write) as session:
-                        await session.initialize()
+                # Pass NEXUS_API_KEY via HTTP headers
+                nexus_api_key = os.environ.get("NEXUS_API_KEY")
+                headers = {}
+                if nexus_api_key:
+                    headers["X-Nexus-API-Key"] = nexus_api_key
 
-                        # List available tools
-                        tools_response = await session.list_tools()
-                        tools = [
-                            {
-                                "name": tool.name,
-                                "description": tool.description or "",
-                                "input_schema": tool.inputSchema,
-                            }
-                            for tool in tools_response.tools
-                        ]
-                        print(f"Connected to MCP server with {len(tools)} tools")
+                async with (
+                    streamablehttp_client(mcp_url, headers=headers) as (read, write, _),
+                    ClientSession(read, write) as session,
+                ):
+                    await session.initialize()
 
-                        # Evaluate each question
-                        for i, qa in enumerate(qa_pairs, 1):
-                            print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
+                    # List available tools
+                    tools_response = await session.list_tools()
+                    tools = [
+                        {
+                            "name": tool.name,
+                            "description": tool.description or "",
+                            "input_schema": tool.inputSchema,
+                        }
+                        for tool in tools_response.tools
+                    ]
+                    print(f"Connected to MCP server with {len(tools)} tools")
 
-                            start_time = time.time()
-                            actual_answer, tool_calls, summary, feedback = await evaluate_question_with_mcp(
-                                client, qa.question, model, session, tools
-                            )
-                            duration = time.time() - start_time
+                    # Evaluate each question
+                    for i, qa in enumerate(qa_pairs, 1):
+                        print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
 
-                            # Check if answer matches
-                            is_correct = actual_answer.lower().strip() == qa.answer.lower().strip()
+                        start_time = time.time()
+                        (
+                            actual_answer,
+                            tool_calls,
+                            summary,
+                            feedback,
+                        ) = await evaluate_question_with_mcp(
+                            client, qa.question, model, session, tools
+                        )
+                        duration = time.time() - start_time
 
-                            result = EvaluationResult(
-                                question=qa.question,
-                                expected_answer=qa.answer,
-                                actual_answer=actual_answer,
-                                is_correct=is_correct,
-                                duration_seconds=duration,
-                                tool_calls=tool_calls,
-                                summary=summary,
-                                feedback=feedback,
-                            )
-                            results.append(result)
+                        # Check if answer matches
+                        is_correct = actual_answer.lower().strip() == qa.answer.lower().strip()
 
-                            status = "✅" if is_correct else "❌"
-                            print(f"  {status} Expected: {qa.answer}, Got: {actual_answer}")
+                        result = EvaluationResult(
+                            question=qa.question,
+                            expected_answer=qa.answer,
+                            actual_answer=actual_answer,
+                            is_correct=is_correct,
+                            duration_seconds=duration,
+                            tool_calls=tool_calls,
+                            summary=summary,
+                            feedback=feedback,
+                        )
+                        results.append(result)
+
+                        status = "✅" if is_correct else "❌"
+                        print(f"  {status} Expected: {qa.answer}, Got: {actual_answer}")
 
             elif transport == "stdio":
                 # Stdio transport - connect to local MCP server
@@ -369,55 +390,63 @@ async def run_evaluation_async(
                     env=None,
                 )
 
-                async with stdio_client(server_params) as (read, write):
-                    async with ClientSession(read, write) as session:
-                        await session.initialize()
+                async with (
+                    stdio_client(server_params) as (read, write),
+                    ClientSession(read, write) as session,
+                ):
+                    await session.initialize()
 
-                        # List available tools
-                        tools_response = await session.list_tools()
-                        tools = [
-                            {
-                                "name": tool.name,
-                                "description": tool.description or "",
-                                "input_schema": tool.inputSchema,
-                            }
-                            for tool in tools_response.tools
-                        ]
-                        print(f"Connected to MCP server with {len(tools)} tools")
+                    # List available tools
+                    tools_response = await session.list_tools()
+                    tools = [
+                        {
+                            "name": tool.name,
+                            "description": tool.description or "",
+                            "input_schema": tool.inputSchema,
+                        }
+                        for tool in tools_response.tools
+                    ]
+                    print(f"Connected to MCP server with {len(tools)} tools")
 
-                        # Evaluate each question
-                        for i, qa in enumerate(qa_pairs, 1):
-                            print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
+                    # Evaluate each question
+                    for i, qa in enumerate(qa_pairs, 1):
+                        print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
 
-                            start_time = time.time()
-                            actual_answer, tool_calls, summary, feedback = await evaluate_question_with_mcp(
-                                client, qa.question, model, session, tools
-                            )
-                            duration = time.time() - start_time
+                        start_time = time.time()
+                        (
+                            actual_answer,
+                            tool_calls,
+                            summary,
+                            feedback,
+                        ) = await evaluate_question_with_mcp(
+                            client, qa.question, model, session, tools
+                        )
+                        duration = time.time() - start_time
 
-                            # Check if answer matches
-                            is_correct = actual_answer.lower().strip() == qa.answer.lower().strip()
+                        # Check if answer matches
+                        is_correct = actual_answer.lower().strip() == qa.answer.lower().strip()
 
-                            result = EvaluationResult(
-                                question=qa.question,
-                                expected_answer=qa.answer,
-                                actual_answer=actual_answer,
-                                is_correct=is_correct,
-                                duration_seconds=duration,
-                                tool_calls=tool_calls,
-                                summary=summary,
-                                feedback=feedback,
-                            )
-                            results.append(result)
+                        result = EvaluationResult(
+                            question=qa.question,
+                            expected_answer=qa.answer,
+                            actual_answer=actual_answer,
+                            is_correct=is_correct,
+                            duration_seconds=duration,
+                            tool_calls=tool_calls,
+                            summary=summary,
+                            feedback=feedback,
+                        )
+                        results.append(result)
 
-                            status = "✅" if is_correct else "❌"
-                            print(f"  {status} Expected: {qa.answer}, Got: {actual_answer}")
+                        status = "✅" if is_correct else "❌"
+                        print(f"  {status} Expected: {qa.answer}, Got: {actual_answer}")
 
             else:
                 raise ValueError(f"Unsupported transport: {transport}")
 
         except Exception as e:
             print(f"Error connecting to MCP server: {e}")
+            print(f"Full traceback:\n{traceback.format_exc()}")
             print("Falling back to prompt-based evaluation...")
             MCP_AVAILABLE_LOCAL = False
         else:
@@ -432,7 +461,9 @@ async def run_evaluation_async(
             print(f"\n[{i}/{len(qa_pairs)}] Evaluating: {qa.question[:60]}...")
 
             start_time = time.time()
-            actual_answer, tool_calls, summary, feedback = evaluate_question_prompt_based(client, qa.question, model)
+            actual_answer, tool_calls, summary, feedback = evaluate_question_prompt_based(
+                client, qa.question, model
+            )
             duration = time.time() - start_time
 
             is_correct = actual_answer.lower().strip() == qa.answer.lower().strip()

@@ -224,19 +224,21 @@ class VectorDatabase:
             # Index might already exist
             pass
 
-        # Create HNSW index for vector search (better than IVFFlat for most cases)
-        try:
-            conn.execute(
-                text("""
-                CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw
-                ON document_chunks
-                USING hnsw (embedding vector_cosine_ops)
-            """)
-            )
-            conn.commit()
-        except OSError:
-            # Index might already exist
-            pass
+        # Create HNSW index for vector search (only if pgvector available)
+        if vec_available:
+            try:
+                conn.execute(
+                    text("""
+                    CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw
+                    ON document_chunks
+                    USING hnsw (embedding vector_cosine_ops)
+                """)
+                )
+                conn.commit()
+            except Exception:
+                # Index might already exist or other pgvector-related error
+                # Rollback transaction to avoid InFailedSqlTransaction errors
+                conn.rollback()
 
     def store_embedding(self, session: Session, chunk_id: str, embedding: list[float]) -> None:
         """Store embedding for a chunk.

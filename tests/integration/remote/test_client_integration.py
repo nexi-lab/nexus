@@ -175,8 +175,9 @@ class TestRemoteNexusFS:
         mock_client.close.assert_called_once()
 
 
+@pytest.mark.integration
 class TestRemoteNexusFSIntegration:
-    """Integration tests for RemoteNexusFS."""
+    """Integration tests for RemoteNexusFS with real server."""
 
     @pytest.fixture
     def server_and_client(self, tmp_path):

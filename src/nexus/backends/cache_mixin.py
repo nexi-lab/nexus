@@ -867,21 +867,21 @@ class CacheConnectorMixin:
         # Process each file
         for backend_path in files:
             try:
-                # Get virtual path
-                virtual_path = backend_to_virtual.get(backend_path)
-                if not virtual_path:
+                # Get virtual path (may be None if filtered out by patterns)
+                vpath = backend_to_virtual.get(backend_path)
+                if vpath is None:
                     # Was filtered out by patterns
                     continue
 
                 # Create context for reading with backend_path set
                 read_context = self._create_read_context(
                     backend_path=backend_path,
-                    virtual_path=virtual_path,
+                    virtual_path=vpath,
                     context=context,
                 )
 
                 # OPTIMIZATION: Get cached entry from bulk-loaded data
-                cached = cached_entries.get(virtual_path)
+                cached = cached_entries.get(vpath)
 
                 # OPTIMIZATION: Skip version check if cache is fresh and not stale
                 # Only check version if we need to verify freshness

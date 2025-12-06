@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 # Try to import Rust extensions
 # - nexus._nexus_fast: Internal module (faster bulk operations)
 # - nexus_fast: External package (has compute_permission_single)
-_internal_module = None
-_external_module = None
+_internal_module: Any = None
+_external_module: Any = None
 RUST_AVAILABLE = False
 
 try:
-    from nexus import _nexus_fast as _internal_module  # type: ignore[assignment]
+    from nexus import _nexus_fast as _internal_module  # type: ignore[no-redef]
 
     RUST_AVAILABLE = True
     logger.info("✓ Rust bulk acceleration available (nexus._nexus_fast)")
@@ -44,7 +44,7 @@ except ImportError:
     pass
 
 try:
-    import nexus_fast as _external_module  # type: ignore[assignment]
+    import nexus_fast as _external_module  # type: ignore[no-redef]
 
     RUST_AVAILABLE = True
     logger.info("✓ Rust single-check acceleration available (nexus_fast)")

@@ -32,6 +32,7 @@ from nexus.core.metadata import FileMetadata, MetadataStore
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
 from nexus.storage.models import (
     Base,
+    ContentCacheModel,
     FileMetadataModel,
     FilePathModel,
     VersionHistoryModel,
@@ -194,12 +195,14 @@ class SQLAlchemyMetadataStore(MetadataStore):
             config["connect_args"] = {"timeout": 30}
         elif self.db_type == "postgresql":
             # PostgreSQL-specific configuration
-            # Use QueuePool with reasonable defaults for production
+            # Use QueuePool with configurable settings for production scalability
+            # Environment variables allow tuning without code changes
             config["poolclass"] = pool.QueuePool
-            config["pool_size"] = 5  # Number of connections to maintain
-            config["max_overflow"] = 10  # Max connections above pool_size
-            config["pool_timeout"] = 30  # Seconds to wait for connection
-            config["pool_recycle"] = 3600  # Recycle connections after 1 hour
+            config["pool_size"] = int(os.getenv("NEXUS_DB_POOL_SIZE", "20"))
+            config["max_overflow"] = int(os.getenv("NEXUS_DB_MAX_OVERFLOW", "30"))
+            config["pool_timeout"] = int(os.getenv("NEXUS_DB_POOL_TIMEOUT", "10"))
+            config["pool_recycle"] = 1800  # Recycle connections every 30 min
+            config["pool_pre_ping"] = True  # Verify connections are alive before use
 
         return config
 
@@ -1459,6 +1462,131 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 self._cache.invalidate_kv(path, key)
         except Exception as e:
             raise MetadataError(f"Failed to set file metadata: {e}", path=path) from e
+
+    def get_searchable_text(self, path: str) -> str | None:
+        """
+        Get searchable text for a file, checking both cache sources.
+
+        This method provides a unified interface for getting searchable text,
+        checking both connector cache (content_cache.content_text) and local
+        file metadata (file_metadata with key='parsed_text').
+
+        Priority:
+        1. content_cache.content_text (for connector files)
+        2. file_metadata.parsed_text (for local files)
+
+        Args:
+            path: Virtual path
+
+        Returns:
+            Searchable text content or None if not available
+        """
+        try:
+            with self.SessionLocal() as session:
+                # Get path_id first
+                path_stmt = select(FilePathModel.path_id).where(
+                    FilePathModel.virtual_path == path, FilePathModel.deleted_at.is_(None)
+                )
+                path_id = session.scalar(path_stmt)
+
+                if path_id is None:
+                    return None
+
+                # 1. Check content_cache first (connector files)
+                cache_stmt = select(ContentCacheModel.content_text).where(
+                    ContentCacheModel.path_id == path_id,
+                    ContentCacheModel.stale == False,  # noqa: E712
+                )
+                content_text = session.scalar(cache_stmt)
+
+                if content_text:
+                    return content_text
+
+                # 2. Fall back to file_metadata (local files)
+                metadata_stmt = select(FileMetadataModel.value).where(
+                    FileMetadataModel.path_id == path_id,
+                    FileMetadataModel.key == "parsed_text",
+                )
+                metadata_value = session.scalar(metadata_stmt)
+
+                if metadata_value:
+                    parsed: str | None = json.loads(metadata_value)
+                    return parsed
+
+                return None
+        except Exception:
+            return None
+
+    def get_searchable_text_bulk(self, paths: builtins.list[str]) -> dict[str, str]:
+        """
+        Get searchable text for multiple files in bulk.
+
+        Optimized for batch operations like grep. Checks both content_cache
+        and file_metadata tables in single queries.
+
+        Args:
+            paths: List of virtual paths
+
+        Returns:
+            Dict mapping path -> searchable text (only for paths with text)
+        """
+        if not paths:
+            return {}
+
+        results: dict[str, str] = {}
+
+        try:
+            with self.SessionLocal() as session:
+                # Get path_ids for all paths
+                path_stmt = select(FilePathModel.virtual_path, FilePathModel.path_id).where(
+                    FilePathModel.virtual_path.in_(paths),
+                    FilePathModel.deleted_at.is_(None),
+                )
+                path_rows = session.execute(path_stmt).fetchall()
+                path_to_id = {row[0]: row[1] for row in path_rows}
+
+                if not path_to_id:
+                    return {}
+
+                path_ids = list(path_to_id.values())
+                id_to_path = {v: k for k, v in path_to_id.items()}
+
+                # 1. Bulk query content_cache (connector files)
+                cache_stmt = select(
+                    ContentCacheModel.path_id, ContentCacheModel.content_text
+                ).where(
+                    ContentCacheModel.path_id.in_(path_ids),
+                    ContentCacheModel.stale == False,  # noqa: E712
+                    ContentCacheModel.content_text.isnot(None),
+                )
+                cache_rows = session.execute(cache_stmt).fetchall()
+
+                found_path_ids = set()
+                for path_id, content_text in cache_rows:
+                    if content_text and path_id in id_to_path:
+                        results[id_to_path[path_id]] = content_text
+                        found_path_ids.add(path_id)
+
+                # 2. For remaining paths, check file_metadata (local files)
+                remaining_path_ids = [pid for pid in path_ids if pid not in found_path_ids]
+
+                if remaining_path_ids:
+                    metadata_stmt = select(
+                        FileMetadataModel.path_id, FileMetadataModel.value
+                    ).where(
+                        FileMetadataModel.path_id.in_(remaining_path_ids),
+                        FileMetadataModel.key == "parsed_text",
+                        FileMetadataModel.value.isnot(None),
+                    )
+                    metadata_rows = session.execute(metadata_stmt).fetchall()
+
+                    for path_id, value in metadata_rows:
+                        if value and path_id in id_to_path:
+                            results[id_to_path[path_id]] = json.loads(value)
+
+                return results
+        except Exception:
+            return {}
 
     def get_path_id(self, path: str) -> str | None:
         """Get the UUID path_id for a virtual path.

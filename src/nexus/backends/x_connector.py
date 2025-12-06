@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError
 
 if TYPE_CHECKING:
@@ -73,6 +74,12 @@ CACHE_TTL = {
 }
 
 
+@register_connector(
+    "x_connector",
+    description="X (Twitter) API with OAuth 2.0 PKCE",
+    category="api",
+    requires=["requests-oauthlib"],
+)
 class XConnectorBackend(Backend):
     """
     X (Twitter) connector backend with OAuth 2.0 PKCE authentication.
@@ -97,6 +104,38 @@ class XConnectorBackend(Backend):
     - Read-only for most paths
     - Fixed virtual directory structure
     """
+
+    user_scoped = True
+
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "token_manager_db": ConnectionArg(
+            type=ArgType.PATH,
+            description="Path to TokenManager database or database URL",
+            required=True,
+        ),
+        "user_email": ConnectionArg(
+            type=ArgType.STRING,
+            description="User email for OAuth lookup (None for multi-user from context)",
+            required=False,
+        ),
+        "cache_ttl": ConnectionArg(
+            type=ArgType.STRING,
+            description="Custom cache TTL configuration (JSON dict)",
+            required=False,
+        ),
+        "cache_dir": ConnectionArg(
+            type=ArgType.PATH,
+            description="Cache directory path",
+            required=False,
+            default="/tmp/nexus-x-cache",
+        ),
+        "provider": ConnectionArg(
+            type=ArgType.STRING,
+            description="OAuth provider name",
+            required=False,
+            default="twitter",
+        ),
+    }
 
     def __init__(
         self,
@@ -142,11 +181,6 @@ class XConnectorBackend(Backend):
     def name(self) -> str:
         """Backend identifier name."""
         return "x"
-
-    @property
-    def user_scoped(self) -> bool:
-        """This backend requires per-user OAuth credentials."""
-        return True
 
     async def _get_api_client_async(
         self, context: "OperationContext | None"

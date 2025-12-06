@@ -15,6 +15,7 @@ import re
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core import glob_fast, grep_fast
+from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 
@@ -31,6 +32,7 @@ class NexusFSSearchMixin:
     if TYPE_CHECKING:
         from nexus.core.mount_router import MountRouter
         from nexus.core.permissions import PermissionEnforcer
+        from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
         metadata: SQLAlchemyMetadataStore
         router: MountRouter
@@ -38,6 +40,7 @@ class NexusFSSearchMixin:
         _default_context: OperationContext
         _permission_enforcer: PermissionEnforcer
         _semantic_search: SemanticSearch | None
+        _rebac_manager: EnhancedReBACManager
 
         def _validate_path(self, path: str) -> str: ...
         def _get_backend_directory_entries(self, path: str) -> set[str]: ...
@@ -121,8 +124,12 @@ class NexusFSSearchMixin:
         # Check if path routes to a dynamic API-backed connector (e.g., x_connector)
         # These connectors have virtual directories that don't exist in metadata
         if path and path != "/":
+            logger.warning(f"[LIST-DEBUG] Entering dynamic connector check for path={path}")
             try:
                 tenant_id, agent_id, is_admin = self._get_routing_params(context)
+                logger.warning(
+                    f"[LIST-DEBUG] routing_params: tenant_id={tenant_id}, is_admin={is_admin}"
+                )
                 route = self.router.route(
                     path,
                     tenant_id=tenant_id,
@@ -130,13 +137,40 @@ class NexusFSSearchMixin:
                     is_admin=is_admin,
                     check_write=False,
                 )
-                # Check if backend is a dynamic API-backed connector
+                # Check if backend is a dynamic API-backed connector or virtual filesystem
                 # We check for user_scoped=True explicitly (not just truthy) to avoid Mock objects
+                # Also check has_virtual_filesystem for connectors like HN that have virtual directories
                 is_dynamic_connector = (
                     getattr(route.backend, "user_scoped", None) is True
                     and getattr(route.backend, "token_manager", None) is not None
-                )
+                ) or getattr(route.backend, "has_virtual_filesystem", None) is True
+
                 if is_dynamic_connector:
+                    # Check permission on the mount path BEFORE listing
+                    # This ensures user has access to the virtual filesystem mount
+                    if self._enforce_permissions and context:
+                        mount_path = route.mount_point.rstrip("/")
+                        if not mount_path:
+                            mount_path = path.rstrip("/")
+                        # Admin users always have access
+                        if context.is_admin:
+                            has_permission = True
+                        elif context.subject_id is None:
+                            # No subject_id means we can't verify permissions
+                            has_permission = False
+                        else:
+                            # Use rebac_check with correct signature: (subject_tuple, permission, object_tuple, context, tenant_id)
+                            has_permission = self._rebac_manager.rebac_check(
+                                subject=(context.subject_type, context.subject_id),
+                                permission="read",
+                                object=("file", mount_path),
+                                tenant_id=context.tenant_id,
+                            )
+                        if not has_permission:
+                            raise PermissionDeniedError(
+                                f"Access denied: User '{context.user}' does not have READ permission for '{path}'"
+                            )
+
                     # Use the backend's list_dir method directly
                     from dataclasses import replace
 
@@ -163,8 +197,15 @@ class NexusFSSearchMixin:
                             for entry in entries
                         ]
                     return [f"{path.rstrip('/')}/{entry}" for entry in entries]
+            except PermissionDeniedError:
+                # Re-raise permission errors - don't fall through to metadata listing
+                raise
             except Exception as e:
-                logger.debug(f"Dynamic connector check failed for {path}: {e}")
+                import traceback
+
+                logger.warning(
+                    f"[LIST-DEBUG] Dynamic connector list_dir failed for {path}: {e}\n{traceback.format_exc()}"
+                )
                 # Fall through to normal metadata-based listing
 
         # Handle backward compatibility with old 'prefix' parameter
@@ -509,22 +550,25 @@ class NexusFSSearchMixin:
         file_pattern: str | None = None,
         ignore_case: bool = False,
         max_results: int = 100,  # Reduced from 1000 for faster first response
-        search_mode: str = "auto",
+        search_mode: str = "auto",  # noqa: ARG002 - Kept for backward compatibility, but ignored
         context: Any = None,
     ) -> builtins.list[dict[str, Any]]:
         r"""
         Search file contents using regex patterns.
+
+        Searches use pre-parsed/cached text when available:
+        - For connector files (GCS, S3, etc.): Uses content_cache.content_text
+        - For local files: Uses file_metadata.parsed_text
+        - Falls back to raw file content if no cached text available
 
         Args:
             pattern: Regex pattern to search for in file contents
             path: Base path to search from (default: "/")
             file_pattern: Optional glob pattern to filter files (e.g., "*.py")
             ignore_case: If True, perform case-insensitive search (default: False)
-            max_results: Maximum number of results to return (default: 1000)
-            search_mode: Content search mode (default: "auto")
-                - "auto": Try parsed text first, fallback to raw (default)
-                - "parsed": Only search parsed text (skip files without parsed content)
-                - "raw": Only search raw file content (skip parsing)
+            max_results: Maximum number of results to return (default: 100)
+            search_mode: Deprecated, kept for backward compatibility (ignored)
+            context: Operation context for permission filtering
 
         Returns:
             List of match dicts, each containing:
@@ -532,34 +576,22 @@ class NexusFSSearchMixin:
             - line: Line number (1-indexed)
             - content: Matched line content
             - match: The matched text
-            - source: Source type - "parsed" or "raw"
 
         Examples:
-            # Search for "TODO" in all files (auto mode - tries parsed first)
+            # Search for "TODO" in all files
             fs.grep("TODO")
-            # Returns: [{"file": "/main.py", "line": 42, "content": "...", "source": "raw"}, ...]
 
             # Search for function definitions in Python files
             fs.grep(r"def \w+", file_pattern="**/*.py")
 
-            # Search only parsed text from PDFs
-            fs.grep("revenue", file_pattern="**/*.pdf", search_mode="parsed")
-
-            # Search only raw content (skip parsing)
-            fs.grep("TODO", search_mode="raw")
+            # Search in PDFs (uses cached parsed text)
+            fs.grep("revenue", file_pattern="**/*.pdf")
 
             # Case-insensitive search
             fs.grep("error", ignore_case=True)
         """
         if path and path != "/":
             path = self._validate_path(path)
-
-        # Validate search_mode
-        valid_modes = {"auto", "parsed", "raw"}
-        if search_mode not in valid_modes:
-            raise ValueError(
-                f"Invalid search_mode: {search_mode}. Must be one of: {', '.join(valid_modes)}"
-            )
 
         # Compile regex pattern
         flags = re.IGNORECASE if ignore_case else 0
@@ -568,7 +600,6 @@ class NexusFSSearchMixin:
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}") from e
 
-        # DEBUG: Add timing to understand performance bottleneck
         import logging
         import time
 
@@ -583,177 +614,111 @@ class NexusFSSearchMixin:
             # Get all files under path (with ReBAC filtering)
             files = cast(list[str], self.list(path, recursive=True, context=context))
         list_elapsed = time.time() - list_start
-        logger.warning(
-            f"[GREP-PERF] Phase 1: list() found {len(files)} files in {list_elapsed:.3f}s"
+        logger.debug(f"[GREP] Phase 1: list() found {len(files)} files in {list_elapsed:.3f}s")
+
+        # Phase 2: Bulk fetch searchable text (from content_cache or file_metadata)
+        text_start = time.time()
+        searchable_texts = self.metadata.get_searchable_text_bulk(files)
+        text_elapsed = time.time() - text_start
+        logger.debug(
+            f"[GREP] Phase 2: get_searchable_text_bulk() returned {len(searchable_texts)} texts in {text_elapsed:.3f}s"
         )
 
-        # Try Rust-accelerated grep for raw content searches
-        logger.warning(
-            f"[GREP-PERF] Checking Rust path: search_mode={search_mode}, grep_fast.is_available()={grep_fast.is_available()}"
-        )
+        # Files that need raw content fallback
+        files_needing_raw = [f for f in files if f not in searchable_texts]
 
-        if search_mode == "raw" and grep_fast.is_available():
-            logger.warning("[GREP-PERF] ✓ Taking Rust-accelerated path!")
-            # Batch read all files for Rust processing using read_bulk()
-            read_start = time.time()
-
-            # Use read_bulk() for efficient batch reading
-            # This eliminates per-file RPC overhead and batches permission checks
-            bulk_results = self.read_bulk(files, context=context, skip_errors=True)
-
-            # Filter out failed reads (None values)
-            file_contents: dict[str, bytes] = {}
-            for file_path, content in bulk_results.items():
-                if content is not None:
-                    assert isinstance(content, bytes), "Expected bytes from read_bulk()"
-                    file_contents[file_path] = content
-                else:
-                    logger.warning(f"[GREP-PERF] Failed to read {file_path} (skipped)")
-
-            read_elapsed = time.time() - read_start
-
-            logger.warning(
-                f"[GREP-PERF] Phase 2: read_bulk() loaded {len(file_contents)} files ({sum(len(c) for c in file_contents.values())} bytes) in {read_elapsed:.3f}s"
-            )
-
-            # Use Rust grep_bulk for fast searching
-            rust_start = time.time()
-            rust_results = grep_fast.grep_bulk(
-                pattern, file_contents, ignore_case=ignore_case, max_results=max_results
-            )
-            rust_elapsed = time.time() - rust_start
-            logger.warning(f"[GREP-PERF] Phase 3: Rust grep_bulk searched in {rust_elapsed:.3f}s")
-
-            if rust_results is not None:
-                # Note: Keep "match" field - it's NOT redundant for regex patterns!
-                # Pattern is "def \w+" but match is "def foo" or "def bar"
-                # Add source field for consistency with docstring
-                for result in rust_results:
-                    result["source"] = "raw"
-                total_elapsed = time.time() - grep_start
-                logger.warning(
-                    f"[GREP-PERF] TOTAL (raw mode): {total_elapsed:.3f}s (list={list_elapsed:.3f}s, read={read_elapsed:.3f}s, rust={rust_elapsed:.3f}s)"
-                )
-                if total_elapsed > 0:
-                    logger.warning(
-                        f"[GREP-PERF] Breakdown: list={list_elapsed / total_elapsed * 100:.1f}%, read={read_elapsed / total_elapsed * 100:.1f}%, rust={rust_elapsed / total_elapsed * 100:.1f}%"
-                    )
-                return rust_results
-            # Fall through to Python implementation if Rust fails
-
-        # Search through files (Python fallback or parsed text search)
-        python_start = time.time()
-        read_time = 0.0
-        search_time = 0.0
-        decode_time = 0.0
+        # Phase 3: Search cached texts
+        search_start = time.time()
         results: list[dict[str, Any]] = []
 
-        logger.warning(f"[GREP-PERF] Starting Python loop for {len(files)} files")
-        for i, file_path in enumerate(files):
+        for file_path, text in searchable_texts.items():
             if len(results) >= max_results:
                 break
 
-            try:
-                text: str | None = None
-                source: str = "raw"  # Track the source of text for result metadata
+            for line_num, line in enumerate(text.splitlines(), start=1):
+                if len(results) >= max_results:
+                    break
 
-                # Get parsed text if needed
-                if search_mode in ("auto", "parsed"):
-                    metadata_start = time.time()
-                    parsed_text = self.metadata.get_file_metadata(file_path, "parsed_text")
-                    metadata_elapsed = time.time() - metadata_start
+                match_obj = regex.search(line)
+                if match_obj:
+                    results.append(
+                        {
+                            "file": file_path,
+                            "line": line_num,
+                            "content": line,
+                            "match": match_obj.group(0),
+                        }
+                    )
 
-                    if i < 3:  # Log first 3 files
-                        logger.warning(
-                            f"[GREP-PERF] File {i + 1}/{len(files)}: get_file_metadata() took {metadata_elapsed * 1000:.1f}ms"
-                        )
+        search_elapsed = time.time() - search_start
+        logger.debug(f"[GREP] Phase 3: Searched cached texts in {search_elapsed:.3f}s")
 
-                    if parsed_text:
-                        text = parsed_text
-                        source = "parsed"
+        # Phase 4: Fall back to raw content for files without cached text
+        if len(results) < max_results and files_needing_raw:
+            raw_start = time.time()
+            remaining_results = max_results - len(results)
 
-                # Get raw text if needed
-                if text is None and search_mode in ("auto", "raw"):
-                    # Read raw content
-                    read_file_start = time.time()
-                    read_result = self.read(file_path, context=context)
-                    read_elapsed = time.time() - read_file_start
-                    read_time += read_elapsed
+            # Try Rust-accelerated grep if available
+            if grep_fast.is_available():
+                bulk_results = self.read_bulk(files_needing_raw, context=context, skip_errors=True)
+                file_contents: dict[str, bytes] = {
+                    fp: content
+                    for fp, content in bulk_results.items()
+                    if content is not None and isinstance(content, bytes)
+                }
 
-                    # Handle both bytes and dict return types
-                    if isinstance(read_result, bytes):
-                        raw_content: bytes = read_result
-                    else:
-                        # Skip if metadata was returned (shouldn't happen with return_metadata=False)
-                        continue
-                    content = raw_content
+                rust_results = grep_fast.grep_bulk(
+                    pattern, file_contents, ignore_case=ignore_case, max_results=remaining_results
+                )
 
-                    if i < 3:  # Log first 3 files
-                        logger.warning(
-                            f"[GREP-PERF] File {i + 1}/{len(files)}: read({file_path}) took {read_elapsed * 1000:.1f}ms"
-                        )
-
-                    # Type narrowing: when return_metadata=False (default), result is bytes
-                    assert isinstance(content, bytes), "Expected bytes from read()"
-
-                    # Try to decode as text
-                    decode_start = time.time()
-                    try:
-                        text = content.decode("utf-8")
-                    except UnicodeDecodeError:
-                        # Skip binary files
-                        continue
-                    decode_time += time.time() - decode_start
-
-                # Skip if no text available
-                if text is None:
-                    continue
-
-                # Search line by line
-                search_file_start = time.time()
-                for line_num, line in enumerate(text.splitlines(), start=1):
+                if rust_results is not None:
+                    results.extend(rust_results)
+            else:
+                # Python fallback for raw content
+                for file_path in files_needing_raw:
                     if len(results) >= max_results:
                         break
 
-                    match_obj = regex.search(line)
-                    if match_obj:
-                        results.append(
-                            {
-                                "file": file_path,
-                                "line": line_num,
-                                "content": line,
-                                "match": match_obj.group(
-                                    0
-                                ),  # The matched text (NOT redundant for regex!)
-                                "source": source,
-                            }
-                        )
-                search_time += time.time() - search_file_start
+                    try:
+                        read_result = self.read(file_path, context=context)
+                        if not isinstance(read_result, bytes):
+                            continue
 
-            except Exception:
-                # Skip files that can't be read
-                continue
+                        try:
+                            text = read_result.decode("utf-8")
+                        except UnicodeDecodeError:
+                            continue
 
-        # Log Python mode performance breakdown
-        python_elapsed = time.time() - python_start
-        total_elapsed = time.time() - grep_start
-        other_time = python_elapsed - read_time - search_time - decode_time
+                        for line_num, line in enumerate(text.splitlines(), start=1):
+                            if len(results) >= max_results:
+                                break
 
-        logger.warning(
-            f"[GREP-PERF] Python loop breakdown: read={read_time:.3f}s, search={search_time:.3f}s, decode={decode_time:.3f}s, other={other_time:.3f}s"
-        )
-        logger.warning(
-            f"[GREP-PERF] TOTAL ({search_mode} mode): {total_elapsed:.3f}s (list={list_elapsed:.3f}s, python_loop={python_elapsed:.3f}s)"
-        )
-        if total_elapsed > 0:
-            logger.warning(
-                f"[GREP-PERF] Breakdown: list={list_elapsed / total_elapsed * 100:.1f}%, read={read_time / total_elapsed * 100:.1f}%, search={search_time / total_elapsed * 100:.1f}%, decode={decode_time / total_elapsed * 100:.1f}%, other={other_time / total_elapsed * 100:.1f}%"
+                            match_obj = regex.search(line)
+                            if match_obj:
+                                results.append(
+                                    {
+                                        "file": file_path,
+                                        "line": line_num,
+                                        "content": line,
+                                        "match": match_obj.group(0),
+                                    }
+                                )
+                    except Exception:
+                        continue
+
+            raw_elapsed = time.time() - raw_start
+            logger.debug(
+                f"[GREP] Phase 4: Raw content fallback for {len(files_needing_raw)} files in {raw_elapsed:.3f}s"
             )
+
+        total_elapsed = time.time() - grep_start
+        logger.debug(f"[GREP] TOTAL: {total_elapsed:.3f}s, {len(results)} results")
 
         return results
 
     # Semantic Search Methods (v0.4.0)
 
+    @rpc_expose(description="Search documents using natural language queries")
     async def semantic_search(
         self,
         query: str,
@@ -828,6 +793,7 @@ class NexusFSSearchMixin:
             for result in results
         ]
 
+    @rpc_expose(description="Index documents for semantic search")
     async def semantic_search_index(
         self, path: str = "/", recursive: bool = True
     ) -> dict[str, int]:
@@ -891,6 +857,7 @@ class NexusFSSearchMixin:
                         results[file_path] = -1  # Indicate error
             return results
 
+    @rpc_expose(description="Get semantic search indexing statistics")
     async def semantic_search_stats(self) -> dict[str, Any]:
         """
         Get semantic search indexing statistics.
@@ -919,6 +886,7 @@ class NexusFSSearchMixin:
 
         return await self._semantic_search.get_index_stats()
 
+    @rpc_expose(description="Initialize semantic search engine")
     async def initialize_semantic_search(
         self,
         embedding_provider: str | None = None,

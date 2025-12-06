@@ -28,6 +28,7 @@ Authentication:
     - AWS default credentials chain (~/.aws/credentials, environment variables, IAM roles)
 """
 
+import logging
 from typing import TYPE_CHECKING
 
 import boto3
@@ -35,13 +36,25 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
+from nexus.backends.cache_mixin import CacheConnectorMixin
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
-    pass
+    from sqlalchemy.orm import Session
+
+    from nexus.core.permissions import OperationContext
+
+logger = logging.getLogger(__name__)
 
 
-class S3ConnectorBackend(BaseBlobStorageConnector):
+@register_connector(
+    "s3_connector",
+    description="AWS S3 with direct path mapping",
+    category="storage",
+    requires=["boto3"],
+)
+class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     """
     AWS S3 connector backend with direct path mapping.
 
@@ -66,6 +79,53 @@ class S3ConnectorBackend(BaseBlobStorageConnector):
     - Requires backend_path in OperationContext
     """
 
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "bucket_name": ConnectionArg(
+            type=ArgType.STRING,
+            description="S3 bucket name",
+            required=True,
+        ),
+        "region_name": ConnectionArg(
+            type=ArgType.STRING,
+            description="AWS region (e.g., 'us-east-1')",
+            required=False,
+            env_var="AWS_REGION",
+        ),
+        "credentials_path": ConnectionArg(
+            type=ArgType.PATH,
+            description="Path to AWS credentials file (JSON format)",
+            required=False,
+            secret=True,
+        ),
+        "prefix": ConnectionArg(
+            type=ArgType.STRING,
+            description="Path prefix for all files in bucket",
+            required=False,
+            default="",
+        ),
+        "access_key_id": ConnectionArg(
+            type=ArgType.SECRET,
+            description="AWS access key ID",
+            required=False,
+            secret=True,
+            env_var="AWS_ACCESS_KEY_ID",
+        ),
+        "secret_access_key": ConnectionArg(
+            type=ArgType.PASSWORD,
+            description="AWS secret access key",
+            required=False,
+            secret=True,
+            env_var="AWS_SECRET_ACCESS_KEY",
+        ),
+        "session_token": ConnectionArg(
+            type=ArgType.SECRET,
+            description="AWS session token (for temporary credentials)",
+            required=False,
+            secret=True,
+            env_var="AWS_SESSION_TOKEN",
+        ),
+    }
+
     def __init__(
         self,
         bucket_name: str,
@@ -75,6 +135,10 @@ class S3ConnectorBackend(BaseBlobStorageConnector):
         access_key_id: str | None = None,
         secret_access_key: str | None = None,
         session_token: str | None = None,
+        # Database session for caching support (deprecated, use session_factory)
+        db_session: "Session | None" = None,
+        # Session factory for caching support (preferred)
+        session_factory: "type[Session] | None" = None,
     ):
         """
         Initialize S3 connector backend.
@@ -87,6 +151,9 @@ class S3ConnectorBackend(BaseBlobStorageConnector):
             access_key_id: AWS access key (alternative to credentials_path)
             secret_access_key: AWS secret key (alternative to credentials_path)
             session_token: AWS session token (for temporary credentials)
+            db_session: Optional SQLAlchemy session for caching (deprecated)
+            session_factory: Optional session factory (e.g., metadata_store.SessionLocal)
+                           for caching support. Preferred over db_session.
         """
         try:
             # Configure retry behavior for transient errors
@@ -169,6 +236,11 @@ class S3ConnectorBackend(BaseBlobStorageConnector):
                 versioning_enabled=versioning_enabled,
             )
 
+            # Store session info for caching support (CacheConnectorMixin)
+            # Prefer session_factory (creates fresh sessions) over db_session
+            self.session_factory = session_factory
+            self.db_session = db_session  # Legacy support
+
         except Exception as e:
             if isinstance(e, BackendError):
                 raise
@@ -182,6 +254,75 @@ class S3ConnectorBackend(BaseBlobStorageConnector):
     def name(self) -> str:
         """Backend identifier name."""
         return "s3_connector"
+
+    # _has_caching() inherited from CacheConnectorMixin
+
+    def _is_version_id(self, value: str) -> bool:
+        """
+        Check if value looks like an S3 version ID.
+
+        S3 version IDs are URL-safe base64-encoded strings (e.g., "null" for no versioning,
+        or random strings like "3HL4kqtJvjVBH40Nrjfkd" when versioning is enabled).
+
+        Args:
+            value: String to check
+
+        Returns:
+            True if likely a version ID, False if likely a content hash
+        """
+        # S3 version IDs are not hex (unlike content hashes)
+        # Content hashes are 64-char hex strings (SHA-256)
+        if len(value) == 64:
+            try:
+                int(value, 16)
+                return False  # It's a hex hash
+            except ValueError:
+                return True  # Not hex, probably version ID
+        return True  # Not 64 chars, probably version ID
+
+    # === Version Support for CacheConnectorMixin ===
+
+    def get_version(
+        self,
+        path: str,
+        context: "OperationContext | None" = None,
+    ) -> str | None:
+        """
+        Get S3 version ID for a file.
+
+        The version ID changes on every write (if versioning enabled) and is used for:
+        - Optimistic locking (version checks before write)
+        - Cache invalidation (detect stale cache entries)
+
+        Args:
+            path: Virtual file path (or backend_path from context)
+            context: Operation context with optional backend_path
+
+        Returns:
+            S3 version ID as string, or None if file doesn't exist or no versioning
+        """
+        try:
+            # Get backend path
+            if context and context.backend_path:
+                backend_path = context.backend_path
+            else:
+                backend_path = path.lstrip("/")
+
+            blob_path = self._get_blob_path(backend_path)
+
+            # Get object metadata
+            response = self.client.head_object(Bucket=self.bucket_name, Key=blob_path)
+
+            # Return version ID if versioning is enabled
+            version_id = response.get("VersionId")
+            if version_id and version_id != "null":
+                return str(version_id)
+            return None
+
+        except ClientError:
+            return None
+        except Exception:
+            return None
 
     # === S3-Specific Blob Operations ===
 
@@ -455,3 +596,181 @@ class S3ConnectorBackend(BaseBlobStorageConnector):
                 backend="s3_connector",
                 path=source_path,
             ) from e
+
+    # === Override Content Operations with Caching ===
+
+    def read_content(
+        self,
+        content_hash: str,
+        context: "OperationContext | None" = None,
+    ) -> bytes:
+        """
+        Read content from S3 with caching support.
+
+        When caching is enabled (db_session provided):
+        1. Check cache for non-stale entry with matching version
+        2. If cache hit, return cached content
+        3. If cache miss, read from S3 and cache result
+
+        Args:
+            content_hash: Version ID (if versioning) or hash (if not)
+            context: Operation context with backend_path
+
+        Returns:
+            File content as bytes
+
+        Raises:
+            ValueError: If backend_path not provided
+            NexusFileNotFoundError: If file doesn't exist
+            BackendError: If read operation fails
+        """
+        if not context or not context.backend_path:
+            raise ValueError(
+                "S3 connector requires backend_path in OperationContext. "
+                "This backend reads files from actual paths, not CAS hashes."
+            )
+
+        # Get cache path (prefers virtual_path over backend_path)
+        cache_path = self._get_cache_path(context) or context.backend_path
+
+        # Check cache first if enabled
+        if self._has_caching():
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                cached = self._read_from_cache(cache_path, original=True)
+                if cached and not cached.stale and cached.content_binary:
+                    # Verify version matches if we have version info
+                    if cached.backend_version and content_hash:
+                        if cached.backend_version == content_hash:
+                            logger.info(f"[S3] Cache hit for {cache_path}")
+                            return cached.content_binary
+                        # Version mismatch - cache is stale, read from backend
+                        logger.debug(f"[S3] Cache version mismatch for {cache_path}")
+                    else:
+                        # No version to compare, trust the cache
+                        logger.info(f"[S3] Cache hit (no version) for {cache_path}")
+                        return cached.content_binary
+
+        # Read from S3 backend
+        logger.info(f"[S3] Cache miss, reading from backend: {cache_path}")
+        blob_path = self._get_blob_path(context.backend_path)
+
+        # Determine if we should use version ID
+        version_id = None
+        if self.versioning_enabled and content_hash and self._is_version_id(content_hash):
+            version_id = content_hash
+
+        content = self._download_blob(blob_path, version_id)
+
+        # Cache the result if caching is enabled
+        if self._has_caching():
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                version = self.get_version(context.backend_path, context)
+                tenant_id = getattr(context, "tenant_id", None)
+                self._write_to_cache(
+                    path=cache_path,
+                    content=content,
+                    backend_version=version,
+                    tenant_id=tenant_id,
+                )
+
+        return content
+
+    def write_content(
+        self,
+        content: bytes,
+        context: "OperationContext | None" = None,
+    ) -> str:
+        """
+        Write content to S3 and update cache.
+
+        Per design doc (cache-layer.md), after successful write:
+        1. Write to S3 backend
+        2. Update cache with new content and version
+
+        Args:
+            content: File content as bytes
+            context: Operation context with backend_path
+
+        Returns:
+            If versioning enabled: S3 version ID
+            If no versioning: Content hash (for metadata compatibility)
+
+        Raises:
+            ValueError: If backend_path is not provided in context
+            BackendError: If write operation fails
+        """
+        if not context or not context.backend_path:
+            raise ValueError(
+                "S3 connector requires backend_path in OperationContext. "
+                "This backend stores files at actual paths, not CAS hashes."
+            )
+
+        # Get cache path (prefers virtual_path over backend_path)
+        cache_path = self._get_cache_path(context) or context.backend_path
+
+        # Get actual blob path from backend_path
+        blob_path = self._get_blob_path(context.backend_path)
+
+        # Detect appropriate Content-Type with charset for proper encoding
+        content_type = self._detect_content_type(context.backend_path, content)
+
+        # Upload blob
+        new_version = self._upload_blob(blob_path, content, content_type)
+
+        # Update cache after write if caching is enabled
+        # Per design doc: both S3 and cache should be updated when write succeeds
+        if self._has_caching():
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                tenant_id = getattr(context, "tenant_id", None)
+                self._write_to_cache(
+                    path=cache_path,
+                    content=content,
+                    backend_version=new_version,
+                    tenant_id=tenant_id,
+                )
+
+        return new_version
+
+    def write_content_with_version_check(
+        self,
+        content: bytes,
+        context: "OperationContext | None" = None,
+        expected_version: str | None = None,
+    ) -> str:
+        """
+        Write content with optimistic locking via version check.
+
+        Args:
+            content: File content as bytes
+            context: Operation context with backend_path
+            expected_version: Expected S3 version for optimistic locking
+
+        Returns:
+            New S3 version ID (or content hash if no versioning)
+
+        Raises:
+            ValueError: If backend_path not provided
+            ConflictError: If version check fails
+            BackendError: If write operation fails
+        """
+        if not context or not context.backend_path:
+            raise ValueError(
+                "S3 connector requires backend_path in OperationContext. "
+                "This backend stores files at actual paths, not CAS hashes."
+            )
+
+        # Get cache path (prefers virtual_path over backend_path)
+        cache_path = self._get_cache_path(context) or context.backend_path
+
+        # Version check if requested
+        if expected_version is not None:
+            self._check_version(cache_path, expected_version, context)
+
+        # Perform the write
+        return self.write_content(content, context)

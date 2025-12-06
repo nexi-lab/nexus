@@ -20,6 +20,7 @@ from google.cloud import storage
 from google.cloud.exceptions import NotFound
 
 from nexus.backends.backend import Backend
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
@@ -27,6 +28,12 @@ if TYPE_CHECKING:
     from nexus.core.permissions_enhanced import EnhancedOperationContext
 
 
+@register_connector(
+    "gcs",
+    description="Google Cloud Storage with CAS deduplication",
+    category="storage",
+    requires=["google-cloud-storage"],
+)
 class GCSBackend(Backend):
     """
     Google Cloud Storage backend.
@@ -48,6 +55,27 @@ class GCSBackend(Backend):
     - Reference counting for safe deletion
     - Directory marker support for compatibility
     """
+
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "bucket_name": ConnectionArg(
+            type=ArgType.STRING,
+            description="GCS bucket name",
+            required=True,
+        ),
+        "project_id": ConnectionArg(
+            type=ArgType.STRING,
+            description="GCP project ID (inferred from credentials if not provided)",
+            required=False,
+            env_var="GCP_PROJECT_ID",
+        ),
+        "credentials_path": ConnectionArg(
+            type=ArgType.PATH,
+            description="Path to service account credentials JSON file",
+            required=False,
+            secret=True,
+            env_var="GOOGLE_APPLICATION_CREDENTIALS",
+        ),
+    }
 
     def __init__(
         self,

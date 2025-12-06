@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.exceptions import PermissionDeniedError, ValidationError
+from nexus.core.permissions import OperationContext
 from nexus.skills.models import SkillMetadata
 from nexus.skills.parser import SkillParser
 from nexus.skills.protocols import NexusFilesystem
@@ -119,56 +120,77 @@ class SkillManager:
 
     async def _create_skill_permissions(
         self,
-        skill_name: str,
+        skill_path: str,
+        skill_dir: str,
         owner_type: str,
         owner_id: str,
         tier: str,
         tenant_id: str | None = None,
+        context: OperationContext | None = None,
     ) -> None:
-        """Create ReBAC permission tuples for a skill.
+        """Create ReBAC permission tuples for a skill based on tier.
+
+        Permission model:
+        - user tier: Owner (user) gets direct_owner on the skill directory
+        - tenant tier: All tenant members get viewer access (via tenant#member)
+        - system tier: Everyone gets viewer access (via role#public)
 
         Args:
-            skill_name: Name of the skill
+            skill_path: Full path to SKILL.md file
+            skill_dir: Path to skill directory
             owner_type: Type of owner (agent, user)
             owner_id: ID of owner
-            tier: Skill tier (agent, tenant, system)
+            tier: Skill tier (agent, user, tenant, system)
             tenant_id: Optional tenant ID
+            context: Operation context for additional info
         """
         if not self._rebac:
             # No ReBAC manager - skip permission creation
             return
 
         try:
-            # Create ownership tuple
-            self._rebac.rebac_write(
-                subject=(owner_type, owner_id),
-                relation="owner-of",
-                object=("skill", skill_name),
-                tenant_id=tenant_id,
-            )
+            # Get tenant_id from context if not provided
+            effective_tenant_id = tenant_id or (context.tenant_id if context else None) or "default"
 
-            # For system skills, add public access
-            if tier == "system":
+            # For user-level skills: Owner gets direct_owner on the skill directory
+            # This allows them full control (read, write, delete)
+            if tier in ("user", "agent"):
                 self._rebac.rebac_write(
-                    subject=("*", "*"),
-                    relation="public",
-                    object=("skill", skill_name),
-                    tenant_id=None,  # System skills are global
+                    subject=(owner_type, owner_id),
+                    relation="direct_owner",
+                    object=("file", skill_dir.rstrip("/")),
+                    tenant_id=effective_tenant_id,
+                )
+                logger.debug(f"Created owner permission for {owner_type}:{owner_id} on {skill_dir}")
+
+            # For tenant-level skills: Grant viewer access to all tenant members
+            elif tier == "tenant":
+                # Grant viewer access to the tenant (all members inherit read access)
+                self._rebac.rebac_write(
+                    subject=("tenant", effective_tenant_id),
+                    relation="viewer",
+                    object=("file", skill_dir.rstrip("/")),
+                    tenant_id=effective_tenant_id,
+                )
+                logger.debug(
+                    f"Created tenant viewer permission for tenant:{effective_tenant_id} on {skill_dir}"
                 )
 
-            # For tenant skills, associate with tenant
-            elif tier == "tenant" and tenant_id or tier == "agent" and tenant_id:
+            # For system-level skills: Grant viewer access to everyone
+            elif tier == "system":
+                # Use "role#public" to grant access to everyone
                 self._rebac.rebac_write(
-                    subject=("tenant", tenant_id),
-                    relation="tenant",
-                    object=("skill", skill_name),
-                    tenant_id=tenant_id,
+                    subject=("role", "public"),
+                    relation="viewer",
+                    object=("file", skill_dir.rstrip("/")),
+                    tenant_id="default",  # System skills use default tenant
                 )
+                logger.debug(f"Created public viewer permission on {skill_dir}")
 
-            logger.debug(f"Created ReBAC permissions for skill '{skill_name}' in tier '{tier}'")
+            logger.info(f"Created ReBAC permissions for skill at {skill_path} (tier={tier})")
 
         except Exception as e:
-            logger.error(f"Failed to create ReBAC permissions for skill '{skill_name}': {e}")
+            logger.error(f"Failed to create ReBAC permissions for skill at {skill_path}: {e}")
             # Don't fail the operation if ReBAC fails
             # The skill file is already created
 
@@ -177,12 +199,13 @@ class SkillManager:
         name: str,
         description: str,
         template: str = "basic",
-        tier: str = "agent",
+        tier: str = "user",
         author: str | None = None,
         version: str = "1.0.0",
         creator_id: str | None = None,
         creator_type: str = "agent",
         tenant_id: str | None = None,
+        context: OperationContext | None = None,
         **kwargs: str,
     ) -> str:
         """Create a new skill from a template.
@@ -191,12 +214,13 @@ class SkillManager:
             name: Skill name (alphanumeric with - or _)
             description: Skill description
             template: Template name (basic, data-analysis, code-generation, etc.)
-            tier: Target tier (agent, tenant, system)
+            tier: Target tier (agent, user, tenant, system)
             author: Optional author name
             version: Initial version (default: 1.0.0)
             creator_id: ID of the creating agent/user (for ReBAC)
             creator_type: Type of creator (agent, user) - default: agent
             tenant_id: Tenant ID for scoping (for ReBAC)
+            context: Operation context with user_id, tenant_id for path resolution
             **kwargs: Additional template variables
 
         Returns:
@@ -211,25 +235,32 @@ class SkillManager:
             ...     "my-analyzer",
             ...     description="Analyzes code quality",
             ...     template="code-generation",
-            ...     author="Alice"
+            ...     author="Alice",
+            ...     context=context,
             ... )
         """
         # Validate skill name
         if not name.replace("-", "").replace("_", "").isalnum():
             raise SkillManagerError(f"Skill name must be alphanumeric (with - or _), got '{name}'")
 
+        # Get context-aware tier paths
+        tier_paths = SkillRegistry.get_tier_paths(context)
+
         # Validate tier
-        if tier not in SkillRegistry.TIER_PATHS:
-            raise SkillManagerError(
-                f"Invalid tier '{tier}'. Must be one of: {list(SkillRegistry.TIER_PATHS.keys())}"
-            )
+        if tier not in tier_paths:
+            # Fall back to static paths for backward compatibility
+            if tier not in SkillRegistry.TIER_PATHS:
+                raise SkillManagerError(
+                    f"Invalid tier '{tier}'. Must be one of: {list(SkillRegistry.TIER_PATHS.keys())}"
+                )
+            tier_paths = SkillRegistry.TIER_PATHS
 
         # Permission check: System tier requires admin (simplified for now)
         if tier == "system" and self._rebac and creator_id:
             logger.info(f"Creating system skill '{name}' by {creator_type}:{creator_id}")
 
-        # Get tier path
-        tier_path = SkillRegistry.TIER_PATHS[tier]
+        # Get tier path (context-aware)
+        tier_path = tier_paths[tier]
 
         # Construct skill directory path
         skill_dir = f"{tier_path}{name}/"
@@ -293,15 +324,24 @@ class SkillManager:
             local_dir.mkdir(parents=True, exist_ok=True)
             Path(skill_file).write_text(skill_md, encoding="utf-8")
 
-        # Create ReBAC permissions for the skill
-        if creator_id:
-            await self._create_skill_permissions(
-                skill_name=name,
-                owner_type=creator_type,
-                owner_id=creator_id,
-                tier=tier,
-                tenant_id=tenant_id,
-            )
+        # Create ReBAC permissions for the skill based on tier
+        # Even without creator_id, we need to set permissions for tenant/system skills
+        owner_type = creator_type
+        owner_id = (
+            creator_id
+            or (context.user_id if context else None)
+            or (context.user if context else None)
+            or "anonymous"
+        )
+        await self._create_skill_permissions(
+            skill_path=skill_file,
+            skill_dir=skill_dir,
+            owner_type=owner_type,
+            owner_id=owner_id,
+            tier=tier,
+            tenant_id=tenant_id,
+            context=context,
+        )
 
         logger.info(f"Created skill '{name}' from template '{template}' at {skill_file}")
         return skill_file
@@ -311,11 +351,12 @@ class SkillManager:
         name: str,
         description: str,
         content: str,
-        tier: str = "agent",
+        tier: str = "user",
         author: str | None = None,
         version: str = "1.0.0",
         source_url: str | None = None,
         metadata: dict[str, Any] | None = None,
+        context: OperationContext | None = None,
     ) -> str:
         """Create a new skill from content (e.g., from web scraping).
 
@@ -323,11 +364,12 @@ class SkillManager:
             name: Skill name (alphanumeric with - or _)
             description: Skill description
             content: Skill content (markdown)
-            tier: Target tier (agent, tenant, system)
+            tier: Target tier (agent, user, tenant, system)
             author: Optional author name
             version: Initial version (default: 1.0.0)
             source_url: Optional source URL (for tracking origin)
             metadata: Optional additional metadata
+            context: Operation context with user_id, tenant_id for path resolution
 
         Returns:
             Path to created SKILL.md file
@@ -341,21 +383,28 @@ class SkillManager:
             ...     description="Stripe API Documentation",
             ...     content="# Stripe API\\n\\n...",
             ...     source_url="https://docs.stripe.com/api",
-            ...     author="Auto-generated"
+            ...     author="Auto-generated",
+            ...     context=context,
             ... )
         """
         # Validate skill name
         if not name.replace("-", "").replace("_", "").isalnum():
             raise SkillManagerError(f"Skill name must be alphanumeric (with - or _), got '{name}'")
 
-        # Validate tier
-        if tier not in SkillRegistry.TIER_PATHS:
-            raise SkillManagerError(
-                f"Invalid tier '{tier}'. Must be one of: {list(SkillRegistry.TIER_PATHS.keys())}"
-            )
+        # Get context-aware tier paths
+        tier_paths = SkillRegistry.get_tier_paths(context)
 
-        # Get tier path
-        tier_path = SkillRegistry.TIER_PATHS[tier]
+        # Validate tier
+        if tier not in tier_paths:
+            # Fall back to static paths for backward compatibility
+            if tier not in SkillRegistry.TIER_PATHS:
+                raise SkillManagerError(
+                    f"Invalid tier '{tier}'. Must be one of: {list(SkillRegistry.TIER_PATHS.keys())}"
+                )
+            tier_paths = SkillRegistry.TIER_PATHS
+
+        # Get tier path (context-aware)
+        tier_path = tier_paths[tier]
 
         # Construct skill directory path
         skill_dir = f"{tier_path}{name}/"
@@ -411,6 +460,23 @@ class SkillManager:
             local_dir = Path(skill_dir)
             local_dir.mkdir(parents=True, exist_ok=True)
             Path(skill_file).write_text(skill_md, encoding="utf-8")
+
+        # Create ReBAC permissions for the skill based on tier
+        owner_type = "user"
+        owner_id = (
+            (context.user_id if context else None)
+            or (context.user if context else None)
+            or "anonymous"
+        )
+        await self._create_skill_permissions(
+            skill_path=skill_file,
+            skill_dir=skill_dir,
+            owner_type=owner_type,
+            owner_id=owner_id,
+            tier=tier,
+            tenant_id=context.tenant_id if context else None,
+            context=context,
+        )
 
         logger.info(f"Created skill '{name}' from content at {skill_file}")
         return skill_file
@@ -558,14 +624,16 @@ class SkillManager:
             Path(target_file).write_text(skill_md, encoding="utf-8")
 
         # Create ReBAC permissions for the forked skill
-        if creator_id:
-            await self._create_skill_permissions(
-                skill_name=target_name,
-                owner_type=creator_type,
-                owner_id=creator_id,
-                tier=tier,
-                tenant_id=tenant_id,
-            )
+        owner_id = creator_id or "anonymous"
+        await self._create_skill_permissions(
+            skill_path=target_file,
+            skill_dir=target_dir,
+            owner_type=creator_type,
+            owner_id=owner_id,
+            tier=tier,
+            tenant_id=tenant_id,
+            context=None,  # fork_skill doesn't take context parameter
+        )
 
         logger.info(
             f"Forked skill '{source_name}' to '{target_name}' at {target_file} "

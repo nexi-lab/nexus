@@ -176,8 +176,8 @@ async def test_discover_from_mock_filesystem() -> None:
     """Test discovering skills from mock filesystem."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/skill-1/SKILL.md": SKILL_1,
-            "/workspace/.nexus/skills/skill-2/SKILL.md": SKILL_2,
+            "/skills/agent/skill-1/SKILL.md": SKILL_1,
+            "/skills/agent/skill-2/SKILL.md": SKILL_2,
         }
     )
 
@@ -209,8 +209,8 @@ Tenant content
 
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/duplicate-skill/SKILL.md": agent_skill,
-            "/shared/skills/duplicate-skill/SKILL.md": tenant_skill,
+            "/skills/agent/duplicate-skill/SKILL.md": agent_skill,
+            "/skills/tenant/duplicate-skill/SKILL.md": tenant_skill,
         }
     )
 
@@ -228,7 +228,7 @@ async def test_get_skill_lazy_loading() -> None:
     """Test that skills are loaded lazily (on-demand)."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/skill-1/SKILL.md": SKILL_1,
+            "/skills/agent/skill-1/SKILL.md": SKILL_1,
         }
     )
 
@@ -254,7 +254,7 @@ async def test_get_skill_from_cache() -> None:
     """Test that subsequent get_skill calls use cache."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/skill-1/SKILL.md": SKILL_1,
+            "/skills/agent/skill-1/SKILL.md": SKILL_1,
         }
     )
 
@@ -284,7 +284,7 @@ async def test_get_metadata() -> None:
     """Test getting skill metadata without loading full content."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/skill-1/SKILL.md": SKILL_1,
+            "/skills/agent/skill-1/SKILL.md": SKILL_1,
         }
     )
 
@@ -315,8 +315,8 @@ async def test_list_skills() -> None:
     """Test listing skills."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/skill-1/SKILL.md": SKILL_1,
-            "/workspace/.nexus/skills/skill-2/SKILL.md": SKILL_2,
+            "/skills/agent/skill-1/SKILL.md": SKILL_1,
+            "/skills/agent/skill-2/SKILL.md": SKILL_2,
         }
     )
 
@@ -333,8 +333,8 @@ async def test_list_skills_by_tier() -> None:
     """Test listing skills filtered by tier."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/agent-skill/SKILL.md": SKILL_1,
-            "/shared/skills/tenant-skill/SKILL.md": SKILL_2,
+            "/skills/agent/agent-skill/SKILL.md": SKILL_1,
+            "/skills/tenant/tenant-skill/SKILL.md": SKILL_2,
         }
     )
 
@@ -355,7 +355,7 @@ async def test_list_skills_with_metadata() -> None:
     """Test listing skills with metadata included."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/skill-1/SKILL.md": SKILL_1,
+            "/skills/agent/skill-1/SKILL.md": SKILL_1,
         }
     )
 
@@ -373,9 +373,9 @@ async def test_resolve_dependencies() -> None:
     """Test resolving skill dependencies."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/skill-1/SKILL.md": SKILL_1,
-            "/workspace/.nexus/skills/skill-2/SKILL.md": SKILL_2,
-            "/workspace/.nexus/skills/skill-3/SKILL.md": SKILL_3,
+            "/skills/agent/skill-1/SKILL.md": SKILL_1,
+            "/skills/agent/skill-2/SKILL.md": SKILL_2,
+            "/skills/agent/skill-3/SKILL.md": SKILL_3,
         }
     )
 
@@ -394,8 +394,8 @@ async def test_resolve_dependencies_circular() -> None:
     """Test that circular dependencies are detected."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/skill-a/SKILL.md": SKILL_CIRCULAR_A,
-            "/workspace/.nexus/skills/skill-b/SKILL.md": SKILL_CIRCULAR_B,
+            "/skills/agent/skill-a/SKILL.md": SKILL_CIRCULAR_A,
+            "/skills/agent/skill-b/SKILL.md": SKILL_CIRCULAR_B,
         }
     )
 
@@ -412,7 +412,7 @@ async def test_resolve_dependencies_missing() -> None:
     """Test that missing dependencies raise error."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/skill-2/SKILL.md": SKILL_2,
+            "/skills/agent/skill-2/SKILL.md": SKILL_2,
             # skill-1 is missing (but skill-2 requires it)
         }
     )
@@ -430,8 +430,8 @@ async def test_get_skill_with_dependencies() -> None:
     """Test loading skill with dependencies."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/skill-1/SKILL.md": SKILL_1,
-            "/workspace/.nexus/skills/skill-2/SKILL.md": SKILL_2,
+            "/skills/agent/skill-1/SKILL.md": SKILL_1,
+            "/skills/agent/skill-2/SKILL.md": SKILL_2,
         }
     )
 
@@ -451,7 +451,7 @@ async def test_clear_cache() -> None:
     """Test clearing skill cache."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/skill-1/SKILL.md": SKILL_1,
+            "/skills/agent/skill-1/SKILL.md": SKILL_1,
         }
     )
 
@@ -475,7 +475,7 @@ async def test_clear_all() -> None:
     """Test clearing all skills and caches."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/skill-1/SKILL.md": SKILL_1,
+            "/skills/agent/skill-1/SKILL.md": SKILL_1,
         }
     )
 
@@ -507,7 +507,7 @@ async def test_registry_repr() -> None:
     """Test registry string representation."""
     fs = MockFilesystem(
         {
-            "/workspace/.nexus/skills/skill-1/SKILL.md": SKILL_1,
+            "/skills/agent/skill-1/SKILL.md": SKILL_1,
         }
     )
 

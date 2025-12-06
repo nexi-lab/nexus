@@ -173,6 +173,11 @@ class NexusFSMountsMixin:
         elif backend_type == "gcs_connector":
             from nexus.backends.gcs_connector import GCSConnectorBackend
 
+            # Get session factory for caching support if available
+            session_factory = None
+            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
+                session_factory = self.metadata.SessionLocal
+
             backend = GCSConnectorBackend(
                 bucket_name=backend_config["bucket"],
                 project_id=backend_config.get("project_id"),
@@ -180,9 +185,16 @@ class NexusFSMountsMixin:
                 credentials_path=backend_config.get("credentials_path"),
                 # OAuth access token (alternative to credentials_path)
                 access_token=backend_config.get("access_token"),
+                # Session factory for caching support
+                session_factory=session_factory,
             )
         elif backend_type == "s3_connector":
             from nexus.backends.s3_connector import S3ConnectorBackend
+
+            # Get session factory for caching support if available
+            session_factory = None
+            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
+                session_factory = self.metadata.SessionLocal
 
             backend = S3ConnectorBackend(
                 bucket_name=backend_config["bucket"],
@@ -192,6 +204,8 @@ class NexusFSMountsMixin:
                 access_key_id=backend_config.get("access_key_id"),
                 secret_access_key=backend_config.get("secret_access_key"),
                 session_token=backend_config.get("session_token"),
+                # Session factory for caching support
+                session_factory=session_factory,
             )
         elif backend_type == "gdrive_connector":
             from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
@@ -211,6 +225,20 @@ class NexusFSMountsMixin:
                 user_email=backend_config.get("user_email"),
                 cache_ttl=backend_config.get("cache_ttl"),
                 cache_dir=backend_config.get("cache_dir"),
+            )
+        elif backend_type == "hn_connector":
+            from nexus.backends.hn_connector import HNConnectorBackend
+
+            # Get session factory for caching support if available
+            hn_session_factory = None
+            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
+                hn_session_factory = self.metadata.SessionLocal
+
+            backend = HNConnectorBackend(
+                cache_ttl=backend_config.get("cache_ttl", 300),
+                stories_per_feed=backend_config.get("stories_per_feed", 10),
+                include_comments=backend_config.get("include_comments", True),
+                session_factory=hn_session_factory,
             )
         else:
             raise RuntimeError(f"Unsupported backend type: {backend_type}")
@@ -325,6 +353,39 @@ class NexusFSMountsMixin:
             )
 
         return result
+
+    @rpc_expose(description="List available connector types")
+    def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
+        """List all available connector types that can be used with add_mount().
+
+        Args:
+            category: Optional filter by category (storage, api, oauth, database)
+
+        Returns:
+            List of connector info dictionaries, each containing:
+                - name: Connector identifier (str)
+                - description: Human-readable description (str)
+                - category: Category for grouping (str)
+                - requires: List of optional dependencies (list[str])
+                - user_scoped: Whether connector requires per-user OAuth (bool)
+        """
+        from nexus.backends.registry import ConnectorRegistry
+
+        if category:
+            connectors = ConnectorRegistry.list_by_category(category)
+        else:
+            connectors = ConnectorRegistry.list_all()
+
+        return [
+            {
+                "name": c.name,
+                "description": c.description,
+                "category": c.category,
+                "requires": c.requires,
+                "user_scoped": c.user_scoped,
+            }
+            for c in connectors
+        ]
 
     @rpc_expose(description="List all backend mounts")
     def list_mounts(self) -> list[dict[str, Any]]:
@@ -729,22 +790,37 @@ class NexusFSMountsMixin:
     @rpc_expose(description="Sync metadata from connector backend")
     def sync_mount(
         self,
-        mount_point: str,
+        mount_point: str | None = None,
+        path: str | None = None,
         recursive: bool = True,
         dry_run: bool = False,
+        sync_content: bool = True,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Sync metadata from a connector backend to Nexus database.
+        """Sync metadata and content from connector backend(s) to Nexus database.
 
         For connector backends (like gcs_connector), this scans the external storage
         and updates Nexus's metadata database with any files that were added externally
         or existed before Nexus was configured. It also removes files from metadata
         that no longer exist in the backend.
 
+        When sync_content=True (default), also populates the content_cache table
+        for fast grep/search operations without hitting the backend.
+
         Args:
-            mount_point: Virtual path of mount to sync (e.g., "/mnt/gcs_demo")
+            mount_point: Virtual path of mount to sync (e.g., "/mnt/gcs_demo").
+                        If None, syncs ALL connector mounts.
+            path: Specific path within mount to sync (e.g., "/reports/2024/")
+                  If None, syncs entire mount. Supports file or directory granularity.
             recursive: If True, sync all subdirectories recursively (default: True)
             dry_run: If True, only report what would be synced without making changes (default: False)
+            sync_content: If True, also sync content to cache for grep/search (default: True)
+            include_patterns: Glob patterns to include (e.g., ["*.py", "*.md"])
+            exclude_patterns: Glob patterns to exclude (e.g., ["*.pyc", ".git/*"])
+            generate_embeddings: If True, generate embeddings for semantic search (default: False)
             context: Operation context containing user/subject information (automatically provided by RPC server)
 
         Returns:
@@ -753,6 +829,9 @@ class NexusFSMountsMixin:
                 - files_created: Number of new files added to database
                 - files_updated: Number of existing files updated
                 - files_deleted: Number of files deleted from database (no longer in backend)
+                - cache_synced: Number of files synced to content cache (if sync_content=True)
+                - cache_bytes: Total bytes synced to cache
+                - embeddings_generated: Number of embeddings generated (if generate_embeddings=True)
                 - errors: List of error messages (if any)
 
         Raises:
@@ -760,13 +839,29 @@ class NexusFSMountsMixin:
             RuntimeError: If backend doesn't support listing (not a connector backend)
 
         Examples:
-            >>> # Sync GCS connector mount
+            >>> # Sync entire GCS connector mount (metadata + content)
             >>> result = nx.sync_mount("/mnt/gcs_demo")
-            >>> print(f"Created {result['files_created']}, deleted {result['files_deleted']}")
+            >>> print(f"Created {result['files_created']}, cached {result['cache_synced']}")
+
+            >>> # Sync specific directory
+            >>> result = nx.sync_mount("/mnt/gcs", path="/reports/2024/")
+
+            >>> # Sync single file
+            >>> result = nx.sync_mount("/mnt/gcs", path="/data/report.pdf")
+
+            >>> # Sync only Python files
+            >>> result = nx.sync_mount("/mnt/gcs", include_patterns=["*.py"])
 
             >>> # Dry run to see what would be synced
             >>> result = nx.sync_mount("/mnt/gcs_demo", dry_run=True)
             >>> print(f"Would scan {result['files_scanned']} files")
+
+            >>> # Sync metadata only (no content cache)
+            >>> result = nx.sync_mount("/mnt/gcs", sync_content=False)
+
+            >>> # Sync ALL connector mounts
+            >>> result = nx.sync_mount()
+            >>> print(f"Synced {result['mounts_synced']} mounts")
         """
         import logging
         from datetime import UTC, datetime
@@ -775,6 +870,77 @@ class NexusFSMountsMixin:
         from nexus.core.metadata import FileMetadata
 
         logger = logging.getLogger(__name__)
+
+        # If no mount_point specified, sync ALL connector mounts
+        if mount_point is None:
+            logger.info("[SYNC_MOUNT] No mount_point specified, syncing all connector mounts")
+            all_mounts = self.list_mounts()
+
+            # Aggregate results from all mounts
+            total_stats: dict[str, Any] = {
+                "mounts_synced": 0,
+                "mounts_skipped": 0,
+                "files_scanned": 0,
+                "files_created": 0,
+                "files_updated": 0,
+                "files_deleted": 0,
+                "cache_synced": 0,
+                "cache_bytes": 0,
+                "embeddings_generated": 0,
+                "errors": [],
+            }
+
+            for mount_info in all_mounts:
+                mp = mount_info.get("mount_point", "")
+                backend_type = mount_info.get("backend_type", "")
+
+                # Only sync connector-style backends (those with list_dir support)
+                mount = self.router.get_mount(mp)
+                if not mount or not hasattr(mount.backend, "list_dir"):
+                    logger.info(
+                        f"[SYNC_MOUNT] Skipping {mp} ({backend_type}) - not a connector backend"
+                    )
+                    total_stats["mounts_skipped"] += 1
+                    continue
+
+                logger.info(f"[SYNC_MOUNT] Syncing mount: {mp}")
+                try:
+                    result = self.sync_mount(
+                        mount_point=mp,
+                        path=path,
+                        recursive=recursive,
+                        dry_run=dry_run,
+                        sync_content=sync_content,
+                        include_patterns=include_patterns,
+                        exclude_patterns=exclude_patterns,
+                        generate_embeddings=generate_embeddings,
+                        context=context,
+                    )
+
+                    # Aggregate stats
+                    total_stats["mounts_synced"] += 1
+                    total_stats["files_scanned"] += result.get("files_scanned", 0)
+                    total_stats["files_created"] += result.get("files_created", 0)
+                    total_stats["files_updated"] += result.get("files_updated", 0)
+                    total_stats["files_deleted"] += result.get("files_deleted", 0)
+                    total_stats["cache_synced"] += result.get("cache_synced", 0)
+                    total_stats["cache_bytes"] += result.get("cache_bytes", 0)
+                    total_stats["embeddings_generated"] += result.get("embeddings_generated", 0)
+
+                    # Prefix errors with mount point
+                    for error in result.get("errors", []):
+                        total_stats["errors"].append(f"[{mp}] {error}")
+
+                except Exception as e:
+                    total_stats["errors"].append(f"[{mp}] Failed to sync: {e}")
+                    logger.warning(f"[SYNC_MOUNT] Failed to sync {mp}: {e}")
+
+            logger.info(
+                f"[SYNC_MOUNT] All mounts sync complete: "
+                f"{total_stats['mounts_synced']} synced, "
+                f"{total_stats['mounts_skipped']} skipped"
+            )
+            return total_stats
 
         # Extract created_by from context
         created_by: str | None = None
@@ -950,16 +1116,105 @@ class NexusFSMountsMixin:
                 error_msg = f"Failed to scan {virtual_path}: {e}"
                 cast(list[str], stats["errors"]).append(error_msg)
 
-        # Start scanning from mount point root
-        # For connector backends, the prefix is already built into the backend itself
-        # So we start with an empty path, and the backend will automatically apply its prefix
-        backend_path = ""  # Start from root (backend's prefix will be applied automatically)
+        # Determine starting path for scan
+        # If path is specified, start from there instead of mount root
+        if path:
+            # path can be relative to mount or absolute
+            if path.startswith(mount_point):
+                start_virtual_path = path
+                start_backend_path = path[len(mount_point) :].lstrip("/")
+            else:
+                start_virtual_path = f"{mount_point.rstrip('/')}/{path.lstrip('/')}"
+                start_backend_path = path.lstrip("/")
 
-        scan_directory(mount_point, backend_path)
+            # Check if this is a single file (not a directory)
+            # Try to list the path as a directory - if it fails or is empty, treat as file
+            is_single_file = False
+            try:
+                entries = backend.list_dir(start_backend_path, context=context)
+                if not entries:
+                    # Empty directory or file - check if path has extension (likely a file)
+                    import os.path as osp
+
+                    if osp.splitext(start_backend_path)[1]:
+                        is_single_file = True
+            except Exception:
+                # If list_dir fails, assume it's a file (e.g., "File not found" means it's a file path)
+                is_single_file = True
+
+            if is_single_file:
+                # Single file sync - process it directly
+                logger.info(f"[SYNC_MOUNT] Syncing single file: {start_virtual_path}")
+                stats["files_scanned"] = 1
+                files_found_in_backend.add(start_virtual_path)
+
+                if not dry_run:
+                    # Check if file already exists in metadata
+                    existing_meta = self.metadata.get(start_virtual_path)  # type: ignore[attr-defined]
+
+                    if not existing_meta:
+                        # Create metadata entry for the file
+                        try:
+                            now = datetime.now(UTC)
+                            import hashlib
+
+                            path_hash = hashlib.sha256(start_backend_path.encode()).hexdigest()
+                            meta = FileMetadata(
+                                path=start_virtual_path,
+                                backend_name=backend.name,
+                                physical_path=start_backend_path,
+                                size=0,
+                                etag=path_hash,
+                                created_at=now,
+                                modified_at=now,
+                                version=1,
+                                created_by=created_by,
+                            )
+                            self.metadata.put(meta)  # type: ignore[attr-defined]
+                            stats["files_created"] = 1
+
+                            # Create parent relationships
+                            if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager:
+                                try:
+                                    self._hierarchy_manager.ensure_parent_tuples(
+                                        start_virtual_path, tenant_id=None
+                                    )
+                                except Exception as parent_error:
+                                    logger.warning(
+                                        f"Failed to create parent tuples for {start_virtual_path}: {parent_error}"
+                                    )
+                        except Exception as e:
+                            error_msg = f"Failed to add {start_virtual_path}: {e}"
+                            cast(list[str], stats["errors"]).append(error_msg)
+            else:
+                # Directory sync
+                scan_directory(start_virtual_path, start_backend_path)
+        else:
+            # Start from mount point root
+            # For connector backends, the prefix is already built into the backend itself
+            # So we start with an empty path, and the backend will automatically apply its prefix
+            start_virtual_path = mount_point
+            start_backend_path = (
+                ""  # Start from root (backend's prefix will be applied automatically)
+            )
+            scan_directory(start_virtual_path, start_backend_path)
 
         # Handle file deletions - remove files from metadata that no longer exist in backend
-        if not dry_run:
+        # Only check deletions if we synced from root (path=None), not for partial syncs
+        if not dry_run and path is None:
             try:
+                # Get list of other mount points to exclude from deletion check
+                # Files under other mounts should not be deleted by this mount's sync
+                other_mount_points = set()
+                try:
+                    all_mounts = self.list_mounts()
+                    for m in all_mounts:
+                        mp = m.get("mount_point", "")
+                        if mp and mp != mount_point and mp != "/":
+                            other_mount_points.add(mp)
+                except Exception:
+                    pass
+
                 # List all files in metadata under this mount point
                 existing_metas = self.metadata.list(prefix=mount_point, recursive=True)  # type: ignore[attr-defined]
                 existing_files = [meta.path for meta in existing_metas]
@@ -967,6 +1222,14 @@ class NexusFSMountsMixin:
                 for existing_path in existing_files:
                     # Skip if it's a directory or if it was found in the backend scan
                     if existing_path in files_found_in_backend:
+                        continue
+
+                    # Skip if this file belongs to another mount (e.g., /mnt/gcs files when syncing /)
+                    belongs_to_other_mount = any(
+                        existing_path.startswith(mp + "/") or existing_path == mp
+                        for mp in other_mount_points
+                    )
+                    if belongs_to_other_mount:
                         continue
 
                     # Check if this is actually a file (not a directory)
@@ -989,5 +1252,63 @@ class NexusFSMountsMixin:
                 error_msg = f"Failed to check for deletions: {e}"
                 cast(list[str], stats["errors"]).append(error_msg)
                 logger.warning(error_msg)
+
+        # Sync content to cache if requested and backend supports it
+        stats["cache_synced"] = 0
+        stats["cache_bytes"] = 0
+        stats["embeddings_generated"] = 0
+
+        if sync_content and not dry_run:
+            # Delegate to backend's sync() method if available (CacheConnectorMixin)
+            if hasattr(backend, "sync"):
+                logger.info("[SYNC_MOUNT] Delegating to backend.sync() for cache population")
+                try:
+                    from nexus.backends.cache_mixin import SyncResult as CacheSyncResult
+
+                    # Determine path for cache sync (relative to mount)
+                    cache_sync_path = None
+                    if path:
+                        # Use the same path that was used for metadata sync
+                        if path.startswith(mount_point):
+                            cache_sync_path = path[len(mount_point) :].lstrip("/")
+                        else:
+                            cache_sync_path = path.lstrip("/")
+
+                    cache_result: CacheSyncResult = backend.sync(
+                        path=cache_sync_path,
+                        mount_point=mount_point,
+                        include_patterns=include_patterns,
+                        exclude_patterns=exclude_patterns,
+                        generate_embeddings=generate_embeddings,
+                        context=context,
+                    )
+
+                    stats["cache_synced"] = cache_result.files_synced
+                    stats["cache_skipped"] = cache_result.files_skipped
+                    stats["cache_bytes"] = cache_result.bytes_synced
+                    stats["embeddings_generated"] = cache_result.embeddings_generated
+
+                    # Add any cache sync errors
+                    if cache_result.errors:
+                        for error in cache_result.errors:
+                            cast(list[str], stats["errors"]).append(f"[cache] {error}")
+
+                    logger.info(
+                        f"[SYNC_MOUNT] Content cache sync complete: "
+                        f"synced={cache_result.files_synced}, "
+                        f"bytes={cache_result.bytes_synced}, "
+                        f"embeddings={cache_result.embeddings_generated}"
+                    )
+                except Exception as e:
+                    error_msg = f"Failed to sync content cache via backend.sync(): {e}"
+                    cast(list[str], stats["errors"]).append(error_msg)
+                    logger.warning(error_msg)
+            else:
+                # Fallback: Backend doesn't have sync() method
+                # This maintains backward compatibility with connectors that don't use CacheConnectorMixin
+                logger.info(
+                    f"[SYNC_MOUNT] Backend {type(backend).__name__} does not support sync(), "
+                    "skipping content cache population"
+                )
 
         return stats

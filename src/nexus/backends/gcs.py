@@ -12,7 +12,6 @@ Authentication (Recommended):
     - Compute Engine/Cloud Run service account (auto-detected)
 """
 
-import hashlib
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +21,7 @@ from google.cloud.exceptions import NotFound
 from nexus.backends.backend import Backend
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -140,8 +140,8 @@ class GCSBackend(Backend):
     # === Content Operations (CAS) ===
 
     def _compute_hash(self, content: bytes) -> str:
-        """Compute SHA-256 hash of content."""
-        return hashlib.sha256(content).hexdigest()
+        """Compute BLAKE3 hash of content (Rust-accelerated)."""
+        return hash_content(content)
 
     def _hash_to_path(self, content_hash: str) -> str:
         """

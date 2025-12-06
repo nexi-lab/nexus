@@ -15,11 +15,17 @@ RUST_AVAILABLE = False
 _rust_grep_bulk: Callable[..., list[dict[str, Any]]] | None = None
 
 try:
-    from nexus_fast import grep_bulk as _rust_grep_bulk  # type: ignore[no-redef]
+    from nexus._nexus_fast import grep_bulk as _rust_grep_bulk  # type: ignore[no-redef]
 
     RUST_AVAILABLE = True
 except ImportError:
-    pass
+    try:
+        # Fallback to external nexus_fast package
+        from nexus_fast import grep_bulk as _rust_grep_bulk  # type: ignore[no-redef]
+
+        RUST_AVAILABLE = True
+    except ImportError:
+        pass
 
 
 def grep_bulk(

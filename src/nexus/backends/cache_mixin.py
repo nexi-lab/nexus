@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import base64
 import contextlib
-import hashlib
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -21,6 +20,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from nexus.core.exceptions import ConflictError
+from nexus.core.hash_fast import hash_content
 from nexus.core.permissions import OperationContext
 from nexus.storage.models import ContentCacheModel, FilePathModel
 
@@ -539,8 +539,8 @@ class CacheConnectorMixin:
         if not path_id:
             raise ValueError(f"Path not found in file_paths: {path}")
 
-        # Compute content hash
-        content_hash = hashlib.sha256(content).hexdigest()
+        # Compute content hash (BLAKE3, Rust-accelerated)
+        content_hash = hash_content(content)
 
         # Determine text content
         if content_text is None:
@@ -894,8 +894,8 @@ class CacheConnectorMixin:
                     else:
                         # No versioning - compare content hashes
                         if cached.content_binary:
-                            content_hash = hashlib.sha256(content).hexdigest()
-                            cached_hash = hashlib.sha256(cached.content_binary).hexdigest()
+                            content_hash = hash_content(content)
+                            cached_hash = hash_content(cached.content_binary)
                             if content_hash == cached_hash:
                                 logger.info(
                                     f"[CACHE] SYNC SKIP (hash match, no versioning): {virtual_path}"

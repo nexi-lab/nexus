@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
+from nexus.core.hash_fast import hash_content
 from nexus.core.metadata import FileMetadata
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
@@ -306,10 +307,9 @@ class NexusFSCoreMixin:
             content = route.backend.read_content("", context=read_context)
             if return_metadata:
                 # Generate synthetic metadata for dynamic content
-                import hashlib
                 from datetime import datetime
 
-                content_hash = hashlib.sha256(content).hexdigest()
+                content_hash = hash_content(content)
                 return {
                     "content": content,
                     "etag": content_hash,

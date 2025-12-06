@@ -31,7 +31,6 @@ Authentication:
     - Automatic refresh when expired
 """
 
-import hashlib
 import io
 import logging
 import mimetypes
@@ -40,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.backends.backend import Backend
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
@@ -533,8 +533,8 @@ class GoogleDriveConnectorBackend(Backend):
                 backend="gdrive",
             )
 
-        # Calculate content hash
-        content_hash = hashlib.sha256(content).hexdigest()
+        # Calculate content hash (BLAKE3, Rust-accelerated)
+        content_hash = hash_content(content)
 
         service = self._get_drive_service(context)
 

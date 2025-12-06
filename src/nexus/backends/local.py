@@ -2,7 +2,6 @@
 
 import contextlib
 import errno
-import hashlib
 import json
 import os
 import platform
@@ -14,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.backends.backend import Backend
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.hash_fast import hash_content
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
@@ -93,8 +93,12 @@ class LocalBackend(Backend):
     # === Content Operations (CAS) ===
 
     def _compute_hash(self, content: bytes) -> str:
-        """Compute SHA-256 hash of content."""
-        return hashlib.sha256(content).hexdigest()
+        """Compute BLAKE3 hash of content (Rust-accelerated).
+
+        Uses BLAKE3 for ~3x faster hashing than SHA-256.
+        Falls back to SHA-256 if Rust extension is not available.
+        """
+        return hash_content(content)
 
     def _hash_to_path(self, content_hash: str) -> Path:
         """

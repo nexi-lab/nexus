@@ -1,5 +1,4 @@
 #![allow(clippy::useless_conversion)]
-#![allow(deprecated)] // TODO: Migrate from allow_threads/downcast to new PyO3 0.27 API
 
 use ahash::{AHashMap, AHashSet};
 use pyo3::prelude::*;
@@ -67,6 +66,7 @@ type MemoCache = AHashMap<(String, String, String, String, String), bool>;
 type CheckRequest = (String, String, String, String, String);
 
 /// Main function: compute permissions in bulk using Rust
+#[allow(deprecated)] // TODO: Migrate py.allow_threads() to new PyO3 0.27 API
 #[pyfunction]
 fn compute_permissions_bulk<'py>(
     py: Python<'py>,
@@ -78,12 +78,12 @@ fn compute_permissions_bulk<'py>(
     let check_requests: Vec<CheckRequest> = checks
         .iter()
         .map(|item| {
-            let tuple = item.downcast::<PyTuple>()?;
+            let tuple: Bound<'_, PyTuple> = item.extract()?;
             let subject_item = tuple.get_item(0)?;
-            let subject = subject_item.downcast::<PyTuple>()?;
+            let subject: Bound<'_, PyTuple> = subject_item.extract()?;
             let permission = tuple.get_item(1)?.extract::<String>()?;
             let object_item = tuple.get_item(2)?;
-            let object = object_item.downcast::<PyTuple>()?;
+            let object: Bound<'_, PyTuple> = object_item.extract()?;
 
             Ok((
                 subject.get_item(0)?.extract::<String>()?, // subject_type
@@ -98,7 +98,7 @@ fn compute_permissions_bulk<'py>(
     let rebac_tuples: Vec<ReBACTuple> = tuples
         .iter()
         .map(|item| {
-            let dict = item.downcast::<PyDict>()?;
+            let dict: Bound<'_, PyDict> = item.extract()?;
             Ok(ReBACTuple {
                 subject_type: dict.get_item("subject_type")?.unwrap().extract()?,
                 subject_id: dict.get_item("subject_id")?.unwrap().extract()?,
@@ -116,7 +116,7 @@ fn compute_permissions_bulk<'py>(
     let mut namespaces = AHashMap::new();
     for (key, value) in namespace_configs.iter() {
         let obj_type: String = key.extract()?;
-        let config_dict = value.downcast::<PyDict>()?;
+        let config_dict: Bound<'_, PyDict> = value.extract()?;
         // Convert Python dict to JSON via Python's json module
         let json_module = py.import("json")?;
         let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
@@ -446,7 +446,7 @@ fn grep_bulk<'py>(
         };
 
         // Try to get bytes with zero-copy from PyBytes
-        if let Ok(py_bytes) = content_py.downcast::<PyBytes>() {
+        if let Ok(py_bytes) = content_py.extract::<Bound<'_, PyBytes>>() {
             let content_bytes = py_bytes.as_bytes();
             let file_results = search_content_optimized(
                 &file_path,

@@ -343,16 +343,21 @@ struct GrepMatch {
 }
 
 /// Fast content search using Rust regex
+///
+/// Optimized approach: search whole content first, then extract line info only for matches.
+/// This avoids iterating every line when matches are sparse.
 #[pyfunction]
 #[pyo3(signature = (pattern, file_contents, ignore_case=false, max_results=1000))]
 fn grep_bulk<'py>(
     py: Python<'py>,
     pattern: &str,
-    file_contents: &Bound<PyDict>,
+    file_contents: &Bound<'py, PyDict>,
     ignore_case: bool,
     max_results: usize,
 ) -> PyResult<Bound<'py, PyList>> {
-    // Compile regex pattern
+    use pyo3::types::PyBytes;
+
+    // Compile regex pattern once
     let regex = RegexBuilder::new(pattern)
         .case_insensitive(ignore_case)
         .build()
@@ -360,66 +365,44 @@ fn grep_bulk<'py>(
             pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e))
         })?;
 
-    // Extract all file contents from Python objects first
-    let mut files_data: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut results: Vec<GrepMatch> = Vec::new();
+
     for (file_path_py, content_py) in file_contents.iter() {
-        let file_path = match file_path_py.extract::<String>() {
+        if results.len() >= max_results {
+            break;
+        }
+
+        let file_path: String = match file_path_py.extract() {
             Ok(p) => p,
             Err(_) => continue,
         };
 
-        let content_bytes = match content_py.extract::<Vec<u8>>() {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-
-        files_data.push((file_path, content_bytes));
-    }
-
-    // Release GIL for computation
-    let matches = py.allow_threads(|| {
-        let mut results = Vec::new();
-
-        // Iterate over extracted file contents
-        for (file_path, content_bytes) in files_data {
-            if results.len() >= max_results {
-                break;
-            }
-
-            // Try to decode as UTF-8 (skip binary files)
-            let content_str = match std::str::from_utf8(&content_bytes) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            // Search line by line
-            for (line_num, line) in content_str.lines().enumerate() {
-                if results.len() >= max_results {
-                    break;
-                }
-
-                let line_bytes = line.as_bytes();
-                if let Some(mat) = regex.find(line_bytes) {
-                    let match_text = std::str::from_utf8(&line_bytes[mat.start()..mat.end()])
-                        .unwrap_or("")
-                        .to_string();
-
-                    results.push(GrepMatch {
-                        file: file_path.clone(),
-                        line: line_num + 1, // 1-indexed
-                        content: line.to_string(),
-                        match_text,
-                    });
-                }
-            }
+        // Try to get bytes with zero-copy from PyBytes
+        if let Ok(py_bytes) = content_py.downcast::<PyBytes>() {
+            let content_bytes = py_bytes.as_bytes();
+            let file_results = search_content_optimized(
+                &file_path,
+                content_bytes,
+                &regex,
+                max_results - results.len(),
+            );
+            results.extend(file_results);
         }
-
-        results
-    });
+        // Fallback: extract as Vec<u8> (copies data)
+        else if let Ok(bytes_vec) = content_py.extract::<Vec<u8>>() {
+            let file_results = search_content_optimized(
+                &file_path,
+                &bytes_vec,
+                &regex,
+                max_results - results.len(),
+            );
+            results.extend(file_results);
+        }
+    }
 
     // Convert results to Python list of dicts
     let py_list = PyList::empty_bound(py);
-    for m in matches {
+    for m in results {
         let dict = PyDict::new_bound(py);
         dict.set_item("file", m.file)?;
         dict.set_item("line", m.line)?;
@@ -431,10 +414,81 @@ fn grep_bulk<'py>(
     Ok(py_list)
 }
 
+/// Optimized search: find matches first, then compute line numbers only for matches
+fn search_content_optimized(
+    file_path: &str,
+    content_bytes: &[u8],
+    regex: &regex::bytes::Regex,
+    max_results: usize,
+) -> Vec<GrepMatch> {
+    use memchr::memchr_iter;
+
+    let mut results = Vec::new();
+
+    // Quick check: any matches at all?
+    if !regex.is_match(content_bytes) {
+        return results;
+    }
+
+    // Build line index using memchr (SIMD-accelerated newline search)
+    let mut line_starts: Vec<usize> = Vec::with_capacity(content_bytes.len() / 40); // estimate
+    line_starts.push(0);
+    for pos in memchr_iter(b'\n', content_bytes) {
+        line_starts.push(pos + 1);
+    }
+
+    // Find all matches and map to lines
+    for mat in regex.find_iter(content_bytes) {
+        if results.len() >= max_results {
+            break;
+        }
+
+        let match_start = mat.start();
+
+        // Binary search for line number
+        let line_idx = match line_starts.binary_search(&match_start) {
+            Ok(i) => i,
+            Err(i) => i.saturating_sub(1),
+        };
+
+        let line_start = line_starts[line_idx];
+        let line_end = line_starts
+            .get(line_idx + 1)
+            .map(|&e| e.saturating_sub(1)) // exclude newline
+            .unwrap_or(content_bytes.len());
+
+        // Extract line content
+        let line_bytes = &content_bytes[line_start..line_end];
+        let line_content = std::str::from_utf8(line_bytes).unwrap_or("").to_string();
+        let match_text = std::str::from_utf8(mat.as_bytes()).unwrap_or("").to_string();
+
+        results.push(GrepMatch {
+            file: file_path.to_string(),
+            line: line_idx + 1,
+            content: line_content,
+            match_text,
+        });
+    }
+
+    results
+}
+
+/// Simple test: just regex is_match on bytes (for benchmarking)
+#[pyfunction]
+fn test_regex_match(pattern: &str, content: &[u8]) -> PyResult<bool> {
+    let regex = RegexBuilder::new(pattern)
+        .build()
+        .map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid regex: {}", e))
+        })?;
+    Ok(regex.is_match(content))
+}
+
 /// Python module definition
 #[pymodule]
 fn _nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compute_permissions_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(grep_bulk, m)?)?;
+    m.add_function(wrap_pyfunction!(test_regex_match, m)?)?;
     Ok(())
 }

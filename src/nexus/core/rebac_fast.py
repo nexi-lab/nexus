@@ -28,15 +28,31 @@ NamespaceConfigDict = dict[str, Any]  # Contains 'relations' and 'permissions' k
 
 logger = logging.getLogger(__name__)
 
-# Try to import Rust extension
+# Try to import Rust extensions
+# - nexus._nexus_fast: Internal module (faster bulk operations)
+# - nexus_fast: External package (has compute_permission_single)
+_internal_module = None
+_external_module = None
+RUST_AVAILABLE = False
+
 try:
-    import nexus_fast
+    from nexus import _nexus_fast as _internal_module  # type: ignore[assignment]
 
     RUST_AVAILABLE = True
-    logger.info("✓ Rust acceleration available (nexus_fast module loaded)")
+    logger.info("✓ Rust bulk acceleration available (nexus._nexus_fast)")
 except ImportError:
-    RUST_AVAILABLE = False
-    logger.info("✗ Rust acceleration not available (nexus_fast not installed)")
+    pass
+
+try:
+    import nexus_fast as _external_module  # type: ignore[assignment]
+
+    RUST_AVAILABLE = True
+    logger.info("✓ Rust single-check acceleration available (nexus_fast)")
+except ImportError:
+    pass
+
+if not RUST_AVAILABLE:
+    logger.info("✗ Rust acceleration not available")
 
 
 def is_rust_available() -> bool:
@@ -100,7 +116,11 @@ def check_permissions_bulk_rust(
         )
 
     try:
-        result: Any = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs)
+        # Prefer internal module (faster), fallback to external
+        module = _internal_module or _external_module
+        if module is None:
+            raise RuntimeError("No Rust module available")
+        result: Any = module.compute_permissions_bulk(checks, tuples, namespace_configs)
         return result  # type: ignore[no-any-return]
     except Exception as e:
         logger.error(f"Rust permission check failed: {e}", exc_info=True)
@@ -296,11 +316,18 @@ def check_permission_single_rust(
             "cd rust/nexus_fast && maturin develop --release"
         )
 
+    # compute_permission_single is only in the external module
+    if _external_module is None:
+        raise RuntimeError(
+            "Rust single permission check not available. "
+            "Install nexus_fast: cd rust/nexus_fast && maturin develop --release"
+        )
+
     try:
         import time
 
         start = time.perf_counter()
-        result: bool = nexus_fast.compute_permission_single(
+        result: bool = _external_module.compute_permission_single(
             subject_type,
             subject_id,
             permission,
@@ -350,7 +377,7 @@ def check_permission_single_with_fallback(
     Returns:
         True if permission is granted, False otherwise
     """
-    if RUST_AVAILABLE and not force_python:
+    if _external_module is not None and not force_python:
         try:
             return check_permission_single_rust(
                 subject_type,

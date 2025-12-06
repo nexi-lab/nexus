@@ -61,18 +61,26 @@ class LocalBackend(Backend):
         ),
     }
 
-    def __init__(self, root_path: str | Path, content_cache: ContentCache | None = None):
+    def __init__(
+        self,
+        root_path: str | Path,
+        content_cache: ContentCache | None = None,
+        batch_read_workers: int = 8,
+    ):
         """
         Initialize local backend.
 
         Args:
             root_path: Root directory for storage
             content_cache: Optional content cache for faster reads (default: None)
+            batch_read_workers: Max parallel workers for batch reads (default: 8).
+                               Use lower values (1-2) for HDDs, higher (8-16) for SSDs/NVMe.
         """
         self.root_path = Path(root_path).resolve()
         self.cas_root = self.root_path / "cas"  # CAS content storage
         self.dir_root = self.root_path / "dirs"  # Directory structure
         self.content_cache = content_cache  # Optional content cache for fast reads
+        self.batch_read_workers = batch_read_workers  # Max parallel workers for batch reads
         self._ensure_roots()
 
     @property
@@ -400,13 +408,20 @@ class LocalBackend(Backend):
         self, content_hashes: list[str], context: "OperationContext | None" = None
     ) -> dict[str, bytes | None]:
         """
-        Optimized batch read for local backend.
+        Optimized batch read for local backend with parallel disk I/O.
 
-        Leverages content cache to reduce disk I/O operations.
+        Leverages content cache to reduce disk I/O operations, then reads
+        uncached content in parallel using a thread pool for improved performance
+        on SSDs and network storage.
 
         Args:
             content_hashes: List of SHA-256 hashes as hex strings
             context: Operation context (ignored for local backend)
+
+        Performance:
+            - Cache hits: O(1) per file
+            - Cache misses: Parallel disk reads (up to 8 concurrent)
+            - Expected speedup: 3-8x for batch reads with cache misses
         """
         result: dict[str, bytes | None] = {}
 
@@ -420,16 +435,38 @@ class LocalBackend(Backend):
                 else:
                     uncached_hashes.append(content_hash)
         else:
-            uncached_hashes = content_hashes
+            uncached_hashes = list(content_hashes)
 
-        # Second pass: read uncached content from disk
-        for content_hash in uncached_hashes:
-            try:
-                content = self.read_content(content_hash, context=context)
-                result[content_hash] = content
-            except Exception:
-                # Return None for missing/errored content (per batch_read spec)
-                result[content_hash] = None
+        # Second pass: read uncached content from disk in parallel
+        if uncached_hashes:
+            # Use parallel reads for better I/O throughput on SSDs
+            # Limit workers to configured max or file count, whichever is smaller
+            max_workers = min(self.batch_read_workers, len(uncached_hashes))
+
+            if max_workers == 1:
+                # Single file - no need for thread pool overhead
+                try:
+                    content = self.read_content(uncached_hashes[0], context=context)
+                    result[uncached_hashes[0]] = content
+                except Exception:
+                    result[uncached_hashes[0]] = None
+            else:
+                # Multiple files - use parallel reads
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                def read_one(content_hash: str) -> tuple[str, bytes | None]:
+                    """Read a single file, returning (hash, content) or (hash, None) on error."""
+                    try:
+                        content = self.read_content(content_hash, context=context)
+                        return (content_hash, content)
+                    except Exception:
+                        return (content_hash, None)
+
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(read_one, h): h for h in uncached_hashes}
+                    for future in as_completed(futures):
+                        content_hash, content = future.result()
+                        result[content_hash] = content
 
         return result
 

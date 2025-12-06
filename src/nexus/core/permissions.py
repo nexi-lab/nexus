@@ -123,8 +123,9 @@ class OperationContext:
     admin_capabilities: set[str] = field(default_factory=set)  # Scoped admin capabilities
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))  # Audit trail correlation ID
 
-    # Backend path for path-based connectors (GCS, Stripe, etc.)
+    # Backend path for path-based connectors (GCS, S3, etc.)
     backend_path: str | None = None  # Backend-relative path for connector backends
+    virtual_path: str | None = None  # Full virtual path with mount prefix (for cache keys)
 
     def __post_init__(self) -> None:
         """Validate context and apply defaults."""
@@ -265,7 +266,7 @@ class PermissionEnforcer:
             >>> enforcer.check("/workspace/file.txt", Permission.READ, ctx)
             True
         """
-        logger.info(
+        logger.debug(
             f"[PermissionEnforcer.check] path={path}, perm={permission.name}, user={context.user}, is_admin={context.is_admin}, is_system={context.is_system}"
         )
 
@@ -352,20 +353,20 @@ class PermissionEnforcer:
         Returns:
             True if ReBAC grants permission, False otherwise
         """
-        logger.info(
+        logger.debug(
             f"[_check_rebac] path={path}, permission={permission}, context.user={context.user}"
         )
 
         if not self.rebac_manager:
             # No ReBAC manager - deny by default
             # This ensures security: must explicitly configure ReBAC
-            logger.info("  -> DENY (no rebac_manager)")
+            logger.debug("  -> DENY (no rebac_manager)")
             return False
 
         # Map Permission flags to string permission names
         permission_name = self._permission_to_string(permission)
         if permission_name == "unknown":
-            logger.info(f"  -> DENY (unknown permission: {permission})")
+            logger.debug(f"  -> DENY (unknown permission: {permission})")
             return False
 
         # Get backend-specific object type for ReBAC check
@@ -393,13 +394,13 @@ class PermissionEnforcer:
                 if object_type == "file":
                     # Use virtual path for file permission checks (mount-aware)
                     object_id = path
-                    logger.info(
+                    logger.debug(
                         f"[PermissionEnforcer] Using virtual path for file permission check: '{path}'"
                     )
                 else:
                     # For non-file backends, use backend-provided object_id
                     object_id = route.backend.get_object_id(route.backend_path)
-                    logger.info(
+                    logger.debug(
                         f"[PermissionEnforcer] Using backend object_id for {object_type}: '{object_id}'"
                     )
             except Exception as e:
@@ -412,7 +413,7 @@ class PermissionEnforcer:
         # P0-4: Pass tenant_id for multi-tenant isolation
         tenant_id = context.tenant_id or "default"
         subject = context.get_subject()
-        logger.info(
+        logger.debug(
             f"[_check_rebac] Calling rebac_check: subject={subject}, permission={permission_name}, object=('{object_type}', '{object_id}'), tenant_id={tenant_id}"
         )
 
@@ -423,7 +424,7 @@ class PermissionEnforcer:
             object=(object_type, object_id),
             tenant_id=tenant_id,
         )
-        logger.info(f"[_check_rebac] rebac_manager.rebac_check returned: {result}")
+        logger.debug(f"[_check_rebac] rebac_manager.rebac_check returned: {result}")
 
         if result:
             return True
@@ -445,7 +446,7 @@ class PermissionEnforcer:
                     parent_path = "/"
 
                 checked_parents.append(parent_path)
-                logger.info(f"[_check_rebac] Checking parent directory: {parent_path}")
+                logger.debug(f"[_check_rebac] Checking parent directory: {parent_path}")
 
                 # Check parent directory permission
                 parent_result = self.rebac_manager.rebac_check(
@@ -456,7 +457,7 @@ class PermissionEnforcer:
                 )
 
                 if parent_result:
-                    logger.info(
+                    logger.debug(
                         f"[_check_rebac] ALLOW (inherited from parent directory: {parent_path})"
                     )
                     return True
@@ -465,21 +466,21 @@ class PermissionEnforcer:
                 if parent_path == "/":
                     break
 
-            logger.info(
+            logger.debug(
                 f"[_check_rebac] No parent directory permissions found (checked: {checked_parents})"
             )
 
         # 3. v0.5.0 ACE: Agent inheritance from user
         # If subject is an agent, check if the agent's owner (user) has permission
         if context.subject_type == "agent" and context.agent_id and self.entity_registry:
-            logger.info(f"[_check_rebac] Checking agent inheritance for agent={context.agent_id}")
+            logger.debug(f"[_check_rebac] Checking agent inheritance for agent={context.agent_id}")
             # Look up agent's owner
             parent = self.entity_registry.get_parent(
                 entity_type="agent", entity_id=context.agent_id
             )
 
             if parent and parent.entity_type == "user":
-                logger.info(
+                logger.debug(
                     f"[_check_rebac] Agent {context.agent_id} owned by user {parent.entity_id}, checking user permission"
                 )
                 # Check if user has permission (using same object type as direct check)
@@ -489,10 +490,10 @@ class PermissionEnforcer:
                     object=(object_type, object_id),
                     tenant_id=tenant_id,
                 )
-                logger.info(f"[_check_rebac] User permission check returned: {user_result}")
+                logger.debug(f"[_check_rebac] User permission check returned: {user_result}")
                 if user_result:
                     # ✅ Agent inherits user's permission
-                    logger.info(
+                    logger.debug(
                         f"[_check_rebac] ALLOW (agent {context.agent_id} inherits from user {parent.entity_id})"
                     )
                     return True
@@ -655,17 +656,43 @@ class PermissionEnforcer:
             import time
 
             overall_start = time.time()
-            logger.info(
-                f"[PERF-FILTER] filter_list START: {len(paths)} paths, subject={context.get_subject()}, tenant={context.tenant_id}"
+            tenant_id = context.tenant_id or "default"
+            logger.debug(
+                f"[PERF-FILTER] filter_list START: {len(paths)} paths, subject={context.get_subject()}, tenant={tenant_id}"
             )
+
+            # OPTIMIZATION: Pre-filter paths by tenant before permission checks
+            # This avoids checking permissions on paths the user can never access
+            # For /tenants/* paths, only keep paths matching the user's tenant
+            prefilter_start = time.time()
+            paths_to_check = []
+            paths_prefiltered = 0
+            for path in paths:
+                # Fast path: /tenants/X paths should only be checked for tenant X
+                if path.startswith("/tenants/"):
+                    # Extract tenant from path: /tenants/tenant_name/...
+                    path_parts = path.split("/")
+                    if len(path_parts) >= 3:
+                        path_tenant = path_parts[2]  # /tenants/<tenant_name>/...
+                        if path_tenant != tenant_id:
+                            # Skip paths for other tenants entirely
+                            paths_prefiltered += 1
+                            continue
+                paths_to_check.append(path)
+
+            prefilter_elapsed = time.time() - prefilter_start
+            if paths_prefiltered > 0:
+                logger.debug(
+                    f"[PERF-FILTER] Tenant pre-filter: {paths_prefiltered} paths skipped "
+                    f"(not in tenant {tenant_id}), {len(paths_to_check)} remaining in {prefilter_elapsed:.3f}s"
+                )
 
             # Build list of checks: (subject, "read", object) for each path
             build_start = time.time()
             checks = []
             subject = context.get_subject()
-            tenant_id = context.tenant_id or "default"
 
-            for path in paths:
+            for path in paths_to_check:
                 # PERFORMANCE FIX: Skip expensive router.route() call for each file
                 # For standard file paths, just use "file" as object type
                 # This avoids O(N) routing overhead during bulk permission checks
@@ -692,7 +719,7 @@ class PermissionEnforcer:
                 checks.append((subject, "read", (obj_type, path)))
 
             build_elapsed = time.time() - build_start
-            logger.info(
+            logger.debug(
                 f"[PERF-FILTER] Built {len(checks)} permission checks in {build_elapsed:.3f}s"
             )
 
@@ -701,17 +728,18 @@ class PermissionEnforcer:
                 bulk_start = time.time()
                 results = self.rebac_manager.rebac_check_bulk(checks, tenant_id=tenant_id)
                 bulk_elapsed = time.time() - bulk_start
-                logger.info(f"[PERF-FILTER] Bulk check completed in {bulk_elapsed:.3f}s")
+                logger.debug(f"[PERF-FILTER] Bulk check completed in {bulk_elapsed:.3f}s")
 
                 # Filter paths based on bulk results
                 filtered = []
-                for path, check in zip(paths, checks, strict=False):
+                for path, check in zip(paths_to_check, checks, strict=False):
                     if results.get(check, False):
                         filtered.append(path)
 
                 overall_elapsed = time.time() - overall_start
-                logger.info(
-                    f"[PERF-FILTER] filter_list DONE: {overall_elapsed:.3f}s total, allowed {len(filtered)}/{len(paths)} paths"
+                logger.debug(
+                    f"[PERF-FILTER] filter_list DONE: {overall_elapsed:.3f}s total, "
+                    f"allowed {len(filtered)}/{len(paths)} paths (prefiltered {paths_prefiltered})"
                 )
                 return filtered
 

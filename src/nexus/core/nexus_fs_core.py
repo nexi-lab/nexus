@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
+from nexus.core.hash_fast import hash_content
 from nexus.core.metadata import FileMetadata
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
@@ -282,22 +283,23 @@ class NexusFSCoreMixin:
         from dataclasses import replace
 
         if context:
-            read_context = replace(context, backend_path=route.backend_path)
+            read_context = replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
             # Create minimal context with just backend_path for connectors
             from nexus.core.permissions import OperationContext
 
             read_context = OperationContext(
-                user="anonymous", groups=[], backend_path=route.backend_path
+                user="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
 
-        # Check if backend is a dynamic API-backed connector (e.g., x_connector)
+        # Check if backend is a dynamic API-backed connector (e.g., x_connector) or virtual filesystem
         # These connectors don't use metadata - they fetch data directly from APIs
         # We check for user_scoped=True explicitly (not just truthy) to avoid Mock objects
+        # Also check has_virtual_filesystem for connectors like HN that have virtual directories
         is_dynamic_connector = (
             getattr(route.backend, "user_scoped", None) is True
             and getattr(route.backend, "token_manager", None) is not None
-        )
+        ) or getattr(route.backend, "has_virtual_filesystem", None) is True
 
         if is_dynamic_connector:
             # Dynamic connector - read directly from backend without metadata check
@@ -305,10 +307,9 @@ class NexusFSCoreMixin:
             content = route.backend.read_content("", context=read_context)
             if return_metadata:
                 # Generate synthetic metadata for dynamic content
-                import hashlib
                 from datetime import datetime
 
-                content_hash = hashlib.sha256(content).hexdigest()
+                content_hash = hash_content(content)
                 return {
                     "content": content,
                     "etag": content_hash,
@@ -407,21 +408,25 @@ class NexusFSCoreMixin:
         # Batch permission check using filter_list
         perm_start = time.time()
         allowed_set: set[str]
-        try:
-            # Use the existing bulk permission check from list()
-            # Note: filter_list assumes READ permission, which is what we want
-            from nexus.core.permissions import OperationContext
+        if not self._enforce_permissions:  # type: ignore[attr-defined]
+            # Skip permission check if permissions are disabled
+            allowed_set = set(validated_paths)
+        else:
+            try:
+                # Use the existing bulk permission check from list()
+                # Note: filter_list assumes READ permission, which is what we want
+                from nexus.core.permissions import OperationContext
 
-            ctx = context if context is not None else self._default_context
-            assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-            allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
-            allowed_set = set(allowed_paths)
-        except Exception as e:
-            logger.error(f"[READ-BULK] Permission check failed: {e}")
-            if not skip_errors:
-                raise
-            # If skip_errors, assume no files are allowed
-            allowed_set = set()
+                ctx = context if context is not None else self._default_context
+                assert isinstance(ctx, OperationContext), "Context must be OperationContext"
+                allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
+                allowed_set = set(allowed_paths)
+            except Exception as e:
+                logger.error(f"[READ-BULK] Permission check failed: {e}")
+                if not skip_errors:
+                    raise
+                # If skip_errors, assume no files are allowed
+                allowed_set = set()
 
         perm_elapsed = time.time() - perm_start
         logger.info(
@@ -437,9 +442,14 @@ class NexusFSCoreMixin:
         read_start = time.time()
         tenant_id, agent_id, is_admin = self._get_routing_params(context)
 
+        # Group paths by backend for potential bulk optimization
+        # First, get metadata and routes for all paths
+        # Note: meta is guaranteed non-None with non-None etag due to check below
+        path_info: dict[str, tuple[FileMetadata, Any]] = {}  # path -> (meta, route)
+        backend_paths: dict[Any, list[str]] = {}  # backend -> [paths]
+
         for path in allowed_set:
             try:
-                # Get metadata
                 meta = self.metadata.get(path)
                 if meta is None or meta.etag is None:
                     if skip_errors:
@@ -447,7 +457,6 @@ class NexusFSCoreMixin:
                         continue
                     raise NexusFileNotFoundError(path)
 
-                # Route to backend
                 route = self.router.route(
                     path,
                     tenant_id=tenant_id,
@@ -455,37 +464,155 @@ class NexusFSCoreMixin:
                     is_admin=is_admin,
                     check_write=False,
                 )
+                path_info[path] = (meta, route)
 
-                # Read content
-                # Add backend_path to context for path-based connectors
-                read_context = context
-                if context:
-                    from dataclasses import replace
-
-                    read_context = replace(context, backend_path=route.backend_path)
-                content = route.backend.read_content(meta.etag, context=read_context)
-
-                # Apply filtering if needed
-                content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
-
-                # Store result
-                if return_metadata:
-                    results[path] = {
-                        "content": content,
-                        "etag": meta.etag,
-                        "version": meta.version,
-                        "modified_at": meta.modified_at,
-                        "size": len(content),
-                    }
-                else:
-                    results[path] = content
-
+                # Group by backend
+                backend = route.backend
+                if backend not in backend_paths:
+                    backend_paths[backend] = []
+                backend_paths[backend].append(path)
             except Exception as e:
-                logger.warning(f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}")
+                logger.warning(f"[READ-BULK] Failed to route {path}: {type(e).__name__}: {e}")
                 if skip_errors:
                     results[path] = None
                 else:
                     raise
+
+        # Try bulk read for backends that support it (CacheConnectorMixin)
+        for backend, paths_for_backend in backend_paths.items():
+            if hasattr(backend, "_read_bulk_from_cache") and len(paths_for_backend) > 1:
+                # Use bulk cache lookup
+                logger.info(
+                    f"[READ-BULK] Using bulk cache for {len(paths_for_backend)} files on {type(backend).__name__}"
+                )
+                try:
+                    cache_entries = backend._read_bulk_from_cache(paths_for_backend, original=True)
+
+                    # Process cache hits
+                    paths_needing_backend: list[str] = []
+                    for path in paths_for_backend:
+                        entry = cache_entries.get(path)
+                        if entry and not entry.stale and entry.content_binary:
+                            content = entry.content_binary
+                            content = self._apply_dynamic_viewer_filter_if_needed(
+                                path, content, context
+                            )
+                            meta, route = path_info[path]
+                            assert meta.etag is not None  # Guaranteed by check above
+                            if return_metadata:
+                                results[path] = {
+                                    "content": content,
+                                    "etag": meta.etag,
+                                    "version": meta.version,
+                                    "modified_at": meta.modified_at,
+                                    "size": len(content),
+                                }
+                            else:
+                                results[path] = content
+                        else:
+                            paths_needing_backend.append(path)
+
+                    # Fall back to individual reads for cache misses
+                    for path in paths_needing_backend:
+                        try:
+                            meta, route = path_info[path]
+                            assert meta.etag is not None  # Guaranteed by check above
+                            read_context = context
+                            if context:
+                                from dataclasses import replace
+
+                                read_context = replace(context, backend_path=route.backend_path)
+                            content = route.backend.read_content(meta.etag, context=read_context)
+                            content = self._apply_dynamic_viewer_filter_if_needed(
+                                path, content, context
+                            )
+                            if return_metadata:
+                                results[path] = {
+                                    "content": content,
+                                    "etag": meta.etag,
+                                    "version": meta.version,
+                                    "modified_at": meta.modified_at,
+                                    "size": len(content),
+                                }
+                            else:
+                                results[path] = content
+                        except Exception as e:
+                            logger.warning(
+                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
+                            )
+                            if skip_errors:
+                                results[path] = None
+                            else:
+                                raise
+                except Exception as e:
+                    logger.warning(
+                        f"[READ-BULK] Bulk cache failed, falling back to individual reads: {e}"
+                    )
+                    # Fall back to individual reads
+                    for path in paths_for_backend:
+                        try:
+                            meta, route = path_info[path]
+                            assert meta.etag is not None  # Guaranteed by check above
+                            read_context = context
+                            if context:
+                                from dataclasses import replace
+
+                                read_context = replace(context, backend_path=route.backend_path)
+                            content = route.backend.read_content(meta.etag, context=read_context)
+                            content = self._apply_dynamic_viewer_filter_if_needed(
+                                path, content, context
+                            )
+                            if return_metadata:
+                                results[path] = {
+                                    "content": content,
+                                    "etag": meta.etag,
+                                    "version": meta.version,
+                                    "modified_at": meta.modified_at,
+                                    "size": len(content),
+                                }
+                            else:
+                                results[path] = content
+                        except Exception as e:
+                            logger.warning(
+                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
+                            )
+                            if skip_errors:
+                                results[path] = None
+                            else:
+                                raise
+            else:
+                # Individual reads for backends without bulk cache support
+                for path in paths_for_backend:
+                    try:
+                        meta, route = path_info[path]
+                        assert meta.etag is not None  # Guaranteed by check above
+                        read_context = context
+                        if context:
+                            from dataclasses import replace
+
+                            read_context = replace(context, backend_path=route.backend_path)
+                        content = route.backend.read_content(meta.etag, context=read_context)
+                        content = self._apply_dynamic_viewer_filter_if_needed(
+                            path, content, context
+                        )
+                        if return_metadata:
+                            results[path] = {
+                                "content": content,
+                                "etag": meta.etag,
+                                "version": meta.version,
+                                "modified_at": meta.modified_at,
+                                "size": len(content),
+                            }
+                        else:
+                            results[path] = content
+                    except Exception as e:
+                        logger.warning(
+                            f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
+                        )
+                        if skip_errors:
+                            results[path] = None
+                        else:
+                            raise
 
         read_elapsed = time.time() - read_start
         bulk_elapsed = time.time() - bulk_start
@@ -710,13 +837,15 @@ class NexusFSCoreMixin:
         from dataclasses import replace
 
         if context:
-            # Create new context with backend_path populated
-            context = replace(context, backend_path=route.backend_path)
+            # Create new context with backend_path and virtual_path populated
+            context = replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
             # Create minimal context with just backend_path for connectors
             from nexus.core.permissions import OperationContext
 
-            context = OperationContext(user="anonymous", groups=[], backend_path=route.backend_path)
+            context = OperationContext(
+                user="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+            )
         content_hash = route.backend.write_content(content, context=context)
 
         # NOTE: Do NOT delete old content when updating a file!
@@ -1289,7 +1418,9 @@ class NexusFSCoreMixin:
         # Delete from routed backend CAS (decrements ref count)
         # Content is only physically deleted when ref_count reaches 0
         # If other files reference the same content, it remains in CAS
-        if meta.etag:
+        # Skip content deletion for directories - they have no actual CAS content
+        # (directories are stored with empty hash but no actual CAS entry)
+        if meta.etag and meta.mime_type != "inode/directory":
             route.backend.delete_content(meta.etag, context=context)
 
         # Remove from metadata

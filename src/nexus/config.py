@@ -11,6 +11,70 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from nexus.server.auth.oauth_config import OAuthConfig
 
 
+class DockerImageTemplate(BaseModel):
+    """Configuration for a single Docker image template."""
+
+    image: str | None = Field(
+        default=None,
+        description="Pre-built Docker image name",
+    )
+    dockerfile: str | None = Field(
+        default=None,
+        description="Path to Dockerfile (relative to project root)",
+    )
+    dockerfile_override: str | None = Field(
+        default=None,
+        description="Inline Dockerfile content to override/customize the base image",
+    )
+    context: str | None = Field(
+        default=".",
+        description="Docker build context directory",
+    )
+
+
+class DockerTemplateConfig(BaseModel):
+    """Configuration for Docker sandbox images.
+
+    Maps template names to Docker images or Dockerfiles for custom sandbox environments.
+    """
+
+    templates: dict[str, DockerImageTemplate] = Field(
+        default_factory=dict,
+        description="Map of template name to image/dockerfile configuration",
+    )
+    default_image: str = Field(
+        default="nexus-runtime:latest",
+        description="Default image if no template specified",
+    )
+
+
+class FeaturesConfig(BaseModel):
+    """Feature flags for optional Nexus functionality."""
+
+    semantic_search: bool = Field(
+        default=False,
+        description="Enable semantic search (requires vector database)",
+    )
+    llm_read: bool = Field(
+        default=False,
+        description="Enable LLM-powered document reading",
+    )
+    agent_memory: bool = Field(
+        default=True,
+        description="Enable agent memory API",
+    )
+    job_system: bool = Field(
+        default=False,
+        description="Enable asynchronous job system",
+    )
+    mcp_server: bool = Field(
+        default=True,
+        description="Enable Model Context Protocol server",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class NexusConfig(BaseModel):
     """
     Unified configuration for all Nexus deployment modes.
@@ -101,6 +165,13 @@ class NexusConfig(BaseModel):
         description="Enable permission enforcement on file operations (P0-6: default True for security)",
     )
 
+    # Admin bypass setting (P0-4)
+    # Default: False for security - admin keys go through normal permission checks
+    allow_admin_bypass: bool = Field(
+        default=False,
+        description="Allow admin keys to bypass permission checks (P0-4: default False for security)",
+    )
+
     # Workspace and Memory registry (v0.7.0)
     workspaces: list[dict[str, Any]] | None = Field(
         default=None,
@@ -129,6 +200,12 @@ class NexusConfig(BaseModel):
         description="OAuth provider configurations (providers list with name, display_name, provider_class, etc.)",
     )
 
+    # Feature flags (v0.9.0+)
+    features: FeaturesConfig = Field(
+        default_factory=FeaturesConfig,
+        description="Feature flags for optional functionality (semantic search, LLM read, etc.)",
+    )
+
     # Remote mode settings (monolithic/distributed)
     url: str | None = Field(default=None, description="Nexus server URL for remote modes")
     api_key: str | None = Field(default=None, description="API key for authentication")
@@ -138,6 +215,12 @@ class NexusConfig(BaseModel):
     tenant_id: str | None = Field(default=None, description="Tenant ID for memory operations")
     user_id: str | None = Field(default=None, description="User ID for memory operations")
     agent_id: str | None = Field(default=None, description="Agent ID for memory operations")
+
+    # Docker sandbox template configuration
+    docker: DockerTemplateConfig = Field(
+        default_factory=DockerTemplateConfig,
+        description="Docker sandbox template configuration",
+    )
 
     @field_validator("mode")
     @classmethod
@@ -279,6 +362,7 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_AUTO_PARSE": "auto_parse",
         "NEXUS_IS_ADMIN": "is_admin",
         "NEXUS_ENFORCE_PERMISSIONS": "enforce_permissions",
+        "NEXUS_ALLOW_ADMIN_BYPASS": "allow_admin_bypass",
         "NEXUS_URL": "url",
         "NEXUS_API_KEY": "api_key",
         "NEXUS_TIMEOUT": "timeout",
@@ -311,6 +395,7 @@ def _load_from_environment() -> NexusConfig:
                 "auto_parse",
                 "is_admin",
                 "enforce_permissions",
+                "allow_admin_bypass",
             ]:
                 converted_value = value.lower() in ["true", "1", "yes", "on"]
             else:

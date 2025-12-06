@@ -78,6 +78,8 @@ dependencies = [
 performance = [
     # Fast JSON serialization (2-3x faster than stdlib json)
     "orjson>=3.9.0",
+    # BLAKE3 hashing fallback when Rust extension unavailable (Issue #582)
+    "blake3>=0.3.0",
 ]
 
 dev = [
@@ -201,6 +203,7 @@ addopts = [
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-report=xml",
+    "--ignore=tests/evaluation",  # Exclude LLM evaluation tests from default runs
 ]
 testpaths = ["tests"]
 asyncio_mode = "auto"
@@ -212,6 +215,7 @@ markers = [
     "integration: marks tests as integration tests",
     "e2e: marks tests as end-to-end tests",
     "benchmark: marks tests as benchmarks",
+    "evaluation: marks tests as LLM evaluation tests (requires ANTHROPIC_API_KEY)",
 ]
 
 [tool.coverage.run]

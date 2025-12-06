@@ -449,12 +449,24 @@ def serve(
             if has_auth:
                 console.print("[green]✓ Permissions enabled (authentication configured)[/green]")
 
+        # Check NEXUS_ALLOW_ADMIN_BYPASS environment variable
+        # Default: False for security (P0-4)
+        allow_admin_bypass = False
+        allow_admin_bypass_env = os.getenv("NEXUS_ALLOW_ADMIN_BYPASS", "").lower()
+        if allow_admin_bypass_env in ("true", "1", "yes", "on"):
+            allow_admin_bypass = True
+            console.print(
+                "[yellow]⚠️  Admin bypass ENABLED by NEXUS_ALLOW_ADMIN_BYPASS "
+                "environment variable[/yellow]"
+            )
+
         # IMPORTANT: Server must always use local NexusFS, never RemoteNexusFS
         # Use force_local=True to prevent circular dependency even if NEXUS_URL is set
         nx = get_filesystem(
             backend_config,
             enforce_permissions=enforce_permissions,
             force_local=True,  # Force local mode to prevent RemoteNexusFS
+            allow_admin_bypass=allow_admin_bypass,
         )
 
         # Load backends from config file if specified
@@ -493,13 +505,41 @@ def serve(
                                 continue
 
                             try:
+                                # Check if mount exists in database (takes precedence over config)
+                                saved_mount = None
+                                if (
+                                    mount_point != "/"
+                                    and hasattr(nx, "mount_manager")
+                                    and nx.mount_manager is not None
+                                ):
+                                    saved_mount = nx.mount_manager.get_mount(mount_point)
+
+                                if saved_mount is not None:
+                                    # Database version exists - it overrides config
+                                    # (User may have customized this mount via API/CLI)
+                                    console.print(
+                                        f"  [dim]→ Mount {mount_point} using database version (overrides config)[/dim]"
+                                    )
+                                    # Skip config mount - database version already loaded by load_all_saved_mounts()
+                                    continue
+
+                                # No database override - use config version
+                                # Check if mount already exists in router (shouldn't happen, but be safe)
+                                existing_mounts = nx.list_mounts()
+                                mount_already_loaded = any(
+                                    m["mount_point"] == mount_point for m in existing_mounts
+                                )
+
                                 # Create backend instance
                                 backend = create_backend_from_config(backend_type, backend_cfg)
 
-                                # Add mount to router (nx is NexusFS at this point)
-                                # If mount_point already exists, it will be replaced
+                                # Add mount to router
                                 nx.router.add_mount(
-                                    mount_point, backend, priority, readonly, replace=True
+                                    mount_point,
+                                    backend,
+                                    priority,
+                                    readonly,
+                                    replace=mount_already_loaded,
                                 )
 
                                 readonly_str = " (read-only)" if readonly else ""
@@ -507,40 +547,10 @@ def serve(
                                     f"  [green]✓[/green] Mounted {backend_type} backend at {mount_point}{readonly_str}"
                                 )
 
-                                # Save mount to database if not already saved (for persistence across restarts)
-                                # Skip root mount "/" as it's the default and doesn't need to be saved
-                                if (
-                                    mount_point != "/"
-                                    and hasattr(nx, "mount_manager")
-                                    and nx.mount_manager is not None
-                                ):
-                                    try:
-                                        # Check if mount is already saved in database
-                                        existing_mount = nx.mount_manager.get_mount(mount_point)
-                                        if existing_mount is None:
-                                            # Save mount configuration to database
-                                            description = backend_def.get("description")
-                                            nx.mount_manager.save_mount(
-                                                mount_point=mount_point,
-                                                backend_type=backend_type,
-                                                backend_config=backend_cfg,
-                                                priority=priority,
-                                                readonly=readonly,
-                                                owner_user_id=admin_user,
-                                                description=description,
-                                            )
-                                            console.print(
-                                                "    [dim]→ Saved mount configuration to database[/dim]"
-                                            )
-                                        else:
-                                            console.print(
-                                                "    [dim]→ Mount already exists in database[/dim]"
-                                            )
-                                    except Exception as save_error:
-                                        # Don't fail startup if saving mount fails, just warn
-                                        console.print(
-                                            f"    [yellow]⚠️  Could not save mount to database: {save_error}[/yellow]"
-                                        )
+                                # NOTE: Config-defined mounts are NOT automatically saved to database
+                                # They serve as defaults. Database is for user customizations (via API/CLI)
+                                # If user wants to persist a modified version, they save it via API
+                                # Priority: Database (runtime) > Config (default)
 
                                 # Auto-grant permissions to admin user for this mount point
                                 # This ensures the admin can list/read/write files in config-mounted backends

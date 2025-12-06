@@ -104,14 +104,17 @@ def mock_nx_with_workflows():
 @pytest.fixture
 def mock_nx_with_search():
     """Create mock NexusFS with semantic search."""
+    from unittest.mock import AsyncMock
+
     nx = Mock()
     nx.read = Mock(return_value=b"test")
     nx.write = Mock()
 
-    # Add search method
-    nx.search = Mock(
-        return_value=[{"path": "/file1.txt", "score": 0.95, "snippet": "relevant content"}]
-    )
+    # Add async semantic_search method
+    async def mock_semantic_search(query, path="/", limit=10, **kwargs):
+        return [{"path": "/file1.txt", "score": 0.95, "snippet": "relevant content"}]
+
+    nx.semantic_search = AsyncMock(side_effect=mock_semantic_search)
 
     return nx
 
@@ -250,8 +253,8 @@ class TestFileOperationTools:
         read_tool = get_tool(server, "nexus_read_file")
         result = read_tool.fn(path="/missing.txt")
 
-        assert "Error reading file" in result
-        assert "File not found" in result
+        assert "Error" in result
+        assert "not found" in result.lower()
 
     def test_write_file_success(self, mock_nx_basic):
         """Test writing a file successfully."""
@@ -277,8 +280,8 @@ class TestFileOperationTools:
         write_tool = get_tool(server, "nexus_write_file")
         result = write_tool.fn(path="/test.txt", content="content")
 
-        assert "Error writing file" in result
-        assert "Permission denied" in result
+        assert "Error" in result
+        assert "permission" in result.lower() or "denied" in result.lower()
 
     def test_delete_file_success(self, mock_nx_basic):
         """Test deleting a file successfully."""
@@ -299,8 +302,8 @@ class TestFileOperationTools:
         delete_tool = get_tool(server, "nexus_delete_file")
         result = delete_tool.fn(path="/missing.txt")
 
-        assert "Error deleting file" in result
-        assert "File not found" in result
+        assert "Error" in result
+        assert "not found" in result.lower() or "deleted" in result.lower()
 
     def test_list_files_basic(self, mock_nx_basic):
         """Test listing files in a directory."""
@@ -309,10 +312,14 @@ class TestFileOperationTools:
         list_tool = get_tool(server, "nexus_list_files")
         result = list_tool.fn(path="/data")
 
-        # Result should be JSON
-        files = json.loads(result)
-        assert isinstance(files, list)
-        assert "/file1.txt" in files
+        # Result should be JSON with pagination metadata
+        response = json.loads(result)
+        assert isinstance(response, dict)
+        assert "items" in response
+        assert "total" in response
+        assert "count" in response
+        assert isinstance(response["items"], list)
+        assert "/file1.txt" in response["items"]
         mock_nx_basic.list.assert_called_once_with("/data", recursive=False, details=True)
 
     def test_list_files_recursive(self, mock_nx_basic):
@@ -332,8 +339,8 @@ class TestFileOperationTools:
         list_tool = get_tool(server, "nexus_list_files")
         result = list_tool.fn(path="/missing")
 
-        assert "Error listing files" in result
-        assert "Directory not found" in result
+        assert "Error" in result
+        assert "not found" in result.lower() or "directory" in result.lower()
 
     def test_file_info_exists(self, mock_nx_basic):
         """Test getting file info for existing file."""
@@ -400,8 +407,8 @@ class TestDirectoryOperationTools:
         mkdir_tool = get_tool(server, "nexus_mkdir")
         result = mkdir_tool.fn(path="/new_dir")
 
-        assert "Error creating directory" in result
-        assert "Permission denied" in result
+        assert "Error" in result
+        assert "permission" in result.lower() or "denied" in result.lower()
 
     def test_rmdir_success(self, mock_nx_basic):
         """Test removing a directory successfully."""
@@ -431,8 +438,8 @@ class TestDirectoryOperationTools:
         rmdir_tool = get_tool(server, "nexus_rmdir")
         result = rmdir_tool.fn(path="/missing_dir")
 
-        assert "Error removing directory" in result
-        assert "Directory not found" in result
+        assert "Error" in result
+        assert "not found" in result.lower() or "removed" in result.lower()
 
 
 # ============================================================================
@@ -450,9 +457,12 @@ class TestSearchTools:
         glob_tool = get_tool(server, "nexus_glob")
         result = glob_tool.fn(pattern="*.py", path="/src")
 
-        matches = json.loads(result)
-        assert isinstance(matches, list)
-        assert "test.py" in matches
+        response = json.loads(result)
+        assert isinstance(response, dict)
+        assert "items" in response
+        assert "total" in response
+        assert isinstance(response["items"], list)
+        assert "test.py" in response["items"]
         mock_nx_basic.glob.assert_called_once_with("*.py", "/src")
 
     def test_glob_default_path(self, mock_nx_basic):
@@ -482,8 +492,11 @@ class TestSearchTools:
         grep_tool = get_tool(server, "nexus_grep")
         result = grep_tool.fn(pattern="TODO", path="/src")
 
-        matches = json.loads(result)
-        assert isinstance(matches, list)
+        response = json.loads(result)
+        assert isinstance(response, dict)
+        assert "items" in response
+        assert "total" in response
+        assert isinstance(response["items"], list)
         mock_nx_basic.grep.assert_called_once_with("TODO", "/src", ignore_case=False)
 
     def test_grep_ignore_case(self, mock_nx_basic):
@@ -496,7 +509,7 @@ class TestSearchTools:
         mock_nx_basic.grep.assert_called_once_with("error", "/logs", ignore_case=True)
 
     def test_grep_result_limiting(self, mock_nx_basic):
-        """Test grep limits results to 100 matches."""
+        """Test grep pagination with default limit of 100 matches."""
         # Create 150 fake results
         large_results = [{"file": f"file{i}.py", "line": i, "content": "match"} for i in range(150)]
         mock_nx_basic.grep.return_value = large_results
@@ -505,8 +518,13 @@ class TestSearchTools:
         grep_tool = get_tool(server, "nexus_grep")
         result = grep_tool.fn(pattern="test")
 
-        matches = json.loads(result)
-        assert len(matches) == 100  # Should be limited to 100
+        response = json.loads(result)
+        assert isinstance(response, dict)
+        assert response["total"] == 150  # Total results found
+        assert response["count"] == 100  # First page limited to 100
+        assert len(response["items"]) == 100
+        assert response["has_more"] is True
+        assert response["next_offset"] == 100
 
     def test_grep_error(self, mock_nx_basic):
         """Test grep error handling."""
@@ -526,15 +544,21 @@ class TestSearchTools:
         search_tool = get_tool(server, "nexus_semantic_search")
         result = search_tool.fn(query="authentication code", limit=5)
 
-        results = json.loads(result)
-        assert isinstance(results, list)
-        mock_nx_with_search.search.assert_called_once_with("authentication code", limit=5)
+        response = json.loads(result)
+        assert isinstance(response, dict)
+        assert "items" in response
+        assert "total" in response
+        assert isinstance(response["items"], list)
+        # Note: With pagination, we now fetch limit*2 to check for more results
+        mock_nx_with_search.semantic_search.assert_called_once_with(
+            "authentication code", path="/", limit=10
+        )
 
     def test_semantic_search_not_available(self, mock_nx_basic):
         """Test semantic search when not available."""
-        # Remove search method
-        if hasattr(mock_nx_basic, "search"):
-            delattr(mock_nx_basic, "search")
+        # Remove semantic_search method
+        if hasattr(mock_nx_basic, "semantic_search"):
+            delattr(mock_nx_basic, "semantic_search")
 
         server = create_mcp_server(nx=mock_nx_basic)
 
@@ -545,7 +569,7 @@ class TestSearchTools:
 
     def test_semantic_search_error(self, mock_nx_with_search):
         """Test semantic search error handling."""
-        mock_nx_with_search.search.side_effect = RuntimeError("Search service down")
+        mock_nx_with_search.semantic_search.side_effect = RuntimeError("Search service down")
         server = create_mcp_server(nx=mock_nx_with_search)
 
         search_tool = get_tool(server, "nexus_semantic_search")

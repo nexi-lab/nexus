@@ -1056,6 +1056,40 @@ class ReBACTupleModel(Base):
         Index("idx_rebac_expires", "expires_at"),
         # Subject relation index for userset-as-subject
         Index("idx_rebac_subject_relation", "subject_type", "subject_id", "subject_relation"),
+        # ========== Issue #591: Composite indexes for permission checks ==========
+        # 1. Direct permission check (most common query pattern)
+        # Used in: _has_direct_relation, _get_direct_relation_tuple
+        # Query: WHERE subject_type=? AND subject_id=? AND relation=? AND object_type=? AND object_id=?
+        Index(
+            "idx_rebac_permission_check",
+            "subject_type",
+            "subject_id",
+            "relation",
+            "object_type",
+            "object_id",
+            "tenant_id",
+        ),
+        # 2. Userset/group membership lookups
+        # Used in: _find_subject_sets
+        # Query: WHERE relation=? AND object_type=? AND object_id=? AND subject_relation IS NOT NULL
+        Index(
+            "idx_rebac_userset_lookup",
+            "relation",
+            "object_type",
+            "object_id",
+            "subject_relation",
+            "tenant_id",
+        ),
+        # 3. Object permission expansion (find all subjects with access to an object)
+        # Used in: rebac_expand, _get_direct_subjects
+        # Query: WHERE relation=? AND object_type=? AND object_id=? AND tenant_id=?
+        Index(
+            "idx_rebac_object_expand",
+            "object_type",
+            "object_id",
+            "relation",
+            "tenant_id",
+        ),
     )
 
 
@@ -2097,6 +2131,96 @@ class OAuthCredentialModel(Base):
 # - effective_score: FLOAT (latest/weighted score)
 # - needs_relearning: BOOLEAN DEFAULT FALSE
 # - relearning_priority: INTEGER DEFAULT 0
+
+
+class ContentCacheModel(Base):
+    """Cache table for connector content.
+
+    Stores cached content from connectors (GCS, X, Gmail, Google Drive, etc.)
+    to enable fast grep, glob, and semantic search without real-time connector access.
+
+    See docs/design/cache-layer.md for design details.
+    """
+
+    __tablename__ = "content_cache"
+
+    # Primary key
+    cache_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # References
+    path_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("file_paths.path_id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+
+    # Tenant isolation (same pattern as other tables)
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+
+    # Content storage
+    content_text: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # Searchable text (parsed or raw)
+    content_binary: Mapped[bytes | None] = mapped_column(
+        Text, nullable=True
+    )  # Original binary as base64 (optional)
+    content_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )  # SHA-256 of original content
+
+    # Size tracking
+    original_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    cached_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    # Parsing info
+    content_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # 'full', 'parsed', 'summary', 'reference'
+    parsed_from: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )  # 'pdf', 'xlsx', 'docx', etc.
+    parser_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    parse_metadata: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # JSON metadata from parsing
+
+    # Version control (for optimistic locking on writes)
+    backend_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Freshness tracking
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    # Relationships
+    file_path: Mapped["FilePathModel"] = relationship("FilePathModel", foreign_keys=[path_id])
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_content_cache_tenant", "tenant_id"),
+        Index("idx_content_cache_stale", "stale", postgresql_where=text("stale = true")),
+        Index("idx_content_cache_synced", "synced_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ContentCacheModel(cache_id={self.cache_id}, path_id={self.path_id}, content_type={self.content_type})>"
+
+
 # - last_feedback_at: TIMESTAMP
 
 

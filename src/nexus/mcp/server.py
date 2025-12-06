@@ -14,6 +14,7 @@ from typing import Any
 from fastmcp import Context, FastMCP
 
 from nexus.core.filesystem import NexusFilesystem
+from nexus.mcp.formatters import format_response
 
 # Context variable for per-request API key (set by infrastructure, not AI)
 _request_api_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -238,7 +239,14 @@ def create_mcp_server(
     # FILE OPERATIONS TOOLS
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_read_file(path: str, ctx: Context | None = None) -> str:
         """Read file content from Nexus filesystem.
 
@@ -255,10 +263,23 @@ def create_mcp_server(
             if isinstance(content, bytes):
                 return content.decode("utf-8", errors="replace")
             return str(content)
+        except FileNotFoundError:
+            return (
+                f"Error: File not found at '{path}'. Use nexus_list_files to check available files."
+            )
+        except PermissionError:
+            return f"Error: Permission denied for '{path}'. Check file permissions."
         except Exception as e:
             return f"Error reading file: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,  # Can overwrite existing files
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
+    )
     def nexus_write_file(path: str, content: str, ctx: Context | None = None) -> str:
         """Write content to a file in Nexus filesystem.
 
@@ -275,10 +296,19 @@ def create_mcp_server(
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
             nx_instance.write(path, content_bytes)
             return f"Successfully wrote {len(content_bytes)} bytes to {path}"
+        except PermissionError:
+            return f"Error: Permission denied for '{path}'. Check write permissions."
         except Exception as e:
             return f"Error writing file: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,  # Deleting already-deleted file is idempotent
+            "openWorldHint": True,
+        }
+    )
     def nexus_delete_file(path: str, ctx: Context | None = None) -> str:
         """Delete a file from Nexus filesystem.
 
@@ -292,37 +322,98 @@ def create_mcp_server(
             nx_instance = _get_nexus_instance(ctx)
             nx_instance.delete(path)
             return f"Successfully deleted {path}"
+        except FileNotFoundError:
+            return f"Error: File not found at '{path}'. It may have already been deleted."
+        except PermissionError:
+            return f"Error: Permission denied for '{path}'. Check delete permissions."
         except Exception as e:
             return f"Error deleting file: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_list_files(
-        path: str = "/", recursive: bool = False, details: bool = True, ctx: Context | None = None
+        path: str = "/",
+        recursive: bool = False,
+        details: bool = True,
+        limit: int = 50,
+        offset: int = 0,
+        response_format: str = "json",
+        ctx: Context | None = None,
     ) -> str:
-        """List files in a directory.
+        """List files in a directory with pagination support.
 
         Args:
             path: Directory path to list (default: "/")
             recursive: Whether to list recursively (default: False)
             details: Whether to include detailed metadata including is_directory flag (default: True)
+            limit: Maximum number of files to return (default: 50)
+            offset: Number of files to skip (default: 0)
+            response_format: Output format - "json" (structured) or "markdown" (readable) (default: "json")
+            ctx: FastMCP Context (automatically injected, optional for backward compatibility)
 
         Returns:
-            JSON string with list of files. When details=True, each entry includes:
-            - path: File/directory path
-            - size: Size in bytes (0 for directories)
-            - is_directory: Boolean indicating if this is a directory
-            - modified_at: Last modification timestamp
-            - etag: Content hash
-            - mime_type: MIME type
+            Formatted string (JSON or Markdown) with paginated file list and metadata:
+            - total: Total number of files available
+            - count: Number of files in this response
+            - offset: Starting position of this page
+            - items: Array of file objects (when details=True, each includes):
+              - path: File/directory path
+              - size: Size in bytes (0 for directories)
+              - is_directory: Boolean indicating if this is a directory
+              - modified_at: Last modification timestamp
+              - etag: Content hash
+              - mime_type: MIME type
+            - has_more: Whether more files are available
+            - next_offset: Offset for next page (null if no more results)
+
+        Example:
+            >>> nexus_list_files("/workspace", limit=10, offset=0)
+            {"total": 150, "count": 10, "offset": 0, "items": [...], "has_more": true, "next_offset": 10}
+            >>> nexus_list_files("/workspace", limit=10, response_format="markdown")
+            **Total**: 150 | **Count**: 10 | **Offset**: 0
+            _More results available (next offset: 10)_
+            ### 1. /workspace/file1.txt
+            - **size**: 1024
+            ...
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
-            files = nx_instance.list(path, recursive=recursive, details=details)
-            return json.dumps(files, indent=2, default=str)
+            all_files = nx_instance.list(path, recursive=recursive, details=details)
+            total = len(all_files)
+
+            # Apply pagination
+            paginated_files = all_files[offset : offset + limit]
+            has_more = (offset + limit) < total
+
+            result = {
+                "total": total,
+                "count": len(paginated_files),
+                "offset": offset,
+                "items": paginated_files,
+                "has_more": has_more,
+                "next_offset": offset + limit if has_more else None,
+            }
+
+            return format_response(result, response_format)
+        except FileNotFoundError:
+            return f"Error: Directory not found at '{path}'. Use nexus_list_files('/') to see root contents."
         except Exception as e:
             return f"Error listing files: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_file_info(path: str, ctx: Context | None = None) -> str:
         """Get detailed information about a file.
 
@@ -337,7 +428,7 @@ def create_mcp_server(
             # Use exists and other methods to get file info
             # info() is not in base NexusFilesystem interface
             if not nx_instance.exists(path):
-                return f"File not found: {path}"
+                return f"Error: File not found at '{path}'. Use nexus_list_files to check available files."
 
             is_dir = nx_instance.is_directory(path)
             info_dict = {
@@ -363,7 +454,14 @@ def create_mcp_server(
     # DIRECTORY OPERATIONS TOOLS
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,  # Creating existing dir is typically idempotent
+            "openWorldHint": True,
+        }
+    )
     def nexus_mkdir(path: str, ctx: Context | None = None) -> str:
         """Create a directory in Nexus filesystem.
 
@@ -377,10 +475,21 @@ def create_mcp_server(
             nx_instance = _get_nexus_instance(ctx)
             nx_instance.mkdir(path)
             return f"Successfully created directory {path}"
+        except FileExistsError:
+            return f"Directory already exists at '{path}'."
+        except PermissionError:
+            return f"Error: Permission denied for '{path}'. Check write permissions."
         except Exception as e:
             return f"Error creating directory: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,  # Removing already-removed dir is idempotent
+            "openWorldHint": True,
+        }
+    )
     def nexus_rmdir(path: str, recursive: bool = False, ctx: Context | None = None) -> str:
         """Remove a directory from Nexus filesystem.
 
@@ -395,82 +504,259 @@ def create_mcp_server(
             nx_instance = _get_nexus_instance(ctx)
             nx_instance.rmdir(path, recursive=recursive)
             return f"Successfully removed directory {path}"
+        except FileNotFoundError:
+            return f"Error: Directory not found at '{path}'. It may have already been removed."
+        except OSError as e:
+            if "not empty" in str(e).lower():
+                return f"Error: Directory '{path}' is not empty. Use recursive=True to remove non-empty directories."
+            return f"Error removing directory: {str(e)}"
         except Exception as e:
             return f"Error removing directory: {str(e)}"
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,  # Can overwrite target if exists
+            # idempotentHint=False: Second call fails (source gone after first rename),
+            # which produces different behavior/errors even if final state is the same
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
+    )
+    def nexus_rename_file(old_path: str, new_path: str, ctx: Context | None = None) -> str:
+        """Rename or move a file or directory in Nexus filesystem.
+
+        Args:
+            old_path: Current path of the file or directory (e.g., "/workspace/old.txt")
+            new_path: New path for the file or directory (e.g., "/workspace/new.txt")
+
+        Returns:
+            Success message or error
+        """
+        try:
+            nx_instance = _get_nexus_instance(ctx)
+            nx_instance.rename(old_path, new_path)
+            return f"Successfully renamed {old_path} to {new_path}"
+        except FileNotFoundError:
+            return f"Error: Source path '{old_path}' not found. Use nexus_list_files to check available files."
+        except FileExistsError:
+            return f"Error: Target path '{new_path}' already exists."
+        except Exception as e:
+            return f"Error renaming file: {str(e)}"
 
     # =========================================================================
     # SEARCH TOOLS
     # =========================================================================
 
-    @mcp.tool()
-    def nexus_glob(pattern: str, path: str = "/", ctx: Context | None = None) -> str:
-        """Search files using glob pattern.
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
+    def nexus_glob(
+        pattern: str,
+        path: str = "/",
+        limit: int = 100,
+        offset: int = 0,
+        response_format: str = "json",
+        ctx: Context | None = None,
+    ) -> str:
+        """Search files using glob pattern with pagination.
 
         Args:
             pattern: Glob pattern (e.g., "**/*.py", "*.txt")
             path: Base path to search from (default: "/")
+            limit: Maximum number of results to return (default: 100)
+            offset: Number of results to skip (default: 0)
+            response_format: Output format - "json" or "markdown" (default: "json")
 
         Returns:
-            JSON string with list of matching file paths
+            Formatted string with paginated search results containing:
+            - total: Total number of matches found
+            - count: Number of matches in this page
+            - offset: Current offset
+            - items: List of matching file paths
+            - has_more: Whether more results are available
+            - next_offset: Offset for next page (if has_more is true)
+
+        Example:
+            To find all Python files: nexus_glob("**/*.py", "/workspace")
+            With pagination: nexus_glob("**/*.py", "/workspace", limit=50, offset=0)
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
-            matches = nx_instance.glob(pattern, path)
-            return json.dumps(matches, indent=2)
-        except Exception as e:
-            return f"Error in glob search: {str(e)}"
+            all_matches = nx_instance.glob(pattern, path)
+            total = len(all_matches)
 
-    @mcp.tool()
+            # Apply pagination
+            paginated_matches = all_matches[offset : offset + limit]
+            has_more = (offset + limit) < total
+
+            result = {
+                "total": total,
+                "count": len(paginated_matches),
+                "offset": offset,
+                "items": paginated_matches,
+                "has_more": has_more,
+                "next_offset": offset + limit if has_more else None,
+            }
+
+            return format_response(result, response_format)
+        except Exception as e:
+            return f"Error in glob search: {str(e)}. Check pattern syntax (e.g., '**/*.py' for recursive Python files)."
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_grep(
-        pattern: str, path: str = "/", ignore_case: bool = False, ctx: Context | None = None
+        pattern: str,
+        path: str = "/",
+        ignore_case: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+        response_format: str = "json",
+        ctx: Context | None = None,
     ) -> str:
-        """Search file contents using regex pattern.
+        """Search file contents using regex pattern with pagination.
 
         Args:
             pattern: Regex pattern to search for
             path: Base path to search from (default: "/")
             ignore_case: Whether to ignore case (default: False)
+            limit: Maximum number of results to return (default: 100)
+            offset: Number of results to skip (default: 0)
+            response_format: Output format - "json" or "markdown" (default: "json")
 
         Returns:
-            JSON string with search results (file paths, line numbers, content)
+            Formatted string with paginated search results containing:
+            - total: Total number of matches found
+            - count: Number of matches in this page
+            - offset: Current offset
+            - items: List of matches (file paths, line numbers, content)
+            - has_more: Whether more results are available
+            - next_offset: Offset for next page (if has_more is true)
+
+        Example:
+            To get first 50 matches: nexus_grep("TODO", "/workspace", limit=50)
+            To get next 50 matches: nexus_grep("TODO", "/workspace", limit=50, offset=50)
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
-            results = nx_instance.grep(pattern, path, ignore_case=ignore_case)
-            # Limit results to first 100 matches
-            if len(results) > 100:
-                results = results[:100]
-            return json.dumps(results, indent=2)
-        except Exception as e:
-            return f"Error in grep search: {str(e)}"
+            all_results = nx_instance.grep(pattern, path, ignore_case=ignore_case)
+            total = len(all_results)
 
-    @mcp.tool()
-    def nexus_semantic_search(query: str, limit: int = 10, ctx: Context | None = None) -> str:
-        """Search files semantically using natural language query.
+            # Apply pagination
+            paginated_results = all_results[offset : offset + limit]
+            has_more = (offset + limit) < total
+
+            result = {
+                "total": total,
+                "count": len(paginated_results),
+                "offset": offset,
+                "items": paginated_results,
+                "has_more": has_more,
+                "next_offset": offset + limit if has_more else None,
+            }
+
+            return format_response(result, response_format)
+        except Exception as e:
+            return f"Error in grep search: {str(e)}. Check regex pattern syntax."
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
+    def nexus_semantic_search(
+        query: str,
+        limit: int = 10,
+        offset: int = 0,
+        response_format: str = "json",
+        ctx: Context | None = None,
+    ) -> str:
+        """Search files semantically using natural language query with pagination.
 
         Args:
             query: Natural language search query
-            limit: Maximum number of results (default: 10)
+            limit: Maximum number of results to return (default: 10)
+            offset: Number of results to skip (default: 0)
+            response_format: Output format - "json" or "markdown" (default: "json")
 
         Returns:
-            JSON string with search results
+            Formatted string with paginated search results containing:
+            - total: Total number of results found
+            - count: Number of results in this page
+            - offset: Current offset
+            - items: List of search results
+            - has_more: Whether more results are available
+            - next_offset: Offset for next page (if has_more is true)
+
+        Example:
+            First page: nexus_semantic_search("machine learning algorithms", limit=10)
+            Next page: nexus_semantic_search("machine learning algorithms", limit=10, offset=10)
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
-            # Check if nx has search method (only available in NexusFS)
-            if hasattr(nx_instance, "search"):
-                # Calling search() - available in NexusFS but not base interface
-                results = nx_instance.search(query, limit=limit)
-                return json.dumps(results, indent=2)
-            return "Semantic search not available (requires NexusFS with search enabled)"
+            # Check if nx has semantic_search method (only available in NexusFS)
+            if hasattr(nx_instance, "semantic_search"):
+                import asyncio
+
+                # Get results with high limit to support pagination
+                # Note: We fetch offset+limit*2 to efficiently check if there are more results
+                fetch_limit = offset + limit * 2
+                # Call async semantic_search method
+                all_results = asyncio.run(
+                    nx_instance.semantic_search(query, path="/", limit=fetch_limit)
+                )
+                total = len(all_results)
+
+                # Apply pagination
+                paginated_results = all_results[offset : offset + limit]
+                has_more = (offset + limit) < total
+
+                result = {
+                    "total": total,
+                    "count": len(paginated_results),
+                    "offset": offset,
+                    "items": paginated_results,
+                    "has_more": has_more,
+                    "next_offset": offset + limit if has_more else None,
+                }
+
+                return format_response(result, response_format)
+            return (
+                "Semantic search not available (requires NexusFS with semantic search initialized)"
+            )
         except Exception as e:
-            return f"Error in semantic search: {str(e)}"
+            # If semantic search is not initialized, return a consistent "not available" message
+            error_msg = str(e)
+            if "not initialized" in error_msg.lower():
+                return "Semantic search not available (not initialized)"
+            return f"Error in semantic search: {error_msg}"
 
     # =========================================================================
     # MEMORY TOOLS
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,  # Each store creates a new memory entry
+            "openWorldHint": True,
+        }
+    )
     def nexus_store_memory(
         content: str,
         memory_type: str | None = None,
@@ -511,7 +797,14 @@ def create_mcp_server(
                     nx_instance.memory.session.rollback()
             return f"Error storing memory: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_query_memory(
         query: str,
         memory_type: str | None = None,
@@ -548,7 +841,14 @@ def create_mcp_server(
     # WORKFLOW TOOLS
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
     def nexus_list_workflows(ctx: Context | None = None) -> str:
         """List available workflows in Nexus.
 
@@ -566,7 +866,14 @@ def create_mcp_server(
         except Exception as e:
             return f"Error listing workflows: {str(e)}"
 
-    @mcp.tool()
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,  # Workflows can modify state
+            "idempotentHint": False,  # Workflow execution may have side effects
+            "openWorldHint": True,
+        }
+    )
     def nexus_execute_workflow(
         name: str, inputs: str | None = None, ctx: Context | None = None
     ) -> str:
@@ -588,6 +895,8 @@ def create_mcp_server(
             input_dict = json.loads(inputs) if inputs else {}
             result = nx_instance.workflows.execute(name, **input_dict)
             return json.dumps(result, indent=2)
+        except json.JSONDecodeError:
+            return "Error: Invalid JSON in inputs parameter. Provide valid JSON string."
         except Exception as e:
             return f"Error executing workflow: {str(e)}"
 

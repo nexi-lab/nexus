@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import builtins
 import contextlib
-import hashlib
 import json
 import threading
 from datetime import UTC, datetime, timedelta
@@ -16,6 +15,7 @@ from sqlalchemy import select
 
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
+from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
     from nexus.core.entity_registry import EntityRegistry
@@ -222,11 +222,13 @@ class NexusFS(
         from nexus.core.permissions import OperationContext
 
         # Create default context using provided tenant_id/agent_id
-        # If tenant_id/agent_id are None, creates an unrestricted context for backward compatibility
+        # If tenant_id is None, default to "default" for multi-tenant compatibility
+        # This prevents warnings during cache warming and other internal operations
+        effective_tenant_id = tenant_id if tenant_id is not None else "default"
         self._default_context = OperationContext(
             user="anonymous",
             groups=[],
-            tenant_id=tenant_id,
+            tenant_id=effective_tenant_id,
             agent_id=agent_id,
             is_admin=is_admin,
             is_system=False,  # SECURITY: Prevent privilege escalation
@@ -785,7 +787,7 @@ class NexusFS(
         assert isinstance(ctx_raw, OperationContext), "Context must be OperationContext"
         ctx: OperationContext = ctx_raw
 
-        logger.info(
+        logger.debug(
             f"_check_permission: path={path}, permission={permission.name}, user={ctx.user}, tenant={getattr(ctx, 'tenant_id', None)}"
         )
 
@@ -800,7 +802,7 @@ class NexusFS(
         original_path, view_type = parse_virtual_path(path, metadata_exists)
         if view_type == "md":
             # This is a virtual view - check permissions on the original file instead
-            logger.info(
+            logger.debug(
                 f"  -> Virtual view detected: checking permissions on original file {original_path}"
             )
             permission_path = original_path
@@ -809,7 +811,7 @@ class NexusFS(
 
         # Check permission using enforcer
         result = self._permission_enforcer.check(permission_path, permission, ctx)
-        logger.info(f"  -> permission_enforcer.check returned: {result}")
+        logger.debug(f"  -> permission_enforcer.check returned: {result}")
 
         if not result:
             raise PermissionError(
@@ -838,7 +840,7 @@ class NexusFS(
 
         # Create a marker for the directory in metadata
         # We use an empty content hash as a placeholder
-        empty_hash = hashlib.sha256(b"").hexdigest()
+        empty_hash = hash_content(b"")
 
         metadata = FileMetadata(
             path=path,
@@ -949,7 +951,7 @@ class NexusFS(
                 # This ensures permission inheritance works for deeply nested paths
                 if hasattr(self, "_hierarchy_manager"):
                     try:
-                        logger.info(
+                        logger.debug(
                             f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
                         )
                         self._hierarchy_manager.ensure_parent_tuples(
@@ -971,7 +973,7 @@ class NexusFS(
 
         logger = logging.getLogger(__name__)
 
-        logger.info(
+        logger.debug(
             f"mkdir: Checking for hierarchy_manager: hasattr={hasattr(self, '_hierarchy_manager')}"
         )
 
@@ -979,13 +981,13 @@ class NexusFS(
 
         if hasattr(self, "_hierarchy_manager"):
             try:
-                logger.info(
+                logger.debug(
                     f"mkdir: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id or 'default'}"
                 )
                 created_count = self._hierarchy_manager.ensure_parent_tuples(
                     path, tenant_id=ctx.tenant_id or "default"
                 )
-                logger.info(f"mkdir: Created {created_count} parent tuples for {path}")
+                logger.debug(f"mkdir: Created {created_count} parent tuples for {path}")
                 if created_count > 0:
                     logger.debug(f"Created {created_count} parent tuples for {path}")
             except Exception as e:
@@ -1003,14 +1005,14 @@ class NexusFS(
         # 'owner' is a computed union of direct_owner + parent_owner in the ReBAC schema.
         if self._rebac_manager and ctx.user and not ctx.is_system:
             try:
-                logger.info(f"mkdir: Granting direct_owner permission to {ctx.user} for {path}")
+                logger.debug(f"mkdir: Granting direct_owner permission to {ctx.user} for {path}")
                 self._rebac_manager.rebac_write(
                     subject=("user", ctx.user),
                     relation="direct_owner",
                     object=("file", path),
                     tenant_id=ctx.tenant_id or "default",
                 )
-                logger.info(f"mkdir: Granted direct_owner permission to {ctx.user} for {path}")
+                logger.debug(f"mkdir: Granted direct_owner permission to {ctx.user} for {path}")
             except Exception as e:
                 logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
 
@@ -1095,11 +1097,11 @@ class NexusFS(
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.info(
-            f"🗑️  RMDIR: path={path}, recursive={recursive}, user={ctx.user}, is_admin={ctx.is_admin}"
+        logger.debug(
+            f"rmdir: path={path}, recursive={recursive}, user={ctx.user}, is_admin={ctx.is_admin}"
         )
         self._check_permission(path, Permission.WRITE, ctx)
-        logger.info(f"  -> Permission check PASSED for rmdir on {path}")
+        logger.debug(f"  -> Permission check PASSED for rmdir on {path}")
 
         # Route to backend with write access check (rmdir requires write permission)
         route = self.router.route(

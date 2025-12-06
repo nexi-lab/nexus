@@ -32,15 +32,13 @@ from urllib.parse import urljoin
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
-import requests
-from requests.adapters import HTTPAdapter
+import httpx
 from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
-from urllib3.util.retry import Retry
 
 from nexus.core.exceptions import (
     ConflictError,
@@ -681,31 +679,34 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         # Initialize memory API as None (lazy initialization)
         self._memory_api: RemoteMemory | None = None
 
-        # Create HTTP session with connection pooling
-        self.session = requests.Session()
-
-        # Configure connection pooling with retry strategy
-        # Retry on connection errors, timeouts, and 5xx server errors
-        retry_strategy = Retry(
-            total=0,  # We'll handle retries with tenacity at RPC level
-            connect=0,
-            read=0,
-            status_forcelist=[500, 502, 503, 504],
-            backoff_factor=0,
+        # Create HTTP client with connection pooling (httpx)
+        # Configure connection limits for pooling
+        limits = httpx.Limits(
+            max_connections=pool_maxsize,
+            max_keepalive_connections=pool_connections,
         )
 
-        adapter = HTTPAdapter(
-            pool_connections=pool_connections,
-            pool_maxsize=pool_maxsize,
-            max_retries=retry_strategy,
+        # Configure timeouts
+        timeout_config = httpx.Timeout(
+            connect=self.connect_timeout,
+            read=self.timeout,
+            write=self.timeout,
+            pool=self.timeout,
         )
 
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
+        # Build headers
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        # Create sync httpx client
+        self.session = httpx.Client(
+            limits=limits,
+            timeout=timeout_config,
+            headers=headers,
+        )
 
         if api_key:
-            self.session.headers["Authorization"] = f"Bearer {api_key}"
-
             # Fetch authenticated user info to get tenant_id
             try:
                 self._fetch_auth_info()
@@ -771,7 +772,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type(
-            (requests.ConnectionError, requests.Timeout, RemoteConnectionError)
+            (httpx.ConnectError, httpx.TimeoutException, RemoteConnectionError)
         ),
         reraise=True,
     )
@@ -830,16 +831,21 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             if self.tenant_id:
                 headers["X-Tenant-ID"] = self.tenant_id
 
-            # Use tuple for timeout: (connect_timeout, read_timeout)
-            # Use custom read_timeout if provided, otherwise use default self.timeout
+            # Use custom read_timeout if provided, otherwise use client default
             actual_read_timeout = read_timeout if read_timeout is not None else self.timeout
+            request_timeout = httpx.Timeout(
+                connect=self.connect_timeout,
+                read=actual_read_timeout,
+                write=actual_read_timeout,
+                pool=actual_read_timeout,
+            )
 
             network_start = time.time()
             response = self.session.post(
                 url,
-                data=body,
+                content=body,  # httpx uses 'content' for bytes
                 headers=headers,
-                timeout=(self.connect_timeout, actual_read_timeout),
+                timeout=request_timeout,
             )
             network_time = time.time() - network_start
 
@@ -885,7 +891,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             logger.info(f"API call completed: {method} ({elapsed:.3f}s)")
             return rpc_response.result
 
-        except requests.ConnectionError as e:
+        except httpx.ConnectError as e:
             elapsed = time.time() - start_time
             logger.error(f"API call connection error: {method} - {e} ({elapsed:.3f}s)")
             raise RemoteConnectionError(
@@ -894,7 +900,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 method=method,
             ) from e
 
-        except requests.Timeout as e:
+        except httpx.TimeoutException as e:
             elapsed = time.time() - start_time
             logger.error(f"API call timeout: {method} - {e} ({elapsed:.3f}s)")
             raise RemoteTimeoutError(
@@ -906,7 +912,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 method=method,
             ) from e
 
-        except requests.RequestException as e:
+        except httpx.HTTPError as e:
             elapsed = time.time() - start_time
             logger.error(f"API call network error: {method} - {e} ({elapsed:.3f}s)")
             raise RemoteFilesystemError(
@@ -1207,6 +1213,97 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             },
         )
         return result["results"]  # type: ignore[no-any-return]
+
+    # ============================================================
+    # Semantic Search Operations
+    # ============================================================
+
+    async def initialize_semantic_search(
+        self,
+        embedding_provider: str | None = None,
+        embedding_model: str | None = None,
+        api_key: str | None = None,
+        chunk_size: int = 1024,
+        chunk_strategy: str = "semantic",
+    ) -> None:
+        """Initialize semantic search engine on the server.
+
+        Args:
+            embedding_provider: Provider name ("openai", "voyage") or None for keyword-only
+            embedding_model: Model name (uses provider default if None)
+            api_key: API key for the embedding provider
+            chunk_size: Chunk size in tokens (default: 1024)
+            chunk_strategy: Chunking strategy ("fixed", "semantic", "overlapping")
+        """
+        self._call_rpc(
+            "initialize_semantic_search",
+            {
+                "embedding_provider": embedding_provider,
+                "embedding_model": embedding_model,
+                "api_key": api_key,
+                "chunk_size": chunk_size,
+                "chunk_strategy": chunk_strategy,
+            },
+        )
+
+    async def semantic_search(
+        self,
+        query: str,
+        path: str = "/",
+        limit: int = 10,
+        filters: dict[str, Any] | None = None,
+        search_mode: str = "semantic",
+    ) -> builtins.list[dict[str, Any]]:
+        """Search documents using natural language queries.
+
+        Args:
+            query: Natural language query
+            path: Root path to search (default: all files)
+            limit: Maximum number of results (default: 10)
+            filters: Optional filters (file_type, etc.)
+            search_mode: Search mode - "keyword", "semantic", or "hybrid"
+
+        Returns:
+            List of search results with path, chunk_text, score, etc.
+        """
+        result = self._call_rpc(
+            "semantic_search",
+            {
+                "query": query,
+                "path": path,
+                "limit": limit,
+                "filters": filters,
+                "search_mode": search_mode,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    async def semantic_search_index(
+        self, path: str = "/", recursive: bool = True
+    ) -> dict[str, int]:
+        """Index documents for semantic search.
+
+        Args:
+            path: Path to index (file or directory)
+            recursive: If True, index directory recursively
+
+        Returns:
+            Dictionary mapping file paths to number of chunks indexed
+        """
+        result = self._call_rpc(
+            "semantic_search_index",
+            {"path": path, "recursive": recursive},
+        )
+        return result  # type: ignore[no-any-return]
+
+    async def semantic_search_stats(self) -> dict[str, Any]:
+        """Get semantic search indexing statistics.
+
+        Returns:
+            Dictionary with statistics (total_chunks, indexed_files, etc.)
+        """
+        result = self._call_rpc("semantic_search_stats", {})
+        return result  # type: ignore[no-any-return]
 
     # ============================================================
     # Directory Operations
@@ -2495,6 +2592,21 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("remove_mount", {"mount_point": mount_point})
         return result  # type: ignore[no-any-return]
 
+    def list_connectors(self, category: str | None = None) -> builtins.list[dict[str, Any]]:
+        """List all available connector types that can be used with add_mount().
+
+        Args:
+            category: Optional filter by category (storage, api, oauth, database)
+
+        Returns:
+            List of connector info dictionaries
+        """
+        params: dict[str, Any] = {}
+        if category:
+            params["category"] = category
+        result = self._call_rpc("list_connectors", params)
+        return result  # type: ignore[no-any-return]
+
     def list_mounts(self) -> builtins.list[dict[str, Any]]:
         """List all active backend mounts.
 
@@ -2685,50 +2797,90 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
     def sync_mount(
         self,
-        mount_point: str,
+        mount_point: str | None = None,
+        path: str | None = None,
         recursive: bool = True,
         dry_run: bool = False,
+        sync_content: bool = True,
+        include_patterns: builtins.list[str] | None = None,
+        exclude_patterns: builtins.list[str] | None = None,
+        generate_embeddings: bool = False,
     ) -> dict[str, Any]:
-        """Sync metadata from a connector backend to Nexus database.
+        """Sync metadata and content from connector backend(s) to Nexus database.
 
         For connector backends (like gcs_connector), this scans the external storage
         and updates Nexus's metadata database with any files that were added externally
-        or existed before Nexus was configured.
+        or existed before Nexus was configured. Also populates content cache for
+        fast grep/search operations.
 
         Args:
-            mount_point: Virtual path of mount to sync (e.g., "/mnt/gcs_demo")
+            mount_point: Virtual path of mount to sync (e.g., "/mnt/gcs_demo").
+                        If None, syncs ALL connector mounts.
+            path: Specific path within mount to sync (e.g., "/reports/2024/").
+                  If None, syncs entire mount. Supports file or directory granularity.
             recursive: If True, sync all subdirectories recursively (default: True)
             dry_run: If True, only report what would be synced without making changes (default: False)
+            sync_content: If True, also sync content to cache for grep/search (default: True)
+            include_patterns: Glob patterns to include (e.g., ["*.py", "*.md"])
+            exclude_patterns: Glob patterns to exclude (e.g., ["*.pyc", ".git/*"])
+            generate_embeddings: If True, generate embeddings for semantic search (default: False)
 
         Returns:
             Dictionary with sync results:
-                - files_found: Number of files found in backend
-                - files_added: Number of new files added to database
+                - files_scanned: Number of files scanned in backend
+                - files_created: Number of new files added to database
                 - files_updated: Number of existing files updated
-                - files_skipped: Number of files skipped (already up-to-date)
+                - files_deleted: Number of files deleted from database
+                - cache_synced: Number of files synced to content cache
+                - cache_bytes: Total bytes synced to cache
+                - embeddings_generated: Number of embeddings generated
                 - errors: List of error messages (if any)
+                - mounts_synced: Number of mounts synced (when mount_point=None)
+                - mounts_skipped: Number of mounts skipped (when mount_point=None)
 
         Raises:
             ValueError: If mount_point doesn't exist
             RemoteFilesystemError: If backend doesn't support listing (not a connector backend)
 
         Examples:
-            >>> # Sync GCS connector mount
-            >>> result = nx.sync_mount("/mnt/gcs_demo")
-            >>> print(f"Added {result['files_added']} new files")
+            >>> # Sync all connector mounts
+            >>> result = nx.sync_mount()
+            >>> print(f"Synced {result['mounts_synced']} mounts")
+
+            >>> # Sync specific mount
+            >>> result = nx.sync_mount("/mnt/gcs")
+            >>> print(f"Created {result['files_created']} files, cached {result['cache_synced']}")
+
+            >>> # Sync specific directory
+            >>> result = nx.sync_mount("/mnt/gcs", path="reports/2024")
+
+            >>> # Sync with patterns
+            >>> result = nx.sync_mount("/mnt/gcs", include_patterns=["*.py"])
 
             >>> # Dry run to see what would be synced
-            >>> result = nx.sync_mount("/mnt/gcs_demo", dry_run=True)
-            >>> print(f"Would add {result['files_found']} files")
+            >>> result = nx.sync_mount("/mnt/gcs", dry_run=True)
         """
-        result = self._call_rpc(
-            "sync_mount",
-            {
-                "mount_point": mount_point,
-                "recursive": recursive,
-                "dry_run": dry_run,
-            },
-        )
+        params: dict[str, Any] = {
+            "recursive": recursive,
+            "dry_run": dry_run,
+            "sync_content": sync_content,
+            "generate_embeddings": generate_embeddings,
+        }
+
+        # Only include mount_point if specified (None means sync all)
+        if mount_point is not None:
+            params["mount_point"] = mount_point
+
+        if path is not None:
+            params["path"] = path
+
+        if include_patterns is not None:
+            params["include_patterns"] = include_patterns
+
+        if exclude_patterns is not None:
+            params["exclude_patterns"] = exclude_patterns
+
+        result = self._call_rpc("sync_mount", params)
         return result  # type: ignore[no-any-return]
 
     # ============================================================

@@ -28,15 +28,31 @@ NamespaceConfigDict = dict[str, Any]  # Contains 'relations' and 'permissions' k
 
 logger = logging.getLogger(__name__)
 
-# Try to import Rust extension
+# Try to import Rust extensions
+# - nexus._nexus_fast: Internal module (faster bulk operations)
+# - nexus_fast: External package (has compute_permission_single)
+_internal_module: Any = None
+_external_module: Any = None
+RUST_AVAILABLE = False
+
 try:
-    import nexus_fast
+    from nexus import _nexus_fast as _internal_module  # type: ignore[no-redef]
 
     RUST_AVAILABLE = True
-    logger.info("✓ Rust acceleration available (nexus_fast module loaded)")
+    logger.info("✓ Rust bulk acceleration available (nexus._nexus_fast)")
 except ImportError:
-    RUST_AVAILABLE = False
-    logger.info("✗ Rust acceleration not available (nexus_fast not installed)")
+    pass
+
+try:
+    import nexus_fast as _external_module  # type: ignore[no-redef]
+
+    RUST_AVAILABLE = True
+    logger.info("✓ Rust single-check acceleration available (nexus_fast)")
+except ImportError:
+    pass
+
+if not RUST_AVAILABLE:
+    logger.info("✗ Rust acceleration not available")
 
 
 def is_rust_available() -> bool:
@@ -100,7 +116,11 @@ def check_permissions_bulk_rust(
         )
 
     try:
-        result: Any = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs)
+        # Prefer internal module (faster), fallback to external
+        module = _internal_module or _external_module
+        if module is None:
+            raise RuntimeError("No Rust module available")
+        result: Any = module.compute_permissions_bulk(checks, tuples, namespace_configs)
         return result  # type: ignore[no-any-return]
     except Exception as e:
         logger.error(f"Rust permission check failed: {e}", exc_info=True)
@@ -255,6 +275,131 @@ def get_performance_stats() -> dict[str, Any]:
     }
 
 
+def check_permission_single_rust(
+    subject_type: str,
+    subject_id: str,
+    permission: str,
+    object_type: str,
+    object_id: str,
+    tuples: list[dict[str, Any]],
+    namespace_configs: dict[str, Any],
+) -> bool:
+    """
+    Check a single permission using Rust implementation with memoization.
+
+    This function provides the same memoization benefits as bulk checks but for
+    single permission checks. It's particularly useful for operations like read()
+    where only one file permission needs to be checked.
+
+    The Rust implementation has proper memoization across recursive calls, which
+    prevents the exponential time complexity that causes timeouts in the Python
+    implementation for deep path hierarchies.
+
+    Args:
+        subject_type: Type of subject (e.g., "user", "agent")
+        subject_id: Subject identifier
+        permission: Permission to check (e.g., "read", "write")
+        object_type: Type of object (e.g., "file")
+        object_id: Object identifier (e.g., file path)
+        tuples: List of ReBAC relationship dictionaries
+        namespace_configs: Dict mapping object_type -> namespace config
+
+    Returns:
+        True if permission is granted, False otherwise
+
+    Raises:
+        RuntimeError: If Rust extension is not available
+    """
+    if not RUST_AVAILABLE:
+        raise RuntimeError(
+            "Rust acceleration not available. Install with: "
+            "cd rust/nexus_fast && maturin develop --release"
+        )
+
+    # compute_permission_single is only in the external module
+    if _external_module is None:
+        raise RuntimeError(
+            "Rust single permission check not available. "
+            "Install nexus_fast: cd rust/nexus_fast && maturin develop --release"
+        )
+
+    try:
+        import time
+
+        start = time.perf_counter()
+        result: bool = _external_module.compute_permission_single(
+            subject_type,
+            subject_id,
+            permission,
+            object_type,
+            object_id,
+            tuples,
+            namespace_configs,
+        )
+        elapsed = time.perf_counter() - start
+        logger.debug(
+            f"[RUST-SINGLE] Permission check: {subject_type}:{subject_id} "
+            f"{permission} {object_type}:{object_id} = {result} ({elapsed * 1000:.2f}ms)"
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Rust single permission check failed: {e}", exc_info=True)
+        raise
+
+
+def check_permission_single_with_fallback(
+    subject_type: str,
+    subject_id: str,
+    permission: str,
+    object_type: str,
+    object_id: str,
+    tuples: list[dict[str, Any]],
+    namespace_configs: dict[str, Any],
+    force_python: bool = False,
+) -> bool:
+    """
+    Check a single permission with automatic fallback to Python.
+
+    This is the recommended interface for single permission checks. It uses Rust
+    if available (with proper memoization), falling back to Python bulk check
+    as a single-item batch if Rust is unavailable.
+
+    Args:
+        subject_type: Type of subject
+        subject_id: Subject identifier
+        permission: Permission to check
+        object_type: Type of object
+        object_id: Object identifier
+        tuples: List of ReBAC relationship dictionaries
+        namespace_configs: Dict mapping object_type -> namespace config
+        force_python: Force use of Python implementation
+
+    Returns:
+        True if permission is granted, False otherwise
+    """
+    if _external_module is not None and not force_python:
+        try:
+            return check_permission_single_rust(
+                subject_type,
+                subject_id,
+                permission,
+                object_type,
+                object_id,
+                tuples,
+                namespace_configs,
+            )
+        except Exception as e:
+            logger.warning(f"Rust single check failed, falling back to Python: {e}")
+            # Fall through to Python
+
+    # Fallback: use Python bulk check with single item
+    # This still benefits from memoization within the bulk operation
+    checks = [((subject_type, subject_id), permission, (object_type, object_id))]
+    results = _check_permissions_bulk_python(checks, tuples, namespace_configs)
+    key = (subject_type, subject_id, permission, object_type, object_id)
+    return results.get(key, False)
+
+
 def estimate_speedup(num_checks: int) -> float:
     """
     Estimate speedup factor for given number of checks.
@@ -275,3 +420,113 @@ def estimate_speedup(num_checks: int) -> float:
         return 50.0  # ~50x
     else:
         return 85.0  # ~85x for large batches
+
+
+def expand_subjects_rust(
+    permission: str,
+    object_type: str,
+    object_id: str,
+    tuples: list[dict[str, Any]],
+    namespace_configs: dict[str, Any],
+) -> list[tuple[str, str]]:
+    """
+    Expand subjects using Rust implementation.
+
+    Find all subjects that have a given permission on an object.
+    This is the inverse of check_permission - instead of "does X have permission on Y",
+    it answers "who has permission on Y".
+
+    Args:
+        permission: Permission to expand (e.g., "read", "write")
+        object_type: Type of object (e.g., "file")
+        object_id: Object identifier (e.g., file path)
+        tuples: List of ReBAC relationship dictionaries
+        namespace_configs: Dict mapping object_type -> namespace config
+
+    Returns:
+        List of (subject_type, subject_id) tuples
+
+    Raises:
+        RuntimeError: If Rust extension is not available
+    """
+    if not RUST_AVAILABLE:
+        raise RuntimeError(
+            "Rust acceleration not available. Install with: "
+            "cd rust/nexus_fast && maturin develop --release"
+        )
+
+    # Use external module which has expand_subjects
+    if _external_module is None:
+        raise RuntimeError(
+            "Rust expand_subjects not available. "
+            "Install nexus_fast: cd rust/nexus_fast && maturin develop --release"
+        )
+
+    try:
+        import time
+
+        start = time.perf_counter()
+        result = _external_module.expand_subjects(
+            permission,
+            object_type,
+            object_id,
+            tuples,
+            namespace_configs,
+        )
+        elapsed = time.perf_counter() - start
+        logger.debug(
+            f"[RUST-EXPAND] Expand {permission} on {object_type}:{object_id} "
+            f"found {len(result)} subjects ({elapsed * 1000:.2f}ms)"
+        )
+        # Convert from list of tuples to list of tuples (already correct format)
+        return [(t[0], t[1]) for t in result]
+    except Exception as e:
+        logger.error(f"Rust expand_subjects failed: {e}", exc_info=True)
+        raise
+
+
+def expand_subjects_with_fallback(
+    permission: str,
+    object_type: str,
+    object_id: str,
+    tuples: list[dict[str, Any]],
+    namespace_configs: dict[str, Any],
+    force_python: bool = False,
+) -> list[tuple[str, str]]:
+    """
+    Expand subjects with automatic fallback to Python.
+
+    This is the recommended interface for subject expansion. It uses Rust
+    if available, falling back to Python implementation if Rust is unavailable.
+
+    Args:
+        permission: Permission to expand
+        object_type: Type of object
+        object_id: Object identifier
+        tuples: List of ReBAC relationship dictionaries
+        namespace_configs: Dict mapping object_type -> namespace config
+        force_python: Force use of Python implementation
+
+    Returns:
+        List of (subject_type, subject_id) tuples
+    """
+    if _external_module is not None and not force_python:
+        try:
+            return expand_subjects_rust(
+                permission,
+                object_type,
+                object_id,
+                tuples,
+                namespace_configs,
+            )
+        except Exception as e:
+            logger.warning(f"Rust expand_subjects failed, falling back to Python: {e}")
+            # Fall through to Python
+
+    # Fallback: Python implementation
+    # Note: The caller should implement Python fallback in rebac_manager.py
+    # This is just a stub that raises NotImplementedError
+    raise NotImplementedError(
+        "Python fallback for expand_subjects not implemented in rebac_fast.py. "
+        "Use ReBACManager._expand_permission directly."
+    )

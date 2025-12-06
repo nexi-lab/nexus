@@ -765,7 +765,7 @@ class ReBACManager:
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.info(
+        logger.debug(
             f"update_object_path called: old_path={old_path}, new_path={new_path}, is_directory={is_directory}"
         )
 
@@ -773,7 +773,7 @@ class ReBACManager:
             cursor = self._create_cursor(conn)
 
             # STEP 1: Update tuples where the path is in object_id
-            logger.info(f"STEP 1: Looking for tuples with object_id matching {old_path}")
+            logger.debug(f"STEP 1: Looking for tuples with object_id matching {old_path}")
             if is_directory:
                 # For directories, match exact path OR any child path
                 # Use LIKE with escaped path to match /old_dir and /old_dir/*
@@ -812,40 +812,80 @@ class ReBACManager:
                 )
 
             rows = cursor.fetchall()
-            logger.info(f"STEP 1: Found {len(rows)} tuples with object_id to update")
+            logger.debug(f"STEP 1: Found {len(rows)} tuples with object_id to update")
 
-            # Update each tuple's object_id
-            for row in rows:
-                tuple_id = row["tuple_id"]
-                old_object_id = row["object_id"]
-                logger.info(f"STEP 1: Updating tuple {tuple_id}: object_id {old_object_id} -> ...")
+            if rows:
+                # PERF: Batch UPDATE with CASE statement (Issue #590)
+                # Instead of N individual UPDATE queries, use a single UPDATE with CASE
+                old_prefix_len = len(old_path)
+                now_iso = datetime.now(UTC).isoformat()
 
-                # Calculate new object_id
-                if is_directory and old_object_id.startswith(old_path + "/"):
-                    # Child path: replace the prefix
-                    new_object_id = new_path + old_object_id[len(old_path) :]
+                if is_directory:
+                    # Batch update: exact match -> new_path, child paths -> new_path + suffix
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            UPDATE rebac_tuples
+                            SET object_id = CASE
+                                WHEN object_id = ? THEN ?
+                                ELSE ? || SUBSTR(object_id, ?)
+                            END
+                            WHERE object_type = ?
+                              AND (object_id = ? OR object_id LIKE ?)
+                              AND (expires_at IS NULL OR expires_at >= ?)
+                            """
+                        ),
+                        (
+                            old_path,  # WHEN object_id = old_path
+                            new_path,  # THEN new_path
+                            new_path,  # ELSE new_path || SUBSTR(...)
+                            old_prefix_len + 1,  # SUBSTR offset (1-indexed in SQL)
+                            object_type,
+                            old_path,
+                            old_path + "/%",
+                            now_iso,
+                        ),
+                    )
                 else:
-                    # Exact match or file
-                    new_object_id = new_path
+                    # Simple batch update for files (exact match only)
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            UPDATE rebac_tuples
+                            SET object_id = ?
+                            WHERE object_type = ?
+                              AND object_id = ?
+                              AND (expires_at IS NULL OR expires_at >= ?)
+                            """
+                        ),
+                        (new_path, object_type, old_path, now_iso),
+                    )
 
-                # Update the tuple
-                logger.info(
-                    f"STEP 1: Updating tuple {tuple_id}: {old_object_id} -> {new_object_id}"
-                )
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        UPDATE rebac_tuples
-                        SET object_id = ?
-                        WHERE tuple_id = ?
-                        """
-                    ),
-                    (new_object_id, tuple_id),
-                )
-                logger.info(f"STEP 1: Updated {cursor.rowcount} rows for tuple {tuple_id}")
+                logger.debug(f"STEP 1: Batch updated {cursor.rowcount} tuples")
 
-                # Log to changelog
-                cursor.execute(
+                # PERF: Batch INSERT changelog entries
+                changelog_entries = []
+                for row in rows:
+                    old_object_id = row["object_id"]
+                    if is_directory and old_object_id.startswith(old_path + "/"):
+                        new_object_id = new_path + old_object_id[old_prefix_len:]
+                    else:
+                        new_object_id = new_path
+
+                    changelog_entries.append(
+                        (
+                            "UPDATE",
+                            row["tuple_id"],
+                            row["subject_type"],
+                            row["subject_id"],
+                            row["relation"],
+                            object_type,
+                            new_object_id,
+                            now_iso,
+                        )
+                    )
+
+                cursor.executemany(
                     self._fix_sql_placeholders(
                         """
                         INSERT INTO rebac_changelog (
@@ -855,38 +895,36 @@ class ReBACManager:
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """
                     ),
-                    (
-                        "UPDATE",
-                        tuple_id,
-                        row["subject_type"],
-                        row["subject_id"],
-                        row["relation"],
-                        object_type,
-                        new_object_id,
-                        datetime.now(UTC).isoformat(),
-                    ),
+                    changelog_entries,
                 )
 
-                # Invalidate cache for both old and new paths
-                subject = Entity(row["subject_type"], row["subject_id"])
-                old_obj = Entity(object_type, old_object_id)
-                new_obj = Entity(object_type, new_object_id)
-                relation = row["relation"]
-                tenant_id = row["tenant_id"]
-                subject_relation = row["subject_relation"]
+                # Invalidate caches (still need to iterate, but it's in-memory)
+                for row in rows:
+                    old_object_id = row["object_id"]
+                    if is_directory and old_object_id.startswith(old_path + "/"):
+                        new_object_id = new_path + old_object_id[old_prefix_len:]
+                    else:
+                        new_object_id = new_path
 
-                self._invalidate_cache_for_tuple(
-                    subject, relation, old_obj, tenant_id, subject_relation
-                )
-                self._invalidate_cache_for_tuple(
-                    subject, relation, new_obj, tenant_id, subject_relation
-                )
+                    subject = Entity(row["subject_type"], row["subject_id"])
+                    old_obj = Entity(object_type, old_object_id)
+                    new_obj = Entity(object_type, new_object_id)
+                    relation = row["relation"]
+                    tenant_id = row["tenant_id"]
+                    subject_relation = row["subject_relation"]
 
-                updated_count += 1
+                    self._invalidate_cache_for_tuple(
+                        subject, relation, old_obj, tenant_id, subject_relation
+                    )
+                    self._invalidate_cache_for_tuple(
+                        subject, relation, new_obj, tenant_id, subject_relation
+                    )
+
+                updated_count += len(rows)
 
             # STEP 2: Update tuples where the path is in subject_id (e.g., parent relationships)
             # This is critical for file-to-file relationships like "file:X -> parent -> file:Y"
-            logger.info(f"STEP 2: Looking for tuples with subject_id matching {old_path}")
+            logger.debug(f"STEP 2: Looking for tuples with subject_id matching {old_path}")
             if is_directory:
                 # For directories, match exact path OR any child path in subject_id
                 cursor.execute(
@@ -924,42 +962,79 @@ class ReBACManager:
                 )
 
             subject_rows = cursor.fetchall()
-            logger.info(f"STEP 2: Found {len(subject_rows)} tuples with subject_id to update")
+            logger.debug(f"STEP 2: Found {len(subject_rows)} tuples with subject_id to update")
 
-            # Update each tuple's subject_id
-            for row in subject_rows:
-                tuple_id = row["tuple_id"]
-                old_subject_id = row["subject_id"]
-                logger.info(
-                    f"STEP 2: Updating tuple {tuple_id}: subject_id {old_subject_id} -> ..."
-                )
+            if subject_rows:
+                # PERF: Batch UPDATE with CASE statement (Issue #590)
+                old_prefix_len = len(old_path)
+                now_iso = datetime.now(UTC).isoformat()
 
-                # Calculate new subject_id
-                if is_directory and old_subject_id.startswith(old_path + "/"):
-                    # Child path: replace the prefix
-                    new_subject_id = new_path + old_subject_id[len(old_path) :]
+                if is_directory:
+                    # Batch update: exact match -> new_path, child paths -> new_path + suffix
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            UPDATE rebac_tuples
+                            SET subject_id = CASE
+                                WHEN subject_id = ? THEN ?
+                                ELSE ? || SUBSTR(subject_id, ?)
+                            END
+                            WHERE subject_type = ?
+                              AND (subject_id = ? OR subject_id LIKE ?)
+                              AND (expires_at IS NULL OR expires_at >= ?)
+                            """
+                        ),
+                        (
+                            old_path,  # WHEN subject_id = old_path
+                            new_path,  # THEN new_path
+                            new_path,  # ELSE new_path || SUBSTR(...)
+                            old_prefix_len + 1,  # SUBSTR offset (1-indexed in SQL)
+                            object_type,
+                            old_path,
+                            old_path + "/%",
+                            now_iso,
+                        ),
+                    )
                 else:
-                    # Exact match or file
-                    new_subject_id = new_path
+                    # Simple batch update for files (exact match only)
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            UPDATE rebac_tuples
+                            SET subject_id = ?
+                            WHERE subject_type = ?
+                              AND subject_id = ?
+                              AND (expires_at IS NULL OR expires_at >= ?)
+                            """
+                        ),
+                        (new_path, object_type, old_path, now_iso),
+                    )
 
-                # Update the tuple
-                logger.info(
-                    f"STEP 2: Updating tuple {tuple_id}: {old_subject_id} -> {new_subject_id}"
-                )
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        UPDATE rebac_tuples
-                        SET subject_id = ?
-                        WHERE tuple_id = ?
-                        """
-                    ),
-                    (new_subject_id, tuple_id),
-                )
-                logger.info(f"STEP 2: Updated {cursor.rowcount} rows for tuple {tuple_id}")
+                logger.debug(f"STEP 2: Batch updated {cursor.rowcount} tuples")
 
-                # Log to changelog
-                cursor.execute(
+                # PERF: Batch INSERT changelog entries
+                changelog_entries = []
+                for row in subject_rows:
+                    old_subject_id = row["subject_id"]
+                    if is_directory and old_subject_id.startswith(old_path + "/"):
+                        new_subject_id = new_path + old_subject_id[old_prefix_len:]
+                    else:
+                        new_subject_id = new_path
+
+                    changelog_entries.append(
+                        (
+                            "UPDATE",
+                            row["tuple_id"],
+                            object_type,
+                            new_subject_id,
+                            row["relation"],
+                            row["object_type"],
+                            row["object_id"],
+                            now_iso,
+                        )
+                    )
+
+                cursor.executemany(
                     self._fix_sql_placeholders(
                         """
                         INSERT INTO rebac_changelog (
@@ -969,34 +1044,32 @@ class ReBACManager:
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """
                     ),
-                    (
-                        "UPDATE",
-                        tuple_id,
-                        object_type,
-                        new_subject_id,
-                        row["relation"],
-                        row["object_type"],
-                        row["object_id"],
-                        datetime.now(UTC).isoformat(),
-                    ),
+                    changelog_entries,
                 )
 
-                # Invalidate cache for both old and new subjects
-                old_subj = Entity(object_type, old_subject_id)
-                new_subj = Entity(object_type, new_subject_id)
-                obj = Entity(row["object_type"], row["object_id"])
-                relation = row["relation"]
-                tenant_id = row["tenant_id"]
-                subject_relation = row["subject_relation"]
+                # Invalidate caches (still need to iterate, but it's in-memory)
+                for row in subject_rows:
+                    old_subject_id = row["subject_id"]
+                    if is_directory and old_subject_id.startswith(old_path + "/"):
+                        new_subject_id = new_path + old_subject_id[old_prefix_len:]
+                    else:
+                        new_subject_id = new_path
 
-                self._invalidate_cache_for_tuple(
-                    old_subj, relation, obj, tenant_id, subject_relation
-                )
-                self._invalidate_cache_for_tuple(
-                    new_subj, relation, obj, tenant_id, subject_relation
-                )
+                    old_subj = Entity(object_type, old_subject_id)
+                    new_subj = Entity(object_type, new_subject_id)
+                    obj = Entity(row["object_type"], row["object_id"])
+                    relation = row["relation"]
+                    tenant_id = row["tenant_id"]
+                    subject_relation = row["subject_relation"]
 
-                updated_count += 1
+                    self._invalidate_cache_for_tuple(
+                        old_subj, relation, obj, tenant_id, subject_relation
+                    )
+                    self._invalidate_cache_for_tuple(
+                        new_subj, relation, obj, tenant_id, subject_relation
+                    )
+
+                updated_count += len(subject_rows)
 
             conn.commit()
             logger.info(f"update_object_path complete: updated {updated_count} tuples total")
@@ -1050,7 +1123,7 @@ class ReBACManager:
         subject_entity = Entity(subject[0], subject[1])
         object_entity = Entity(object[0], object[1])
 
-        logger.info(
+        logger.debug(
             f"🔍 REBAC CHECK: subject={subject_entity}, permission={permission}, object={object_entity}, tenant_id={tenant_id}"
         )
 
@@ -1061,11 +1134,11 @@ class ReBACManager:
         if context is None:
             cached = self._get_cached_check(subject_entity, permission, object_entity, tenant_id)
             if cached is not None:
-                logger.info(f"✅ CACHE HIT: result={cached}")
+                logger.debug(f"✅ CACHE HIT: result={cached}")
                 return cached
 
         # Compute permission via graph traversal with context
-        logger.info("🔎 Computing permission (no cache hit, computing from graph)")
+        logger.debug("🔎 Computing permission (no cache hit, computing from graph)")
         result = self._compute_permission(
             subject_entity,
             permission,
@@ -1076,7 +1149,7 @@ class ReBACManager:
             tenant_id=tenant_id,
         )
 
-        logger.info(f"{'✅' if result else '❌'} REBAC RESULT: {result}")
+        logger.debug(f"{'✅' if result else '❌'} REBAC RESULT: {result}")
 
         # Cache result (only if no context)
         if context is None:
@@ -1192,7 +1265,7 @@ class ReBACManager:
             else:
                 uncached_checks.append((i, (subject, permission, obj)))
 
-        logger.info(
+        logger.debug(
             f"🚀 Batch check: {len(checks)} total, {len(results)} cached, "
             f"{len(uncached_checks)} to compute (Rust={'enabled' if use_rust and is_rust_available() else 'disabled'})"
         )
@@ -1201,7 +1274,7 @@ class ReBACManager:
         if uncached_checks:
             if use_rust and is_rust_available() and len(uncached_checks) >= 10:
                 # Use Rust for bulk computation (efficient for 10+ checks)
-                logger.info(
+                logger.debug(
                     f"⚡ Using Rust acceleration for {len(uncached_checks)} uncached checks"
                 )
                 try:
@@ -1225,7 +1298,7 @@ class ReBACManager:
                 reason = (
                     "batch too small (<10)" if len(uncached_checks) < 10 else "Rust not available"
                 )
-                logger.info(
+                logger.debug(
                     f"🐍 Using Python computation for {len(uncached_checks)} checks ({reason})"
                 )
                 self._compute_batch_python(uncached_checks, results)
@@ -1327,7 +1400,7 @@ class ReBACManager:
                     }
                 )
 
-            logger.info(f"📦 Fetched {len(tuples)} tuples for batch computation")
+            logger.debug(f"📦 Fetched {len(tuples)} tuples for batch computation")
             return tuples
 
     def rebac_explain(
@@ -1794,16 +1867,16 @@ class ReBACManager:
         namespace = self.get_namespace(obj.entity_type)
         if not namespace:
             # No namespace config - check for direct relation only
-            logger.info(
+            logger.debug(
                 f"  [depth={depth}] ⚠️ No namespace for {obj.entity_type}, checking direct relation"
             )
             return self._has_direct_relation(subject, permission, obj, context, tenant_id)
 
-        logger.info(f"  [depth={depth}] ✅ Found namespace for {obj.entity_type}")
-        logger.info(
+        logger.debug(f"  [depth={depth}] ✅ Found namespace for {obj.entity_type}")
+        logger.debug(
             f"  [depth={depth}] 📊 ALL Relations in namespace: {list(namespace.config.get('relations', {}).keys())}"
         )
-        logger.info(
+        logger.debug(
             f"  [depth={depth}] 📊 ALL Permissions in namespace: {list(namespace.config.get('permissions', {}).keys())}"
         )
 
@@ -1812,49 +1885,49 @@ class ReBACManager:
         if namespace.has_permission(permission):
             # Permission defined explicitly - check all usersets that grant it
             usersets = namespace.get_permission_usersets(permission)
-            logger.info(
+            logger.debug(
                 f"  [depth={depth}] 🔑 Permission '{permission}' defined in namespace '{obj.entity_type}'"
             )
-            logger.info(
+            logger.debug(
                 f"  [depth={depth}] 📋 Permission '{permission}' expands to usersets: {usersets}"
             )
-            logger.info(
+            logger.debug(
                 f"  [depth={depth}] 🧪 Checking {len(usersets)} usersets for {subject} on {obj}"
             )
-            logger.info(
+            logger.debug(
                 f"  [depth={depth}] 📊 NAMESPACE CONFIG for '{obj.entity_type}': relations={list(namespace.config.get('relations', {}).keys())}"
             )
 
             for i, userset in enumerate(usersets):
-                logger.info(
+                logger.debug(
                     f"  [depth={depth}] 🔍 [{i + 1}/{len(usersets)}] Checking userset '{userset}'..."
                 )
                 result = self._compute_permission(
                     subject, userset, obj, visited.copy(), depth + 1, context, tenant_id
                 )
                 if result:
-                    logger.info(
+                    logger.debug(
                         f"  [depth={depth}] ✅ [{i + 1}/{len(usersets)}] GRANTED via userset '{userset}'"
                     )
                     return True
                 else:
-                    logger.info(
+                    logger.debug(
                         f"  [depth={depth}] ❌ [{i + 1}/{len(usersets)}] DENIED for userset '{userset}'"
                     )
 
-            logger.info(
+            logger.debug(
                 f"  [depth={depth}] 🚫 ALL {len(usersets)} usersets DENIED - permission DENIED"
             )
             return False
 
         # Fallback: Check if permission is defined as a relation (legacy)
         rel_config = namespace.get_relation_config(permission)
-        logger.info(
+        logger.debug(
             f"  [depth={depth}] 🔍 Checking relation config for '{permission}': {rel_config}"
         )
         if not rel_config:
             # Permission not defined in namespace - check for direct relation
-            logger.info(
+            logger.debug(
                 f"  [depth={depth}] ⚠️ No relation config for '{permission}', checking direct relation"
             )
             return self._has_direct_relation(subject, permission, obj, context, tenant_id)
@@ -1862,29 +1935,29 @@ class ReBACManager:
         # Handle union (OR of multiple relations)
         if namespace.has_union(permission):
             union_relations = namespace.get_union_relations(permission)
-            logger.info(
+            logger.debug(
                 f"  [depth={depth}] 🔗 Relation '{permission}' is UNION of: {union_relations}"
             )
-            logger.info(
+            logger.debug(
                 f"  [depth={depth}] 📋 Relation config for '{permission}': {namespace.get_relation_config(permission)}"
             )
             for i, rel in enumerate(union_relations):
-                logger.info(
+                logger.debug(
                     f"  [depth={depth}] 🔍 [{i + 1}/{len(union_relations)}] Checking union relation '{rel}'..."
                 )
                 result = self._compute_permission(
                     subject, rel, obj, visited.copy(), depth + 1, context, tenant_id
                 )
                 if result:
-                    logger.info(
+                    logger.debug(
                         f"  [depth={depth}] ✅ [{i + 1}/{len(union_relations)}] GRANTED via union relation '{rel}'"
                     )
                     return True
                 else:
-                    logger.info(
+                    logger.debug(
                         f"  [depth={depth}] ❌ [{i + 1}/{len(union_relations)}] DENIED for union relation '{rel}'"
                     )
-            logger.info(f"  [depth={depth}] 🚫 ALL union relations DENIED")
+            logger.debug(f"  [depth={depth}] 🚫 ALL union relations DENIED")
             return False
 
         # Handle intersection (AND of multiple relations)
@@ -1911,20 +1984,20 @@ class ReBACManager:
         # Handle tupleToUserset (indirect relation via another object)
         if namespace.has_tuple_to_userset(permission):
             ttu = namespace.get_tuple_to_userset(permission)
-            logger.info(f"  [depth={depth}] 🔄 tupleToUserset for '{permission}': {ttu}")
+            logger.debug(f"  [depth={depth}] 🔄 tupleToUserset for '{permission}': {ttu}")
             if ttu:
                 tupleset_relation = ttu["tupleset"]
                 computed_userset = ttu["computedUserset"]
 
                 # Find all objects related via tupleset
                 related_objects = self._find_related_objects(obj, tupleset_relation)
-                logger.info(
+                logger.debug(
                     f"  [depth={depth}] 🔍 Found {len(related_objects)} related objects via tupleset '{tupleset_relation}': {[(o.entity_type, o.entity_id) for o in related_objects]}"
                 )
 
                 # Check if subject has computed_userset on any related object
                 for i, related_obj in enumerate(related_objects):
-                    logger.info(
+                    logger.debug(
                         f"  [depth={depth}] 🔍 [{i + 1}/{len(related_objects)}] Checking if {subject} has '{computed_userset}' on {related_obj}..."
                     )
                     if self._compute_permission(
@@ -1936,14 +2009,14 @@ class ReBACManager:
                         context,
                         tenant_id,
                     ):
-                        logger.info(
+                        logger.debug(
                             f"  [depth={depth}] ✅ GRANTED via tupleToUserset through {related_obj}"
                         )
                         return True
                     else:
-                        logger.info(f"  [depth={depth}] ❌ DENIED for {related_obj}")
+                        logger.debug(f"  [depth={depth}] ❌ DENIED for {related_obj}")
 
-                logger.info(
+                logger.debug(
                     f"  [depth={depth}] 🚫 tupleToUserset: No related objects granted permission"
                 )
 
@@ -1979,15 +2052,15 @@ class ReBACManager:
         Returns:
             True if direct relation exists and conditions are satisfied
         """
-        logger.info(
+        logger.debug(
             f"    💾 Checking DATABASE for direct tuple: subject={subject}, relation={relation}, object={obj}, tenant_id={tenant_id}"
         )
         result = self._find_direct_relation_tuple(subject, relation, obj, context, tenant_id)
         if result is not None:
-            logger.info(f"    ✅ FOUND tuple: {result.get('tuple_id', 'unknown')}")
+            logger.debug(f"    ✅ FOUND tuple: {result.get('tuple_id', 'unknown')}")
             return True
         else:
-            logger.info("    ❌ NO tuple found in database")
+            logger.debug("    ❌ NO tuple found in database")
             return False
 
     def _find_direct_relation_tuple(
@@ -2284,7 +2357,7 @@ class ReBACManager:
         Returns:
             List of related object entities (the objects from matching tuples)
         """
-        logger.info(
+        logger.debug(
             f"      🔎 _find_related_objects: Looking for tuples where subject={obj}, relation='{relation}'"
         )
 
@@ -2315,12 +2388,12 @@ class ReBACManager:
             for row in cursor.fetchall():
                 entity = Entity(row["object_type"], row["object_id"])
                 results.append(entity)
-                logger.info(f"      ✅ Found related object: {entity}")
+                logger.debug(f"      ✅ Found related object: {entity}")
 
             if not results:
-                logger.info(f"      ❌ No related objects found for ({obj}, '{relation}', ?)")
+                logger.debug(f"      ❌ No related objects found for ({obj}, '{relation}', ?)")
             else:
-                logger.info(f"      📊 Total related objects found: {len(results)}")
+                logger.debug(f"      📊 Total related objects found: {len(results)}")
 
             return results
 
@@ -3034,7 +3107,7 @@ class ReBACManager:
             #    Example: "group:project1-editors#member direct_editor file:/workspace" means any member
             #    of project1-editors now has access, so invalidate everything to be safe.
             if subject_relation is not None:
-                logger.info(
+                logger.debug(
                     f"Userset-as-subject detected ({subject}#{subject_relation}), clearing ALL cache for safety"
                 )
 
@@ -3085,7 +3158,7 @@ class ReBACManager:
             )
 
             conn.commit()
-            logger.info(
+            logger.debug(
                 f"Invalidated all cached checks for namespace '{object_type}' "
                 f"due to config update (deleted {cursor.rowcount} cache entries)"
             )

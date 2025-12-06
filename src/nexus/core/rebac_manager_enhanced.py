@@ -112,7 +112,7 @@ class GraphLimits:
 
     MAX_DEPTH = 50  # Max recursion depth (increased for deep directory hierarchies)
     MAX_FAN_OUT = 1000  # Max edges per union/expand
-    MAX_EXECUTION_TIME_MS = 1000  # Hard timeout (1000ms = 1 second, increased for deep hierarchies with parent traversal)
+    MAX_EXECUTION_TIME_MS = 1000  # 1 second timeout for permission computation
     MAX_VISITED_NODES = 10000  # Memory bound
     MAX_TUPLE_QUERIES = 100  # DB query limit
 
@@ -223,7 +223,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.info(
+        logger.debug(
             f"EnhancedReBACManager.rebac_check called: enforce_tenant_isolation={self.enforce_tenant_isolation}, MAX_DEPTH={GraphLimits.MAX_DEPTH}"
         )
 
@@ -231,14 +231,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if not self.enforce_tenant_isolation:
             from nexus.core.rebac_manager import ReBACManager
 
-            logger.info(f"  -> Falling back to base ReBACManager, base max_depth={self.max_depth}")
+            logger.debug(f"  -> Falling back to base ReBACManager, base max_depth={self.max_depth}")
             return ReBACManager.rebac_check(self, subject, permission, object, context, tenant_id)
 
-        logger.info("  -> Using rebac_check_detailed")
+        logger.debug("  -> Using rebac_check_detailed")
         result = self.rebac_check_detailed(
             subject, permission, object, context, tenant_id, consistency
         )
-        logger.info(
+        logger.debug(
             f"  -> rebac_check_detailed result: allowed={result.allowed}, indeterminate={result.indeterminate}"
         )
         return result.allowed
@@ -395,7 +395,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 subject_entity, permission, object_entity, tenant_id
             )
             if cached is not None:
-                logger.info(f"  -> CACHE HIT: returning cached result={cached}")
+                logger.debug(f"  -> CACHE HIT: returning cached result={cached}")
                 decision_time_ms = (time.perf_counter() - start_time) * 1000
                 return CheckResult(
                     allowed=cached,
@@ -405,7 +405,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     cache_age_ms=None,  # Could be up to cache_ttl_seconds old
                     traversal_stats=None,
                 )
-            logger.info("  -> CACHE MISS: computing fresh result")
+            logger.debug("  -> CACHE MISS: computing fresh result")
 
             # Cache miss - compute fresh
             stats = TraversalStats()
@@ -447,6 +447,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
     ) -> bool:
         """Compute permission with graph limits enforced (P0-5).
 
+        This method first tries to use Rust acceleration (which has proper memoization
+        to prevent exponential recursion). If Rust is unavailable or fails, it falls
+        back to the Python implementation.
+
         Args:
             subject: Subject entity
             permission: Permission to check
@@ -458,8 +462,44 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         Raises:
             GraphLimitExceeded: If any limit is exceeded during traversal
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
         start_time = time.perf_counter()
 
+        # Try Rust acceleration first (has proper memoization, prevents timeout)
+        try:
+            from nexus.core.rebac_fast import check_permission_single_rust, is_rust_available
+
+            if is_rust_available():
+                # Fetch tuples and namespace configs for Rust
+                tuples = self._fetch_tuples_for_rust(tenant_id)
+                namespace_configs = self._get_namespace_configs_for_rust()
+
+                result = check_permission_single_rust(
+                    subject_type=subject.entity_type,
+                    subject_id=subject.entity_id,
+                    permission=permission,
+                    object_type=obj.entity_type,
+                    object_id=obj.entity_id,
+                    tuples=tuples,
+                    namespace_configs=namespace_configs,
+                )
+
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                stats.duration_ms = elapsed_ms
+                logger.debug(
+                    f"[RUST-SINGLE] Permission check completed in {elapsed_ms:.2f}ms: "
+                    f"{subject.entity_type}:{subject.entity_id} {permission} "
+                    f"{obj.entity_type}:{obj.entity_id} = {result}"
+                )
+                return result
+
+        except Exception as e:
+            logger.warning(f"Rust single permission check failed, falling back to Python: {e}")
+            # Fall through to Python implementation
+
+        # Fallback to Python implementation
         result = self._compute_permission_tenant_aware_with_limits(
             subject=subject,
             permission=permission,
@@ -473,6 +513,63 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         )
 
         return result
+
+    def _fetch_tuples_for_rust(self, tenant_id: str) -> list[dict[str, Any]]:
+        """Fetch ReBAC tuples for Rust permission computation.
+
+        Args:
+            tenant_id: Tenant ID to scope tuples
+
+        Returns:
+            List of tuple dictionaries for Rust
+        """
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            # Fetch all tuples for this tenant (Rust will do the graph traversal)
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    SELECT subject_type, subject_id, subject_relation, relation,
+                           object_type, object_id
+                    FROM rebac_tuples
+                    WHERE tenant_id = ?
+                    """
+                ),
+                (tenant_id,),
+            )
+
+            tuples = []
+            for row in cursor.fetchall():
+                tuples.append(
+                    {
+                        "subject_type": row["subject_type"],
+                        "subject_id": row["subject_id"],
+                        "subject_relation": row["subject_relation"],
+                        "relation": row["relation"],
+                        "object_type": row["object_type"],
+                        "object_id": row["object_id"],
+                    }
+                )
+
+            return tuples
+
+    def _get_namespace_configs_for_rust(self) -> dict[str, Any]:
+        """Get namespace configurations for Rust permission computation.
+
+        Returns:
+            Dict mapping object_type -> namespace config
+        """
+        # Get the standard object types that we need namespace configs for
+        # These are the common object types used in permission checks
+        object_types = ["file", "tenant", "user", "group", "agent", "memory"]
+
+        configs = {}
+        for obj_type in object_types:
+            namespace = self.get_namespace(obj_type)
+            if namespace:
+                configs[obj_type] = namespace.config
+        return configs
 
     def _compute_permission_tenant_aware_with_limits(
         self,
@@ -493,7 +590,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         logger = logging.getLogger(__name__)
         indent = "  " * depth
-        logger.info(
+        logger.debug(
             f"{indent}→ [ENTER depth={depth}] CHECK: {subject.entity_type}:{subject.entity_id} has '{permission}' on {obj.entity_type}:{obj.entity_id}?"
         )
 
@@ -545,13 +642,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if namespace.has_permission(permission):
             usersets = namespace.get_permission_usersets(permission)
             if usersets:
-                logger.info(
+                logger.debug(
                     f"{indent}[depth={depth}] Permission '{permission}' maps to relations: {usersets} for {obj}"
                 )
                 # Permission is defined as a mapping to relations (e.g., write -> [editor, owner])
                 # Check if subject has ANY of the relations that grant this permission
                 for relation in usersets:
-                    logger.info(
+                    logger.debug(
                         f"{indent}[depth={depth}]   Checking if {subject} has relation '{relation}'"
                     )
                     result = self._compute_permission_tenant_aware_with_limits(
@@ -565,11 +662,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         stats,
                         context,
                     )
-                    logger.info(f"{indent}[depth={depth}]   → Result for '{relation}': {result}")
+                    logger.debug(f"{indent}[depth={depth}]   → Result for '{relation}': {result}")
                     if result:
-                        logger.info(f"{indent}[depth={depth}] ✅ GRANTED (via '{relation}')")
+                        logger.debug(f"{indent}[depth={depth}] ✅ GRANTED (via '{relation}')")
                         return True
-                logger.info(f"{indent}[depth={depth}] ❌ DENIED (no relations granted access)")
+                logger.debug(f"{indent}[depth={depth}] ❌ DENIED (no relations granted access)")
                 return False
 
         # If permission is not mapped, try as a direct relation
@@ -590,7 +687,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         # Handle union (OR of multiple relations)
         if namespace.has_union(permission):
             union_relations = namespace.get_union_relations(permission)
-            logger.info(
+            logger.debug(
                 f"{indent}[depth={depth}] Relation '{permission}' is union of: {union_relations}"
             )
 
@@ -599,7 +696,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 raise GraphLimitExceeded("fan_out", GraphLimits.MAX_FAN_OUT, len(union_relations))
 
             for i, rel in enumerate(union_relations):
-                logger.info(
+                logger.debug(
                     f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] Checking union member '{rel}'..."
                 )
                 try:
@@ -614,11 +711,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         stats,
                         context,
                     )
-                    logger.info(
+                    logger.debug(
                         f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] Result for '{rel}': {result}"
                     )
                     if result:
-                        logger.info(f"{indent}[depth={depth}] ✅ GRANTED via union member '{rel}'")
+                        logger.debug(f"{indent}[depth={depth}] ✅ GRANTED via union member '{rel}'")
                         return True
                 except GraphLimitExceeded as e:
                     logger.error(
@@ -632,7 +729,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     )
                     # Re-raise to maintain error handling semantics
                     raise
-            logger.info(f"{indent}[depth={depth}] ❌ DENIED - no union members granted access")
+            logger.debug(f"{indent}[depth={depth}] ❌ DENIED - no union members granted access")
             return False
 
         # Handle tupleToUserset (indirect relation via another object)
@@ -641,7 +738,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             if ttu:
                 tupleset_relation = ttu["tupleset"]
                 computed_userset = ttu["computedUserset"]
-                logger.info(
+                logger.debug(
                     f"{indent}[depth={depth}] Relation '{permission}' uses tupleToUserset: find via '{tupleset_relation}', check '{computed_userset}' on them"
                 )
 
@@ -655,7 +752,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 related_objects = self._find_related_objects_tenant_aware(
                     obj, tupleset_relation, tenant_id
                 )
-                logger.info(
+                logger.debug(
                     f"{indent}[depth={depth}]   Found {len(related_objects)} related objects: {[f'{o.entity_type}:{o.entity_id}' for o in related_objects]}"
                 )
 
@@ -690,14 +787,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             return False
 
         # Direct relation check
-        logger.info(f"{indent}[depth={depth}] Checking direct relation (fallback)")
+        logger.debug(f"{indent}[depth={depth}] Checking direct relation (fallback)")
         stats.queries += 1
         if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
             raise GraphLimitExceeded("queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries)
         result = self._has_direct_relation_tenant_aware(
             subject, permission, obj, tenant_id, context
         )
-        logger.info(f"{indent}← [EXIT depth={depth}] Direct relation result: {result}")
+        logger.debug(f"{indent}← [EXIT depth={depth}] Direct relation result: {result}")
         return result
 
     def _find_related_objects_tenant_aware(
@@ -750,7 +847,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             for row in cursor.fetchall():
                 results.append(Entity(row["object_type"], row["object_id"]))
 
-            logger.info(
+            logger.debug(
                 f"_find_related_objects_tenant_aware: Found {len(results)} objects for {obj} via '{relation}': {[str(r) for r in results]}"
             )
             return results
@@ -1064,22 +1161,24 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.info(f"rebac_check_bulk: Checking {len(checks)} permissions in batch")
+        import time as time_module
+
+        bulk_start = time_module.perf_counter()
+        logger.debug(f"rebac_check_bulk: Checking {len(checks)} permissions in batch")
+
+        # Log sample of checks for debugging
+        if checks and len(checks) <= 10:
+            logger.debug(f"[BULK-DEBUG] All checks: {checks}")
+        elif checks:
+            logger.debug(f"[BULK-DEBUG] First 5 checks: {checks[:5]}")
+            logger.debug(f"[BULK-DEBUG] Last 5 checks: {checks[-5:]}")
 
         if not checks:
             return {}
 
-        # If tenant isolation is disabled, fall back to individual checks
-        # (bulk optimization requires tenant-aware queries)
-        if not self.enforce_tenant_isolation:
-            logger.warning(
-                "rebac_check_bulk called with tenant isolation disabled, falling back to individual checks"
-            )
-            results = {}
-            for check in checks:
-                subject, permission, obj = check
-                results[check] = self.rebac_check(subject, permission, obj, tenant_id=tenant_id)
-            return results
+        # Note: When tenant isolation is disabled, we still use bulk processing
+        # but skip the tenant_id filter in the SQL query. This provides the same
+        # 50-100x speedup as the tenant-isolated case. (Issue #580)
 
         # Validate tenant_id (same logic as rebac_check)
         if not tenant_id:
@@ -1094,44 +1193,59 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 logger.warning("rebac_check_bulk called without tenant_id, defaulting to 'default'")
                 tenant_id = "default"
 
-        # STRATEGY: For EVENTUAL consistency, check cache first for all checks
-        # For any cache misses, fetch all relevant tuples in bulk and compute
+        # STRATEGY: Check L1 in-memory cache first (fast), then L2 DB cache, then compute
         results = {}
         cache_misses = []
 
-        # OPTIMIZATION: Skip cache check for bulk operations (adds 323ms overhead)
-        # For large batches (>100), cache checking is slower than just computing with Rust
-        # TODO: Implement batch cache lookup for better performance
-        if len(checks) > 100:
-            logger.info(
-                f"[CACHE-OPT] Skipping cache check for {len(checks)} items (would add ~{len(checks) * 0.5:.0f}ms)"
-            )
-            cache_misses = checks
-        elif consistency == ConsistencyLevel.EVENTUAL:
-            # Try to get results from cache first (only for small batches)
+        # PHASE 0: Check L1 in-memory cache first (very fast, <1ms for all checks)
+        l1_start = time_module.perf_counter()
+        l1_hits = 0
+        l1_cache_enabled = self._l1_cache is not None
+        logger.debug(
+            f"[BULK-DEBUG] L1 cache enabled: {l1_cache_enabled}, consistency: {consistency}"
+        )
+
+        if (
+            l1_cache_enabled
+            and self._l1_cache is not None
+            and consistency == ConsistencyLevel.EVENTUAL
+        ):
+            l1_cache_stats = self._l1_cache.get_stats()
+            logger.debug(f"[BULK-DEBUG] L1 cache stats before lookup: {l1_cache_stats}")
+
             for check in checks:
                 subject, permission, obj = check
-                subject_entity = Entity(subject[0], subject[1])
-                obj_entity = Entity(obj[0], obj[1])
-
-                cached = self._get_cached_check_tenant_aware(
-                    subject_entity, permission, obj_entity, tenant_id
+                cached = self._l1_cache.get(
+                    subject[0], subject[1], permission, obj[0], obj[1], tenant_id
                 )
                 if cached is not None:
                     results[check] = cached
-                    logger.debug(f"Cache HIT for {check}")
+                    l1_hits += 1
                 else:
                     cache_misses.append(check)
-                    logger.debug(f"Cache MISS for {check}")
+
+            l1_elapsed = (time_module.perf_counter() - l1_start) * 1000
+            logger.debug(
+                f"[BULK-PERF] L1 cache lookup: {l1_hits} hits, {len(cache_misses)} misses in {l1_elapsed:.1f}ms"
+            )
+
+            if not cache_misses:
+                total_elapsed = (time_module.perf_counter() - bulk_start) * 1000
+                logger.debug(
+                    f"[BULK-PERF] ✅ All {len(checks)} checks satisfied from L1 cache in {total_elapsed:.1f}ms"
+                )
+                return results
         else:
-            # For BOUNDED/STRONG consistency, skip cache
-            cache_misses = checks
+            cache_misses = list(checks)
+            logger.debug(
+                f"[BULK-DEBUG] Skipping L1 cache (enabled={l1_cache_enabled}, consistency={consistency})"
+            )
 
         if not cache_misses:
-            logger.info("All checks satisfied from cache")
+            logger.debug("All checks satisfied from cache")
             return results
 
-        logger.info(f"Cache misses: {len(cache_misses)}, fetching tuples in bulk")
+        logger.debug(f"Cache misses: {len(cache_misses)}, fetching tuples in bulk")
 
         # PHASE 1: Fetch all relevant tuples in bulk
         # Extract all unique subjects and objects from cache misses
@@ -1215,18 +1329,31 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 f"(object_type, object_id) IN ({placeholders_objects})",
             ]
 
-            query = self._fix_sql_placeholders(
-                f"""
-                SELECT subject_type, subject_id, subject_relation, relation,
-                       object_type, object_id, conditions, expires_at
-                FROM rebac_tuples
-                WHERE tenant_id = ?
-                  AND (expires_at IS NULL OR expires_at >= ?)
-                  AND ({" OR ".join(where_clauses)})
-                """
-            )
-
-            params = [tenant_id, datetime.now(UTC).isoformat()] + subject_params + object_params
+            # When tenant isolation is disabled, skip the tenant_id filter (Issue #580)
+            if self.enforce_tenant_isolation:
+                query = self._fix_sql_placeholders(
+                    f"""
+                    SELECT subject_type, subject_id, subject_relation, relation,
+                           object_type, object_id, conditions, expires_at
+                    FROM rebac_tuples
+                    WHERE tenant_id = ?
+                      AND (expires_at IS NULL OR expires_at >= ?)
+                      AND ({" OR ".join(where_clauses)})
+                    """
+                )
+                params = [tenant_id, datetime.now(UTC).isoformat()] + subject_params + object_params
+            else:
+                # No tenant_id filter when tenant isolation is disabled
+                query = self._fix_sql_placeholders(
+                    f"""
+                    SELECT subject_type, subject_id, subject_relation, relation,
+                           object_type, object_id, conditions, expires_at
+                    FROM rebac_tuples
+                    WHERE (expires_at IS NULL OR expires_at >= ?)
+                      AND ({" OR ".join(where_clauses)})
+                    """
+                )
+                params = [datetime.now(UTC).isoformat()] + subject_params + object_params
             cursor.execute(query, params)
 
             # Build in-memory graph of all tuples
@@ -1245,7 +1372,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     }
                 )
 
-            logger.info(
+            logger.debug(
                 f"Fetched {len(tuples_graph)} tuples in bulk for graph computation (includes parent hierarchy)"
             )
 
@@ -1266,7 +1393,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             "max_depth": 0,
         }  # Track cache hits/misses and max depth
 
-        logger.info(
+        logger.debug(
             f"Starting computation for {len(cache_misses)} cache misses with shared memo cache"
         )
 
@@ -1279,10 +1406,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             namespace = self.get_namespace(obj_type)
             if namespace and namespace.has_permission(permission):
                 usersets = namespace.get_permission_usersets(permission)
-                logger.info(
+                logger.debug(
                     f"[SCHEMA-VERIFY] Permission '{permission}' on '{obj_type}' expands to {len(usersets)} relations: {usersets}"
                 )
-                logger.info(
+                logger.debug(
                     "[SCHEMA-VERIFY] Expected: 3 for hybrid schema (viewer, editor, owner) or 9 for flattened"
                 )
 
@@ -1292,7 +1419,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         rust_success = False
         if is_rust_available() and len(cache_misses) >= 10:
             try:
-                logger.info(f"⚡ Attempting Rust acceleration for {len(cache_misses)} checks")
+                logger.debug(f"⚡ Attempting Rust acceleration for {len(cache_misses)} checks")
 
                 # Get all namespace configs
                 object_types = {obj[0] for _, _, obj in cache_misses}
@@ -1307,7 +1434,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 if namespace_configs:
                     sample_type = list(namespace_configs.keys())[0]
                     sample_config = namespace_configs[sample_type]
-                    logger.info(
+                    logger.debug(
                         f"[RUST-DEBUG] Sample namespace config for '{sample_type}': {str(sample_config)[:200]}"
                     )
 
@@ -1320,26 +1447,32 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 )
                 rust_elapsed = time.perf_counter() - rust_start
                 per_check_us = (rust_elapsed / len(cache_misses)) * 1_000_000
-                logger.info(
+                logger.debug(
                     f"[RUST-TIMING] {len(cache_misses)} checks in {rust_elapsed * 1000:.1f}ms = {per_check_us:.1f}µs/check"
                 )
 
-                # Convert results (skip caching in loop for speed)
+                # Convert results and cache in L1 (in-memory cache is fast)
+                l1_cache_writes = 0
                 for check in cache_misses:
                     subject, permission, obj = check
                     key = (subject[0], subject[1], permission, obj[0], obj[1])
                     result = rust_results_dict.get(key, False)
                     results[check] = result
 
-                # Cache results in batch after loop (avoid 679 individual cache writes)
-                # TODO: Implement batch cache write for better performance
-                # For now, skip caching to avoid the 425ms overhead
-                logger.info(
-                    f"[RUST-PERF] Skipping individual cache writes (would add ~{len(cache_misses) * 0.6:.0f}ms overhead)"
-                )
+                    # Write to L1 in-memory cache (fast, ~0.01ms per write)
+                    if self._l1_cache is not None:
+                        self._l1_cache.set(
+                            subject[0], subject[1], permission, obj[0], obj[1], result, tenant_id
+                        )
+                        l1_cache_writes += 1
+
+                if l1_cache_writes > 0:
+                    logger.debug(
+                        f"[RUST-PERF] Wrote {l1_cache_writes} results to L1 in-memory cache"
+                    )
 
                 rust_success = True
-                logger.info(f"✅ Rust acceleration successful for {len(cache_misses)} checks")
+                logger.debug(f"✅ Rust acceleration successful for {len(cache_misses)} checks")
 
             except Exception as e:
                 logger.warning(f"Rust acceleration failed: {e}, falling back to Python")
@@ -1347,7 +1480,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         # FALLBACK TO PYTHON if Rust not available or failed
         if not rust_success:
-            logger.info(f"🐍 Using Python for {len(cache_misses)} checks")
+            logger.debug(f"🐍 Using Python for {len(cache_misses)} checks")
             for check in cache_misses:
                 subject, permission, obj = check
                 subject_entity = Entity(subject[0], subject[1])
@@ -1385,14 +1518,27 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         total_accesses = memo_stats["hits"] + memo_stats["misses"]
         hit_rate = (memo_stats["hits"] / total_accesses * 100) if total_accesses > 0 else 0
 
-        logger.info(f"Bulk memo cache stats: {len(bulk_memo_cache)} unique checks stored")
-        logger.info(
+        logger.debug(f"Bulk memo cache stats: {len(bulk_memo_cache)} unique checks stored")
+        logger.debug(
             f"Cache performance: {memo_stats['hits']} hits + {memo_stats['misses']} misses = {total_accesses} total accesses"
         )
-        logger.info(f"Cache hit rate: {hit_rate:.1f}% ({memo_stats['hits']}/{total_accesses})")
-        logger.info(f"Max traversal depth reached: {memo_stats.get('max_depth', 0)}")
+        logger.debug(f"Cache hit rate: {hit_rate:.1f}% ({memo_stats['hits']}/{total_accesses})")
+        logger.debug(f"Max traversal depth reached: {memo_stats.get('max_depth', 0)}")
 
-        logger.info(f"rebac_check_bulk completed: {len(results)} results")
+        # Summary timing
+        total_elapsed = (time_module.perf_counter() - bulk_start) * 1000
+        allowed_count = sum(1 for r in results.values() if r)
+        denied_count = len(results) - allowed_count
+        logger.debug(
+            f"[BULK-PERF] rebac_check_bulk completed: {len(results)} results "
+            f"({allowed_count} allowed, {denied_count} denied) in {total_elapsed:.1f}ms"
+        )
+
+        # Log L1 cache stats after writes
+        if self._l1_cache is not None:
+            l1_stats_after = self._l1_cache.get_stats()
+            logger.debug(f"[BULK-DEBUG] L1 cache stats after: {l1_stats_after}")
+
         return results
 
     def _compute_permission_bulk_helper(
@@ -1449,7 +1595,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 memo_stats["hits"] += 1
                 # Log every 100th hit to show progress without flooding
                 if memo_stats["hits"] % 100 == 0:
-                    logger.info(
+                    logger.debug(
                         f"[MEMO HIT #{memo_stats['hits']}] {subject.entity_type}:{subject.entity_id} {permission} on {obj.entity_type}:{obj.entity_id}"
                     )
             return bulk_memo_cache[memo_key]

@@ -31,14 +31,15 @@ Authentication:
     - Automatic refresh when expired
 """
 
-import hashlib
 import io
 import logging
 import mimetypes
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
@@ -84,6 +85,12 @@ EXPORT_FORMATS = {
 }
 
 
+@register_connector(
+    "gdrive_connector",
+    description="Google Drive with OAuth 2.0 authentication",
+    category="oauth",
+    requires=["google-api-python-client", "google-auth-oauthlib"],
+)
 class GoogleDriveConnectorBackend(Backend):
     """
     Google Drive connector backend with OAuth 2.0 authentication.
@@ -104,6 +111,44 @@ class GoogleDriveConnectorBackend(Backend):
     - Requires OAuth tokens for each user
     - Rate limited by Google Drive API quotas
     """
+
+    user_scoped = True
+
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "token_manager_db": ConnectionArg(
+            type=ArgType.PATH,
+            description="Path to TokenManager database or database URL",
+            required=True,
+        ),
+        "user_email": ConnectionArg(
+            type=ArgType.STRING,
+            description="User email for OAuth lookup (None for multi-user from context)",
+            required=False,
+        ),
+        "root_folder": ConnectionArg(
+            type=ArgType.STRING,
+            description="Root folder name in Google Drive",
+            required=False,
+            default="nexus-data",
+        ),
+        "use_shared_drives": ConnectionArg(
+            type=ArgType.BOOLEAN,
+            description="Whether to use shared drives",
+            required=False,
+            default=False,
+        ),
+        "shared_drive_id": ConnectionArg(
+            type=ArgType.STRING,
+            description="Shared drive ID (if use_shared_drives=True)",
+            required=False,
+        ),
+        "provider": ConnectionArg(
+            type=ArgType.STRING,
+            description="OAuth provider name from config",
+            required=False,
+            default="google-drive",
+        ),
+    }
 
     def __init__(
         self,
@@ -196,11 +241,6 @@ class GoogleDriveConnectorBackend(Backend):
     def name(self) -> str:
         """Backend identifier name."""
         return "gdrive"
-
-    @property
-    def user_scoped(self) -> bool:
-        """This backend requires per-user OAuth credentials."""
-        return True
 
     def _get_drive_service(self, context: "OperationContext | None" = None) -> "Resource":
         """Get Google Drive service with user's OAuth credentials.
@@ -493,8 +533,8 @@ class GoogleDriveConnectorBackend(Backend):
                 backend="gdrive",
             )
 
-        # Calculate content hash
-        content_hash = hashlib.sha256(content).hexdigest()
+        # Calculate content hash (BLAKE3, Rust-accelerated)
+        content_hash = hash_content(content)
 
         service = self._get_drive_service(context)
 

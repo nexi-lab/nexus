@@ -50,6 +50,7 @@ class SandboxManager:
         e2b_api_key: str | None = None,
         e2b_team_id: str | None = None,
         e2b_template_id: str | None = None,
+        config: Any = None,  # NexusConfig | None
     ):
         """Initialize sandbox manager.
 
@@ -58,6 +59,7 @@ class SandboxManager:
             e2b_api_key: E2B API key
             e2b_team_id: E2B team ID
             e2b_template_id: Default E2B template ID
+            config: Nexus configuration (for Docker templates)
         """
         self.db = db_session
 
@@ -73,7 +75,8 @@ class SandboxManager:
         # Initialize Docker provider if available (no API key needed)
         if DOCKER_PROVIDER_AVAILABLE:
             try:
-                self.providers["docker"] = DockerSandboxProvider()
+                docker_config = config.docker if config else None
+                self.providers["docker"] = DockerSandboxProvider(docker_config=docker_config)
                 logger.info("Docker provider initialized successfully")
             except Exception as e:
                 logger.warning(f"Failed to initialize Docker provider: {e}")

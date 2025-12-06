@@ -183,8 +183,9 @@ class VectorDatabase:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             conn.commit()
             vec_available = True
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, Exception):
             # pgvector not available - will only support keyword search
+            # Catches psycopg2.errors.FeatureNotSupported and other database errors
             import warnings
 
             warnings.warn(
@@ -194,6 +195,8 @@ class VectorDatabase:
                 "https://github.com/pgvector/pgvector",
                 stacklevel=2,
             )
+            # Rollback the failed transaction so subsequent commands can execute
+            conn.rollback()
 
         self.vec_available = vec_available
 
@@ -221,19 +224,21 @@ class VectorDatabase:
             # Index might already exist
             pass
 
-        # Create HNSW index for vector search (better than IVFFlat for most cases)
-        try:
-            conn.execute(
-                text("""
-                CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw
-                ON document_chunks
-                USING hnsw (embedding vector_cosine_ops)
-            """)
-            )
-            conn.commit()
-        except OSError:
-            # Index might already exist
-            pass
+        # Create HNSW index for vector search (only if pgvector available)
+        if vec_available:
+            try:
+                conn.execute(
+                    text("""
+                    CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw
+                    ON document_chunks
+                    USING hnsw (embedding vector_cosine_ops)
+                """)
+                )
+                conn.commit()
+            except Exception:
+                # Index might already exist or other pgvector-related error
+                # Rollback transaction to avoid InFailedSqlTransaction errors
+                conn.rollback()
 
     def store_embedding(self, session: Session, chunk_id: str, embedding: list[float]) -> None:
         """Store embedding for a chunk.

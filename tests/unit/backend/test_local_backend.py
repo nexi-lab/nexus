@@ -1,11 +1,10 @@
 """Unit tests for local filesystem backend."""
 
-import hashlib
-
 import pytest
 
 from nexus.backends.local import LocalBackend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.hash_fast import hash_content
 
 
 @pytest.fixture
@@ -37,8 +36,8 @@ def test_write_and_read_content(temp_backend):
     content = b"Hello, World!"
     content_hash = temp_backend.write_content(content)
 
-    # Verify hash is correct
-    expected_hash = hashlib.sha256(content).hexdigest()
+    # Verify hash is correct (using BLAKE3)
+    expected_hash = hash_content(content)
     assert content_hash == expected_hash
 
     # Read content back
@@ -126,10 +125,10 @@ def test_hash_to_path_invalid_hash(temp_backend):
 
 
 def test_compute_hash(temp_backend):
-    """Test content hash computation."""
+    """Test content hash computation (using BLAKE3)."""
     content = b"Test content for hashing"
     computed_hash = temp_backend._compute_hash(content)
-    expected_hash = hashlib.sha256(content).hexdigest()
+    expected_hash = hash_content(content)
 
     assert computed_hash == expected_hash
 
@@ -139,8 +138,8 @@ def test_write_empty_content(temp_backend):
     content = b""
     content_hash = temp_backend.write_content(content)
 
-    # Verify hash is correct for empty content
-    expected_hash = hashlib.sha256(b"").hexdigest()
+    # Verify hash is correct for empty content (using BLAKE3)
+    expected_hash = hash_content(b"")
     assert content_hash == expected_hash
 
     # Read it back

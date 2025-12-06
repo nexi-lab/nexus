@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import builtins
 import contextlib
-import hashlib
 import json
 import threading
 from datetime import UTC, datetime, timedelta
@@ -16,6 +15,7 @@ from sqlalchemy import select
 
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
+from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
     from nexus.core.entity_registry import EntityRegistry
@@ -840,7 +840,7 @@ class NexusFS(
 
         # Create a marker for the directory in metadata
         # We use an empty content hash as a placeholder
-        empty_hash = hashlib.sha256(b"").hexdigest()
+        empty_hash = hash_content(b"")
 
         metadata = FileMetadata(
             path=path,

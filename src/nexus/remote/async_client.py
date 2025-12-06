@@ -1177,6 +1177,266 @@ class AsyncRemoteNexusFS:
         result = await self._call_rpc("delete_agent", {"agent_id": agent_id})
         return result  # type: ignore[no-any-return]
 
+    # =========================================================================
+    # Sandbox API (E2B cloud sandboxes)
+    # =========================================================================
+
+    async def sandbox_run(
+        self,
+        sandbox_id: str,
+        language: str,
+        code: str,
+        timeout: int = 300,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Run code in a sandbox (async).
+
+        Args:
+            sandbox_id: Sandbox ID
+            language: Programming language ("python", "javascript", "bash")
+            code: Code to execute
+            timeout: Execution timeout in seconds (default: 300)
+            context: Operation context
+
+        Returns:
+            Dict with stdout, stderr, exit_code, execution_time
+        """
+        params: dict[str, Any] = {
+            "sandbox_id": sandbox_id,
+            "language": language,
+            "code": code,
+            "timeout": timeout,
+        }
+        if context is not None:
+            params["context"] = context
+        # Use execution timeout + 10 seconds buffer for HTTP read timeout
+        read_timeout = timeout + 10
+        result = await self._call_rpc("sandbox_run", params, read_timeout=read_timeout)
+        return result  # type: ignore[no-any-return]
+
+    async def sandbox_pause(
+        self,
+        sandbox_id: str,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Pause sandbox to save costs (async).
+
+        Args:
+            sandbox_id: Sandbox ID
+            context: Operation context
+
+        Returns:
+            Updated sandbox metadata
+        """
+        params: dict[str, Any] = {"sandbox_id": sandbox_id}
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("sandbox_pause", params)
+        return result  # type: ignore[no-any-return]
+
+    async def sandbox_resume(
+        self,
+        sandbox_id: str,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Resume a paused sandbox (async).
+
+        Args:
+            sandbox_id: Sandbox ID
+            context: Operation context
+
+        Returns:
+            Updated sandbox metadata
+        """
+        params: dict[str, Any] = {"sandbox_id": sandbox_id}
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("sandbox_resume", params)
+        return result  # type: ignore[no-any-return]
+
+    async def sandbox_stop(
+        self,
+        sandbox_id: str,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Stop and destroy sandbox (async).
+
+        Args:
+            sandbox_id: Sandbox ID
+            context: Operation context
+
+        Returns:
+            Updated sandbox metadata
+        """
+        params: dict[str, Any] = {"sandbox_id": sandbox_id}
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("sandbox_stop", params)
+        return result  # type: ignore[no-any-return]
+
+    async def sandbox_list(
+        self,
+        context: dict[str, Any] | None = None,
+        verify_status: bool = False,
+        user_id: str | None = None,
+        tenant_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        """List user's sandboxes (async).
+
+        Args:
+            context: Operation context
+            verify_status: If True, verify status with provider
+            user_id: Filter by user_id (admin only)
+            tenant_id: Filter by tenant_id (admin only)
+            agent_id: Filter by agent_id
+
+        Returns:
+            Dict with list of sandboxes
+        """
+        params: dict[str, Any] = {"verify_status": verify_status}
+        if context is not None:
+            params["context"] = context
+        if user_id is not None:
+            params["user_id"] = user_id
+        if tenant_id is not None:
+            params["tenant_id"] = tenant_id
+        if agent_id is not None:
+            params["agent_id"] = agent_id
+        result = await self._call_rpc("sandbox_list", params)
+        return result  # type: ignore[no-any-return]
+
+    async def sandbox_status(
+        self,
+        sandbox_id: str,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Get sandbox status and metadata (async).
+
+        Args:
+            sandbox_id: Sandbox ID
+            context: Operation context
+
+        Returns:
+            Sandbox metadata dict
+        """
+        params: dict[str, Any] = {"sandbox_id": sandbox_id}
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("sandbox_status", params)
+        return result  # type: ignore[no-any-return]
+
+    async def sandbox_get_or_create(
+        self,
+        name: str,
+        ttl_minutes: int = 10,
+        provider: str | None = None,
+        template_id: str | None = None,
+        verify_status: bool = True,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Get existing sandbox or create new one (async).
+
+        Args:
+            name: Sandbox name (unique per user)
+            ttl_minutes: Idle timeout in minutes (default: 10)
+            provider: Sandbox provider
+            template_id: Provider-specific template ID
+            verify_status: If True, verify existing sandbox is active
+            context: Operation context
+
+        Returns:
+            Sandbox metadata dict
+        """
+        params: dict[str, Any] = {
+            "name": name,
+            "ttl_minutes": ttl_minutes,
+            "verify_status": verify_status,
+        }
+        if provider is not None:
+            params["provider"] = provider
+        if template_id is not None:
+            params["template_id"] = template_id
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("sandbox_get_or_create", params)
+        return result  # type: ignore[no-any-return]
+
+    async def sandbox_connect(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+        mount_path: str = "/mnt/nexus",
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Connect and mount Nexus to a sandbox (async).
+
+        Args:
+            sandbox_id: External sandbox ID
+            provider: Sandbox provider (default: "e2b")
+            sandbox_api_key: Provider API key (uses E2B_API_KEY env if None)
+            mount_path: Path to mount Nexus in sandbox
+            nexus_url: Nexus server URL (uses client's URL if None)
+            nexus_api_key: Nexus API key (uses client's key if None)
+            context: Operation context
+
+        Returns:
+            Connection result with mount status
+        """
+        params: dict[str, Any] = {
+            "sandbox_id": sandbox_id,
+            "provider": provider,
+            "mount_path": mount_path,
+        }
+        if sandbox_api_key is not None:
+            params["sandbox_api_key"] = sandbox_api_key
+
+        # Use client's URL/key if not provided
+        if nexus_url is None:
+            nexus_url = self.server_url
+        if nexus_api_key is None:
+            nexus_api_key = self.api_key
+
+        params["nexus_url"] = nexus_url
+        params["nexus_api_key"] = nexus_api_key
+
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("sandbox_connect", params)
+        return result  # type: ignore[no-any-return]
+
+    async def sandbox_disconnect(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Disconnect and unmount Nexus from a sandbox (async).
+
+        Args:
+            sandbox_id: External sandbox ID
+            provider: Sandbox provider (default: "e2b")
+            sandbox_api_key: Provider API key
+            context: Operation context
+
+        Returns:
+            Disconnection result
+        """
+        params: dict[str, Any] = {
+            "sandbox_id": sandbox_id,
+            "provider": provider,
+        }
+        if sandbox_api_key is not None:
+            params["sandbox_api_key"] = sandbox_api_key
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("sandbox_disconnect", params)
+        return result  # type: ignore[no-any-return]
+
 
 class AsyncRemoteMemory:
     """Async Remote Memory API client.

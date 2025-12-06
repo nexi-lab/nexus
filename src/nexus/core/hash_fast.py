@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 # Try to import Rust-accelerated BLAKE3
 _RUST_AVAILABLE = False
 _PYTHON_BLAKE3_AVAILABLE = False
-_python_blake3 = None
 
 try:
     from nexus._nexus_fast import hash_content as _rust_hash_content

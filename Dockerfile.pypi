@@ -6,7 +6,7 @@ ARG NEXUS_VERSION=latest
 ARG GIT_COMMIT=unknown
 ARG BUILD_DATE=unknown
 
-FROM python:3.11-slim as builder
+FROM python:3.13-slim as builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,7 +27,7 @@ RUN if [ "$NEXUS_VERSION" = "latest" ]; then \
     fi
 
 # Production image
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # Re-declare ARGs for this stage
 ARG NEXUS_VERSION=latest

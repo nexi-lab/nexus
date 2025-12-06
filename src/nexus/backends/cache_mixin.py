@@ -834,44 +834,77 @@ class CacheConnectorMixin:
 
         result.files_scanned = len(files)
 
+        # OPTIMIZATION: Build virtual paths and bulk load cache entries
+        virtual_paths: list[str] = []
+        backend_to_virtual: dict[str, str] = {}
+
+        for backend_path in files:
+            # Construct virtual path from mount_point + backend_path
+            if mount_point:
+                virtual_path = f"{mount_point.rstrip('/')}/{backend_path.lstrip('/')}"
+            else:
+                virtual_path = f"/{backend_path.lstrip('/')}"
+
+            # Check include/exclude patterns (match against virtual path)
+            if include_patterns and not any(
+                fnmatch.fnmatch(virtual_path, p) for p in include_patterns
+            ):
+                result.files_skipped += 1
+                continue
+
+            if exclude_patterns and any(fnmatch.fnmatch(virtual_path, p) for p in exclude_patterns):
+                result.files_skipped += 1
+                continue
+
+            virtual_paths.append(virtual_path)
+            backend_to_virtual[backend_path] = virtual_path
+
+        # OPTIMIZATION: Bulk load all cache entries in one query
+        logger.info(f"[CACHE-SYNC] Bulk loading cache for {len(virtual_paths)} paths...")
+        cached_entries = self._read_bulk_from_cache(virtual_paths, original=True)
+        logger.info(f"[CACHE-SYNC] Found {len(cached_entries)} cached entries")
+
+        # Process each file
         for backend_path in files:
             try:
-                # Construct virtual path from mount_point + backend_path
-                if mount_point:
-                    virtual_path = f"{mount_point.rstrip('/')}/{backend_path.lstrip('/')}"
-                else:
-                    virtual_path = f"/{backend_path.lstrip('/')}"
-
-                # Check include/exclude patterns (match against virtual path)
-                if include_patterns and not any(
-                    fnmatch.fnmatch(virtual_path, p) for p in include_patterns
-                ):
-                    result.files_skipped += 1
-                    continue
-
-                if exclude_patterns and any(
-                    fnmatch.fnmatch(virtual_path, p) for p in exclude_patterns
-                ):
-                    result.files_skipped += 1
+                # Get virtual path (may be None if filtered out by patterns)
+                vpath = backend_to_virtual.get(backend_path)
+                if vpath is None:
+                    # Was filtered out by patterns
                     continue
 
                 # Create context for reading with backend_path set
                 read_context = self._create_read_context(
                     backend_path=backend_path,
-                    virtual_path=virtual_path,
+                    virtual_path=vpath,
                     context=context,
                 )
 
-                # Check if cache already has fresh content (skip if up-to-date)
-                cached = self._read_from_cache(virtual_path)
+                # OPTIMIZATION: Get cached entry from bulk-loaded data
+                cached = cached_entries.get(vpath)
 
-                # Get current backend version
+                # OPTIMIZATION: Skip version check if cache is fresh and not stale
+                # Only check version if we need to verify freshness
                 version = None
-                if hasattr(self, "get_version"):
+                skip_version_check = cached and not cached.stale
+
+                if not skip_version_check and hasattr(self, "get_version"):
                     with contextlib.suppress(Exception):
                         version = self.get_version(backend_path, read_context)
 
-                # Read content from backend (needed for version check if no versioning)
+                # OPTIMIZATION: If cache is fresh and not stale, skip without reading content
+                # If we have version support and cached version, trust it without network call
+                if (
+                    cached
+                    and not cached.stale
+                    and hasattr(self, "get_version")
+                    and cached.backend_version
+                ):
+                    logger.info(f"[CACHE] SYNC SKIP (cached, no version check): {virtual_path}")
+                    result.files_skipped += 1
+                    continue
+
+                # Read content from backend (only if needed for verification)
                 content = self._read_content_from_backend(backend_path, read_context)
 
                 if content is None:

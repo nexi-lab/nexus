@@ -3,9 +3,14 @@
 use ahash::{AHashMap, AHashSet};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
+use rayon::prelude::*;
 use regex::bytes::RegexBuilder;
 use serde::Deserialize;
 use std::collections::HashMap as StdHashMap;
+
+/// Threshold for parallelization: only use rayon for lists larger than this
+const GLOB_PARALLEL_THRESHOLD: usize = 500;
+const PERMISSION_PARALLEL_THRESHOLD: usize = 50;
 
 /// Entity represents a subject or object in ReBAC
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -19,7 +24,10 @@ struct Entity {
 struct ReBACTuple {
     subject_type: String,
     subject_id: String,
-    #[allow(dead_code)]
+    /// When set, this is a userset-as-subject tuple:
+    /// "members of subject_type:subject_id have this relation on the object"
+    /// e.g., group:eng#member -> editor -> file:readme
+    /// means "members of group:eng have editor on file:readme"
     subject_relation: Option<String>,
     relation: String,
     object_type: String,
@@ -68,6 +76,18 @@ type TupleKey = (String, String, String, String, String);
 /// Key for adjacency list: (subject_type, subject_id, relation)
 type AdjacencyKey = (String, String, String);
 
+/// Key for userset index: (object_type, object_id, relation)
+type UsersetKey = (String, String, String);
+
+/// Userset entry: when subject_relation is set, the permission is granted through group membership
+/// e.g., (group, eng, member) means "members of group:eng"
+#[derive(Debug, Clone)]
+struct UsersetEntry {
+    subject_type: String,
+    subject_id: String,
+    subject_relation: String,
+}
+
 /// Graph indexing structure for fast lookups
 #[derive(Debug, Clone)]
 struct ReBACGraph {
@@ -79,6 +99,11 @@ struct ReBACGraph {
     /// Key: (subject_type, subject_id, relation)
     /// Value: List of objects related via that relation
     adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>>,
+
+    /// Userset index for group-based permissions: O(1) lookup
+    /// Key: (object_type, object_id, relation)
+    /// Value: List of usersets that grant this permission (e.g., group:eng#member)
+    userset_index: AHashMap<UsersetKey, Vec<UsersetEntry>>,
 }
 
 impl ReBACGraph {
@@ -86,17 +111,38 @@ impl ReBACGraph {
     fn from_tuples(tuples: &[ReBACTuple]) -> Self {
         let mut tuple_index = AHashMap::new();
         let mut adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
+        let mut userset_index: AHashMap<UsersetKey, Vec<UsersetEntry>> = AHashMap::new();
 
         for tuple in tuples {
-            // Build tuple index for direct relation checks
-            let tuple_key = (
-                tuple.object_type.clone(),
-                tuple.object_id.clone(),
-                tuple.relation.clone(),
-                tuple.subject_type.clone(),
-                tuple.subject_id.clone(),
-            );
-            tuple_index.insert(tuple_key, true);
+            // Check if this is a userset-as-subject tuple (has subject_relation)
+            if let Some(ref subject_relation) = tuple.subject_relation {
+                // This is a userset tuple: group:eng#member -> editor -> file:readme
+                // Index by (object_type, object_id, relation) for fast lookup
+                let userset_key = (
+                    tuple.object_type.clone(),
+                    tuple.object_id.clone(),
+                    tuple.relation.clone(),
+                );
+                userset_index
+                    .entry(userset_key)
+                    .or_default()
+                    .push(UsersetEntry {
+                        subject_type: tuple.subject_type.clone(),
+                        subject_id: tuple.subject_id.clone(),
+                        subject_relation: subject_relation.clone(),
+                    });
+            } else {
+                // Direct tuple: user:alice -> editor -> file:readme
+                // Build tuple index for direct relation checks
+                let tuple_key = (
+                    tuple.object_type.clone(),
+                    tuple.object_id.clone(),
+                    tuple.relation.clone(),
+                    tuple.subject_type.clone(),
+                    tuple.subject_id.clone(),
+                );
+                tuple_index.insert(tuple_key, true);
+            }
 
             // Build adjacency list for finding related objects
             // This is used for tupleToUserset traversal
@@ -114,6 +160,7 @@ impl ReBACGraph {
         ReBACGraph {
             tuple_index,
             adjacency_list,
+            userset_index,
         }
     }
 
@@ -140,6 +187,22 @@ impl ReBACGraph {
             .get(&adj_key)
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// Get usersets that grant a relation on an object in O(1) time
+    /// Returns list of (subject_type, subject_id, subject_relation) tuples
+    /// e.g., for file:readme#editor, might return [(group, eng, member)]
+    /// meaning "members of group:eng have editor on file:readme"
+    fn get_usersets(&self, object: &Entity, relation: &str) -> &[UsersetEntry] {
+        let userset_key = (
+            object.entity_type.clone(),
+            object.entity_id.clone(),
+            relation.to_string(),
+        );
+        self.userset_index
+            .get(&userset_key)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -205,41 +268,83 @@ fn compute_permissions_bulk<'py>(
     }
 
     // Release GIL for computation
+    // Use parallel iteration for large check lists, sequential for small lists
     let results = py.allow_threads(|| {
-        let mut results = AHashMap::new();
-        let mut memo_cache: MemoCache = AHashMap::new();
-
         // Build graph indexes once for all checks - massive speedup!
         let graph = ReBACGraph::from_tuples(&rebac_tuples);
 
-        for check in check_requests {
-            let (subject_type, subject_id, permission, object_type, object_id) = &check;
+        if check_requests.len() < PERMISSION_PARALLEL_THRESHOLD {
+            // Sequential for small batches (shared memoization cache)
+            let mut results = AHashMap::new();
+            let mut memo_cache: MemoCache = AHashMap::new();
 
-            let subject = Entity {
-                entity_type: subject_type.clone(),
-                entity_id: subject_id.clone(),
-            };
+            for check in check_requests {
+                let (subject_type, subject_id, permission, object_type, object_id) = &check;
 
-            let object = Entity {
-                entity_type: object_type.clone(),
-                entity_id: object_id.clone(),
-            };
+                let subject = Entity {
+                    entity_type: subject_type.clone(),
+                    entity_id: subject_id.clone(),
+                };
 
-            let allowed = compute_permission(
-                &subject,
-                permission,
-                &object,
-                &graph,
-                &namespaces,
-                &mut memo_cache,
-                &mut AHashSet::new(),
-                0,
-            );
+                let object = Entity {
+                    entity_type: object_type.clone(),
+                    entity_id: object_id.clone(),
+                };
 
-            results.insert(check.clone(), allowed);
+                let allowed = compute_permission(
+                    &subject,
+                    permission,
+                    &object,
+                    &graph,
+                    &namespaces,
+                    &mut memo_cache,
+                    &mut AHashSet::new(),
+                    0,
+                );
+
+                results.insert(check.clone(), allowed);
+            }
+
+            results
+        } else {
+            // Parallel for large batches (per-thread memoization caches)
+            // Collect into Vec first, then convert to AHashMap
+            let results_vec: Vec<_> = check_requests
+                .into_par_iter()
+                .map(|check| {
+                    let (subject_type, subject_id, permission, object_type, object_id) = &check;
+
+                    let subject = Entity {
+                        entity_type: subject_type.clone(),
+                        entity_id: subject_id.clone(),
+                    };
+
+                    let object = Entity {
+                        entity_type: object_type.clone(),
+                        entity_id: object_id.clone(),
+                    };
+
+                    // Each thread gets its own memo cache
+                    let mut local_memo_cache: MemoCache = AHashMap::new();
+
+                    let allowed = compute_permission(
+                        &subject,
+                        permission,
+                        &object,
+                        &graph,
+                        &namespaces,
+                        &mut local_memo_cache,
+                        &mut AHashSet::new(),
+                        0,
+                    );
+
+                    (check, allowed)
+                })
+                .collect();
+
+            // Convert Vec to AHashMap
+            results_vec.into_iter().collect()
         }
-
-        results
     });
 
     // Convert AHashMap to PyDict
@@ -249,6 +354,52 @@ fn compute_permissions_bulk<'py>(
     }
 
     Ok(py_dict)
+}
+
+/// Check if subject has a relation on object via direct tuple OR userset membership
+/// This handles the userset-as-subject pattern: group:eng#member -> editor -> file:readme
+#[allow(clippy::too_many_arguments)]
+fn check_relation_with_usersets(
+    subject: &Entity,
+    relation: &str,
+    object: &Entity,
+    graph: &ReBACGraph,
+    namespaces: &AHashMap<String, NamespaceConfig>,
+    memo_cache: &mut MemoCache,
+    visited: &mut AHashSet<(String, String, String, String, String)>,
+    depth: u32,
+) -> bool {
+    // First check direct relation: user:alice -> editor -> file:readme
+    if graph.check_direct_relation(subject, relation, object) {
+        return true;
+    }
+
+    // Then check userset-based permissions
+    // e.g., if group:eng#member -> editor -> file:readme exists,
+    // check if subject has "member" relation on group:eng
+    for userset in graph.get_usersets(object, relation) {
+        let userset_entity = Entity {
+            entity_type: userset.subject_type.clone(),
+            entity_id: userset.subject_id.clone(),
+        };
+
+        // Check if subject is a member of this userset
+        // e.g., does user:alice have "member" on group:eng?
+        if compute_permission(
+            subject,
+            &userset.subject_relation,
+            &userset_entity,
+            graph,
+            namespaces,
+            memo_cache,
+            &mut visited.clone(),
+            depth + 1,
+        ) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Compute a single permission check with memoization
@@ -292,8 +443,10 @@ fn compute_permission(
     let namespace = match namespaces.get(&object.entity_type) {
         Some(ns) => ns,
         None => {
-            // No namespace, check direct relation using O(1) graph index
-            let result = graph.check_direct_relation(subject, permission, object);
+            // No namespace, check direct relation AND userset membership
+            let result = check_relation_with_usersets(
+                subject, permission, object, graph, namespaces, memo_cache, visited, depth,
+            );
             memo_cache.insert(memo_key, result);
             return result;
         }
@@ -324,8 +477,10 @@ fn compute_permission(
         match relation_config {
             RelationConfig::Direct(_) | RelationConfig::EmptyDict(_) => {
                 // Both "direct" string and {} empty dict mean direct relation
-                // Use O(1) graph index instead of O(n) scan
-                graph.check_direct_relation(subject, permission, object)
+                // Check direct AND userset-based permissions
+                check_relation_with_usersets(
+                    subject, permission, object, graph, namespaces, memo_cache, visited, depth,
+                )
             }
             RelationConfig::Union { union } => {
                 // Union (OR semantics)
@@ -372,7 +527,10 @@ fn compute_permission(
             }
         }
     } else {
-        false
+        // Permission not in namespace config, check direct relation AND userset membership
+        check_relation_with_usersets(
+            subject, permission, object, graph, namespaces, memo_cache, visited, depth,
+        )
     };
 
     memo_cache.insert(memo_key, result);
@@ -585,14 +743,21 @@ fn glob_match_bulk(
     })?;
 
     // Match paths against the glob set
-    let matches = py.allow_threads(|| {
-        let mut results = Vec::new();
-        for path in paths {
-            if globset.is_match(&path) {
-                results.push(path);
-            }
+    // Use parallel iteration for large lists, sequential for small lists
+    let matches: Vec<String> = py.allow_threads(|| {
+        if paths.len() < GLOB_PARALLEL_THRESHOLD {
+            // Sequential for small lists (avoid rayon overhead)
+            paths
+                .into_iter()
+                .filter(|path| globset.is_match(path))
+                .collect()
+        } else {
+            // Parallel for large lists
+            paths
+                .into_par_iter()
+                .filter(|path| globset.is_match(path))
+                .collect()
         }
-        results
     });
 
     // Convert results to Python list
@@ -605,6 +770,7 @@ fn glob_match_bulk(
 }
 
 /// Fast path filtering using Rust glob patterns
+/// Uses rayon parallelization for large path lists (>500 paths)
 #[pyfunction]
 fn filter_paths(
     py: Python<'_>,
@@ -635,25 +801,244 @@ fn filter_paths(
     })?;
 
     // Filter paths against exclude patterns
+    // Use parallel iteration for large lists, sequential for small lists
     let filtered = py.allow_threads(|| {
-        let mut results = Vec::new();
-        for path in paths {
-            // Extract filename from path
-            let filename = if let Some(pos) = path.rfind('/') {
-                &path[pos + 1..]
-            } else {
-                &path
-            };
-
-            // Check if filename matches any exclude pattern
-            if !globset.is_match(filename) {
-                results.push(path);
-            }
+        if paths.len() < GLOB_PARALLEL_THRESHOLD {
+            // Sequential for small lists
+            paths
+                .into_iter()
+                .filter(|path| {
+                    let filename = if let Some(pos) = path.rfind('/') {
+                        &path[pos + 1..]
+                    } else {
+                        path.as_str()
+                    };
+                    !globset.is_match(filename)
+                })
+                .collect()
+        } else {
+            // Parallel for large lists
+            paths
+                .into_par_iter()
+                .filter(|path| {
+                    let filename = if let Some(pos) = path.rfind('/') {
+                        &path[pos + 1..]
+                    } else {
+                        path.as_str()
+                    };
+                    !globset.is_match(filename)
+                })
+                .collect()
         }
-        results
     });
 
     Ok(filtered)
+}
+
+/// Expand subjects: find all subjects that have a given permission on an object
+/// This is the inverse of check_permission - instead of "does X have permission on Y",
+/// it answers "who has permission on Y"
+#[pyfunction]
+fn expand_subjects<'py>(
+    py: Python<'py>,
+    permission: String,
+    object_type: String,
+    object_id: String,
+    tuples: &Bound<PyList>,
+    namespace_configs: &Bound<PyDict>,
+) -> PyResult<Bound<'py, PyList>> {
+    // Parse tuples from Python
+    let rebac_tuples: Vec<ReBACTuple> = tuples
+        .iter()
+        .map(|item| {
+            let dict = item.downcast::<PyDict>()?;
+            Ok(ReBACTuple {
+                subject_type: dict.get_item("subject_type")?.unwrap().extract()?,
+                subject_id: dict.get_item("subject_id")?.unwrap().extract()?,
+                subject_relation: dict
+                    .get_item("subject_relation")?
+                    .and_then(|v| v.extract().ok()),
+                relation: dict.get_item("relation")?.unwrap().extract()?,
+                object_type: dict.get_item("object_type")?.unwrap().extract()?,
+                object_id: dict.get_item("object_id")?.unwrap().extract()?,
+            })
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+
+    // Parse namespace configs
+    let mut namespaces = AHashMap::new();
+    for (key, value) in namespace_configs.iter() {
+        let obj_type: String = key.extract()?;
+        let config_dict = value.downcast::<PyDict>()?;
+        let json_module = py.import_bound("json")?;
+        let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
+        let config_json: String = config_json_py.extract()?;
+        let config: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
+        })?;
+        namespaces.insert(obj_type, config);
+    }
+
+    // Release GIL for computation
+    let subjects = py.allow_threads(|| {
+        let object = Entity {
+            entity_type: object_type,
+            entity_id: object_id,
+        };
+
+        // Build graph indexes for fast lookups
+        let graph = ReBACGraph::from_tuples(&rebac_tuples);
+        let mut subjects: AHashSet<(String, String)> = AHashSet::new();
+        let mut visited: AHashSet<(String, String, String)> = AHashSet::new();
+
+        expand_permission(
+            &permission,
+            &object,
+            &graph,
+            &namespaces,
+            &mut subjects,
+            &mut visited,
+            0,
+        );
+
+        subjects
+    });
+
+    // Convert to Python list of tuples
+    let py_list = PyList::empty_bound(py);
+    for (subj_type, subj_id) in subjects {
+        let tuple = PyTuple::new_bound(py, &[subj_type, subj_id]);
+        py_list.append(tuple)?;
+    }
+
+    Ok(py_list)
+}
+
+/// Internal expand function - finds all subjects with a permission on an object
+fn expand_permission(
+    permission: &str,
+    object: &Entity,
+    graph: &ReBACGraph,
+    namespaces: &AHashMap<String, NamespaceConfig>,
+    subjects: &mut AHashSet<(String, String)>,
+    visited: &mut AHashSet<(String, String, String)>,
+    depth: u32,
+) {
+    const MAX_DEPTH: u32 = 50;
+
+    if depth > MAX_DEPTH {
+        return;
+    }
+
+    // Cycle detection
+    let visit_key = (
+        permission.to_string(),
+        object.entity_type.clone(),
+        object.entity_id.clone(),
+    );
+    if visited.contains(&visit_key) {
+        return;
+    }
+    visited.insert(visit_key);
+
+    // Get namespace config
+    let namespace = match namespaces.get(&object.entity_type) {
+        Some(ns) => ns,
+        None => {
+            // No namespace - add direct subjects only
+            add_direct_subjects(permission, object, graph, subjects);
+            return;
+        }
+    };
+
+    // Check if permission is defined in permissions map
+    if let Some(usersets) = namespace.permissions.get(permission) {
+        // Permission -> usersets (OR semantics) - expand each userset
+        for userset in usersets {
+            expand_permission(
+                userset,
+                object,
+                graph,
+                namespaces,
+                subjects,
+                &mut visited.clone(),
+                depth + 1,
+            );
+        }
+        return;
+    }
+
+    // Check if permission is a relation
+    if let Some(relation_config) = namespace.relations.get(permission) {
+        match relation_config {
+            RelationConfig::Direct(_) | RelationConfig::EmptyDict(_) => {
+                // Direct relation - add all direct subjects
+                add_direct_subjects(permission, object, graph, subjects);
+            }
+            RelationConfig::Union { union } => {
+                // Union (OR semantics) - expand each relation
+                for rel in union {
+                    expand_permission(
+                        rel,
+                        object,
+                        graph,
+                        namespaces,
+                        subjects,
+                        &mut visited.clone(),
+                        depth + 1,
+                    );
+                }
+            }
+            RelationConfig::TupleToUserset { tuple_to_userset } => {
+                // TupleToUserset: find related objects, expand on them
+                let related_objects =
+                    graph.find_related_objects(object, &tuple_to_userset.tupleset);
+                for related_obj in related_objects {
+                    expand_permission(
+                        &tuple_to_userset.computed_userset,
+                        &related_obj,
+                        graph,
+                        namespaces,
+                        subjects,
+                        &mut visited.clone(),
+                        depth + 1,
+                    );
+                }
+            }
+        }
+        return;
+    }
+
+    // Permission not in namespace - add direct subjects
+    add_direct_subjects(permission, object, graph, subjects);
+}
+
+/// Add all direct subjects that have a relation on an object
+fn add_direct_subjects(
+    relation: &str,
+    object: &Entity,
+    graph: &ReBACGraph,
+    subjects: &mut AHashSet<(String, String)>,
+) {
+    // Get direct subjects from tuple index
+    // We need to find all tuples where (object_type, object_id, relation) matches
+    // and extract (subject_type, subject_id)
+    for (key, _) in graph.tuple_index.iter() {
+        let (obj_type, obj_id, rel, subj_type, subj_id) = key;
+        if obj_type == &object.entity_type && obj_id == &object.entity_id && rel == relation {
+            subjects.insert((subj_type.clone(), subj_id.clone()));
+        }
+    }
+
+    // Also check userset subjects (group memberships that grant this relation)
+    for userset in graph.get_usersets(object, relation) {
+        // The userset itself is also a subject (e.g., group:eng#member)
+        // Add the userset as a subject - the caller can expand further if needed
+        subjects.insert((
+            format!("{}#{}", userset.subject_type, userset.subject_relation),
+            userset.subject_id.clone(),
+        ));
+    }
 }
 
 /// Python module definition
@@ -661,6 +1046,7 @@ fn filter_paths(
 fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compute_permissions_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(compute_permission_single, m)?)?;
+    m.add_function(wrap_pyfunction!(expand_subjects, m)?)?;
     m.add_function(wrap_pyfunction!(grep_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(glob_match_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(filter_paths, m)?)?;

@@ -183,7 +183,8 @@ class AsyncReBACBridge:
             raise RuntimeError("AsyncReBACBridge not started")
 
         future = self._run_coro(self._manager.rebac_check(subject, permission, object, tenant_id))
-        return future.result(timeout=timeout)
+        result: bool = future.result(timeout=timeout)
+        return result
 
     def rebac_check_bulk(
         self,
@@ -205,7 +206,10 @@ class AsyncReBACBridge:
             raise RuntimeError("AsyncReBACBridge not started")
 
         future = self._run_coro(self._manager.rebac_check_bulk(checks, tenant_id))
-        return future.result(timeout=timeout)
+        result: dict[tuple[tuple[str, str], str, tuple[str, str]], bool] = future.result(
+            timeout=timeout
+        )
+        return result
 
     def write_tuple(
         self,
@@ -235,7 +239,8 @@ class AsyncReBACBridge:
         future = self._run_coro(
             self._manager.write_tuple(subject, relation, object, tenant_id, subject_relation)
         )
-        return future.result(timeout=timeout)
+        result: str = future.result(timeout=timeout)
+        return result
 
     def delete_tuple(
         self,
@@ -261,7 +266,8 @@ class AsyncReBACBridge:
             raise RuntimeError("AsyncReBACBridge not started")
 
         future = self._run_coro(self._manager.delete_tuple(subject, relation, object, tenant_id))
-        return future.result(timeout=timeout)
+        result: bool = future.result(timeout=timeout)
+        return result
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get L1 cache statistics."""

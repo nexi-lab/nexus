@@ -423,7 +423,8 @@ def _register_routes(app: FastAPI) -> None:
             }
             # encode_rpc_message handles bytes, datetime, etc.
             encoded = encode_rpc_message(success_response)
-            return Response(content=encoded, media_type="application/json")
+            # Using Response directly with pre-encoded JSON for performance
+            return Response(content=encoded, media_type="application/json")  # type: ignore[return-value]
 
         except ValueError as e:
             return _error_response(None, RPCErrorCode.INVALID_PARAMS, f"Invalid parameters: {e}")
@@ -656,7 +657,7 @@ def _handle_copy(params: Any, context: Any) -> dict[str, Any]:
     """Handle copy method."""
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
-    nexus_fs.copy(params.src_path, params.dst_path, context=context)
+    nexus_fs.copy(params.src_path, params.dst_path, context=context)  # type: ignore[attr-defined]
     return {"copied": True}
 
 
@@ -694,7 +695,7 @@ def _handle_get_metadata(params: Any, context: Any) -> dict[str, Any]:
     """Handle get_metadata method."""
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
-    metadata = nexus_fs.get_metadata(params.path, context=context)
+    metadata = nexus_fs.get_metadata(params.path, context=context)  # type: ignore[attr-defined]
     return {"metadata": metadata}
 
 
@@ -741,7 +742,7 @@ def _handle_search(params: Any, context: Any) -> dict[str, Any]:
     if hasattr(params, "search_type") and params.search_type:
         kwargs["search_type"] = params.search_type
 
-    results = nexus_fs.search(params.query, **kwargs)
+    results = nexus_fs.search(params.query, **kwargs)  # type: ignore[attr-defined]
     return {"results": results}
 
 

@@ -835,7 +835,7 @@ class AsyncReBACManager:
             )
             await session.commit()
 
-            deleted = result.rowcount > 0
+            deleted: bool = result.rowcount > 0
 
         # Invalidate L1 cache
         if self._l1_cache:

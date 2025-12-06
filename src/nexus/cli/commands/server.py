@@ -1093,7 +1093,7 @@ def serve(
             database_url = os.getenv("NEXUS_DATABASE_URL")
 
             app = create_app(
-                nexus_fs=nx,
+                nexus_fs=nx,  # type: ignore[arg-type]
                 api_key=api_key,
                 auth_provider=auth_provider,
                 database_url=database_url,

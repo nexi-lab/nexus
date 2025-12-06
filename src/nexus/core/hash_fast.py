@@ -45,7 +45,7 @@ def hash_content(content: bytes) -> str:
         64-character hex string (256-bit hash)
     """
     if _RUST_AVAILABLE and _rust_hash_content is not None:
-        return _rust_hash_content(content)
+        return _rust_hash_content(content)  # type: ignore[no-any-return]
     # Fallback to SHA-256
     return hashlib.sha256(content).hexdigest()
 
@@ -69,7 +69,7 @@ def hash_content_smart(content: bytes) -> str:
         64-character hex string (256-bit hash)
     """
     if _RUST_AVAILABLE and _rust_hash_content_smart is not None:
-        return _rust_hash_content_smart(content)
+        return _rust_hash_content_smart(content)  # type: ignore[no-any-return]
 
     # Fallback to Python implementation
     threshold = 256 * 1024  # 256KB

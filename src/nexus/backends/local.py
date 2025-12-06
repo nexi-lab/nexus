@@ -465,8 +465,8 @@ class LocalBackend(Backend):
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = {executor.submit(read_one, h): h for h in uncached_hashes}
                     for future in as_completed(futures):
-                        content_hash, content = future.result()
-                        result[content_hash] = content
+                        hash_key, file_content = future.result()
+                        result[hash_key] = file_content
 
         return result
 

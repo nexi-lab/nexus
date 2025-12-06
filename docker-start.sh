@@ -244,13 +244,50 @@ check_frontend_repo() {
     echo ""
 }
 
+init_nginx_conf() {
+    echo "🔍 Checking for nginx service environment"
+    if [ -z "${EXTERNAL_ACCESS_ADDRESS}" ]; then
+        echo "❌ Error: EXTERNAL_ACCESS_ADDRESS (service access domain) is not configured in $ENV_FILE"
+        exit 1
+    fi
+    REQUIRED_SSL_VARS=("SSL_CERT_NAME" "SSL_KEY_NAME")
+    for var in "${REQUIRED_SSL_VARS[@]}"; do
+    if [ -z "${!var}" ]; then
+        echo "❌ Error: ${var} (SSL certificate/private key filename) is not configured in $ENV_FILE"
+        exit 1
+    fi
+    done
+    SSL_CERT_PATH="./nginx/ssl/${SSL_CERT_NAME}"
+    SSL_KEY_PATH="./nginx/ssl/${SSL_KEY_NAME}"
+    if [ ! -f "${SSL_CERT_PATH}" ]; then
+        echo "❌ Error: SSL certificate file does not exist -> ${SSL_CERT_PATH}"
+        echo "  Please ensure the certificate filename matches SSL_CERT_NAME in $ENV_FILE"
+        exit 1
+    fi
+    if [ ! -f "${SSL_KEY_PATH}" ]; then
+        echo "❌ Error: SSL private key file does not exist -> ${SSL_KEY_PATH}"
+        echo "  Please ensure the private key filename matches SSL_KEY_NAME in  $ENV_FILE"
+        exit 1
+    fi
+    # Replace placeholders in template (domain, SSL filenames, ports)
+    sed \
+    -e "s|{{EXTERNAL_ACCESS_ADDRESS}}|${EXTERNAL_ACCESS_ADDRESS}|g" \
+    -e "s|{{SSL_CERT_NAME}}|${SSL_CERT_NAME}|g" \
+    -e "s|{{SSL_KEY_NAME}}|${SSL_KEY_NAME}|g" \
+    ./nginx/nginx.conf.template > ./nginx/nginx.conf
+    echo "✅ Nginx config file generated successfully -> nginx.conf"
+    echo "  - Service domain: ${EXTERNAL_ACCESS_ADDRESS}"
+    echo "  - SSL certificate path: ${SSL_CERT_PATH}"
+    echo "  - SSL private key path: ${SSL_KEY_PATH}"
+}
+
 show_services() {
     cat << EOF
 📦 Services:
    • postgres    - PostgreSQL database (port 5432)
    • nexus       - Nexus RPC server (port 8080)
    • langgraph   - LangGraph agent (port 2024)
-   • frontend    - React web UI (port 5173)
+   • frontend    - React web UI (port 5173,ssl port 15173) and Service proxy(ssl port 18080,18081,12024)
 EOF
     echo ""
 }
@@ -312,6 +349,7 @@ cmd_start() {
     check_gcs_credentials
     check_aws_credentials
     check_frontend_repo
+    init_nginx_conf
 
     echo "🧹 Cleaning up old sandbox containers..."
     docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
@@ -459,6 +497,7 @@ cmd_init() {
     check_env_file
     check_gcs_credentials
     check_frontend_repo
+    init_nginx_conf
 
     echo "🔧 INITIALIZATION MODE"
     echo ""
@@ -541,7 +580,7 @@ show_api_key() {
         echo ""
         echo "  To use this key:"
         echo "    export NEXUS_API_KEY='${API_KEY}'"
-        echo "    export NEXUS_URL='http://localhost:8080'"
+        echo "    export NEXUS_URL='https://${EXTERNAL_ACCESS_ADDRESS}:18080'"
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
@@ -553,20 +592,20 @@ show_api_key() {
 }
 
 cmd_urls() {
-    cat << 'EOF'
+    cat << EOF
 ╔═══════════════════════════════════════════════════════════════════╗
 ║                      🌐 Access URLs                              ║
 ╚═══════════════════════════════════════════════════════════════════╝
 
-  🎨 Frontend:        http://localhost:5173
-  🔧 Nexus API:       http://localhost:8080
-  🔮 LangGraph:       http://localhost:2024
-  🗄️  PostgreSQL:     localhost:5432
+  🎨 Frontend:        https://${EXTERNAL_ACCESS_ADDRESS}:15173
+  🔧 Nexus API:       https://${EXTERNAL_ACCESS_ADDRESS}:18080
+  🔮 LangGraph:       https://${EXTERNAL_ACCESS_ADDRESS}:12024
+  🗄️   PostgreSQL:     localhost:5432
 
   📊 Health Checks:
-     • Nexus:         curl http://localhost:8080/health
-     • Frontend:      curl http://localhost:5173/health
-     • LangGraph:     curl http://localhost:2024/ok
+     • Nexus:         curl https://${EXTERNAL_ACCESS_ADDRESS}:18080/health
+     • Frontend:      curl https://${EXTERNAL_ACCESS_ADDRESS}:15173/health
+     • LangGraph:     curl https://${EXTERNAL_ACCESS_ADDRESS}:12024/ok
 
 ╔═══════════════════════════════════════════════════════════════════╗
 ║                      📚 Useful Commands                          ║
@@ -646,6 +685,7 @@ case "$COMMAND" in
         cmd_logs
         ;;
     --status)
+	check_env_file
         print_banner
         cmd_status
         show_api_key

@@ -6,6 +6,7 @@ import pytest
 
 from nexus.backends.gcs import GCSBackend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.hash_fast import hash_content
 
 
 @pytest.fixture
@@ -142,10 +143,8 @@ class TestContentOperations:
         """Test reading content successfully."""
         test_content = b"Hello, GCS!"
 
-        # Compute the actual hash for this content
-        import hashlib
-
-        expected_hash = hashlib.sha256(test_content).hexdigest()
+        # Compute the actual hash for this content (using BLAKE3)
+        expected_hash = hash_content(test_content)
 
         mock_blob = Mock()
         mock_blob.exists.return_value = True
@@ -454,12 +453,12 @@ class TestHashOperations:
     """Test hash-related helper methods."""
 
     def test_compute_hash(self, gcs_backend: GCSBackend) -> None:
-        """Test computing SHA-256 hash."""
+        """Test computing content hash (BLAKE3)."""
         content = b"Hello, World!"
         hash_result = gcs_backend._compute_hash(content)
 
-        # Known SHA-256 hash for "Hello, World!"
-        expected = "dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f"
+        # Verify hash matches what hash_content produces
+        expected = hash_content(content)
         assert hash_result == expected
         assert len(hash_result) == 64
 

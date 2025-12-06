@@ -4,7 +4,7 @@ This abstract base class provides shared functionality for cloud blob storage
 connectors that support direct path mapping (not CAS-based).
 
 Shared features:
-- Content hash computation (SHA-256)
+- Content hash computation (BLAKE3, Rust-accelerated)
 - Content-Type detection with UTF-8 charset handling
 - Reference counting (always 1 - no deduplication)
 - Common path mapping patterns
@@ -17,13 +17,13 @@ Backend-specific implementations:
 - Cloud provider-specific API calls
 """
 
-import hashlib
 import mimetypes
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -72,17 +72,18 @@ class BaseBlobStorageConnector(Backend):
 
     def _compute_hash(self, content: bytes) -> str:
         """
-        Compute SHA-256 hash of content for metadata compatibility.
+        Compute BLAKE3 hash of content (Rust-accelerated).
 
-        This is used when versioning is disabled to track content identity.
+        Uses BLAKE3 for ~3x faster hashing than SHA-256.
+        Falls back to SHA-256 if Rust extension is not available.
 
         Args:
             content: File content bytes
 
         Returns:
-            SHA-256 hash as hexadecimal string (64 characters)
+            Hash as hexadecimal string (64 characters)
         """
-        return hashlib.sha256(content).hexdigest()
+        return hash_content(content)
 
     def _detect_content_type(self, backend_path: str, content: bytes) -> str:
         """

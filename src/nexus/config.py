@@ -11,6 +11,43 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from nexus.server.auth.oauth_config import OAuthConfig
 
 
+class DockerImageTemplate(BaseModel):
+    """Configuration for a single Docker image template."""
+
+    image: str | None = Field(
+        default=None,
+        description="Pre-built Docker image name",
+    )
+    dockerfile: str | None = Field(
+        default=None,
+        description="Path to Dockerfile (relative to project root)",
+    )
+    dockerfile_override: str | None = Field(
+        default=None,
+        description="Inline Dockerfile content to override/customize the base image",
+    )
+    context: str | None = Field(
+        default=".",
+        description="Docker build context directory",
+    )
+
+
+class DockerTemplateConfig(BaseModel):
+    """Configuration for Docker sandbox images.
+
+    Maps template names to Docker images or Dockerfiles for custom sandbox environments.
+    """
+
+    templates: dict[str, DockerImageTemplate] = Field(
+        default_factory=dict,
+        description="Map of template name to image/dockerfile configuration",
+    )
+    default_image: str = Field(
+        default="nexus-runtime:latest",
+        description="Default image if no template specified",
+    )
+
+
 class FeaturesConfig(BaseModel):
     """Feature flags for optional Nexus functionality."""
 
@@ -178,6 +215,12 @@ class NexusConfig(BaseModel):
     tenant_id: str | None = Field(default=None, description="Tenant ID for memory operations")
     user_id: str | None = Field(default=None, description="User ID for memory operations")
     agent_id: str | None = Field(default=None, description="Agent ID for memory operations")
+
+    # Docker sandbox template configuration
+    docker: DockerTemplateConfig = Field(
+        default_factory=DockerTemplateConfig,
+        description="Docker sandbox template configuration",
+    )
 
     @field_validator("mode")
     @classmethod

@@ -1056,6 +1056,40 @@ class ReBACTupleModel(Base):
         Index("idx_rebac_expires", "expires_at"),
         # Subject relation index for userset-as-subject
         Index("idx_rebac_subject_relation", "subject_type", "subject_id", "subject_relation"),
+        # ========== Issue #591: Composite indexes for permission checks ==========
+        # 1. Direct permission check (most common query pattern)
+        # Used in: _has_direct_relation, _get_direct_relation_tuple
+        # Query: WHERE subject_type=? AND subject_id=? AND relation=? AND object_type=? AND object_id=?
+        Index(
+            "idx_rebac_permission_check",
+            "subject_type",
+            "subject_id",
+            "relation",
+            "object_type",
+            "object_id",
+            "tenant_id",
+        ),
+        # 2. Userset/group membership lookups
+        # Used in: _find_subject_sets
+        # Query: WHERE relation=? AND object_type=? AND object_id=? AND subject_relation IS NOT NULL
+        Index(
+            "idx_rebac_userset_lookup",
+            "relation",
+            "object_type",
+            "object_id",
+            "subject_relation",
+            "tenant_id",
+        ),
+        # 3. Object permission expansion (find all subjects with access to an object)
+        # Used in: rebac_expand, _get_direct_subjects
+        # Query: WHERE relation=? AND object_type=? AND object_id=? AND tenant_id=?
+        Index(
+            "idx_rebac_object_expand",
+            "object_type",
+            "object_id",
+            "relation",
+            "tenant_id",
+        ),
     )
 
 

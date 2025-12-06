@@ -78,6 +78,7 @@ class DockerSandboxProvider(SandboxProvider):
         memory_limit: str = "512m",
         cpu_limit: float = 1.0,
         network_name: str | None = None,
+        docker_config: Any = None,  # DockerTemplateConfig | None
     ):
         """Initialize Docker sandbox provider.
 
@@ -89,6 +90,7 @@ class DockerSandboxProvider(SandboxProvider):
             memory_limit: Memory limit (e.g., "512m", "1g")
             cpu_limit: CPU limit in cores (e.g., 1.0 = 1 core)
             network_name: Docker network name (defaults to NEXUS_DOCKER_NETWORK env var)
+            docker_config: Docker template configuration for custom images
         """
         if not DOCKER_AVAILABLE:
             raise RuntimeError("docker package not installed. Install with: pip install docker")
@@ -117,6 +119,7 @@ class DockerSandboxProvider(SandboxProvider):
         self.auto_pull = auto_pull
         self.memory_limit = memory_limit
         self.cpu_limit = cpu_limit
+        self.docker_config = docker_config
 
         # Read Docker network from env var if not provided
         import os
@@ -154,8 +157,8 @@ class DockerSandboxProvider(SandboxProvider):
             SandboxCreationError: If sandbox creation fails
         """
         try:
-            # Use provided template (Docker image) or default
-            image = template_id or self.default_image
+            # Resolve template_id to Docker image name
+            image = self._resolve_image(template_id)
 
             # Ensure image exists
             await asyncio.to_thread(self._ensure_image, image)
@@ -202,6 +205,40 @@ class DockerSandboxProvider(SandboxProvider):
         except Exception as e:
             logger.error(f"Failed to create Docker sandbox: {e}")
             raise SandboxCreationError(f"Docker sandbox creation failed: {e}") from e
+
+    def _resolve_image(self, template_id: str | None) -> str:
+        """Resolve template_id to Docker image name.
+
+        Args:
+            template_id: Template name or direct image name
+
+        Returns:
+            Docker image name to use
+        """
+        # No template specified, use default
+        if not template_id:
+            default_img: str = (
+                self.docker_config.default_image if self.docker_config else self.default_image
+            )
+            return default_img
+
+        # Check if it's a configured template
+        if self.docker_config and template_id in self.docker_config.templates:
+            template = self.docker_config.templates[template_id]
+            # Use the configured image name for this template
+            if template.image:
+                logger.info(f"Resolved template '{template_id}' to image: {template.image}")
+                image_name: str = template.image
+                return image_name
+            else:
+                logger.warning(
+                    f"Template '{template_id}' has no image configured, using as literal image name"
+                )
+                return template_id
+
+        # Treat as direct image name
+        logger.debug(f"Using '{template_id}' as direct image name")
+        return template_id
 
     async def run_code(
         self,

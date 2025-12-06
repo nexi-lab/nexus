@@ -99,3 +99,48 @@ monitoring:
   logging:
     level: info
     format: text
+
+# Docker sandbox configuration with inline Dockerfile templates
+docker:
+  default_image: nexus-runtime:latest
+
+  templates:
+    # Use existing base image
+    base:
+      image: nexus-runtime:latest
+
+    # ML/AI heavy template with PyTorch, TensorFlow, and transformers
+    ml-heavy:
+      image: nexus-runtime-ml:latest
+      dockerfile_override: |
+        FROM nexus-runtime:latest
+        USER root
+
+        RUN apt-get update && apt-get install -y \
+            ffmpeg graphviz \
+            && rm -rf /var/lib/apt/lists/*
+
+        RUN pip install --no-cache-dir \
+            torch>=2.0.0 \
+            tensorflow>=2.13.0 \
+            transformers
+
+        USER nexus
+        WORKDIR /home/nexus/workspace
+
+    # Web development template with FastAPI and database tools
+    web-dev:
+      image: nexus-runtime-web:latest
+      dockerfile_override: |
+        FROM nexus-runtime:latest
+        USER root
+
+        RUN apt-get update && apt-get install -y \
+            postgresql-client redis-tools \
+            && rm -rf /var/lib/apt/lists/*
+
+        RUN pip install --no-cache-dir \
+            fastapi 'uvicorn[standard]' sqlalchemy
+
+        USER nexus
+        WORKDIR /home/nexus/workspace

@@ -4,7 +4,7 @@ Implements OAuth flow for all Google services (Drive, Gmail, Calendar, Cloud Sto
 This provider can be used for any Google service by specifying the appropriate scopes.
 
 Different Google services are configured via the OAuth config system with different
-default scopes. See config.example.yaml for examples.
+default scopes. See config.demo.yaml for examples.
 
 Example:
     >>> provider = GoogleOAuthProvider(
@@ -42,7 +42,7 @@ class GoogleOAuthProvider(OAuthProvider):
     - etc.
 
     Different Google services are configured via the OAuth config system with
-    different default scopes. See config.example.yaml for service-specific
+    different default scopes. See config.demo.yaml for service-specific
     configurations.
 
     OAuth endpoints (shared across all Google services):

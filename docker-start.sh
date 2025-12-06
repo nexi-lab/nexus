@@ -365,11 +365,27 @@ cmd_build() {
     echo "🔨 Building Docker images..."
     echo ""
 
-    # Build images
+    # Build base runtime image first
+    echo "🔨 Building base runtime image for sandboxes..."
+    ./docker/build.sh
+
+    echo ""
+    echo "🔨 Building template images from config..."
+    # Use uv if available, otherwise skip template building
+    if command -v uv &> /dev/null; then
+        uv run python docker/build-templates.py
+    else
+        echo "⚠️  uv not found - skipping template image builds"
+        echo "   Template images will be built on-demand when first used"
+        echo "   To enable pre-building, install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    fi
+
+    echo ""
+    echo "🔨 Building service images..."
     docker compose -f "$COMPOSE_FILE" build
 
     echo ""
-    echo "✅ Images built successfully!"
+    echo "✅ All images built successfully!"
     echo ""
     echo "Starting services..."
     docker compose -f "$COMPOSE_FILE" up -d
@@ -464,9 +480,10 @@ cmd_init() {
     echo ""
     echo "This will:"
     echo "  1. Clean all data (containers, volumes, sandboxes)"
-    echo "  2. Build runtime image for sandboxes"
-    echo "  3. Rebuild all service Docker images"
-    echo "  4. Start all services fresh"
+    echo "  2. Build base runtime image for sandboxes"
+    echo "  3. Build all template images from config (ml-heavy, web-dev, etc.)"
+    echo "  4. Rebuild all service Docker images"
+    echo "  5. Start all services fresh"
     if [ "$SKIP_PERMISSIONS" = true ]; then
         echo "  (Skipping permission setup and disabling runtime permission checks)"
     fi
@@ -485,20 +502,31 @@ cmd_init() {
     fi
 
     echo ""
-    echo "🧹 Step 1/4: Cleaning all data..."
+    echo "🧹 Step 1/5: Cleaning all data..."
     clean_all_data "false" ""
     echo ""
 
     echo ""
-    echo "🔨 Step 2/4: Building runtime image for sandboxes..."
+    echo "🔨 Step 2/5: Building base runtime image for sandboxes..."
     ./docker/build.sh
 
     echo ""
-    echo "🔨 Step 3/4: Building service images..."
+    echo "🔨 Step 3/5: Building template images from config..."
+    # Use uv if available, otherwise skip template building
+    if command -v uv &> /dev/null; then
+        uv run python docker/build-templates.py
+    else
+        echo "⚠️  uv not found - skipping template image builds"
+        echo "   Template images will be built on-demand when first used"
+        echo "   To enable pre-building, install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    fi
+
+    echo ""
+    echo "🔨 Step 4/5: Building service images..."
     docker compose -f "$COMPOSE_FILE" build
 
     echo ""
-    echo "🚀 Step 4/4: Starting services..."
+    echo "🚀 Step 5/5: Starting services..."
     # Export SKIP_PERMISSIONS so Docker Compose can pass it to containers
     if [ "$SKIP_PERMISSIONS" = true ]; then
         export NEXUS_SKIP_PERMISSIONS=true

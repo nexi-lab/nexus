@@ -814,38 +814,78 @@ class ReBACManager:
             rows = cursor.fetchall()
             logger.debug(f"STEP 1: Found {len(rows)} tuples with object_id to update")
 
-            # Update each tuple's object_id
-            for row in rows:
-                tuple_id = row["tuple_id"]
-                old_object_id = row["object_id"]
-                logger.debug(f"STEP 1: Updating tuple {tuple_id}: object_id {old_object_id} -> ...")
+            if rows:
+                # PERF: Batch UPDATE with CASE statement (Issue #590)
+                # Instead of N individual UPDATE queries, use a single UPDATE with CASE
+                old_prefix_len = len(old_path)
+                now_iso = datetime.now(UTC).isoformat()
 
-                # Calculate new object_id
-                if is_directory and old_object_id.startswith(old_path + "/"):
-                    # Child path: replace the prefix
-                    new_object_id = new_path + old_object_id[len(old_path) :]
+                if is_directory:
+                    # Batch update: exact match -> new_path, child paths -> new_path + suffix
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            UPDATE rebac_tuples
+                            SET object_id = CASE
+                                WHEN object_id = ? THEN ?
+                                ELSE ? || SUBSTR(object_id, ?)
+                            END
+                            WHERE object_type = ?
+                              AND (object_id = ? OR object_id LIKE ?)
+                              AND (expires_at IS NULL OR expires_at >= ?)
+                            """
+                        ),
+                        (
+                            old_path,  # WHEN object_id = old_path
+                            new_path,  # THEN new_path
+                            new_path,  # ELSE new_path || SUBSTR(...)
+                            old_prefix_len + 1,  # SUBSTR offset (1-indexed in SQL)
+                            object_type,
+                            old_path,
+                            old_path + "/%",
+                            now_iso,
+                        ),
+                    )
                 else:
-                    # Exact match or file
-                    new_object_id = new_path
+                    # Simple batch update for files (exact match only)
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            UPDATE rebac_tuples
+                            SET object_id = ?
+                            WHERE object_type = ?
+                              AND object_id = ?
+                              AND (expires_at IS NULL OR expires_at >= ?)
+                            """
+                        ),
+                        (new_path, object_type, old_path, now_iso),
+                    )
 
-                # Update the tuple
-                logger.debug(
-                    f"STEP 1: Updating tuple {tuple_id}: {old_object_id} -> {new_object_id}"
-                )
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        UPDATE rebac_tuples
-                        SET object_id = ?
-                        WHERE tuple_id = ?
-                        """
-                    ),
-                    (new_object_id, tuple_id),
-                )
-                logger.debug(f"STEP 1: Updated {cursor.rowcount} rows for tuple {tuple_id}")
+                logger.debug(f"STEP 1: Batch updated {cursor.rowcount} tuples")
 
-                # Log to changelog
-                cursor.execute(
+                # PERF: Batch INSERT changelog entries
+                changelog_entries = []
+                for row in rows:
+                    old_object_id = row["object_id"]
+                    if is_directory and old_object_id.startswith(old_path + "/"):
+                        new_object_id = new_path + old_object_id[old_prefix_len:]
+                    else:
+                        new_object_id = new_path
+
+                    changelog_entries.append(
+                        (
+                            "UPDATE",
+                            row["tuple_id"],
+                            row["subject_type"],
+                            row["subject_id"],
+                            row["relation"],
+                            object_type,
+                            new_object_id,
+                            now_iso,
+                        )
+                    )
+
+                cursor.executemany(
                     self._fix_sql_placeholders(
                         """
                         INSERT INTO rebac_changelog (
@@ -855,34 +895,32 @@ class ReBACManager:
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """
                     ),
-                    (
-                        "UPDATE",
-                        tuple_id,
-                        row["subject_type"],
-                        row["subject_id"],
-                        row["relation"],
-                        object_type,
-                        new_object_id,
-                        datetime.now(UTC).isoformat(),
-                    ),
+                    changelog_entries,
                 )
 
-                # Invalidate cache for both old and new paths
-                subject = Entity(row["subject_type"], row["subject_id"])
-                old_obj = Entity(object_type, old_object_id)
-                new_obj = Entity(object_type, new_object_id)
-                relation = row["relation"]
-                tenant_id = row["tenant_id"]
-                subject_relation = row["subject_relation"]
+                # Invalidate caches (still need to iterate, but it's in-memory)
+                for row in rows:
+                    old_object_id = row["object_id"]
+                    if is_directory and old_object_id.startswith(old_path + "/"):
+                        new_object_id = new_path + old_object_id[old_prefix_len:]
+                    else:
+                        new_object_id = new_path
 
-                self._invalidate_cache_for_tuple(
-                    subject, relation, old_obj, tenant_id, subject_relation
-                )
-                self._invalidate_cache_for_tuple(
-                    subject, relation, new_obj, tenant_id, subject_relation
-                )
+                    subject = Entity(row["subject_type"], row["subject_id"])
+                    old_obj = Entity(object_type, old_object_id)
+                    new_obj = Entity(object_type, new_object_id)
+                    relation = row["relation"]
+                    tenant_id = row["tenant_id"]
+                    subject_relation = row["subject_relation"]
 
-                updated_count += 1
+                    self._invalidate_cache_for_tuple(
+                        subject, relation, old_obj, tenant_id, subject_relation
+                    )
+                    self._invalidate_cache_for_tuple(
+                        subject, relation, new_obj, tenant_id, subject_relation
+                    )
+
+                updated_count += len(rows)
 
             # STEP 2: Update tuples where the path is in subject_id (e.g., parent relationships)
             # This is critical for file-to-file relationships like "file:X -> parent -> file:Y"
@@ -926,40 +964,77 @@ class ReBACManager:
             subject_rows = cursor.fetchall()
             logger.debug(f"STEP 2: Found {len(subject_rows)} tuples with subject_id to update")
 
-            # Update each tuple's subject_id
-            for row in subject_rows:
-                tuple_id = row["tuple_id"]
-                old_subject_id = row["subject_id"]
-                logger.debug(
-                    f"STEP 2: Updating tuple {tuple_id}: subject_id {old_subject_id} -> ..."
-                )
+            if subject_rows:
+                # PERF: Batch UPDATE with CASE statement (Issue #590)
+                old_prefix_len = len(old_path)
+                now_iso = datetime.now(UTC).isoformat()
 
-                # Calculate new subject_id
-                if is_directory and old_subject_id.startswith(old_path + "/"):
-                    # Child path: replace the prefix
-                    new_subject_id = new_path + old_subject_id[len(old_path) :]
+                if is_directory:
+                    # Batch update: exact match -> new_path, child paths -> new_path + suffix
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            UPDATE rebac_tuples
+                            SET subject_id = CASE
+                                WHEN subject_id = ? THEN ?
+                                ELSE ? || SUBSTR(subject_id, ?)
+                            END
+                            WHERE subject_type = ?
+                              AND (subject_id = ? OR subject_id LIKE ?)
+                              AND (expires_at IS NULL OR expires_at >= ?)
+                            """
+                        ),
+                        (
+                            old_path,  # WHEN subject_id = old_path
+                            new_path,  # THEN new_path
+                            new_path,  # ELSE new_path || SUBSTR(...)
+                            old_prefix_len + 1,  # SUBSTR offset (1-indexed in SQL)
+                            object_type,
+                            old_path,
+                            old_path + "/%",
+                            now_iso,
+                        ),
+                    )
                 else:
-                    # Exact match or file
-                    new_subject_id = new_path
+                    # Simple batch update for files (exact match only)
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            UPDATE rebac_tuples
+                            SET subject_id = ?
+                            WHERE subject_type = ?
+                              AND subject_id = ?
+                              AND (expires_at IS NULL OR expires_at >= ?)
+                            """
+                        ),
+                        (new_path, object_type, old_path, now_iso),
+                    )
 
-                # Update the tuple
-                logger.debug(
-                    f"STEP 2: Updating tuple {tuple_id}: {old_subject_id} -> {new_subject_id}"
-                )
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        UPDATE rebac_tuples
-                        SET subject_id = ?
-                        WHERE tuple_id = ?
-                        """
-                    ),
-                    (new_subject_id, tuple_id),
-                )
-                logger.debug(f"STEP 2: Updated {cursor.rowcount} rows for tuple {tuple_id}")
+                logger.debug(f"STEP 2: Batch updated {cursor.rowcount} tuples")
 
-                # Log to changelog
-                cursor.execute(
+                # PERF: Batch INSERT changelog entries
+                changelog_entries = []
+                for row in subject_rows:
+                    old_subject_id = row["subject_id"]
+                    if is_directory and old_subject_id.startswith(old_path + "/"):
+                        new_subject_id = new_path + old_subject_id[old_prefix_len:]
+                    else:
+                        new_subject_id = new_path
+
+                    changelog_entries.append(
+                        (
+                            "UPDATE",
+                            row["tuple_id"],
+                            object_type,
+                            new_subject_id,
+                            row["relation"],
+                            row["object_type"],
+                            row["object_id"],
+                            now_iso,
+                        )
+                    )
+
+                cursor.executemany(
                     self._fix_sql_placeholders(
                         """
                         INSERT INTO rebac_changelog (
@@ -969,34 +1044,32 @@ class ReBACManager:
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """
                     ),
-                    (
-                        "UPDATE",
-                        tuple_id,
-                        object_type,
-                        new_subject_id,
-                        row["relation"],
-                        row["object_type"],
-                        row["object_id"],
-                        datetime.now(UTC).isoformat(),
-                    ),
+                    changelog_entries,
                 )
 
-                # Invalidate cache for both old and new subjects
-                old_subj = Entity(object_type, old_subject_id)
-                new_subj = Entity(object_type, new_subject_id)
-                obj = Entity(row["object_type"], row["object_id"])
-                relation = row["relation"]
-                tenant_id = row["tenant_id"]
-                subject_relation = row["subject_relation"]
+                # Invalidate caches (still need to iterate, but it's in-memory)
+                for row in subject_rows:
+                    old_subject_id = row["subject_id"]
+                    if is_directory and old_subject_id.startswith(old_path + "/"):
+                        new_subject_id = new_path + old_subject_id[old_prefix_len:]
+                    else:
+                        new_subject_id = new_path
 
-                self._invalidate_cache_for_tuple(
-                    old_subj, relation, obj, tenant_id, subject_relation
-                )
-                self._invalidate_cache_for_tuple(
-                    new_subj, relation, obj, tenant_id, subject_relation
-                )
+                    old_subj = Entity(object_type, old_subject_id)
+                    new_subj = Entity(object_type, new_subject_id)
+                    obj = Entity(row["object_type"], row["object_id"])
+                    relation = row["relation"]
+                    tenant_id = row["tenant_id"]
+                    subject_relation = row["subject_relation"]
 
-                updated_count += 1
+                    self._invalidate_cache_for_tuple(
+                        old_subj, relation, obj, tenant_id, subject_relation
+                    )
+                    self._invalidate_cache_for_tuple(
+                        new_subj, relation, obj, tenant_id, subject_relation
+                    )
+
+                updated_count += len(subject_rows)
 
             conn.commit()
             logger.info(f"update_object_path complete: updated {updated_count} tuples total")

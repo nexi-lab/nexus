@@ -1396,7 +1396,7 @@ class AsyncRemoteNexusFS:
 
         # Use client's URL/key if not provided
         if nexus_url is None:
-            nexus_url = self.base_url
+            nexus_url = self.server_url
         if nexus_api_key is None:
             nexus_api_key = self.api_key
 

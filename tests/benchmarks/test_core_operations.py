@@ -426,14 +426,12 @@ class TestPermissionBenchmarks:
         """Benchmark simple permission check (no tuples needed)."""
         nx = benchmark_nexus_with_permissions
 
-        # Set up a simple permission
+        # Set up a simple permission using rebac_write
         if hasattr(nx, "_rebac_manager") and nx._rebac_manager:
-            nx._rebac_manager.create_tuple(
-                subject_type="agent",
-                subject_id="benchmark_agent",
-                relation="read",
-                object_type="file",
-                object_id="/test_permission.txt",
+            nx._rebac_manager.rebac_write(
+                subject=("agent", "benchmark_agent"),
+                relation="direct_viewer",
+                object=("file", "/test_permission.txt"),
             )
 
         def check_perm():
@@ -577,12 +575,13 @@ class TestPathResolutionBenchmarks:
         result = benchmark(validate)
         assert "level_19" in result
 
-    def test_path_resolution_with_dots(self, benchmark, benchmark_nexus):
-        """Benchmark path resolution with .. and . components."""
+    def test_path_resolution_deep(self, benchmark, benchmark_nexus):
+        """Benchmark path resolution with deep paths."""
         nx = benchmark_nexus
 
         def validate():
-            return nx._validate_path("/foo/bar/../baz/./qux/../file.txt")
+            # Use a valid deep path (no .. or . segments - those are rejected for security)
+            return nx._validate_path("/foo/bar/baz/qux/deep/nested/file.txt")
 
         benchmark(validate)
 
@@ -643,3 +642,119 @@ class TestBulkOperationBenchmarks:
 
         result = benchmark(read_bulk)
         assert len(result) == 50
+
+
+# =============================================================================
+# BLAKE3 HASHING BENCHMARKS (Rust-accelerated)
+# =============================================================================
+
+
+@pytest.mark.benchmark_hash
+class TestBlake3HashingBenchmarks:
+    """Benchmarks for BLAKE3 content hashing (Rust-accelerated).
+
+    These benchmarks compare the performance of BLAKE3 (Rust-accelerated)
+    against the SHA-256 fallback for content-addressable storage.
+
+    See issue #571 for context.
+    """
+
+    def test_hash_tiny_content(self, benchmark):
+        """Benchmark hashing tiny content (13 bytes)."""
+        from nexus.core.hash_fast import hash_content
+
+        content = b"Hello, World!"
+
+        result = benchmark(hash_content, content)
+        assert len(result) == 64  # 256-bit hash = 64 hex chars
+
+    def test_hash_1kb_content(self, benchmark):
+        """Benchmark hashing 1 KB content."""
+        from nexus.core.hash_fast import hash_content
+
+        content = b"x" * 1024
+
+        result = benchmark(hash_content, content)
+        assert len(result) == 64
+
+    def test_hash_64kb_content(self, benchmark):
+        """Benchmark hashing 64 KB content."""
+        from nexus.core.hash_fast import hash_content
+
+        content = b"x" * (64 * 1024)
+
+        result = benchmark(hash_content, content)
+        assert len(result) == 64
+
+    def test_hash_1mb_content(self, benchmark):
+        """Benchmark hashing 1 MB content."""
+        from nexus.core.hash_fast import hash_content
+
+        content = b"x" * (1024 * 1024)
+
+        result = benchmark(hash_content, content)
+        assert len(result) == 64
+
+    def test_hash_10mb_content(self, benchmark):
+        """Benchmark hashing 10 MB content."""
+        from nexus.core.hash_fast import hash_content
+
+        content = b"x" * (10 * 1024 * 1024)
+
+        result = benchmark(hash_content, content)
+        assert len(result) == 64
+
+    def test_hash_smart_256kb_content(self, benchmark):
+        """Benchmark smart hashing 256 KB content (threshold)."""
+        from nexus.core.hash_fast import hash_content_smart
+
+        content = b"x" * (256 * 1024)
+
+        result = benchmark(hash_content_smart, content)
+        assert len(result) == 64
+
+    def test_hash_smart_1mb_content(self, benchmark):
+        """Benchmark smart hashing 1 MB content (uses sampling)."""
+        from nexus.core.hash_fast import hash_content_smart
+
+        content = b"x" * (1024 * 1024)
+
+        result = benchmark(hash_content_smart, content)
+        assert len(result) == 64
+
+    def test_hash_smart_10mb_content(self, benchmark):
+        """Benchmark smart hashing 10 MB content (uses sampling)."""
+        from nexus.core.hash_fast import hash_content_smart
+
+        content = b"x" * (10 * 1024 * 1024)
+
+        result = benchmark(hash_content_smart, content)
+        assert len(result) == 64
+
+    def test_sha256_baseline_1mb(self, benchmark):
+        """Baseline: SHA-256 hashing 1 MB content."""
+        content = b"x" * (1024 * 1024)
+
+        def sha256_hash():
+            return hashlib.sha256(content).hexdigest()
+
+        result = benchmark(sha256_hash)
+        assert len(result) == 64
+
+    def test_sha256_baseline_10mb(self, benchmark):
+        """Baseline: SHA-256 hashing 10 MB content."""
+        content = b"x" * (10 * 1024 * 1024)
+
+        def sha256_hash():
+            return hashlib.sha256(content).hexdigest()
+
+        result = benchmark(sha256_hash)
+        assert len(result) == 64
+
+    def test_rust_availability(self):
+        """Check if Rust acceleration is available."""
+        from nexus.core.hash_fast import is_rust_available
+
+        available = is_rust_available()
+        print(f"\n[INFO] Rust BLAKE3 acceleration: {'AVAILABLE' if available else 'NOT AVAILABLE'}")
+        # This test always passes - just informational

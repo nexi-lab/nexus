@@ -77,7 +77,7 @@ def hash_content(content: bytes) -> str:
 
     # Priority 2: Python blake3 (consistent with Rust)
     if _PYTHON_BLAKE3_AVAILABLE and _python_blake3 is not None:
-        return _python_blake3.blake3(content).hexdigest()
+        return _python_blake3.blake3(content).hexdigest()  # type: ignore[no-any-return]
 
     # Priority 3: SHA-256 fallback (WARNING: incompatible hashes!)
     return hashlib.sha256(content).hexdigest()
@@ -117,7 +117,7 @@ def hash_content_smart(content: bytes) -> str:
     # Priority 2: Python blake3 (consistent with Rust)
     if _PYTHON_BLAKE3_AVAILABLE and _python_blake3 is not None:
         if len(content) < threshold:
-            return _python_blake3.blake3(content).hexdigest()
+            return _python_blake3.blake3(content).hexdigest()  # type: ignore[no-any-return]
 
         # Strategic sampling with blake3
         hasher = _python_blake3.blake3()
@@ -126,7 +126,7 @@ def hash_content_smart(content: bytes) -> str:
         hasher.update(content[mid_start : mid_start + sample_size])  # Middle 64KB
         hasher.update(content[-sample_size:])  # Last 64KB
         hasher.update(len(content).to_bytes(8, byteorder="little"))  # File size
-        return hasher.hexdigest()
+        return hasher.hexdigest()  # type: ignore[no-any-return]
 
     # Priority 3: SHA-256 fallback (WARNING: incompatible hashes!)
     if len(content) < threshold:

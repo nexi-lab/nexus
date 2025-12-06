@@ -7,6 +7,8 @@ from nexus.backends.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResu
 # Core backends (always available)
 from nexus.backends.local import LocalBackend
 from nexus.backends.registry import (
+    ArgType,
+    ConnectionArg,
     ConnectorInfo,
     ConnectorRegistry,
     create_connector,
@@ -41,6 +43,11 @@ try:
 except ImportError:
     XConnectorBackend = None  # type: ignore
 
+try:
+    from nexus.backends.hn_connector import HNConnectorBackend
+except ImportError:
+    HNConnectorBackend = None  # type: ignore
+
 __all__ = [
     # Base classes
     "Backend",
@@ -51,6 +58,8 @@ __all__ = [
     # Registry
     "ConnectorRegistry",
     "ConnectorInfo",
+    "ConnectionArg",
+    "ArgType",
     "register_connector",
     "create_connector",
     "create_connector_from_config",
@@ -61,4 +70,5 @@ __all__ = [
     "GCSConnectorBackend",
     "S3ConnectorBackend",
     "XConnectorBackend",
+    "HNConnectorBackend",
 ]

@@ -282,22 +282,23 @@ class NexusFSCoreMixin:
         from dataclasses import replace
 
         if context:
-            read_context = replace(context, backend_path=route.backend_path)
+            read_context = replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
             # Create minimal context with just backend_path for connectors
             from nexus.core.permissions import OperationContext
 
             read_context = OperationContext(
-                user="anonymous", groups=[], backend_path=route.backend_path
+                user="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
 
-        # Check if backend is a dynamic API-backed connector (e.g., x_connector)
+        # Check if backend is a dynamic API-backed connector (e.g., x_connector) or virtual filesystem
         # These connectors don't use metadata - they fetch data directly from APIs
         # We check for user_scoped=True explicitly (not just truthy) to avoid Mock objects
+        # Also check has_virtual_filesystem for connectors like HN that have virtual directories
         is_dynamic_connector = (
             getattr(route.backend, "user_scoped", None) is True
             and getattr(route.backend, "token_manager", None) is not None
-        )
+        ) or getattr(route.backend, "has_virtual_filesystem", None) is True
 
         if is_dynamic_connector:
             # Dynamic connector - read directly from backend without metadata check
@@ -407,21 +408,25 @@ class NexusFSCoreMixin:
         # Batch permission check using filter_list
         perm_start = time.time()
         allowed_set: set[str]
-        try:
-            # Use the existing bulk permission check from list()
-            # Note: filter_list assumes READ permission, which is what we want
-            from nexus.core.permissions import OperationContext
+        if not self._enforce_permissions:  # type: ignore[attr-defined]
+            # Skip permission check if permissions are disabled
+            allowed_set = set(validated_paths)
+        else:
+            try:
+                # Use the existing bulk permission check from list()
+                # Note: filter_list assumes READ permission, which is what we want
+                from nexus.core.permissions import OperationContext
 
-            ctx = context if context is not None else self._default_context
-            assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-            allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
-            allowed_set = set(allowed_paths)
-        except Exception as e:
-            logger.error(f"[READ-BULK] Permission check failed: {e}")
-            if not skip_errors:
-                raise
-            # If skip_errors, assume no files are allowed
-            allowed_set = set()
+                ctx = context if context is not None else self._default_context
+                assert isinstance(ctx, OperationContext), "Context must be OperationContext"
+                allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
+                allowed_set = set(allowed_paths)
+            except Exception as e:
+                logger.error(f"[READ-BULK] Permission check failed: {e}")
+                if not skip_errors:
+                    raise
+                # If skip_errors, assume no files are allowed
+                allowed_set = set()
 
         perm_elapsed = time.time() - perm_start
         logger.info(
@@ -832,13 +837,15 @@ class NexusFSCoreMixin:
         from dataclasses import replace
 
         if context:
-            # Create new context with backend_path populated
-            context = replace(context, backend_path=route.backend_path)
+            # Create new context with backend_path and virtual_path populated
+            context = replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
             # Create minimal context with just backend_path for connectors
             from nexus.core.permissions import OperationContext
 
-            context = OperationContext(user="anonymous", groups=[], backend_path=route.backend_path)
+            context = OperationContext(
+                user="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+            )
         content_hash = route.backend.write_content(content, context=context)
 
         # NOTE: Do NOT delete old content when updating a file!

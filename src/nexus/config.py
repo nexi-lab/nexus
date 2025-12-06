@@ -48,6 +48,33 @@ class DockerTemplateConfig(BaseModel):
     )
 
 
+class FeaturesConfig(BaseModel):
+    """Feature flags for optional Nexus functionality."""
+
+    semantic_search: bool = Field(
+        default=False,
+        description="Enable semantic search (requires vector database)",
+    )
+    llm_read: bool = Field(
+        default=False,
+        description="Enable LLM-powered document reading",
+    )
+    agent_memory: bool = Field(
+        default=True,
+        description="Enable agent memory API",
+    )
+    job_system: bool = Field(
+        default=False,
+        description="Enable asynchronous job system",
+    )
+    mcp_server: bool = Field(
+        default=True,
+        description="Enable Model Context Protocol server",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class NexusConfig(BaseModel):
     """
     Unified configuration for all Nexus deployment modes.
@@ -138,6 +165,13 @@ class NexusConfig(BaseModel):
         description="Enable permission enforcement on file operations (P0-6: default True for security)",
     )
 
+    # Admin bypass setting (P0-4)
+    # Default: False for security - admin keys go through normal permission checks
+    allow_admin_bypass: bool = Field(
+        default=False,
+        description="Allow admin keys to bypass permission checks (P0-4: default False for security)",
+    )
+
     # Workspace and Memory registry (v0.7.0)
     workspaces: list[dict[str, Any]] | None = Field(
         default=None,
@@ -164,6 +198,12 @@ class NexusConfig(BaseModel):
     oauth: OAuthConfig | None = Field(
         default=None,
         description="OAuth provider configurations (providers list with name, display_name, provider_class, etc.)",
+    )
+
+    # Feature flags (v0.9.0+)
+    features: FeaturesConfig = Field(
+        default_factory=FeaturesConfig,
+        description="Feature flags for optional functionality (semantic search, LLM read, etc.)",
     )
 
     # Remote mode settings (monolithic/distributed)
@@ -322,6 +362,7 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_AUTO_PARSE": "auto_parse",
         "NEXUS_IS_ADMIN": "is_admin",
         "NEXUS_ENFORCE_PERMISSIONS": "enforce_permissions",
+        "NEXUS_ALLOW_ADMIN_BYPASS": "allow_admin_bypass",
         "NEXUS_URL": "url",
         "NEXUS_API_KEY": "api_key",
         "NEXUS_TIMEOUT": "timeout",
@@ -354,6 +395,7 @@ def _load_from_environment() -> NexusConfig:
                 "auto_parse",
                 "is_admin",
                 "enforce_permissions",
+                "allow_admin_bypass",
             ]:
                 converted_value = value.lower() in ["true", "1", "yes", "on"]
             else:

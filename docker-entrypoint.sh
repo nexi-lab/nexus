@@ -293,8 +293,87 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 # ============================================
+# Initialize Semantic Search (Optional)
+# ============================================
+# Check if semantic search is enabled in config file
+CONFIG_FILE="${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}"
+if [ -f "$CONFIG_FILE" ]; then
+    # Extract semantic_search value from YAML config
+    SEMANTIC_SEARCH_ENABLED=$(python3 -c "
+import sys
+import yaml
+try:
+    with open('$CONFIG_FILE', 'r') as f:
+        config = yaml.safe_load(f)
+    enabled = config.get('features', {}).get('semantic_search', False)
+    print('true' if enabled else 'false')
+except Exception as e:
+    print('false')
+    print(f'Warning: Could not read semantic_search config: {e}', file=sys.stderr)
+" 2>&1)
+
+    if [ "$SEMANTIC_SEARCH_ENABLED" = "true" ]; then
+        echo ""
+        echo "🔍 Initializing semantic search (from config)..."
+
+        python3 << 'PYTHON_SEMANTIC_INIT'
+import os
+import sys
+import asyncio
+
+try:
+    # Add src to path
+    sys.path.insert(0, '/app/src')
+
+    from nexus.core.nexus_fs import NexusFS
+    from nexus.backends.local import LocalBackend
+
+    data_dir = os.getenv('NEXUS_DATA_DIR', '/app/data')
+    database_url = os.getenv('NEXUS_DATABASE_URL')
+
+    async def init_semantic_search():
+        """Initialize semantic search in keyword-only mode."""
+        backend = LocalBackend(data_dir)
+        nx = NexusFS(backend, db_path=database_url)
+
+        # Initialize in keyword-only mode (no API key needed)
+        await nx.initialize_semantic_search(
+            embedding_provider=None,  # Keyword-only mode
+            chunk_size=512,
+            chunk_strategy="semantic"
+        )
+
+        nx.close()
+        print("✓ Semantic search initialized (keyword-only mode)")
+
+    asyncio.run(init_semantic_search())
+
+except Exception as e:
+    print(f"ERROR: Failed to initialize semantic search: {e}", file=sys.stderr)
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+PYTHON_SEMANTIC_INIT
+
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}✓ Semantic search initialized${NC}"
+        else
+            echo -e "${RED}✗ Semantic search initialization failed${NC}"
+            exit 1
+        fi
+    else
+        echo ""
+        echo "ℹ️  Semantic search not enabled in config (features.semantic_search: false)"
+    fi
+else
+    echo ""
+    echo "ℹ️  No config file found, skipping semantic search initialization"
+fi
+
+# ============================================
 # Start Nexus Server
 # ============================================
+echo ""
 echo "🚀 Starting Nexus server..."
 echo ""
 echo "  Host: ${NEXUS_HOST:-0.0.0.0}"

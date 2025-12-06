@@ -191,6 +191,11 @@ class NexusFSMountsMixin:
         elif backend_type == "s3_connector":
             from nexus.backends.s3_connector import S3ConnectorBackend
 
+            # Get session factory for caching support if available
+            session_factory = None
+            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
+                session_factory = self.metadata.SessionLocal
+
             backend = S3ConnectorBackend(
                 bucket_name=backend_config["bucket"],
                 region_name=backend_config.get("region_name"),
@@ -199,6 +204,8 @@ class NexusFSMountsMixin:
                 access_key_id=backend_config.get("access_key_id"),
                 secret_access_key=backend_config.get("secret_access_key"),
                 session_token=backend_config.get("session_token"),
+                # Session factory for caching support
+                session_factory=session_factory,
             )
         elif backend_type == "gdrive_connector":
             from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
@@ -234,6 +241,20 @@ class NexusFSMountsMixin:
                 session_factory=session_factory,
                 max_results=backend_config.get("max_results", 100),
                 labels=backend_config.get("labels", ["INBOX"]),
+            )
+        elif backend_type == "hn_connector":
+            from nexus.backends.hn_connector import HNConnectorBackend
+
+            # Get session factory for caching support if available
+            hn_session_factory = None
+            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
+                hn_session_factory = self.metadata.SessionLocal
+
+            backend = HNConnectorBackend(
+                cache_ttl=backend_config.get("cache_ttl", 300),
+                stories_per_feed=backend_config.get("stories_per_feed", 10),
+                include_comments=backend_config.get("include_comments", True),
+                session_factory=hn_session_factory,
             )
         else:
             raise RuntimeError(f"Unsupported backend type: {backend_type}")
@@ -780,19 +801,25 @@ class NexusFSMountsMixin:
 
                         result_queue: queue.Queue = queue.Queue()
 
-                        def _sync_worker():
+                        def _sync_worker(
+                            mp: str, ctx: OperationContext | None, rq: queue.Queue
+                        ) -> None:
                             try:
                                 result = self.sync_mount(
-                                    mount_point, recursive=True, dry_run=False, context=sync_context
+                                    mp, recursive=True, dry_run=False, context=ctx
                                 )
-                                result_queue.put(("success", result))
+                                rq.put(("success", result))
                             except Exception as e:
-                                result_queue.put(("error", str(e)))
+                                rq.put(("error", str(e)))
 
                         print(
                             f"[DEBUG-MOUNT-LOOP] Calling sync_mount for {mount_point} with {sync_timeout}s timeout..."
                         )
-                        sync_thread = threading.Thread(target=_sync_worker, daemon=True)
+                        sync_thread = threading.Thread(
+                            target=_sync_worker,
+                            args=(mount_point, sync_context, result_queue),
+                            daemon=True,
+                        )
                         sync_thread.start()
                         sync_thread.join(timeout=sync_timeout)
 
@@ -1382,23 +1409,27 @@ class NexusFSMountsMixin:
                             cast(list[str], stats["errors"]).append(f"[cache] {error}")
 
                     # Update backend_config with new history_id (for Gmail incremental sync)
-                    if hasattr(cache_result, "history_id") and cache_result.history_id:
-                        if hasattr(self, "mount_manager") and self.mount_manager:
-                            try:
-                                # Get current backend_config and merge in new history_id
-                                mount_config = self.mount_manager.get_mount(mount_point)
-                                if mount_config and "backend_config" in mount_config:
-                                    updated_config = mount_config["backend_config"].copy()
-                                    updated_config["history_id"] = cache_result.history_id
-                                    self.mount_manager.update_mount(
-                                        mount_point=mount_point, backend_config=updated_config
-                                    )
-                                    logger.info(
-                                        f"[SYNC_MOUNT] Updated backend_config with new history_id: "
-                                        f"{cache_result.history_id}"
-                                    )
-                            except Exception as e:
-                                logger.warning(f"[SYNC_MOUNT] Failed to update history_id: {e}")
+                    if (
+                        hasattr(cache_result, "history_id")
+                        and cache_result.history_id
+                        and hasattr(self, "mount_manager")
+                        and self.mount_manager
+                    ):
+                        try:
+                            # Get current backend_config and merge in new history_id
+                            mount_config = self.mount_manager.get_mount(mount_point)
+                            if mount_config and "backend_config" in mount_config:
+                                updated_config = mount_config["backend_config"].copy()
+                                updated_config["history_id"] = cache_result.history_id
+                                self.mount_manager.update_mount(
+                                    mount_point=mount_point, backend_config=updated_config
+                                )
+                                logger.info(
+                                    f"[SYNC_MOUNT] Updated backend_config with new history_id: "
+                                    f"{cache_result.history_id}"
+                                )
+                        except Exception as e:
+                            logger.warning(f"[SYNC_MOUNT] Failed to update history_id: {e}")
 
                     logger.info(
                         f"[SYNC_MOUNT] Content cache sync complete: "

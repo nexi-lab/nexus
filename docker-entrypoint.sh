@@ -91,6 +91,9 @@ try:
         print("✓ Database schema already exists")
     else:
         print("Creating database schema...")
+        # Disable mount loading during schema creation
+        os.environ['NEXUS_SKIP_MOUNT_LOADING'] = 'true'
+
         # Import NexusFS to create tables
         from nexus.core.nexus_fs import NexusFS
         from nexus.backends.local import LocalBackend

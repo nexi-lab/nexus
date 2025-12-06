@@ -27,6 +27,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Create content_cache table."""
+    # Check if table already exists
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "content_cache" in inspector.get_table_names():
+        print("⏭️  Skipping: content_cache table already exists")
+        return
+
     # Create the content_cache table
     op.create_table(
         "content_cache",
@@ -101,10 +108,26 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Drop content_cache table."""
-    # Drop indexes
-    op.drop_index("idx_content_cache_stale", table_name="content_cache")
-    op.drop_index("idx_content_cache_synced", table_name="content_cache")
-    op.drop_index("idx_content_cache_tenant", table_name="content_cache")
+    # Check if table exists
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "content_cache" not in inspector.get_table_names():
+        print("⏭️  Skipping: content_cache table doesn't exist")
+        return
+
+    # Drop indexes (suppress errors if they don't exist)
+    try:
+        op.drop_index("idx_content_cache_stale", table_name="content_cache")
+    except Exception:
+        pass
+    try:
+        op.drop_index("idx_content_cache_synced", table_name="content_cache")
+    except Exception:
+        pass
+    try:
+        op.drop_index("idx_content_cache_tenant", table_name="content_cache")
+    except Exception:
+        pass
 
     # Drop table
     op.drop_table("content_cache")

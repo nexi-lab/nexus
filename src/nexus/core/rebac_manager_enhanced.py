@@ -1176,17 +1176,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if not checks:
             return {}
 
-        # If tenant isolation is disabled, fall back to individual checks
-        # (bulk optimization requires tenant-aware queries)
-        if not self.enforce_tenant_isolation:
-            logger.warning(
-                "rebac_check_bulk called with tenant isolation disabled, falling back to individual checks"
-            )
-            results = {}
-            for check in checks:
-                subject, permission, obj = check
-                results[check] = self.rebac_check(subject, permission, obj, tenant_id=tenant_id)
-            return results
+        # Note: When tenant isolation is disabled, we still use bulk processing
+        # but skip the tenant_id filter in the SQL query. This provides the same
+        # 50-100x speedup as the tenant-isolated case. (Issue #580)
 
         # Validate tenant_id (same logic as rebac_check)
         if not tenant_id:
@@ -1337,18 +1329,31 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 f"(object_type, object_id) IN ({placeholders_objects})",
             ]
 
-            query = self._fix_sql_placeholders(
-                f"""
-                SELECT subject_type, subject_id, subject_relation, relation,
-                       object_type, object_id, conditions, expires_at
-                FROM rebac_tuples
-                WHERE tenant_id = ?
-                  AND (expires_at IS NULL OR expires_at >= ?)
-                  AND ({" OR ".join(where_clauses)})
-                """
-            )
-
-            params = [tenant_id, datetime.now(UTC).isoformat()] + subject_params + object_params
+            # When tenant isolation is disabled, skip the tenant_id filter (Issue #580)
+            if self.enforce_tenant_isolation:
+                query = self._fix_sql_placeholders(
+                    f"""
+                    SELECT subject_type, subject_id, subject_relation, relation,
+                           object_type, object_id, conditions, expires_at
+                    FROM rebac_tuples
+                    WHERE tenant_id = ?
+                      AND (expires_at IS NULL OR expires_at >= ?)
+                      AND ({" OR ".join(where_clauses)})
+                    """
+                )
+                params = [tenant_id, datetime.now(UTC).isoformat()] + subject_params + object_params
+            else:
+                # No tenant_id filter when tenant isolation is disabled
+                query = self._fix_sql_placeholders(
+                    f"""
+                    SELECT subject_type, subject_id, subject_relation, relation,
+                           object_type, object_id, conditions, expires_at
+                    FROM rebac_tuples
+                    WHERE (expires_at IS NULL OR expires_at >= ?)
+                      AND ({" OR ".join(where_clauses)})
+                    """
+                )
+                params = [datetime.now(UTC).isoformat()] + subject_params + object_params
             cursor.execute(query, params)
 
             # Build in-memory graph of all tuples

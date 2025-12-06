@@ -19,7 +19,10 @@ struct Entity {
 struct ReBACTuple {
     subject_type: String,
     subject_id: String,
-    #[allow(dead_code)]
+    /// When set, this is a userset-as-subject tuple:
+    /// "members of subject_type:subject_id have this relation on the object"
+    /// e.g., group:eng#member -> editor -> file:readme
+    /// means "members of group:eng have editor on file:readme"
     subject_relation: Option<String>,
     relation: String,
     object_type: String,
@@ -208,8 +211,10 @@ fn compute_permission(
     let namespace = match namespaces.get(&object.entity_type) {
         Some(ns) => ns,
         None => {
-            // No namespace, check direct relation
-            let result = check_direct_relation(subject, permission, object, tuples);
+            // No namespace, check direct relation AND userset membership
+            let result = check_relation_with_usersets(
+                subject, permission, object, tuples, namespaces, memo_cache, visited, depth,
+            );
             memo_cache.insert(memo_key, result);
             return result;
         }
@@ -240,7 +245,10 @@ fn compute_permission(
         match relation_config {
             RelationConfig::Direct(_) | RelationConfig::EmptyDict(_) => {
                 // Both "direct" string and {} empty dict mean direct relation
-                check_direct_relation(subject, permission, object, tuples)
+                // Check direct AND userset-based permissions
+                check_relation_with_usersets(
+                    subject, permission, object, tuples, namespaces, memo_cache, visited, depth,
+                )
             }
             RelationConfig::Union { union } => {
                 // Union (OR semantics)
@@ -287,7 +295,10 @@ fn compute_permission(
             }
         }
     } else {
-        false
+        // Permission not in namespace config, check direct relation AND userset membership
+        check_relation_with_usersets(
+            subject, permission, object, tuples, namespaces, memo_cache, visited, depth,
+        )
     };
 
     memo_cache.insert(memo_key, result);
@@ -302,7 +313,9 @@ fn check_direct_relation(
     tuples: &[ReBACTuple],
 ) -> bool {
     for tuple in tuples {
-        if tuple.object_type == object.entity_type
+        // Only check tuples WITHOUT subject_relation (direct tuples)
+        if tuple.subject_relation.is_none()
+            && tuple.object_type == object.entity_type
             && tuple.object_id == object.entity_id
             && tuple.relation == relation
             && tuple.subject_type == subject.entity_type
@@ -311,6 +324,60 @@ fn check_direct_relation(
             return true;
         }
     }
+    false
+}
+
+/// Check if subject has a relation on object via direct tuple OR userset membership
+/// This handles the userset-as-subject pattern: group:eng#member -> editor -> file:readme
+#[allow(clippy::too_many_arguments)]
+fn check_relation_with_usersets(
+    subject: &Entity,
+    relation: &str,
+    object: &Entity,
+    tuples: &[ReBACTuple],
+    namespaces: &AHashMap<String, NamespaceConfig>,
+    memo_cache: &mut MemoCache,
+    visited: &mut AHashSet<(String, String, String, String, String)>,
+    depth: u32,
+) -> bool {
+    // First check direct relation
+    if check_direct_relation(subject, relation, object, tuples) {
+        return true;
+    }
+
+    // Then check userset-based permissions
+    // e.g., if group:eng#member -> editor -> file:readme exists,
+    // check if subject has "member" relation on group:eng
+    for tuple in tuples {
+        // Find userset tuples matching the object and relation
+        if let Some(ref subject_relation) = tuple.subject_relation {
+            if tuple.object_type == object.entity_type
+                && tuple.object_id == object.entity_id
+                && tuple.relation == relation
+            {
+                // Check if subject is a member of this userset
+                // e.g., does user:alice have "member" on group:eng?
+                let userset_entity = Entity {
+                    entity_type: tuple.subject_type.clone(),
+                    entity_id: tuple.subject_id.clone(),
+                };
+
+                if compute_permission(
+                    subject,
+                    subject_relation,
+                    &userset_entity,
+                    tuples,
+                    namespaces,
+                    memo_cache,
+                    &mut visited.clone(),
+                    depth + 1,
+                ) {
+                    return true;
+                }
+            }
+        }
+    }
+
     false
 }
 

@@ -1040,25 +1040,9 @@ class NexusFSMountsMixin:
 
                         if existing_meta:
                             # File exists - already tracked, no action needed
+                            # Note: Parent tuples are created when file is first added
+                            # No need to re-create them on every sync (huge performance waste)
                             pass
-
-                            # Still create parent relationships for permission inheritance
-                            # (in case they're missing from previous syncs)
-                            if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager:
-                                try:
-                                    logger.info(
-                                        f"[SYNC_MOUNT] Creating parent tuples for existing file: {entry_virtual_path}"
-                                    )
-                                    created = self._hierarchy_manager.ensure_parent_tuples(
-                                        entry_virtual_path, tenant_id=None
-                                    )
-                                    logger.info(
-                                        f"[SYNC_MOUNT] Created {created} parent tuples for {entry_virtual_path}"
-                                    )
-                                except Exception as parent_error:
-                                    logger.warning(
-                                        f"Failed to create parent tuples for existing {entry_virtual_path}: {parent_error}"
-                                    )
                         else:
                             # File doesn't exist in metadata - add it
                             try:

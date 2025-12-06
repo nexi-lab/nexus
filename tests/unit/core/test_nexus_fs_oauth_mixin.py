@@ -39,7 +39,17 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
         enforce_permissions=False,
     )
     yield nx
-    nx.close()
+    # Ensure proper cleanup order for Windows
+    try:
+        nx.close()
+        # Give Windows time to release file handles (SQLite on Windows issue)
+        import sys
+        import time
+
+        if sys.platform == "win32":
+            time.sleep(0.1)
+    except Exception:
+        pass  # Ignore cleanup errors
 
 
 class TestMapProviderName:

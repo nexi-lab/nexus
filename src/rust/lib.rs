@@ -1,8 +1,9 @@
 #![allow(clippy::useless_conversion)]
+#![allow(deprecated)] // TODO: Migrate from allow_threads/downcast to new PyO3 0.27 API
 
 use ahash::{AHashMap, AHashSet};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use regex::bytes::RegexBuilder;
 use serde::Deserialize;
 use std::collections::HashMap as StdHashMap;

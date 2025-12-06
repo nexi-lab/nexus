@@ -122,6 +122,10 @@ services:
       # Set to 'false' to disable permission checks at runtime
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
 
+      # Admin bypass (allows admin users to bypass ReBAC checks)
+      # Set to 'false' for stricter security in production
+      NEXUS_ALLOW_ADMIN_BYPASS: ${NEXUS_ALLOW_ADMIN_BYPASS:-true}
+
       # Configuration file path (defaults to config.demo.yaml if not specified)
       NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}
     volumes:

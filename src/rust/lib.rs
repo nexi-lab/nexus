@@ -117,7 +117,7 @@ fn compute_permissions_bulk<'py>(
         let obj_type: String = key.extract()?;
         let config_dict = value.downcast::<PyDict>()?;
         // Convert Python dict to JSON via Python's json module
-        let json_module = py.import_bound("json")?;
+        let json_module = py.import("json")?;
         let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
         let config_json: String = config_json_py.extract()?;
         let config: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
@@ -162,7 +162,7 @@ fn compute_permissions_bulk<'py>(
     });
 
     // Convert AHashMap to PyDict
-    let py_dict = PyDict::new_bound(py);
+    let py_dict = PyDict::new(py);
     for (key, value) in results {
         py_dict.set_item(key, value)?;
     }
@@ -468,9 +468,9 @@ fn grep_bulk<'py>(
     }
 
     // Convert results to Python list of dicts
-    let py_list = PyList::empty_bound(py);
+    let py_list = PyList::empty(py);
     for m in results {
-        let dict = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
         dict.set_item("file", m.file)?;
         dict.set_item("line", m.line)?;
         dict.set_item("content", m.content)?;

@@ -383,13 +383,13 @@ if [ -f "$CONFIG_FILE" ]; then
     echo "  Config: $CONFIG_FILE"
     echo ""
     echo -e "${GREEN}✓ Using configuration file${NC}"
-    CMD="nexus serve --config $CONFIG_FILE --auth-type database"
+    CMD="nexus serve --config $CONFIG_FILE --auth-type database --async"
 else
     echo "  Config: Not found (using CLI options)"
     echo ""
 
     # Build command based on backend type (legacy CLI mode)
-    CMD="nexus serve --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-8080} --auth-type database"
+    CMD="nexus serve --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-8080} --auth-type database --async"
 
     if [ "${NEXUS_BACKEND}" = "gcs" ]; then
         CMD="$CMD --backend gcs --gcs-bucket ${NEXUS_GCS_BUCKET}"

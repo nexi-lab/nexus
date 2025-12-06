@@ -8,14 +8,14 @@ name = "nexus_fast"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.22", features = ["extension-module", "hashbrown"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-ahash = "0.8"  # Fast hashmap for better performance
+pyo3 = { version = "0.27", features = ["extension-module", "hashbrown"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+ahash = "0.8.12"  # Fast hashmap for better performance
 regex = "1.10"  # Fast regex matching
-encoding_rs = "0.8"  # Encoding detection for text files
-globset = "0.4"  # Fast glob pattern matching
-rayon = "1.10"   # Parallel iterators for bulk operations
+encoding_rs = "0.8.35"  # Encoding detection for text files
+globset = "0.4.18"  # Fast glob pattern matching
+rayon = "1.11"   # Parallel iterators for bulk operations
 
 [profile.release]
 lto = true

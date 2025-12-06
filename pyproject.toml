@@ -3,7 +3,7 @@ name = "nexus-ai-fs"
 version = "0.5.6"
 description = "AI-Native Distributed Filesystem Architecture"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 license = {text = "MIT"}
 authors = [
     {name = "Nexus Team", email = "team@nexus.example.com"}
@@ -43,32 +43,38 @@ dependencies = [
     "pydantic>=2.5.0",
     "pyyaml>=6.0.1",
     # HTTP client (for remote mode)
-    "httpx>=0.27.0",
+    "httpx>=0.28.1",
     "requests>=2.31.0",
     "tenacity>=8.2.0",  # Retry logic with exponential backoff
+    # HTTP server (FastAPI + ASGI)
+    "fastapi>=0.124.0",
+    "uvicorn[standard]>=0.38.0",  # ASGI server
+    "uvloop>=0.22.1; sys_platform != 'win32'",  # Fast event loop (Unix only, 2-4x faster)
     # Database
-    "sqlalchemy>=2.0.0",
+    "sqlalchemy>=2.0.44",
     "alembic>=1.13.0",
-    "psycopg2-binary>=2.9.0",  # PostgreSQL driver
+    "psycopg2-binary>=2.9.10",  # PostgreSQL driver (sync)
+    "asyncpg>=0.31.0",  # PostgreSQL driver (async)
+    "aiosqlite>=0.20.0",  # SQLite driver (async)
     # Caching
-    "cachetools>=5.3.0",
+    "cachetools>=6.2.2",
     # Authentication
-    "authlib>=1.3.0",  # JWT and OAuth support for OIDC auth
+    "authlib>=1.6.5",  # JWT and OAuth support for OIDC auth
     "bcrypt>=4.0.0",  # Password hashing for local auth
     "cryptography>=41.0.0",  # OAuth token encryption (Fernet)
     # Cloud Storage Backends
-    "boto3>=1.34.0",  # AWS SDK for Python (S3 connector)
-    "google-cloud-storage>=2.14.0",
-    "google-api-python-client>=2.108.0",  # Google Drive API
-    "google-auth>=2.25.0",  # Google authentication
-    "google-auth-httplib2>=0.2.0",  # Google auth HTTP adapter
+    "boto3>=1.42.4",  # AWS SDK for Python (S3 connector)
+    "google-cloud-storage>=3.6.0",
+    "google-api-python-client>=2.187.0",  # Google Drive API
+    "google-auth>=2.43.0",  # Google authentication
+    "google-auth-httplib2>=0.2.1",  # Google auth HTTP adapter
     "google-auth-oauthlib>=1.2.0",  # Google OAuth flow
     # Document Parsing
-    "markitdown[all]>=0.0.1a2",  # Includes PDF, Excel, PowerPoint, etc.
+    "markitdown[all]>=0.1.4",  # Includes PDF, Excel, PowerPoint, etc.
     # LLM Provider Abstraction
     "litellm>=1.0",  # Multi-provider LLM support
-    "tiktoken>=0.5",  # Token counting for OpenAI models and chunking
-    "anthropic>=0.40",  # Native Anthropic SDK for better Claude support
+    "tiktoken>=0.12",  # Token counting for OpenAI models and chunking
+    "anthropic>=0.75",  # Native Anthropic SDK for better Claude support
     "dotenv>=0.9.9",
     # MCP Server (v0.7.0)
     "fastmcp>=0.2.0",  # Model Context Protocol server

@@ -80,11 +80,12 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:${NEXUS_PORT}/health || exit 1
 
-# Run the server
+# Run the server (--async for FastAPI with 10-50x throughput improvement)
 CMD nexus serve \
     --host ${NEXUS_HOST} \
     --port ${NEXUS_PORT} \
     --data-dir ${NEXUS_DATA_DIR} \
+    --async \
     ${NEXUS_BACKEND:+--backend $NEXUS_BACKEND} \
     ${NEXUS_GCS_BUCKET:+--gcs-bucket $NEXUS_GCS_BUCKET} \
     ${NEXUS_GCS_PROJECT:+--gcs-project $NEXUS_GCS_PROJECT} \

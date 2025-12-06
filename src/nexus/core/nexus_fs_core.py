@@ -896,6 +896,27 @@ class NexusFSCoreMixin:
                     f"write: Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
                 )
 
+        # Issue #548: Grant direct_owner permission to the user who created the file
+        # For new files only (meta is None means file didn't exist before)
+        # Note: Use ctx.user (human user) so agents inherit via agent->user relationship
+        if meta is None and hasattr(self, "_rebac_manager") and self._rebac_manager:
+            try:
+                ctx = context if context is not None else self._default_context
+                if ctx.user and not ctx.is_system:
+                    logger.debug(
+                        f"write: Granting direct_owner permission to {ctx.user} for {path}"
+                    )
+                    self._rebac_manager.rebac_write(
+                        subject=("user", ctx.user),
+                        relation="direct_owner",
+                        object=("file", path),
+                        tenant_id=ctx.tenant_id or "default",
+                    )
+                    logger.debug(f"write: Granted direct_owner permission to {ctx.user} for {path}")
+            except Exception as e:
+                # Log but don't fail the write operation
+                logger.warning(f"write: Failed to grant direct_owner permission for {path}: {e}")
+
         # Auto-parse file if enabled and format is supported
         if self.auto_parse:
             self._auto_parse_file(path)
@@ -1248,6 +1269,38 @@ class NexusFSCoreMixin:
 
         # Store all metadata in a single transaction (with version history)
         self.metadata.put_batch(metadata_list)
+
+        # Issue #548: Create parent tuples and grant direct_owner for new files
+        # This ensures agents can read files they create (via user inheritance)
+        import logging
+
+        logger = logging.getLogger(__name__)
+        ctx = context if context is not None else self._default_context
+
+        for (path, _), _meta in zip(validated_files, metadata_list, strict=False):
+            is_new_file = existing_metadata.get(path) is None
+
+            # Create parent relationship tuples for file inheritance
+            if hasattr(self, "_hierarchy_manager"):
+                try:
+                    self._hierarchy_manager.ensure_parent_tuples(
+                        path, tenant_id=ctx.tenant_id or "default"
+                    )
+                except Exception as e:
+                    logger.warning(f"write_batch: Failed to create parent tuples for {path}: {e}")
+
+            # Grant direct_owner permission for new files only
+            if is_new_file and hasattr(self, "_rebac_manager") and self._rebac_manager:
+                try:
+                    if ctx.user and not ctx.is_system:
+                        self._rebac_manager.rebac_write(
+                            subject=("user", ctx.user),
+                            relation="direct_owner",
+                            object=("file", path),
+                            tenant_id=ctx.tenant_id or "default",
+                        )
+                except Exception as e:
+                    logger.warning(f"write_batch: Failed to grant direct_owner for {path}: {e}")
 
         # Auto-parse files if enabled
         if self.auto_parse:

@@ -1,5 +1,4 @@
 #![allow(clippy::useless_conversion)]
-#![allow(deprecated)] // TODO: Migrate from allow_threads to new PyO3 0.27 API
 
 use ahash::{AHashMap, AHashSet};
 use pyo3::prelude::*;
@@ -270,7 +269,7 @@ fn compute_permissions_bulk<'py>(
 
     // Release GIL for computation
     // Use parallel iteration for large check lists, sequential for small lists
-    let results = py.allow_threads(|| {
+    let results = py.detach(|| {
         // Build graph indexes once for all checks - massive speedup!
         let graph = ReBACGraph::from_tuples(&rebac_tuples);
 
@@ -585,7 +584,7 @@ fn compute_permission_single(
     }
 
     // Release GIL for computation
-    let result = py.allow_threads(|| {
+    let result = py.detach(|| {
         let subject = Entity {
             entity_type: subject_type,
             entity_id: subject_id,
@@ -658,7 +657,7 @@ fn grep_bulk<'py>(
     }
 
     // Release GIL for computation
-    let matches = py.allow_threads(|| {
+    let matches = py.detach(|| {
         let mut results = Vec::new();
 
         // Iterate over extracted file contents
@@ -723,7 +722,7 @@ fn glob_match_bulk(
     use globset::{Glob, GlobSetBuilder};
 
     // Build glob set from patterns
-    let globset = py.allow_threads(|| {
+    let globset = py.detach(|| {
         let mut builder = GlobSetBuilder::new();
         for pattern in &patterns {
             match Glob::new(pattern) {
@@ -745,7 +744,7 @@ fn glob_match_bulk(
 
     // Match paths against the glob set
     // Use parallel iteration for large lists, sequential for small lists
-    let matches: Vec<String> = py.allow_threads(|| {
+    let matches: Vec<String> = py.detach(|| {
         if paths.len() < GLOB_PARALLEL_THRESHOLD {
             // Sequential for small lists (avoid rayon overhead)
             paths
@@ -781,7 +780,7 @@ fn filter_paths(
     use globset::{Glob, GlobSetBuilder};
 
     // Build glob set from exclude patterns
-    let globset = py.allow_threads(|| {
+    let globset = py.detach(|| {
         let mut builder = GlobSetBuilder::new();
         for pattern in &exclude_patterns {
             match Glob::new(pattern) {
@@ -803,7 +802,7 @@ fn filter_paths(
 
     // Filter paths against exclude patterns
     // Use parallel iteration for large lists, sequential for small lists
-    let filtered = py.allow_threads(|| {
+    let filtered = py.detach(|| {
         if paths.len() < GLOB_PARALLEL_THRESHOLD {
             // Sequential for small lists
             paths
@@ -881,7 +880,7 @@ fn expand_subjects<'py>(
     }
 
     // Release GIL for computation
-    let subjects = py.allow_threads(|| {
+    let subjects = py.detach(|| {
         let object = Entity {
             entity_type: object_type,
             entity_id: object_id,

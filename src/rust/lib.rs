@@ -66,7 +66,6 @@ type MemoCache = AHashMap<(String, String, String, String, String), bool>;
 type CheckRequest = (String, String, String, String, String);
 
 /// Main function: compute permissions in bulk using Rust
-#[allow(deprecated)] // TODO: Migrate py.allow_threads() to new PyO3 0.27 API
 #[pyfunction]
 fn compute_permissions_bulk<'py>(
     py: Python<'py>,
@@ -128,7 +127,7 @@ fn compute_permissions_bulk<'py>(
     }
 
     // Release GIL for computation
-    let results = py.allow_threads(|| {
+    let results = py.detach(|| {
         let mut results = AHashMap::new();
         let mut memo_cache: MemoCache = AHashMap::new();
 

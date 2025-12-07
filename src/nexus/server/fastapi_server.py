@@ -734,13 +734,18 @@ def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "path") and params.path:
         kwargs["path"] = params.path
-    if hasattr(params, "case_sensitive") and params.case_sensitive is not None:
-        kwargs["case_sensitive"] = params.case_sensitive
-    if hasattr(params, "max_matches") and params.max_matches is not None:
-        kwargs["max_matches"] = params.max_matches
+    if hasattr(params, "ignore_case") and params.ignore_case is not None:
+        kwargs["ignore_case"] = params.ignore_case
+    if hasattr(params, "max_results") and params.max_results is not None:
+        kwargs["max_results"] = params.max_results
+    if hasattr(params, "file_pattern") and params.file_pattern is not None:
+        kwargs["file_pattern"] = params.file_pattern
+    if hasattr(params, "search_mode") and params.search_mode is not None:
+        kwargs["search_mode"] = params.search_mode
 
-    matches = nexus_fs.grep(params.pattern, **kwargs)
-    return {"matches": matches}
+    results = nexus_fs.grep(params.pattern, **kwargs)
+    # Return "results" key to match RemoteNexusFS.grep() expectations
+    return {"results": results}
 
 
 def _handle_search(params: Any, context: Any) -> dict[str, Any]:

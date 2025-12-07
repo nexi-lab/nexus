@@ -166,10 +166,11 @@ class NexusConfig(BaseModel):
     )
 
     # Admin bypass setting (P0-4)
-    # Default: False for security - admin keys go through normal permission checks
+    # Default: True for better developer experience - admin keys bypass permission checks
+    # Set to False explicitly for stricter production security
     allow_admin_bypass: bool = Field(
-        default=False,
-        description="Allow admin keys to bypass permission checks (P0-4: default False for security)",
+        default=True,
+        description="Allow admin keys to bypass permission checks (default True for dev experience)",
     )
 
     # Workspace and Memory registry (v0.7.0)

@@ -540,4 +540,8 @@ if [ "$QUIET" = "1" ]; then
     export NEXUS_LOG_LEVEL=ERROR
 fi
 
-nexus serve --host $HOST --port $PORT --auth-type database > "$LOG_FILE" 2>&1
+# Enable admin bypass for dev/demo environments (allows admin users to bypass ReBAC checks)
+# In production, set NEXUS_ALLOW_ADMIN_BYPASS=false or leave unset for security
+export NEXUS_ALLOW_ADMIN_BYPASS="${NEXUS_ALLOW_ADMIN_BYPASS:-true}"
+
+nexus serve --host $HOST --port $PORT --auth-type database --async > "$LOG_FILE" 2>&1

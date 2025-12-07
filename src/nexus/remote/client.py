@@ -978,7 +978,32 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             If return_metadata=False: File content as bytes
             If return_metadata=True: Dict with content, etag, version, etc.
         """
+        import base64
+
         result = self._call_rpc("read", {"path": path, "return_metadata": return_metadata})
+
+        # Handle base64-encoded content from RPC response
+        if isinstance(result, dict) and "content" in result:
+            content = result["content"]
+            encoding = result.get("encoding", "base64")
+
+            # Decode base64 content to bytes
+            if encoding == "base64" and isinstance(content, str):
+                decoded_content = base64.b64decode(content)
+            elif isinstance(content, bytes):
+                decoded_content = content
+            else:
+                # Already decoded or unknown format
+                decoded_content = content.encode() if isinstance(content, str) else content
+
+            if return_metadata:
+                # Return dict with decoded content and metadata
+                result["content"] = decoded_content
+                return result
+            else:
+                # Return just the bytes
+                return decoded_content
+
         return result  # type: ignore[no-any-return]
 
     def read_bulk(

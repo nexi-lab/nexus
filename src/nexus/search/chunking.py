@@ -113,7 +113,14 @@ class DocumentChunker:
             raise ValueError(f"Unknown chunking strategy: {self.strategy}")
 
     def _chunk_fixed(self, content: str) -> list[DocumentChunk]:
-        """Chunk document into fixed-size chunks.
+        """Chunk document into fixed-size chunks using recursive splitting.
+
+        Uses a recursive approach similar to LangChain's RecursiveCharacterTextSplitter:
+        tries to split at semantic boundaries (paragraphs, sentences, words) while
+        respecting the chunk_size limit.
+
+        This is much more efficient than per-word tokenization as it only counts
+        tokens on merged chunks, not individual words.
 
         Args:
             content: Document content
@@ -121,48 +128,180 @@ class DocumentChunker:
         Returns:
             List of chunks
         """
+        # Separators in order of preference (most semantic to least)
+        separators = ["\n\n", "\n", ". ", ", ", " "]
+        return self._recursive_split(content, separators, start_offset=0)
+
+    def _recursive_split(
+        self, text: str, separators: list[str], start_offset: int
+    ) -> list[DocumentChunk]:
+        """Recursively split text using separators until chunks fit within chunk_size.
+
+        Args:
+            text: Text to split
+            separators: List of separators to try, in order of preference
+            start_offset: Starting offset in the original document
+
+        Returns:
+            List of chunks
+        """
+        if not text.strip():
+            return []
+
+        # Check if text already fits
+        text_tokens = self._count_tokens(text)
+        if text_tokens <= self.chunk_size:
+            return [
+                DocumentChunk(
+                    text=text,
+                    chunk_index=0,  # Will be renumbered later
+                    tokens=text_tokens,
+                    start_offset=start_offset,
+                    end_offset=start_offset + len(text),
+                )
+            ]
+
+        # Try each separator
+        for sep in separators:
+            if sep in text:
+                return self._split_and_merge(text, sep, separators, start_offset)
+
+        # Last resort: split by characters (shouldn't normally reach here)
+        return self._split_by_chars(text, start_offset)
+
+    def _split_and_merge(
+        self, text: str, separator: str, separators: list[str], start_offset: int
+    ) -> list[DocumentChunk]:
+        """Split text by separator and merge segments to fit chunk_size.
+
+        Args:
+            text: Text to split
+            separator: Separator to use
+            separators: All separators for recursive splitting
+            start_offset: Starting offset in the original document
+
+        Returns:
+            List of chunks
+        """
         chunks: list[DocumentChunk] = []
-        words = content.split()
-        current_chunk: list[str] = []
+        parts = text.split(separator)
+
+        current_parts: list[str] = []
         current_tokens = 0
-        current_offset = 0
+        current_offset = start_offset
 
-        for word in words:
-            word_tokens = self._count_tokens(word)
+        for part in parts:
+            if not part:
+                continue
 
-            if current_tokens + word_tokens > self.chunk_size and current_chunk:
-                # Create chunk
-                chunk_text = " ".join(current_chunk)
-                chunk_end = current_offset + len(chunk_text)
+            part_tokens = self._count_tokens(part)
+
+            # If single part exceeds chunk_size, recursively split it
+            if part_tokens > self.chunk_size:
+                # First, finalize current chunk if any
+                if current_parts:
+                    chunk_text = separator.join(current_parts)
+                    chunks.append(
+                        DocumentChunk(
+                            text=chunk_text,
+                            chunk_index=len(chunks),
+                            tokens=current_tokens,
+                            start_offset=current_offset,
+                            end_offset=current_offset + len(chunk_text),
+                        )
+                    )
+                    current_offset += len(chunk_text) + len(separator)
+                    current_parts = []
+                    current_tokens = 0
+
+                # Recursively split the large part with remaining separators
+                remaining_seps = separators[separators.index(separator) + 1 :]
+                if remaining_seps:
+                    sub_chunks = self._recursive_split(part, remaining_seps, current_offset)
+                    for sub_chunk in sub_chunks:
+                        sub_chunk.chunk_index = len(chunks)
+                        chunks.append(sub_chunk)
+                    current_offset += len(part) + len(separator)
+                else:
+                    # No more separators, split by chars
+                    sub_chunks = self._split_by_chars(part, current_offset)
+                    for sub_chunk in sub_chunks:
+                        sub_chunk.chunk_index = len(chunks)
+                        chunks.append(sub_chunk)
+                    current_offset += len(part) + len(separator)
+                continue
+
+            # Check if adding this part would exceed chunk_size
+            # Account for separator between parts
+            sep_tokens = self._count_tokens(separator) if current_parts else 0
+            if current_tokens + sep_tokens + part_tokens > self.chunk_size and current_parts:
+                # Finalize current chunk
+                chunk_text = separator.join(current_parts)
                 chunks.append(
                     DocumentChunk(
                         text=chunk_text,
                         chunk_index=len(chunks),
                         tokens=current_tokens,
                         start_offset=current_offset,
-                        end_offset=chunk_end,
+                        end_offset=current_offset + len(chunk_text),
                     )
                 )
-                current_offset = chunk_end + 1  # +1 for space
-                current_chunk = []
+                current_offset += len(chunk_text) + len(separator)
+                current_parts = []
                 current_tokens = 0
 
-            current_chunk.append(word)
-            current_tokens += word_tokens
+            current_parts.append(part)
+            current_tokens += part_tokens + (sep_tokens if len(current_parts) > 1 else 0)
 
-        # Add remaining chunk
-        if current_chunk:
-            chunk_text = " ".join(current_chunk)
-            chunk_end = current_offset + len(chunk_text)
+        # Add remaining parts as final chunk
+        if current_parts:
+            chunk_text = separator.join(current_parts)
+            final_tokens = self._count_tokens(chunk_text)
             chunks.append(
                 DocumentChunk(
                     text=chunk_text,
                     chunk_index=len(chunks),
-                    tokens=current_tokens,
+                    tokens=final_tokens,
                     start_offset=current_offset,
-                    end_offset=chunk_end,
+                    end_offset=current_offset + len(chunk_text),
                 )
             )
+
+        # Renumber chunk indices
+        for i, chunk in enumerate(chunks):
+            chunk.chunk_index = i
+
+        return chunks
+
+    def _split_by_chars(self, text: str, start_offset: int) -> list[DocumentChunk]:
+        """Split text by characters when no separator works.
+
+        Args:
+            text: Text to split
+            start_offset: Starting offset in the original document
+
+        Returns:
+            List of chunks
+        """
+        chunks: list[DocumentChunk] = []
+
+        # Estimate chars per token (roughly 4 chars per token)
+        chars_per_chunk = self.chunk_size * 4
+        current_offset = start_offset
+
+        for i in range(0, len(text), chars_per_chunk):
+            chunk_text = text[i : i + chars_per_chunk]
+            tokens = self._count_tokens(chunk_text)
+            chunks.append(
+                DocumentChunk(
+                    text=chunk_text,
+                    chunk_index=len(chunks),
+                    tokens=tokens,
+                    start_offset=current_offset,
+                    end_offset=current_offset + len(chunk_text),
+                )
+            )
+            current_offset += len(chunk_text)
 
         return chunks
 

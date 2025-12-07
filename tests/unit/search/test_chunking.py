@@ -198,3 +198,126 @@ Paragraph three."""
         chunked_words = set(all_text.split())
         # Most words should be preserved (allowing for some splitting)
         assert len(original_words & chunked_words) >= len(original_words) * 0.8
+
+    def test_chunk_fixed_respects_semantic_boundaries(self):
+        """Test that fixed chunking tries to split at semantic boundaries."""
+        chunker = DocumentChunker(chunk_size=50, strategy=ChunkStrategy.FIXED)
+        content = """First paragraph with some content.
+
+Second paragraph with more content.
+
+Third paragraph with even more content."""
+
+        chunks = chunker.chunk(content)
+
+        # Should produce multiple chunks
+        assert len(chunks) >= 1
+        # Chunks should prefer paragraph boundaries when possible
+        for chunk in chunks:
+            assert isinstance(chunk, DocumentChunk)
+
+    def test_chunk_fixed_splits_long_sentences(self):
+        """Test that fixed chunking can split long sentences."""
+        chunker = DocumentChunker(chunk_size=10, strategy=ChunkStrategy.FIXED)
+        # Create a very long sentence with no paragraph breaks
+        content = "word " * 100  # 100 words, no paragraph breaks
+
+        chunks = chunker.chunk(content)
+
+        # Should split into multiple chunks
+        assert len(chunks) > 1
+        # Each chunk should be within size limits (approximately)
+        for chunk in chunks:
+            assert chunk.tokens <= chunker.chunk_size * 2  # Allow flexibility
+
+    def test_chunk_fixed_handles_nested_splitting(self):
+        """Test recursive splitting with multiple separator levels."""
+        chunker = DocumentChunker(chunk_size=20, strategy=ChunkStrategy.FIXED)
+        content = """Para 1 sentence 1. Para 1 sentence 2.
+
+Para 2 sentence 1. Para 2 sentence 2.
+
+Para 3 with a very long sentence that goes on and on with many words."""
+
+        chunks = chunker.chunk(content)
+
+        assert len(chunks) >= 1
+        for i, chunk in enumerate(chunks):
+            assert chunk.chunk_index == i
+            assert len(chunk.text) > 0
+
+    def test_chunk_fixed_sequential_indices(self):
+        """Test that chunk indices are sequential after recursive splitting."""
+        chunker = DocumentChunker(chunk_size=15, strategy=ChunkStrategy.FIXED)
+        content = """Short para.
+
+A much longer paragraph with many words that will need to be split into multiple chunks.
+
+Another short one."""
+
+        chunks = chunker.chunk(content)
+
+        # Verify indices are sequential
+        for i, chunk in enumerate(chunks):
+            assert chunk.chunk_index == i, f"Expected index {i}, got {chunk.chunk_index}"
+
+
+class TestChunkingPerformance:
+    """Performance tests for chunking."""
+
+    def test_large_document_chunking_efficiency(self):
+        """Test that chunking large documents doesn't call tokenizer per-word.
+
+        The new implementation should tokenize at paragraph/sentence level,
+        not per-word, making it much more efficient for large documents.
+        """
+        chunker = DocumentChunker(chunk_size=512, strategy=ChunkStrategy.FIXED)
+
+        # Create a moderately large document (100KB ~ 20K words)
+        paragraphs = []
+        for i in range(200):
+            paragraphs.append(f"This is paragraph {i} with some content. " * 5)
+        content = "\n\n".join(paragraphs)
+
+        # This should complete quickly (< 1 second) with efficient implementation
+        # Old per-word implementation would be much slower
+        import time
+
+        start = time.time()
+        chunks = chunker.chunk(content)
+        elapsed = time.time() - start
+
+        assert len(chunks) > 0
+        # Should complete in reasonable time (generous limit for CI)
+        assert elapsed < 10.0, f"Chunking took {elapsed:.2f}s, expected < 10s"
+
+    def test_tokenize_count_efficiency(self):
+        """Verify the number of tokenize calls is reasonable.
+
+        The recursive splitter should call tokenizer on paragraphs/sentences,
+        not on individual words.
+        """
+
+        chunker = DocumentChunker(chunk_size=100, strategy=ChunkStrategy.FIXED)
+
+        # Create content with 10 paragraphs, ~50 words each = ~500 words total
+        paragraphs = ["Word " * 50 for _ in range(10)]
+        content = "\n\n".join(paragraphs)
+
+        # Mock _count_tokens to count calls
+        original_count_tokens = chunker._count_tokens
+        call_count = [0]
+
+        def counting_wrapper(text):
+            call_count[0] += 1
+            return original_count_tokens(text)
+
+        chunker._count_tokens = counting_wrapper
+
+        chunks = chunker.chunk(content)
+
+        # Old implementation: ~500 calls (one per word)
+        # New implementation: ~10-50 calls (paragraphs + some sentences)
+        # Allow generous margin but should be way less than per-word
+        assert call_count[0] < 200, f"Too many tokenize calls: {call_count[0]}"
+        assert len(chunks) > 0

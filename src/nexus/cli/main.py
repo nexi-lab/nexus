@@ -12,9 +12,15 @@ import click
 
 import nexus
 from nexus.cli.commands import register_all_commands
+from nexus.core import setup_uvloop
 
 # Suppress pydub warning about missing ffmpeg/avconv
 warnings.filterwarnings("ignore", message="Couldn't find ffmpeg or avconv", category=RuntimeWarning)
+
+# Install uvloop early for better async performance in all CLI commands
+# This affects all asyncio.run() calls throughout the CLI
+# Can be disabled with NEXUS_USE_UVLOOP=false
+setup_uvloop()
 
 
 @click.group()

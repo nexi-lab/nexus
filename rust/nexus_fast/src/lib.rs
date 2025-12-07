@@ -218,12 +218,12 @@ fn compute_permissions_bulk<'py>(
     let check_requests: Vec<CheckRequest> = checks
         .iter()
         .map(|item| {
-            let tuple = item.downcast::<PyTuple>()?;
+            let tuple: Bound<'_, PyTuple> = item.extract()?;
             let subject_item = tuple.get_item(0)?;
-            let subject = subject_item.downcast::<PyTuple>()?;
+            let subject: Bound<'_, PyTuple> = subject_item.extract()?;
             let permission = tuple.get_item(1)?.extract::<String>()?;
             let object_item = tuple.get_item(2)?;
-            let object = object_item.downcast::<PyTuple>()?;
+            let object: Bound<'_, PyTuple> = object_item.extract()?;
 
             Ok((
                 subject.get_item(0)?.extract::<String>()?, // subject_type
@@ -238,7 +238,7 @@ fn compute_permissions_bulk<'py>(
     let rebac_tuples: Vec<ReBACTuple> = tuples
         .iter()
         .map(|item| {
-            let dict = item.downcast::<PyDict>()?;
+            let dict: Bound<'_, PyDict> = item.extract()?;
             Ok(ReBACTuple {
                 subject_type: dict.get_item("subject_type")?.unwrap().extract()?,
                 subject_id: dict.get_item("subject_id")?.unwrap().extract()?,
@@ -256,9 +256,9 @@ fn compute_permissions_bulk<'py>(
     let mut namespaces = AHashMap::new();
     for (key, value) in namespace_configs.iter() {
         let obj_type: String = key.extract()?;
-        let config_dict = value.downcast::<PyDict>()?;
+        let config_dict: Bound<'_, PyDict> = value.extract()?;
         // Convert Python dict to JSON via Python's json module
-        let json_module = py.import_bound("json")?;
+        let json_module = py.import("json")?;
         let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
         let config_json: String = config_json_py.extract()?;
         let config: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
@@ -269,7 +269,7 @@ fn compute_permissions_bulk<'py>(
 
     // Release GIL for computation
     // Use parallel iteration for large check lists, sequential for small lists
-    let results = py.allow_threads(|| {
+    let results = py.detach(|| {
         // Build graph indexes once for all checks - massive speedup!
         let graph = ReBACGraph::from_tuples(&rebac_tuples);
 
@@ -348,7 +348,7 @@ fn compute_permissions_bulk<'py>(
     });
 
     // Convert AHashMap to PyDict
-    let py_dict = PyDict::new_bound(py);
+    let py_dict = PyDict::new(py);
     for (key, value) in results {
         py_dict.set_item(key, value)?;
     }
@@ -555,7 +555,7 @@ fn compute_permission_single(
     let rebac_tuples: Vec<ReBACTuple> = tuples
         .iter()
         .map(|item| {
-            let dict = item.downcast::<PyDict>()?;
+            let dict: Bound<'_, PyDict> = item.extract()?;
             Ok(ReBACTuple {
                 subject_type: dict.get_item("subject_type")?.unwrap().extract()?,
                 subject_id: dict.get_item("subject_id")?.unwrap().extract()?,
@@ -573,8 +573,8 @@ fn compute_permission_single(
     let mut namespaces = AHashMap::new();
     for (key, value) in namespace_configs.iter() {
         let obj_type: String = key.extract()?;
-        let config_dict = value.downcast::<PyDict>()?;
-        let json_module = py.import_bound("json")?;
+        let config_dict: Bound<'_, PyDict> = value.extract()?;
+        let json_module = py.import("json")?;
         let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
         let config_json: String = config_json_py.extract()?;
         let config: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
@@ -584,7 +584,7 @@ fn compute_permission_single(
     }
 
     // Release GIL for computation
-    let result = py.allow_threads(|| {
+    let result = py.detach(|| {
         let subject = Entity {
             entity_type: subject_type,
             entity_id: subject_id,
@@ -657,7 +657,7 @@ fn grep_bulk<'py>(
     }
 
     // Release GIL for computation
-    let matches = py.allow_threads(|| {
+    let matches = py.detach(|| {
         let mut results = Vec::new();
 
         // Iterate over extracted file contents
@@ -698,9 +698,9 @@ fn grep_bulk<'py>(
     });
 
     // Convert results to Python list of dicts
-    let py_list = PyList::empty_bound(py);
+    let py_list = PyList::empty(py);
     for m in matches {
-        let dict = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
         dict.set_item("file", m.file)?;
         dict.set_item("line", m.line)?;
         dict.set_item("content", m.content)?;
@@ -722,7 +722,7 @@ fn glob_match_bulk(
     use globset::{Glob, GlobSetBuilder};
 
     // Build glob set from patterns
-    let globset = py.allow_threads(|| {
+    let globset = py.detach(|| {
         let mut builder = GlobSetBuilder::new();
         for pattern in &patterns {
             match Glob::new(pattern) {
@@ -744,7 +744,7 @@ fn glob_match_bulk(
 
     // Match paths against the glob set
     // Use parallel iteration for large lists, sequential for small lists
-    let matches: Vec<String> = py.allow_threads(|| {
+    let matches: Vec<String> = py.detach(|| {
         if paths.len() < GLOB_PARALLEL_THRESHOLD {
             // Sequential for small lists (avoid rayon overhead)
             paths
@@ -761,7 +761,7 @@ fn glob_match_bulk(
     });
 
     // Convert results to Python list
-    let py_list = PyList::empty_bound(py);
+    let py_list = PyList::empty(py);
     for path in matches {
         py_list.append(path)?;
     }
@@ -780,7 +780,7 @@ fn filter_paths(
     use globset::{Glob, GlobSetBuilder};
 
     // Build glob set from exclude patterns
-    let globset = py.allow_threads(|| {
+    let globset = py.detach(|| {
         let mut builder = GlobSetBuilder::new();
         for pattern in &exclude_patterns {
             match Glob::new(pattern) {
@@ -802,7 +802,7 @@ fn filter_paths(
 
     // Filter paths against exclude patterns
     // Use parallel iteration for large lists, sequential for small lists
-    let filtered = py.allow_threads(|| {
+    let filtered = py.detach(|| {
         if paths.len() < GLOB_PARALLEL_THRESHOLD {
             // Sequential for small lists
             paths
@@ -851,7 +851,7 @@ fn expand_subjects<'py>(
     let rebac_tuples: Vec<ReBACTuple> = tuples
         .iter()
         .map(|item| {
-            let dict = item.downcast::<PyDict>()?;
+            let dict: Bound<'_, PyDict> = item.extract()?;
             Ok(ReBACTuple {
                 subject_type: dict.get_item("subject_type")?.unwrap().extract()?,
                 subject_id: dict.get_item("subject_id")?.unwrap().extract()?,
@@ -869,8 +869,8 @@ fn expand_subjects<'py>(
     let mut namespaces = AHashMap::new();
     for (key, value) in namespace_configs.iter() {
         let obj_type: String = key.extract()?;
-        let config_dict = value.downcast::<PyDict>()?;
-        let json_module = py.import_bound("json")?;
+        let config_dict: Bound<'_, PyDict> = value.extract()?;
+        let json_module = py.import("json")?;
         let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
         let config_json: String = config_json_py.extract()?;
         let config: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
@@ -880,7 +880,7 @@ fn expand_subjects<'py>(
     }
 
     // Release GIL for computation
-    let subjects = py.allow_threads(|| {
+    let subjects = py.detach(|| {
         let object = Entity {
             entity_type: object_type,
             entity_id: object_id,
@@ -905,9 +905,9 @@ fn expand_subjects<'py>(
     });
 
     // Convert to Python list of tuples
-    let py_list = PyList::empty_bound(py);
+    let py_list = PyList::empty(py);
     for (subj_type, subj_id) in subjects {
-        let tuple = PyTuple::new_bound(py, &[subj_type, subj_id]);
+        let tuple = PyTuple::new(py, &[subj_type, subj_id])?;
         py_list.append(tuple)?;
     }
 

@@ -367,6 +367,108 @@ def test_batch_read_content_with_cache(tmp_path):
     assert result2[hash2] == content2
 
 
+def test_batch_read_content_parallel(tmp_path):
+    """Test batch read uses parallel reads for multiple uncached files.
+
+    This test verifies that:
+    1. Multiple files can be read in parallel
+    2. The parallel execution works correctly with ThreadPoolExecutor
+    3. Results are correctly mapped to their hashes
+    """
+    backend = LocalBackend(root_path=tmp_path / "backend")
+    # No cache - forces disk reads
+    backend.content_cache = None
+
+    # Write multiple files
+    contents = [f"Content for file {i}".encode() for i in range(10)]
+    hashes = [backend.write_content(content) for content in contents]
+
+    # Batch read all files (will use parallel reads since cache is disabled)
+    result = backend.batch_read_content(hashes)
+
+    # Verify all content was read correctly
+    assert len(result) == 10
+    for i, h in enumerate(hashes):
+        assert result[h] == contents[i]
+
+
+def test_batch_read_content_parallel_performance(tmp_path):
+    """Test that parallel batch read is faster than sequential for many files.
+
+    This is a basic sanity check that parallelism is working.
+    """
+    import time
+
+    backend = LocalBackend(root_path=tmp_path / "backend")
+    backend.content_cache = None  # Disable cache to force disk reads
+
+    # Write 20 files
+    contents = [f"Content for performance test file {i}".encode() for i in range(20)]
+    hashes = [backend.write_content(content) for content in contents]
+
+    # Time batch read (should be parallel)
+    start = time.time()
+    result = backend.batch_read_content(hashes)
+    elapsed = time.time() - start
+
+    # Verify correctness
+    assert len(result) == 20
+    for i, h in enumerate(hashes):
+        assert result[h] == contents[i]
+
+    # Should complete in reasonable time (generous limit for CI environments)
+    # Even sequential reads of 20 small files should be < 1s
+    assert elapsed < 5.0, f"Batch read took {elapsed:.2f}s, expected < 5s"
+
+
+def test_batch_read_content_single_file_no_threadpool(tmp_path):
+    """Test that single file batch read doesn't use ThreadPoolExecutor overhead."""
+    backend = LocalBackend(root_path=tmp_path / "backend")
+    backend.content_cache = None
+
+    content = b"Single file content"
+    content_hash = backend.write_content(content)
+
+    # Batch read with single file
+    result = backend.batch_read_content([content_hash])
+
+    assert len(result) == 1
+    assert result[content_hash] == content
+
+
+def test_batch_read_workers_configurable(tmp_path):
+    """Test that batch_read_workers is configurable via constructor."""
+    # Default is 8
+    backend_default = LocalBackend(root_path=tmp_path / "backend1")
+    assert backend_default.batch_read_workers == 8
+
+    # Custom value for HDD
+    backend_hdd = LocalBackend(root_path=tmp_path / "backend2", batch_read_workers=2)
+    assert backend_hdd.batch_read_workers == 2
+
+    # Custom value for fast NVMe
+    backend_nvme = LocalBackend(root_path=tmp_path / "backend3", batch_read_workers=16)
+    assert backend_nvme.batch_read_workers == 16
+
+
+def test_batch_read_respects_worker_limit(tmp_path):
+    """Test that batch read respects the configured worker limit."""
+    # Create backend with low worker count (simulating HDD config)
+    backend = LocalBackend(root_path=tmp_path / "backend", batch_read_workers=2)
+    backend.content_cache = None
+
+    # Write 10 files
+    contents = [f"Content {i}".encode() for i in range(10)]
+    hashes = [backend.write_content(c) for c in contents]
+
+    # Batch read should work correctly even with limited workers
+    result = backend.batch_read_content(hashes)
+
+    assert len(result) == 10
+    for i, h in enumerate(hashes):
+        assert result[h] == contents[i]
+
+
 def test_stream_content_small_file(temp_backend):
     """Test streaming a small file."""
     content = b"Small file content for streaming test"

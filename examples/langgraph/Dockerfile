@@ -1,7 +1,7 @@
 # Nexus LangGraph Agent Server - Production Dockerfile
 # Multi-stage build for optimal image size
 
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 # Install build dependencies (including build-essential for Rust linking)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -26,7 +26,7 @@ RUN uv pip install --system .
 # ============================================
 # Production image
 # ============================================
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin/langgraph /usr/local/bin/langgraph
 
 # Copy application files

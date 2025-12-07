@@ -623,11 +623,12 @@ def _handle_write(params: Any, context: Any) -> dict[str, Any]:
     return {"bytes_written": bytes_written}
 
 
-def _handle_exists(params: Any, context: Any) -> dict[str, Any]:
+def _handle_exists(params: Any, _context: Any) -> dict[str, Any]:
     """Handle exists method."""
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
-    return {"exists": nexus_fs.exists(params.path, context=context)}
+    # Note: exists() doesn't support context parameter in NexusFilesystem
+    return {"exists": nexus_fs.exists(params.path)}
 
 
 def _handle_list(params: Any, context: Any) -> dict[str, Any]:
@@ -648,19 +649,21 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
     return {"files": entries}
 
 
-def _handle_delete(params: Any, context: Any) -> dict[str, Any]:
+def _handle_delete(params: Any, _context: Any) -> dict[str, Any]:
     """Handle delete method."""
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
-    nexus_fs.delete(params.path, context=context)
+    # Note: delete() doesn't support context parameter in NexusFilesystem
+    nexus_fs.delete(params.path)
     return {"deleted": True}
 
 
-def _handle_rename(params: Any, context: Any) -> dict[str, Any]:
+def _handle_rename(params: Any, _context: Any) -> dict[str, Any]:
     """Handle rename method."""
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
-    nexus_fs.rename(params.old_path, params.new_path, context=context)
+    # Note: rename() doesn't support context parameter in NexusFilesystem
+    nexus_fs.rename(params.old_path, params.new_path)
     return {"renamed": True}
 
 

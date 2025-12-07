@@ -217,6 +217,27 @@ class NexusFSMountsMixin:
                     "user_email"
                 ),  # Optional - uses context.user_id if None
             )
+        elif backend_type == "gmail_connector":
+            from nexus.backends.gmail_connector import GmailConnectorBackend
+
+            # Get session factory for caching support if available
+            gmail_session_factory = None
+            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
+                gmail_session_factory = self.metadata.SessionLocal
+
+            backend = GmailConnectorBackend(
+                token_manager_db=backend_config["token_manager_db"],
+                user_email=backend_config.get(
+                    "user_email"
+                ),  # Optional - uses context.user_id if None
+                sync_from_date=backend_config.get(
+                    "sync_from_date"
+                ),  # Optional - defaults to 30 days ago
+                last_history_id=backend_config.get(
+                    "last_history_id"
+                ),  # Optional - for incremental sync
+                session_factory=gmail_session_factory,
+            )
         elif backend_type == "x_connector":
             from nexus.backends.x_connector import XConnectorBackend
 
@@ -598,10 +619,10 @@ class NexusFSMountsMixin:
         if isinstance(backend_config, str):
             backend_config = json.loads(backend_config)
 
-        # Normalize token_manager_db for OAuth-backed mounts (gdrive_connector, x_connector)
+        # Normalize token_manager_db for OAuth-backed mounts (gdrive_connector, gmail_connector, x_connector)
         # According to docs, token_manager_db should come from NexusFS config db_path, not from saved config
         backend_type = mount_config["backend_type"]
-        if backend_type in ("gdrive_connector", "x_connector"):
+        if backend_type in ("gdrive_connector", "gmail_connector", "x_connector"):
             # Priority: config.db_path > metadata.database_url
             database_url = None
 
@@ -623,6 +644,14 @@ class NexusFSMountsMixin:
                 )
 
             backend_config["token_manager_db"] = database_url
+
+            # Add session_factory for gmail_connector caching support
+            if (
+                backend_type == "gmail_connector"
+                and hasattr(self, "metadata")
+                and hasattr(self.metadata, "SessionLocal")
+            ):
+                backend_config["session_factory"] = self.metadata.SessionLocal
 
         # Activate the mount
         return self.add_mount(

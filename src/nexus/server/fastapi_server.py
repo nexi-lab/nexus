@@ -537,6 +537,17 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await asyncio.to_thread(_handle_search, params, context)
     elif method == "is_directory":
         return await asyncio.to_thread(_handle_is_directory, params, context)
+    # Admin API methods (v0.5.1)
+    elif method == "admin_create_key":
+        return await asyncio.to_thread(_handle_admin_create_key, params, context)
+    elif method == "admin_list_keys":
+        return await asyncio.to_thread(_handle_admin_list_keys, params, context)
+    elif method == "admin_get_key":
+        return await asyncio.to_thread(_handle_admin_get_key, params, context)
+    elif method == "admin_revoke_key":
+        return await asyncio.to_thread(_handle_admin_revoke_key, params, context)
+    elif method == "admin_update_key":
+        return await asyncio.to_thread(_handle_admin_update_key, params, context)
     elif method in _app_state.exposed_methods:
         return await _auto_dispatch(method, params, context)
     else:
@@ -751,6 +762,237 @@ def _handle_is_directory(params: Any, context: Any) -> dict[str, Any]:
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
     return {"is_directory": nexus_fs.is_directory(params.path, context=context)}
+
+
+# ============================================================================
+# Admin API Handlers (v0.5.1)
+# ============================================================================
+
+
+def _require_admin(context: Any) -> None:
+    """Require admin privileges for admin operations."""
+    from nexus.core.exceptions import NexusPermissionError
+
+    if not context or not getattr(context, "is_admin", False):
+        raise NexusPermissionError("Admin privileges required for this operation")
+
+
+def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
+    """Handle admin_create_key method."""
+    from datetime import UTC, datetime, timedelta
+
+    from nexus.core.entity_registry import EntityRegistry
+    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+
+    _require_admin(context)
+
+    auth_provider = _app_state.auth_provider
+    if not auth_provider or not hasattr(auth_provider, "session_factory"):
+        raise RuntimeError("Database auth provider not configured")
+
+    # Register user in entity registry (for agent permission inheritance)
+    if params.subject_type == "user" or not params.subject_type:
+        entity_registry = EntityRegistry(auth_provider.session_factory)
+        entity_registry.register_entity(
+            entity_type="user",
+            entity_id=params.user_id,
+            parent_type="tenant",
+            parent_id=params.tenant_id,
+        )
+
+    # Calculate expiry if specified
+    expires_at = None
+    if params.expires_days:
+        expires_at = datetime.now(UTC) + timedelta(days=params.expires_days)
+
+    # Create API key
+    with auth_provider.session_factory() as session:
+        key_id, raw_key = DatabaseAPIKeyAuth.create_key(
+            session,
+            user_id=params.user_id,
+            name=params.name,
+            subject_type=params.subject_type,
+            subject_id=params.subject_id,
+            tenant_id=params.tenant_id,
+            is_admin=params.is_admin,
+            expires_at=expires_at,
+        )
+        session.commit()
+
+        return {
+            "key_id": key_id,
+            "api_key": raw_key,
+            "user_id": params.user_id,
+            "name": params.name,
+            "subject_type": params.subject_type,
+            "subject_id": params.subject_id or params.user_id,
+            "tenant_id": params.tenant_id,
+            "is_admin": params.is_admin,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+        }
+
+
+def _handle_admin_list_keys(params: Any, context: Any) -> dict[str, Any]:
+    """Handle admin_list_keys method."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from nexus.storage.models import APIKeyModel
+
+    _require_admin(context)
+
+    auth_provider = _app_state.auth_provider
+    if not auth_provider or not hasattr(auth_provider, "session_factory"):
+        raise RuntimeError("Database auth provider not configured")
+
+    with auth_provider.session_factory() as session:
+        stmt = select(APIKeyModel)
+
+        if params.user_id:
+            stmt = stmt.where(APIKeyModel.user_id == params.user_id)
+        if params.tenant_id:
+            stmt = stmt.where(APIKeyModel.tenant_id == params.tenant_id)
+        if params.is_admin is not None:
+            stmt = stmt.where(APIKeyModel.is_admin == int(params.is_admin))
+        if not params.include_revoked:
+            stmt = stmt.where(APIKeyModel.revoked == 0)
+
+        stmt = stmt.limit(params.limit).offset(params.offset)
+        api_keys = list(session.scalars(stmt).all())
+
+        # Filter expired keys if needed
+        now = datetime.now(UTC)
+        if not params.include_expired:
+            api_keys = [
+                key
+                for key in api_keys
+                if not key.expires_at
+                or (
+                    key.expires_at.replace(tzinfo=UTC)
+                    if key.expires_at.tzinfo is None
+                    else key.expires_at
+                )
+                > now
+            ]
+
+        keys = []
+        for key in api_keys:
+            keys.append(
+                {
+                    "key_id": key.key_id,
+                    "user_id": key.user_id,
+                    "subject_type": key.subject_type,
+                    "subject_id": key.subject_id,
+                    "name": key.name,
+                    "tenant_id": key.tenant_id,
+                    "is_admin": bool(key.is_admin),
+                    "created_at": key.created_at.isoformat() if key.created_at else None,
+                    "expires_at": key.expires_at.isoformat() if key.expires_at else None,
+                    "revoked": bool(key.revoked),
+                    "revoked_at": key.revoked_at.isoformat() if key.revoked_at else None,
+                    "last_used_at": key.last_used_at.isoformat() if key.last_used_at else None,
+                }
+            )
+
+        return {"keys": keys, "total": len(keys)}
+
+
+def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
+    """Handle admin_get_key method."""
+    from sqlalchemy import select
+
+    from nexus.core.exceptions import NexusFileNotFoundError
+    from nexus.storage.models import APIKeyModel
+
+    _require_admin(context)
+
+    auth_provider = _app_state.auth_provider
+    if not auth_provider or not hasattr(auth_provider, "session_factory"):
+        raise RuntimeError("Database auth provider not configured")
+
+    with auth_provider.session_factory() as session:
+        stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
+        api_key = session.scalar(stmt)
+
+        if not api_key:
+            raise NexusFileNotFoundError(f"API key not found: {params.key_id}")
+
+        return {
+            "key_id": api_key.key_id,
+            "user_id": api_key.user_id,
+            "subject_type": api_key.subject_type,
+            "subject_id": api_key.subject_id,
+            "name": api_key.name,
+            "tenant_id": api_key.tenant_id,
+            "is_admin": bool(api_key.is_admin),
+            "created_at": api_key.created_at.isoformat() if api_key.created_at else None,
+            "expires_at": api_key.expires_at.isoformat() if api_key.expires_at else None,
+            "revoked": bool(api_key.revoked),
+            "revoked_at": api_key.revoked_at.isoformat() if api_key.revoked_at else None,
+            "last_used_at": api_key.last_used_at.isoformat() if api_key.last_used_at else None,
+        }
+
+
+def _handle_admin_revoke_key(params: Any, context: Any) -> dict[str, Any]:
+    """Handle admin_revoke_key method."""
+    from nexus.core.exceptions import NexusFileNotFoundError
+    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+
+    _require_admin(context)
+
+    auth_provider = _app_state.auth_provider
+    if not auth_provider or not hasattr(auth_provider, "session_factory"):
+        raise RuntimeError("Database auth provider not configured")
+
+    with auth_provider.session_factory() as session:
+        success = DatabaseAPIKeyAuth.revoke_key(session, params.key_id)
+        if not success:
+            raise NexusFileNotFoundError(f"API key not found: {params.key_id}")
+
+        session.commit()
+        return {"success": True, "key_id": params.key_id}
+
+
+def _handle_admin_update_key(params: Any, context: Any) -> dict[str, Any]:
+    """Handle admin_update_key method."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from nexus.core.exceptions import NexusFileNotFoundError
+    from nexus.storage.models import APIKeyModel
+
+    _require_admin(context)
+
+    auth_provider = _app_state.auth_provider
+    if not auth_provider or not hasattr(auth_provider, "session_factory"):
+        raise RuntimeError("Database auth provider not configured")
+
+    with auth_provider.session_factory() as session:
+        stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
+        api_key = session.scalar(stmt)
+
+        if not api_key:
+            raise NexusFileNotFoundError(f"API key not found: {params.key_id}")
+
+        # Update fields if provided
+        if params.name is not None:
+            api_key.name = params.name
+        if params.is_admin is not None:
+            api_key.is_admin = int(params.is_admin)
+        if params.expires_days is not None:
+            api_key.expires_at = datetime.now(UTC) + timedelta(days=params.expires_days)
+
+        session.commit()
+
+        return {
+            "success": True,
+            "key_id": api_key.key_id,
+            "name": api_key.name,
+            "is_admin": bool(api_key.is_admin),
+            "expires_at": api_key.expires_at.isoformat() if api_key.expires_at else None,
+        }
 
 
 # ============================================================================

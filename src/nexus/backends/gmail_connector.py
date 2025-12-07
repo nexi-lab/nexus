@@ -45,6 +45,7 @@ except ImportError:
     yaml = None  # type: ignore
 
 from nexus.backends.backend import Backend
+from nexus.backends.cache_mixin import CacheConnectorMixin
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
@@ -55,7 +56,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class GmailConnectorBackend(Backend):
+class GmailConnectorBackend(Backend, CacheConnectorMixin):
     """
     Gmail connector backend with OAuth 2.0 authentication.
 
@@ -68,6 +69,7 @@ class GmailConnectorBackend(Backend):
     - Flat storage structure (all emails in root directory)
     - Full email metadata and content
     - Automatic token refresh
+    - Persistent caching via CacheConnectorMixin for fast grep/search
 
     Limitations:
     - No automatic deduplication (each email is a unique file)
@@ -83,6 +85,7 @@ class GmailConnectorBackend(Backend):
         sync_from_date: str | None = None,
         last_history_id: str | None = None,
         provider: str = "gmail",
+        session_factory=None,  # type: ignore[no-untyped-def]
     ):
         """
         Initialize Gmail connector backend.
@@ -98,6 +101,8 @@ class GmailConnectorBackend(Backend):
                            If provided, uses Gmail history API to sync only changes since this ID.
                            If None, performs initial sync using sync_from_date.
             provider: OAuth provider name from config (default: "gmail")
+            session_factory: SQLAlchemy session factory for content caching (optional).
+                           If provided, enables persistent caching for fast grep/search.
 
         Note:
             For single-user scenarios (demos), set user_email explicitly.
@@ -124,6 +129,9 @@ class GmailConnectorBackend(Backend):
         self.user_email = user_email  # None means use context.user_id
         self.provider = provider
         self.last_history_id = last_history_id
+
+        # Store session factory for caching (CacheConnectorMixin)
+        self.session_factory = session_factory
 
         # Parse sync_from_date (only used if last_history_id is not provided)
         if sync_from_date:
@@ -678,6 +686,189 @@ class GmailConnectorBackend(Backend):
             Last synced historyId, or None if no sync has been performed
         """
         return self._current_history_id or self.last_history_id
+
+    # === CacheConnectorMixin required methods ===
+
+    def _read_content_from_backend(
+        self, backend_path: str, context: "OperationContext | None" = None
+    ) -> bytes:
+        """Read content from Gmail API (required by CacheConnectorMixin).
+
+        This is the backend-specific implementation called by the cache layer.
+
+        Args:
+            backend_path: Path to the email file (e.g., "email-123.yaml")
+            context: Operation context for authentication
+
+        Returns:
+            Email content as bytes
+
+        Raises:
+            NexusFileNotFoundError: If email doesn't exist
+        """
+        # Extract message_id from path
+        is_html = backend_path.endswith(".html")
+        is_yaml = backend_path.endswith(".yaml")
+
+        if not is_html and not is_yaml:
+            raise NexusFileNotFoundError(backend_path)
+
+        if is_html:
+            if not backend_path.startswith(".email-"):
+                raise NexusFileNotFoundError(backend_path)
+            message_id = backend_path.replace(".email-", "").replace(".html", "")
+        else:
+            if not backend_path.startswith("email-"):
+                raise NexusFileNotFoundError(backend_path)
+            message_id = backend_path.replace("email-", "").replace(".yaml", "")
+
+        # Check cache first
+        if message_id not in self._email_cache:
+            # Fetch from Gmail API
+            try:
+                service = self._get_gmail_service(context)
+                email_data = self._fetch_email(service, message_id)
+                self._email_cache[message_id] = email_data
+            except Exception as e:
+                raise NexusFileNotFoundError(backend_path) from e
+
+        email_data = self._email_cache[message_id]
+
+        # Return content based on file type
+        if is_html:
+            body_html = email_data.get("body_html", "")
+            body_text = email_data.get("body_text", "")
+            body_text_is_html = body_text.strip().startswith(("<!DOCTYPE", "<!doctype", "<html"))
+            if body_html:
+                return body_html.encode("utf-8")
+            elif body_text_is_html:
+                return body_text.encode("utf-8")
+            else:
+                return b""
+        else:
+            # Return YAML content (same logic as read_content but simplified)
+            return self._format_email_as_yaml(email_data)
+
+    def _format_email_as_yaml(self, email_data: dict[str, Any]) -> bytes:
+        """Format email data as YAML bytes.
+
+        Args:
+            email_data: Email metadata dictionary
+
+        Returns:
+            Formatted YAML as bytes
+        """
+        if yaml is None:
+            raise BackendError(
+                "PyYAML not installed. Install with: pip install pyyaml",
+                backend="gmail",
+            )
+
+        # Remove HTML and headers from YAML output
+        yaml_data = {k: v for k, v in email_data.items() if k not in ("body_html", "headers")}
+
+        # Check if body_text is HTML
+        body_text = yaml_data.get("body_text", "")
+        body_text_is_html = body_text.strip().startswith(("<!DOCTYPE", "<!doctype", "<html"))
+
+        if body_text_is_html:
+            yaml_data["body_text"] = ""
+        elif body_text:
+            # Normalize line endings
+            text = body_text.replace("\r\n", "\n")
+            if "\\n" in text:
+                text = text.replace("\\n", "\n")
+            yaml_data["body_text"] = text
+
+        # Use custom dumper for literal block scalars
+        class LiteralDumper(yaml.SafeDumper):  # type: ignore[name-defined]
+            def choose_scalar_style(self):  # type: ignore[no-untyped-def]
+                if self.event.value and "\n" in self.event.value:
+                    return "|"
+                return super().choose_scalar_style()
+
+        def literal_presenter(dumper, data):  # type: ignore[no-untyped-def]
+            if isinstance(data, str) and "\n" in data:
+                return dumper.represent_scalar("tag:yaml.org,2002:str", data.rstrip(), style="|")
+            return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
+        LiteralDumper.add_representer(str, literal_presenter)
+
+        yaml_output = yaml.dump(  # type: ignore[attr-defined]
+            yaml_data,
+            Dumper=LiteralDumper,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+        return yaml_output.encode("utf-8")
+
+    def _list_files_recursive(
+        self, path: str, context: "OperationContext | None" = None
+    ) -> list[str]:
+        """List all files recursively (required by CacheConnectorMixin).
+
+        Args:
+            path: Starting path (empty string for root)
+            context: Operation context
+
+        Returns:
+            List of backend-relative file paths
+        """
+        # Gmail uses flat structure - just return all files from cache
+        # Trigger sync if cache is empty
+        if not self._email_cache:
+            self._sync_emails(context)
+
+        # Return all email files (both .yaml and .html)
+        files = []
+        for email_data in self._email_cache.values():
+            message_id = email_data["id"]
+            files.append(f"email-{message_id}.yaml")
+            files.append(f".email-{message_id}.html")
+
+        return files
+
+    def _create_read_context(
+        self,
+        backend_path: str,
+        virtual_path: str,
+        context: "OperationContext | None" = None,
+    ) -> "OperationContext":
+        """Create operation context with paths set (required by CacheConnectorMixin).
+
+        Args:
+            backend_path: Backend-relative path
+            virtual_path: Full virtual path (with mount point)
+            context: Original context (optional)
+
+        Returns:
+            New context with paths set
+        """
+        from nexus.core.permissions import OperationContext
+
+        if context:
+            # Clone existing context and add paths
+            return OperationContext(
+                user=context.user_id if hasattr(context, "user_id") else context.user,
+                groups=context.groups if hasattr(context, "groups") else [],
+                tenant_id=context.tenant_id if hasattr(context, "tenant_id") else "default",
+                subject_type=context.subject_type if hasattr(context, "subject_type") else "user",
+                subject_id=context.subject_id if hasattr(context, "subject_id") else None,
+                backend_path=backend_path,
+                virtual_path=virtual_path,
+            )
+        else:
+            # Create minimal context with paths
+            return OperationContext(
+                user=self.user_email or "anonymous",
+                groups=[],
+                tenant_id="default",
+                backend_path=backend_path,
+                virtual_path=virtual_path,
+            )
+
+    # === Backend interface methods ===
 
     def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
         """

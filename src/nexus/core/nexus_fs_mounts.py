@@ -220,6 +220,11 @@ class NexusFSMountsMixin:
         elif backend_type == "gmail_connector":
             from nexus.backends.gmail_connector import GmailConnectorBackend
 
+            # Get session factory for caching support if available
+            gmail_session_factory = None
+            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
+                gmail_session_factory = self.metadata.SessionLocal
+
             backend = GmailConnectorBackend(
                 token_manager_db=backend_config["token_manager_db"],
                 user_email=backend_config.get(
@@ -231,6 +236,7 @@ class NexusFSMountsMixin:
                 last_history_id=backend_config.get(
                     "last_history_id"
                 ),  # Optional - for incremental sync
+                session_factory=gmail_session_factory,
             )
         elif backend_type == "x_connector":
             from nexus.backends.x_connector import XConnectorBackend
@@ -639,6 +645,14 @@ class NexusFSMountsMixin:
 
             backend_config["token_manager_db"] = database_url
 
+            # Add session_factory for gmail_connector caching support
+            if (
+                backend_type == "gmail_connector"
+                and hasattr(self, "metadata")
+                and hasattr(self.metadata, "SessionLocal")
+            ):
+                backend_config["session_factory"] = self.metadata.SessionLocal
+
         # Activate the mount
         return self.add_mount(
             mount_point=mount_config["mount_point"],
@@ -752,11 +766,7 @@ class NexusFSMountsMixin:
 
                 # Try to sync connector backends after loading
                 backend_type = mount["backend_type"]
-                if "connector" in backend_type.lower() or backend_type.lower() in [
-                    "gcs",
-                    "s3",
-                    "gmail_connector",
-                ]:
+                if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
                     try:
                         logger.info(f"Syncing connector mount: {mount_point}")
                         # Create a minimal context from mount owner if available
@@ -993,10 +1003,6 @@ class NexusFSMountsMixin:
 
         backend = mount.backend
         backend_name = type(backend).__name__
-
-        # Set mount_point on backend if it supports it (for config updates)
-        if hasattr(backend, "set_mount_point"):
-            backend.set_mount_point(mount_point)
 
         # Check if backend supports list_dir (connector-style backends)
         if not hasattr(backend, "list_dir"):
@@ -1257,24 +1263,6 @@ class NexusFSMountsMixin:
                         logger.warning(error_msg)
             except Exception as e:
                 error_msg = f"Failed to check for deletions: {e}"
-                cast(list[str], stats["errors"]).append(error_msg)
-                logger.warning(error_msg)
-
-        # Update backend config if backend provides updated config (e.g., new last_history_id)
-        if not dry_run and hasattr(backend, "get_updated_config"):
-            try:
-                updated_config = backend.get_updated_config()
-                if updated_config and hasattr(self, "mount_manager") and self.mount_manager:
-                    logger.info(
-                        f"[SYNC_MOUNT] Updating mount config for {mount_point} with new backend config"
-                    )
-                    self.mount_manager.update_mount(
-                        mount_point=mount_point,
-                        backend_config=updated_config,
-                    )
-                    logger.info(f"[SYNC_MOUNT] Successfully updated mount config for {mount_point}")
-            except Exception as e:
-                error_msg = f"Failed to update mount config: {e}"
                 cast(list[str], stats["errors"]).append(error_msg)
                 logger.warning(error_msg)
 

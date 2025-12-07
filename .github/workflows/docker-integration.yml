@@ -603,8 +603,8 @@ jobs:
             exit 1
           fi
 
-          # Extract and decode base64 content
-          CONTENT=$(echo "$READ_RESPONSE" | python3 -c "import sys, json, base64; data=json.load(sys.stdin); print(base64.b64decode(data['result']['data']).decode('utf-8').strip())" 2>/dev/null || echo "")
+          # Extract and decode base64 content (try 'content' key first, then 'data' for compatibility)
+          CONTENT=$(echo "$READ_RESPONSE" | python3 -c "import sys, json, base64; data=json.load(sys.stdin); result=data.get('result', {}); content=result.get('content') or result.get('data', ''); print(base64.b64decode(content).decode('utf-8').strip()) if content else ''" 2>/dev/null || echo "")
 
           if [ "$CONTENT" = "$ADMIN_FILE_CONTENT" ]; then
             echo "✅ User successfully read admin file after permission grant"

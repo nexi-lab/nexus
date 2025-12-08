@@ -389,80 +389,6 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                 backend="gmail",
             ) from e
 
-    # === CacheConnectorMixin required methods ===
-
-    def _read_content_bulk_from_backend(
-        self, backend_paths: list[str], context: "OperationContext | None" = None
-    ) -> dict[str, bytes]:
-        """Read multiple email contents from Gmail API in bulk.
-
-        Uses Gmail's batch API to efficiently fetch multiple messages.
-
-        Args:
-            backend_paths: List of paths to email files
-            context: Operation context for authentication
-
-        Returns:
-            Dict mapping path -> content bytes (only successful reads)
-        """
-        if not backend_paths:
-            return {}
-
-        # Extract message IDs from paths
-        path_info: dict[str, str] = {}  # path -> message_id
-
-        for backend_path in backend_paths:
-            try:
-                # Parse path to extract message ID
-                path_parts = backend_path.split("/")
-                if len(path_parts) == 3 and path_parts[0] in self.LABEL_FOLDERS:
-                    filename = path_parts[2]
-                elif len(path_parts) == 1:
-                    filename = path_parts[0]
-                else:
-                    continue
-
-                # Extract message_id from filename (only .yaml files)
-                if not filename.endswith(".yaml"):
-                    continue
-
-                if not filename.startswith("email-"):
-                    continue
-
-                message_id = filename.replace("email-", "").replace(".yaml", "")
-                path_info[backend_path] = message_id
-            except Exception:
-                continue
-
-        if not path_info:
-            return {}
-
-        # Collect all message IDs to fetch
-        messages_to_fetch = list(path_info.values())
-
-        # Batch fetch messages from Gmail API
-        email_cache: dict[str, dict[str, Any]] = {}
-        if messages_to_fetch:
-            try:
-                service = self._get_gmail_service(context)
-                fetch_emails_batch(
-                    service, messages_to_fetch, self._parse_gmail_message, email_cache
-                )
-            except Exception:
-                pass  # Suppress errors, return partial results
-
-        # Format results
-        results: dict[str, bytes] = {}
-        for backend_path, message_id in path_info.items():
-            if message_id in email_cache:
-                try:
-                    email_data = email_cache[message_id]
-                    results[backend_path] = self._format_email_as_yaml(email_data)
-                except Exception:
-                    pass  # Skip this path on error
-
-        return results
-
     def _format_email_as_yaml(self, email_data: dict[str, Any]) -> bytes:
         """Format email data as YAML bytes.
 
@@ -613,6 +539,86 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                 pass  # Don't fail on cache write errors
 
         return content
+
+    def _bulk_download_contents(
+        self,
+        paths: list[str],
+        contexts: dict[str, "OperationContext"] | None = None,
+    ) -> dict[str, bytes]:
+        """Bulk download email contents using Gmail batch API.
+
+        This method is called by CacheConnectorMixin._batch_read_from_backend
+        for efficient bulk downloads of email content.
+
+        Args:
+            paths: List of backend-relative paths (e.g., "INBOX/thread_id/email-123.yaml")
+            contexts: Optional dict mapping path -> OperationContext
+
+        Returns:
+            Dict mapping path -> content bytes (only successful reads)
+        """
+
+        # Extract message IDs from paths
+        path_to_message_id: dict[str, str] = {}
+        for path in paths:
+            try:
+                # Parse path to extract filename
+                path_parts = path.split("/")
+                if len(path_parts) == 3 and path_parts[0] in self.LABEL_FOLDERS:
+                    # Path is "LABEL/thread_id/email-123.yaml" - use just the filename
+                    filename = path_parts[2]
+                elif len(path_parts) == 1:
+                    # Already just a filename
+                    filename = path_parts[0]
+                else:
+                    continue  # Skip invalid paths
+
+                # Extract message_id from filename (only .yaml files)
+                if not filename.endswith(".yaml") or not filename.startswith("email-"):
+                    continue
+
+                message_id = filename.replace("email-", "").replace(".yaml", "")
+                path_to_message_id[path] = message_id
+            except Exception:
+                continue  # Skip paths that fail to parse
+
+        if not path_to_message_id:
+            return {}
+
+        # Get Gmail service (use first context if available)
+        context = None
+        if contexts and paths:
+            context = contexts.get(paths[0])
+        service = self._get_gmail_service(context)
+
+        # Batch fetch emails using Gmail API
+        email_cache: dict[str, dict[str, Any]] = {}
+        message_ids = list(path_to_message_id.values())
+
+        try:
+            fetch_emails_batch(
+                service=service,
+                message_ids=message_ids,
+                parse_message_func=self._parse_gmail_message,
+                email_cache=email_cache,
+            )
+        except Exception:
+            # If batch fetch fails, fall back to empty results
+            # The cache mixin will retry with sequential reads
+            return {}
+
+        # Format results as YAML
+        results: dict[str, bytes] = {}
+        for path, message_id in path_to_message_id.items():
+            if message_id in email_cache:
+                try:
+                    email_data = email_cache[message_id]
+                    content = self._format_email_as_yaml(email_data)
+                    results[path] = content
+                except Exception:
+                    continue  # Skip emails that fail to format
+
+        return results
 
     def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         """

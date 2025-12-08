@@ -1347,6 +1347,16 @@ class CacheConnectorMixin:
             )
             return results
 
+        # Check if this connector has custom bulk download support
+        if hasattr(self, "_bulk_download_contents"):
+            # Use connector-specific bulk download
+            logger.info(f"[BATCH-READ] Using connector bulk download for {len(paths)} paths")
+            results = self._bulk_download_contents(paths, contexts)
+            logger.info(
+                f"[BATCH-READ] Bulk download complete: {len(results)}/{len(paths)} successful"
+            )
+            return results
+
         # Fallback: sequential reads for non-blob connectors
         logger.info(f"[BATCH-READ] Falling back to sequential reads for {len(paths)} paths")
         results = {}

@@ -32,32 +32,45 @@ backends:
     priority: 0
     readonly: false
 
-  # GCS Connector backend for external bucket access
-  # This provides direct path mapping to a GCS bucket, allowing external tools
-  # to browse the bucket as if it were a local filesystem.
-  - type: gcs_connector
-    mount_point: /mnt/gcs_demo
-    config:
-      bucket: nexus-connector-test-1763281655
-      project_id: nexi-lab-888
-      prefix: nexus-demo
-    priority: 10
-    readonly: false
-    description: "GCS test bucket for Nexus connector demo"
-
-  # AWS S3 Connector backend for external bucket access
-  # This provides direct path mapping to an S3 bucket, allowing external tools
-  # to browse the bucket as if it were a local filesystem.
-  # Uncomment and configure to enable S3 backend:
-  # - type: s3_connector
-  #   mount_point: /mnt/s3_demo
+  # # GCS Connector backend for external bucket access
+  # # This provides direct path mapping to a GCS bucket, allowing external tools
+  # # to browse the bucket as if it were a local filesystem.
+  # - type: gcs_connector
+  #   mount_point: /mnt/gcs_demo
   #   config:
-  #     bucket: nexus-s3-test-bucket
-  #     region_name: us-east-1
+  #     bucket: nexus-connector-test-1763281655
+  #     project_id: nexi-lab-888
   #     prefix: nexus-demo
   #   priority: 10
   #   readonly: false
-  #   description: "S3 test bucket for Nexus connector demo"
+  #   description: "GCS test bucket for Nexus connector demo"
+
+  # # AWS S3 Connector backend for external bucket access
+  # # This provides direct path mapping to an S3 bucket, allowing external tools
+  # # to browse the bucket as if it were a local filesystem.
+  # # Uncomment and configure to enable S3 backend:
+  # # - type: s3_connector
+  # #   mount_point: /mnt/s3_demo
+  # #   config:
+  # #     bucket: nexus-s3-test-bucket
+  # #     region_name: us-east-1
+  # #     prefix: nexus-demo
+  # #   priority: 10
+  # #   readonly: false
+  # #   description: "S3 test bucket for Nexus connector demo"
+
+  # # Gmail Connector backend with OAuth authentication
+  # # Provides access to Gmail emails as a mounted filesystem
+  # - type: gmail_connector
+  #   mount_point: /mnt/gmail_demo
+  #   config:
+  #     token_manager_db: postgresql://postgres:nexus@postgres:5432/nexus
+  #     user_email: joezhoujinjing@gmail.com
+  #     provider: gmail
+  #     max_message_per_label: 50
+  #   priority: 10
+  #   readonly: false
+  #   description: "Gmail for joezhoujinjing@gmail.com"
 
   # Google Drive Connector backend with OAuth authentication
   # Provides access to Google Drive folders as a mounted filesystem

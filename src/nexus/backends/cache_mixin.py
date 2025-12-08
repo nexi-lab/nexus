@@ -383,13 +383,19 @@ class CacheConnectorMixin:
             logger.info(f"[CACHE-BULK] All {len(paths)} files served from cache")
             return results
 
-        # Read remaining from backend (one at a time for now)
-        # TODO: Could add backend bulk read if supported
-        for path in paths_needing_backend:
-            with contextlib.suppress(Exception):
-                content = self._read_content_from_backend(path, context)
-                if content:
-                    results[path] = content
+        # Read remaining from backend
+        # Check if backend supports bulk read
+        if hasattr(self, "_read_content_bulk_from_backend"):
+            # Use bulk backend read if available
+            bulk_results = self._read_content_bulk_from_backend(paths_needing_backend, context)
+            results.update(bulk_results)
+        else:
+            # Fall back to one at a time
+            for path in paths_needing_backend:
+                with contextlib.suppress(Exception):
+                    content = self._read_content_from_backend(path, context)
+                    if content:
+                        results[path] = content
 
         logger.info(
             f"[CACHE-BULK] {len(cache_entries)} cache hits, "
@@ -860,68 +866,160 @@ class CacheConnectorMixin:
             backend_to_virtual[backend_path] = virtual_path
 
         # OPTIMIZATION: Bulk load all cache entries in one query
-        logger.info(f"[CACHE-SYNC] Bulk loading cache for {len(virtual_paths)} paths...")
+        logger.info(
+            f"[CACHE-SYNC] ⚡ BULK-OPT-V2: Bulk loading cache for {len(virtual_paths)} paths..."
+        )
         cached_entries = self._read_bulk_from_cache(virtual_paths, original=True)
         logger.info(f"[CACHE-SYNC] Found {len(cached_entries)} cached entries")
 
-        # Process each file
+        # OPTIMIZATION: Determine which files need content reading
+        # Collect files that need to be read from backend
+        files_to_read: list[
+            tuple[str, str, OperationContext]
+        ] = []  # (backend_path, virtual_path, context)
+        files_to_skip: set[str] = set()
+
+        logger.info("[CACHE-SYNC] Phase 1: Checking which files need content refresh...")
+        for backend_path in files:
+            vpath = backend_to_virtual.get(backend_path)
+            if vpath is None:
+                continue
+
+            # Check if we can skip based on cache freshness
+            cached = cached_entries.get(vpath)
+            if (
+                cached
+                and not cached.stale
+                and hasattr(self, "get_version")
+                and cached.backend_version
+            ):
+                # Has version support and cache is fresh - can skip
+                files_to_skip.add(backend_path)
+                continue
+
+            # Need to read content
+            read_context = self._create_read_context(
+                backend_path=backend_path,
+                virtual_path=vpath,
+                context=context,
+            )
+            files_to_read.append((backend_path, vpath, read_context))
+
+        logger.info(
+            f"[CACHE-SYNC] Phase 1 complete: {len(files_to_skip)} files can skip content read, "
+            f"{len(files_to_read)} files need content refresh"
+        )
+
+        # OPTIMIZATION: Bulk read content from backend
+        content_results: dict[str, bytes] = {}
+        if files_to_read:
+            logger.info(
+                f"[CACHE-SYNC] Phase 2: Bulk reading {len(files_to_read)} files from backend..."
+            )
+
+            # Check if backend supports bulk read
+            if hasattr(self, "_read_content_bulk_from_backend"):
+                logger.info("[CACHE-SYNC] Using bulk read API (batch mode)")
+                # Batch in groups of 50 to avoid overwhelming the API
+                BATCH_SIZE = 50
+                for i in range(0, len(files_to_read), BATCH_SIZE):
+                    batch = files_to_read[i : i + BATCH_SIZE]
+                    batch_backend_paths = [bp for bp, _, _ in batch]
+
+                    logger.info(
+                        f"[CACHE-SYNC] Reading batch {i // BATCH_SIZE + 1}/{(len(files_to_read) - 1) // BATCH_SIZE + 1}: "
+                        f"{len(batch)} files"
+                    )
+
+                    # Use first context as representative (they should all be similar)
+                    representative_context = batch[0][2] if batch else None
+
+                    try:
+                        batch_results = self._read_content_bulk_from_backend(
+                            batch_backend_paths, representative_context
+                        )
+                        content_results.update(batch_results)
+                        logger.info(
+                            f"[CACHE-SYNC] Batch {i // BATCH_SIZE + 1} complete: {len(batch_results)} files read"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"[CACHE-SYNC] Batch read failed: {e}, falling back to individual reads"
+                        )
+                        # Fall back to individual reads for this batch
+                        for backend_path, _vpath, read_ctx in batch:
+                            with contextlib.suppress(Exception):
+                                content = self._read_content_from_backend(backend_path, read_ctx)
+                                if content:
+                                    content_results[backend_path] = content
+            else:
+                logger.info("[CACHE-SYNC] Using individual read API (no bulk support)")
+                # Fall back to individual reads
+                for backend_path, _vpath, read_ctx in files_to_read:
+                    with contextlib.suppress(Exception):
+                        content = self._read_content_from_backend(backend_path, read_ctx)
+                        if content:
+                            content_results[backend_path] = content
+
+            logger.info(
+                f"[CACHE-SYNC] Phase 2 complete: {len(content_results)} files read from backend, "
+                f"{len(files_to_read) - len(content_results)} failed"
+            )
+
+        logger.info("[CACHE-SYNC] Phase 3: Processing and caching content...")
+
+        # Process each file with progress logging
+        total_files = len(files)
+        files_processed = 0
         for backend_path in files:
             try:
+                # Track progress for all files
+                files_processed += 1
+
                 # Get virtual path (may be None if filtered out by patterns)
                 vpath = backend_to_virtual.get(backend_path)
                 if vpath is None:
                     # Was filtered out by patterns
                     continue
 
-                # Create context for reading with backend_path set
-                read_context = self._create_read_context(
-                    backend_path=backend_path,
-                    virtual_path=vpath,
-                    context=context,
-                )
-
                 # OPTIMIZATION: Get cached entry from bulk-loaded data
                 cached = cached_entries.get(vpath)
 
-                # OPTIMIZATION: Skip version check if cache is fresh and not stale
-                # Only check version if we need to verify freshness
-                version = None
-                skip_version_check = cached and not cached.stale
-
-                if not skip_version_check and hasattr(self, "get_version"):
-                    with contextlib.suppress(Exception):
-                        version = self.get_version(backend_path, read_context)
-
-                # OPTIMIZATION: If cache is fresh and not stale, skip without reading content
-                # If we have version support and cached version, trust it without network call
-                if (
-                    cached
-                    and not cached.stale
-                    and hasattr(self, "get_version")
-                    and cached.backend_version
-                ):
-                    logger.info(f"[CACHE] SYNC SKIP (cached, no version check): {virtual_path}")
+                # OPTIMIZATION: Skip if we already determined this file can be skipped
+                if backend_path in files_to_skip:
+                    logger.info(f"[CACHE] SYNC SKIP (cached, no version check): {vpath}")
                     result.files_skipped += 1
                     continue
 
-                # Read content from backend (only if needed for verification)
-                content = self._read_content_from_backend(backend_path, read_context)
+                # OPTIMIZATION: Get content from bulk-read results
+                content = content_results.get(backend_path)
 
                 if content is None:
                     result.files_skipped += 1
                     continue
+
+                # Get version if backend supports it (for cache metadata)
+                version = None
+                if hasattr(self, "get_version"):
+                    read_context = self._create_read_context(
+                        backend_path=backend_path,
+                        virtual_path=vpath,
+                        context=context,
+                    )
+                    with contextlib.suppress(Exception):
+                        version = self.get_version(backend_path, read_context)
 
                 # Skip if cache is fresh (not stale and version/content matches)
                 if cached and not cached.stale:
                     if version is not None:
                         # Backend supports versioning - compare version IDs
                         if cached.backend_version == version:
-                            logger.info(f"[CACHE] SYNC SKIP (version match): {virtual_path}")
+                            logger.info(f"[CACHE] SYNC SKIP (version match): {vpath}")
                             result.files_skipped += 1
                             continue
                         else:
                             logger.info(
-                                f"[CACHE] SYNC STALE (version mismatch): {virtual_path} "
+                                f"[CACHE] SYNC STALE (version mismatch): {vpath} "
                                 f"cached={cached.backend_version} current={version}"
                             )
                     else:
@@ -931,13 +1029,13 @@ class CacheConnectorMixin:
                             cached_hash = hash_content(cached.content_binary)
                             if content_hash == cached_hash:
                                 logger.info(
-                                    f"[CACHE] SYNC SKIP (hash match, no versioning): {virtual_path}"
+                                    f"[CACHE] SYNC SKIP (hash match, no versioning): {vpath}"
                                 )
                                 result.files_skipped += 1
                                 continue
                             else:
                                 logger.info(
-                                    f"[CACHE] SYNC STALE (hash mismatch, no versioning): {virtual_path}"
+                                    f"[CACHE] SYNC STALE (hash mismatch, no versioning): {vpath}"
                                 )
                         # No cached binary to compare - will re-cache
 
@@ -952,13 +1050,11 @@ class CacheConnectorMixin:
                     tenant_id = context.tenant_id
 
                 # Parse content if supported (PDF, Excel, etc.)
-                parsed_text, parsed_from, parse_metadata = self._parse_content(
-                    virtual_path, content
-                )
+                parsed_text, parsed_from, parse_metadata = self._parse_content(vpath, content)
 
                 # Write to cache using virtual_path (matches file_paths table)
                 self._write_to_cache(
-                    path=virtual_path,
+                    path=vpath,
                     content=content,
                     content_text=parsed_text,
                     content_type="parsed" if parsed_text else "full",
@@ -971,15 +1067,21 @@ class CacheConnectorMixin:
                 result.files_synced += 1
                 result.bytes_synced += len(content)
 
+                # Progress logging every 10 files
+                if files_processed % 10 == 0:
+                    logger.info(
+                        f"[CACHE-SYNC] Progress: {files_processed}/{total_files} files processed "
+                        f"({result.files_synced} synced, {result.files_skipped} skipped, "
+                        f"{result.bytes_synced / (1024 * 1024):.1f}MB)"
+                    )
+
                 # Generate embeddings if requested
                 if generate_embeddings:
                     try:
-                        self._generate_embeddings(virtual_path)
+                        self._generate_embeddings(vpath)
                         result.embeddings_generated += 1
                     except Exception as e:
-                        result.errors.append(
-                            f"Failed to generate embeddings for {virtual_path}: {e}"
-                        )
+                        result.errors.append(f"Failed to generate embeddings for {vpath}: {e}")
 
             except Exception as e:
                 result.errors.append(f"Failed to sync {backend_path}: {e}")

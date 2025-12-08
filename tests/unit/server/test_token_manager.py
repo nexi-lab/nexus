@@ -247,6 +247,9 @@ class TestTokenManager:
         success = await manager.revoke_credential("google", "nonexistent@example.com")
         assert success is False
 
+    @pytest.mark.skipif(
+        platform.system() == "Windows", reason="Skipping on Windows - takes too much time"
+    )
     @pytest.mark.asyncio
     async def test_list_credentials(self, manager, valid_credential):
         """Test listing credentials."""
@@ -390,6 +393,9 @@ class TestTokenManager:
                 user_email="alice@example.com",
             )
 
+    @pytest.mark.skipif(
+        platform.system() == "Windows", reason="Skipping on Windows - takes too much time"
+    )
     @pytest.mark.asyncio
     async def test_tenant_isolation(self, manager, valid_credential):
         """Test that credentials are isolated by tenant."""

@@ -183,20 +183,67 @@ class NexusFSSearchMixin:
                             user="anonymous", groups=[], backend_path=route.backend_path
                         )
                     entries = route.backend.list_dir(route.backend_path, context=list_context)
-                    # Format results
-                    if details:
-                        from datetime import datetime
+                    logger.warning(
+                        f"[LIST-RECURSIVE-DEBUG] Got {len(entries)} entries from list_dir, recursive={recursive}"
+                    )
 
-                        return [
-                            {
-                                "path": f"{path.rstrip('/')}/{entry}",
-                                "size": 0,
-                                "modified_at": datetime.now().isoformat(),
-                                "etag": "",
-                            }
-                            for entry in entries
-                        ]
-                    return [f"{path.rstrip('/')}/{entry}" for entry in entries]
+                    # Handle recursive listing for dynamic connectors
+                    if recursive:
+                        logger.warning(
+                            f"[LIST-RECURSIVE-DEBUG] Entering recursive traversal block for {path}"
+                        )
+                        all_paths = []
+                        for entry in entries:
+                            logger.warning(f"[LIST-RECURSIVE-DEBUG] Processing entry: {entry}")
+                            entry_path = f"{path.rstrip('/')}/{entry}"
+                            if entry.endswith("/"):
+                                # Directory - recursively list its contents
+                                try:
+                                    sub_paths = self.list(
+                                        path=entry_path,
+                                        recursive=True,
+                                        details=False,
+                                        context=context,
+                                    )
+                                    # Add all file paths from subdirectory (filter out directories)
+                                    all_paths.extend([p for p in sub_paths if not p.endswith("/")])
+                                except Exception as e:
+                                    logger.warning(
+                                        f"[LIST-DEBUG] Failed to recursively list {entry_path}: {e}"
+                                    )
+                            else:
+                                # File - add to results
+                                all_paths.append(entry_path)
+
+                        # Format results
+                        if details:
+                            from datetime import datetime
+
+                            return [
+                                {
+                                    "path": p,
+                                    "size": 0,
+                                    "modified_at": datetime.now().isoformat(),
+                                    "etag": "",
+                                }
+                                for p in all_paths
+                            ]
+                        return all_paths
+                    else:
+                        # Non-recursive: return immediate children only
+                        if details:
+                            from datetime import datetime
+
+                            return [
+                                {
+                                    "path": f"{path.rstrip('/')}/{entry}",
+                                    "size": 0,
+                                    "modified_at": datetime.now().isoformat(),
+                                    "etag": "",
+                                }
+                                for entry in entries
+                            ]
+                        return [f"{path.rstrip('/')}/{entry}" for entry in entries]
             except PermissionDeniedError:
                 # Re-raise permission errors - don't fall through to metadata listing
                 raise

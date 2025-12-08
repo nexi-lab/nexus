@@ -230,12 +230,6 @@ class NexusFSMountsMixin:
                 user_email=backend_config.get(
                     "user_email"
                 ),  # Optional - uses context.user_id if None
-                sync_from_date=backend_config.get(
-                    "sync_from_date"
-                ),  # Optional - defaults to 30 days ago
-                last_history_id=backend_config.get(
-                    "last_history_id"
-                ),  # Optional - for incremental sync
                 session_factory=gmail_session_factory,
             )
         elif backend_type == "x_connector":
@@ -995,6 +989,9 @@ class NexusFSMountsMixin:
             f"hierarchy_manager={has_hierarchy}, "
             f"enable_inheritance={enable_inheritance}"
         )
+        logger.info(
+            "[SYNC_MOUNT] Phase 1/3: Metadata sync - scanning directories and updating database"
+        )
 
         # Get the mount
         mount = self.router.get_mount(mount_point)
@@ -1023,9 +1020,24 @@ class NexusFSMountsMixin:
         # Track all files found in backend (for deletion detection)
         files_found_in_backend: set[str] = set()
 
+        # Progress tracking for grouped logging
+        directories_scanned = 0
+        last_dir_log = 0
+
         # Recursive function to scan directories
         def scan_directory(virtual_path: str, backend_path: str) -> None:
+            nonlocal directories_scanned, last_dir_log
             try:
+                # Track directory progress
+                directories_scanned += 1
+                if directories_scanned - last_dir_log >= 10:
+                    logger.info(
+                        f"[SYNC_MOUNT] Scanning progress: {directories_scanned} directories scanned, "
+                        f"{stats['files_scanned']} files found, "
+                        f"{stats['files_created']} new files"
+                    )
+                    last_dir_log = directories_scanned
+
                 # List entries in this directory
                 entries = backend.list_dir(backend_path, context=context)
 
@@ -1133,6 +1145,9 @@ class NexusFSMountsMixin:
         # If path is specified, start from there instead of mount root
         if path:
             # path can be relative to mount or absolute
+            logger.info(
+                f"[SYNC_MOUNT] Scan starting from path: {path!r} (mount point: {mount_point!r})"
+            )
             if path.startswith(mount_point):
                 start_virtual_path = path
                 start_backend_path = path[len(mount_point) :].lstrip("/")
@@ -1206,15 +1221,24 @@ class NexusFSMountsMixin:
             # Start from mount point root
             # For connector backends, the prefix is already built into the backend itself
             # So we start with an empty path, and the backend will automatically apply its prefix
+            logger.info(f"[SYNC_MOUNT] Syncing from mount point root: {mount_point}")
             start_virtual_path = mount_point
             start_backend_path = (
                 ""  # Start from root (backend's prefix will be applied automatically)
             )
             scan_directory(start_virtual_path, start_backend_path)
 
+        # Log metadata sync completion
+        logger.info(
+            f"[SYNC_MOUNT] Phase 1 complete: Scanned {directories_scanned} directories, "
+            f"found {stats['files_scanned']} files ({stats['files_created']} new, "
+            f"{stats['files_scanned'] - stats['files_created']} existing)"  # type: ignore[operator]
+        )
+
         # Handle file deletions - remove files from metadata that no longer exist in backend
         # Only check deletions if we synced from root (path=None), not for partial syncs
         if not dry_run and path is None:
+            logger.info("[SYNC_MOUNT] Phase 2/3: Deletion detection - checking for removed files")
             try:
                 # Get list of other mount points to exclude from deletion check
                 # Files under other mounts should not be deleted by this mount's sync
@@ -1266,6 +1290,14 @@ class NexusFSMountsMixin:
                 cast(list[str], stats["errors"]).append(error_msg)
                 logger.warning(error_msg)
 
+            logger.info(
+                f"[SYNC_MOUNT] Phase 2 complete: Removed {stats['files_deleted']} deleted files from metadata"
+            )
+        else:
+            logger.info(
+                "[SYNC_MOUNT] Phase 2 skipped: Partial sync (path specified) - deletions not checked"
+            )
+
         # Sync content to cache if requested and backend supports it
         stats["cache_synced"] = 0
         stats["cache_bytes"] = 0
@@ -1274,7 +1306,10 @@ class NexusFSMountsMixin:
         if sync_content and not dry_run:
             # Delegate to backend's sync() method if available (CacheConnectorMixin)
             if hasattr(backend, "sync"):
-                logger.info("[SYNC_MOUNT] Delegating to backend.sync() for cache population")
+                logger.info(
+                    "[SYNC_MOUNT] Phase 3/3: Content cache sync - reading and caching file contents"
+                )
+                logger.info("[SYNC_MOUNT] Step 1: Enumerating all files via list_dir()")
                 try:
                     from nexus.backends.cache_mixin import SyncResult as CacheSyncResult
 
@@ -1287,6 +1322,9 @@ class NexusFSMountsMixin:
                         else:
                             cache_sync_path = path.lstrip("/")
 
+                    logger.info(
+                        "[SYNC_MOUNT] Step 2: Reading file contents and caching (progress logged every 10 files)"
+                    )
                     cache_result: CacheSyncResult = backend.sync(
                         path=cache_sync_path,
                         mount_point=mount_point,
@@ -1323,5 +1361,13 @@ class NexusFSMountsMixin:
                     f"[SYNC_MOUNT] Backend {type(backend).__name__} does not support sync(), "
                     "skipping content cache population"
                 )
+
+        # Final summary
+        logger.info(
+            f"[SYNC_MOUNT] ✓ Sync complete for {mount_point}: "
+            f"scanned={stats['files_scanned']}, created={stats['files_created']}, "
+            f"deleted={stats['files_deleted']}, cached={stats['cache_synced']}, "
+            f"errors={len(cast(list, stats['errors']))}"
+        )
 
         return stats

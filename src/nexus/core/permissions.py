@@ -644,11 +644,23 @@ class PermissionEnforcer:
             >>> enforcer.filter_list(all_paths, ctx)
             ["/file1.txt", "/file2.txt"]  # /secret.txt filtered out
         """
-        # Admin/system bypass
-        if (context.is_admin and self.allow_admin_bypass) or (
-            context.is_system and self.allow_system_bypass
-        ):
+        # System bypass
+        if context.is_system and self.allow_system_bypass:
             return paths
+
+        # Admin bypass (capability-based, matching check() behavior)
+        if context.is_admin:
+            if self.allow_admin_bypass:
+                # Full bypass enabled
+                return paths
+            # If bypass disabled, check admin capabilities for READ permission
+            # This matches check() behavior which falls through to capability check
+            from nexus.core.permissions_enhanced import AdminCapability
+
+            # Check if admin has READ_ALL capability (grants read to any file in tenant)
+            if AdminCapability.READ_ALL in context.admin_capabilities:
+                return paths
+            # Fall through to ReBAC check if no READ_ALL capability
 
         # OPTIMIZATION: Use bulk permission checking for better performance
         # This reduces N individual checks (each with 10-15 queries) to 1-2 bulk queries

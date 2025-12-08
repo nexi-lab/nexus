@@ -1087,9 +1087,9 @@ class CacheConnectorMixin:
                     continue
 
                 # Get context
-                read_context = all_contexts.get(backend_path)
-                if not read_context:
+                if backend_path not in all_contexts:
                     continue
+                read_context = all_contexts[backend_path]
 
                 # Get cached entry from bulk-loaded data
                 cached = cached_entries.get(vpath)

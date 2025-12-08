@@ -241,7 +241,7 @@ class BaseBlobStorageConnector(Backend):
         for path in backend_paths:
             context = contexts.get(path) if contexts else None
             try:
-                version = self.get_version(path, context)  # type: ignore
+                version = self.get_version(path, context)
                 results[path] = version
             except Exception:
                 results[path] = None

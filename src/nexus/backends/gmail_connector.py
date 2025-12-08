@@ -1,54 +1,57 @@
-"""Gmail connector backend with OAuth 2.0 authentication and caching support.
+"""Gmail connector backend with OAuth 2.0 authentication.
 
-This is a READ-ONLY connector that syncs Gmail messages to Nexus using OAuth credentials
-and caches them locally for fast search and access. Writing/deleting emails is not supported.
+This is a connector backend that provides read-only access to Gmail emails,
+organizing them by label-based folders and thread structure.
 
-Use case: Personal Gmail integration where users mount their Gmail messages into
-Nexus workspace for searching, analysis, and AI operations.
+Use case: Access Gmail emails through Nexus mount for search, analysis, and archival.
 
-Storage structure:
-    Gmail/
-    ├── inbox/
-    │   └── <message_id>.yaml        # Email metadata and bodies (YAML format)
-    ├── sent/
-    │   └── <message_id>.yaml
-    └── drafts/
-        └── <message_id>.yaml
+Storage structure (3-level hierarchy):
+    /
+    ├── SENT/                          # Sent emails
+    │   └── {thread_id}/               # Thread folders
+    │       └── email-{msg_id}.yaml    # Email metadata and content
+    ├── STARRED/                       # Starred emails in INBOX
+    ├── IMPORTANT/                     # Important emails in INBOX
+    └── INBOX/                         # Remaining inbox emails
 
 Key features:
 - OAuth 2.0 authentication (user-scoped)
-- Read-only access (no write/delete operations)
-- Incremental syncing via Gmail History API (uses historyId)
-- Email syncing with cache support via CacheConnectorMixin
-- Message search and filtering
-- Full-text extraction from emails
+- Priority-based label folders (SENT > STARRED > IMPORTANT > INBOX)
+- Thread-based organization preserving Gmail conversations
+- Efficient API usage with label-based filtering
+- On-demand email fetching from Gmail API
+- Full email metadata and content in YAML format (including HTML body if present)
 - Automatic token refresh via TokenManager
-- Label/folder support (INBOX, SENT, DRAFTS, etc.)
+- Database-backed caching via CacheConnectorMixin for fast search
 
-Incremental sync:
-    The connector uses Gmail's historyId for efficient incremental syncing:
-    - historyId is a global mailbox state marker (not per-message or per-label)
-    - First sync: Fetches all messages and returns historyId
-    - Subsequent syncs: Only fetches changes (new/deleted messages) since historyId
-    - historyId should be stored in mount's backend_config and passed to sync()
-    - After sync, new historyId is returned in SyncResult.history_id
+Fetching strategy:
+- Uses list_emails_by_folder() utility with label-based filtering
+- Fetches emails on-demand when accessed
+- Each email appears in exactly ONE folder based on highest priority label match
 
 Authentication:
     Uses OAuth 2.0 flow via TokenManager:
     - User authorizes via browser
     - Tokens stored encrypted in database
     - Automatic refresh when expired
-    - Required scope: gmail.readonly
 """
 
-import base64
-import email
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import CacheConnectorMixin
+from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+
+try:
+    import yaml
+except ImportError:
+    yaml = None  # type: ignore
+
+# Suppress annoying googleapiclient discovery cache warnings
+logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
@@ -60,41 +63,53 @@ logger = logging.getLogger(__name__)
 
 class GmailConnectorBackend(Backend, CacheConnectorMixin):
     """
-    Gmail connector backend with OAuth 2.0 authentication and caching.
+    Gmail connector backend with OAuth 2.0 authentication.
 
-    This is a READ-ONLY backend that syncs Gmail messages to Nexus and caches them
-    locally for fast access and search. Each message is stored as a virtual file.
+    This backend syncs emails from Gmail API and organizes them as YAML files
+    by Gmail labels (INBOX, SENT, STARRED, etc.).
 
     Features:
     - OAuth 2.0 authentication (per-user credentials)
-    - Read-only access (no write/delete operations)
-    - Incremental syncing using Gmail History API (historyId)
-    - Message caching via CacheConnectorMixin
-    - Label/folder support (inbox, sent, drafts, etc.)
-    - Full-text extraction from emails
-    - Full-text search via cache
+    - Email syncing from a start date
+    - Label-based folder structure (INBOX/, SENT/, STARRED/, etc.)
+    - Full email metadata and content
     - Automatic token refresh
+    - Persistent caching via CacheConnectorMixin for fast grep/search
 
-    Incremental Sync:
-    - historyId is passed via sync(history_id=...) from backend_config
-    - After sync, new historyId is returned in result.history_id
-    - Caller should persist historyId back to backend_config for next sync
+    Folder Structure (3-level hierarchy, priority-based, mutually exclusive):
+    - / - Root directory (lists label folders)
+    - /SENT/ - All sent emails (priority 1)
+      - {thread_id}/ - Thread folders
+        - email-{msg_id}.yaml - Individual email messages with full content
+    - /STARRED/ - Starred emails in INBOX, excluding SENT (priority 2)
+    - /IMPORTANT/ - Important emails in INBOX, excluding SENT and STARRED (priority 3)
+    - /INBOX/ - Remaining INBOX emails (priority 4)
+    - Each email appears in exactly ONE folder based on highest priority match
+    - Thread grouping preserved in folder structure
 
     Limitations:
-    - Read-only (no write/delete operations)
+    - No automatic deduplication (each email is a unique file)
+    - Requires OAuth tokens for each user
     - Rate limited by Gmail API quotas
-    - Large messages may not be cached (configurable)
+    - Emails are stored as YAML files (not editable)
     """
+
+    # Gmail system labels to expose as folders (in priority order)
+    # Each email appears in exactly ONE folder based on priority
+    LABEL_FOLDERS = [
+        "SENT",  # Priority 1: All sent emails
+        "STARRED",  # Priority 2: Starred emails in INBOX (excluding SENT)
+        "IMPORTANT",  # Priority 3: Important emails in INBOX (excluding SENT, STARRED)
+        "INBOX",  # Priority 4: Remaining INBOX emails
+    ]
 
     def __init__(
         self,
         token_manager_db: str,
         user_email: str | None = None,
         provider: str = "gmail",
-        db_session: Any | None = None,
-        session_factory: Any | None = None,
-        max_results: int = 100,
-        labels: list[str] | None = None,
+        session_factory=None,  # type: ignore[no-untyped-def]
+        max_message_per_label: int = 50,
     ):
         """
         Initialize Gmail connector backend.
@@ -104,63 +119,46 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             user_email: Optional user email for OAuth lookup. If None, uses authenticated
                        user from OperationContext (recommended for multi-user scenarios)
             provider: OAuth provider name from config (default: "gmail")
-            db_session: SQLAlchemy session for caching (deprecated, use session_factory)
-            session_factory: Session factory (e.g., metadata_store.SessionLocal) for
-                           caching support. Preferred over db_session.
-            max_results: Maximum messages to fetch per sync (default: 100)
-            labels: List of Gmail labels to sync (default: ["INBOX"])
+            session_factory: SQLAlchemy session factory for content caching (optional).
+                           If provided, enables persistent caching for fast grep/search.
+            max_message_per_label: Maximum number of messages to fetch per label (default: 50).
+                                  Set to None for unlimited. Useful for testing with small datasets.
 
         Note:
             For single-user scenarios (demos), set user_email explicitly.
             For multi-user production, leave user_email=None to auto-detect from context.
+            This ensures each user accesses their own Gmail.
         """
-        logger.info(
-            f"[GMAIL-INIT] Initializing Gmail connector: user_email={user_email}, "
-            f"provider={provider}, max_results={max_results}"
-        )
-
         # Import TokenManager here to avoid circular imports
         from nexus.server.auth.token_manager import TokenManager
+
+        # Store original token_manager_db for config updates
+        self.token_manager_db = token_manager_db
 
         # Support both file paths and database URLs
         if token_manager_db.startswith(("postgresql://", "sqlite://", "mysql://")):
             self.token_manager = TokenManager(db_url=token_manager_db)
         else:
             self.token_manager = TokenManager(db_path=token_manager_db)
-
         self.user_email = user_email  # None means use context.user_id
         self.provider = provider
 
-        # Store session info for caching support (CacheConnectorMixin)
-        # Prefer session_factory (creates fresh sessions) over db_session
+        # Store session factory for caching (CacheConnectorMixin)
         self.session_factory = session_factory
-        self.db_session = db_session  # Legacy support
 
-        # Warn if using deprecated db_session parameter
-        if db_session is not None and session_factory is None:
-            import warnings
-
-            warnings.warn(
-                "The 'db_session' parameter is deprecated and will be removed in a future version. "
-                "Use 'session_factory' instead for better session management.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        self.max_results = max_results
-        self.labels = labels or ["INBOX"]
+        # Store max messages per label (for testing with small datasets)
+        self.max_message_per_label = max_message_per_label
 
         # Register OAuth provider using factory (loads from config)
         self._register_oauth_provider()
 
-        # Cache for message metadata
-        self._message_cache: dict[str, dict[str, Any]] = {}
-
-        # Lazy import Gmail API (only when needed)
-        self._gmail_service = None
-
     def _register_oauth_provider(self) -> None:
         """Register OAuth provider with TokenManager using OAuthProviderFactory."""
+        import logging
+        import traceback
+
+        logger = logging.getLogger(__name__)
+
         try:
             from nexus.server.auth.oauth_factory import OAuthProviderFactory
 
@@ -172,16 +170,18 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                 provider_instance = factory.create_provider(
                     name=self.provider,
                 )
-                # Register with TokenManager
+                # Register with TokenManager using the provider name from config
                 self.token_manager.register_provider(self.provider, provider_instance)
                 logger.info(f"✓ Registered OAuth provider '{self.provider}' for Gmail backend")
             except ValueError as e:
+                # Provider not found in config or credentials not set
                 logger.warning(
                     f"OAuth provider '{self.provider}' not available: {e}. "
                     "OAuth flow must be initiated manually via the Integrations page."
                 )
         except Exception as e:
-            logger.error(f"Failed to register OAuth provider: {e}")
+            error_msg = f"Failed to register OAuth provider: {e}\n{traceback.format_exc()}"
+            logger.error(error_msg)
 
     @property
     def name(self) -> str:
@@ -193,78 +193,14 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         """This backend requires per-user OAuth credentials."""
         return True
 
-    def _has_caching(self) -> bool:
-        """Check if caching is enabled (session factory or db_session available)."""
-        return self.session_factory is not None or self.db_session is not None
-
-    def _create_yaml_content(
-        self,
-        headers: dict[str, str],
-        text_body: str,
-        html_body: str,
-        labels: list[str] | None = None,
-    ) -> str:
-        """
-        Create YAML content with literal block scalar style for text_body and html_body.
-
-        This ensures that multi-line text bodies are represented with the | (pipe)
-        notation in YAML, preserving newlines and making the output more readable.
-
-        Args:
-            headers: Email headers dict
-            text_body: Email text body
-            html_body: Email HTML body
-            labels: Gmail labels (optional)
-
-        Returns:
-            YAML string with literal block scalar for text_body and html_body
-        """
-        import yaml
-
-        # Custom representer for strings with newlines
-        # This forces text_body to use literal block scalar style (|)
-        class LiteralString(str):
-            """String subclass to force literal block scalar style in YAML."""
-
-            pass
-
-        def literal_representer(dumper: yaml.Dumper, data: LiteralString) -> yaml.Node:
-            """Represent LiteralString as literal block scalar (|)."""
-            if "\n" in data:
-                return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
-            return dumper.represent_scalar("tag:yaml.org,2002:str", data)
-
-        yaml.add_representer(LiteralString, literal_representer)
-
-        # Normalize line endings (CRLF -> LF) before creating LiteralString
-        # Email content uses RFC 822 format with CRLF, but we want clean LF for YAML
-        normalized_text = text_body.replace("\r\n", "\n").replace("\r", "\n")
-        normalized_html = html_body.replace("\r\n", "\n").replace("\r", "\n") if html_body else ""
-
-        # Create YAML structure with LiteralString for text_body and html_body
-        yaml_data = {
-            "headers": headers,
-            "text_body": LiteralString(normalized_text),
-        }
-
-        # Add HTML body if present
-        if html_body:
-            yaml_data["html_body"] = LiteralString(normalized_html)
-
-        # Add labels if present
-        if labels:
-            yaml_data["labels"] = labels
-
-        return yaml.dump(yaml_data, default_flow_style=False, allow_unicode=True)
-
     def _get_gmail_service(self, context: "OperationContext | None" = None) -> "Resource":
-        """Get Gmail API service with user's OAuth credentials.
+        """Get Gmail service with user's OAuth credentials.
 
         Args:
             context: Operation context (provides user_id if user_email not configured)
 
         Returns:
-            Gmail API service instance
+            Gmail service instance
 
         Raises:
             BackendError: If credentials not found or user not authenticated
@@ -297,19 +233,33 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         import asyncio
 
         try:
-            # Default to 'default' tenant if not specified
+            # Default to 'default' tenant if not specified to match mount configurations
             tenant_id = (
                 context.tenant_id
                 if context and hasattr(context, "tenant_id") and context.tenant_id
                 else "default"
             )
-            access_token = asyncio.run(
-                self.token_manager.get_valid_token(
-                    provider=self.provider,
-                    user_email=user_email,
-                    tenant_id=tenant_id,
+
+            # Handle both sync and async contexts
+            try:
+                # Try to get the current event loop
+                asyncio.get_running_loop()
+                # If we're in an async context, we can't use asyncio.run()
+                # This shouldn't happen in normal usage, but handle it gracefully
+                raise BackendError(
+                    "Gmail connector cannot be used in async context. "
+                    "Use sync methods or ensure you're not in an async event loop.",
+                    backend="gmail",
                 )
-            )
+            except RuntimeError:
+                # No running event loop, safe to use asyncio.run()
+                access_token = asyncio.run(
+                    self.token_manager.get_valid_token(
+                        provider=self.provider,
+                        user_email=user_email,
+                        tenant_id=tenant_id,
+                    )
+                )
         except Exception as e:
             raise BackendError(
                 f"Failed to get valid OAuth token for user {user_email}: {e}",
@@ -320,962 +270,444 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         from google.oauth2.credentials import Credentials
 
         creds = Credentials(token=access_token)
-        return build("gmail", "v1", credentials=creds)
+        service = build("gmail", "v1", credentials=creds)
 
-    def _fetch_messages_initial(
-        self,
-        service: "Resource",
-        label_ids: list[str] | None = None,
-        query: str | None = None,
-        max_results: int | None = None,
-    ) -> tuple[list[dict[str, Any]], str | None]:
-        """Fetch messages for initial sync (full fetch).
+        return service
+
+    def _parse_email_date(self, date_str: str) -> datetime:
+        """Parse email date string to datetime.
 
         Args:
-            service: Gmail API service
-            label_ids: List of label IDs to filter (default: None for all)
-            query: Gmail search query (default: None)
-            max_results: Maximum messages to fetch (default: self.max_results)
+            date_str: Email date string (RFC 2822 format)
 
         Returns:
-            Tuple of (message_list, history_id)
-
-        Raises:
-            BackendError: If fetch fails
+            Datetime object in UTC
         """
-        try:
-            results_per_page = min(max_results or self.max_results, 500)
-            messages = []
-            latest_history_id = None
-
-            # Build request parameters
-            params: dict[str, Any] = {
-                "userId": "me",
-                "maxResults": results_per_page,
-            }
-            if label_ids:
-                params["labelIds"] = label_ids
-            if query:
-                params["q"] = query
-
-            # Fetch messages (with pagination)
-            while True:
-                response = service.users().messages().list(**params).execute()
-                batch = response.get("messages", [])
-                messages.extend(batch)
-
-                # Capture the latest historyId from response
-                if "historyId" in response:
-                    latest_history_id = response["historyId"]
-
-                # Check if we've reached max_results
-                if max_results and len(messages) >= max_results:
-                    messages = messages[:max_results]
-                    break
-
-                # Check if there are more pages
-                next_page_token = response.get("nextPageToken")
-                if not next_page_token:
-                    break
-
-                params["pageToken"] = next_page_token
-
-            logger.info(
-                f"Initial sync: Fetched {len(messages)} messages from Gmail (historyId: {latest_history_id})"
-            )
-            return messages, latest_history_id
-
-        except Exception as e:
-            raise BackendError(
-                f"Failed to fetch messages from Gmail: {e}",
-                backend="gmail",
-            ) from e
-
-    def _fetch_messages_incremental(
-        self,
-        service: "Resource",
-        start_history_id: str,
-        label_ids: list[str] | None = None,
-    ) -> tuple[list[dict[str, Any]], list[str], str | None]:
-        """Fetch message changes since last sync (incremental sync using History API).
-
-        Args:
-            service: Gmail API service
-            start_history_id: History ID from last sync
-            label_ids: List of label IDs to filter
-
-        Returns:
-            Tuple of (messages_added, messages_deleted, new_history_id)
-
-        Raises:
-            BackendError: If fetch fails
-        """
-        try:
-            messages_added = []
-            messages_deleted = []
-            latest_history_id = None
-
-            # Build request parameters for history list
-            params: dict[str, Any] = {
-                "userId": "me",
-                "startHistoryId": start_history_id,
-                "historyTypes": ["messageAdded", "messageDeleted"],
-            }
-            if label_ids:
-                params["labelId"] = label_ids[0]  # History API accepts single labelId
-
-            # Fetch history (with pagination)
-            try:
-                while True:
-                    response = service.users().history().list(**params).execute()
-
-                    # Process history records
-                    history_records = response.get("history", [])
-                    for record in history_records:
-                        # Handle messages added
-                        for msg_added in record.get("messagesAdded", []):
-                            if label_ids:
-                                # Check if message has the label we're interested in
-                                msg_labels = msg_added.get("message", {}).get("labelIds", [])
-                                if any(label in msg_labels for label in label_ids):
-                                    messages_added.append(msg_added["message"])
-                            else:
-                                messages_added.append(msg_added["message"])
-
-                        # Handle messages deleted
-                        for msg_deleted in record.get("messagesDeleted", []):
-                            messages_deleted.append(msg_deleted["message"]["id"])
-
-                    # Capture the latest historyId
-                    if "historyId" in response:
-                        latest_history_id = response["historyId"]
-
-                    # Check if there are more pages
-                    next_page_token = response.get("nextPageToken")
-                    if not next_page_token:
-                        break
-
-                    params["pageToken"] = next_page_token
-
-                logger.info(
-                    f"Incremental sync: {len(messages_added)} added, {len(messages_deleted)} deleted "
-                    f"(historyId: {start_history_id} -> {latest_history_id})"
-                )
-                return messages_added, messages_deleted, latest_history_id
-
-            except Exception as e:
-                # If history request fails (e.g., historyId too old), fall back to full sync
-                if "404" in str(e) or "historyId" in str(e).lower():
-                    logger.warning(
-                        f"History ID {start_history_id} is no longer valid. "
-                        "Falling back to full sync."
-                    )
-                    return [], [], None
-                raise
-
-        except Exception as e:
-            raise BackendError(
-                f"Failed to fetch message history from Gmail: {e}",
-                backend="gmail",
-            ) from e
-
-    def _get_message_content(
-        self, service: "Resource", message_id: str
-    ) -> tuple[dict[str, str], str, str, list[str], bytes]:
-        """Get full message content from Gmail API.
-
-        Args:
-            service: Gmail API service
-            message_id: Message ID
-
-        Returns:
-            Tuple of (headers_dict, text_body, html_body, labels, raw_bytes)
-
-        Raises:
-            BackendError: If fetch fails
-        """
-        try:
-            # Fetch full message with metadata to get labels
-            message = (
-                service.users().messages().get(userId="me", id=message_id, format="full").execute()
-            )
-
-            # Extract labels from message metadata
-            labels = message.get("labelIds", [])
-
-            # Get raw content from payload
-            raw_data = message.get("raw")
-            if raw_data:
-                # If raw is available, use it
-                raw_bytes = base64.urlsafe_b64decode(raw_data)
-            else:
-                # Fallback: fetch raw format separately
-                raw_message = (
-                    service.users()
-                    .messages()
-                    .get(userId="me", id=message_id, format="raw")
-                    .execute()
-                )
-                raw_data = raw_message.get("raw", "")
-                raw_bytes = base64.urlsafe_b64decode(raw_data)
-
-            # Parse email
-            msg = email.message_from_bytes(raw_bytes)
-
-            # Extract headers (including cc and bcc)
-            headers = {
-                "from": msg.get("From", "Unknown"),
-                "to": msg.get("To", "Unknown"),
-                "subject": msg.get("Subject", "No Subject"),
-                "date": msg.get("Date", "Unknown"),
-            }
-
-            # Add cc and bcc if present
-            cc = msg.get("Cc")
-            if cc:
-                headers["cc"] = cc
-
-            bcc = msg.get("Bcc")
-            if bcc:
-                headers["bcc"] = bcc
-
-            # Extract text and HTML bodies
-            text_body, html_body = self._extract_text_and_html_from_message(msg)
-
-            return headers, text_body, html_body, labels, raw_bytes
-
-        except Exception as e:
-            raise BackendError(
-                f"Failed to get message content for {message_id}: {e}",
-                backend="gmail",
-                path=message_id,
-            ) from e
-
-    def _extract_text_from_message(self, msg: email.message.Message) -> str:
-        """Extract plain text from email message.
-
-        Args:
-            msg: Email message object
-
-        Returns:
-            Plain text content
-        """
-        text_parts = []
-
-        # Add headers
-        headers = [
-            f"From: {msg.get('From', 'Unknown')}",
-            f"To: {msg.get('To', 'Unknown')}",
-            f"Subject: {msg.get('Subject', 'No Subject')}",
-            f"Date: {msg.get('Date', 'Unknown')}",
-            "",
-        ]
-        text_parts.append("\n".join(headers))
-
-        # Extract body
-        if msg.is_multipart():
-            for part in msg.walk():
-                content_type = part.get_content_type()
-                if content_type == "text/plain":
-                    try:
-                        payload = part.get_payload(decode=True)
-                        if payload:
-                            charset = part.get_content_charset() or "utf-8"
-                            text_parts.append(payload.decode(charset, errors="ignore"))
-                    except Exception:
-                        pass
-        else:
-            try:
-                payload = msg.get_payload(decode=True)
-                if payload:
-                    charset = msg.get_content_charset() or "utf-8"
-                    text_parts.append(payload.decode(charset, errors="ignore"))
-            except Exception:
-                pass
-
-        return "\n\n".join(text_parts)
-
-    def _extract_text_and_html_from_message(self, msg: email.message.Message) -> tuple[str, str]:
-        """Extract both plain text and HTML from email message.
-
-        Args:
-            msg: Email message object
-
-        Returns:
-            Tuple of (text_body, html_body)
-        """
-        text_body_parts = []
-        html_body = ""
-
-        # Extract body content
-        if msg.is_multipart():
-            for part in msg.walk():
-                content_type = part.get_content_type()
-                try:
-                    payload = part.get_payload(decode=True)
-                    if not payload:
-                        continue
-
-                    charset = part.get_content_charset() or "utf-8"
-                    decoded = payload.decode(charset, errors="ignore")
-
-                    if content_type == "text/plain":
-                        text_body_parts.append(decoded)
-                    elif content_type == "text/html" and not html_body:
-                        # Take the first HTML part
-                        html_body = decoded
-                except Exception:
-                    pass
-        else:
-            content_type = msg.get_content_type()
-            try:
-                payload = msg.get_payload(decode=True)
-                if payload:
-                    charset = msg.get_content_charset() or "utf-8"
-                    decoded = payload.decode(charset, errors="ignore")
-
-                    if content_type == "text/plain":
-                        text_body_parts.append(decoded)
-                    elif content_type == "text/html":
-                        html_body = decoded
-            except Exception:
-                pass
-
-        text_body = "\n\n".join(text_body_parts)
-        return text_body, html_body
-
-    def sync(
-        self,
-        path: str | None = None,
-        mount_point: str | None = None,
-        include_patterns: list[str] | None = None,
-        exclude_patterns: list[str] | None = None,
-        max_file_size: int | None = None,
-        generate_embeddings: bool = True,
-        context: "OperationContext | None" = None,
-        history_id: str | None = None,
-    ) -> Any:
-        """Sync Gmail messages to cache using incremental sync (History API).
-
-        This is the main entry point for syncing emails from Gmail to the local cache.
-        Uses historyId for efficient incremental syncing - only fetches changes since
-        last sync instead of all messages.
-
-        The historyId is a global mailbox state marker that should be:
-        1. Passed in from the mount's backend_config (history_id parameter)
-        2. Stored back to backend_config after sync (returned in result.history_id)
-
-        Args:
-            path: Specific label/path to sync (e.g., "INBOX", "SENT")
-            mount_point: Mount point path (REQUIRED for cache to work - used to construct full virtual paths)
-            include_patterns: Not used for Gmail (reserved for future)
-            exclude_patterns: Not used for Gmail (reserved for future)
-            max_file_size: Maximum message size to cache (default: MAX_CACHE_FILE_SIZE)
-            generate_embeddings: Generate embeddings for semantic search
-            context: Operation context
-            history_id: Current mailbox history ID from previous sync (stored in backend_config)
-
-        Returns:
-            SyncResult with statistics, including new history_id attribute to save to backend_config
-
-        Raises:
-            ValueError: If mount_point is not provided (required for caching)
-        """
-        from nexus.backends.cache_mixin import SyncResult
-
-        result = SyncResult()
-        new_history_id = history_id  # Start with current history_id
-
-        # Validate that mount_point is provided (required for cache path consistency)
-        if not mount_point:
-            raise ValueError(
-                "mount_point is required for Gmail sync (needed for cache path consistency)"
-            )
+        from email.utils import parsedate_to_datetime
 
         try:
-            service = self._get_gmail_service(context)
-
-            # Determine which labels to sync
-            # Treat empty string, "/", or None as "sync all labels"
-            if path and path.strip() and path.strip() != "/":
-                labels_to_sync = [path.strip()]
-            else:
-                labels_to_sync = self.labels
-
-            logger.info(
-                f"[GMAIL-SYNC] path={repr(path)}, self.labels={self.labels}, labels_to_sync={labels_to_sync}"
-            )
-
-            for label in labels_to_sync:
-                logger.info(f"[GMAIL-SYNC] Processing label: {repr(label)}")
-                messages_to_process = []
-                messages_to_delete = []
-                label_history_id = None
-
-                if history_id:
-                    # Incremental sync: fetch only changes since last sync
-                    logger.info(f"Incremental sync for {label} (historyId: {history_id})")
-                    messages_added, messages_deleted, label_history_id = (
-                        self._fetch_messages_incremental(
-                            service,
-                            start_history_id=history_id,
-                            label_ids=[label],
-                        )
-                    )
-
-                    # If incremental sync failed (e.g., history too old), fall back to full sync
-                    if label_history_id is None:
-                        logger.info(f"Falling back to full sync for {label}")
-                        messages, label_history_id = self._fetch_messages_initial(
-                            service,
-                            label_ids=[label],
-                            max_results=self.max_results,
-                        )
-                        messages_to_process = messages
-                    else:
-                        messages_to_process = messages_added
-                        messages_to_delete = messages_deleted
-                else:
-                    # Initial sync: fetch all messages
-                    logger.info(f"Initial sync for {label}")
-                    messages, label_history_id = self._fetch_messages_initial(
-                        service,
-                        label_ids=[label],
-                        max_results=self.max_results,
-                    )
-                    messages_to_process = messages
-
-                result.files_scanned += len(messages_to_process)
-
-                # Process added/updated messages
-                for msg_meta in messages_to_process:
-                    msg_id = msg_meta["id"]
-                    # Construct full virtual path with mount point for cache consistency
-                    virtual_path = f"{mount_point}/{label.lower()}/{msg_id}.yaml"
-                    logger.info(f"[GMAIL-SYNC] Constructed path: virtual_path={virtual_path}")
-
-                    try:
-                        # Fetch full message content
-                        headers, text_body, html_body, labels, raw_bytes = (
-                            self._get_message_content(service, msg_id)
-                        )
-
-                        # Check size
-                        max_size = max_file_size or self.MAX_CACHE_FILE_SIZE
-                        if len(raw_bytes) > max_size:
-                            result.files_skipped += 1
-                            logger.debug(f"Skipping large message {msg_id}: {len(raw_bytes)} bytes")
-                            continue
-
-                        # Get tenant_id from context
-                        tenant_id = None
-                        if context and hasattr(context, "tenant_id"):
-                            tenant_id = context.tenant_id
-
-                        # Create YAML content with headers, text body, HTML body, and labels
-                        yaml_content = self._create_yaml_content(
-                            headers, text_body, html_body, labels
-                        )
-                        yaml_bytes = yaml_content.encode("utf-8")
-
-                        # Concatenate all content for full-text search (text body + HTML body)
-                        searchable_text = (
-                            f"From: {headers['from']}\n"
-                            f"To: {headers['to']}\n"
-                            f"Subject: {headers['subject']}\n"
-                            f"Date: {headers['date']}\n\n"
-                            f"{text_body}"
-                        )
-                        if html_body:
-                            searchable_text += f"\n\n{html_body}"
-
-                        # Write YAML to cache if caching is enabled
-                        if self._has_caching():
-                            import contextlib
-
-                            with contextlib.suppress(Exception):
-                                self._write_to_cache(
-                                    path=virtual_path,
-                                    content=yaml_bytes,
-                                    content_text=searchable_text,
-                                    content_type="full",
-                                    backend_version=None,  # Gmail doesn't have versions
-                                    parsed_from="gmail",
-                                    parse_metadata={"message_id": msg_id, "label": label},
-                                    tenant_id=tenant_id,
-                                )
-
-                        result.files_synced += 1
-                        result.bytes_synced += len(yaml_bytes)
-
-                        # Generate embeddings if requested and caching is enabled
-                        if generate_embeddings and self._has_caching():
-                            import contextlib
-
-                            with contextlib.suppress(Exception):
-                                self._generate_embeddings(virtual_path)
-                                result.embeddings_generated += 1
-
-                    except Exception as e:
-                        result.errors.append(f"Failed to sync message {msg_id}: {e}")
-                        logger.error(f"Failed to sync message {msg_id}: {e}")
-
-                # Process deleted messages
-                for msg_id in messages_to_delete:
-                    # Construct full virtual path with mount point for cache consistency
-                    virtual_path = f"{mount_point}/{label.lower()}/{msg_id}.yaml"
-
-                    # Invalidate cache for deleted message if caching is enabled
-                    if self._has_caching():
-                        import contextlib
-
-                        with contextlib.suppress(Exception):
-                            self._invalidate_cache(path=virtual_path, delete=True)
-                            logger.debug(f"Removed deleted message {msg_id} from cache")
-
-                # Update the global history ID with the latest from this label sync
-                if label_history_id:
-                    new_history_id = label_history_id
-
-            # Store the new history_id in the result for caller to save to backend_config
-            result.history_id = new_history_id  # type: ignore[attr-defined]
-            logger.info(f"Gmail sync completed: {result} (new historyId: {new_history_id})")
-            return result
-
-        except Exception as e:
-            result.errors.append(f"Failed to sync Gmail: {e}")
-            result.history_id = new_history_id  # type: ignore[attr-defined]
-            logger.error(f"Failed to sync Gmail: {e}")
-            return result
-
-    # ===  Backend Interface Methods ===
-
-    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
-        """
-        Write content to Gmail (not supported - read-only connector).
-
-        Gmail connector is read-only. Writing emails is not supported.
-
-        Args:
-            content: Email content as bytes (RFC 822 format)
-            context: Operation context
-
-        Returns:
-            Content hash (message ID)
-
-        Raises:
-            BackendError: Always raised - write operations not supported
-        """
-        raise BackendError(
-            "Gmail connector is read-only. Writing/sending emails is not supported.",
-            backend="gmail",
-        )
-
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
-        """
-        Read email content from Gmail by message ID.
-
-        Args:
-            content_hash: Message ID (or virtual path for .html files)
-            context: Operation context
-
-        Returns:
-            Email content as bytes (YAML for .yaml files, HTML for .html files)
-
-        Raises:
-            NexusFileNotFoundError: If message doesn't exist
-            BackendError: If read operation fails
-        """
-        # Get virtual path for cache lookup
-        virtual_path = (
-            context.backend_path if context and hasattr(context, "backend_path") else content_hash
-        )
-        if context and hasattr(context, "virtual_path") and context.virtual_path:
-            virtual_path = context.virtual_path
-
-        # Check cache first if enabled
-        if self._has_caching():
-            import contextlib
-
-            with contextlib.suppress(Exception):
-                cached = self._read_from_cache(virtual_path)
-                if cached and not cached.stale and cached.content_binary:
-                    logger.info(f"[Gmail] Cache hit for {virtual_path}")
-                    return cached.content_binary
-
-        # Cache miss - read from Gmail backend
-        logger.info(f"[Gmail] Cache miss, reading from Gmail API: {content_hash}")
-        try:
-            service = self._get_gmail_service(context)
-
-            # Extract message ID from virtual path if needed
-            # Format: /{label}/{msg_id}.yaml
-            import os
-
-            filename = os.path.basename(virtual_path) if virtual_path else content_hash
-            is_yaml = filename.endswith(".yaml")
-
-            # Extract message ID
-            msg_id = filename[:-5] if is_yaml else content_hash  # Remove '.yaml' or fallback
-
-            # Fetch message content
-            headers, text_body, html_body, labels, raw_bytes = self._get_message_content(
-                service, msg_id
-            )
-
-            # Return YAML content with headers, text body, HTML body, and labels
-            if is_yaml:
-                yaml_content = self._create_yaml_content(headers, text_body, html_body, labels)
-                result_bytes = yaml_content.encode("utf-8")
-            else:
-                # Fallback: return raw bytes
-                result_bytes = raw_bytes
-
-            # Cache the result if caching is enabled
-            if self._has_caching():
-                import contextlib
-
-                with contextlib.suppress(Exception):
-                    tenant_id = getattr(context, "tenant_id", None) if context else None
-
-                    if is_yaml:
-                        # Create searchable text for YAML files (text body + HTML body)
-                        searchable_text = (
-                            f"From: {headers['from']}\n"
-                            f"To: {headers['to']}\n"
-                            f"Subject: {headers['subject']}\n"
-                            f"Date: {headers['date']}\n\n"
-                            f"{text_body}"
-                        )
-                        if html_body:
-                            searchable_text += f"\n\n{html_body}"
-                        self._write_to_cache(
-                            path=virtual_path,
-                            content=result_bytes,
-                            content_text=searchable_text,
-                            backend_version=None,
-                            tenant_id=tenant_id,
-                        )
-                    else:
-                        self._write_to_cache(
-                            path=virtual_path,
-                            content=result_bytes,
-                            backend_version=None,
-                            tenant_id=tenant_id,
-                        )
-
-            return result_bytes
-
-        except Exception as e:
-            if "not found" in str(e).lower() or "404" in str(e):
-                raise NexusFileNotFoundError(content_hash) from e
-            raise BackendError(
-                f"Failed to read message {content_hash}: {e}",
-                backend="gmail",
-                path=content_hash,
-            ) from e
-
-    def batch_read_content(
-        self, content_hashes: list[str], context: "OperationContext | None" = None
-    ) -> dict[str, bytes | None]:
-        """
-        Read multiple email contents from Gmail using batch API (optimized).
-
-        Uses Gmail API's batch request feature to fetch multiple messages in a single
-        HTTP request, significantly reducing latency and API quota usage compared to
-        sequential requests.
-
-        Args:
-            content_hashes: List of message IDs to fetch
-            context: Operation context
-
-        Returns:
-            Dictionary mapping content_hash -> content bytes
-            Returns None for hashes that don't exist or fail to fetch
-
-        Note:
-            - Processes up to 100 messages per batch (Gmail API limit)
-            - Automatically handles batching for larger requests
-            - Checks cache first for each message
-            - Falls back to individual requests if batch API fails
-        """
-        if not content_hashes:
-            return {}
-
-        result: dict[str, bytes | None] = {}
-
-        # Check cache first for each message
-        cached_hashes = set()
-        if self._has_caching():
-            import contextlib
-
-            for content_hash in content_hashes:
-                # Determine virtual path for cache lookup
-                # This is a simplified approach - we try common patterns
-                virtual_path = content_hash
-                if context and hasattr(context, "virtual_path") and context.virtual_path:
-                    virtual_path = context.virtual_path
-
-                with contextlib.suppress(Exception):
-                    cached = self._read_from_cache(virtual_path)
-                    if cached and not cached.stale and cached.content_binary:
-                        result[content_hash] = cached.content_binary
-                        cached_hashes.add(content_hash)
-                        logger.debug(f"[Gmail Batch] Cache hit for {content_hash}")
-
-        # Fetch uncached messages from Gmail
-        uncached_hashes = [h for h in content_hashes if h not in cached_hashes]
-        if not uncached_hashes:
-            return result
-
-        try:
-            service = self._get_gmail_service(context)
-
-            # Gmail API supports up to 100 requests per batch
-            batch_size = 100
-            for i in range(0, len(uncached_hashes), batch_size):
-                batch_hashes = uncached_hashes[i : i + batch_size]
-
-                try:
-                    # Use Gmail API batch request
-
-                    batch = service.new_batch_http_request()
-
-                    # Callback to handle each response
-                    def create_callback(msg_id: str) -> Any:
-                        def callback(_request_id: str, response: Any, exception: Any) -> None:
-                            if exception:
-                                logger.debug(f"[Gmail Batch] Failed to fetch {msg_id}: {exception}")
-                                result[msg_id] = None
-                            else:
-                                try:
-                                    # Process the message response
-                                    headers, text_body, html_body, labels, raw_bytes = (
-                                        self._parse_message_response(response)
-                                    )
-
-                                    # Create YAML content
-                                    yaml_content = self._create_yaml_content(
-                                        headers, text_body, html_body, labels
-                                    )
-                                    yaml_bytes = yaml_content.encode("utf-8")
-
-                                    result[msg_id] = yaml_bytes
-
-                                    # Cache if enabled
-                                    if self._has_caching():
-                                        import contextlib
-
-                                        with contextlib.suppress(Exception):
-                                            tenant_id = (
-                                                getattr(context, "tenant_id", None)
-                                                if context
-                                                else None
-                                            )
-                                            searchable_text = (
-                                                f"From: {headers['from']}\n"
-                                                f"To: {headers['to']}\n"
-                                                f"Subject: {headers['subject']}\n"
-                                                f"Date: {headers['date']}\n\n"
-                                                f"{text_body}"
-                                            )
-                                            if html_body:
-                                                searchable_text += f"\n\n{html_body}"
-
-                                            self._write_to_cache(
-                                                path=f"inbox/{msg_id}.yaml",  # Simplified path
-                                                content=yaml_bytes,
-                                                content_text=searchable_text,
-                                                backend_version=None,
-                                                tenant_id=tenant_id,
-                                            )
-
-                                except Exception as e:
-                                    logger.error(f"[Gmail Batch] Failed to process {msg_id}: {e}")
-                                    result[msg_id] = None
-
-                        return callback
-
-                    # Add all messages to batch
-                    for msg_id in batch_hashes:
-                        batch.add(
-                            service.users().messages().get(userId="me", id=msg_id, format="full"),
-                            callback=create_callback(msg_id),
-                        )
-
-                    # Execute batch
-                    batch.execute()
-                    logger.info(
-                        f"[Gmail Batch] Fetched batch of {len(batch_hashes)} messages "
-                        f"({len([h for h in batch_hashes if result.get(h)])} successful)"
-                    )
-
-                except Exception as batch_error:
-                    # Batch request failed, fall back to individual requests
-                    logger.warning(
-                        f"[Gmail Batch] Batch request failed, falling back to individual requests: {batch_error}"
-                    )
-                    for msg_id in batch_hashes:
-                        if msg_id not in result:
-                            try:
-                                result[msg_id] = self.read_content(msg_id, context=context)
-                            except Exception:
-                                result[msg_id] = None
-
-        except Exception as e:
-            # Service creation failed, mark all as None
-            logger.error(f"[Gmail Batch] Failed to create Gmail service: {e}")
-            for msg_id in uncached_hashes:
-                if msg_id not in result:
-                    result[msg_id] = None
-
-        return result
-
-    def _parse_message_response(
-        self, message: dict[str, Any]
-    ) -> tuple[dict, str, str, list, bytes]:
-        """
-        Parse Gmail API message response (helper for batch operations).
+            dt = parsedate_to_datetime(date_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt
+        except Exception:
+            # Fallback to current time if parsing fails
+            return datetime.now(UTC)
+
+    def _parse_gmail_message(self, message: dict[str, Any]) -> dict[str, Any]:
+        """Parse Gmail API message response into email data dict.
+
+        This is a helper method for batch operations. It extracts email metadata
+        and content from Gmail API response format.
 
         Args:
             message: Gmail API message response dict
 
         Returns:
-            Tuple of (headers_dict, text_body, html_body, labels, raw_bytes)
+            Email data dictionary with metadata and content
         """
         import base64
-        import email
 
-        # Extract labels
-        labels = message.get("labelIds", [])
+        # Extract headers
+        headers = {h["name"]: h["value"] for h in message.get("payload", {}).get("headers", [])}
 
-        # Get raw content
-        raw_data = message.get("raw")
-        raw_bytes = base64.urlsafe_b64decode(raw_data) if raw_data else b""
+        # Extract date
+        date_str = headers.get("Date", "")
+        email_date = self._parse_email_date(date_str) if date_str else datetime.now(UTC)
 
-        # Parse email
-        msg = email.message_from_bytes(raw_bytes) if raw_bytes else None
-
-        if msg:
-            # Extract headers
-            headers = {
-                "from": msg.get("From", "Unknown"),
-                "to": msg.get("To", "Unknown"),
-                "subject": msg.get("Subject", "No Subject"),
-                "date": msg.get("Date", "Unknown"),
-            }
-            if msg.get("Cc"):
-                headers["cc"] = msg.get("Cc")
-            if msg.get("Bcc"):
-                headers["bcc"] = msg.get("Bcc")
-
-            # Extract bodies
-            text_body, html_body = self._extract_text_and_html_from_message(msg)
+        # Extract body
+        body_text = ""
+        body_html = ""
+        parts = message.get("payload", {}).get("parts", [])
+        if not parts:
+            # Simple message without multipart
+            body_data = message.get("payload", {}).get("body", {}).get("data")
+            if body_data:
+                body_text = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
         else:
-            # Fallback for messages without raw content
-            headers = {
-                "from": "Unknown",
-                "to": "Unknown",
-                "subject": "No Subject",
-                "date": "Unknown",
-            }
-            text_body = ""
-            html_body = ""
+            # Multipart message
+            for part in parts:
+                mime_type = part.get("mimeType", "")
+                body_data = part.get("body", {}).get("data")
+                if body_data:
+                    decoded = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
+                    if mime_type == "text/plain":
+                        body_text = decoded
+                    elif mime_type == "text/html":
+                        body_html = decoded
 
-        return headers, text_body, html_body, labels, raw_bytes
+        # Build email data structure
+        email_data = {
+            "id": message["id"],
+            "threadId": message.get("threadId"),
+            "labelIds": message.get("labelIds", []),
+            "snippet": message.get("snippet", ""),
+            "date": email_date.isoformat(),
+            "headers": headers,
+            "subject": headers.get("Subject", ""),
+            "from": headers.get("From", ""),
+            "to": headers.get("To", ""),
+            "cc": headers.get("Cc", ""),
+            "bcc": headers.get("Bcc", ""),
+            "body_text": body_text,
+            "body_html": body_html,
+            "sizeEstimate": message.get("sizeEstimate", 0),
+            "historyId": message.get("historyId"),
+        }
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
-        """
-        Delete email from Gmail (not supported - read-only connector).
+        # Store the historyId from the message for tracking
+        if message.get("historyId"):
+            self._current_history_id = str(message.get("historyId"))
 
-        Gmail connector is read-only. Deleting emails is not supported.
+        return email_data
+
+    def _fetch_email(self, service: "Resource", message_id: str) -> dict[str, Any]:
+        """Fetch full email data from Gmail API.
 
         Args:
-            content_hash: Message ID
+            service: Gmail service instance
+            message_id: Gmail message ID
+
+        Returns:
+            Email data dictionary with metadata and content
+
+        Raises:
+            BackendError: If fetch fails
+        """
+        try:
+            # Get message
+            message = (
+                service.users().messages().get(userId="me", id=message_id, format="full").execute()
+            )
+
+            # Use shared parser
+            return self._parse_gmail_message(message)
+
+        except Exception as e:
+            raise BackendError(
+                f"Failed to fetch email {message_id}: {e}",
+                backend="gmail",
+            ) from e
+
+    # === CacheConnectorMixin required methods ===
+
+    def _read_content_bulk_from_backend(
+        self, backend_paths: list[str], context: "OperationContext | None" = None
+    ) -> dict[str, bytes]:
+        """Read multiple email contents from Gmail API in bulk.
+
+        Uses Gmail's batch API to efficiently fetch multiple messages.
+
+        Args:
+            backend_paths: List of paths to email files
+            context: Operation context for authentication
+
+        Returns:
+            Dict mapping path -> content bytes (only successful reads)
+        """
+        if not backend_paths:
+            return {}
+
+        # Extract message IDs from paths
+        path_info: dict[str, str] = {}  # path -> message_id
+
+        for backend_path in backend_paths:
+            try:
+                # Parse path to extract message ID
+                path_parts = backend_path.split("/")
+                if len(path_parts) == 3 and path_parts[0] in self.LABEL_FOLDERS:
+                    filename = path_parts[2]
+                elif len(path_parts) == 1:
+                    filename = path_parts[0]
+                else:
+                    continue
+
+                # Extract message_id from filename (only .yaml files)
+                if not filename.endswith(".yaml"):
+                    continue
+
+                if not filename.startswith("email-"):
+                    continue
+
+                message_id = filename.replace("email-", "").replace(".yaml", "")
+                path_info[backend_path] = message_id
+            except Exception:
+                continue
+
+        if not path_info:
+            return {}
+
+        # Collect all message IDs to fetch
+        messages_to_fetch = list(path_info.values())
+
+        # Batch fetch messages from Gmail API
+        email_cache: dict[str, dict[str, Any]] = {}
+        if messages_to_fetch:
+            try:
+                service = self._get_gmail_service(context)
+                fetch_emails_batch(
+                    service, messages_to_fetch, self._parse_gmail_message, email_cache
+                )
+            except Exception:
+                pass  # Suppress errors, return partial results
+
+        # Format results
+        results: dict[str, bytes] = {}
+        for backend_path, message_id in path_info.items():
+            if message_id in email_cache:
+                try:
+                    email_data = email_cache[message_id]
+                    results[backend_path] = self._format_email_as_yaml(email_data)
+                except Exception:
+                    pass  # Skip this path on error
+
+        return results
+
+    def _format_email_as_yaml(self, email_data: dict[str, Any]) -> bytes:
+        """Format email data as YAML bytes.
+
+        Args:
+            email_data: Email metadata dictionary
+
+        Returns:
+            Formatted YAML as bytes
+        """
+        if yaml is None:
+            raise BackendError(
+                "PyYAML not installed. Install with: pip install pyyaml",
+                backend="gmail",
+            )
+
+        # Remove headers from YAML output (but keep body_html and body_text)
+        yaml_data = {k: v for k, v in email_data.items() if k != "headers"}
+
+        # Normalize line endings in text bodies
+        if "body_text" in yaml_data and yaml_data["body_text"]:
+            text = yaml_data["body_text"]
+            text = text.replace("\r\n", "\n")
+            if "\\n" in text:
+                text = text.replace("\\n", "\n")
+            yaml_data["body_text"] = text
+
+        # Use custom dumper for literal block scalars
+        class LiteralDumper(yaml.SafeDumper):  # type: ignore[name-defined]
+            def choose_scalar_style(self):  # type: ignore[no-untyped-def]
+                if self.event.value and "\n" in self.event.value:
+                    return "|"
+                return super().choose_scalar_style()
+
+        def literal_presenter(dumper, data):  # type: ignore[no-untyped-def]
+            if isinstance(data, str) and "\n" in data:
+                return dumper.represent_scalar("tag:yaml.org,2002:str", data.rstrip(), style="|")
+            return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
+        LiteralDumper.add_representer(str, literal_presenter)
+
+        yaml_output = yaml.dump(  # type: ignore[attr-defined]
+            yaml_data,
+            Dumper=LiteralDumper,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+        return yaml_output.encode("utf-8")
+
+    # === Backend interface methods ===
+
+    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
+        """
+        Write content is not supported for Gmail connector (read-only).
+
+        Args:
+            content: File content as bytes
             context: Operation context
 
         Raises:
-            BackendError: Always raised - delete operations not supported
+            BackendError: Always raised (read-only backend)
         """
         raise BackendError(
-            "Gmail connector is read-only. Deleting emails is not supported.",
+            "Gmail connector is read-only. Cannot write emails back to Gmail.",
+            backend="gmail",
+        )
+
+    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+        """
+        Read email content from cache or Gmail API.
+
+        For connector backends, content_hash is ignored - we use backend_path instead.
+
+        Args:
+            content_hash: Ignored for connector backends
+            context: Operation context with backend_path
+
+        Returns:
+            Email content as YAML bytes
+
+        Raises:
+            NexusFileNotFoundError: If email doesn't exist
+            BackendError: If read operation fails or PyYAML not installed
+        """
+        if yaml is None:
+            raise BackendError(
+                "PyYAML not installed. Install with: pip install pyyaml",
+                backend="gmail",
+            )
+
+        if not context or not context.backend_path:
+            raise BackendError(
+                "Gmail connector requires backend_path in OperationContext. "
+                "This backend reads files from actual paths, not CAS hashes.",
+                backend="gmail",
+            )
+
+        # Strip label and thread folder prefix (e.g., "INBOX/thread_id/email-123.yaml" -> "email-123.yaml")
+        path_parts = context.backend_path.split("/")
+        if len(path_parts) == 3 and path_parts[0] in self.LABEL_FOLDERS:
+            # Path is "LABEL/thread_id/email-123.yaml" - use just the filename
+            filename = path_parts[2]
+        elif len(path_parts) == 1:
+            # Already just a filename
+            filename = path_parts[0]
+        else:
+            raise NexusFileNotFoundError(context.backend_path)
+
+        # Extract message_id from path (only .yaml files)
+        if not filename.endswith(".yaml"):
+            raise NexusFileNotFoundError(context.backend_path)
+
+        if not filename.startswith("email-"):
+            raise NexusFileNotFoundError(context.backend_path)
+
+        message_id = filename.replace("email-", "").replace(".yaml", "")
+
+        # Get cache path
+        cache_path = self._get_cache_path(context) or context.backend_path
+
+        # Check cache first (if caching enabled)
+        if self._has_caching():
+            cached = self._read_from_cache(cache_path, original=True)
+            if cached and not cached.stale and cached.content_binary:
+                return cached.content_binary
+
+        # Fetch from Gmail API
+        try:
+            service = self._get_gmail_service(context)
+            email_data = self._fetch_email(service, message_id)
+        except Exception as e:
+            raise NexusFileNotFoundError(context.backend_path) from e
+
+        # Format as YAML (includes both body_text and body_html)
+        content = self._format_email_as_yaml(email_data)
+
+        # Cache the result
+        if self._has_caching():
+            try:
+                tenant_id = getattr(context, "tenant_id", None)
+                self._write_to_cache(
+                    path=cache_path,
+                    content=content,
+                    backend_version=None,  # Emails are immutable, no versioning needed
+                    tenant_id=tenant_id,
+                )
+            except Exception:
+                pass  # Don't fail on cache write errors
+
+        return content
+
+    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+        """
+        Delete is not supported for Gmail connector (read-only).
+
+        Args:
+            content_hash: Content hash
+            context: Operation context
+
+        Raises:
+            BackendError: Always raised (read-only backend)
+        """
+        raise BackendError(
+            "Gmail connector is read-only. Cannot delete emails from Gmail.",
             backend="gmail",
         )
 
     def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
         """
-        Check if email exists in Gmail.
+        Check if email exists.
 
         Args:
-            content_hash: Message ID
-            context: Operation context
+            content_hash: Content hash (ignored)
+            context: Operation context with backend_path
 
         Returns:
-            True if message exists, False otherwise
+            True if email exists, False otherwise
         """
+        if not context or not context.backend_path:
+            return False
+
         try:
-            service = self._get_gmail_service(context)
+            # Strip label and thread folder prefix (e.g., "INBOX/thread_id/email-123.yaml" -> "email-123.yaml")
+            path_parts = context.backend_path.split("/")
+            if len(path_parts) == 3 and path_parts[0] in self.LABEL_FOLDERS:
+                # Path is "LABEL/thread_id/email-123.yaml" - use just the filename
+                filename = path_parts[2]
+            elif len(path_parts) == 1:
+                # Already just a filename
+                filename = path_parts[0]
+            else:
+                return False
 
-            # Try to get message metadata
-            service.users().messages().get(userId="me", id=content_hash, format="minimal").execute()
+            # Extract message_id from path (only .yaml files)
+            if not filename.endswith(".yaml"):
+                return False
 
-            return True
+            if not filename.startswith("email-"):
+                return False
+
+            message_id = filename.replace("email-", "").replace(".yaml", "")
+
+            # Try to fetch from Gmail API
+            try:
+                service = self._get_gmail_service(context)
+                service.users().messages().get(userId="me", id=message_id).execute()
+                return True
+            except Exception:
+                return False
 
         except Exception:
             return False
 
     def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
-        """Get email size from Gmail.
+        """Get email content size.
 
         Args:
-            content_hash: Message ID
-            context: Operation context
+            content_hash: Content hash (ignored)
+            context: Operation context with backend_path
 
         Returns:
             Content size in bytes
 
         Raises:
-            NexusFileNotFoundError: If message doesn't exist
+            NexusFileNotFoundError: If email doesn't exist
             BackendError: If operation fails
         """
-        try:
-            service = self._get_gmail_service(context)
+        if context is None or not hasattr(context, "backend_path"):
+            raise ValueError("Gmail connector requires backend_path in OperationContext")
 
-            # Get message metadata
-            message = (
-                service.users()
-                .messages()
-                .get(userId="me", id=content_hash, format="minimal")
-                .execute()
-            )
-
-            size = message.get("sizeEstimate", 0)
-            return int(size)
-
-        except Exception as e:
-            if "not found" in str(e).lower() or "404" in str(e):
-                raise NexusFileNotFoundError(content_hash) from e
-            raise BackendError(
-                f"Failed to get message size: {e}",
-                backend="gmail",
-                path=content_hash,
-            ) from e
+        # Read content to get size
+        content = self.read_content(content_hash, context)
+        return len(content)
 
     def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         """Get reference count (always 1 for connector backends).
 
-        Gmail doesn't do deduplication, so each message has exactly one reference.
-
         Args:
-            content_hash: Message ID
+            content_hash: Content hash
             context: Operation context
 
         Returns:
             Always 1 (no reference counting)
         """
         return 1
-
-    # === Directory operations (not applicable for Gmail) ===
 
     def mkdir(
         self,
@@ -1284,12 +716,21 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Create directory (not applicable for Gmail).
+        """Create directory (not supported for Gmail connector).
 
-        Gmail uses labels, not directories. This is a no-op.
+        Args:
+            path: Directory path
+            parents: Create parent directories if needed
+            exist_ok: Don't raise error if directory exists
+            context: Operation context
+
+        Raises:
+            BackendError: Always raised (read-only backend)
         """
-        # No-op: Gmail uses labels, not directories
-        pass
+        raise BackendError(
+            "Gmail connector is read-only. Cannot create directories.",
+            backend="gmail",
+        )
 
     def rmdir(
         self,
@@ -1297,59 +738,132 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         recursive: bool = False,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Remove directory (not applicable for Gmail).
+        """Remove directory (not supported for Gmail connector).
 
-        Gmail uses labels, not directories. This is a no-op.
+        Args:
+            path: Directory path
+            recursive: Remove non-empty directory
+            context: Operation context
+
+        Raises:
+            BackendError: Always raised (read-only backend)
         """
-        # No-op: Gmail uses labels, not directories
-        pass
+        raise BackendError(
+            "Gmail connector is read-only. Cannot remove directories.",
+            backend="gmail",
+        )
 
     def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         """Check if path is a directory.
 
-        For Gmail, labels act as directories.
-
         Args:
-            path: Path to check (label name)
-
-        Returns:
-            True if path is a known label, False otherwise
-        """
-        # Labels act as directories
-        path_clean = path.strip("/").upper()
-        return path_clean in ["INBOX", "SENT", "DRAFTS", "TRASH", "SPAM", "STARRED"]
-
-    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
-        """
-        List directory contents (list messages in label).
-
-        Args:
-            path: Label name (e.g., "INBOX")
+            path: Path to check
             context: Operation context
 
         Returns:
-            List of message filenames (.yaml files)
+            True if path is a directory, False if it's a file
+        """
+        path = path.strip("/")
+        if not path:
+            return True  # Root is always a directory
+
+        # Check if it's a label folder (SENT/, STARRED/, etc.)
+        if path in self.LABEL_FOLDERS:
+            return True
+
+        # Check if it's a thread folder (SENT/thread_id, etc.)
+        path_parts = path.split("/")
+        if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
+            return True
+
+        # Email files (.yaml) are not directories
+        if path.endswith(".yaml"):
+            return False
+
+        return False
+
+    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+        """
+        List directory contents.
+
+        This method fetches emails from Gmail and lists:
+        - Root directory: Label folders (SENT/, STARRED/, IMPORTANT/, INBOX/)
+        - Label folders: Thread folders (thread_id_1/, thread_id_2/, ...)
+        - Thread folders: Email files for that thread (email-msg_id.yaml)
+
+        Args:
+            path: Directory path to list (relative to backend root)
+            context: Operation context for authentication
+
+        Returns:
+            List of entry names (folders or email files)
 
         Raises:
+            FileNotFoundError: If directory doesn't exist
             BackendError: If operation fails
         """
         try:
+            path = path.strip("/")
+
+            # Root directory - list label folders
+            if not path:
+                return [f"{label}/" for label in self.LABEL_FOLDERS]
+
+            # Get Gmail service
             service = self._get_gmail_service(context)
 
-            # Fetch messages for this label
-            label = path.strip("/").upper()
-            messages, history_id = self._fetch_messages_initial(
-                service,
-                label_ids=[label] if label else None,
-                max_results=self.max_results,
-            )
+            # Label folder - list thread folders for this label
+            if path in self.LABEL_FOLDERS:
+                # Fetch emails from Gmail API
+                emails = list_emails_by_folder(
+                    service,
+                    max_results=self.max_message_per_label,
+                    folder_filter=[path],
+                    silent=True,
+                )
 
-            # Return message IDs as YAML files
-            return [f"{msg['id']}.yaml" for msg in messages]
+                # Extract unique thread IDs
+                threads = set()
+                for email in emails:
+                    if email.get("folder") == path:
+                        thread_id = email.get("threadId")
+                        if thread_id:
+                            threads.add(thread_id)
+                return sorted([f"{thread_id}/" for thread_id in threads])
 
+            # Label/Thread folder - list email files for this thread
+            path_parts = path.split("/")
+            if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
+                target_folder = path_parts[0]
+                target_thread = path_parts[1]
+
+                # Fetch emails from Gmail API
+                emails = list_emails_by_folder(
+                    service,
+                    max_results=self.max_message_per_label,
+                    folder_filter=[target_folder],
+                    silent=True,
+                )
+
+                # Filter for files in this thread (only .yaml files)
+                files = []
+                for email in emails:
+                    if (
+                        email.get("folder") == target_folder
+                        and email.get("threadId") == target_thread
+                    ):
+                        message_id = email["id"]
+                        files.append(f"email-{message_id}.yaml")
+                return sorted(files)
+
+            # Invalid path
+            raise FileNotFoundError(f"Directory not found: {path}")
+
+        except FileNotFoundError:
+            raise
         except Exception as e:
             raise BackendError(
-                f"Failed to list messages in {path}: {e}",
+                f"Failed to list directory {path}: {e}",
                 backend="gmail",
                 path=path,
             ) from e

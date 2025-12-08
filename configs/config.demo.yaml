@@ -74,20 +74,19 @@ backends:
   #   description: "Google Drive for joezhoujinjing@gmail.com"
 
   # Gmail Connector backend with OAuth authentication
-  # Provides read-only access to Gmail messages as YAML files
+  # Provides read-only access to Gmail messages organized by priority folders
+  # Structure: /SENT/, /STARRED/, /IMPORTANT/, /INBOX/ (each with thread folders)
+  # Each email appears in exactly ONE folder based on highest priority label match
   # - type: gmail_connector
   #   mount_point: /mnt/gmail/joezhoujinjing@gmail.com
   #   config:
   #     token_manager_db: postgresql://postgres:nexus@postgres:5432/nexus
   #     user_email: joezhoujinjing@gmail.com
   #     provider: gmail
-  #     max_results: 100
-  #     labels:
-  #       - INBOX
-  #       - SENT
+  #     max_message_per_label: 50  # Maximum emails to fetch per folder (SENT, STARRED, IMPORTANT, INBOX)
   #   priority: 10
   #   readonly: true
-  #   description: "Gmail messages for joezhoujinjing@gmail.com"
+  #   description: "Gmail messages for joezhoujinjing@gmail.com organized by priority folders"
 
 # Cache configuration
 cache:

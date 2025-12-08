@@ -253,8 +253,7 @@ class NexusFSMountsMixin:
                 user_email=backend_config.get("user_email"),
                 provider=backend_config.get("provider", "gmail"),
                 session_factory=gmail_session_factory,
-                max_results=backend_config.get("max_results", 100),
-                labels=backend_config.get("labels", ["INBOX"]),
+                max_message_per_label=backend_config.get("max_message_per_label", 50),
             )
         else:
             raise RuntimeError(f"Unsupported backend type: {backend_type}")

@@ -712,6 +712,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         cache_path = self._get_cache_path(context) or context.backend_path
 
         # Check cache first if enabled
+        cache_rejected_reason = None
         if self._has_caching():
             import contextlib
 
@@ -723,15 +724,22 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                         if cached.backend_version == content_hash:
                             logger.info(f"[GCS] Cache hit for {cache_path}")
                             return cached.content_binary
-                        # Version mismatch - cache is stale, read from backend
-                        logger.debug(f"[GCS] Cache version mismatch for {cache_path}")
+                        # Version mismatch - cache entry exists but version is stale
+                        cache_rejected_reason = "version mismatch"
+                        logger.info(
+                            f"[GCS] Cache version mismatch for {cache_path} "
+                            f"(cached={cached.backend_version}, requested={content_hash})"
+                        )
                     else:
                         # No version to compare, trust the cache
                         logger.info(f"[GCS] Cache hit (no version) for {cache_path}")
                         return cached.content_binary
 
         # Read from GCS backend
-        logger.info(f"[GCS] Cache miss, reading from backend: {cache_path}")
+        if cache_rejected_reason:
+            logger.info(f"[GCS] Reading from backend due to {cache_rejected_reason}: {cache_path}")
+        else:
+            logger.info(f"[GCS] Cache miss, reading from backend: {cache_path}")
         blob_path = self._get_blob_path(context.backend_path)
 
         # Determine if we should use version ID

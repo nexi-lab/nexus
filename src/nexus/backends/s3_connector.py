@@ -771,6 +771,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         cache_path = self._get_cache_path(context) or context.backend_path
 
         # Check cache first if enabled
+        cache_rejected_reason = None
         if self._has_caching():
             import contextlib
 
@@ -782,15 +783,22 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                         if cached.backend_version == content_hash:
                             logger.info(f"[S3] Cache hit for {cache_path}")
                             return cached.content_binary
-                        # Version mismatch - cache is stale, read from backend
-                        logger.debug(f"[S3] Cache version mismatch for {cache_path}")
+                        # Version mismatch - cache entry exists but version is stale
+                        cache_rejected_reason = "version mismatch"
+                        logger.info(
+                            f"[S3] Cache version mismatch for {cache_path} "
+                            f"(cached={cached.backend_version}, requested={content_hash})"
+                        )
                     else:
                         # No version to compare, trust the cache
                         logger.info(f"[S3] Cache hit (no version) for {cache_path}")
                         return cached.content_binary
 
         # Read from S3 backend
-        logger.info(f"[S3] Cache miss, reading from backend: {cache_path}")
+        if cache_rejected_reason:
+            logger.info(f"[S3] Reading from backend due to {cache_rejected_reason}: {cache_path}")
+        else:
+            logger.info(f"[S3] Cache miss, reading from backend: {cache_path}")
         blob_path = self._get_blob_path(context.backend_path)
 
         # Determine if we should use version ID

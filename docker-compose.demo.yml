@@ -244,6 +244,9 @@ services:
       LANGCHAIN_ENDPOINT: ${LANGCHAIN_ENDPOINT:-}
       LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-}
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+    volumes:
+      # Persist LangGraph dev history across container rebuilds and restarts
+      - ./examples/langgraph/.langgraph_api:/app/.langgraph_api
     ports:
       - "${LANGGRAPH_PORT:-2024}:2024"
     healthcheck:

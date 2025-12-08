@@ -273,6 +273,21 @@ def get_nexus_tools() -> list[Any]:
                 path = path[len("/mnt/nexus") :]
             raw_content = nx.read(path)
 
+            # Handle dict response (when return_metadata=True or edge cases)
+            if isinstance(raw_content, dict):
+                # Extract content and encoding from metadata dict
+                encoding = raw_content.get("encoding", "")
+                content_value = raw_content.get("content")
+                if content_value is None:
+                    return f"Error: nx.read() returned dict without 'content' key: {raw_content}"
+                raw_content = content_value
+
+                # Decode base64 if needed
+                if encoding == "base64" and isinstance(raw_content, str):
+                    import base64
+
+                    raw_content = base64.b64decode(raw_content)
+
             # Handle bytes and ensure we have a string
             if isinstance(raw_content, bytes):
                 content_str = raw_content.decode("utf-8")

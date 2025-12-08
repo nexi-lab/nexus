@@ -982,6 +982,17 @@ class NexusFSMountsMixin:
                 f"Only connector-style backends (e.g., gcs_connector) can be synced."
             )
 
+        # Ensure mount directory entry exists (backwards compatibility)
+        # This handles cases where mount was added directly to router without calling add_mount()
+        if hasattr(self, "mkdir"):
+            try:
+                self.mkdir(mount_point, parents=True, exist_ok=True, context=context)
+                logger.debug(f"[SYNC_MOUNT] Ensured directory entry exists for {mount_point}")
+            except Exception as e:
+                logger.warning(
+                    f"[SYNC_MOUNT] Failed to create directory entry for {mount_point}: {e}"
+                )
+
         # Track sync statistics
         stats: dict[str, int | list[str]] = {
             "files_scanned": 0,
@@ -1204,6 +1215,10 @@ class NexusFSMountsMixin:
                 existing_files = [meta.path for meta in existing_metas]
 
                 for existing_path in existing_files:
+                    # Skip the mount point itself (it's a directory we manage)
+                    if existing_path == mount_point:
+                        continue
+
                     # Skip if it's a directory or if it was found in the backend scan
                     if existing_path in files_found_in_backend:
                         continue

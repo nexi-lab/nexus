@@ -124,8 +124,11 @@ nexus-frontend/
 # Examples (not needed in production)
 examples/
 
-# Scripts (dev-only)
-scripts/
+# Scripts (dev-only - exclude shell scripts and most Python scripts)
+scripts/*.sh
+scripts/*.py
+# But keep init_database.py for database initialization in Docker
+!scripts/init_database.py
 *.sh
 # But keep docker-entrypoint.sh for container startup
 !docker-entrypoint.sh

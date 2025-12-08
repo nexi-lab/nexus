@@ -523,5 +523,94 @@ class TokenManager:
         )
 
     def close(self) -> None:
-        """Cleanup resources."""
-        self.engine.dispose()
+        """Cleanup resources with Windows file locking support."""
+        import gc
+        import sys
+        import time
+
+        if not hasattr(self, "engine"):
+            return  # Already closed or never initialized
+
+        # Prevent double-close
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+
+        try:
+            # CRITICAL: Force garbage collection BEFORE closing database
+            # This ensures any lingering session references are cleaned up first
+            # Especially important on Windows where sessions may hold file locks
+            gc.collect()
+            gc.collect(1)
+            gc.collect(2)
+            # Brief wait to let OS release file handles
+            if sys.platform == "win32":
+                time.sleep(0.05)  # 50ms on Windows
+            else:
+                time.sleep(0.01)  # 10ms elsewhere
+
+            # SQLite-specific cleanup
+            if "sqlite" in self.database_url:
+                # For SQLite, checkpoint WAL/journal files before disposing
+                try:
+                    from sqlalchemy import text
+
+                    # Create a new connection to ensure we have exclusive access
+                    with self.engine.connect() as conn:
+                        # Checkpoint WAL file to merge changes back to main database
+                        conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+                        conn.commit()
+
+                        # Switch to DELETE mode to remove WAL files
+                        conn.execute(text("PRAGMA journal_mode=DELETE"))
+                        conn.commit()
+
+                        # Close the connection explicitly
+                        conn.close()
+                except Exception:
+                    # Ignore errors during checkpoint (e.g., database already closed or locked)
+                    pass
+
+            # Dispose of the connection pool - this closes all connections
+            # Note: All sessions should be closed via context managers (with statements)
+            # before this point. The dispose() call will close any remaining connections.
+            self.engine.dispose()
+
+            # CRITICAL: On Windows, force GC after disposal to release lingering references
+            gc.collect()
+            gc.collect(1)
+            gc.collect(2)
+            # Minimal wait for OS to release handles
+            if sys.platform == "win32":
+                time.sleep(0.1)  # 100ms on Windows
+            else:
+                time.sleep(0.01)  # 10ms elsewhere
+
+            # SQLite-specific file cleanup
+            if "sqlite" in self.database_url and hasattr(self, "database_url"):
+                # Extract db_path from sqlite:///path/to/db
+                db_path_str = self.database_url.replace("sqlite:///", "")
+                if db_path_str:
+                    try:
+                        from pathlib import Path
+
+                        db_path = Path(db_path_str)
+                        # Additional cleanup: Try to remove any lingering SQLite temp files
+                        # This helps with test cleanup when using tempfile.TemporaryDirectory()
+                        for suffix in ["-wal", "-shm", "-journal"]:
+                            temp_file = db_path.parent / f"{db_path.name}{suffix}"
+                            if temp_file.exists():
+                                import contextlib
+
+                                # Ignore errors - file may be locked or already deleted
+                                with contextlib.suppress(OSError, PermissionError):
+                                    temp_file.unlink(missing_ok=True)
+                    except Exception:
+                        # Ignore errors during temp file cleanup
+                        pass
+        except Exception:
+            # Ensure engine is disposed even if cleanup fails
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                self.engine.dispose()

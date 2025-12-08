@@ -3764,3 +3764,7 @@ class NexusFS(
         # Close AuditStore to release database connection
         if hasattr(self, "_audit_store"):
             self._audit_store.close()
+
+        # Close TokenManager to release database connection
+        if hasattr(self, "_token_manager") and self._token_manager is not None:
+            self._token_manager.close()

@@ -9,14 +9,11 @@ Nexus workspace for searching, analysis, and AI operations.
 Storage structure:
     Gmail/
     ├── inbox/
-    │   ├── <message_id>.yaml        # Email metadata and bodies (YAML format)
-    │   └── .<message_id>.html       # HTML body (if present, hidden file)
+    │   └── <message_id>.yaml        # Email metadata and bodies (YAML format)
     ├── sent/
-    │   ├── <message_id>.yaml
-    │   └── .<message_id>.html
+    │   └── <message_id>.yaml
     └── drafts/
-        ├── <message_id>.yaml
-        └── .<message_id>.html
+        └── <message_id>.yaml
 
 Key features:
 - OAuth 2.0 authentication (user-scoped)
@@ -201,10 +198,14 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         return self.session_factory is not None or self.db_session is not None
 
     def _create_yaml_content(
-        self, headers: dict[str, str], text_body: str, labels: list[str] | None = None
+        self,
+        headers: dict[str, str],
+        text_body: str,
+        html_body: str,
+        labels: list[str] | None = None,
     ) -> str:
         """
-        Create YAML content with literal block scalar style for text_body.
+        Create YAML content with literal block scalar style for text_body and html_body.
 
         This ensures that multi-line text bodies are represented with the | (pipe)
         notation in YAML, preserving newlines and making the output more readable.
@@ -212,10 +213,11 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         Args:
             headers: Email headers dict
             text_body: Email text body
+            html_body: Email HTML body
             labels: Gmail labels (optional)
 
         Returns:
-            YAML string with literal block scalar for text_body
+            YAML string with literal block scalar for text_body and html_body
         """
         import yaml
 
@@ -237,12 +239,17 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         # Normalize line endings (CRLF -> LF) before creating LiteralString
         # Email content uses RFC 822 format with CRLF, but we want clean LF for YAML
         normalized_text = text_body.replace("\r\n", "\n").replace("\r", "\n")
+        normalized_html = html_body.replace("\r\n", "\n").replace("\r", "\n") if html_body else ""
 
-        # Create YAML structure with LiteralString for text_body
+        # Create YAML structure with LiteralString for text_body and html_body
         yaml_data = {
             "headers": headers,
             "text_body": LiteralString(normalized_text),
         }
+
+        # Add HTML body if present
+        if html_body:
+            yaml_data["html_body"] = LiteralString(normalized_html)
 
         # Add labels if present
         if labels:
@@ -743,12 +750,9 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                 # Process added/updated messages
                 for msg_meta in messages_to_process:
                     msg_id = msg_meta["id"]
-                    # Construct full virtual paths with mount point for cache consistency
+                    # Construct full virtual path with mount point for cache consistency
                     virtual_path = f"{mount_point}/{label.lower()}/{msg_id}.yaml"
-                    html_path = f"{mount_point}/{label.lower()}/.{msg_id}.html"
-                    logger.info(
-                        f"[GMAIL-SYNC] Constructed paths: virtual_path={virtual_path}, html_path={html_path}"
-                    )
+                    logger.info(f"[GMAIL-SYNC] Constructed path: virtual_path={virtual_path}")
 
                     try:
                         # Fetch full message content
@@ -768,12 +772,13 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                         if context and hasattr(context, "tenant_id"):
                             tenant_id = context.tenant_id
 
-                        # Create YAML content with headers, text body, and labels
-                        # HTML body is stored separately in .{message_id}.html file
-                        yaml_content = self._create_yaml_content(headers, text_body, labels)
+                        # Create YAML content with headers, text body, HTML body, and labels
+                        yaml_content = self._create_yaml_content(
+                            headers, text_body, html_body, labels
+                        )
                         yaml_bytes = yaml_content.encode("utf-8")
 
-                        # Concatenate all content for full-text search
+                        # Concatenate all content for full-text search (text body + HTML body)
                         searchable_text = (
                             f"From: {headers['from']}\n"
                             f"To: {headers['to']}\n"
@@ -781,6 +786,8 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                             f"Date: {headers['date']}\n\n"
                             f"{text_body}"
                         )
+                        if html_body:
+                            searchable_text += f"\n\n{html_body}"
 
                         # Write YAML to cache if caching is enabled
                         if self._has_caching():
@@ -798,30 +805,8 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                                     tenant_id=tenant_id,
                                 )
 
-                            # Write HTML body to separate file if present
-                            if html_body:
-                                with contextlib.suppress(Exception):
-                                    html_bytes = html_body.encode("utf-8")
-                                    self._write_to_cache(
-                                        path=html_path,
-                                        content=html_bytes,
-                                        content_text=html_body,
-                                        content_type="full",
-                                        backend_version=None,
-                                        parsed_from="gmail",
-                                        parse_metadata={
-                                            "message_id": msg_id,
-                                            "label": label,
-                                            "type": "html_body",
-                                        },
-                                        tenant_id=tenant_id,
-                                    )
-
                         result.files_synced += 1
                         result.bytes_synced += len(yaml_bytes)
-                        if html_body:
-                            result.files_synced += 1
-                            result.bytes_synced += len(html_body.encode("utf-8"))
 
                         # Generate embeddings if requested and caching is enabled
                         if generate_embeddings and self._has_caching():
@@ -837,9 +822,8 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
 
                 # Process deleted messages
                 for msg_id in messages_to_delete:
-                    # Construct full virtual paths with mount point for cache consistency
+                    # Construct full virtual path with mount point for cache consistency
                     virtual_path = f"{mount_point}/{label.lower()}/{msg_id}.yaml"
-                    html_path = f"{mount_point}/{label.lower()}/.{msg_id}.html"
 
                     # Invalidate cache for deleted message if caching is enabled
                     if self._has_caching():
@@ -847,7 +831,6 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
 
                         with contextlib.suppress(Exception):
                             self._invalidate_cache(path=virtual_path, delete=True)
-                            self._invalidate_cache(path=html_path, delete=True)
                             logger.debug(f"Removed deleted message {msg_id} from cache")
 
                 # Update the global history ID with the latest from this label sync
@@ -926,34 +909,23 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             service = self._get_gmail_service(context)
 
             # Extract message ID from virtual path if needed
-            # Format: /{label}/{msg_id}.yaml or /{label}/.{msg_id}.html
+            # Format: /{label}/{msg_id}.yaml
             import os
 
             filename = os.path.basename(virtual_path) if virtual_path else content_hash
-            is_html = filename.startswith(".") and filename.endswith(".html")
             is_yaml = filename.endswith(".yaml")
 
             # Extract message ID
-            if is_html:
-                msg_id = filename[1:-5]  # Remove leading '.' and '.html'
-            elif is_yaml:
-                msg_id = filename[:-5]  # Remove '.yaml'
-            else:
-                msg_id = content_hash  # Fallback to content_hash
+            msg_id = filename[:-5] if is_yaml else content_hash  # Remove '.yaml' or fallback
 
             # Fetch message content
             headers, text_body, html_body, labels, raw_bytes = self._get_message_content(
                 service, msg_id
             )
 
-            # Determine what to return based on file type
-            if is_html:
-                # Return HTML body only
-                result_bytes = html_body.encode("utf-8")
-            elif is_yaml:
-                # Return YAML content (headers, text body, and labels)
-                # HTML body is in a separate .{message_id}.html file
-                yaml_content = self._create_yaml_content(headers, text_body, labels)
+            # Return YAML content with headers, text body, HTML body, and labels
+            if is_yaml:
+                yaml_content = self._create_yaml_content(headers, text_body, html_body, labels)
                 result_bytes = yaml_content.encode("utf-8")
             else:
                 # Fallback: return raw bytes
@@ -967,7 +939,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                     tenant_id = getattr(context, "tenant_id", None) if context else None
 
                     if is_yaml:
-                        # Create searchable text for YAML files
+                        # Create searchable text for YAML files (text body + HTML body)
                         searchable_text = (
                             f"From: {headers['from']}\n"
                             f"To: {headers['to']}\n"
@@ -975,6 +947,8 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                             f"Date: {headers['date']}\n\n"
                             f"{text_body}"
                         )
+                        if html_body:
+                            searchable_text += f"\n\n{html_body}"
                         self._write_to_cache(
                             path=virtual_path,
                             content=result_bytes,
@@ -1145,7 +1119,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             context: Operation context
 
         Returns:
-            List of message filenames (.yaml and .html files)
+            List of message filenames (.yaml files)
 
         Raises:
             BackendError: If operation fails
@@ -1161,8 +1135,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                 max_results=self.max_results,
             )
 
-            # Return message IDs as virtual files (YAML format)
-            # Note: HTML files are created separately during sync, but we only list YAML files
+            # Return message IDs as YAML files
             return [f"{msg['id']}.yaml" for msg in messages]
 
         except Exception as e:

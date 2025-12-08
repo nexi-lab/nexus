@@ -46,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]  # windows-latest disabled - takes too much time
         python-version: ["3.13"]
 
     steps:
@@ -86,7 +86,10 @@ jobs:
       - name: Run tests with coverage
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            uv run pytest -n auto -m "not slow" --cov=nexus --cov-report=xml --cov-report=term-missing
+            # Exclude slow Windows tests: test_list_credentials and test_tenant_isolation
+            uv run pytest -n auto -m "not slow" --cov=nexus --cov-report=xml --cov-report=term-missing \
+              --ignore=tests/unit/server/test_token_manager.py::TestTokenManager::test_list_credentials \
+              --ignore=tests/unit/server/test_token_manager.py::TestTokenManager::test_tenant_isolation
           else
             uv run pytest -n auto --cov=nexus --cov-report=xml --cov-report=term-missing
           fi

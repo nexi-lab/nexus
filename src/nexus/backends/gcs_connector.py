@@ -277,7 +277,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         self,
         blob_path: str,
         version_id: str | None = None,
-    ) -> bytes:
+    ) -> tuple[bytes, str | None]:
         """
         Download blob from GCS.
 
@@ -286,7 +286,9 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             version_id: Optional GCS generation number
 
         Returns:
-            File content as bytes
+            Tuple of (content, generation_number)
+            - content: File content as bytes
+            - generation_number: GCS generation as string, or None if not available
 
         Raises:
             NexusFileNotFoundError: If blob doesn't exist
@@ -309,7 +311,12 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                 timeout=60,
                 retry=retry.Retry(deadline=120),  # Retry for up to 2 minutes
             )
-            return bytes(content)
+
+            # Reload blob metadata to get generation after download
+            blob.reload()
+            generation_str = str(blob.generation) if blob.generation else None
+
+            return bytes(content), generation_str
 
         except NotFound as e:
             raise NexusFileNotFoundError(blob_path) from e
@@ -427,7 +434,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                 # Get version ID (generation number) if provided
                 version_id = version_ids.get(blob_path) if version_ids else None
                 # Call existing _download_blob() to reuse error handling and retry logic
-                content = self._download_blob(blob_path, version_id)
+                content, _generation = self._download_blob(blob_path, version_id)
                 return (blob_path, content)
 
             except Exception as e:
@@ -759,19 +766,19 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         if self.versioning_enabled and content_hash and self._is_version_id(content_hash):
             version_id = content_hash
 
-        content = self._download_blob(blob_path, version_id)
+        content, generation = self._download_blob(blob_path, version_id)
 
         # Cache the result if caching is enabled
         if self._has_caching():
             import contextlib
 
             with contextlib.suppress(Exception):
-                version = self.get_version(context.backend_path, context)
+                # Use generation from download instead of making extra API call
                 tenant_id = getattr(context, "tenant_id", None)
                 self._write_to_cache(
                     path=cache_path,
                     content=content,
-                    backend_version=version,
+                    backend_version=generation,
                     tenant_id=tenant_id,
                 )
 

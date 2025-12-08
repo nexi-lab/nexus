@@ -31,12 +31,16 @@ class MockBlobConnector(BaseBlobStorageConnector, CacheConnectorMixin):
         """Convert backend path to blob path."""
         return backend_path
 
-    def _download_blob(self, blob_path: str, version_id: str | None = None) -> bytes:
+    def _download_blob(
+        self, blob_path: str, version_id: str | None = None
+    ) -> tuple[bytes, str | None]:
         """Download single blob."""
         self.download_count += 1
         if blob_path not in self.files:
             raise FileNotFoundError(f"Blob not found: {blob_path}")
-        return self.files[blob_path]
+        # Return content and version (use provided version_id or generate one)
+        file_version = version_id or self.versions.get(blob_path, "v1")
+        return self.files[blob_path], file_version
 
     def _delete_blob(self, blob_path: str) -> None:
         """Delete blob."""

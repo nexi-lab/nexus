@@ -374,7 +374,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         self,
         blob_path: str,
         version_id: str | None = None,
-    ) -> bytes:
+    ) -> tuple[bytes, str | None]:
         """
         Download blob from S3.
 
@@ -383,7 +383,9 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             version_id: Optional S3 version ID
 
         Returns:
-            File content as bytes
+            Tuple of (content, version_id)
+            - content: File content as bytes
+            - version_id: S3 version ID as string, or None if not available
 
         Raises:
             NexusFileNotFoundError: If blob doesn't exist
@@ -399,7 +401,11 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
 
             response = self.client.get_object(**get_params)
             content = response["Body"].read()
-            return bytes(content)
+
+            # Extract version ID from response metadata
+            response_version_id = response.get("VersionId")
+
+            return bytes(content), response_version_id
 
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "")
@@ -524,7 +530,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                 # Get version ID if provided
                 version_id = version_ids.get(blob_path) if version_ids else None
                 # Call existing _download_blob() to reuse error handling and boto3 logic
-                content = self._download_blob(blob_path, version_id)
+                content, _version_id = self._download_blob(blob_path, version_id)
                 return (blob_path, content)
 
             except Exception as e:
@@ -818,19 +824,19 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         if self.versioning_enabled and content_hash and self._is_version_id(content_hash):
             version_id = content_hash
 
-        content = self._download_blob(blob_path, version_id)
+        content, response_version_id = self._download_blob(blob_path, version_id)
 
         # Cache the result if caching is enabled
         if self._has_caching():
             import contextlib
 
             with contextlib.suppress(Exception):
-                version = self.get_version(context.backend_path, context)
+                # Use version ID from download instead of making extra API call
                 tenant_id = getattr(context, "tenant_id", None)
                 self._write_to_cache(
                     path=cache_path,
                     content=content,
-                    backend_version=version,
+                    backend_version=response_version_id,
                     tenant_id=tenant_id,
                 )
 

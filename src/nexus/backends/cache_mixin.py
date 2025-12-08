@@ -1058,8 +1058,9 @@ class CacheConnectorMixin:
             if vpath is None:
                 continue
             cached = cached_entries.get(vpath)
-            skip_version_check = cached and not cached.stale
-            if not skip_version_check and hasattr(self, "get_version"):
+            # Check version if: no cache OR cache is stale
+            needs_version_check = not cached or cached.stale
+            if needs_version_check and hasattr(self, "get_version"):
                 paths_needing_version_check.append(backend_path)
 
         if paths_needing_version_check and hasattr(self, "_batch_get_versions"):

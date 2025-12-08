@@ -187,7 +187,7 @@ class BaseBlobStorageConnector(Backend):
         self,
         blob_path: str,
         version_id: str | None = None,
-    ) -> bytes:
+    ) -> tuple[bytes, str | None]:
         """
         Download blob from cloud storage.
 
@@ -196,7 +196,9 @@ class BaseBlobStorageConnector(Backend):
             version_id: Optional version ID for versioned reads
 
         Returns:
-            File content as bytes
+            Tuple of (content, version_id)
+            - content: File content as bytes
+            - version_id: Backend version ID as string, or None if not available
 
         Raises:
             NexusFileNotFoundError: If blob doesn't exist
@@ -293,7 +295,7 @@ class BaseBlobStorageConnector(Backend):
             try:
                 version_id = version_ids.get(blob_path) if version_ids else None
                 # Call existing _download_blob() to avoid code duplication
-                content = self._download_blob(blob_path, version_id)
+                content, _version_id = self._download_blob(blob_path, version_id)
                 return (blob_path, content)
             except Exception as e:
                 logger.warning(f"Failed to download {blob_path}: {e}")
@@ -492,7 +494,8 @@ class BaseBlobStorageConnector(Backend):
                 version_id = content_hash
 
             # Download blob (subclass implements cloud-specific download)
-            return self._download_blob(blob_path, version_id)
+            content, _version_id = self._download_blob(blob_path, version_id)
+            return content
 
         except (NexusFileNotFoundError, BackendError):
             raise

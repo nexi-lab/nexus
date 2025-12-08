@@ -283,5 +283,163 @@ class TestGmailConnectorGetGmailService:
             gmail_connector._get_gmail_service()
 
 
+class TestGmailConnectorBatchOperations:
+    """Test Gmail connector batch read operations."""
+
+    def test_batch_read_content_empty_list(self, gmail_connector) -> None:
+        """Test batch_read_content with empty list returns empty dict."""
+        result = gmail_connector.batch_read_content([])
+        assert result == {}
+
+    def test_batch_read_content_cache_hits(self, gmail_connector) -> None:
+        """Test batch_read_content uses cache when available."""
+        # Mock caching
+        gmail_connector.session_factory = Mock()
+
+        mock_cached = Mock()
+        mock_cached.stale = False
+        mock_cached.content_binary = b"cached content"
+
+        with patch.object(gmail_connector, "_read_from_cache", return_value=mock_cached):
+            result = gmail_connector.batch_read_content(["msg1", "msg2"])
+
+            # Both should be served from cache
+            assert result["msg1"] == b"cached content"
+            assert result["msg2"] == b"cached content"
+
+    def test_batch_read_content_successful_batch(self, gmail_connector) -> None:
+        """Test batch_read_content with successful batch request."""
+        message_ids = ["msg1", "msg2", "msg3"]
+
+        # Mock Gmail service and batch request
+        mock_service = Mock()
+        mock_batch = Mock()
+
+        with (
+            patch.object(gmail_connector, "_get_gmail_service", return_value=mock_service),
+            patch("googleapiclient.http.BatchHttpRequest", return_value=mock_batch),
+        ):
+            mock_service.new_batch_http_request.return_value = mock_batch
+            mock_batch.execute = Mock()
+
+            # Mock _parse_message_response to return test data
+            test_headers = {
+                "from": "test@example.com",
+                "to": "user@example.com",
+                "subject": "Test",
+                "date": "2024-01-01",
+            }
+            with patch.object(
+                gmail_connector,
+                "_parse_message_response",
+                return_value=(test_headers, "Text body", "", [], b"raw"),
+            ):
+                result = gmail_connector.batch_read_content(message_ids)
+
+                # Should have called new_batch_http_request
+                mock_service.new_batch_http_request.assert_called_once()
+                # Should have called execute
+                mock_batch.execute.assert_called_once()
+                # Result should be a dict
+                assert isinstance(result, dict)
+
+    def test_batch_read_content_fallback_on_batch_error(self, gmail_connector) -> None:
+        """Test batch_read_content falls back to individual reads on batch error."""
+        message_ids = ["msg1", "msg2"]
+
+        mock_service = Mock()
+        mock_batch = Mock()
+        mock_batch.execute.side_effect = Exception("Batch failed")
+
+        with (
+            patch.object(gmail_connector, "_get_gmail_service", return_value=mock_service),
+            patch("googleapiclient.http.BatchHttpRequest", return_value=mock_batch),
+            patch.object(gmail_connector, "read_content", return_value=b"individual read"),
+        ):
+            mock_service.new_batch_http_request.return_value = mock_batch
+
+            result = gmail_connector.batch_read_content(message_ids)
+
+            # Should have fallen back to individual reads
+            assert result["msg1"] == b"individual read"
+            assert result["msg2"] == b"individual read"
+
+    def test_batch_read_content_handles_large_batch(self, gmail_connector) -> None:
+        """Test batch_read_content handles more than 100 messages (batch size limit)."""
+        # Create 150 message IDs (should be split into 2 batches)
+        message_ids = [f"msg{i}" for i in range(150)]
+
+        mock_service = Mock()
+        mock_batch = Mock()
+
+        with (
+            patch.object(gmail_connector, "_get_gmail_service", return_value=mock_service),
+            patch("googleapiclient.http.BatchHttpRequest", return_value=mock_batch),
+        ):
+            mock_service.new_batch_http_request.return_value = mock_batch
+            mock_batch.execute = Mock()
+
+            test_headers = {
+                "from": "test@example.com",
+                "to": "user@example.com",
+                "subject": "Test",
+                "date": "2024-01-01",
+            }
+            with patch.object(
+                gmail_connector,
+                "_parse_message_response",
+                return_value=(test_headers, "Text", "", [], b"raw"),
+            ):
+                gmail_connector.batch_read_content(message_ids)
+
+                # Should have created 2 batch requests (100 + 50)
+                assert mock_service.new_batch_http_request.call_count == 2
+                assert mock_batch.execute.call_count == 2
+
+    def test_parse_message_response(self, gmail_connector) -> None:
+        """Test _parse_message_response helper method."""
+        import base64
+
+        # Create a test email message
+        raw_email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\n\r\nTest body"
+        encoded_raw = base64.urlsafe_b64encode(raw_email).decode()
+
+        message = {
+            "labelIds": ["INBOX"],
+            "raw": encoded_raw,
+        }
+
+        headers, text_body, html_body, labels, raw_bytes = gmail_connector._parse_message_response(
+            message
+        )
+
+        assert headers["from"] == "sender@example.com"
+        assert headers["to"] == "recipient@example.com"
+        assert headers["subject"] == "Test"
+        assert "Test body" in text_body
+        assert html_body == ""  # No HTML in this test message
+        assert labels == ["INBOX"]
+        assert raw_bytes == raw_email
+
+    def test_parse_message_response_without_raw(self, gmail_connector) -> None:
+        """Test _parse_message_response handles messages without raw content."""
+        message = {
+            "labelIds": ["SENT"],
+        }
+
+        headers, text_body, html_body, labels, raw_bytes = gmail_connector._parse_message_response(
+            message
+        )
+
+        # Should return defaults
+        assert headers["from"] == "Unknown"
+        assert headers["to"] == "Unknown"
+        assert headers["subject"] == "No Subject"
+        assert text_body == ""
+        assert html_body == ""
+        assert labels == ["SENT"]
+        assert raw_bytes == b""
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -975,6 +975,215 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                 path=content_hash,
             ) from e
 
+    def batch_read_content(
+        self, content_hashes: list[str], context: "OperationContext | None" = None
+    ) -> dict[str, bytes | None]:
+        """
+        Read multiple email contents from Gmail using batch API (optimized).
+
+        Uses Gmail API's batch request feature to fetch multiple messages in a single
+        HTTP request, significantly reducing latency and API quota usage compared to
+        sequential requests.
+
+        Args:
+            content_hashes: List of message IDs to fetch
+            context: Operation context
+
+        Returns:
+            Dictionary mapping content_hash -> content bytes
+            Returns None for hashes that don't exist or fail to fetch
+
+        Note:
+            - Processes up to 100 messages per batch (Gmail API limit)
+            - Automatically handles batching for larger requests
+            - Checks cache first for each message
+            - Falls back to individual requests if batch API fails
+        """
+        if not content_hashes:
+            return {}
+
+        result: dict[str, bytes | None] = {}
+
+        # Check cache first for each message
+        cached_hashes = set()
+        if self._has_caching():
+            import contextlib
+
+            for content_hash in content_hashes:
+                # Determine virtual path for cache lookup
+                # This is a simplified approach - we try common patterns
+                virtual_path = content_hash
+                if context and hasattr(context, "virtual_path") and context.virtual_path:
+                    virtual_path = context.virtual_path
+
+                with contextlib.suppress(Exception):
+                    cached = self._read_from_cache(virtual_path)
+                    if cached and not cached.stale and cached.content_binary:
+                        result[content_hash] = cached.content_binary
+                        cached_hashes.add(content_hash)
+                        logger.debug(f"[Gmail Batch] Cache hit for {content_hash}")
+
+        # Fetch uncached messages from Gmail
+        uncached_hashes = [h for h in content_hashes if h not in cached_hashes]
+        if not uncached_hashes:
+            return result
+
+        try:
+            service = self._get_gmail_service(context)
+
+            # Gmail API supports up to 100 requests per batch
+            batch_size = 100
+            for i in range(0, len(uncached_hashes), batch_size):
+                batch_hashes = uncached_hashes[i : i + batch_size]
+
+                try:
+                    # Use Gmail API batch request
+
+                    batch = service.new_batch_http_request()
+
+                    # Callback to handle each response
+                    def create_callback(msg_id: str) -> Any:
+                        def callback(_request_id: str, response: Any, exception: Any) -> None:
+                            if exception:
+                                logger.debug(f"[Gmail Batch] Failed to fetch {msg_id}: {exception}")
+                                result[msg_id] = None
+                            else:
+                                try:
+                                    # Process the message response
+                                    headers, text_body, html_body, labels, raw_bytes = (
+                                        self._parse_message_response(response)
+                                    )
+
+                                    # Create YAML content
+                                    yaml_content = self._create_yaml_content(
+                                        headers, text_body, html_body, labels
+                                    )
+                                    yaml_bytes = yaml_content.encode("utf-8")
+
+                                    result[msg_id] = yaml_bytes
+
+                                    # Cache if enabled
+                                    if self._has_caching():
+                                        import contextlib
+
+                                        with contextlib.suppress(Exception):
+                                            tenant_id = (
+                                                getattr(context, "tenant_id", None)
+                                                if context
+                                                else None
+                                            )
+                                            searchable_text = (
+                                                f"From: {headers['from']}\n"
+                                                f"To: {headers['to']}\n"
+                                                f"Subject: {headers['subject']}\n"
+                                                f"Date: {headers['date']}\n\n"
+                                                f"{text_body}"
+                                            )
+                                            if html_body:
+                                                searchable_text += f"\n\n{html_body}"
+
+                                            self._write_to_cache(
+                                                path=f"inbox/{msg_id}.yaml",  # Simplified path
+                                                content=yaml_bytes,
+                                                content_text=searchable_text,
+                                                backend_version=None,
+                                                tenant_id=tenant_id,
+                                            )
+
+                                except Exception as e:
+                                    logger.error(f"[Gmail Batch] Failed to process {msg_id}: {e}")
+                                    result[msg_id] = None
+
+                        return callback
+
+                    # Add all messages to batch
+                    for msg_id in batch_hashes:
+                        batch.add(
+                            service.users().messages().get(userId="me", id=msg_id, format="full"),
+                            callback=create_callback(msg_id),
+                        )
+
+                    # Execute batch
+                    batch.execute()
+                    logger.info(
+                        f"[Gmail Batch] Fetched batch of {len(batch_hashes)} messages "
+                        f"({len([h for h in batch_hashes if result.get(h)])} successful)"
+                    )
+
+                except Exception as batch_error:
+                    # Batch request failed, fall back to individual requests
+                    logger.warning(
+                        f"[Gmail Batch] Batch request failed, falling back to individual requests: {batch_error}"
+                    )
+                    for msg_id in batch_hashes:
+                        if msg_id not in result:
+                            try:
+                                result[msg_id] = self.read_content(msg_id, context=context)
+                            except Exception:
+                                result[msg_id] = None
+
+        except Exception as e:
+            # Service creation failed, mark all as None
+            logger.error(f"[Gmail Batch] Failed to create Gmail service: {e}")
+            for msg_id in uncached_hashes:
+                if msg_id not in result:
+                    result[msg_id] = None
+
+        return result
+
+    def _parse_message_response(
+        self, message: dict[str, Any]
+    ) -> tuple[dict, str, str, list, bytes]:
+        """
+        Parse Gmail API message response (helper for batch operations).
+
+        Args:
+            message: Gmail API message response dict
+
+        Returns:
+            Tuple of (headers_dict, text_body, html_body, labels, raw_bytes)
+        """
+        import base64
+        import email
+
+        # Extract labels
+        labels = message.get("labelIds", [])
+
+        # Get raw content
+        raw_data = message.get("raw")
+        raw_bytes = base64.urlsafe_b64decode(raw_data) if raw_data else b""
+
+        # Parse email
+        msg = email.message_from_bytes(raw_bytes) if raw_bytes else None
+
+        if msg:
+            # Extract headers
+            headers = {
+                "from": msg.get("From", "Unknown"),
+                "to": msg.get("To", "Unknown"),
+                "subject": msg.get("Subject", "No Subject"),
+                "date": msg.get("Date", "Unknown"),
+            }
+            if msg.get("Cc"):
+                headers["cc"] = msg.get("Cc")
+            if msg.get("Bcc"):
+                headers["bcc"] = msg.get("Bcc")
+
+            # Extract bodies
+            text_body, html_body = self._extract_text_and_html_from_message(msg)
+        else:
+            # Fallback for messages without raw content
+            headers = {
+                "from": "Unknown",
+                "to": "Unknown",
+                "subject": "No Subject",
+                "date": "Unknown",
+            }
+            text_body = ""
+            html_body = ""
+
+        return headers, text_body, html_body, labels, raw_bytes
+
     def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         """
         Delete email from Gmail (not supported - read-only connector).

@@ -63,6 +63,7 @@ COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini pyproject.toml README.md ./
 COPY configs/ ./configs/
+COPY scripts/init_database.py ./scripts/init_database.py
 COPY docker-entrypoint.sh /usr/local/bin/
 
 # Make entrypoint executable

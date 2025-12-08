@@ -52,6 +52,7 @@ USER nexus
 # Environment variables (can be overridden)
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
     LANGGRAPH_HOST=0.0.0.0 \
     LANGGRAPH_PORT=2024
 

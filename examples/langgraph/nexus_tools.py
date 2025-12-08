@@ -25,6 +25,7 @@ Authentication:
     Each tool creates an authenticated RemoteNexusFS instance using the extracted token.
 """
 
+import logging
 import os
 import shlex
 
@@ -32,6 +33,8 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 from nexus.remote import RemoteNexusFS
+
+logger = logging.getLogger(__name__)
 
 
 def get_nexus_tools():
@@ -196,7 +199,6 @@ def get_nexus_tools():
         try:
             # Get authenticated client
             nx = _get_nexus_client(config)
-
             # Parse read command
             parts = shlex.split(read_cmd.strip())
             if not parts:
@@ -247,11 +249,29 @@ def get_nexus_tools():
             # Read file content
             if path.startswith("/mnt/nexus"):
                 path = path[len("/mnt/nexus") :]
+
             content = nx.read(path)
+
+            # Handle dict response (when return_metadata=True or edge cases)
+            if isinstance(content, dict):
+                # Extract content and encoding from metadata dict
+                encoding = content.get("encoding", "")
+                content_value = content.get("content")
+                if content_value is None:
+                    return f"Error: nx.read() returned dict without 'content' key: {content}"
+                content = content_value
+
+                # Decode base64 if needed
+                if encoding == "base64" and isinstance(content, str):
+                    import base64
+
+                    content = base64.b64decode(content)
 
             # Handle bytes
             if isinstance(content, bytes):
                 content = content.decode("utf-8")
+            elif not isinstance(content, str):
+                return f"Error: Unexpected content type from {path}: {type(content)}"
 
             # Split into lines for line-based operations
             lines = content.split("\n")

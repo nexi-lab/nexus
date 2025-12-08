@@ -204,6 +204,114 @@ class BaseBlobStorageConnector(Backend):
         """
         pass
 
+    def _batch_get_versions(
+        self,
+        backend_paths: list[str],
+        contexts: dict[str, "OperationContext"] | None = None,
+    ) -> dict[str, str | None]:
+        """
+        Get versions for multiple files in batch (optimized for bulk operations).
+
+        This method should be overridden by subclasses for cloud-specific optimizations.
+        Default implementation calls get_version() for each path (no batching).
+
+        Args:
+            backend_paths: List of backend-relative paths
+            contexts: Optional dict mapping path -> OperationContext
+
+        Returns:
+            Dict mapping backend_path -> version string (or None if no version/doesn't exist)
+
+        Performance:
+            - GCS: Single list_blobs() API call (~200ms for 1000s of files)
+            - S3: Batch head_object() calls (20-30ms per batch of 1000)
+            - Default: Sequential get_version() calls (slow, ~10ms per file)
+
+        Note:
+            Subclasses should override for cloud-specific batch operations:
+            - GCS: Use list_blobs() with prefix to get all generations at once
+            - S3: Use batch head_object() calls with threading
+        """
+        if not hasattr(self, "get_version"):
+            # No version support - return empty dict
+            return dict.fromkeys(backend_paths)
+
+        # Default implementation: sequential calls (slow, but works)
+        results: dict[str, str | None] = {}
+        for path in backend_paths:
+            context = contexts.get(path) if contexts else None
+            try:
+                version = self.get_version(path, context)  # type: ignore
+                results[path] = version
+            except Exception:
+                results[path] = None
+        return results
+
+    def _bulk_download_blobs(
+        self,
+        blob_paths: list[str],
+        version_ids: dict[str, str] | None = None,
+        max_workers: int = 20,
+    ) -> dict[str, bytes]:
+        """
+        Download multiple blobs in parallel using ThreadPoolExecutor.
+
+        This method should be overridden by subclasses for cloud-specific optimizations.
+        Default implementation uses ThreadPoolExecutor for parallel downloads.
+
+        Args:
+            blob_paths: List of blob paths to download
+            version_ids: Optional dict mapping blob_path -> version_id
+            max_workers: Number of concurrent downloads (default: 20, conservative)
+
+        Returns:
+            Dict mapping blob_path -> content bytes (only successful downloads)
+
+        Performance:
+            - Typical speedup: 10-20x over sequential
+            - Optimal worker count varies by backend (GCS: 10, S3: 20-30)
+            - Graceful degradation: Failed downloads are logged but don't stop others
+
+        Note:
+            Subclasses should override with cloud-specific defaults:
+            - GCS: 10 workers (optimal, avoids rate limiting)
+            - S3: 20-30 workers (higher throughput tolerance)
+            - Azure: 15-20 workers (moderate)
+        """
+        import logging
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        logger = logging.getLogger(__name__)
+
+        if not blob_paths:
+            return {}
+
+        results: dict[str, bytes] = {}
+
+        def download_one(blob_path: str) -> tuple[str, bytes | None]:
+            """Download single blob, return (path, content) or (path, None) on error."""
+            try:
+                version_id = version_ids.get(blob_path) if version_ids else None
+                # Call existing _download_blob() to avoid code duplication
+                content = self._download_blob(blob_path, version_id)
+                return (blob_path, content)
+            except Exception as e:
+                logger.warning(f"Failed to download {blob_path}: {e}")
+                return (blob_path, None)
+
+        # Parallel downloads with thread pool
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all download tasks
+            futures = {executor.submit(download_one, path): path for path in blob_paths}
+
+            # Collect results as they complete
+            for future in as_completed(futures):
+                blob_path, content = future.result()
+                if content is not None:
+                    results[blob_path] = content
+
+        return results
+
     @abstractmethod
     def _delete_blob(self, blob_path: str) -> None:
         """

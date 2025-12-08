@@ -719,20 +719,32 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             with contextlib.suppress(Exception):
                 cached = self._read_from_cache(cache_path, original=True)
                 if cached and not cached.stale and cached.content_binary:
-                    # Verify version matches if we have version info
-                    if cached.backend_version and content_hash:
-                        if cached.backend_version == content_hash:
-                            logger.info(f"[GCS] Cache hit for {cache_path}")
+                    # For GCS versioned storage, always check current backend version
+                    # Don't compare content_hash (which may be SHA256 from metadata)
+                    # to backend_version (which is GCS generation number) - they're different types
+                    if cached.backend_version:
+                        # Get current backend version to verify cache freshness
+                        current_version = self.get_version(context.backend_path, context)
+                        if current_version and cached.backend_version == current_version:
+                            logger.info(
+                                f"[GCS] Cache hit (version match) for {cache_path} "
+                                f"(version={current_version})"
+                            )
                             return cached.content_binary
-                        # Version mismatch - cache entry exists but version is stale
-                        cache_rejected_reason = "version mismatch"
-                        logger.info(
-                            f"[GCS] Cache version mismatch for {cache_path} "
-                            f"(cached={cached.backend_version}, requested={content_hash})"
-                        )
+                        elif current_version:
+                            # Version mismatch - cache entry exists but version is stale
+                            cache_rejected_reason = "version mismatch"
+                            logger.info(
+                                f"[GCS] Cache version mismatch for {cache_path} "
+                                f"(cached={cached.backend_version}, current={current_version})"
+                            )
+                        else:
+                            # Can't get current version, trust cache
+                            logger.info(f"[GCS] Cache hit (no current version) for {cache_path}")
+                            return cached.content_binary
                     else:
-                        # No version to compare, trust the cache
-                        logger.info(f"[GCS] Cache hit (no version) for {cache_path}")
+                        # No version in cache, trust the cache
+                        logger.info(f"[GCS] Cache hit (no cached version) for {cache_path}")
                         return cached.content_binary
 
         # Read from GCS backend

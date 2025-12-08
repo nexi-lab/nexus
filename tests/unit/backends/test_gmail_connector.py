@@ -38,8 +38,7 @@ def gmail_connector(mock_token_manager, mock_oauth_factory) -> GmailConnectorBac
         token_manager_db="sqlite:///test.db",
         user_email="test@example.com",
         provider="gmail",
-        max_results=10,
-        labels=["INBOX"],
+        max_message_per_label=10,
     )
 
 
@@ -56,8 +55,7 @@ class TestGmailConnectorInitialization:
         assert backend.name == "gmail"
         assert backend.user_email == "test@example.com"
         assert backend.provider == "gmail"
-        assert backend.max_results == 100
-        assert backend.labels == ["INBOX"]
+        assert backend.max_message_per_label == 100
         assert backend.user_scoped is True
 
     def test_init_with_db_url(self, mock_token_manager, mock_oauth_factory) -> None:
@@ -76,14 +74,12 @@ class TestGmailConnectorInitialization:
             token_manager_db="sqlite:///test.db",
             user_email="custom@example.com",
             provider="gmail-custom",
-            max_results=50,
-            labels=["INBOX", "SENT", "DRAFTS"],
+            max_message_per_label=50,
         )
 
         assert backend.user_email == "custom@example.com"
         assert backend.provider == "gmail-custom"
-        assert backend.max_results == 50
-        assert backend.labels == ["INBOX", "SENT", "DRAFTS"]
+        assert backend.max_message_per_label == 50
 
     def test_init_without_user_email(self, mock_token_manager, mock_oauth_factory) -> None:
         """Test initialization without user_email (uses context)."""
@@ -225,9 +221,255 @@ class TestGmailConnectorDirectoryOperations:
         assert gmail_connector.is_directory("UNKNOWN") is False
         assert gmail_connector.is_directory("/random/path") is False
 
+    def test_is_directory_email_file_is_not_directory(self, gmail_connector) -> None:
+        """Test is_directory returns False for email files (flattened format)."""
+        # Email files in flattened format: {thread_id}-{msg_id}.yaml
+        assert gmail_connector.is_directory("SENT/19a93df17407089a-19a93df17407089a") is False
+        assert gmail_connector.is_directory("INBOX/thread123-msg456") is False
+
+    def test_is_directory_thread_folder_no_longer_exists(self, gmail_connector) -> None:
+        """Test is_directory returns False for old thread folder paths (flattened hierarchy)."""
+        # In flattened hierarchy, thread folders no longer exist
+        assert gmail_connector.is_directory("SENT/19a93df17407089a") is False
+        assert gmail_connector.is_directory("INBOX/thread123") is False
+
     def test_get_ref_count(self, gmail_connector) -> None:
         """Test get_ref_count always returns 1."""
         assert gmail_connector.get_ref_count("any_message_id") == 1
+
+
+class TestGmailConnectorFlattenedHierarchy:
+    """Test flattened 2-level hierarchy (Label/thread_id-msg_id.yaml)."""
+
+    def test_list_dir_root_returns_label_folders(self, gmail_connector) -> None:
+        """Test list_dir('') returns hardcoded label folders."""
+        result = gmail_connector.list_dir("")
+
+        # Should return SENT/, STARRED/, IMPORTANT/, INBOX/
+        assert len(result) == 4
+        assert "SENT/" in result
+        assert "STARRED/" in result
+        assert "IMPORTANT/" in result
+        assert "INBOX/" in result
+
+    def test_list_dir_label_returns_email_files(self, gmail_connector) -> None:
+        """Test list_dir('SENT') returns email files in flattened format."""
+        # Mock Gmail service and email listing
+        mock_service = Mock()
+        mock_emails = [
+            {
+                "id": "msg1",
+                "threadId": "thread1",
+                "folder": "SENT",
+            },
+            {
+                "id": "msg2",
+                "threadId": "thread1",
+                "folder": "SENT",
+            },
+            {
+                "id": "msg3",
+                "threadId": "thread2",
+                "folder": "SENT",
+            },
+        ]
+
+        with (
+            patch.object(gmail_connector, "_get_gmail_service", return_value=mock_service),
+            patch(
+                "nexus.backends.gmail_connector.list_emails_by_folder",
+                return_value=mock_emails,
+            ),
+        ):
+            result = gmail_connector.list_dir("SENT")
+
+            # Should return files in format: thread_id-msg_id.yaml
+            assert len(result) == 3
+            assert "thread1-msg1.yaml" in result
+            assert "thread1-msg2.yaml" in result
+            assert "thread2-msg3.yaml" in result
+
+    def test_list_dir_label_only_returns_matching_folder(self, gmail_connector) -> None:
+        """Test list_dir filters emails by folder."""
+        mock_service = Mock()
+        mock_emails = [
+            {"id": "msg1", "threadId": "thread1", "folder": "SENT"},
+            {"id": "msg2", "threadId": "thread2", "folder": "INBOX"},  # Different folder
+            {"id": "msg3", "threadId": "thread3", "folder": "SENT"},
+        ]
+
+        with (
+            patch.object(gmail_connector, "_get_gmail_service", return_value=mock_service),
+            patch(
+                "nexus.backends.gmail_connector.list_emails_by_folder",
+                return_value=mock_emails,
+            ),
+        ):
+            result = gmail_connector.list_dir("SENT")
+
+            # Should only return SENT emails
+            assert len(result) == 2
+            assert "thread1-msg1.yaml" in result
+            assert "thread3-msg3.yaml" in result
+            assert "thread2-msg2.yaml" not in result
+
+    def test_list_dir_thread_folder_raises_error(self, gmail_connector) -> None:
+        """Test list_dir raises error for thread folders (no longer exist in flattened hierarchy)."""
+        # Thread folders don't exist in flattened hierarchy
+        with pytest.raises(FileNotFoundError, match="Directory not found"):
+            gmail_connector.list_dir("SENT/thread123")
+
+    def test_list_dir_invalid_path_raises_error(self, gmail_connector) -> None:
+        """Test list_dir raises error for invalid paths."""
+        with pytest.raises(FileNotFoundError, match="Directory not found"):
+            gmail_connector.list_dir("INVALID/path/here")
+
+    def test_read_content_flattened_path_format(self, gmail_connector) -> None:
+        """Test read_content with flattened path format (LABEL/thread_id-msg_id.yaml)."""
+        # Create mock context with flattened path
+        mock_context = Mock()
+        mock_context.backend_path = "SENT/thread123-msg456.yaml"
+
+        mock_service = Mock()
+
+        # Mock the complete Gmail API response with all required fields
+        mock_message = {
+            "id": "msg456",
+            "threadId": "thread123",
+            "labelIds": ["SENT"],
+            "payload": {
+                "headers": [
+                    {"name": "From", "value": "test@example.com"},
+                    {"name": "To", "value": "user@example.com"},
+                    {"name": "Subject", "value": "Test"},
+                    {"name": "Date", "value": "2024-01-01"},
+                ],
+                "body": {"data": "VGVzdCBib2R5"},  # "Test body" in base64
+            },
+        }
+
+        with (
+            patch.object(gmail_connector, "_get_gmail_service", return_value=mock_service),
+            patch.object(gmail_connector, "_read_from_cache", return_value=None),
+            patch.object(gmail_connector, "_write_to_cache"),
+        ):
+            mock_service.users().messages().get().execute.return_value = mock_message
+
+            result = gmail_connector.read_content("dummy_hash", context=mock_context)
+
+            # Should successfully parse and return YAML content
+            assert isinstance(result, bytes)
+            assert b"from: test@example.com" in result
+            assert b"subject: Test" in result
+
+    def test_read_content_invalid_path_format_raises_error(self, gmail_connector) -> None:
+        """Test read_content raises error for invalid path format."""
+        from nexus.core.exceptions import NexusFileNotFoundError
+
+        # Invalid path: missing thread_id in filename
+        mock_context = Mock()
+        mock_context.backend_path = "SENT/msg456.yaml"  # Missing thread_id prefix
+
+        with pytest.raises(NexusFileNotFoundError):
+            gmail_connector.read_content("dummy_hash", context=mock_context)
+
+    def test_read_content_old_thread_folder_format_raises_error(self, gmail_connector) -> None:
+        """Test read_content raises error for old 3-level path format."""
+        from nexus.core.exceptions import NexusFileNotFoundError
+
+        # Old format: SENT/thread_id/email-msg_id.yaml (no longer supported)
+        mock_context = Mock()
+        mock_context.backend_path = "SENT/thread123/email-msg456.yaml"
+
+        with pytest.raises(NexusFileNotFoundError):
+            gmail_connector.read_content("dummy_hash", context=mock_context)
+
+    def test_content_exists_flattened_format(self, gmail_connector) -> None:
+        """Test content_exists with flattened path format."""
+        mock_context = Mock()
+        mock_context.backend_path = "SENT/thread123-msg456.yaml"
+
+        mock_service = Mock()
+
+        with patch.object(gmail_connector, "_get_gmail_service", return_value=mock_service):
+            mock_service.users().messages().get().execute.return_value = {"id": "msg456"}
+
+            result = gmail_connector.content_exists("dummy_hash", context=mock_context)
+
+            # Should successfully validate path format and check Gmail API
+            assert result is True
+
+    def test_content_exists_invalid_format_returns_false(self, gmail_connector) -> None:
+        """Test content_exists returns False for invalid path format."""
+        # Invalid format: missing thread_id
+        mock_context = Mock()
+        mock_context.backend_path = "SENT/msg456.yaml"
+
+        result = gmail_connector.content_exists("dummy_hash", context=mock_context)
+        assert result is False
+
+    def test_content_exists_old_format_returns_false(self, gmail_connector) -> None:
+        """Test content_exists returns False for old 3-level format."""
+        # Old format not supported
+        mock_context = Mock()
+        mock_context.backend_path = "SENT/thread123/email-msg456.yaml"
+
+        result = gmail_connector.content_exists("dummy_hash", context=mock_context)
+        assert result is False
+
+    def test_bulk_download_flattened_paths(self, gmail_connector) -> None:
+        """Test _bulk_download_contents with flattened path format."""
+        paths = [
+            "SENT/thread1-msg1.yaml",
+            "SENT/thread1-msg2.yaml",
+            "INBOX/thread2-msg3.yaml",
+        ]
+
+        mock_service = Mock()
+        mock_batch = Mock()
+
+        with patch.object(gmail_connector, "_get_gmail_service", return_value=mock_service):
+            # Mock the batch execution to return our test responses
+            def mock_callback_exec():
+                # Simulate batch callback execution
+                pass
+
+            mock_batch.execute = mock_callback_exec
+            mock_service.new_batch_http_request.return_value = mock_batch
+
+            result = gmail_connector._bulk_download_contents(paths)
+
+            # Should successfully parse flattened paths
+            assert isinstance(result, dict)
+            # Batch should be created
+            mock_service.new_batch_http_request.assert_called_once()
+
+    def test_bulk_download_skips_invalid_paths(self, gmail_connector) -> None:
+        """Test _bulk_download_contents skips invalid path formats."""
+        paths = [
+            "SENT/thread1-msg1.yaml",  # Valid
+            "SENT/msg2.yaml",  # Invalid: missing thread_id
+            "SENT/thread3/email-msg3.yaml",  # Invalid: old 3-level format
+            "INBOX/thread4-msg4.yaml",  # Valid
+        ]
+
+        mock_service = Mock()
+        mock_batch = Mock()
+
+        with patch.object(gmail_connector, "_get_gmail_service", return_value=mock_service):
+            # Mock the batch execution
+            def mock_callback_exec():
+                # Simulate batch callback execution
+                pass
+
+            mock_batch.execute = mock_callback_exec
+            mock_service.new_batch_http_request.return_value = mock_batch
+
+            result = gmail_connector._bulk_download_contents(paths)
+
+            # Should process valid paths only (2 out of 4)
+            # Invalid paths are skipped silently
+            assert isinstance(result, dict)
 
 
 class TestGmailConnectorGetGmailService:
@@ -439,6 +681,185 @@ class TestGmailConnectorBatchOperations:
         assert html_body == ""
         assert labels == ["SENT"]
         assert raw_bytes == b""
+
+
+class TestGmailConnectorExponentialBackoff:
+    """Test exponential backoff for Gmail API rate limiting."""
+
+    def test_batch_fetch_succeeds_on_first_try(self) -> None:
+        """Test batch fetch succeeds without retries when no errors occur."""
+        from nexus.backends.gmail_connector_utils import fetch_emails_batch
+
+        mock_service = Mock()
+        mock_batch = Mock()
+        message_ids = ["msg1", "msg2", "msg3"]
+        email_cache = {}
+
+        def mock_parse(msg: dict) -> dict:
+            return {"id": msg["id"], "content": "test"}
+
+        # Mock successful batch execution
+        mock_service.new_batch_http_request.return_value = mock_batch
+        mock_batch.execute = Mock()  # Success on first try
+
+        with patch("time.sleep") as mock_sleep:
+            fetch_emails_batch(mock_service, message_ids, mock_parse, email_cache)
+
+            # Should succeed without any retries
+            mock_batch.execute.assert_called_once()
+            mock_sleep.assert_not_called()
+
+    def test_batch_fetch_retries_on_429_error(self) -> None:
+        """Test batch fetch retries with exponential backoff on 429 errors."""
+        from nexus.backends.gmail_connector_utils import fetch_emails_batch
+
+        mock_service = Mock()
+        mock_batch = Mock()
+        message_ids = ["msg1", "msg2"]
+        email_cache = {}
+
+        def mock_parse(msg: dict) -> dict:
+            return {"id": msg["id"], "content": "test"}
+
+        # Simulate 429 error on first two attempts, then success
+        error_429 = Exception("429 rateLimitExceeded: Too many concurrent requests for user")
+        mock_batch.execute = Mock(side_effect=[error_429, error_429, None])
+        mock_service.new_batch_http_request.return_value = mock_batch
+
+        with patch("time.sleep") as mock_sleep:
+            fetch_emails_batch(mock_service, message_ids, mock_parse, email_cache)
+
+            # Should retry 2 times (fail, fail, succeed)
+            assert mock_batch.execute.call_count == 3
+
+            # Should sleep with exponential backoff: 1s, 2s
+            assert mock_sleep.call_count == 2
+            mock_sleep.assert_any_call(1.0)  # First retry delay
+            mock_sleep.assert_any_call(2.0)  # Second retry delay
+
+    def test_batch_fetch_gives_up_after_max_retries(self) -> None:
+        """Test batch fetch stops retrying after max attempts."""
+        from nexus.backends.gmail_connector_utils import fetch_emails_batch
+
+        mock_service = Mock()
+        mock_batch = Mock()
+        message_ids = ["msg1"]
+        email_cache = {}
+
+        def mock_parse(msg: dict) -> dict:
+            return {"id": msg["id"], "content": "test"}
+
+        # Always return 429 error
+        error_429 = Exception("429 rateLimitExceeded")
+        mock_batch.execute = Mock(side_effect=error_429)
+        mock_service.new_batch_http_request.return_value = mock_batch
+
+        with patch("time.sleep") as mock_sleep:
+            fetch_emails_batch(mock_service, message_ids, mock_parse, email_cache)
+
+            # Should try 5 times (max_retries)
+            assert mock_batch.execute.call_count == 5
+
+            # Should sleep 4 times (not on last retry): 1s, 2s, 4s, 8s
+            assert mock_sleep.call_count == 4
+            mock_sleep.assert_any_call(1.0)
+            mock_sleep.assert_any_call(2.0)
+            mock_sleep.assert_any_call(4.0)
+            mock_sleep.assert_any_call(8.0)
+
+    def test_batch_fetch_does_not_retry_non_rate_limit_errors(self) -> None:
+        """Test batch fetch doesn't retry for non-429 errors."""
+        from nexus.backends.gmail_connector_utils import fetch_emails_batch
+
+        mock_service = Mock()
+        mock_batch = Mock()
+        message_ids = ["msg1"]
+        email_cache = {}
+
+        def mock_parse(msg: dict) -> dict:
+            return {"id": msg["id"], "content": "test"}
+
+        # Non-rate-limit error (e.g., 500 server error)
+        error_500 = Exception("500 Internal Server Error")
+        mock_batch.execute = Mock(side_effect=error_500)
+        mock_service.new_batch_http_request.return_value = mock_batch
+
+        with patch("time.sleep") as mock_sleep:
+            fetch_emails_batch(mock_service, message_ids, mock_parse, email_cache)
+
+            # Should only try once (no retries for non-429 errors)
+            mock_batch.execute.assert_called_once()
+            mock_sleep.assert_not_called()
+
+    def test_list_emails_retries_on_429_error(self) -> None:
+        """Test list_emails_by_folder retries with exponential backoff on 429 errors."""
+        from nexus.backends.gmail_connector_utils import list_emails_by_folder
+
+        mock_service = Mock()
+
+        # Simulate 429 error on first attempt, then success
+        error_429 = Exception("429 rateLimitExceeded")
+        success_response = {"messages": [{"id": "msg1", "threadId": "thread1"}]}
+
+        mock_list = Mock()
+        mock_list.execute = Mock(side_effect=[error_429, success_response])
+        mock_service.users().messages().list = Mock(return_value=mock_list)
+
+        with patch("time.sleep") as mock_sleep:
+            result = list_emails_by_folder(mock_service, folder_filter=["SENT"], silent=True)
+
+            # Should retry once and succeed
+            assert mock_list.execute.call_count == 2
+            mock_sleep.assert_called_once_with(1.0)  # First retry delay
+
+            # Should return emails
+            assert len(result) > 0
+
+    def test_list_emails_exponential_delays_are_correct(self) -> None:
+        """Test that exponential backoff delays follow 2^n pattern."""
+        from nexus.backends.gmail_connector_utils import list_emails_by_folder
+
+        mock_service = Mock()
+
+        # Simulate multiple 429 errors
+        error_429 = Exception("429 rateLimitExceeded")
+        success_response = {"messages": []}
+
+        mock_list = Mock()
+        # Fail 4 times, then succeed on 5th try
+        mock_list.execute = Mock(
+            side_effect=[error_429, error_429, error_429, error_429, success_response]
+        )
+        mock_service.users().messages().list = Mock(return_value=mock_list)
+
+        with patch("time.sleep") as mock_sleep:
+            list_emails_by_folder(mock_service, folder_filter=["SENT"], silent=True)
+
+            # Should have delays: 1, 2, 4, 8 seconds
+            assert mock_sleep.call_count == 4
+            calls = [call[0][0] for call in mock_sleep.call_args_list]
+            assert calls == [1.0, 2.0, 4.0, 8.0]
+
+    def test_list_emails_raises_after_max_retries(self) -> None:
+        """Test list_emails raises exception after max retries."""
+        from nexus.backends.gmail_connector_utils import list_emails_by_folder
+
+        mock_service = Mock()
+
+        # Always return 429 error
+        error_429 = Exception("429 rateLimitExceeded")
+        mock_list = Mock()
+        mock_list.execute = Mock(side_effect=error_429)
+        mock_service.users().messages().list = Mock(return_value=mock_list)
+
+        with (
+            patch("time.sleep"),
+            pytest.raises(Exception, match="429"),
+        ):
+            list_emails_by_folder(mock_service, folder_filter=["SENT"], silent=True)
+
+            # Should try 5 times before giving up
+            assert mock_list.execute.call_count == 5
 
 
 if __name__ == "__main__":

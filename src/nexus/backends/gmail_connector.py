@@ -5,11 +5,10 @@ organizing them by label-based folders and thread structure.
 
 Use case: Access Gmail emails through Nexus mount for search, analysis, and archival.
 
-Storage structure (3-level hierarchy):
+Storage structure (2-level hierarchy - flattened for performance):
     /
     ├── SENT/                          # Sent emails
-    │   └── {thread_id}/               # Thread folders
-    │       └── email-{msg_id}.yaml    # Email metadata and content
+    │   └── {thread_id}-{msg_id}.yaml  # Email metadata and content (flattened)
     ├── STARRED/                       # Starred emails in INBOX
     ├── IMPORTANT/                     # Important emails in INBOX
     └── INBOX/                         # Remaining inbox emails
@@ -41,7 +40,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
-from nexus.backends.cache_mixin import CacheConnectorMixin
+from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
 from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 
@@ -76,16 +75,15 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
     - Automatic token refresh
     - Persistent caching via CacheConnectorMixin for fast grep/search
 
-    Folder Structure (3-level hierarchy, priority-based, mutually exclusive):
+    Folder Structure (2-level hierarchy - flattened for performance):
     - / - Root directory (lists label folders)
     - /SENT/ - All sent emails (priority 1)
-      - {thread_id}/ - Thread folders
-        - email-{msg_id}.yaml - Individual email messages with full content
+      - {thread_id}-{msg_id}.yaml - Email messages (flattened, thread_id in filename)
     - /STARRED/ - Starred emails in INBOX, excluding SENT (priority 2)
     - /IMPORTANT/ - Important emails in INBOX, excluding SENT and STARRED (priority 3)
     - /INBOX/ - Remaining INBOX emails (priority 4)
     - Each email appears in exactly ONE folder based on highest priority match
-    - Thread grouping preserved in folder structure
+    - Thread grouping preserved in filename (thread_id prefix)
 
     Limitations:
     - No automatic deduplication (each email is a unique file)
@@ -103,6 +101,10 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         "INBOX",  # Priority 4: Remaining INBOX emails
     ]
 
+    # Enable metadata-based listing (use file_paths table like GCS)
+    # This makes Gmail use fast database queries instead of Gmail API calls for list operations
+    use_metadata_listing = True
+
     def __init__(
         self,
         token_manager_db: str,
@@ -110,6 +112,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         provider: str = "gmail",
         session_factory=None,  # type: ignore[no-untyped-def]
         max_message_per_label: int = 50,
+        metadata_store=None,  # type: ignore[no-untyped-def]
     ):
         """
         Initialize Gmail connector backend.
@@ -123,6 +126,8 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                            If provided, enables persistent caching for fast grep/search.
             max_message_per_label: Maximum number of messages to fetch per label (default: 50).
                                   Set to None for unlimited. Useful for testing with small datasets.
+            metadata_store: MetadataStore instance for writing to file_paths table (optional).
+                          Required for metadata-based listing (fast database queries).
 
         Note:
             For single-user scenarios (demos), set user_email explicitly.
@@ -148,6 +153,9 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
 
         # Store max messages per label (for testing with small datasets)
         self.max_message_per_label = max_message_per_label
+
+        # Store metadata store for file_paths table (enables metadata-based listing)
+        self.metadata_store = metadata_store
 
         # Register OAuth provider using factory (loads from config)
         self._register_oauth_provider()
@@ -404,8 +412,8 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                 backend="gmail",
             )
 
-        # Remove headers from YAML output (but keep body_html and body_text)
-        yaml_data = {k: v for k, v in email_data.items() if k != "headers"}
+        # Remove headers and body_html from YAML output (keep only body_text)
+        yaml_data = {k: v for k, v in email_data.items() if k not in ("headers", "body_html")}
 
         # Normalize line endings in text bodies
         if "body_text" in yaml_data and yaml_data["body_text"]:
@@ -486,25 +494,27 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                 backend="gmail",
             )
 
-        # Strip label and thread folder prefix (e.g., "INBOX/thread_id/email-123.yaml" -> "email-123.yaml")
+        # Extract filename from flattened path (e.g., "SENT/thread_id-msg_id.yaml" -> "thread_id-msg_id.yaml")
         path_parts = context.backend_path.split("/")
-        if len(path_parts) == 3 and path_parts[0] in self.LABEL_FOLDERS:
-            # Path is "LABEL/thread_id/email-123.yaml" - use just the filename
-            filename = path_parts[2]
+        if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
+            # Path is "LABEL/thread_id-msg_id.yaml" - use just the filename
+            filename = path_parts[1]
         elif len(path_parts) == 1:
             # Already just a filename
             filename = path_parts[0]
         else:
             raise NexusFileNotFoundError(context.backend_path)
 
-        # Extract message_id from path (only .yaml files)
+        # Extract message_id from filename (format: thread_id-msg_id.yaml)
         if not filename.endswith(".yaml"):
             raise NexusFileNotFoundError(context.backend_path)
 
-        if not filename.startswith("email-"):
+        # Split "thread_id-msg_id.yaml" to get msg_id
+        filename_parts = filename.replace(".yaml", "").split("-", 1)
+        if len(filename_parts) != 2:
             raise NexusFileNotFoundError(context.backend_path)
 
-        message_id = filename.replace("email-", "").replace(".yaml", "")
+        message_id = filename_parts[1]  # Get msg_id from "thread_id-msg_id"
 
         # Get cache path
         cache_path = self._get_cache_path(context) or context.backend_path
@@ -532,7 +542,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                 self._write_to_cache(
                     path=cache_path,
                     content=content,
-                    backend_version=None,  # Emails are immutable, no versioning needed
+                    backend_version=IMMUTABLE_VERSION,  # Emails are immutable, use fixed version
                     tenant_id=tenant_id,
                 )
             except Exception:
@@ -562,22 +572,27 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         path_to_message_id: dict[str, str] = {}
         for path in paths:
             try:
-                # Parse path to extract filename
+                # Parse flattened path to extract filename
                 path_parts = path.split("/")
-                if len(path_parts) == 3 and path_parts[0] in self.LABEL_FOLDERS:
-                    # Path is "LABEL/thread_id/email-123.yaml" - use just the filename
-                    filename = path_parts[2]
+                if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
+                    # Path is "LABEL/thread_id-msg_id.yaml" - use just the filename
+                    filename = path_parts[1]
                 elif len(path_parts) == 1:
                     # Already just a filename
                     filename = path_parts[0]
                 else:
                     continue  # Skip invalid paths
 
-                # Extract message_id from filename (only .yaml files)
-                if not filename.endswith(".yaml") or not filename.startswith("email-"):
+                # Extract message_id from filename (format: thread_id-msg_id.yaml)
+                if not filename.endswith(".yaml"):
                     continue
 
-                message_id = filename.replace("email-", "").replace(".yaml", "")
+                # Split "thread_id-msg_id.yaml" to get msg_id
+                filename_parts = filename.replace(".yaml", "").split("-", 1)
+                if len(filename_parts) != 2:
+                    continue
+
+                message_id = filename_parts[1]  # Get msg_id from "thread_id-msg_id"
                 path_to_message_id[path] = message_id
             except Exception:
                 continue  # Skip paths that fail to parse
@@ -651,25 +666,27 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             return False
 
         try:
-            # Strip label and thread folder prefix (e.g., "INBOX/thread_id/email-123.yaml" -> "email-123.yaml")
+            # Extract filename from flattened path (e.g., "SENT/thread_id-msg_id.yaml" -> "thread_id-msg_id.yaml")
             path_parts = context.backend_path.split("/")
-            if len(path_parts) == 3 and path_parts[0] in self.LABEL_FOLDERS:
-                # Path is "LABEL/thread_id/email-123.yaml" - use just the filename
-                filename = path_parts[2]
+            if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
+                # Path is "LABEL/thread_id-msg_id.yaml" - use just the filename
+                filename = path_parts[1]
             elif len(path_parts) == 1:
                 # Already just a filename
                 filename = path_parts[0]
             else:
                 return False
 
-            # Extract message_id from path (only .yaml files)
+            # Validate filename format (thread_id-msg_id.yaml)
             if not filename.endswith(".yaml"):
                 return False
 
-            if not filename.startswith("email-"):
+            # Check if filename has correct format: thread_id-msg_id.yaml
+            filename_parts = filename.replace(".yaml", "").split("-", 1)
+            if len(filename_parts) != 2:
                 return False
 
-            message_id = filename.replace("email-", "").replace(".yaml", "")
+            message_id = filename_parts[1]  # Extract msg_id from "thread_id-msg_id"
 
             # Try to fetch from Gmail API
             try:
@@ -714,6 +731,89 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             Always 1 (no reference counting)
         """
         return 1
+
+    def get_version(
+        self,
+        path: str,
+        context: "OperationContext | None" = None,
+    ) -> str | None:
+        """
+        Get version for a Gmail email file.
+
+        Gmail emails are immutable (read-only) - once sent, they never change.
+        Therefore, we return a fixed version "immutable" for all email files.
+        This enables cache optimization: if cached entry has version "immutable",
+        sync can skip re-downloading the email.
+
+        Args:
+            path: Virtual file path (or backend_path from context)
+            context: Operation context with optional backend_path
+
+        Returns:
+            "immutable" for email files, None for directories/non-files
+        """
+        try:
+            # Get backend path
+            if context and hasattr(context, "backend_path") and context.backend_path:
+                backend_path = context.backend_path
+            else:
+                backend_path = path.lstrip("/")
+
+            # Check if this is an email file (ends with .yaml)
+            if not backend_path.endswith(".yaml"):
+                return None  # Not a file (likely a directory/label)
+
+            # Validate filename format (LABEL/thread_id-msg_id.yaml or thread_id-msg_id.yaml)
+            path_parts = backend_path.split("/")
+            if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
+                # Path is "LABEL/thread_id-msg_id.yaml"
+                filename = path_parts[1]
+            elif len(path_parts) == 1:
+                # Path is just "thread_id-msg_id.yaml"
+                filename = path_parts[0]
+            else:
+                return None
+
+            # Check filename format: thread_id-msg_id.yaml
+            filename_base = filename.replace(".yaml", "")
+            if "-" not in filename_base:
+                return None
+
+            # Return fixed version for immutable Gmail emails
+            return IMMUTABLE_VERSION
+
+        except Exception:
+            return None
+
+    def _batch_get_versions(
+        self,
+        backend_paths: list[str],
+        contexts: dict[str, "OperationContext"] | None = None,
+    ) -> dict[str, str | None]:
+        """
+        Get versions for multiple Gmail email files in batch (optimized).
+
+        Since Gmail emails are immutable, this is extremely fast - we just
+        return "immutable" for all email files without making any API calls.
+
+        Args:
+            backend_paths: List of backend-relative paths
+            contexts: Optional dict mapping path -> OperationContext
+
+        Returns:
+            Dict mapping backend_path -> version ("immutable" or None)
+        """
+        results: dict[str, str | None] = {}
+
+        for backend_path in backend_paths:
+            # Get context if available
+            ctx = contexts.get(backend_path) if contexts else None
+
+            # Call get_version for each path (very fast - no API calls)
+            version = self.get_version(backend_path, context=ctx)
+            results[backend_path] = version
+
+        return results
 
     def mkdir(
         self,
@@ -774,19 +874,8 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             return True  # Root is always a directory
 
         # Check if it's a label folder (SENT/, STARRED/, etc.)
-        if path in self.LABEL_FOLDERS:
-            return True
-
-        # Check if it's a thread folder (SENT/thread_id, etc.)
-        path_parts = path.split("/")
-        if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
-            return True
-
-        # Email files (.yaml) are not directories
-        if path.endswith(".yaml"):
-            return False
-
-        return False
+        # Everything else (email files with format LABEL/thread_id-msg_id.yaml) is a file
+        return path in self.LABEL_FOLDERS
 
     def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """
@@ -794,8 +883,11 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
 
         This method fetches emails from Gmail and lists:
         - Root directory: Label folders (SENT/, STARRED/, IMPORTANT/, INBOX/)
-        - Label folders: Thread folders (thread_id_1/, thread_id_2/, ...)
-        - Thread folders: Email files for that thread (email-msg_id.yaml)
+        - Label folders: Email files (thread_id-msg_id.yaml)
+
+        NOTE: Flattened from 3-level to 2-level hierarchy to optimize API calls.
+        Previously had thread folders but this required N+1 API calls (1 for label + N for each thread).
+        Now just 1 API call per label, with thread_id in filename.
 
         Args:
             path: Directory path to list (relative to backend root)
@@ -815,12 +907,12 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             if not path:
                 return [f"{label}/" for label in self.LABEL_FOLDERS]
 
-            # Get Gmail service
-            service = self._get_gmail_service(context)
-
-            # Label folder - list thread folders for this label
+            # Label folder - list email files directly (flattened)
             if path in self.LABEL_FOLDERS:
-                # Fetch emails from Gmail API
+                # Get Gmail service
+                service = self._get_gmail_service(context)
+
+                # Fetch emails from Gmail API (single call per label)
                 emails = list_emails_by_folder(
                     service,
                     max_results=self.max_message_per_label,
@@ -828,38 +920,13 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                     silent=True,
                 )
 
-                # Extract unique thread IDs
-                threads = set()
+                # Return email files with format: thread_id-msg_id.yaml
+                files = []
                 for email in emails:
                     if email.get("folder") == path:
                         thread_id = email.get("threadId")
-                        if thread_id:
-                            threads.add(thread_id)
-                return sorted([f"{thread_id}/" for thread_id in threads])
-
-            # Label/Thread folder - list email files for this thread
-            path_parts = path.split("/")
-            if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
-                target_folder = path_parts[0]
-                target_thread = path_parts[1]
-
-                # Fetch emails from Gmail API
-                emails = list_emails_by_folder(
-                    service,
-                    max_results=self.max_message_per_label,
-                    folder_filter=[target_folder],
-                    silent=True,
-                )
-
-                # Filter for files in this thread (only .yaml files)
-                files = []
-                for email in emails:
-                    if (
-                        email.get("folder") == target_folder
-                        and email.get("threadId") == target_thread
-                    ):
                         message_id = email["id"]
-                        files.append(f"email-{message_id}.yaml")
+                        files.append(f"{thread_id}-{message_id}.yaml")
                 return sorted(files)
 
             # Invalid path

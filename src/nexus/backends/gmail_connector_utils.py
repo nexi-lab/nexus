@@ -1,7 +1,10 @@
 """Gmail connector utility functions for email categorization and listing."""
 
-import contextlib
+import logging
+import time
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def get_email_folder(email_labels: list[str]) -> str | None:
@@ -117,7 +120,38 @@ def list_emails_by_folder(
             if page_token:
                 request_params["pageToken"] = page_token
 
-            result = service.users().messages().list(**request_params).execute()
+            # Exponential backoff for rate limiting
+            max_retries = 5
+            base_delay = 1.0
+            result = None
+
+            for retry in range(max_retries):
+                try:
+                    result = service.users().messages().list(**request_params).execute()
+                    break  # Success
+                except Exception as e:
+                    error_str = str(e)
+                    if "429" in error_str or "rateLimitExceeded" in error_str:
+                        if retry < max_retries - 1:
+                            delay = base_delay * (2**retry)
+                            logger.warning(
+                                f"[LIST-EMAILS] Rate limit hit (429), retrying in {delay}s "
+                                f"(attempt {retry + 1}/{max_retries})"
+                            )
+                            time.sleep(delay)
+                        else:
+                            logger.error(
+                                f"[LIST-EMAILS] Rate limit exceeded after {max_retries} retries"
+                            )
+                            raise
+                    else:
+                        # Non-rate-limit error
+                        logger.error(f"[LIST-EMAILS] Failed to list messages: {e}")
+                        raise
+
+            if result is None:
+                break
+
             page_messages = result.get("messages", [])
 
             for msg in page_messages:
@@ -317,30 +351,111 @@ def fetch_emails_batch(
         parse_message_func: Function to parse Gmail message response (e.g., _parse_gmail_message)
         email_cache: Cache dict to populate with fetched emails (modified in-place)
     """
-    from googleapiclient.http import BatchHttpRequest
-
-    def callback(request_id: str, response: Any, exception: Exception | None) -> None:
-        """Callback for batch request."""
-        if exception:
-            return  # Skip on error
-
-        if response and request_id:
-            try:
-                message_id = request_id
-                email_data = parse_message_func(response)
-                email_cache[message_id] = email_data
-            except Exception:
-                pass  # Skip on parse error
-
-    # Gmail batch requests are limited to 100 requests per batch
-    batch_size = 100
+    # Gmail batch requests - reduce to 50 to avoid rate limiting
+    batch_size = 50
     for i in range(0, len(message_ids), batch_size):
         batch_ids = message_ids[i : i + batch_size]
 
-        batch = BatchHttpRequest()
-        for message_id in batch_ids:
-            request = service.users().messages().get(userId="me", id=message_id, format="full")
-            batch.add(request, callback=callback, request_id=message_id)
+        # Track failed message IDs for retry
+        failed_429_ids: list[str] = []
 
-        with contextlib.suppress(Exception):
-            batch.execute()
+        def make_callback(failed_list: list[str]):
+            """Factory to create callback with proper closure."""
+
+            def _callback(request_id: str, response: Any, exception: Exception | None) -> None:
+                """Callback for batch request."""
+                if exception:
+                    error_str = str(exception)
+                    # Check if this individual message failed with 429
+                    if "429" in error_str or "rateLimitExceeded" in error_str:
+                        failed_list.append(request_id)
+                        # Don't log 429 errors here - they'll be retried and logged only if retries fail
+                    else:
+                        # Log non-429 errors immediately (these won't be retried)
+                        logger.warning(
+                            f"[BATCH-FETCH] Error fetching message {request_id}: {exception}"
+                        )
+                    return  # Skip on error
+
+                if response and request_id:
+                    try:
+                        message_id = request_id
+                        email_data = parse_message_func(response)
+                        email_cache[message_id] = email_data
+                    except Exception as e:
+                        logger.warning(f"[BATCH-FETCH] Error parsing message {request_id}: {e}")
+                        pass  # Skip on parse error
+
+            return _callback
+
+        callback = make_callback(failed_429_ids)
+
+        # Exponential backoff for rate limiting (429 errors)
+        max_retries = 5
+        base_delay = 1.0  # Start with 1 second
+        ids_to_fetch = batch_ids  # Start with all message IDs
+
+        for retry in range(max_retries):
+            # Reset failed IDs for this retry attempt
+            failed_429_ids.clear()
+
+            # Use service.new_batch_http_request() instead of deprecated BatchHttpRequest()
+            batch = service.new_batch_http_request()
+
+            if not ids_to_fetch:
+                break  # No messages to fetch
+
+            for message_id in ids_to_fetch:
+                request = service.users().messages().get(userId="me", id=message_id, format="full")
+                batch.add(request, callback=callback, request_id=message_id)
+
+            try:
+                batch.execute()
+
+                # Check if any individual messages failed with 429
+                if failed_429_ids:
+                    if retry < max_retries - 1:
+                        # Exponential backoff: 1s, 2s, 4s, 8s, 16s
+                        delay = base_delay * (2**retry)
+                        logger.warning(
+                            f"[BATCH-FETCH] {len(failed_429_ids)} messages hit rate limit (429), "
+                            f"retrying in {delay}s (attempt {retry + 1}/{max_retries})"
+                        )
+                        time.sleep(delay)
+                        # Set up next iteration to retry only the failed messages
+                        ids_to_fetch = failed_429_ids.copy()
+                        continue  # Retry with failed messages
+                    else:
+                        logger.warning(
+                            f"[BATCH-FETCH] {len(failed_429_ids)} messages still failing after "
+                            f"{max_retries} retries: {failed_429_ids[:5]}..."
+                        )
+
+                # Success - no failures or retries exhausted
+                break
+
+            except Exception as e:
+                error_str = str(e)
+
+                # Check if the entire batch request failed with 429
+                if "429" in error_str or "rateLimitExceeded" in error_str:
+                    if retry < max_retries - 1:
+                        # Exponential backoff: 1s, 2s, 4s, 8s, 16s
+                        delay = base_delay * (2**retry)
+                        logger.warning(
+                            f"[BATCH-FETCH] Batch request hit rate limit (429), retrying in {delay}s "
+                            f"(attempt {retry + 1}/{max_retries}) for {len(ids_to_fetch)} messages"
+                        )
+                        time.sleep(delay)
+                        # Keep same ids_to_fetch for next iteration
+                    else:
+                        logger.warning(
+                            f"[BATCH-FETCH] Batch rate limit exceeded after {max_retries} retries "
+                            f"for {len(ids_to_fetch)} messages"
+                        )
+                else:
+                    # Non-rate-limit error - log and break
+                    logger.warning(
+                        f"[BATCH-FETCH] Batch execute failed for {len(ids_to_fetch)} messages: {e}"
+                    )
+                    break

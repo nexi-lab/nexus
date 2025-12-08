@@ -31,6 +31,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Backend version constant for immutable content (e.g., Gmail emails that never change)
+IMMUTABLE_VERSION = "immutable"
+
 
 @dataclass
 class SyncResult:
@@ -1058,9 +1061,15 @@ class CacheConnectorMixin:
             if vpath is None:
                 continue
             cached = cached_entries.get(vpath)
-            # Check version if: no cache OR cache is stale
-            needs_version_check = not cached or cached.stale
-            if needs_version_check and hasattr(self, "get_version"):
+
+            # Early exit: Skip immutable cached files (Gmail emails never change)
+            if cached and not cached.stale and cached.backend_version == IMMUTABLE_VERSION:
+                logger.debug(f"[CACHE] SYNC SKIP (immutable): {vpath}")
+                result.files_skipped += 1
+                continue
+
+            # Always fetch version if backend supports it (needed for comparison)
+            if hasattr(self, "get_version") or hasattr(self, "_batch_get_versions"):
                 paths_needing_version_check.append(backend_path)
 
         if paths_needing_version_check and hasattr(self, "_batch_get_versions"):

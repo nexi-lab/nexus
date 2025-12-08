@@ -1064,7 +1064,7 @@ class CacheConnectorMixin:
 
             # Early exit: Skip immutable cached files (Gmail emails never change)
             if cached and not cached.stale and cached.backend_version == IMMUTABLE_VERSION:
-                logger.debug(f"[CACHE] SYNC SKIP (immutable): {vpath}")
+                logger.info(f"[CACHE] SYNC SKIP (immutable): {vpath}")
                 result.files_skipped += 1
                 continue
 
@@ -1103,6 +1103,12 @@ class CacheConnectorMixin:
 
                 # Get cached entry from bulk-loaded data
                 cached = cached_entries.get(vpath)
+
+                # Early exit for immutable cached files (already counted in first loop)
+                if cached and not cached.stale and cached.backend_version == IMMUTABLE_VERSION:
+                    # Don't increment result.files_skipped (already counted in first loop)
+                    logger.debug(f"[CACHE] SYNC RE-SKIP (immutable, already counted): {vpath}")
+                    continue
 
                 # Get version from batch fetch (or None)
                 version = versions.get(backend_path)

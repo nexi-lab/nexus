@@ -188,3 +188,5 @@ examples/cli/
 # GCS credentials - never commit!
 gcs-credentials.json
 .env.railway
+aws-config
+aws-credentials

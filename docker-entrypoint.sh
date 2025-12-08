@@ -65,71 +65,25 @@ if [ -n "$NEXUS_DATABASE_URL" ]; then
 fi
 
 # ============================================
-# Initialize Database Schema
+# Initialize Database Schema & Migrations
 # ============================================
 echo ""
-echo "📊 Initializing database schema..."
+echo "📊 Initializing database..."
 
-# Create schema by instantiating NexusFS (it auto-creates tables)
-python3 << 'PYTHON_INIT'
-import os
-import sys
-from sqlalchemy import create_engine, inspect
-
-database_url = os.getenv('NEXUS_DATABASE_URL')
-if not database_url:
-    print("ERROR: NEXUS_DATABASE_URL not set", file=sys.stderr)
-    sys.exit(1)
-
-try:
-    # Check if tables exist
-    engine = create_engine(database_url)
-    inspector = inspect(engine)
-    tables = inspector.get_table_names()
-
-    if 'users' in tables:
-        print("✓ Database schema already exists")
-    else:
-        print("Creating database schema...")
-        # Import NexusFS to create tables
-        from nexus.core.nexus_fs import NexusFS
-        from nexus.backends.local import LocalBackend
-
-        data_dir = os.getenv('NEXUS_DATA_DIR', '/app/data')
-        backend = LocalBackend(data_dir)
-        nfs = NexusFS(backend, db_path=database_url)
-        nfs.close()
-        print("✓ Database schema created")
-
-except Exception as e:
-    print(f"ERROR: Failed to initialize database: {e}", file=sys.stderr)
-    sys.exit(1)
-PYTHON_INIT
+# Use new migration-based initialization script
+# This script intelligently handles:
+# - Fresh databases: Creates schema + stamps with latest migration
+# - Existing databases: Runs pending migrations
+# - Legacy databases: Stamps existing schema + runs future migrations
+cd /app
+python3 scripts/init_database.py
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}✗ Database initialization failed${NC}"
     exit 1
 fi
 
-# ============================================
-# Run Database Migrations
-# ============================================
-echo ""
-echo "🔄 Running database migrations..."
-
-# Run Alembic migrations to apply schema changes
-# env.py automatically reads NEXUS_DATABASE_URL from environment
-cd /app
-
-# Run with timeout to avoid hanging
-timeout 30 alembic upgrade head 2>&1 || true
-
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✓ Database migrations applied${NC}"
-else
-    echo -e "${YELLOW}⚠ Database migrations timed out or failed${NC}"
-    echo -e "${YELLOW}  This is expected for legacy databases - continuing startup${NC}"
-fi
+echo -e "${GREEN}✓ Database initialized${NC}"
 
 # ============================================
 # Create Admin API Key (First Run)

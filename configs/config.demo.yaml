@@ -73,6 +73,22 @@ backends:
   #   readonly: false
   #   description: "Google Drive for joezhoujinjing@gmail.com"
 
+  # Gmail Connector backend with OAuth authentication
+  # Provides read-only access to Gmail messages as YAML files
+  # - type: gmail_connector
+  #   mount_point: /mnt/gmail/joezhoujinjing@gmail.com
+  #   config:
+  #     token_manager_db: postgresql://postgres:nexus@postgres:5432/nexus
+  #     user_email: joezhoujinjing@gmail.com
+  #     provider: gmail
+  #     max_results: 100
+  #     labels:
+  #       - INBOX
+  #       - SENT
+  #   priority: 10
+  #   readonly: true
+  #   description: "Gmail messages for joezhoujinjing@gmail.com"
+
 # Cache configuration
 cache:
   type: memory

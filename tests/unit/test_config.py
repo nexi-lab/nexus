@@ -537,3 +537,339 @@ class TestAutoDiscover:
         assert result.cache_size_mb == 100
         assert result.enable_vector_search is True
         assert result.enable_llm_cache is True
+
+
+class TestDockerImageTemplate:
+    """Tests for DockerImageTemplate model."""
+
+    def test_with_image(self) -> None:
+        """Test template with pre-built image."""
+        from nexus.config import DockerImageTemplate
+
+        template = DockerImageTemplate(image="python:3.11")
+        assert template.image == "python:3.11"
+        assert template.dockerfile is None
+        assert template.context == "."
+
+    def test_with_dockerfile(self) -> None:
+        """Test template with Dockerfile."""
+        from nexus.config import DockerImageTemplate
+
+        template = DockerImageTemplate(dockerfile="docker/Dockerfile.custom", context="docker")
+        assert template.dockerfile == "docker/Dockerfile.custom"
+        assert template.context == "docker"
+        assert template.image is None
+
+    def test_with_dockerfile_override(self) -> None:
+        """Test template with inline Dockerfile override."""
+        from nexus.config import DockerImageTemplate
+
+        override = "FROM python:3.11\nRUN pip install numpy"
+        template = DockerImageTemplate(image="python:3.11", dockerfile_override=override)
+        assert template.image == "python:3.11"
+        assert template.dockerfile_override == override
+
+
+class TestDockerTemplateConfig:
+    """Tests for DockerTemplateConfig model."""
+
+    def test_default_values(self) -> None:
+        """Test default template configuration."""
+        from nexus.config import DockerTemplateConfig
+
+        config = DockerTemplateConfig()
+        assert config.templates == {}
+        assert config.default_image == "nexus-runtime:latest"
+
+    def test_with_templates(self) -> None:
+        """Test template configuration with custom templates."""
+        from nexus.config import DockerImageTemplate, DockerTemplateConfig
+
+        templates = {
+            "python": DockerImageTemplate(image="python:3.11"),
+            "node": DockerImageTemplate(image="node:20"),
+        }
+        config = DockerTemplateConfig(templates=templates)
+        assert len(config.templates) == 2
+        assert config.templates["python"].image == "python:3.11"
+        assert config.templates["node"].image == "node:20"
+
+    def test_custom_default_image(self) -> None:
+        """Test custom default image."""
+        from nexus.config import DockerTemplateConfig
+
+        config = DockerTemplateConfig(default_image="custom:latest")
+        assert config.default_image == "custom:latest"
+
+
+class TestFeaturesConfig:
+    """Tests for FeaturesConfig model."""
+
+    def test_default_values(self) -> None:
+        """Test default feature flags."""
+        from nexus.config import FeaturesConfig
+
+        config = FeaturesConfig()
+        assert config.semantic_search is False
+        assert config.llm_read is False
+        assert config.agent_memory is True
+        assert config.job_system is False
+        assert config.mcp_server is True
+
+    def test_custom_values(self) -> None:
+        """Test custom feature flags."""
+        from nexus.config import FeaturesConfig
+
+        config = FeaturesConfig(
+            semantic_search=True,
+            llm_read=True,
+            agent_memory=False,
+            job_system=True,
+            mcp_server=False,
+        )
+        assert config.semantic_search is True
+        assert config.llm_read is True
+        assert config.agent_memory is False
+        assert config.job_system is True
+        assert config.mcp_server is False
+
+    def test_extra_fields_forbidden(self) -> None:
+        """Test that extra fields raise validation error."""
+        from pydantic import ValidationError
+
+        from nexus.config import FeaturesConfig
+
+        with pytest.raises(ValidationError):
+            FeaturesConfig(unknown_feature=True)
+
+
+class TestNexusConfigAdvanced:
+    """Advanced tests for NexusConfig with nested models."""
+
+    def test_with_docker_config(self) -> None:
+        """Test NexusConfig with Docker templates."""
+        from nexus.config import DockerImageTemplate, DockerTemplateConfig
+
+        docker_config = DockerTemplateConfig(
+            templates={"python": DockerImageTemplate(image="python:3.11")},
+            default_image="custom:latest",
+        )
+        config = NexusConfig(docker=docker_config)
+        assert config.docker.default_image == "custom:latest"
+        assert "python" in config.docker.templates
+
+    def test_with_features_config(self) -> None:
+        """Test NexusConfig with feature flags."""
+        from nexus.config import FeaturesConfig
+
+        features = FeaturesConfig(semantic_search=True, llm_read=True)
+        config = NexusConfig(features=features)
+        assert config.features.semantic_search is True
+        assert config.features.llm_read is True
+
+    def test_gcs_backend_with_bucket(self) -> None:
+        """Test that GCS backend works with bucket provided."""
+        config = NexusConfig(backend="gcs", gcs_bucket_name="my-bucket")
+        assert config.backend == "gcs"
+        assert config.gcs_bucket_name == "my-bucket"
+
+    def test_monolithic_mode_with_url(self) -> None:
+        """Test that monolithic mode works with URL provided."""
+        config = NexusConfig(mode="monolithic", url="http://localhost:8000")
+        assert config.mode == "monolithic"
+        assert config.url == "http://localhost:8000"
+
+    def test_distributed_mode_with_url(self) -> None:
+        """Test that distributed mode works with URL provided."""
+        config = NexusConfig(mode="distributed", url="http://localhost:9000")
+        assert config.mode == "distributed"
+        assert config.url == "http://localhost:9000"
+
+    def test_parsers_list(self) -> None:
+        """Test NexusConfig with parsers list."""
+        parsers = [{"module": "my_parsers", "class": "CSVParser", "priority": 60, "enabled": True}]
+        config = NexusConfig(parsers=parsers)
+        assert config.parsers == parsers
+
+    def test_namespaces_list(self) -> None:
+        """Test NexusConfig with namespaces list."""
+        namespaces = [{"name": "private", "readonly": False, "admin_only": True}]
+        config = NexusConfig(namespaces=namespaces)
+        assert config.namespaces == namespaces
+
+    def test_workspaces_and_memories(self) -> None:
+        """Test NexusConfig with workspaces and memories."""
+        workspaces = [{"path": "/workspace", "name": "Main", "created_by": "admin"}]
+        memories = [{"path": "/memory", "name": "Context", "created_by": "agent"}]
+        config = NexusConfig(workspaces=workspaces, memories=memories)
+        assert config.workspaces == workspaces
+        assert config.memories == memories
+
+    def test_backends_list(self) -> None:
+        """Test NexusConfig with multiple backends."""
+        backends = [
+            {"type": "local", "mount_point": "/local", "priority": 1},
+            {"type": "gcs", "mount_point": "/cloud", "priority": 2, "readonly": True},
+        ]
+        config = NexusConfig(backends=backends)
+        assert config.backends == backends
+
+    def test_identity_settings(self) -> None:
+        """Test NexusConfig with identity settings."""
+        config = NexusConfig(tenant_id="tenant-123", user_id="user-456", agent_id="agent-789")
+        assert config.tenant_id == "tenant-123"
+        assert config.user_id == "user-456"
+        assert config.agent_id == "agent-789"
+
+    def test_permission_settings(self) -> None:
+        """Test NexusConfig with permission settings."""
+        config = NexusConfig(
+            enforce_permissions=False,
+            allow_admin_bypass=False,
+            is_admin=True,
+        )
+        assert config.enforce_permissions is False
+        assert config.allow_admin_bypass is False
+        assert config.is_admin is True
+
+    def test_cache_settings(self) -> None:
+        """Test NexusConfig with cache settings."""
+        config = NexusConfig(
+            enable_metadata_cache=True,
+            cache_path_size=1024,
+            cache_list_size=256,
+            cache_kv_size=512,
+            cache_exists_size=2048,
+            cache_ttl_seconds=600,
+        )
+        assert config.enable_metadata_cache is True
+        assert config.cache_path_size == 1024
+        assert config.cache_list_size == 256
+        assert config.cache_kv_size == 512
+        assert config.cache_exists_size == 2048
+        assert config.cache_ttl_seconds == 600
+
+    def test_cache_ttl_none(self) -> None:
+        """Test NexusConfig with no cache TTL."""
+        config = NexusConfig(cache_ttl_seconds=None)
+        assert config.cache_ttl_seconds is None
+
+    def test_workflow_settings(self) -> None:
+        """Test NexusConfig with workflow settings."""
+        config = NexusConfig(enable_workflows=False)
+        assert config.enable_workflows is False
+
+    def test_auto_parse_setting(self) -> None:
+        """Test NexusConfig with auto_parse setting."""
+        config = NexusConfig(auto_parse=False)
+        assert config.auto_parse is False
+
+    def test_gcs_settings(self) -> None:
+        """Test NexusConfig with GCS settings."""
+        config = NexusConfig(
+            backend="gcs",
+            gcs_bucket_name="my-bucket",
+            gcs_project_id="my-project",
+            gcs_credentials_path="/path/to/creds.json",
+        )
+        assert config.backend == "gcs"
+        assert config.gcs_bucket_name == "my-bucket"
+        assert config.gcs_project_id == "my-project"
+        assert config.gcs_credentials_path == "/path/to/creds.json"
+
+
+class TestLoadFromEnvironmentAdvanced:
+    """Advanced tests for _load_from_environment with more fields."""
+
+    def test_parsers_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test loading parsers from environment variable."""
+        monkeypatch.setenv(
+            "NEXUS_PARSERS", "my_parsers.csv:CSVParser:60,my_parsers.log:LogParser:50"
+        )
+        result = _load_from_environment()
+
+        assert result.parsers is not None
+        assert len(result.parsers) == 2
+        assert result.parsers[0]["module"] == "my_parsers.csv"
+        assert result.parsers[0]["class"] == "CSVParser"
+        assert result.parsers[0]["priority"] == 60
+        assert result.parsers[1]["module"] == "my_parsers.log"
+        assert result.parsers[1]["class"] == "LogParser"
+        assert result.parsers[1]["priority"] == 50
+
+    def test_parsers_from_env_no_priority(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test loading parsers without priority from environment."""
+        monkeypatch.setenv("NEXUS_PARSERS", "my_parsers.csv:CSVParser")
+        result = _load_from_environment()
+
+        assert result.parsers is not None
+        assert len(result.parsers) == 1
+        assert result.parsers[0]["module"] == "my_parsers.csv"
+        assert result.parsers[0]["class"] == "CSVParser"
+        assert "priority" not in result.parsers[0]
+
+    def test_cache_ttl_none_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test loading cache_ttl_seconds as None from environment."""
+        monkeypatch.setenv("NEXUS_CACHE_TTL_SECONDS", "none")
+        result = _load_from_environment()
+        assert result.cache_ttl_seconds is None
+
+    def test_cache_settings_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test loading cache settings from environment."""
+        monkeypatch.setenv("NEXUS_ENABLE_METADATA_CACHE", "true")
+        monkeypatch.setenv("NEXUS_CACHE_PATH_SIZE", "1024")
+        monkeypatch.setenv("NEXUS_CACHE_LIST_SIZE", "256")
+        monkeypatch.setenv("NEXUS_CACHE_KV_SIZE", "512")
+        monkeypatch.setenv("NEXUS_CACHE_EXISTS_SIZE", "2048")
+        monkeypatch.setenv("NEXUS_CACHE_TTL_SECONDS", "600")
+
+        result = _load_from_environment()
+
+        assert result.enable_metadata_cache is True
+        assert result.cache_path_size == 1024
+        assert result.cache_list_size == 256
+        assert result.cache_kv_size == 512
+        assert result.cache_exists_size == 2048
+        assert result.cache_ttl_seconds == 600
+
+    def test_permission_flags_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test loading permission flags from environment."""
+        monkeypatch.setenv("NEXUS_IS_ADMIN", "true")
+        monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "false")
+        monkeypatch.setenv("NEXUS_ALLOW_ADMIN_BYPASS", "false")
+
+        result = _load_from_environment()
+
+        assert result.is_admin is True
+        assert result.enforce_permissions is False
+        assert result.allow_admin_bypass is False
+
+    def test_identity_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test loading identity settings from environment."""
+        monkeypatch.setenv("NEXUS_TENANT_ID", "tenant-123")
+        monkeypatch.setenv("NEXUS_USER_ID", "user-456")
+        monkeypatch.setenv("NEXUS_AGENT_ID", "agent-789")
+
+        result = _load_from_environment()
+
+        assert result.tenant_id == "tenant-123"
+        assert result.user_id == "user-456"
+        assert result.agent_id == "agent-789"
+
+    def test_auto_parse_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test loading auto_parse from environment."""
+        monkeypatch.setenv("NEXUS_AUTO_PARSE", "false")
+        result = _load_from_environment()
+        assert result.auto_parse is False
+
+    def test_gcs_settings_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test loading GCS settings from environment."""
+        monkeypatch.setenv("NEXUS_GCS_BUCKET_NAME", "my-bucket")
+        monkeypatch.setenv("NEXUS_GCS_PROJECT_ID", "my-project")
+        monkeypatch.setenv("NEXUS_GCS_CREDENTIALS_PATH", "/creds.json")
+
+        result = _load_from_environment()
+
+        assert result.gcs_bucket_name == "my-bucket"
+        assert result.gcs_project_id == "my-project"
+        assert result.gcs_credentials_path == "/creds.json"

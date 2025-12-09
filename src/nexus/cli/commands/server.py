@@ -26,6 +26,69 @@ from nexus.cli.utils import (
 )
 
 
+def start_background_mount_sync(nx: NexusFilesystem) -> None:
+    """Start background thread to sync connector mounts after server is ready.
+
+    This function starts a daemon thread that syncs all connector backends
+    (GCS, S3, etc.) without blocking server startup. The sync begins 2 seconds
+    after the thread starts to ensure the server is fully initialized.
+
+    Args:
+        nx: NexusFilesystem instance to sync mounts from
+
+    Note:
+        - Runs in daemon thread (won't prevent server shutdown)
+        - Only syncs connector backends (skips local backends)
+        - Errors are logged but don't crash the server
+    """
+    import threading
+
+    def sync_connector_mounts_background():
+        """Background thread worker that performs the actual sync."""
+        import time
+
+        time.sleep(2)  # Wait for server to be fully ready
+        console.print("[cyan]🔄 Starting background sync for connector mounts...[/cyan]")
+
+        try:
+            all_mounts = nx.list_mounts()
+            synced_count = 0
+
+            for mount in all_mounts:
+                backend_type = mount.get("backend_type", "")
+                mount_point = mount.get("mount_point", "")
+
+                # Only sync connector backends (skip local backends)
+                if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
+                    try:
+                        console.print(f"  Syncing {mount_point} ({backend_type})...")
+                        result = nx.sync_mount(mount_point, recursive=True)
+                        console.print(
+                            f"  [green]✓[/green] {mount_point}: {result['files_scanned']} scanned, "
+                            f"{result['files_created']} created, "
+                            f"{result['files_updated']} updated"
+                        )
+                        synced_count += 1
+                    except Exception as sync_error:
+                        console.print(
+                            f"  [yellow]⚠️ [/yellow] Failed to sync {mount_point}: {sync_error}"
+                        )
+
+            console.print(
+                f"[green]✅ Background sync complete! Synced {synced_count} mounts[/green]"
+            )
+
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Background sync failed: {e}[/yellow]")
+
+    # Start sync in background (daemon=True = non-blocking, won't prevent shutdown)
+    threading.Thread(
+        target=sync_connector_mounts_background,
+        daemon=True,
+        name="mount-sync-thread",
+    ).start()
+
+
 @click.command(name="mount")
 @click.argument("mount_point", type=click.Path())
 @click.option(
@@ -1097,6 +1160,9 @@ def serve(
                 database_url=database_url,
             )
 
+            # Start background sync for connector mounts (non-blocking)
+            start_background_mount_sync(nx)
+
             run_server(app, host=host, port=port, log_level="info")
         else:
             # Use traditional ThreadingHTTPServer
@@ -1107,6 +1173,9 @@ def serve(
                 api_key=api_key,
                 auth_provider=auth_provider,
             )
+
+            # Start background sync for connector mounts (non-blocking)
+            start_background_mount_sync(nx)
 
             server.serve_forever()
 

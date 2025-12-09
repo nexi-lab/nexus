@@ -152,7 +152,7 @@ class SkillGenerator:
         return ConnectorTemplate(
             name=name,
             service=name,  # service name is same as name in new format
-            connector=service_info.connector if service_info else "",
+            connector=service_info.connector or "" if service_info else "",
             oauth_provider=service_info.oauth_provider
             if service_info
             else frontmatter.get("oauth_provider"),
@@ -285,7 +285,7 @@ class SkillGenerator:
                 description = desc_match.group(1).strip().replace("{mount_path}", mount_path)
 
         # Build frontmatter
-        frontmatter = {
+        frontmatter: dict[str, Any] = {
             "name": metadata.name,
             "display_name": metadata.display_name,
             "description": description,

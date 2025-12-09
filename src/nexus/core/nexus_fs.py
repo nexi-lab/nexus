@@ -1536,7 +1536,7 @@ class NexusFS(
             >>> metadata = fs.get_metadata("/workspace/file.txt")
             >>> print(f"Size: {metadata['size']} bytes")
         """
-        ctx = context or self._get_default_context()
+        ctx = context or self._default_context
         normalized = self._validate_path(path, allow_root=True)
 
         # Check if it's a directory first

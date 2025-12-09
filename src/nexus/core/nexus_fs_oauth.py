@@ -862,10 +862,12 @@ class NexusFSOAuthMixin:
                         cred_provider = cred_info.get("provider")
                         # Check if credential provider matches our oauth provider or any of its local names
                         if cred_provider == oauth_provider or cred_provider in local_providers:
-                            credential = await token_manager.get_credential(
-                                provider=cred_provider,
-                                user_email=cred_info.get("user_email"),
-                            )
+                            user_email = cred_info.get("user_email")
+                            if user_email:
+                                credential = await token_manager.get_credential(
+                                    provider=cred_provider,
+                                    user_email=user_email,
+                                )
                             if credential:
                                 logger.info(
                                     f"Found matching credential for {cred_provider}:{cred_info.get('user_email')}"
@@ -1035,10 +1037,11 @@ class NexusFSOAuthMixin:
                         # Check if any variant matches
                         for variant in connector_variants:
                             if variant in backend_type:
-                                data_mount_path = mount_point
-                                logger.info(
-                                    f"Found connector mount at {data_mount_path} (matched {variant})"
-                                )
+                                if mount_point is not None:
+                                    data_mount_path = str(mount_point)
+                                    logger.info(
+                                        f"Found connector mount at {data_mount_path} (matched {variant})"
+                                    )
                                 break
                         if data_mount_path != skill_path:
                             break

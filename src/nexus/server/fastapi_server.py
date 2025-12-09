@@ -708,7 +708,7 @@ def _handle_get_metadata(params: Any, context: Any) -> dict[str, Any]:
     """Handle get_metadata method."""
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
-    metadata = nexus_fs.get_metadata(params.path, context=context)  # type: ignore[attr-defined]
+    metadata = nexus_fs.get_metadata(params.path, context=context)
     return {"metadata": metadata}
 
 

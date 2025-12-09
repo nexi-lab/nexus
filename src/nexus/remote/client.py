@@ -3549,7 +3549,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         self,
         name: str,
         ttl_minutes: int = 10,
-        provider: str = "e2b",
+        provider: str | None = "e2b",
         template_id: str | None = None,
         context: dict | None = None,
     ) -> dict:
@@ -3570,7 +3570,9 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             >>> result = nx.sandbox_create("data-analysis", ttl_minutes=30, provider="docker")
             >>> print(result['sandbox_id'])
         """
-        params: dict[str, Any] = {"name": name, "ttl_minutes": ttl_minutes, "provider": provider}
+        params: dict[str, Any] = {"name": name, "ttl_minutes": ttl_minutes}
+        if provider is not None:
+            params["provider"] = provider
         if template_id is not None:
             params["template_id"] = template_id
         if context is not None:
@@ -3704,6 +3706,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         user_id: str | None = None,
         tenant_id: str | None = None,
         agent_id: str | None = None,
+        status: str | None = None,
     ) -> dict:
         """List user's sandboxes.
 
@@ -3713,6 +3716,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             user_id: Filter by user_id (admin only)
             tenant_id: Filter by tenant_id (admin only)
             agent_id: Filter by agent_id
+            status: Filter by status (e.g., 'active', 'stopped', 'paused')
 
         Returns:
             Dict with list of sandboxes
@@ -3731,6 +3735,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             params["tenant_id"] = tenant_id
         if agent_id is not None:
             params["agent_id"] = agent_id
+        if status is not None:
+            params["status"] = status
         result = self._call_rpc("sandbox_list", params)
         return result  # type: ignore[no-any-return]
 

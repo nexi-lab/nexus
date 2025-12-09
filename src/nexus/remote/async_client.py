@@ -1437,6 +1437,176 @@ class AsyncRemoteNexusFS:
         result = await self._call_rpc("sandbox_disconnect", params)
         return result  # type: ignore[no-any-return]
 
+    # ============================================================
+    # OAuth Operations
+    # ============================================================
+
+    async def oauth_list_providers(self) -> builtins.list[dict[str, Any]]:
+        """List available OAuth providers (async)."""
+        result = await self._call_rpc("oauth_list_providers", {})
+        return result.get("providers", [])  # type: ignore[no-any-return]
+
+    async def oauth_get_auth_url(
+        self,
+        provider: str,
+        redirect_uri: str,
+        scopes: builtins.list[str] | None = None,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Get OAuth authorization URL (async)."""
+        params: dict[str, Any] = {
+            "provider": provider,
+            "redirect_uri": redirect_uri,
+        }
+        if scopes is not None:
+            params["scopes"] = scopes
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("oauth_get_auth_url", params)
+        return result  # type: ignore[no-any-return]
+
+    async def oauth_exchange_code(
+        self,
+        provider: str,
+        code: str,
+        user_email: str,
+        redirect_uri: str,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Exchange OAuth code for tokens (async)."""
+        params: dict[str, Any] = {
+            "provider": provider,
+            "code": code,
+            "user_email": user_email,
+            "redirect_uri": redirect_uri,
+        }
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("oauth_exchange_code", params)
+        return result  # type: ignore[no-any-return]
+
+    async def oauth_list_credentials(
+        self,
+        provider: str | None = None,
+        user_email: str | None = None,
+        context: Any = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """List OAuth credentials (async)."""
+        params: dict[str, Any] = {}
+        if provider is not None:
+            params["provider"] = provider
+        if user_email is not None:
+            params["user_email"] = user_email
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("oauth_list_credentials", params)
+        return result.get("credentials", [])  # type: ignore[no-any-return]
+
+    async def oauth_revoke_credential(
+        self,
+        provider: str,
+        user_email: str,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Revoke OAuth credential (async)."""
+        params: dict[str, Any] = {
+            "provider": provider,
+            "user_email": user_email,
+        }
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("oauth_revoke_credential", params)
+        return result  # type: ignore[no-any-return]
+
+    async def oauth_test_credential(
+        self,
+        provider: str,
+        user_email: str,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Test if an OAuth credential is valid (async)."""
+        params: dict[str, Any] = {
+            "provider": provider,
+            "user_email": user_email,
+        }
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("oauth_test_credential", params)
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # MCP/Klavis Integration
+    # ============================================================
+
+    async def mcp_connect(
+        self,
+        provider: str,
+        redirect_url: str | None = None,
+        user_email: str | None = None,
+        reuse_nexus_token: bool = True,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Connect to a Klavis MCP server with OAuth support (async).
+
+        This method creates a Klavis MCP instance, handles OAuth if needed,
+        discovers tools, and generates SKILL.md in the user's folder.
+
+        Args:
+            provider: MCP provider name (e.g., "google_drive", "gmail", "slack")
+            redirect_url: OAuth redirect URL (required if OAuth needed)
+            user_email: User email for OAuth (optional, uses context if not provided)
+            reuse_nexus_token: If True, try to reuse existing Nexus OAuth token
+            context: Operation context (optional)
+
+        Returns:
+            Dictionary containing:
+                - status: "connected" | "oauth_required" | "error"
+                - instance_id: Klavis instance ID (if created)
+                - oauth_url: OAuth URL (if OAuth required)
+                - tools: List of available tools (if connected)
+                - skill_path: Path to generated SKILL.md
+                - error: Error message (if error)
+        """
+        params: dict[str, Any] = {
+            "provider": provider,
+            "reuse_nexus_token": reuse_nexus_token,
+        }
+        if redirect_url is not None:
+            params["redirect_url"] = redirect_url
+        if user_email is not None:
+            params["user_email"] = user_email
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("mcp_connect", params)
+        return result  # type: ignore[no-any-return]
+
+    async def mcp_get_oauth_url(
+        self,
+        provider: str,
+        redirect_url: str,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Get OAuth URL for a Klavis MCP provider (async).
+
+        Args:
+            provider: MCP provider name (e.g., "google_drive", "gmail")
+            redirect_url: OAuth callback URL
+            context: Operation context (optional)
+
+        Returns:
+            Dictionary containing:
+                - oauth_url: URL to redirect user for OAuth
+                - instance_id: Klavis instance ID for tracking
+        """
+        params: dict[str, Any] = {
+            "provider": provider,
+            "redirect_url": redirect_url,
+        }
+        if context is not None:
+            params["context"] = context
+        result = await self._call_rpc("mcp_get_oauth_url", params)
+        return result  # type: ignore[no-any-return]
+
 
 class AsyncRemoteMemory:
     """Async Remote Memory API client.

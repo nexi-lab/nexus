@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import builtins
 from abc import ABC, abstractmethod
-from datetime import timedelta
 
 # Import List to avoid name conflict with list() method
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -752,7 +752,7 @@ class NexusFilesystem(ABC):
         self,
         name: str,
         ttl_minutes: int = 10,
-        provider: str = "e2b",
+        provider: str | None = "e2b",
         template_id: str | None = None,
         context: dict | None = None,
     ) -> dict[Any, Any]:
@@ -802,6 +802,8 @@ class NexusFilesystem(ABC):
         language: str,
         code: str,
         timeout: int = 300,
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
         context: dict | None = None,
     ) -> dict[Any, Any]:
         """Run code in a sandbox.
@@ -811,6 +813,8 @@ class NexusFilesystem(ABC):
             language: Programming language
             code: Code to execute
             timeout: Execution timeout in seconds
+            nexus_url: Nexus server URL for credential injection
+            nexus_api_key: Nexus API key for credential injection
             context: Operation context
 
         Returns:
@@ -865,6 +869,7 @@ class NexusFilesystem(ABC):
         user_id: str | None = None,
         tenant_id: str | None = None,
         agent_id: str | None = None,
+        status: str | None = None,
     ) -> dict[Any, Any]:
         """List all sandboxes for the current user.
 
@@ -874,6 +879,7 @@ class NexusFilesystem(ABC):
             user_id: Filter by user ID
             tenant_id: Filter by tenant ID
             agent_id: Filter by agent ID
+            status: Filter by status
 
         Returns:
             List of sandbox metadata dicts

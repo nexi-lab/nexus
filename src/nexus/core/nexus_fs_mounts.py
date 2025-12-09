@@ -93,6 +93,82 @@ class NexusFSMountsMixin:
             # Log but don't fail the mount operation if permission grant fails
             logger.warning(f"Failed to grant direct_owner permission for mount {mount_point}: {e}")
 
+    def _generate_connector_skill(
+        self, mount_point: str, backend_type: str, context: OperationContext | None
+    ) -> bool:
+        """Generate SKILL.md for a connector mount.
+
+        Creates a skill document describing the connector's capabilities,
+        folder structure, and operations. Uses pre-defined templates from
+        configs/connector-skills/ when available.
+
+        Args:
+            mount_point: The virtual path of the mount (e.g., "/mnt/gdrive")
+            backend_type: Backend type (e.g., "gdrive_connector", "s3_connector")
+            context: Operation context containing user/subject information
+
+        Returns:
+            True if skill was generated, False otherwise
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        try:
+            from nexus.backends.service_map import ServiceMap
+            from nexus.skills.skill_generator import generate_skill_md
+
+            # Get unified service name from backend type
+            service_name = ServiceMap.get_service_name(connector=backend_type)
+            if not service_name:
+                # Use backend type as service name if not in registry
+                service_name = backend_type.replace("_connector", "").replace("_", "-")
+                logger.debug(f"No service mapping for {backend_type}, using: {service_name}")
+
+            # Determine skill path based on context
+            # Default to system tier, but could use tenant/user tiers based on context
+            if context and hasattr(context, "user_id") and context.user_id:
+                skill_base_path = f"/skills/users/{context.user_id}/"
+            elif context and hasattr(context, "tenant_id") and context.tenant_id:
+                skill_base_path = f"/skills/tenants/{context.tenant_id}/"
+            else:
+                skill_base_path = "/skills/system/"
+
+            skill_path = f"{skill_base_path}{service_name}/"
+            skill_md_path = f"{skill_path}SKILL.md"
+
+            # Generate skill content with connector template
+            # Note: If MCP was connected first, user can re-run mcp_connect to regenerate
+            # merged SKILL.md (mcp_connect uses ServiceMap to include connector template)
+            skill_md = generate_skill_md(
+                service_name=service_name,
+                mount_path=mount_point,
+            )
+
+            # Create skill directory and write SKILL.md
+            if hasattr(self, "mkdir"):
+                try:
+                    self.mkdir(skill_path, parents=True, exist_ok=True, context=context)
+                except Exception as mkdir_e:
+                    logger.warning(f"Failed to create skill directory {skill_path}: {mkdir_e}")
+
+            if hasattr(self, "write"):
+                self.write(
+                    skill_md_path,
+                    skill_md.encode("utf-8") if isinstance(skill_md, str) else skill_md,
+                    context=context,
+                )
+                logger.info(f"Generated connector skill: {skill_md_path}")
+                return True
+            else:
+                logger.warning("write method not available, skipping skill generation")
+                return False
+
+        except Exception as e:
+            # Log but don't fail the mount operation
+            logger.warning(f"Failed to generate skill for {backend_type} at {mount_point}: {e}")
+            return False
+
     @rpc_expose(description="Add dynamic backend mount")
     def add_mount(
         self,
@@ -156,6 +232,30 @@ class NexusFSMountsMixin:
             ...     readonly=True
             ... )
         """
+        # Auto-inject token_manager_db for OAuth-backed connectors
+        if (
+            backend_type in ("gdrive_connector", "x_connector")
+            and "token_manager_db" not in backend_config
+        ):
+            # Get database URL from NexusFS config or metadata store
+            database_url = None
+            if (
+                hasattr(self, "_config")
+                and self._config
+                and hasattr(self._config, "db_path")
+                and self._config.db_path
+            ):
+                database_url = self._config.db_path
+            elif hasattr(self, "metadata") and hasattr(self.metadata, "database_url"):
+                database_url = self.metadata.database_url
+
+            if not database_url:
+                raise RuntimeError(
+                    f"Cannot create {backend_type} mount: No database path configured. "
+                    "Either pass 'token_manager_db' in backend_config or configure NexusFS with a database."
+                )
+            backend_config = {**backend_config, "token_manager_db": database_url}
+
         # Import backend classes dynamically
         backend: Backend
         if backend_type == "local":
@@ -250,6 +350,10 @@ class NexusFSMountsMixin:
 
         # Grant direct_owner permission to the user who created the mount
         self._grant_mount_owner_permission(mount_point, context)
+
+        # Generate SKILL.md for connector backends
+        if backend_type.endswith("_connector") or backend_type in ("google_drive", "gdrive"):
+            self._generate_connector_skill(mount_point, backend_type, context)
 
         return mount_point  # Return mount_point as the mount ID
 
@@ -527,6 +631,10 @@ class NexusFSMountsMixin:
 
         # Grant direct_owner permission to the user who saved the mount
         self._grant_mount_owner_permission(mount_point, context)
+
+        # Generate SKILL.md for connector backends
+        if backend_type.endswith("_connector") or backend_type in ("google_drive", "gdrive"):
+            self._generate_connector_skill(mount_point, backend_type, context)
 
         return mount_id
 

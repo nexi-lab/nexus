@@ -731,7 +731,7 @@ class NexusFilesystem(Protocol):
         self,
         name: str,
         ttl_minutes: int = 10,
-        provider: str = "e2b",
+        provider: str | None = "e2b",
         template_id: str | None = None,
         context: dict | None = None,
     ) -> dict[Any, Any]:
@@ -779,6 +779,8 @@ class NexusFilesystem(Protocol):
         language: str,
         code: str,
         timeout: int = 300,
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
         context: dict | None = None,
     ) -> dict[Any, Any]:
         """Run code in a sandbox.
@@ -788,6 +790,8 @@ class NexusFilesystem(Protocol):
             language: Programming language
             code: Code to execute
             timeout: Execution timeout in seconds
+            nexus_url: Nexus server URL for credential injection
+            nexus_api_key: Nexus API key for credential injection
             context: Operation context
 
         Returns:
@@ -838,6 +842,7 @@ class NexusFilesystem(Protocol):
         user_id: str | None = None,
         tenant_id: str | None = None,
         agent_id: str | None = None,
+        status: str | None = None,
     ) -> dict[Any, Any]:
         """List all sandboxes for the current user.
 
@@ -847,6 +852,7 @@ class NexusFilesystem(Protocol):
             user_id: Filter by user ID
             tenant_id: Filter by tenant ID
             agent_id: Filter by agent ID
+            status: Filter by status
 
         Returns:
             List of sandbox metadata dicts

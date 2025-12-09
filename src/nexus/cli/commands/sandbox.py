@@ -645,6 +645,16 @@ def sandbox_status(
     help="Mount path in sandbox (default: /mnt/nexus)",
 )
 @click.option(
+    "--nexus-url",
+    envvar="NEXUS_URL",
+    help="Nexus server URL for sandbox to connect to",
+)
+@click.option(
+    "--nexus-api-key",
+    envvar="NEXUS_API_KEY",
+    help="Nexus API key for sandbox authentication",
+)
+@click.option(
     "--json",
     "-j",
     "json_output",
@@ -661,6 +671,8 @@ def connect_sandbox(
     provider: str,
     sandbox_api_key: str,
     mount_path: str,
+    nexus_url: str | None,
+    nexus_api_key: str | None,
     json_output: bool,
     data_dir: str | None,  # noqa: ARG001
 ) -> None:
@@ -674,10 +686,15 @@ def connect_sandbox(
     Examples:
         # Connect to E2B sandbox (API key from env)
         export E2B_API_KEY=your_key
+        export NEXUS_URL=http://localhost:8080
+        export NEXUS_API_KEY=sk-xxx
         nexus sandbox connect sb_xxx
 
-        # Connect with explicit API key
-        nexus sandbox connect sb_xxx --sandbox-api-key your_key
+        # Connect with explicit options
+        nexus sandbox connect sb_xxx \\
+            --sandbox-api-key your_e2b_key \\
+            --nexus-url http://localhost:8080 \\
+            --nexus-api-key sk-xxx
 
         # Custom mount path
         nexus sandbox connect sb_xxx --mount-path /home/user/nexus
@@ -693,6 +710,8 @@ def connect_sandbox(
             provider=provider,
             sandbox_api_key=sandbox_api_key,
             mount_path=mount_path,
+            nexus_url=nexus_url,
+            nexus_api_key=nexus_api_key,
         )
 
         if json_output:

@@ -10,7 +10,6 @@ import builtins
 from abc import ABC, abstractmethod
 
 # Import List to avoid name conflict with list() method
-from collections.abc import Coroutine
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -756,7 +755,7 @@ class NexusFilesystem(ABC):
         provider: str | None = "e2b",
         template_id: str | None = None,
         context: dict | None = None,
-    ) -> dict[Any, Any] | Coroutine[Any, Any, dict[Any, Any]]:
+    ) -> dict[Any, Any]:
         """Create a new code execution sandbox.
 
         Args:
@@ -780,7 +779,7 @@ class NexusFilesystem(ABC):
         template_id: str | None = None,
         verify_status: bool = True,
         context: dict | None = None,
-    ) -> dict[Any, Any] | Coroutine[Any, Any, dict[Any, Any]]:
+    ) -> dict[Any, Any]:
         """Get existing active sandbox or create a new one.
 
         Args:
@@ -806,7 +805,7 @@ class NexusFilesystem(ABC):
         nexus_url: str | None = None,
         nexus_api_key: str | None = None,
         context: dict | None = None,
-    ) -> dict[Any, Any] | Coroutine[Any, Any, dict[Any, Any]]:
+    ) -> dict[Any, Any]:
         """Run code in a sandbox.
 
         Args:
@@ -824,9 +823,7 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
-    def sandbox_pause(
-        self, sandbox_id: str, context: dict | None = None
-    ) -> dict[Any, Any] | Coroutine[Any, Any, dict[Any, Any]]:
+    def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
         """Pause a running sandbox.
 
         Args:
@@ -839,9 +836,7 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
-    def sandbox_resume(
-        self, sandbox_id: str, context: dict | None = None
-    ) -> dict[Any, Any] | Coroutine[Any, Any, dict[Any, Any]]:
+    def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
         """Resume a paused sandbox.
 
         Args:
@@ -854,9 +849,7 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
-    def sandbox_stop(
-        self, sandbox_id: str, context: dict | None = None
-    ) -> dict[Any, Any] | Coroutine[Any, Any, dict[Any, Any]]:
+    def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
         """Stop a sandbox.
 
         Args:
@@ -877,7 +870,7 @@ class NexusFilesystem(ABC):
         tenant_id: str | None = None,
         agent_id: str | None = None,
         status: str | None = None,
-    ) -> dict[Any, Any] | Coroutine[Any, Any, dict[Any, Any]]:
+    ) -> dict[Any, Any]:
         """List all sandboxes for the current user.
 
         Args:
@@ -894,9 +887,7 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
-    def sandbox_status(
-        self, sandbox_id: str, context: dict | None = None
-    ) -> dict[Any, Any] | Coroutine[Any, Any, dict[Any, Any]]:
+    def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
         """Get sandbox status.
 
         Args:
@@ -918,7 +909,7 @@ class NexusFilesystem(ABC):
         nexus_url: str | None = None,
         nexus_api_key: str | None = None,
         context: dict | None = None,
-    ) -> dict[Any, Any] | Coroutine[Any, Any, dict[Any, Any]]:
+    ) -> dict[Any, Any]:
         """Connect to user-managed sandbox (Issue #371).
 
         Args:
@@ -942,7 +933,7 @@ class NexusFilesystem(ABC):
         provider: str = "e2b",
         sandbox_api_key: str | None = None,
         context: dict | None = None,
-    ) -> dict[Any, Any] | Coroutine[Any, Any, dict[Any, Any]]:
+    ) -> dict[Any, Any]:
         """Disconnect from user-managed sandbox (Issue #371).
 
         Args:

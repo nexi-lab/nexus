@@ -3451,7 +3451,7 @@ class NexusFS(
             return loop.run_until_complete(coro)
 
     @rpc_expose(description="Create a new sandbox")
-    async def sandbox_create(
+    async def sandbox_create(  # type: ignore[override]
         self,
         name: str,
         ttl_minutes: int = 10,
@@ -3490,7 +3490,7 @@ class NexusFS(
         return result
 
     @rpc_expose(description="Run code in sandbox")
-    async def sandbox_run(
+    async def sandbox_run(  # type: ignore[override]
         self,
         sandbox_id: str,
         language: str,
@@ -3561,7 +3561,7 @@ class NexusFS(
         return result
 
     @rpc_expose(description="Pause sandbox")
-    async def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
+    async def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002
         """Pause sandbox to save costs.
 
         Args:
@@ -3579,7 +3579,7 @@ class NexusFS(
         return result
 
     @rpc_expose(description="Resume paused sandbox")
-    async def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
+    async def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002
         """Resume a paused sandbox.
 
         Args:
@@ -3597,7 +3597,7 @@ class NexusFS(
         return result
 
     @rpc_expose(description="Stop and destroy sandbox")
-    async def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
+    async def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002
         """Stop and destroy sandbox.
 
         Args:
@@ -3615,7 +3615,7 @@ class NexusFS(
         return result
 
     @rpc_expose(description="List sandboxes")
-    async def sandbox_list(
+    async def sandbox_list(  # type: ignore[override]
         self,
         context: dict | None = None,
         verify_status: bool = False,
@@ -3660,7 +3660,7 @@ class NexusFS(
         return {"sandboxes": sandboxes}
 
     @rpc_expose(description="Get sandbox status")
-    async def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
+    async def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002
         """Get sandbox status and metadata.
 
         Args:
@@ -3678,7 +3678,7 @@ class NexusFS(
         return result
 
     @rpc_expose(description="Get or create sandbox")
-    async def sandbox_get_or_create(
+    async def sandbox_get_or_create(  # type: ignore[override]
         self,
         name: str,
         ttl_minutes: int = 10,
@@ -3732,7 +3732,7 @@ class NexusFS(
         return result
 
     @rpc_expose(description="Connect to user-managed sandbox")
-    async def sandbox_connect(
+    async def sandbox_connect(  # type: ignore[override]
         self,
         sandbox_id: str,
         provider: str = "e2b",
@@ -3799,7 +3799,7 @@ class NexusFS(
         return result
 
     @rpc_expose(description="Disconnect from user-managed sandbox")
-    async def sandbox_disconnect(
+    async def sandbox_disconnect(  # type: ignore[override]
         self,
         sandbox_id: str,
         provider: str = "e2b",

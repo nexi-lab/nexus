@@ -35,7 +35,7 @@ The main nexus module re-exports core functionality for backward compatibility.
 New projects should use nexus.sdk for a cleaner API.
 """
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 

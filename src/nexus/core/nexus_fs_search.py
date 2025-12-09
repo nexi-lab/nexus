@@ -182,21 +182,58 @@ class NexusFSSearchMixin:
                         list_context = OperationContext(
                             user="anonymous", groups=[], backend_path=route.backend_path
                         )
-                    entries = route.backend.list_dir(route.backend_path, context=list_context)
+
+                    # Helper function to recursively list directory contents
+                    def list_recursive(current_path: str, backend_path: str) -> builtins.list[str]:
+                        """Recursively list all files in directory tree."""
+                        results: builtins.list[str] = []
+
+                        # Get entries at current level
+                        entries = route.backend.list_dir(backend_path, context=list_context)
+
+                        for entry in entries:
+                            full_path = f"{current_path.rstrip('/')}/{entry}"
+
+                            if entry.endswith("/"):
+                                # Directory - recurse into it if recursive=True
+                                if recursive:
+                                    # Add the directory itself
+                                    results.append(full_path)
+                                    # Recurse into subdirectory
+                                    subdir_backend_path = (
+                                        f"{backend_path.rstrip('/')}/{entry.rstrip('/')}"
+                                        if backend_path
+                                        else entry.rstrip("/")
+                                    )
+                                    results.extend(
+                                        list_recursive(full_path.rstrip("/"), subdir_backend_path)
+                                    )
+                                else:
+                                    # Non-recursive - just add the directory
+                                    results.append(full_path)
+                            else:
+                                # File - add it
+                                results.append(full_path)
+
+                        return results
+
+                    # List directory contents (with recursion if requested)
+                    all_paths = list_recursive(path, route.backend_path)
+
                     # Format results
                     if details:
                         from datetime import datetime
 
                         return [
                             {
-                                "path": f"{path.rstrip('/')}/{entry}",
+                                "path": entry_path,
                                 "size": 0,
                                 "modified_at": datetime.now().isoformat(),
                                 "etag": "",
                             }
-                            for entry in entries
+                            for entry_path in all_paths
                         ]
-                    return [f"{path.rstrip('/')}/{entry}" for entry in entries]
+                    return all_paths
             except PermissionDeniedError:
                 # Re-raise permission errors - don't fall through to metadata listing
                 raise

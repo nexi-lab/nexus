@@ -340,6 +340,21 @@ class NexusFSMountsMixin:
                 include_comments=backend_config.get("include_comments", True),
                 session_factory=hn_session_factory,
             )
+        elif backend_type == "gmail_connector":
+            from nexus.backends.gmail_connector import GmailConnectorBackend
+
+            # Get session factory for caching support if available
+            gmail_session_factory = None
+            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
+                gmail_session_factory = self.metadata.SessionLocal
+
+            backend = GmailConnectorBackend(
+                token_manager_db=backend_config["token_manager_db"],
+                user_email=backend_config.get("user_email"),
+                provider=backend_config.get("provider", "gmail"),
+                session_factory=gmail_session_factory,
+                max_message_per_label=backend_config.get("max_message_per_label", 2000),
+            )
         else:
             raise RuntimeError(f"Unsupported backend type: {backend_type}")
 

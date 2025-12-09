@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,7 @@ def list_emails_by_folder(
         folder_filter = ["SENT", "STARRED", "IMPORTANT", "INBOX"]
 
     # Track folder statistics for summary
-    folder_stats = {
+    folder_stats: dict[str, dict[str, int | set[str]]] = {
         "SENT": {"emails": 0, "threads": set()},
         "STARRED": {"emails": 0, "threads": set()},
         "IMPORTANT": {"emails": 0, "threads": set()},
@@ -296,7 +297,12 @@ def print_folder_statistics(emails: list[dict[str, Any]]) -> None:
     print("=" * 80)
 
     # Group by folder
-    folder_groups = {"SENT": [], "STARRED": [], "IMPORTANT": [], "INBOX": []}
+    folder_groups: dict[str, list[dict]] = {
+        "SENT": [],
+        "STARRED": [],
+        "IMPORTANT": [],
+        "INBOX": [],
+    }
 
     for email in emails:
         folder = email.get("folder")
@@ -359,7 +365,9 @@ def fetch_emails_batch(
         # Track failed message IDs for retry
         failed_429_ids: list[str] = []
 
-        def make_callback(failed_list: list[str]):
+        def make_callback(
+            failed_list: list[str],
+        ) -> Callable[[str, Any, Exception | None], None]:
             """Factory to create callback with proper closure."""
 
             def _callback(request_id: str, response: Any, exception: Exception | None) -> None:

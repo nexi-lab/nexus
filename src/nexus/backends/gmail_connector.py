@@ -110,9 +110,9 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         token_manager_db: str,
         user_email: str | None = None,
         provider: str = "gmail",
-        session_factory=None,  # type: ignore[no-untyped-def]
+        session_factory: Any = None,
         max_message_per_label: int = 2000,
-        metadata_store=None,  # type: ignore[no-untyped-def]
+        metadata_store: Any = None,
     ):
         """
         Initialize Gmail connector backend.
@@ -424,9 +424,14 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             yaml_data["body_text"] = text
 
         # Use custom dumper for literal block scalars
-        class LiteralDumper(yaml.SafeDumper):  # type: ignore[name-defined]
+        class LiteralDumper(yaml.SafeDumper):
             def choose_scalar_style(self):  # type: ignore[no-untyped-def]
-                if self.event.value and "\n" in self.event.value:
+                if (
+                    self.event
+                    and hasattr(self.event, "value")
+                    and self.event.value
+                    and "\n" in self.event.value
+                ):
                     return "|"
                 return super().choose_scalar_style()
 
@@ -437,7 +442,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
 
         LiteralDumper.add_representer(str, literal_presenter)
 
-        yaml_output = yaml.dump(  # type: ignore[attr-defined]
+        yaml_output = yaml.dump(
             yaml_data,
             Dumper=LiteralDumper,
             default_flow_style=False,

@@ -83,52 +83,55 @@ def get_nexus_tools():
         return RemoteNexusFS(server_url=server_url, api_key=api_key)
 
     @tool
-    def grep_files(grep_cmd: str, config: RunnableConfig) -> str:
+    def grep_files(
+        pattern: str,
+        config: RunnableConfig,
+        path: str = "/",
+        file_pattern: str | None = None,
+        ignore_case: bool = False,
+        max_results: int = 1000,
+    ) -> str:
         """Search file content for text patterns.
 
         Args:
-            grep_cmd: Format "pattern [path] [options]"
-                     - pattern: Text/regex to search (quote if spaces)
-                     - path: Directory to search (default "/")
-                     - -i: Case insensitive
+            pattern: Text/regex pattern to search for
+            config: Runtime configuration (provided by framework)
+            path: Directory to search (default: "/")
+            file_pattern: Optional glob pattern to filter files (e.g., "*.py", "**/*.md")
+            ignore_case: If True, perform case-insensitive search (default: False)
+            max_results: Maximum number of results to return (default: 1000)
 
-        Examples: "async def /workspace", "TODO:", "'import pandas' -i"
+        Examples:
+            grep_files("async def", path="/workspace")
+            grep_files("TODO", file_pattern="**/*.py")
+            grep_files("error", ignore_case=True, max_results=100)
+            grep_files("import pandas", path="/notebooks", file_pattern="*.ipynb")
         """
         try:
             # Get authenticated client
             nx = _get_nexus_client(config)
 
-            # Parse grep command
-            parts = shlex.split(grep_cmd)
-            if not parts:
-                return "Error: Empty grep command. Usage: grep_files('pattern [path] [options]')"
-
-            pattern = parts[0]
-            path = "/"
-            case_sensitive = True
-
-            # Parse remaining arguments
-            i = 1
-            while i < len(parts):
-                arg = parts[i]
-                if arg == "-i":
-                    case_sensitive = False
-                elif not arg.startswith("-"):
-                    # Assume it's a path
-                    path = arg
-                i += 1
-
-            # Execute grep
-            results = nx.grep(pattern, path, ignore_case=not case_sensitive)
+            # Execute grep with provided parameters
+            results = nx.grep(
+                pattern=pattern,
+                path=path,
+                file_pattern=file_pattern,
+                ignore_case=ignore_case,
+                max_results=max_results,
+            )
 
             if not results:
-                return f"No matches found for pattern '{pattern}' in {path}"
+                search_info = f"pattern '{pattern}' in {path}"
+                if file_pattern:
+                    search_info += f" (files: {file_pattern})"
+                return f"No matches found for {search_info}"
 
             # Format results in standard grep format: file_path:line_number:content
             output_lines = []
             max_line_length = 300  # Limit line length to prevent overwhelming output
+            display_limit = min(50, max_results)  # Show at most 50 results in output
 
-            for match in results[:50]:  # Limit to first 50 matches
+            for match in results[:display_limit]:
                 file_path = match.get("file", "unknown")
                 line_num = match.get("line", "")
                 content = match.get("content", "").strip()
@@ -140,13 +143,21 @@ def get_nexus_tools():
                 # Standard grep format: file:line:content
                 output_lines.append(f"{file_path}:{line_num}:{content}")
 
-            if len(results) > 50:
-                output_lines.append(f"\n... and {len(results) - 50} more matches")
+            # Add summary footer
+            total_results = len(results)
+            if total_results > display_limit:
+                output_lines.append(f"\n... and {total_results - display_limit} more matches")
+
+            # Add header with search info
+            header_parts = [f"Found {total_results} matches"]
+            if file_pattern:
+                header_parts.append(f"in files matching '{file_pattern}'")
+            output_lines.insert(0, " ".join(header_parts) + "\n")
 
             return "\n".join(output_lines)
 
         except Exception as e:
-            return f"Error executing grep: {str(e)}\nUsage: grep_files('pattern [path] [options]')"
+            return f"Error executing grep: {str(e)}"
 
     @tool
     def glob_files(pattern: str, config: RunnableConfig, path: str = "/") -> str:

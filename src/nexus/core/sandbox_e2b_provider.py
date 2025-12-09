@@ -26,13 +26,19 @@ from nexus.core.sandbox_provider import (
 
 logger = logging.getLogger(__name__)
 
+# Default E2B template with Nexus + FUSE pre-installed
+# Built from e2b-template/e2b.Dockerfile
+NEXUS_FUSE_TEMPLATE = "nexus-fuse"
+
 # Lazy import e2b to avoid import errors if not installed
 try:
     from e2b import AsyncSandbox
+    from e2b.sandbox.commands.command_handle import CommandExitException
 
     E2B_AVAILABLE = True
 except ImportError:
     E2B_AVAILABLE = False
+    CommandExitException = Exception  # Fallback for type hints
     logger.warning("e2b package not installed. E2BSandboxProvider will not work.")
 
 
@@ -190,6 +196,20 @@ class E2BSandboxProvider(SandboxProvider):
             raise ExecutionTimeoutError(
                 f"Code execution exceeded {timeout} second timeout"
             ) from timeout_err
+        except CommandExitException as cmd_err:
+            # E2B raises CommandExitException for non-zero exit codes
+            # This is normal behavior - return the result with the exit code
+            execution_time = time.time() - start_time
+            logger.debug(
+                f"Command exited with non-zero code in sandbox {sandbox_id}: "
+                f"exit_code={cmd_err.exit_code}, stderr={cmd_err.stderr}"
+            )
+            return CodeExecutionResult(
+                stdout=cmd_err.stdout or "",
+                stderr=cmd_err.stderr or "",
+                exit_code=cmd_err.exit_code,
+                execution_time=execution_time,
+            )
         except Exception as e:
             logger.error(f"Code execution failed in sandbox {sandbox_id}: {e}")
             raise
@@ -307,8 +327,8 @@ class E2BSandboxProvider(SandboxProvider):
 
         logger.info(f"Mounting Nexus at {mount_path} in sandbox {sandbox_id}")
 
-        # Create mount directory
-        mkdir_result = await sandbox.commands.run(f"mkdir -p {mount_path}")
+        # Create mount directory (use sudo for system directories like /mnt)
+        mkdir_result = await sandbox.commands.run(f"sudo mkdir -p {mount_path}")
         if mkdir_result.exit_code != 0:
             error_msg = f"Failed to create mount directory: {mkdir_result.stderr}"
             logger.error(error_msg)
@@ -320,13 +340,63 @@ class E2BSandboxProvider(SandboxProvider):
             }
 
         # Check if nexus CLI is available
-        check_result = await sandbox.commands.run("which nexus")
-        if check_result.exit_code != 0:
+        nexus_installed = False
+        try:
+            check_result = await sandbox.commands.run("which nexus")
+            if check_result.exit_code == 0:
+                nexus_installed = True
+                logger.info("nexus CLI already available, skipping installation")
+        except CommandExitException:
+            # which returns non-zero when command not found
+            pass
+
+        # Check and install libfuse (system library required for FUSE)
+        libfuse_installed = False
+        try:
+            check_libfuse = await sandbox.commands.run(
+                "dpkg -l | grep -q fuse || ls /lib/*/libfuse* >/dev/null 2>&1",
+                timeout=10,
+            )
+            if check_libfuse.exit_code == 0:
+                libfuse_installed = True
+                logger.info("libfuse already installed")
+        except CommandExitException:
+            pass
+
+        if not libfuse_installed:
+            logger.info("Installing libfuse (system FUSE library)...")
+            try:
+                # Install libfuse via apt (Ubuntu/Debian)
+                install_result = await sandbox.commands.run(
+                    "sudo apt-get update -qq && sudo apt-get install -y -qq fuse libfuse-dev",
+                    timeout=120,
+                )
+                logger.info("Successfully installed libfuse")
+            except CommandExitException as e:
+                logger.warning(f"Failed to install libfuse via apt: {e.stderr}")
+
+        if not nexus_installed:
             # nexus not found, try to install
-            logger.info("nexus CLI not found, installing nexus-ai-fs...")
-            install_result = await sandbox.commands.run("pip install -q nexus-ai-fs")
-            if install_result.exit_code != 0:
-                error_msg = f"Failed to install nexus-ai-fs: {install_result.stderr}"
+            # Use longer timeout (180s) for pip install as it can take time
+            # Install with fuse extra for FUSE mount support
+            logger.info("nexus CLI not found, installing nexus-ai-fs[fuse]...")
+            try:
+                install_result = await sandbox.commands.run(
+                    "pip install -q 'nexus-ai-fs[fuse]'",
+                    timeout=180,  # 3 minutes for installation
+                )
+                if install_result.exit_code != 0:
+                    error_msg = f"Failed to install nexus-ai-fs: {install_result.stderr}"
+                    logger.error(error_msg)
+                    return {
+                        "success": False,
+                        "mount_path": mount_path,
+                        "message": error_msg,
+                        "files_visible": 0,
+                    }
+                logger.info("Successfully installed nexus-ai-fs[fuse]")
+            except CommandExitException as e:
+                error_msg = f"Failed to install nexus-ai-fs: {e.stderr}"
                 logger.error(error_msg)
                 return {
                     "success": False,
@@ -334,9 +404,29 @@ class E2BSandboxProvider(SandboxProvider):
                     "message": error_msg,
                     "files_visible": 0,
                 }
-            logger.info("Successfully installed nexus-ai-fs")
         else:
-            logger.info("nexus CLI already available, skipping installation")
+            # nexus is installed, check if fusepy is also installed
+            fusepy_installed = False
+            try:
+                check_fuse = await sandbox.commands.run(
+                    "python3 -c 'import fuse; print(\"ok\")'", timeout=10
+                )
+                if check_fuse.exit_code == 0:
+                    fusepy_installed = True
+                    logger.info("fusepy already installed")
+            except CommandExitException:
+                pass
+
+            if not fusepy_installed:
+                logger.info("fusepy not found, installing...")
+                try:
+                    install_result = await sandbox.commands.run(
+                        "pip install -q fusepy",
+                        timeout=60,
+                    )
+                    logger.info("Successfully installed fusepy")
+                except CommandExitException as e:
+                    logger.warning(f"Failed to install fusepy: {e.stderr}")
 
         # Build mount command with sudo and allow-other
         # Use nohup to run in background
@@ -364,39 +454,53 @@ class E2BSandboxProvider(SandboxProvider):
                 "files_visible": 0,
             }
 
-        # Wait for mount to initialize (FUSE needs time to mount and authenticate)
-        # Initial connection may take longer due to remote API calls
+        # Verify mount with polling instead of fixed sleep
+        # Poll every 0.5s for up to 15s, checking if FUSE mount is actually present
+        # Note: We can't just check if the directory exists (mkdir already created it)
+        # We need to verify the FUSE mount is actually mounted
         logger.info("Waiting for FUSE mount to initialize...")
-        await asyncio.sleep(5)
+        max_wait = 15  # Maximum seconds to wait
+        poll_interval = 0.5  # Check every 0.5 seconds
+        mount_verified = False
 
-        # Verify mount with lightweight stat check (avoids timeout from full directory listing)
-        # The first stat may timeout as FUSE initializes, so we retry with exponential backoff
-        max_retries = 3
-        base_delay = 5  # Start with 5 seconds
-        stat_result = None
+        for attempt in range(int(max_wait / poll_interval)):
+            # Check if FUSE mount is actually present in mount table
+            # This is more reliable than stat since the directory exists before mount
+            mount_check_cmd = f"mount | grep -q '{mount_path}'"
+            try:
+                mount_result = await sandbox.commands.run(mount_check_cmd, timeout=5)
+                if mount_result.exit_code == 0:
+                    # FUSE mount is present in mount table
+                    mount_verified = True
+                    elapsed = (attempt + 1) * poll_interval
+                    logger.info(f"FUSE mount verified after {elapsed:.1f}s")
+                    break
+            except CommandExitException:
+                # grep returns exit code 1 when no match found - this is expected
+                pass
 
-        for attempt in range(max_retries):
-            logger.info(f"Verifying mount (attempt {attempt + 1}/{max_retries})...")
-            # Use stat instead of ls - just checks mount accessibility without listing all files
-            stat_cmd = f"timeout 10 stat {mount_path}"
-            stat_result = await sandbox.commands.run(stat_cmd, timeout=15)
+            await asyncio.sleep(poll_interval)
 
-            if stat_result.exit_code == 0:
-                # Success! Mount is accessible
-                break
-
-            if attempt < max_retries - 1:
-                # Exponential backoff: 5s, 10s, 20s
-                retry_delay = base_delay * (2**attempt)
-                logger.warning(
-                    f"Mount verification attempt {attempt + 1} failed, retrying in {retry_delay}s..."
+        if not mount_verified:
+            # Polling timed out, check logs for details
+            log_stdout = ""
+            ps_stdout = ""
+            try:
+                log_result = await sandbox.commands.run("cat /tmp/nexus-mount.log 2>&1")
+                log_stdout = log_result.stdout
+            except CommandExitException as e:
+                log_stdout = e.stdout or ""
+            try:
+                ps_result = await sandbox.commands.run(
+                    "ps aux | grep -E 'nexus|fuse' | grep -v grep"
                 )
-                await asyncio.sleep(retry_delay)
-        else:
-            # All retries failed, check logs for details
-            log_result = await sandbox.commands.run("cat /tmp/nexus-mount.log")
+                ps_stdout = ps_result.stdout
+            except CommandExitException as e:
+                ps_stdout = e.stdout or ""
+
             error_msg = (
-                f"Mount verification failed after {max_retries} attempts. Log: {log_result.stdout}"
+                f"FUSE mount not found in mount table after {max_wait}s. "
+                f"Mount log: {log_stdout}. Processes: {ps_stdout}"
             )
             logger.error(error_msg)
             return {
@@ -406,23 +510,31 @@ class E2BSandboxProvider(SandboxProvider):
                 "files_visible": 0,
             }
 
-        # Mount verified successfully
-        if stat_result and stat_result.exit_code == 0:
-            logger.info(f"Successfully mounted Nexus at {mount_path} (verified with stat)")
+        # Mount verified - now wait a bit more for FUSE to fully initialize
+        # (allow time for initial directory listing to populate)
+        await asyncio.sleep(1)
+
+        # Verify files are accessible
+        try:
+            ls_result = await sandbox.commands.run(f"ls {mount_path}/ 2>&1", timeout=10)
+            logger.info(f"Successfully mounted Nexus at {mount_path} (verified with mount + ls)")
             return {
                 "success": True,
                 "mount_path": mount_path,
                 "message": f"Nexus mounted successfully at {mount_path}",
-                "files_visible": -1,  # Not counted with stat check
+                "files_visible": len(ls_result.stdout.strip().split("\n"))
+                if ls_result.stdout.strip()
+                else 0,
             }
-        else:
-            error_msg = "Mount verification failed: stat check unsuccessful"
-            logger.error(error_msg)
+        except CommandExitException as e:
+            logger.warning(
+                f"FUSE mount present but ls failed: {e.stderr}. Mount may still be initializing."
+            )
             return {
-                "success": False,
+                "success": True,
                 "mount_path": mount_path,
-                "message": error_msg,
-                "files_visible": 0,
+                "message": f"Nexus mounted at {mount_path} (FUSE present, ls pending)",
+                "files_visible": -1,
             }
 
     async def _get_sandbox(self, sandbox_id: str) -> AsyncSandbox:

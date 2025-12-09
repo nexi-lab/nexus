@@ -623,12 +623,11 @@ def _handle_write(params: Any, context: Any) -> dict[str, Any]:
     return {"bytes_written": bytes_written}
 
 
-def _handle_exists(params: Any, _context: Any) -> dict[str, Any]:
+def _handle_exists(params: Any, context: Any) -> dict[str, Any]:
     """Handle exists method."""
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
-    # Note: exists() doesn't support context parameter in NexusFilesystem
-    return {"exists": nexus_fs.exists(params.path)}
+    return {"exists": nexus_fs.exists(params.path, context=context)}
 
 
 def _handle_list(params: Any, context: Any) -> dict[str, Any]:
@@ -709,7 +708,7 @@ def _handle_get_metadata(params: Any, context: Any) -> dict[str, Any]:
     """Handle get_metadata method."""
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
-    metadata = nexus_fs.get_metadata(params.path, context=context)  # type: ignore[attr-defined]
+    metadata = nexus_fs.get_metadata(params.path, context=context)
     return {"metadata": metadata}
 
 

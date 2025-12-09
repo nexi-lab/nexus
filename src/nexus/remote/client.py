@@ -3549,7 +3549,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         self,
         name: str,
         ttl_minutes: int = 10,
-        provider: str = "e2b",
+        provider: str | None = "e2b",
         template_id: str | None = None,
         context: dict | None = None,
     ) -> dict:
@@ -3570,7 +3570,9 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             >>> result = nx.sandbox_create("data-analysis", ttl_minutes=30, provider="docker")
             >>> print(result['sandbox_id'])
         """
-        params: dict[str, Any] = {"name": name, "ttl_minutes": ttl_minutes, "provider": provider}
+        params: dict[str, Any] = {"name": name, "ttl_minutes": ttl_minutes}
+        if provider is not None:
+            params["provider"] = provider
         if template_id is not None:
             params["template_id"] = template_id
         if context is not None:
@@ -3584,6 +3586,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         language: str,
         code: str,
         timeout: int = 300,
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
         context: dict | None = None,
     ) -> dict:
         """Run code in a sandbox.
@@ -3593,6 +3597,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             language: Programming language ("python", "javascript", "bash")
             code: Code to execute
             timeout: Execution timeout in seconds (default: 300)
+            nexus_url: Nexus server URL to inject into code as NEXUS_URL env var
+            nexus_api_key: Nexus API key to inject into code as NEXUS_API_KEY env var
             context: Operation context
 
         Returns:
@@ -3605,6 +3611,15 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ...     "import pandas as pd\\nprint(pd.__version__)"
             ... )
             >>> print(result['stdout'])
+
+            # With credential injection for nexus CLI access:
+            >>> result = nx.sandbox_run(
+            ...     "sb_123",
+            ...     "bash",
+            ...     "nexus ls /workspace",
+            ...     nexus_url="https://nexus.example.com",
+            ...     nexus_api_key="sk-xxx"
+            ... )
         """
         params: dict[str, Any] = {
             "sandbox_id": sandbox_id,
@@ -3612,6 +3627,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             "code": code,
             "timeout": timeout,
         }
+        if nexus_url is not None:
+            params["nexus_url"] = nexus_url
+        if nexus_api_key is not None:
+            params["nexus_api_key"] = nexus_api_key
         if context is not None:
             params["context"] = context
         # Use execution timeout + 10 seconds buffer for HTTP read timeout
@@ -3687,6 +3706,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         user_id: str | None = None,
         tenant_id: str | None = None,
         agent_id: str | None = None,
+        status: str | None = None,
     ) -> dict:
         """List user's sandboxes.
 
@@ -3696,6 +3716,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             user_id: Filter by user_id (admin only)
             tenant_id: Filter by tenant_id (admin only)
             agent_id: Filter by agent_id
+            status: Filter by status (e.g., 'active', 'stopped', 'paused')
 
         Returns:
             Dict with list of sandboxes
@@ -3714,6 +3735,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             params["tenant_id"] = tenant_id
         if agent_id is not None:
             params["agent_id"] = agent_id
+        if status is not None:
+            params["status"] = status
         result = self._call_rpc("sandbox_list", params)
         return result  # type: ignore[no-any-return]
 
@@ -4191,9 +4214,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         self,
         provider: str,
         code: str,
-        user_email: str,
+        user_email: str | None = None,
         state: str | None = None,
         redirect_uri: str = "http://localhost:3000/oauth/callback",
+        code_verifier: str | None = None,
         context: Any = None,
     ) -> dict[str, Any]:
         """Exchange OAuth authorization code for tokens and store credentials.
@@ -4201,15 +4225,16 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Args:
             provider: OAuth provider name (e.g., "google")
             code: Authorization code from OAuth callback
-            user_email: User email address for credential storage
+            user_email: User email address for credential storage (optional, fetched from provider if not provided)
             state: CSRF state token (optional, for validation)
             redirect_uri: OAuth redirect URI (must match authorization request)
+            code_verifier: PKCE code verifier (required for some providers like X/Twitter)
             context: Operation context (optional)
 
         Returns:
             Dictionary containing:
                 - credential_id: Unique credential identifier
-                - user_email: User email
+                - user_email: User email (from provider if not provided)
                 - expires_at: Token expiration timestamp (ISO format)
                 - success: True if successful
 
@@ -4220,11 +4245,14 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         params: dict[str, Any] = {
             "provider": provider,
             "code": code,
-            "user_email": user_email,
             "redirect_uri": redirect_uri,
         }
+        if user_email is not None:
+            params["user_email"] = user_email
         if state is not None:
             params["state"] = state
+        if code_verifier is not None:
+            params["code_verifier"] = code_verifier
         if context is not None:
             params["context"] = context
         result = self._call_rpc("oauth_exchange_code", params)
@@ -4322,6 +4350,79 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         if context is not None:
             params["context"] = context
         result = self._call_rpc("oauth_test_credential", params)
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # MCP/Klavis Integration
+    # ============================================================
+
+    def mcp_connect(
+        self,
+        provider: str,
+        redirect_url: str | None = None,
+        user_email: str | None = None,
+        reuse_nexus_token: bool = True,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Connect to a Klavis MCP server with OAuth support.
+
+        This method creates a Klavis MCP instance, handles OAuth if needed,
+        discovers tools, and generates SKILL.md in the user's folder.
+
+        Args:
+            provider: MCP provider name (e.g., "google_drive", "gmail", "slack")
+            redirect_url: OAuth redirect URL (required if OAuth needed)
+            user_email: User email for OAuth (optional, uses context if not provided)
+            reuse_nexus_token: If True, try to reuse existing Nexus OAuth token
+            context: Operation context (optional)
+
+        Returns:
+            Dictionary containing:
+                - status: "connected" | "oauth_required" | "error"
+                - instance_id: Klavis instance ID (if created)
+                - oauth_url: OAuth URL (if OAuth required)
+                - tools: List of available tools (if connected)
+                - skill_path: Path to generated SKILL.md
+                - error: Error message (if error)
+        """
+        params: dict[str, Any] = {
+            "provider": provider,
+            "reuse_nexus_token": reuse_nexus_token,
+        }
+        if redirect_url is not None:
+            params["redirect_url"] = redirect_url
+        if user_email is not None:
+            params["user_email"] = user_email
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("mcp_connect", params)
+        return result  # type: ignore[no-any-return]
+
+    def mcp_get_oauth_url(
+        self,
+        provider: str,
+        redirect_url: str,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Get OAuth URL for a Klavis MCP provider.
+
+        Args:
+            provider: MCP provider name (e.g., "google_drive", "gmail")
+            redirect_url: OAuth callback URL
+            context: Operation context (optional)
+
+        Returns:
+            Dictionary containing:
+                - oauth_url: URL to redirect user for OAuth
+                - instance_id: Klavis instance ID for tracking
+        """
+        params: dict[str, Any] = {
+            "provider": provider,
+            "redirect_url": redirect_url,
+        }
+        if context is not None:
+            params["context"] = context
+        result = self._call_rpc("mcp_get_oauth_url", params)
         return result  # type: ignore[no-any-return]
 
     def close(self) -> None:

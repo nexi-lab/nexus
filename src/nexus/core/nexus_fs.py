@@ -1512,6 +1512,67 @@ class NexusFS(
         )
         return result
 
+    @rpc_expose(description="Get file metadata for FUSE operations")
+    def get_metadata(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        Get file metadata (permissions, ownership, size, etc.) for FUSE operations.
+
+        This method retrieves metadata without reading the file content,
+        used primarily by FUSE getattr() operations.
+
+        Args:
+            path: Virtual file path
+            context: Operation context with user, permissions, tenant info
+
+        Returns:
+            Metadata dict with keys: path, size, mime_type, created_at, modified_at,
+            is_directory, owner, mode. Returns None if file doesn't exist.
+
+        Examples:
+            >>> metadata = fs.get_metadata("/workspace/file.txt")
+            >>> print(f"Size: {metadata['size']} bytes")
+        """
+        ctx = context or self._default_context
+        normalized = self._validate_path(path, allow_root=True)
+
+        # Check if it's a directory first
+        is_dir = self.is_directory(normalized, context=ctx)
+
+        if is_dir:
+            # Return directory metadata
+            return {
+                "path": normalized,
+                "size": 4096,  # Standard directory size
+                "mime_type": "inode/directory",
+                "created_at": None,
+                "modified_at": None,
+                "is_directory": True,
+                "owner": ctx.user_id,
+                "group": ctx.user_id,
+                "mode": 0o755,  # drwxr-xr-x
+            }
+
+        # Try to get file metadata from store
+        file_meta = self.metadata.get(normalized)
+        if file_meta is None:
+            return None
+
+        return {
+            "path": file_meta.path,
+            "size": file_meta.size or 0,
+            "mime_type": file_meta.mime_type or "application/octet-stream",
+            "created_at": file_meta.created_at.isoformat() if file_meta.created_at else None,
+            "modified_at": file_meta.modified_at.isoformat() if file_meta.modified_at else None,
+            "is_directory": False,
+            "owner": ctx.user_id,
+            "group": ctx.user_id,
+            "mode": 0o644,  # -rw-r--r--
+        }
+
     def _get_backend_directory_entries(
         self, path: str, context: OperationContext | None = None
     ) -> set[str]:
@@ -3390,7 +3451,7 @@ class NexusFS(
             return loop.run_until_complete(coro)
 
     @rpc_expose(description="Create a new sandbox")
-    def sandbox_create(
+    async def sandbox_create(  # type: ignore[override]
         self,
         name: str,
         ttl_minutes: int = 10,
@@ -3417,27 +3478,27 @@ class NexusFS(
         assert self._sandbox_manager is not None
 
         # Create sandbox (provider auto-selection happens in sandbox_manager)
-        result: dict[Any, Any] = self._run_async(
-            self._sandbox_manager.create_sandbox(
-                name=name,
-                user_id=ctx.user or "system",
-                tenant_id=ctx.tenant_id or self._default_context.tenant_id or "default",
-                agent_id=ctx.agent_id,
-                ttl_minutes=ttl_minutes,
-                provider=provider,
-                template_id=template_id,
-            )
+        result: dict[Any, Any] = await self._sandbox_manager.create_sandbox(
+            name=name,
+            user_id=ctx.user or "system",
+            tenant_id=ctx.tenant_id or self._default_context.tenant_id or "default",
+            agent_id=ctx.agent_id,
+            ttl_minutes=ttl_minutes,
+            provider=provider,
+            template_id=template_id,
         )
         return result
 
     @rpc_expose(description="Run code in sandbox")
-    def sandbox_run(
+    async def sandbox_run(  # type: ignore[override]
         self,
         sandbox_id: str,
         language: str,
         code: str,
         timeout: int = 300,
-        context: dict | None = None,  # noqa: ARG002
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
+        context: dict | None = None,
     ) -> dict:
         """Run code in a sandbox.
 
@@ -3446,7 +3507,9 @@ class NexusFS(
             language: Programming language ("python", "javascript", "bash")
             code: Code to execute
             timeout: Execution timeout in seconds (default: 300)
-            context: Operation context
+            nexus_url: Nexus server URL (auto-injected as env var if provided)
+            nexus_api_key: Nexus API key (auto-injected as env var if provided)
+            context: Operation context (used to get api_key if nexus_api_key not provided)
 
         Returns:
             Dict with stdout, stderr, exit_code, execution_time
@@ -3455,13 +3518,50 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        result: dict[Any, Any] = self._run_async(
-            self._sandbox_manager.run_code(sandbox_id, language, code, timeout)
+        # Get Nexus credentials from context if not provided
+        if not nexus_api_key and context:
+            ctx = self._parse_context(context)
+            nexus_api_key = getattr(ctx, "api_key", None)
+
+        # Auto-detect nexus_url if not provided
+        if not nexus_url:
+            import os
+
+            nexus_url = os.getenv("NEXUS_SERVER_URL") or os.getenv("NEXUS_URL")
+
+        # Inject Nexus credentials as environment variables in the code
+        if nexus_url or nexus_api_key:
+            env_prefix = ""
+            if language == "bash":
+                if nexus_url:
+                    env_prefix += f'export NEXUS_URL="{nexus_url}"\n'
+                if nexus_api_key:
+                    env_prefix += f'export NEXUS_API_KEY="{nexus_api_key}"\n'
+                code = env_prefix + code
+            elif language == "python":
+                env_lines = ["import os"]
+                if nexus_url:
+                    env_lines.append(f'os.environ["NEXUS_URL"] = "{nexus_url}"')
+                if nexus_api_key:
+                    env_lines.append(f'os.environ["NEXUS_API_KEY"] = "{nexus_api_key}"')
+                env_prefix = "\n".join(env_lines) + "\n"
+                code = env_prefix + code
+            elif language in ("javascript", "js"):
+                env_lines = []
+                if nexus_url:
+                    env_lines.append(f'process.env.NEXUS_URL = "{nexus_url}";')
+                if nexus_api_key:
+                    env_lines.append(f'process.env.NEXUS_API_KEY = "{nexus_api_key}";')
+                env_prefix = "\n".join(env_lines) + "\n"
+                code = env_prefix + code
+
+        result: dict[Any, Any] = await self._sandbox_manager.run_code(
+            sandbox_id, language, code, timeout
         )
         return result
 
     @rpc_expose(description="Pause sandbox")
-    def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
+    async def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002
         """Pause sandbox to save costs.
 
         Args:
@@ -3475,11 +3575,11 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        result: dict[Any, Any] = self._run_async(self._sandbox_manager.pause_sandbox(sandbox_id))
+        result: dict[Any, Any] = await self._sandbox_manager.pause_sandbox(sandbox_id)
         return result
 
     @rpc_expose(description="Resume paused sandbox")
-    def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
+    async def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002
         """Resume a paused sandbox.
 
         Args:
@@ -3493,11 +3593,11 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        result: dict[Any, Any] = self._run_async(self._sandbox_manager.resume_sandbox(sandbox_id))
+        result: dict[Any, Any] = await self._sandbox_manager.resume_sandbox(sandbox_id)
         return result
 
     @rpc_expose(description="Stop and destroy sandbox")
-    def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
+    async def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002
         """Stop and destroy sandbox.
 
         Args:
@@ -3511,11 +3611,11 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        result: dict[Any, Any] = self._run_async(self._sandbox_manager.stop_sandbox(sandbox_id))
+        result: dict[Any, Any] = await self._sandbox_manager.stop_sandbox(sandbox_id)
         return result
 
     @rpc_expose(description="List sandboxes")
-    def sandbox_list(
+    async def sandbox_list(  # type: ignore[override]
         self,
         context: dict | None = None,
         verify_status: bool = False,
@@ -3550,19 +3650,17 @@ class NexusFS(
         filter_tenant_id = tenant_id if (tenant_id is not None and ctx.is_admin) else ctx.tenant_id
         filter_agent_id = agent_id if agent_id is not None else ctx.agent_id
 
-        sandboxes = self._run_async(
-            self._sandbox_manager.list_sandboxes(
-                user_id=filter_user_id,
-                tenant_id=filter_tenant_id,
-                agent_id=filter_agent_id,
-                status=status,
-                verify_status=verify_status,
-            )
+        sandboxes = await self._sandbox_manager.list_sandboxes(
+            user_id=filter_user_id,
+            tenant_id=filter_tenant_id,
+            agent_id=filter_agent_id,
+            status=status,
+            verify_status=verify_status,
         )
         return {"sandboxes": sandboxes}
 
     @rpc_expose(description="Get sandbox status")
-    def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
+    async def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002
         """Get sandbox status and metadata.
 
         Args:
@@ -3576,13 +3674,11 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        result: dict[Any, Any] = self._run_async(
-            self._sandbox_manager.get_sandbox_status(sandbox_id)
-        )
+        result: dict[Any, Any] = await self._sandbox_manager.get_sandbox_status(sandbox_id)
         return result
 
     @rpc_expose(description="Get or create sandbox")
-    def sandbox_get_or_create(
+    async def sandbox_get_or_create(  # type: ignore[override]
         self,
         name: str,
         ttl_minutes: int = 10,
@@ -3623,22 +3719,20 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        result: dict[Any, Any] = self._run_async(
-            self._sandbox_manager.get_or_create_sandbox(
-                name=name,
-                user_id=ctx.user or "system",
-                tenant_id=ctx.tenant_id or self._default_context.tenant_id or "default",
-                agent_id=ctx.agent_id,
-                ttl_minutes=ttl_minutes,
-                provider=provider,
-                template_id=template_id,
-                verify_status=verify_status,
-            )
+        result: dict[Any, Any] = await self._sandbox_manager.get_or_create_sandbox(
+            name=name,
+            user_id=ctx.user or "system",
+            tenant_id=ctx.tenant_id or self._default_context.tenant_id or "default",
+            agent_id=ctx.agent_id,
+            ttl_minutes=ttl_minutes,
+            provider=provider,
+            template_id=template_id,
+            verify_status=verify_status,
         )
         return result
 
     @rpc_expose(description="Connect to user-managed sandbox")
-    def sandbox_connect(
+    async def sandbox_connect(  # type: ignore[override]
         self,
         sandbox_id: str,
         provider: str = "e2b",
@@ -3694,20 +3788,18 @@ class NexusFS(
                 "Nexus API key required for mounting. Pass nexus_api_key or provide in context."
             )
 
-        result: dict[Any, Any] = self._run_async(
-            self._sandbox_manager.connect_sandbox(
-                sandbox_id=sandbox_id,
-                provider=provider,
-                sandbox_api_key=sandbox_api_key,
-                mount_path=mount_path,
-                nexus_url=nexus_url,
-                nexus_api_key=nexus_api_key,
-            )
+        result: dict[Any, Any] = await self._sandbox_manager.connect_sandbox(
+            sandbox_id=sandbox_id,
+            provider=provider,
+            sandbox_api_key=sandbox_api_key,
+            mount_path=mount_path,
+            nexus_url=nexus_url,
+            nexus_api_key=nexus_api_key,
         )
         return result
 
     @rpc_expose(description="Disconnect from user-managed sandbox")
-    def sandbox_disconnect(
+    async def sandbox_disconnect(  # type: ignore[override]
         self,
         sandbox_id: str,
         provider: str = "e2b",
@@ -3733,12 +3825,10 @@ class NexusFS(
         self._ensure_sandbox_manager()
         assert self._sandbox_manager is not None
 
-        result: dict[Any, Any] = self._run_async(
-            self._sandbox_manager.disconnect_sandbox(
-                sandbox_id=sandbox_id,
-                provider=provider,
-                sandbox_api_key=sandbox_api_key,
-            )
+        result: dict[Any, Any] = await self._sandbox_manager.disconnect_sandbox(
+            sandbox_id=sandbox_id,
+            provider=provider,
+            sandbox_api_key=sandbox_api_key,
         )
         return result
 

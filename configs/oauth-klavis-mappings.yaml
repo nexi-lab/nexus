@@ -1,0 +1,79 @@
+# OAuth to Klavis MCP Mappings
+#
+# This file maps our local OAuth providers to Klavis MCP servers that can reuse the same tokens.
+# When a user has authenticated with our OAuth (e.g., for gdrive_connector), we can pass
+# that token to Klavis via set_auth() instead of requiring a separate OAuth flow.
+#
+# Flow:
+#   1. User does: nexus oauth setup-gdrive --user-email alice@gmail.com
+#   2. Token stored in TokenManager under oauth_provider "google"
+#   3. User does: nexus mcp connect gmail --user alice@gmail.com
+#   4. System checks: gmail needs "google" OAuth, we have it!
+#   5. System calls klavis.set_auth() with our token
+#   6. No additional OAuth required!
+
+oauth_providers:
+  # Google OAuth - used by multiple services
+  google:
+    # Our OAuth provider names (from oauth.yaml)
+    local_providers:
+      - google-drive
+      - gmail
+      - google-cloud-storage
+
+    # Our connectors that store tokens under this OAuth
+    connectors:
+      - gdrive_connector
+
+    # Klavis MCP servers that can reuse this token
+    # (exact identifiers from Klavis API)
+    klavis_mcps:
+      - gmail
+      - google_drive
+      - google_docs
+      - google_sheets
+      - google_calendar
+
+    # Scope requirements for each Klavis MCP
+    # If our token has these scopes, we can use set_auth
+    mcp_scopes:
+      gmail:
+        - https://www.googleapis.com/auth/gmail.readonly
+      google_drive:
+        - https://www.googleapis.com/auth/drive
+      google_docs:
+        - https://www.googleapis.com/auth/drive
+      google_sheets:
+        - https://www.googleapis.com/auth/drive
+      google_calendar:
+        - https://www.googleapis.com/auth/calendar
+
+  # Microsoft OAuth
+  microsoft:
+    local_providers:
+      - microsoft-onedrive
+
+    connectors: []  # No connector yet
+
+    klavis_mcps:
+      - outlook
+      - onedrive
+
+    mcp_scopes:
+      outlook:
+        - Mail.Read
+      onedrive:
+        - Files.ReadWrite.All
+
+  # X/Twitter OAuth
+  # Note: Klavis does NOT have X/Twitter integration as of Dec 2024
+  twitter:
+    local_providers:
+      - x
+
+    connectors:
+      - x_connector
+
+    klavis_mcps: []  # Klavis doesn't support X yet
+
+    mcp_scopes: {}

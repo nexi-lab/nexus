@@ -15,7 +15,6 @@ Prerequisites:
 """
 
 import argparse
-import asyncio
 import json
 import sys
 from pathlib import Path
@@ -88,7 +87,7 @@ def get_db_url_from_docker():
         raise
 
 
-async def test_gmail_multipart_parsing(user_email: str, max_messages: int = 5):
+def test_gmail_multipart_parsing(user_email: str, max_messages: int = 5):
     """Test Gmail connector with real API calls."""
     from nexus.backends.gmail_connector import GmailConnectorBackend
     from nexus.core.permissions import OperationContext
@@ -110,9 +109,7 @@ async def test_gmail_multipart_parsing(user_email: str, max_messages: int = 5):
         )
 
         # Create operation context
-        context = OperationContext(
-            user_id=user_email, tenant_id="default", backend_path="", api_key_metadata={}
-        )
+        context = OperationContext(user=user_email, groups=[], tenant_id="default", backend_path="")
 
         # Get Gmail service
         print("\n=== Fetching OAuth Tokens ===")
@@ -278,7 +275,7 @@ def main():
     print("=" * 80)
 
     try:
-        asyncio.run(test_gmail_multipart_parsing(args.user, args.max_messages))
+        test_gmail_multipart_parsing(args.user, args.max_messages)
         print("\n✅ Test completed successfully!")
         sys.exit(0)
     except Exception as e:

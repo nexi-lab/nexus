@@ -1032,6 +1032,8 @@ class SandboxRunParams:
     language: str
     code: str
     timeout: int = 300
+    nexus_url: str | None = None
+    nexus_api_key: str | None = None
     context: dict | None = None
 
 
@@ -1387,6 +1389,16 @@ class OAuthTestCredentialParams:
     user_email: str
 
 
+@dataclass
+class MCPConnectParams:
+    """Parameters for mcp_connect method."""
+
+    provider: str
+    redirect_url: str | None = None
+    user_email: str | None = None
+    reuse_nexus_token: bool = True
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -1504,6 +1516,8 @@ METHOD_PARAMS = {
     "oauth_list_credentials": OAuthListCredentialsParams,
     "oauth_revoke_credential": OAuthRevokeCredentialParams,
     "oauth_test_credential": OAuthTestCredentialParams,
+    # MCP/Klavis integration methods
+    "mcp_connect": MCPConnectParams,
     # ACE (Adaptive Concurrency Engine) methods
     "ace_start_trajectory": AceStartTrajectoryParams,
     "ace_log_trajectory_step": AceLogTrajectoryStepParams,

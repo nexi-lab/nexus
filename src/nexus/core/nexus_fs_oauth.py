@@ -765,3 +765,308 @@ class NexusFSOAuthMixin:
                 "valid": False,
                 "error": str(e),
             }
+
+    @rpc_expose(description="Connect to MCP provider via Klavis")
+    async def mcp_connect(
+        self,
+        provider: str,
+        redirect_url: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Connect to an MCP provider using Klavis hosted OAuth.
+
+        This method:
+        1. Creates a Klavis MCP instance for the provider
+        2. If we have stored OAuth tokens for this provider, passes them to Klavis via set_auth()
+        3. Returns the OAuth URL if not authenticated, or strata URL if authenticated
+        4. Generates SKILL.md in user's skill folder
+
+        Args:
+            provider: MCP provider name (e.g., "google_drive", "gmail", "slack")
+            redirect_url: OAuth redirect URL (for OAuth flow)
+            context: Operation context
+
+        Returns:
+            Dict with:
+                - provider: Provider name
+                - oauth_url: URL to complete OAuth (if not authenticated)
+                - strata_url: MCP strata URL (if authenticated)
+                - is_authenticated: Whether user is authenticated
+                - tools: List of available MCP tools (if authenticated)
+                - skill_path: Path to generated SKILL.md
+        """
+        import os
+
+        import httpx
+
+        from nexus.mcp.oauth_mappings import OAuthKlavisMappings
+
+        klavis_api_key = os.environ.get("KLAVIS_API_KEY")
+        if not klavis_api_key:
+            raise ValueError("KLAVIS_API_KEY environment variable not set")
+
+        # Get user info from context
+        user_id = "admin"
+        if context:
+            user_id = getattr(context, "user_id", None) or getattr(context, "user", None) or "admin"
+
+        # Create unique Klavis user ID for this Nexus user
+        klavis_user_id = f"nexus-{user_id}"
+
+        headers = {
+            "Authorization": f"Bearer {klavis_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        oauth_mappings = OAuthKlavisMappings()
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Step 1: Check for stored OAuth credentials and pass to Klavis via set_auth
+            oauth_provider = oauth_mappings.get_oauth_provider_for_klavis_mcp(provider)
+            used_stored_token = False
+
+            if oauth_provider:
+                # Try to find a stored credential for this OAuth provider
+                try:
+                    token_manager = self._get_token_manager()
+                    credential = None
+
+                    # Get the mapping to find all local provider names
+                    mapping = oauth_mappings.get_mapping(oauth_provider)
+                    local_providers = mapping.local_providers if mapping else [oauth_provider]
+                    logger.info(
+                        f"Looking for credentials: oauth_provider={oauth_provider}, local_providers={local_providers}, user_id={user_id}"
+                    )
+
+                    # Try listing credentials to find one for this provider
+                    credentials = await token_manager.list_credentials(user_id=user_id)
+                    logger.info(f"Found {len(credentials)} credentials for user_id={user_id}")
+                    for cred_info in credentials:
+                        logger.debug(
+                            f"  Credential: provider={cred_info.get('provider')}, user_email={cred_info.get('user_email')}, user_id={cred_info.get('user_id')}"
+                        )
+
+                    # Also try without user_id filter (fallback)
+                    if not credentials:
+                        logger.info(
+                            "No credentials found with user_id filter, trying without filter"
+                        )
+                        credentials = await token_manager.list_credentials()
+                        logger.info(f"Found {len(credentials)} total credentials")
+                        for cred_info in credentials:
+                            logger.debug(
+                                f"  Credential: provider={cred_info.get('provider')}, user_email={cred_info.get('user_email')}, user_id={cred_info.get('user_id')}"
+                            )
+
+                    for cred_info in credentials:
+                        cred_provider = cred_info.get("provider")
+                        # Check if credential provider matches our oauth provider or any of its local names
+                        if cred_provider == oauth_provider or cred_provider in local_providers:
+                            credential = await token_manager.get_credential(
+                                provider=cred_provider,
+                                user_email=cred_info.get("user_email"),
+                            )
+                            if credential:
+                                logger.info(
+                                    f"Found matching credential for {cred_provider}:{cred_info.get('user_email')}"
+                                )
+                                break
+
+                    if credential and credential.access_token:
+                        # Pass our token to Klavis via set_auth
+                        logger.info(
+                            f"Passing stored {oauth_provider} token to Klavis for {provider}"
+                        )
+                        set_auth_resp = await client.post(
+                            "https://api.klavis.ai/user/set-auth",
+                            json={
+                                "serverName": provider,
+                                "userId": klavis_user_id,
+                                "authData": {
+                                    "data": {
+                                        "access_token": credential.access_token,
+                                        "token_type": "Bearer",
+                                        "refresh_token": credential.refresh_token,
+                                    }
+                                },
+                            },
+                            headers=headers,
+                        )
+                        if set_auth_resp.status_code == 200:
+                            logger.info(f"Successfully passed token to Klavis for {provider}")
+                            used_stored_token = True
+                        else:
+                            logger.warning(f"Failed to pass token to Klavis: {set_auth_resp.text}")
+                except Exception as e:
+                    logger.debug(f"Could not pass stored token to Klavis: {e}")
+
+            # Step 2: Create MCP instance
+            create_resp = await client.post(
+                "https://api.klavis.ai/mcp-server/instance/create",
+                json={
+                    "serverName": provider,
+                    "userId": klavis_user_id,
+                },
+                headers=headers,
+            )
+            create_resp.raise_for_status()
+            instance_data = create_resp.json()
+            instance_id = instance_data.get("instanceId")
+            # Get server URL from instance creation response
+            server_url = instance_data.get("serverUrl") or instance_data.get("url")
+            logger.info(f"Klavis instance created: id={instance_id}, server_url={server_url}")
+            logger.debug(f"Klavis instance data: {instance_data}")
+
+            # Step 3: Get instance status to check if authenticated
+            status_resp = await client.get(
+                f"https://api.klavis.ai/mcp-server/instance/{instance_id}",
+                headers=headers,
+            )
+            status_resp.raise_for_status()
+            status_data = status_resp.json()
+            logger.debug(f"Klavis instance status: {status_data}")
+            # Also try to get server URL from status if not in create response
+            if not server_url:
+                server_url = status_data.get("serverUrl") or status_data.get("url")
+
+            is_authenticated = status_data.get("isAuthenticated", False)
+
+            # If not authenticated after passing token, return OAuth URL
+            if not is_authenticated:
+                oauth_url = status_data.get("oauthUrl")
+                if redirect_url and oauth_url:
+                    # Append redirect_url to oauth_url
+                    separator = "&" if "?" in oauth_url else "?"
+                    oauth_url = f"{oauth_url}{separator}redirect_url={redirect_url}"
+
+                logger.info(f"MCP OAuth URL generated for {provider}, user={klavis_user_id}")
+                return {
+                    "provider": provider,
+                    "instance_id": instance_id,
+                    "oauth_url": oauth_url,
+                    "is_authenticated": False,
+                    "used_stored_token": used_stored_token,
+                    "user_id": klavis_user_id,
+                }
+
+            # Step 4: Get strata URL for authenticated user (optional - may not be needed)
+            strata_url = None
+            try:
+                strata_resp = await client.post(
+                    "https://api.klavis.ai/mcp-server/strata/create",
+                    json={
+                        "serverName": provider,
+                        "userId": klavis_user_id,
+                    },
+                    headers=headers,
+                )
+                if strata_resp.status_code == 200:
+                    strata_data = strata_resp.json()
+                    strata_url = strata_data.get("strataUrl")
+                else:
+                    logger.warning(
+                        f"Klavis strata/create returned {strata_resp.status_code}: {strata_resp.text}"
+                    )
+            except Exception as e:
+                logger.warning(f"Klavis strata/create failed: {e}")
+
+            # Step 5: Get available tools
+            tools = []
+            # Build request - use serverUrl if available, otherwise serverName
+            list_tools_payload: dict[str, Any] = {"userId": klavis_user_id}
+            if server_url:
+                list_tools_payload["serverUrl"] = server_url
+            else:
+                list_tools_payload["serverName"] = provider
+
+            tools_resp = await client.post(
+                "https://api.klavis.ai/mcp-server/list-tools",
+                json=list_tools_payload,
+                headers=headers,
+            )
+            logger.info(f"Klavis list-tools response: {tools_resp.status_code}")
+            if tools_resp.status_code == 200:
+                tools_data = tools_resp.json()
+                logger.info(
+                    f"Klavis list-tools data: success={tools_data.get('success')}, tools_count={len(tools_data.get('tools', []))}"
+                )
+                if tools_data.get("success"):
+                    tools = tools_data.get("tools", [])
+                else:
+                    logger.warning(f"Klavis list-tools returned success=False: {tools_data}")
+            else:
+                logger.warning(
+                    f"Klavis list-tools failed: {tools_resp.status_code} - {tools_resp.text}"
+                )
+
+            # Step 6: Generate SKILL.md in user's folder
+            # generate_skill_md uses ServiceMap to get connector template + MCP tools
+            from nexus.backends.service_map import ServiceMap
+            from nexus.skills.skill_generator import generate_skill_md
+
+            service_name = ServiceMap.get_service_name(mcp=provider) or provider
+            skill_base_path = f"/skills/users/{user_id}/"
+            skill_path = f"{skill_base_path}{service_name}/"
+            skill_file = f"{skill_path}SKILL.md"
+
+            # Find connector mount path if connector exists for this service
+            # This makes the SKILL.md reference the actual data location
+            service_info = ServiceMap.get_service_info(service_name)
+            data_mount_path = skill_path  # default to skill path for MCP-only services
+            logger.info(
+                f"Looking for connector mount: service={service_name}, connector={service_info.connector if service_info else None}"
+            )
+            if service_info and service_info.connector and hasattr(self, "router"):
+                # Look for existing mount with this connector
+                router_mounts = getattr(self.router, "_mounts", [])
+                logger.info(f"Found {len(router_mounts)} mounts in router")
+                # Normalize connector name for comparison (e.g., gdrive_connector -> gdriveconnector, googledrive)
+                connector_variants = [
+                    service_info.connector.lower().replace("_", ""),  # gdriveconnector
+                    service_info.connector.lower().replace("_connector", ""),  # gdrive
+                    "googledrive",  # common variant
+                ]
+                for mount in router_mounts:
+                    mount_backend = getattr(mount, "backend", None)
+                    mount_point = getattr(mount, "mount_point", None)
+                    if mount_backend:
+                        backend_type = type(mount_backend).__name__.lower()
+                        logger.info(f"  Mount: {mount_point} -> {backend_type}")
+                        # Check if any variant matches
+                        for variant in connector_variants:
+                            if variant in backend_type:
+                                data_mount_path = mount_point
+                                logger.info(
+                                    f"Found connector mount at {data_mount_path} (matched {variant})"
+                                )
+                                break
+                        if data_mount_path != skill_path:
+                            break
+            logger.info(f"Using mount path for SKILL.md: {data_mount_path}")
+
+            skill_md = generate_skill_md(
+                service_name=service_name,
+                mount_path=data_mount_path,
+                mcp_tools=tools,
+            )
+
+            # Write skill file
+            try:
+                if hasattr(self, "mkdir"):
+                    self.mkdir(skill_path, parents=True, exist_ok=True, context=context)
+                if hasattr(self, "write"):
+                    self.write(skill_file, skill_md.encode("utf-8"), context=context)
+                    logger.info(f"Generated MCP skill: {skill_file}")
+            except Exception as e:
+                logger.warning(f"Failed to write skill file: {e}")
+
+            return {
+                "provider": provider,
+                "instance_id": instance_id,
+                "strata_url": strata_url,
+                "is_authenticated": True,
+                "tools": tools,
+                "tool_count": len(tools),
+                "skill_path": skill_file,
+                "user_id": klavis_user_id,
+            }

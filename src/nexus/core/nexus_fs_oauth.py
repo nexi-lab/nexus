@@ -1001,15 +1001,20 @@ class NexusFSOAuthMixin:
                     f"Klavis list-tools failed: {tools_resp.status_code} - {tools_resp.text}"
                 )
 
-            # Step 6: Generate SKILL.md in user's folder
+            # Step 6: Generate SKILL.md, mount.json, and {tool}.json files in user's folder
             # generate_skill_md uses ServiceMap to get connector template + MCP tools
+            import json as json_module
+            from datetime import UTC, datetime
+
             from nexus.backends.service_map import ServiceMap
+            from nexus.skills.mcp_models import MCPMount, MCPToolConfig, MCPToolDefinition
             from nexus.skills.skill_generator import generate_skill_md
 
             service_name = ServiceMap.get_service_name(mcp=provider) or provider
             skill_base_path = f"/skills/users/{user_id}/"
             skill_path = f"{skill_base_path}{service_name}/"
             skill_file = f"{skill_path}SKILL.md"
+            mount_file = f"{skill_path}mount.json"
 
             # Find connector mount path if connector exists for this service
             # This makes the SKILL.md reference the actual data location
@@ -1053,15 +1058,74 @@ class NexusFSOAuthMixin:
                 mcp_tools=tools,
             )
 
-            # Write skill file
+            # Write skill files
             try:
                 if hasattr(self, "mkdir"):
                     self.mkdir(skill_path, parents=True, exist_ok=True, context=context)
+
                 if hasattr(self, "write"):
+                    # Write SKILL.md
                     self.write(skill_file, skill_md.encode("utf-8"), context=context)
                     logger.info(f"Generated MCP skill: {skill_file}")
+
+                    # Write mount.json
+                    now = datetime.now(UTC)
+                    mount_config = MCPMount(
+                        name=service_name,
+                        description=service_info.description
+                        if service_info
+                        else f"{provider} MCP integration",
+                        transport="klavis_rest",
+                        url=server_url or strata_url,
+                        klavis_strata_id=instance_id,
+                        auth_type="oauth",
+                        auth_config={
+                            "klavis_user_id": klavis_user_id
+                        },  # Store user ID for API calls
+                        tools_path=skill_path,
+                        mounted=True,
+                        mounted_at=now,
+                        last_sync=now,
+                        tool_count=len(tools),
+                        tools=[t.get("name", "") for t in tools],
+                        tier="user",
+                    )
+                    mount_json = json_module.dumps(mount_config.to_dict(), indent=2)
+                    self.write(mount_file, mount_json.encode("utf-8"), context=context)
+                    logger.info(f"Generated mount config: {mount_file}")
+
+                    # Write {tool}.json for each tool
+                    for tool in tools:
+                        tool_name = tool.get("name", "")
+                        if not tool_name:
+                            continue
+
+                        tool_config = MCPToolConfig(
+                            endpoint=f"mcp://{service_name}/{tool_name}",
+                            input_schema=tool.get("inputSchema", {}),
+                            requires_mount=True,
+                            mount_name=service_name,
+                            when_to_use=tool.get("description", ""),
+                        )
+
+                        tool_def = MCPToolDefinition(
+                            name=tool_name,
+                            description=tool.get("description", ""),
+                            version="1.0.0",
+                            skill_type="mcp_tool",
+                            mcp_config=tool_config,
+                            created_at=now,
+                            modified_at=now,
+                        )
+
+                        tool_file = f"{skill_path}{tool_name}.json"
+                        tool_json = json_module.dumps(tool_def.to_dict(), indent=2)
+                        self.write(tool_file, tool_json.encode("utf-8"), context=context)
+
+                    logger.info(f"Generated {len(tools)} tool definitions in {skill_path}")
+
             except Exception as e:
-                logger.warning(f"Failed to write skill file: {e}")
+                logger.warning(f"Failed to write skill files: {e}")
 
             return {
                 "provider": provider,
@@ -1071,5 +1135,7 @@ class NexusFSOAuthMixin:
                 "tools": tools,
                 "tool_count": len(tools),
                 "skill_path": skill_file,
+                "mount_path": mount_file,
+                "tools_path": skill_path,
                 "user_id": klavis_user_id,
             }

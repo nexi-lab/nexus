@@ -36,6 +36,7 @@ Authentication:
 """
 
 import logging
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -302,6 +303,48 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             # Fallback to current time if parsing fails
             return datetime.now(UTC)
 
+    def _extract_body_from_parts(
+        self, parts: list[dict[str, Any]], body_text: str = "", body_html: str = ""
+    ) -> tuple[str, str]:
+        """Recursively extract body text and HTML from message parts.
+
+        This handles nested multipart messages (e.g., multipart/alternative inside multipart/mixed).
+
+        Args:
+            parts: List of message parts from Gmail API
+            body_text: Accumulated plain text body (for recursion)
+            body_html: Accumulated HTML body (for recursion)
+
+        Returns:
+            Tuple of (body_text, body_html)
+        """
+        import base64
+
+        for part in parts:
+            mime_type = part.get("mimeType", "")
+            body_data = part.get("body", {}).get("data")
+
+            # If this part has nested parts (multipart/*), recurse
+            if "parts" in part:
+                body_text, body_html = self._extract_body_from_parts(
+                    part["parts"], body_text, body_html
+                )
+            # Otherwise, extract body data if present
+            elif body_data:
+                try:
+                    decoded = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
+                    if mime_type == "text/plain" and not body_text:
+                        # Only set if not already set (prefer first occurrence)
+                        body_text = decoded
+                    elif mime_type == "text/html" and not body_html:
+                        # Only set if not already set (prefer first occurrence)
+                        body_html = decoded
+                except Exception:
+                    # Skip parts that fail to decode
+                    continue
+
+        return body_text, body_html
+
     def _parse_gmail_message(self, message: dict[str, Any]) -> dict[str, Any]:
         """Parse Gmail API message response into email data dict.
 
@@ -326,23 +369,18 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         # Extract body
         body_text = ""
         body_html = ""
-        parts = message.get("payload", {}).get("parts", [])
+        payload = message.get("payload", {})
+        parts = payload.get("parts", [])
+
         if not parts:
             # Simple message without multipart
-            body_data = message.get("payload", {}).get("body", {}).get("data")
+            body_data = payload.get("body", {}).get("data")
             if body_data:
-                body_text = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
+                with suppress(Exception):
+                    body_text = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
         else:
-            # Multipart message
-            for part in parts:
-                mime_type = part.get("mimeType", "")
-                body_data = part.get("body", {}).get("data")
-                if body_data:
-                    decoded = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
-                    if mime_type == "text/plain":
-                        body_text = decoded
-                    elif mime_type == "text/html":
-                        body_html = decoded
+            # Multipart message - use recursive extraction to handle nested multipart
+            body_text, body_html = self._extract_body_from_parts(parts)
 
         # Build email data structure
         email_data = {
@@ -696,7 +734,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             # Try to fetch from Gmail API
             try:
                 service = self._get_gmail_service(context)
-                service.users().messages().get(userId="me", id=message_id).execute()
+                service.users().messages().get(userId="me", id=message_id, format="full").execute()
                 return True
             except Exception:
                 return False

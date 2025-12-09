@@ -887,5 +887,266 @@ class TestGmailConnectorExponentialBackoff:
             assert mock_list.execute.call_count == 5
 
 
+class TestGmailConnectorRecursiveBodyParsing:
+    """Test recursive body extraction from nested multipart messages."""
+
+    def test_extract_body_from_simple_parts(self, gmail_connector) -> None:
+        """Test extracting body from simple non-nested parts."""
+        import base64
+
+        text_content = "This is plain text body"
+        html_content = "<html><body>This is HTML body</body></html>"
+
+        parts = [
+            {
+                "mimeType": "text/plain",
+                "body": {"data": base64.urlsafe_b64encode(text_content.encode()).decode()},
+            },
+            {
+                "mimeType": "text/html",
+                "body": {"data": base64.urlsafe_b64encode(html_content.encode()).decode()},
+            },
+        ]
+
+        body_text, body_html = gmail_connector._extract_body_from_parts(parts)
+
+        assert body_text == text_content
+        assert body_html == html_content
+
+    def test_extract_body_from_nested_multipart(self, gmail_connector) -> None:
+        """Test extracting body from nested multipart/alternative inside multipart/mixed."""
+        import base64
+
+        text_content = "Nested plain text"
+        html_content = "<html><body>Nested HTML</body></html>"
+
+        # Simulate: multipart/mixed containing multipart/alternative
+        parts = [
+            {
+                "mimeType": "multipart/alternative",
+                "parts": [
+                    {
+                        "mimeType": "text/plain",
+                        "body": {"data": base64.urlsafe_b64encode(text_content.encode()).decode()},
+                    },
+                    {
+                        "mimeType": "text/html",
+                        "body": {"data": base64.urlsafe_b64encode(html_content.encode()).decode()},
+                    },
+                ],
+            },
+            {
+                "mimeType": "application/pdf",
+                "body": {"attachmentId": "attachment123"},
+            },
+        ]
+
+        body_text, body_html = gmail_connector._extract_body_from_parts(parts)
+
+        assert body_text == text_content
+        assert body_html == html_content
+
+    def test_extract_body_from_deeply_nested_multipart(self, gmail_connector) -> None:
+        """Test extracting body from deeply nested multipart structures."""
+        import base64
+
+        text_content = "Deeply nested text"
+        html_content = "<html>Deeply nested HTML</html>"
+
+        # Simulate: multipart/mixed > multipart/related > multipart/alternative
+        parts = [
+            {
+                "mimeType": "multipart/related",
+                "parts": [
+                    {
+                        "mimeType": "multipart/alternative",
+                        "parts": [
+                            {
+                                "mimeType": "text/plain",
+                                "body": {
+                                    "data": base64.urlsafe_b64encode(text_content.encode()).decode()
+                                },
+                            },
+                            {
+                                "mimeType": "text/html",
+                                "body": {
+                                    "data": base64.urlsafe_b64encode(html_content.encode()).decode()
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        "mimeType": "image/png",
+                        "body": {"attachmentId": "img123"},
+                    },
+                ],
+            }
+        ]
+
+        body_text, body_html = gmail_connector._extract_body_from_parts(parts)
+
+        assert body_text == text_content
+        assert body_html == html_content
+
+    def test_extract_body_prefers_first_occurrence(self, gmail_connector) -> None:
+        """Test that extraction prefers the first occurrence of each type."""
+        import base64
+
+        first_text = "First text"
+        second_text = "Second text"
+        first_html = "<html>First HTML</html>"
+        second_html = "<html>Second HTML</html>"
+
+        parts = [
+            {
+                "mimeType": "text/plain",
+                "body": {"data": base64.urlsafe_b64encode(first_text.encode()).decode()},
+            },
+            {
+                "mimeType": "text/plain",
+                "body": {"data": base64.urlsafe_b64encode(second_text.encode()).decode()},
+            },
+            {
+                "mimeType": "text/html",
+                "body": {"data": base64.urlsafe_b64encode(first_html.encode()).decode()},
+            },
+            {
+                "mimeType": "text/html",
+                "body": {"data": base64.urlsafe_b64encode(second_html.encode()).decode()},
+            },
+        ]
+
+        body_text, body_html = gmail_connector._extract_body_from_parts(parts)
+
+        # Should use first occurrence
+        assert body_text == first_text
+        assert body_html == first_html
+
+    def test_extract_body_handles_empty_parts(self, gmail_connector) -> None:
+        """Test extracting body from empty parts list."""
+        parts = []
+
+        body_text, body_html = gmail_connector._extract_body_from_parts(parts)
+
+        assert body_text == ""
+        assert body_html == ""
+
+    def test_extract_body_handles_parts_without_data(self, gmail_connector) -> None:
+        """Test extracting body from parts without data (e.g., attachments only)."""
+        parts = [
+            {
+                "mimeType": "application/pdf",
+                "body": {"attachmentId": "attachment123"},
+            },
+            {
+                "mimeType": "image/jpeg",
+                "body": {"attachmentId": "img456"},
+            },
+        ]
+
+        body_text, body_html = gmail_connector._extract_body_from_parts(parts)
+
+        assert body_text == ""
+        assert body_html == ""
+
+    def test_extract_body_handles_decode_errors(self, gmail_connector) -> None:
+        """Test that decode errors are gracefully handled."""
+        parts = [
+            {
+                "mimeType": "text/plain",
+                "body": {"data": "invalid-base64!!!"},
+            },
+            {
+                "mimeType": "text/html",
+                "body": {"data": "also-invalid-base64!!!"},
+            },
+        ]
+
+        # Should not raise, should return empty strings
+        body_text, body_html = gmail_connector._extract_body_from_parts(parts)
+
+        assert body_text == ""
+        assert body_html == ""
+
+    def test_parse_gmail_message_with_nested_multipart(self, gmail_connector) -> None:
+        """Test _parse_gmail_message with nested multipart structure."""
+        import base64
+
+        text_content = "Test message body"
+        html_content = "<html><body>Test HTML</body></html>"
+
+        message = {
+            "id": "msg123",
+            "threadId": "thread456",
+            "labelIds": ["INBOX"],
+            "snippet": "Test snippet",
+            "payload": {
+                "headers": [
+                    {"name": "From", "value": "sender@example.com"},
+                    {"name": "To", "value": "recipient@example.com"},
+                    {"name": "Subject", "value": "Test Subject"},
+                    {"name": "Date", "value": "Mon, 1 Jan 2024 12:00:00 +0000"},
+                ],
+                "parts": [
+                    {
+                        "mimeType": "multipart/alternative",
+                        "parts": [
+                            {
+                                "mimeType": "text/plain",
+                                "body": {
+                                    "data": base64.urlsafe_b64encode(text_content.encode()).decode()
+                                },
+                            },
+                            {
+                                "mimeType": "text/html",
+                                "body": {
+                                    "data": base64.urlsafe_b64encode(html_content.encode()).decode()
+                                },
+                            },
+                        ],
+                    }
+                ],
+            },
+        }
+
+        email_data = gmail_connector._parse_gmail_message(message)
+
+        assert email_data["id"] == "msg123"
+        assert email_data["threadId"] == "thread456"
+        assert email_data["subject"] == "Test Subject"
+        assert email_data["from"] == "sender@example.com"
+        assert email_data["to"] == "recipient@example.com"
+        assert email_data["body_text"] == text_content
+        assert email_data["body_html"] == html_content
+
+    def test_parse_gmail_message_with_simple_body(self, gmail_connector) -> None:
+        """Test _parse_gmail_message with simple non-multipart body."""
+        import base64
+
+        text_content = "Simple message body"
+
+        message = {
+            "id": "msg789",
+            "threadId": "thread012",
+            "labelIds": ["SENT"],
+            "snippet": "Simple snippet",
+            "payload": {
+                "headers": [
+                    {"name": "From", "value": "me@example.com"},
+                    {"name": "To", "value": "you@example.com"},
+                    {"name": "Subject", "value": "Simple Subject"},
+                    {"name": "Date", "value": "Tue, 2 Jan 2024 12:00:00 +0000"},
+                ],
+                "body": {"data": base64.urlsafe_b64encode(text_content.encode()).decode()},
+            },
+        }
+
+        email_data = gmail_connector._parse_gmail_message(message)
+
+        assert email_data["id"] == "msg789"
+        assert email_data["body_text"] == text_content
+        assert email_data["body_html"] == ""
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

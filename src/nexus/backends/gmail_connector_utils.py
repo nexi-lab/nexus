@@ -3,9 +3,16 @@
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypedDict
 
 logger = logging.getLogger(__name__)
+
+
+class FolderStats(TypedDict):
+    """Type for folder statistics."""
+
+    emails: int
+    threads: set[str]
 
 
 def get_email_folder(email_labels: list[str]) -> str | None:
@@ -82,7 +89,7 @@ def list_emails_by_folder(
         folder_filter = ["SENT", "STARRED", "IMPORTANT", "INBOX"]
 
     # Track folder statistics for summary
-    folder_stats: dict[str, dict[str, int | set[str]]] = {
+    folder_stats: dict[str, FolderStats] = {
         "SENT": {"emails": 0, "threads": set()},
         "STARRED": {"emails": 0, "threads": set()},
         "IMPORTANT": {"emails": 0, "threads": set()},

@@ -11,7 +11,8 @@ This module contains mount management operations:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from nexus.backends.backend import Backend
 from nexus.core.rpc_decorator import rpc_expose
@@ -20,6 +21,35 @@ if TYPE_CHECKING:
     from nexus.core.mount_manager import MountManager
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
+
+
+@dataclass
+class SyncMountContext:
+    """Context object for sync_mount operations.
+
+    Groups all parameters needed for syncing a mount to reduce parameter passing.
+    """
+
+    mount_point: str
+    path: str | None
+    recursive: bool
+    dry_run: bool
+    sync_content: bool
+    include_patterns: list[str] | None
+    exclude_patterns: list[str] | None
+    generate_embeddings: bool
+    context: OperationContext | None
+    # Additional fields populated during sync
+    backend: Any | None = None
+    created_by: str | None = None
+    has_hierarchy: bool = False
+
+
+class MetadataSyncResult(NamedTuple):
+    """Result from metadata sync operation."""
+
+    stats: dict[str, int | list[str]]
+    files_found_in_backend: set[str]
 
 
 class NexusFSMountsMixin:
@@ -785,19 +815,22 @@ class NexusFSMountsMixin:
 
         return self.mount_manager.remove_mount(mount_point)
 
-    def load_all_saved_mounts(self) -> dict[str, Any]:
+    def load_all_saved_mounts(self, auto_sync: bool = False) -> dict[str, Any]:
         """Load all saved mount configurations from database and activate them.
 
         This method is called during NexusFS initialization to restore all
         persisted mounts from the database. It retrieves all saved mount configs
-        via mount_manager.list_mounts() and activates each one. For connector
-        backends (like gcs_connector), it also automatically syncs metadata
-        to import existing files.
+        via mount_manager.list_mounts() and activates each one.
+
+        Args:
+            auto_sync: If True, automatically sync connector backends after loading.
+                      If False (default), skip auto-sync for faster server startup.
+                      Users can manually call sync_mount() after server is up.
 
         Returns:
             Dictionary with loading results:
                 - loaded: Number of successfully loaded mounts
-                - synced: Number of connector mounts that were synced
+                - synced: Number of connector mounts that were synced (only if auto_sync=True)
                 - failed: Number of mounts that failed to load
                 - errors: List of error messages for failed mounts
 
@@ -805,12 +838,21 @@ class NexusFSMountsMixin:
             - mount_manager.list_mounts() returns SAVED mounts from database
             - self.list_mounts() returns ACTIVE mounts from router
             - This method loads saved mounts to make them active
-            - Connector backends are automatically synced after loading
+            - auto_sync=False (default) for faster server startup
+            - Call sync_mount() manually after startup for large connectors
 
         Examples:
-            >>> # Called during NexusFS initialization
+            >>> # Fast startup (default) - no auto-sync
             >>> result = nx.load_all_saved_mounts()
-            >>> print(f"Loaded {result['loaded']} mounts, {result['synced']} synced, {result['failed']} failed")
+            >>> print(f"Loaded {result['loaded']} mounts")
+
+            >>> # With auto-sync (slower startup)
+            >>> result = nx.load_all_saved_mounts(auto_sync=True)
+            >>> print(f"Loaded {result['loaded']} mounts, {result['synced']} synced")
+
+            >>> # Manual sync after startup
+            >>> result = nx.load_all_saved_mounts()  # Fast startup
+            >>> nx.sync_mount("/mnt/gcs")  # Sync when ready
         """
         import logging
 
@@ -858,46 +900,54 @@ class NexusFSMountsMixin:
                 loaded += 1
                 logger.info(f"✓ Successfully loaded mount: {mount_point}")
 
-                # Try to sync connector backends after loading
-                backend_type = mount["backend_type"]
-                if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
-                    try:
-                        logger.info(f"Syncing connector mount: {mount_point}")
-                        # Create a minimal context from mount owner if available
-                        sync_context = None
-                        if mount.get("owner_user_id"):
-                            from nexus.core.permissions import OperationContext
+                # Only auto-sync if explicitly requested (default: False for fast startup)
+                if auto_sync:
+                    backend_type = mount["backend_type"]
+                    if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
+                        try:
+                            logger.info(f"Auto-syncing connector mount: {mount_point}")
+                            # Create a minimal context from mount owner if available
+                            sync_context = None
+                            if mount.get("owner_user_id"):
+                                from nexus.core.permissions import OperationContext
 
-                            # Parse owner_user_id (format: "user:alice" or "agent:bot")
-                            owner_parts = mount["owner_user_id"].split(":", 1)
-                            if len(owner_parts) == 2:
-                                subject_type, subject_id = owner_parts
-                            else:
-                                subject_type, subject_id = "user", owner_parts[0]
-                            sync_context = OperationContext(
-                                user=subject_id,
-                                groups=[],
-                                tenant_id=mount.get("tenant_id", "default"),
-                                subject_type=subject_type,
-                                subject_id=subject_id,
+                                # Parse owner_user_id (format: "user:alice" or "agent:bot")
+                                owner_parts = mount["owner_user_id"].split(":", 1)
+                                if len(owner_parts) == 2:
+                                    subject_type, subject_id = owner_parts
+                                else:
+                                    subject_type, subject_id = "user", owner_parts[0]
+                                sync_context = OperationContext(
+                                    user=subject_id,
+                                    groups=[],
+                                    tenant_id=mount.get("tenant_id", "default"),
+                                    subject_type=subject_type,
+                                    subject_id=subject_id,
+                                )
+                                logger.info(
+                                    f"Using owner context for sync: {subject_type}:{subject_id}"
+                                )
+                            sync_result = self.sync_mount(
+                                mount_point, recursive=True, dry_run=False, context=sync_context
                             )
+                            synced += 1
                             logger.info(
-                                f"Using owner context for sync: {subject_type}:{subject_id}"
+                                f"✓ Synced {mount_point}: "
+                                f"{sync_result['files_scanned']} scanned, "
+                                f"{sync_result['files_created']} created, "
+                                f"{sync_result['files_updated']} updated, "
+                                f"{sync_result['files_deleted']} deleted"
                             )
-                        sync_result = self.sync_mount(
-                            mount_point, recursive=True, dry_run=False, context=sync_context
-                        )
-                        synced += 1
+                        except Exception as sync_e:
+                            # Log sync error but don't fail the mount
+                            logger.warning(f"Failed to sync {mount_point}: {str(sync_e)}")
+                else:
+                    # Skip auto-sync for faster startup
+                    backend_type = mount["backend_type"]
+                    if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
                         logger.info(
-                            f"✓ Synced {mount_point}: "
-                            f"{sync_result['files_scanned']} scanned, "
-                            f"{sync_result['files_created']} created, "
-                            f"{sync_result['files_updated']} updated, "
-                            f"{sync_result['files_deleted']} deleted"
+                            f"⏭️  Skipping auto-sync for {mount_point} (use sync_mount() to sync manually)"
                         )
-                    except Exception as sync_e:
-                        # Log sync error but don't fail the mount
-                        logger.warning(f"Failed to sync {mount_point}: {str(sync_e)}")
 
             except Exception as e:
                 failed += 1
@@ -909,6 +959,33 @@ class NexusFSMountsMixin:
         logger.info(f"Mount loading complete: {loaded} loaded, {synced} synced, {failed} failed")
 
         return {"loaded": loaded, "synced": synced, "failed": failed, "errors": errors}
+
+    def _matches_patterns(
+        self, file_path: str, include_patterns: list[str] | None, exclude_patterns: list[str] | None
+    ) -> bool:
+        """Check if a file path matches include/exclude patterns.
+
+        Args:
+            file_path: Virtual file path to check
+            include_patterns: Glob patterns to include (None or empty means include all)
+            exclude_patterns: Glob patterns to exclude (None or empty means exclude none)
+
+        Returns:
+            True if file should be included, False otherwise
+        """
+        import fnmatch
+
+        # Check include patterns (if specified, file must match at least one)
+        if include_patterns and not any(
+            fnmatch.fnmatch(file_path, pattern) for pattern in include_patterns
+        ):
+            return False
+
+        # Check exclude patterns (if file matches any, exclude it)
+        return not (
+            exclude_patterns
+            and any(fnmatch.fnmatch(file_path, pattern) for pattern in exclude_patterns)
+        )
 
     @rpc_expose(description="Sync metadata from connector backend")
     def sync_mount(
@@ -986,7 +1063,251 @@ class NexusFSMountsMixin:
             >>> result = nx.sync_mount()
             >>> print(f"Synced {result['mounts_synced']} mounts")
         """
+        # STEP 1: If no mount_point specified, sync ALL connector mounts
+        if mount_point is None:
+            return self._sync_all_connector_mounts(
+                path=path,
+                recursive=recursive,
+                dry_run=dry_run,
+                sync_content=sync_content,
+                include_patterns=include_patterns,
+                exclude_patterns=exclude_patterns,
+                generate_embeddings=generate_embeddings,
+                context=context,
+            )
+
+        # Initialize statistics upfront for clearer data flow
+        stats: dict[str, int | list[str]] = {
+            "files_scanned": 0,
+            "files_created": 0,
+            "files_updated": 0,
+            "files_deleted": 0,
+            "cache_synced": 0,
+            "cache_bytes": 0,
+            "cache_skipped": 0,
+            "embeddings_generated": 0,
+            "errors": [],
+        }
+
+        # Create context object to reduce parameter passing
+        ctx = SyncMountContext(
+            mount_point=mount_point,
+            path=path,
+            recursive=recursive,
+            dry_run=dry_run,
+            sync_content=sync_content,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
+            generate_embeddings=generate_embeddings,
+            context=context,
+        )
+
+        # STEP 2: Setup and validation
+        self._sync_mount_setup(ctx)
+
+        # STEP 3: Scan backend and sync metadata (using iterative directory traversal)
+        result = self._sync_mount_metadata(ctx, stats)
+        files_found_in_backend = result.files_found_in_backend
+
+        # STEP 4: Handle file deletions
+        self._sync_mount_deletions(ctx, files_found_in_backend, stats)
+
+        # STEP 5: Sync content to cache
+        self._sync_mount_content_cache(ctx, stats)
+
+        return stats
+
+    def _sync_all_connector_mounts(
+        self,
+        path: str | None,
+        recursive: bool,
+        dry_run: bool,
+        sync_content: bool,
+        include_patterns: list[str] | None,
+        exclude_patterns: list[str] | None,
+        generate_embeddings: bool,
+        context: Any,
+    ) -> dict[str, Any]:
+        """Step 1: Sync all connector mounts when mount_point is None.
+
+        Args:
+            path: Specific path within mounts to sync
+            recursive: Whether to sync recursively
+            dry_run: Whether this is a dry run
+            sync_content: Whether to sync content to cache
+            include_patterns: Patterns to include
+            exclude_patterns: Patterns to exclude
+            generate_embeddings: Whether to generate embeddings
+            context: Operation context
+
+        Returns:
+            Dictionary with aggregated sync statistics
+        """
         import logging
+
+        logger = logging.getLogger(__name__)
+
+        logger.info("[SYNC_MOUNT] No mount_point specified, syncing all connector mounts")
+        all_mounts = self.list_mounts()
+
+        # Aggregate results from all mounts
+        total_stats: dict[str, Any] = {
+            "mounts_synced": 0,
+            "mounts_skipped": 0,
+            "files_scanned": 0,
+            "files_created": 0,
+            "files_updated": 0,
+            "files_deleted": 0,
+            "cache_synced": 0,
+            "cache_bytes": 0,
+            "embeddings_generated": 0,
+            "errors": [],
+        }
+
+        for mount_info in all_mounts:
+            mp = mount_info.get("mount_point", "")
+            backend_type = mount_info.get("backend_type", "")
+
+            # Only sync connector-style backends (those with list_dir support)
+            mount = self.router.get_mount(mp)
+            if not mount or not hasattr(mount.backend, "list_dir"):
+                logger.info(
+                    f"[SYNC_MOUNT] Skipping {mp} ({backend_type}) - not a connector backend"
+                )
+                total_stats["mounts_skipped"] += 1
+                continue
+
+            logger.info(f"[SYNC_MOUNT] Syncing mount: {mp}")
+            try:
+                result = self.sync_mount(
+                    mount_point=mp,
+                    path=path,
+                    recursive=recursive,
+                    dry_run=dry_run,
+                    sync_content=sync_content,
+                    include_patterns=include_patterns,
+                    exclude_patterns=exclude_patterns,
+                    generate_embeddings=generate_embeddings,
+                    context=context,
+                )
+
+                # Aggregate stats
+                total_stats["mounts_synced"] += 1
+                total_stats["files_scanned"] += result.get("files_scanned", 0)
+                total_stats["files_created"] += result.get("files_created", 0)
+                total_stats["files_updated"] += result.get("files_updated", 0)
+                total_stats["files_deleted"] += result.get("files_deleted", 0)
+                total_stats["cache_synced"] += result.get("cache_synced", 0)
+                total_stats["cache_bytes"] += result.get("cache_bytes", 0)
+                total_stats["embeddings_generated"] += result.get("embeddings_generated", 0)
+
+                # Prefix errors with mount point
+                for error in result.get("errors", []):
+                    total_stats["errors"].append(f"[{mp}] {error}")
+
+            except Exception as e:
+                total_stats["errors"].append(f"[{mp}] Failed to sync: {e}")
+                logger.warning(f"[SYNC_MOUNT] Failed to sync {mp}: {e}")
+
+        logger.info(
+            f"[SYNC_MOUNT] All mounts sync complete: "
+            f"{total_stats['mounts_synced']} synced, "
+            f"{total_stats['mounts_skipped']} skipped"
+        )
+        return total_stats
+
+    def _sync_mount_setup(self, ctx: SyncMountContext) -> None:
+        """Step 2: Setup and validation for mount sync.
+
+        Extracts context information, checks hierarchy manager status,
+        validates mount exists, and ensures mount directory entry exists.
+        Populates ctx.backend, ctx.created_by, and ctx.has_hierarchy.
+
+        Args:
+            ctx: Sync mount context (modified in-place)
+
+        Raises:
+            ValueError: If mount not found
+            RuntimeError: If backend doesn't support list_dir
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Extract created_by from context
+        if (
+            ctx.context
+            and hasattr(ctx.context, "subject_type")
+            and hasattr(ctx.context, "subject_id")
+        ):
+            if ctx.context.subject_id:
+                subject_type = ctx.context.subject_type if ctx.context.subject_type else "user"
+                ctx.created_by = f"{subject_type}:{ctx.context.subject_id}"
+                logger.info(f"[SYNC_MOUNT] Using created_by from context: {ctx.created_by}")
+            else:
+                logger.warning("[SYNC_MOUNT] Context provided but subject_id is None")
+        else:
+            logger.warning("[SYNC_MOUNT] No context provided, created_by will be NULL")
+
+        # Check hierarchy manager status
+        ctx.has_hierarchy = hasattr(self, "_hierarchy_manager") and self._hierarchy_manager
+        enable_inheritance = (
+            self._hierarchy_manager.enable_inheritance  # type: ignore[attr-defined]
+            if ctx.has_hierarchy
+            else False
+        )
+        logger.info(
+            f"[SYNC_MOUNT] Starting sync for {ctx.mount_point}, "
+            f"hierarchy_manager={ctx.has_hierarchy}, "
+            f"enable_inheritance={enable_inheritance}"
+        )
+
+        # Get the mount
+        mount = self.router.get_mount(ctx.mount_point)
+        if not mount:
+            raise ValueError(f"Mount not found: {ctx.mount_point}")
+
+        ctx.backend = mount.backend
+        assert ctx.backend is not None, f"Backend for mount {ctx.mount_point} is None"
+        backend_name = type(ctx.backend).__name__
+
+        # Check if backend supports list_dir (connector-style backends)
+        if not hasattr(ctx.backend, "list_dir"):
+            raise RuntimeError(
+                f"Backend {backend_name} does not support metadata sync. "
+                f"Only connector-style backends (e.g., gcs_connector) can be synced."
+            )
+
+        # Ensure mount directory entry exists (backwards compatibility)
+        if hasattr(self, "mkdir"):
+            try:
+                self.mkdir(ctx.mount_point, parents=True, exist_ok=True, context=ctx.context)
+                logger.debug(f"[SYNC_MOUNT] Ensured directory entry exists for {ctx.mount_point}")
+            except Exception as e:
+                logger.warning(
+                    f"[SYNC_MOUNT] Failed to create directory entry for {ctx.mount_point}: {e}"
+                )
+
+    def _sync_mount_metadata(
+        self, ctx: SyncMountContext, stats: dict[str, int | list[str]]
+    ) -> MetadataSyncResult:
+        """Step 3: Scan backend and sync metadata using ITERATIVE directory traversal.
+
+        This method uses a deque-based BFS approach instead of recursion to avoid
+        stack overflow issues with deeply nested directories.
+
+        Applies include/exclude patterns to filter which files get added to metadata,
+        ensuring consistency with content cache filtering in Step 5.
+
+        Args:
+            ctx: Sync mount context
+            stats: Statistics dictionary to update
+
+        Returns:
+            MetadataSyncResult with stats and files found in backend
+        """
+        import logging
+        from collections import deque
         from datetime import UTC, datetime
         from typing import cast
 
@@ -994,153 +1315,108 @@ class NexusFSMountsMixin:
 
         logger = logging.getLogger(__name__)
 
-        # If no mount_point specified, sync ALL connector mounts
-        if mount_point is None:
-            logger.info("[SYNC_MOUNT] No mount_point specified, syncing all connector mounts")
-            all_mounts = self.list_mounts()
-
-            # Aggregate results from all mounts
-            total_stats: dict[str, Any] = {
-                "mounts_synced": 0,
-                "mounts_skipped": 0,
-                "files_scanned": 0,
-                "files_created": 0,
-                "files_updated": 0,
-                "files_deleted": 0,
-                "cache_synced": 0,
-                "cache_bytes": 0,
-                "embeddings_generated": 0,
-                "errors": [],
-            }
-
-            for mount_info in all_mounts:
-                mp = mount_info.get("mount_point", "")
-                backend_type = mount_info.get("backend_type", "")
-
-                # Only sync connector-style backends (those with list_dir support)
-                mount = self.router.get_mount(mp)
-                if not mount or not hasattr(mount.backend, "list_dir"):
-                    logger.info(
-                        f"[SYNC_MOUNT] Skipping {mp} ({backend_type}) - not a connector backend"
-                    )
-                    total_stats["mounts_skipped"] += 1
-                    continue
-
-                logger.info(f"[SYNC_MOUNT] Syncing mount: {mp}")
-                try:
-                    result = self.sync_mount(
-                        mount_point=mp,
-                        path=path,
-                        recursive=recursive,
-                        dry_run=dry_run,
-                        sync_content=sync_content,
-                        include_patterns=include_patterns,
-                        exclude_patterns=exclude_patterns,
-                        generate_embeddings=generate_embeddings,
-                        context=context,
-                    )
-
-                    # Aggregate stats
-                    total_stats["mounts_synced"] += 1
-                    total_stats["files_scanned"] += result.get("files_scanned", 0)
-                    total_stats["files_created"] += result.get("files_created", 0)
-                    total_stats["files_updated"] += result.get("files_updated", 0)
-                    total_stats["files_deleted"] += result.get("files_deleted", 0)
-                    total_stats["cache_synced"] += result.get("cache_synced", 0)
-                    total_stats["cache_bytes"] += result.get("cache_bytes", 0)
-                    total_stats["embeddings_generated"] += result.get("embeddings_generated", 0)
-
-                    # Prefix errors with mount point
-                    for error in result.get("errors", []):
-                        total_stats["errors"].append(f"[{mp}] {error}")
-
-                except Exception as e:
-                    total_stats["errors"].append(f"[{mp}] Failed to sync: {e}")
-                    logger.warning(f"[SYNC_MOUNT] Failed to sync {mp}: {e}")
-
-            logger.info(
-                f"[SYNC_MOUNT] All mounts sync complete: "
-                f"{total_stats['mounts_synced']} synced, "
-                f"{total_stats['mounts_skipped']} skipped"
-            )
-            return total_stats
-
-        # Extract created_by from context
-        created_by: str | None = None
-        if context and hasattr(context, "subject_type") and hasattr(context, "subject_id"):
-            if context.subject_id:
-                subject_type = context.subject_type if context.subject_type else "user"
-                created_by = f"{subject_type}:{context.subject_id}"
-                logger.info(f"[SYNC_MOUNT] Using created_by from context: {created_by}")
-            else:
-                logger.warning("[SYNC_MOUNT] Context provided but subject_id is None")
-        else:
-            logger.warning("[SYNC_MOUNT] No context provided, created_by will be NULL")
-
-        # Check hierarchy manager status
-        has_hierarchy = hasattr(self, "_hierarchy_manager") and self._hierarchy_manager
-        enable_inheritance = (
-            self._hierarchy_manager.enable_inheritance  # type: ignore[attr-defined]
-            if has_hierarchy
-            else False
-        )
-        logger.info(
-            f"[SYNC_MOUNT] Starting sync for {mount_point}, "
-            f"hierarchy_manager={has_hierarchy}, "
-            f"enable_inheritance={enable_inheritance}"
-        )
-
-        # Get the mount
-        mount = self.router.get_mount(mount_point)
-        if not mount:
-            raise ValueError(f"Mount not found: {mount_point}")
-
-        backend = mount.backend
-        backend_name = type(backend).__name__
-
-        # Check if backend supports list_dir (connector-style backends)
-        if not hasattr(backend, "list_dir"):
-            raise RuntimeError(
-                f"Backend {backend_name} does not support metadata sync. "
-                f"Only connector-style backends (e.g., gcs_connector) can be synced."
-            )
-
-        # Ensure mount directory entry exists (backwards compatibility)
-        # This handles cases where mount was added directly to router without calling add_mount()
-        if hasattr(self, "mkdir"):
-            try:
-                self.mkdir(mount_point, parents=True, exist_ok=True, context=context)
-                logger.debug(f"[SYNC_MOUNT] Ensured directory entry exists for {mount_point}")
-            except Exception as e:
-                logger.warning(
-                    f"[SYNC_MOUNT] Failed to create directory entry for {mount_point}: {e}"
-                )
-
-        # Track sync statistics
-        stats: dict[str, int | list[str]] = {
-            "files_scanned": 0,
-            "files_created": 0,
-            "files_updated": 0,
-            "files_deleted": 0,
-            "errors": [],
-        }
-
         # Track all files found in backend (for deletion detection)
         files_found_in_backend: set[str] = set()
 
-        # Recursive function to scan directories
-        def scan_directory(virtual_path: str, backend_path: str) -> None:
+        # Determine starting path for scan
+        if ctx.path:
+            # path can be relative to mount or absolute
+            if ctx.path.startswith(ctx.mount_point):
+                start_virtual_path = ctx.path
+                start_backend_path = ctx.path[len(ctx.mount_point) :].lstrip("/")
+            else:
+                start_virtual_path = f"{ctx.mount_point.rstrip('/')}/{ctx.path.lstrip('/')}"
+                start_backend_path = ctx.path.lstrip("/")
+
+            # Check if this is a single file (not a directory)
+            is_single_file = False
+            try:
+                entries = ctx.backend.list_dir(start_backend_path, context=ctx.context)  # type: ignore[union-attr]
+                if not entries:
+                    # Empty directory or file - check if path has extension
+                    import os.path as osp
+
+                    if osp.splitext(start_backend_path)[1]:
+                        is_single_file = True
+            except Exception:
+                # If list_dir fails, assume it's a file
+                is_single_file = True
+
+            if is_single_file:
+                # Single file sync - apply pattern filtering using helper
+                if not self._matches_patterns(
+                    start_virtual_path, ctx.include_patterns, ctx.exclude_patterns
+                ):
+                    logger.info(
+                        f"[SYNC_MOUNT] Skipping {start_virtual_path} - filtered by patterns"
+                    )
+                    return MetadataSyncResult(stats, files_found_in_backend)
+
+                # Process single file
+                logger.info(f"[SYNC_MOUNT] Syncing single file: {start_virtual_path}")
+                stats["files_scanned"] = 1
+                files_found_in_backend.add(start_virtual_path)
+
+                if not ctx.dry_run:
+                    existing_meta = self.metadata.get(start_virtual_path)  # type: ignore[attr-defined]
+
+                    if not existing_meta:
+                        try:
+                            now = datetime.now(UTC)
+                            import hashlib
+
+                            path_hash = hashlib.sha256(start_backend_path.encode()).hexdigest()
+                            meta = FileMetadata(
+                                path=start_virtual_path,
+                                backend_name=ctx.backend.name,  # type: ignore[union-attr]
+                                physical_path=start_backend_path,
+                                size=0,
+                                etag=path_hash,
+                                created_at=now,
+                                modified_at=now,
+                                version=1,
+                                created_by=ctx.created_by,
+                            )
+                            self.metadata.put(meta)  # type: ignore[attr-defined]
+                            stats["files_created"] = 1
+
+                            # Create parent relationships
+                            if ctx.has_hierarchy and self._hierarchy_manager:  # type: ignore[attr-defined]
+                                try:
+                                    self._hierarchy_manager.ensure_parent_tuples(  # type: ignore[attr-defined]
+                                        start_virtual_path, tenant_id=None
+                                    )
+                                except Exception as parent_error:
+                                    logger.warning(
+                                        f"Failed to create parent tuples for {start_virtual_path}: {parent_error}"
+                                    )
+                        except Exception as e:
+                            error_msg = f"Failed to add {start_virtual_path}: {e}"
+                            cast(list[str], stats["errors"]).append(error_msg)
+                return MetadataSyncResult(stats, files_found_in_backend)
+        else:
+            # Start from mount point root
+            start_virtual_path = ctx.mount_point
+            start_backend_path = ""
+
+        # ITERATIVE directory scanning using BFS with deque
+        # Queue contains tuples of (virtual_path, backend_path)
+        queue: deque[tuple[str, str]] = deque([(start_virtual_path, start_backend_path)])
+
+        while queue:
+            virtual_path, backend_path = queue.popleft()
+
             try:
                 # List entries in this directory
-                entries = backend.list_dir(backend_path, context=context)
+                entries = ctx.backend.list_dir(backend_path, context=ctx.context)  # type: ignore[union-attr]
 
                 for entry_name in entries:
                     is_dir = entry_name.endswith("/")
                     entry_name = entry_name.rstrip("/")
 
                     # Construct full virtual path
-                    if virtual_path == mount_point:
-                        entry_virtual_path = f"{mount_point}/{entry_name}"
+                    if virtual_path == ctx.mount_point:
+                        entry_virtual_path = f"{ctx.mount_point}/{entry_name}"
                     else:
                         entry_virtual_path = f"{virtual_path}/{entry_name}"
 
@@ -1151,77 +1427,65 @@ class NexusFSMountsMixin:
                         entry_backend_path = entry_name
 
                     if is_dir:
-                        # Recursively scan subdirectory
-                        if recursive:
-                            scan_directory(entry_virtual_path, entry_backend_path)
+                        # Add subdirectory to queue for BFS traversal
+                        if ctx.recursive:
+                            queue.append((entry_virtual_path, entry_backend_path))
                     else:
+                        # Apply include/exclude patterns using helper
+                        if not self._matches_patterns(
+                            entry_virtual_path, ctx.include_patterns, ctx.exclude_patterns
+                        ):
+                            continue
+
                         # Process file
-                        stats["files_scanned"] = (
-                            stats["files_scanned"] + 1  # type: ignore[operator]
-                        )
+                        stats["files_scanned"] = stats["files_scanned"] + 1  # type: ignore[operator]
 
                         # Track this file as found in backend
                         files_found_in_backend.add(entry_virtual_path)
 
-                        if dry_run:
+                        if ctx.dry_run:
                             # Dry run: just count, don't modify database
                             continue
 
                         # Check if file already exists in metadata
-                        existing_meta = self.metadata.get(  # type: ignore[attr-defined]
-                            entry_virtual_path
-                        )
+                        existing_meta = self.metadata.get(entry_virtual_path)  # type: ignore[attr-defined]
 
-                        if existing_meta:
-                            # File exists - already tracked, no action needed
-                            # Note: Parent tuples are created when file is first added
-                            # No need to re-create them on every sync (huge performance waste)
-                            pass
-                        else:
+                        if not existing_meta:
                             # File doesn't exist in metadata - add it
                             try:
-                                # Create minimal metadata entry
-                                # Note: We don't know the actual size without reading the file,
-                                # so we use 0 as a placeholder. The size will be updated on first read.
                                 now = datetime.now(UTC)
-                                # Use a placeholder hash for synced files - marks them as "discovered but not yet read"
-                                # This will be updated with the actual hash on first read operation
-                                # Hash the path to create a unique 64-character placeholder (fits in content_hash column)
                                 import hashlib
 
                                 path_hash = hashlib.sha256(entry_backend_path.encode()).hexdigest()
                                 meta = FileMetadata(
                                     path=entry_virtual_path,
-                                    backend_name=backend.name,
+                                    backend_name=ctx.backend.name,  # type: ignore[union-attr]
                                     physical_path=entry_backend_path,
-                                    size=0,  # Placeholder - will be updated on first access
-                                    etag=path_hash,  # Placeholder hash - will be updated on first read
+                                    size=0,
+                                    etag=path_hash,
                                     created_at=now,
                                     modified_at=now,
                                     version=1,
-                                    created_by=created_by,  # Set creator from context
+                                    created_by=ctx.created_by,
                                 )
 
                                 # Save to database
                                 self.metadata.put(meta)  # type: ignore[attr-defined]
-                                stats["files_created"] = (
-                                    stats["files_created"] + 1  # type: ignore[operator]
-                                )
+                                stats["files_created"] = stats["files_created"] + 1  # type: ignore[operator]
 
                                 # Create parent relationships for permission inheritance
-                                if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager:
+                                if ctx.has_hierarchy and self._hierarchy_manager:  # type: ignore[attr-defined]
                                     try:
                                         logger.info(
                                             f"[SYNC_MOUNT] Creating parent tuples for new file: {entry_virtual_path}"
                                         )
-                                        created = self._hierarchy_manager.ensure_parent_tuples(
+                                        created = self._hierarchy_manager.ensure_parent_tuples(  # type: ignore[attr-defined]
                                             entry_virtual_path, tenant_id=None
                                         )
                                         logger.info(
                                             f"[SYNC_MOUNT] Created {created} parent tuples for {entry_virtual_path}"
                                         )
                                     except Exception as parent_error:
-                                        # Log but don't fail sync - permissions can be fixed later
                                         logger.warning(
                                             f"Failed to create parent tuples for {entry_virtual_path}: {parent_error}"
                                         )
@@ -1234,203 +1498,153 @@ class NexusFSMountsMixin:
                 error_msg = f"Failed to scan {virtual_path}: {e}"
                 cast(list[str], stats["errors"]).append(error_msg)
 
-        # Determine starting path for scan
-        # If path is specified, start from there instead of mount root
-        if path:
-            # path can be relative to mount or absolute
-            if path.startswith(mount_point):
-                start_virtual_path = path
-                start_backend_path = path[len(mount_point) :].lstrip("/")
-            else:
-                start_virtual_path = f"{mount_point.rstrip('/')}/{path.lstrip('/')}"
-                start_backend_path = path.lstrip("/")
+        return MetadataSyncResult(stats, files_found_in_backend)
 
-            # Check if this is a single file (not a directory)
-            # Try to list the path as a directory - if it fails or is empty, treat as file
-            is_single_file = False
+    def _sync_mount_deletions(
+        self,
+        ctx: SyncMountContext,
+        files_found_in_backend: set[str],
+        stats: dict[str, int | list[str]],
+    ) -> None:
+        """Step 4: Handle file deletions - remove files no longer in backend.
+
+        Only performs deletion check when syncing from root (path=None),
+        not for partial syncs to avoid false positives.
+
+        Args:
+            ctx: Sync mount context
+            files_found_in_backend: Set of files found during metadata scan
+            stats: Statistics dictionary to update
+        """
+        import logging
+        from typing import cast
+
+        logger = logging.getLogger(__name__)
+
+        # Only check deletions if we synced from root (path=None)
+        if ctx.dry_run or ctx.path is not None:
+            return
+
+        try:
+            # Get list of other mount points to exclude from deletion check
+            other_mount_points = set()
             try:
-                entries = backend.list_dir(start_backend_path, context=context)
-                if not entries:
-                    # Empty directory or file - check if path has extension (likely a file)
-                    import os.path as osp
-
-                    if osp.splitext(start_backend_path)[1]:
-                        is_single_file = True
+                all_mounts = self.list_mounts()
+                for m in all_mounts:
+                    mp = m.get("mount_point", "")
+                    if mp and mp != ctx.mount_point and mp != "/":
+                        other_mount_points.add(mp)
             except Exception:
-                # If list_dir fails, assume it's a file (e.g., "File not found" means it's a file path)
-                is_single_file = True
+                pass
 
-            if is_single_file:
-                # Single file sync - process it directly
-                logger.info(f"[SYNC_MOUNT] Syncing single file: {start_virtual_path}")
-                stats["files_scanned"] = 1
-                files_found_in_backend.add(start_virtual_path)
+            # List all files in metadata under this mount point
+            existing_metas = self.metadata.list(prefix=ctx.mount_point, recursive=True)  # type: ignore[attr-defined]
+            existing_files = [meta.path for meta in existing_metas]
 
-                if not dry_run:
-                    # Check if file already exists in metadata
-                    existing_meta = self.metadata.get(start_virtual_path)  # type: ignore[attr-defined]
+            for existing_path in existing_files:
+                # Skip the mount point itself
+                if existing_path == ctx.mount_point:
+                    continue
 
-                    if not existing_meta:
-                        # Create metadata entry for the file
-                        try:
-                            now = datetime.now(UTC)
-                            import hashlib
+                # Skip if it was found in the backend scan
+                if existing_path in files_found_in_backend:
+                    continue
 
-                            path_hash = hashlib.sha256(start_backend_path.encode()).hexdigest()
-                            meta = FileMetadata(
-                                path=start_virtual_path,
-                                backend_name=backend.name,
-                                physical_path=start_backend_path,
-                                size=0,
-                                etag=path_hash,
-                                created_at=now,
-                                modified_at=now,
-                                version=1,
-                                created_by=created_by,
-                            )
-                            self.metadata.put(meta)  # type: ignore[attr-defined]
-                            stats["files_created"] = 1
+                # Skip if this file belongs to another mount
+                belongs_to_other_mount = any(
+                    existing_path.startswith(mp + "/") or existing_path == mp
+                    for mp in other_mount_points
+                )
+                if belongs_to_other_mount:
+                    continue
 
-                            # Create parent relationships
-                            if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager:
-                                try:
-                                    self._hierarchy_manager.ensure_parent_tuples(
-                                        start_virtual_path, tenant_id=None
-                                    )
-                                except Exception as parent_error:
-                                    logger.warning(
-                                        f"Failed to create parent tuples for {start_virtual_path}: {parent_error}"
-                                    )
-                        except Exception as e:
-                            error_msg = f"Failed to add {start_virtual_path}: {e}"
-                            cast(list[str], stats["errors"]).append(error_msg)
-            else:
-                # Directory sync
-                scan_directory(start_virtual_path, start_backend_path)
-        else:
-            # Start from mount point root
-            # For connector backends, the prefix is already built into the backend itself
-            # So we start with an empty path, and the backend will automatically apply its prefix
-            start_virtual_path = mount_point
-            start_backend_path = (
-                ""  # Start from root (backend's prefix will be applied automatically)
-            )
-            scan_directory(start_virtual_path, start_backend_path)
-
-        # Handle file deletions - remove files from metadata that no longer exist in backend
-        # Only check deletions if we synced from root (path=None), not for partial syncs
-        if not dry_run and path is None:
-            try:
-                # Get list of other mount points to exclude from deletion check
-                # Files under other mounts should not be deleted by this mount's sync
-                other_mount_points = set()
+                # Check if this is actually a file
                 try:
-                    all_mounts = self.list_mounts()
-                    for m in all_mounts:
-                        mp = m.get("mount_point", "")
-                        if mp and mp != mount_point and mp != "/":
-                            other_mount_points.add(mp)
-                except Exception:
-                    pass
-
-                # List all files in metadata under this mount point
-                existing_metas = self.metadata.list(prefix=mount_point, recursive=True)  # type: ignore[attr-defined]
-                existing_files = [meta.path for meta in existing_metas]
-
-                for existing_path in existing_files:
-                    # Skip the mount point itself (it's a directory we manage)
-                    if existing_path == mount_point:
-                        continue
-
-                    # Skip if it's a directory or if it was found in the backend scan
-                    if existing_path in files_found_in_backend:
-                        continue
-
-                    # Skip if this file belongs to another mount (e.g., /mnt/gcs files when syncing /)
-                    belongs_to_other_mount = any(
-                        existing_path.startswith(mp + "/") or existing_path == mp
-                        for mp in other_mount_points
-                    )
-                    if belongs_to_other_mount:
-                        continue
-
-                    # Check if this is actually a file (not a directory)
-                    try:
-                        meta = self.metadata.get(existing_path)  # type: ignore[attr-defined]
-                        if meta:
-                            # File exists in metadata but not in backend - delete it
-                            logger.info(
-                                f"[SYNC_MOUNT] Deleting file no longer in backend: {existing_path}"
-                            )
-                            self.metadata.delete(existing_path)  # type: ignore[attr-defined]
-                            stats["files_deleted"] = (
-                                stats["files_deleted"] + 1  # type: ignore[operator]
-                            )
-                    except Exception as e:
-                        error_msg = f"Failed to delete {existing_path}: {e}"
-                        cast(list[str], stats["errors"]).append(error_msg)
-                        logger.warning(error_msg)
-            except Exception as e:
-                error_msg = f"Failed to check for deletions: {e}"
-                cast(list[str], stats["errors"]).append(error_msg)
-                logger.warning(error_msg)
-
-        # Sync content to cache if requested and backend supports it
-        stats["cache_synced"] = 0
-        stats["cache_bytes"] = 0
-        stats["embeddings_generated"] = 0
-
-        if sync_content and not dry_run:
-            # Delegate to backend's sync() method if available (CacheConnectorMixin)
-            if hasattr(backend, "sync"):
-                logger.info("[SYNC_MOUNT] Delegating to backend.sync() for cache population")
-                try:
-                    from nexus.backends.cache_mixin import SyncResult as CacheSyncResult
-
-                    # Determine path for cache sync (relative to mount)
-                    cache_sync_path = None
-                    if path:
-                        # Use the same path that was used for metadata sync
-                        if path.startswith(mount_point):
-                            cache_sync_path = path[len(mount_point) :].lstrip("/")
-                        else:
-                            cache_sync_path = path.lstrip("/")
-
-                    cache_result: CacheSyncResult = backend.sync(
-                        path=cache_sync_path,
-                        mount_point=mount_point,
-                        include_patterns=include_patterns,
-                        exclude_patterns=exclude_patterns,
-                        generate_embeddings=generate_embeddings,
-                        context=context,
-                    )
-
-                    stats["cache_synced"] = cache_result.files_synced
-                    stats["cache_skipped"] = cache_result.files_skipped
-                    stats["cache_bytes"] = cache_result.bytes_synced
-                    stats["embeddings_generated"] = cache_result.embeddings_generated
-
-                    # Add any cache sync errors
-                    if cache_result.errors:
-                        for error in cache_result.errors:
-                            cast(list[str], stats["errors"]).append(f"[cache] {error}")
-
-                    logger.info(
-                        f"[SYNC_MOUNT] Content cache sync complete: "
-                        f"synced={cache_result.files_synced}, "
-                        f"bytes={cache_result.bytes_synced}, "
-                        f"embeddings={cache_result.embeddings_generated}"
-                    )
+                    meta = self.metadata.get(existing_path)  # type: ignore[attr-defined]
+                    if meta:
+                        # File exists in metadata but not in backend - delete it
+                        logger.info(
+                            f"[SYNC_MOUNT] Deleting file no longer in backend: {existing_path}"
+                        )
+                        self.metadata.delete(existing_path)  # type: ignore[attr-defined]
+                        stats["files_deleted"] = stats["files_deleted"] + 1  # type: ignore[operator]
                 except Exception as e:
-                    error_msg = f"Failed to sync content cache via backend.sync(): {e}"
+                    error_msg = f"Failed to delete {existing_path}: {e}"
                     cast(list[str], stats["errors"]).append(error_msg)
                     logger.warning(error_msg)
-            else:
-                # Fallback: Backend doesn't have sync() method
-                # This maintains backward compatibility with connectors that don't use CacheConnectorMixin
-                logger.info(
-                    f"[SYNC_MOUNT] Backend {type(backend).__name__} does not support sync(), "
-                    "skipping content cache population"
-                )
+        except Exception as e:
+            error_msg = f"Failed to check for deletions: {e}"
+            cast(list[str], stats["errors"]).append(error_msg)
+            logger.warning(error_msg)
 
-        return stats
+    def _sync_mount_content_cache(
+        self,
+        ctx: SyncMountContext,
+        stats: dict[str, int | list[str]],
+    ) -> None:
+        """Step 5: Sync content to cache if requested.
+
+        Delegates to backend.sync() method (from CacheConnectorMixin) to
+        populate the content_cache table for fast grep/search operations.
+
+        Args:
+            ctx: Sync mount context
+            stats: Statistics dictionary to update
+        """
+        import logging
+        from typing import cast
+
+        logger = logging.getLogger(__name__)
+
+        if not ctx.sync_content or ctx.dry_run:
+            return
+
+        # Delegate to backend's sync() method if available (CacheConnectorMixin)
+        if not hasattr(ctx.backend, "sync"):
+            logger.info(
+                f"[SYNC_MOUNT] Backend {type(ctx.backend).__name__} does not support sync(), "
+                "skipping content cache population"
+            )
+            return
+
+        logger.info("[SYNC_MOUNT] Delegating to backend.sync() for cache population")
+        try:
+            from nexus.backends.cache_mixin import SyncResult as CacheSyncResult
+
+            # Determine path for cache sync (relative to mount)
+            cache_sync_path = None
+            if ctx.path:
+                if ctx.path.startswith(ctx.mount_point):
+                    cache_sync_path = ctx.path[len(ctx.mount_point) :].lstrip("/")
+                else:
+                    cache_sync_path = ctx.path.lstrip("/")
+
+            cache_result: CacheSyncResult = ctx.backend.sync(  # type: ignore[union-attr]
+                path=cache_sync_path,
+                mount_point=ctx.mount_point,
+                include_patterns=ctx.include_patterns,
+                exclude_patterns=ctx.exclude_patterns,
+                generate_embeddings=ctx.generate_embeddings,
+                context=ctx.context,
+            )
+
+            stats["cache_synced"] = cache_result.files_synced
+            stats["cache_skipped"] = cache_result.files_skipped
+            stats["cache_bytes"] = cache_result.bytes_synced
+            stats["embeddings_generated"] = cache_result.embeddings_generated
+
+            # Add any cache sync errors
+            if cache_result.errors:
+                for error in cache_result.errors:
+                    cast(list[str], stats["errors"]).append(f"[cache] {error}")
+
+            logger.info(
+                f"[SYNC_MOUNT] Content cache sync complete: "
+                f"synced={cache_result.files_synced}, "
+                f"bytes={cache_result.bytes_synced}, "
+                f"embeddings={cache_result.embeddings_generated}"
+            )
+        except Exception as e:
+            error_msg = f"Failed to sync content cache via backend.sync(): {e}"
+            cast(list[str], stats["errors"]).append(error_msg)
+            logger.warning(error_msg)

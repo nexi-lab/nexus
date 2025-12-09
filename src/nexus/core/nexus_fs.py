@@ -362,16 +362,33 @@ class NexusFS(
 
         # Load all saved mounts from database and activate them
         # This ensures persisted mounts are restored on server startup
+        # By default, skip auto-sync for fast startup (set NEXUS_AUTO_SYNC_MOUNTS=true to enable)
         try:
             if hasattr(self, "load_all_saved_mounts"):
-                mount_result = self.load_all_saved_mounts()
+                import os
+
+                # Check environment variable for auto-sync (default: False for fast startup)
+                auto_sync = os.getenv("NEXUS_AUTO_SYNC_MOUNTS", "false").lower() in (
+                    "true",
+                    "1",
+                    "yes",
+                )
+
+                mount_result = self.load_all_saved_mounts(auto_sync=auto_sync)
                 if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
                     import logging
 
                     logger = logging.getLogger(__name__)
-                    logger.info(
-                        f"🔄 Mount restoration: {mount_result['loaded']} loaded, {mount_result['failed']} failed"
+                    sync_msg = (
+                        f", {mount_result['synced']} synced" if mount_result["synced"] > 0 else ""
                     )
+                    logger.info(
+                        f"🔄 Mount restoration: {mount_result['loaded']} loaded{sync_msg}, {mount_result['failed']} failed"
+                    )
+                    if not auto_sync and mount_result["loaded"] > 0:
+                        logger.info(
+                            "💡 Auto-sync disabled for fast startup. Use sync_mount() to sync manually or set NEXUS_AUTO_SYNC_MOUNTS=true"
+                        )
                     if mount_result["errors"]:
                         for error in mount_result["errors"]:
                             logger.error(f"  ❌ {error}")

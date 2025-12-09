@@ -43,7 +43,7 @@ class TestCacheMixinBulkOperations:
     """Test bulk cache operations for performance."""
 
     def test_bulk_cache_loading_in_sync(self, tmp_path: Path):
-        """Test that sync() uses bulk cache loading instead of one-by-one."""
+        """Test that sync_content_to_cache() uses bulk cache loading instead of one-by-one."""
         # Setup
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
@@ -72,10 +72,10 @@ class TestCacheMixinBulkOperations:
             mock_bulk.return_value = {}  # No cached entries
 
             # Run sync
-            backend.sync(mount_point="/test", generate_embeddings=False)
+            backend.sync_content_to_cache(mount_point="/test", generate_embeddings=False)
 
             # Verify bulk method was called (optimization)
-            assert mock_bulk.called, "sync() should use bulk cache loading"
+            assert mock_bulk.called, "sync_content_to_cache() should use bulk cache loading"
 
             # Verify it was called with list of paths
             call_args = mock_bulk.call_args
@@ -131,7 +131,7 @@ class TestCacheMixinBulkOperations:
             mock_version.return_value = "v1"
 
             # Run sync
-            backend.sync(mount_point="/test", generate_embeddings=False)
+            backend.sync_content_to_cache(mount_point="/test", generate_embeddings=False)
 
             # Verify version check was NOT called (optimization!)
             # Fresh cache with version should skip the network call
@@ -187,7 +187,7 @@ class TestCacheMixinBulkOperations:
             mock_version.return_value = "v2"
 
             # Run sync
-            backend.sync(mount_point="/test", generate_embeddings=False)
+            backend.sync_content_to_cache(mount_point="/test", generate_embeddings=False)
 
             # Stale entries should still be checked/re-cached
             # This ensures data freshness

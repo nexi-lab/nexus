@@ -25,6 +25,8 @@ COPY alembic/ ./alembic/
 COPY alembic.ini ./
 
 # Install dependencies to system (not editable for multi-stage build)
+# Increase timeout for large packages like onnxruntime (14.5MB)
+ENV UV_HTTP_TIMEOUT=300
 RUN uv pip install --system .
 
 # Install sandbox providers

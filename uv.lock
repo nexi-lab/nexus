@@ -2338,7 +2338,7 @@ wheels = [
 
 [[package]]
 name = "nexus-ai-fs"
-version = "0.6.0"
+version = "0.6.1"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },

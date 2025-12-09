@@ -419,7 +419,7 @@ class ScopedFilesystem:
         self,
         name: str,
         ttl_minutes: int = 10,
-        provider: str = "e2b",
+        provider: str | None = "e2b",
         template_id: str | None = None,
         context: dict | None = None,
     ) -> dict[Any, Any]:
@@ -446,10 +446,14 @@ class ScopedFilesystem:
         language: str,
         code: str,
         timeout: int = 300,
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
         context: dict | None = None,
     ) -> dict[Any, Any]:
         """Run code in a sandbox."""
-        return self._fs.sandbox_run(sandbox_id, language, code, timeout, context)
+        return self._fs.sandbox_run(
+            sandbox_id, language, code, timeout, nexus_url, nexus_api_key, context
+        )
 
     def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
         """Pause a running sandbox."""
@@ -470,9 +474,10 @@ class ScopedFilesystem:
         user_id: str | None = None,
         tenant_id: str | None = None,
         agent_id: str | None = None,
+        status: str | None = None,
     ) -> dict[Any, Any]:
         """List all sandboxes for the current user."""
-        return self._fs.sandbox_list(context, verify_status, user_id, tenant_id, agent_id)
+        return self._fs.sandbox_list(context, verify_status, user_id, tenant_id, agent_id, status)
 
     def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
         """Get sandbox status."""

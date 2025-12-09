@@ -43,7 +43,7 @@ def start_background_mount_sync(nx: NexusFilesystem) -> None:
     """
     import threading
 
-    def sync_connector_mounts_background():
+    def sync_connector_mounts_background() -> None:
         """Background thread worker that performs the actual sync."""
         import time
 
@@ -62,7 +62,7 @@ def start_background_mount_sync(nx: NexusFilesystem) -> None:
                 if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
                     try:
                         console.print(f"  Syncing {mount_point} ({backend_type})...")
-                        result = nx.sync_mount(mount_point, recursive=True)
+                        result = nx.sync_mount(mount_point, recursive=True)  # type: ignore[attr-defined]
                         console.print(
                             f"  [green]✓[/green] {mount_point}: {result['files_scanned']} scanned, "
                             f"{result['files_created']} created, "

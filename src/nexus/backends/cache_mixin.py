@@ -15,7 +15,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
@@ -1057,7 +1057,7 @@ class CacheConnectorMixin:
         return result
 
     # Backward compatibility alias
-    def sync(self, *args, **kwargs) -> SyncResult:
+    def sync(self, *args: Any, **kwargs: Any) -> SyncResult:
         """Deprecated: Use sync_content_to_cache() instead.
 
         This method is kept for backward compatibility but will be removed in a future version.

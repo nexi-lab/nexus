@@ -1268,6 +1268,7 @@ class NexusFSMountsMixin:
             raise ValueError(f"Mount not found: {ctx.mount_point}")
 
         ctx.backend = mount.backend
+        assert ctx.backend is not None, f"Backend for mount {ctx.mount_point} is None"
         backend_name = type(ctx.backend).__name__
 
         # Check if backend supports list_dir (connector-style backends)
@@ -1330,7 +1331,7 @@ class NexusFSMountsMixin:
             # Check if this is a single file (not a directory)
             is_single_file = False
             try:
-                entries = ctx.backend.list_dir(start_backend_path, context=ctx.context)
+                entries = ctx.backend.list_dir(start_backend_path, context=ctx.context)  # type: ignore[union-attr]
                 if not entries:
                     # Empty directory or file - check if path has extension
                     import os.path as osp
@@ -1367,7 +1368,7 @@ class NexusFSMountsMixin:
                             path_hash = hashlib.sha256(start_backend_path.encode()).hexdigest()
                             meta = FileMetadata(
                                 path=start_virtual_path,
-                                backend_name=ctx.backend.name,
+                                backend_name=ctx.backend.name,  # type: ignore[union-attr]
                                 physical_path=start_backend_path,
                                 size=0,
                                 etag=path_hash,
@@ -1380,9 +1381,9 @@ class NexusFSMountsMixin:
                             stats["files_created"] = 1
 
                             # Create parent relationships
-                            if ctx.has_hierarchy and self._hierarchy_manager:
+                            if ctx.has_hierarchy and self._hierarchy_manager:  # type: ignore[attr-defined]
                                 try:
-                                    self._hierarchy_manager.ensure_parent_tuples(
+                                    self._hierarchy_manager.ensure_parent_tuples(  # type: ignore[attr-defined]
                                         start_virtual_path, tenant_id=None
                                     )
                                 except Exception as parent_error:
@@ -1407,7 +1408,7 @@ class NexusFSMountsMixin:
 
             try:
                 # List entries in this directory
-                entries = ctx.backend.list_dir(backend_path, context=ctx.context)
+                entries = ctx.backend.list_dir(backend_path, context=ctx.context)  # type: ignore[union-attr]
 
                 for entry_name in entries:
                     is_dir = entry_name.endswith("/")
@@ -1458,7 +1459,7 @@ class NexusFSMountsMixin:
                                 path_hash = hashlib.sha256(entry_backend_path.encode()).hexdigest()
                                 meta = FileMetadata(
                                     path=entry_virtual_path,
-                                    backend_name=ctx.backend.name,
+                                    backend_name=ctx.backend.name,  # type: ignore[union-attr]
                                     physical_path=entry_backend_path,
                                     size=0,
                                     etag=path_hash,
@@ -1473,12 +1474,12 @@ class NexusFSMountsMixin:
                                 stats["files_created"] = stats["files_created"] + 1  # type: ignore[operator]
 
                                 # Create parent relationships for permission inheritance
-                                if ctx.has_hierarchy and self._hierarchy_manager:
+                                if ctx.has_hierarchy and self._hierarchy_manager:  # type: ignore[attr-defined]
                                     try:
                                         logger.info(
                                             f"[SYNC_MOUNT] Creating parent tuples for new file: {entry_virtual_path}"
                                         )
-                                        created = self._hierarchy_manager.ensure_parent_tuples(
+                                        created = self._hierarchy_manager.ensure_parent_tuples(  # type: ignore[attr-defined]
                                             entry_virtual_path, tenant_id=None
                                         )
                                         logger.info(
@@ -1618,7 +1619,7 @@ class NexusFSMountsMixin:
                 else:
                     cache_sync_path = ctx.path.lstrip("/")
 
-            cache_result: CacheSyncResult = ctx.backend.sync(
+            cache_result: CacheSyncResult = ctx.backend.sync(  # type: ignore[union-attr]
                 path=cache_sync_path,
                 mount_point=ctx.mount_point,
                 include_patterns=ctx.include_patterns,

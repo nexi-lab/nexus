@@ -55,7 +55,7 @@ class TestGmailConnectorInitialization:
         assert backend.name == "gmail"
         assert backend.user_email == "test@example.com"
         assert backend.provider == "gmail"
-        assert backend.max_message_per_label == 2000
+        assert backend.max_message_per_label == 200
         assert backend.user_scoped is True
 
     def test_init_with_db_url(self, mock_token_manager, mock_oauth_factory) -> None:

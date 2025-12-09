@@ -66,11 +66,18 @@ class TestGrepFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = grep_tool('"async def"', state, config)
+            result = grep_tool("async def", state, config)
 
         assert "/test.py:10:async def test():" in result
         assert "/main.py:5:async def main():" in result
-        mock_nx.grep.assert_called_once_with("async def", "/", ignore_case=False)
+        assert "Found 2 matches" in result
+        mock_nx.grep.assert_called_once_with(
+            pattern="async def",
+            path="/",
+            file_pattern=None,
+            ignore_case=False,
+            max_results=1000,
+        )
 
     def test_grep_with_path(self):
         """Test grep with custom path."""
@@ -86,10 +93,17 @@ class TestGrepFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = grep_tool("pattern /workspace", state, config)
+            result = grep_tool("pattern", state, config, path="/workspace")
 
-        mock_nx.grep.assert_called_once_with("pattern", "/workspace", ignore_case=False)
+        mock_nx.grep.assert_called_once_with(
+            pattern="pattern",
+            path="/workspace",
+            file_pattern=None,
+            ignore_case=False,
+            max_results=1000,
+        )
         assert "No matches found" in result
+        assert "in /workspace" in result
 
     def test_grep_case_insensitive(self):
         """Test grep with case insensitive flag."""
@@ -105,9 +119,102 @@ class TestGrepFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            grep_tool("pattern -i", state, config)
+            grep_tool("pattern", state, config, ignore_case=True)
 
-        mock_nx.grep.assert_called_once_with("pattern", "/", ignore_case=True)
+        mock_nx.grep.assert_called_once_with(
+            pattern="pattern",
+            path="/",
+            file_pattern=None,
+            ignore_case=True,
+            max_results=1000,
+        )
+
+    def test_grep_with_file_pattern(self):
+        """Test grep with file_pattern parameter."""
+        tools = get_nexus_tools()
+        grep_tool = tools[0].func
+
+        mock_nx = Mock(spec=RemoteNexusFS)
+        mock_nx.grep.return_value = [
+            {"file": "/test.py", "line": 10, "content": "import pandas"},
+        ]
+
+        state = {}
+        config: RunnableConfig = {
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+        }
+
+        with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
+            result = grep_tool("import pandas", state, config, file_pattern="**/*.py")
+
+        mock_nx.grep.assert_called_once_with(
+            pattern="import pandas",
+            path="/",
+            file_pattern="**/*.py",
+            ignore_case=False,
+            max_results=1000,
+        )
+        assert "in files matching '**/*.py'" in result
+
+    def test_grep_with_max_results(self):
+        """Test grep with custom max_results."""
+        tools = get_nexus_tools()
+        grep_tool = tools[0].func
+
+        mock_nx = Mock(spec=RemoteNexusFS)
+        mock_nx.grep.return_value = []
+
+        state = {}
+        config: RunnableConfig = {
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+        }
+
+        with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
+            grep_tool("pattern", state, config, max_results=50)
+
+        mock_nx.grep.assert_called_once_with(
+            pattern="pattern",
+            path="/",
+            file_pattern=None,
+            ignore_case=False,
+            max_results=50,
+        )
+
+    def test_grep_with_all_parameters(self):
+        """Test grep with all parameters specified."""
+        tools = get_nexus_tools()
+        grep_tool = tools[0].func
+
+        mock_nx = Mock(spec=RemoteNexusFS)
+        mock_nx.grep.return_value = [
+            {"file": "/logs/error.log", "line": 42, "content": "ERROR: Connection failed"},
+        ]
+
+        state = {}
+        config: RunnableConfig = {
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+        }
+
+        with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
+            result = grep_tool(
+                "error",
+                state,
+                config,
+                path="/logs",
+                file_pattern="*.log",
+                ignore_case=True,
+                max_results=100,
+            )
+
+        mock_nx.grep.assert_called_once_with(
+            pattern="error",
+            path="/logs",
+            file_pattern="*.log",
+            ignore_case=True,
+            max_results=100,
+        )
+        assert "Found 1 matches" in result
+        assert "in files matching '*.log'" in result
 
     def test_grep_from_state_context(self):
         """Test getting auth from state context."""
@@ -156,19 +263,6 @@ class TestGrepFilesTool:
         result = grep_tool("test", state, config)
         assert "Invalid x_auth format" in result
 
-    def test_grep_empty_command(self):
-        """Test grep with empty command."""
-        tools = get_nexus_tools()
-        grep_tool = tools[0].func
-
-        state = {}
-        config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
-        }
-
-        result = grep_tool("", state, config)
-        assert "Error: Empty grep command" in result
-
     def test_grep_truncates_long_lines(self):
         """Test that grep truncates very long lines."""
         tools = get_nexus_tools()
@@ -190,7 +284,7 @@ class TestGrepFilesTool:
         assert len(result) < len(long_content)
 
     def test_grep_limits_results(self):
-        """Test that grep limits to first 50 matches."""
+        """Test that grep limits display to first 50 matches."""
         tools = get_nexus_tools()
         grep_tool = tools[0].func
 
@@ -206,7 +300,33 @@ class TestGrepFilesTool:
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
             result = grep_tool("pattern", state, config)
 
+        assert "Found 100 matches" in result
         assert "and 50 more matches" in result
+
+    def test_grep_respects_max_results_display_limit(self):
+        """Test that grep display limit respects max_results parameter."""
+        tools = get_nexus_tools()
+        grep_tool = tools[0].func
+
+        mock_nx = Mock(spec=RemoteNexusFS)
+        # Simulate nx.grep returning fewer results due to max_results=10
+        matches = [{"file": f"/file{i}.py", "line": i, "content": "match"} for i in range(10)]
+        mock_nx.grep.return_value = matches
+
+        state = {}
+        config: RunnableConfig = {
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+        }
+
+        with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
+            result = grep_tool("pattern", state, config, max_results=10)
+
+        # Should show all 10 results without "more matches" message
+        assert "Found 10 matches" in result
+        assert "more matches" not in result
+        # All 10 files should be in output
+        for i in range(10):
+            assert f"/file{i}.py" in result
 
 
 class TestGlobFilesTool:

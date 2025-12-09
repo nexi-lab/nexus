@@ -111,7 +111,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         user_email: str | None = None,
         provider: str = "gmail",
         session_factory: Any = None,
-        max_message_per_label: int = 2000,
+        max_message_per_label: int = 200,
         metadata_store: Any = None,
     ):
         """
@@ -124,7 +124,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             provider: OAuth provider name from config (default: "gmail")
             session_factory: SQLAlchemy session factory for content caching (optional).
                            If provided, enables persistent caching for fast grep/search.
-            max_message_per_label: Maximum number of messages to fetch per label (default: 50).
+            max_message_per_label: Maximum number of messages to fetch per label (default: 200).
                                   Set to None for unlimited. Useful for testing with small datasets.
             metadata_store: MetadataStore instance for writing to file_paths table (optional).
                           Required for metadata-based listing (fast database queries).

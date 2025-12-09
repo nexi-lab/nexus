@@ -111,7 +111,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         user_email: str | None = None,
         provider: str = "gmail",
         session_factory=None,  # type: ignore[no-untyped-def]
-        max_message_per_label: int = 50,
+        max_message_per_label: int = 2000,
         metadata_store=None,  # type: ignore[no-untyped-def]
     ):
         """

@@ -1376,7 +1376,7 @@ class NexusFSMountsMixin:
                                     size_context = OperationContext(backend_path=start_backend_path)
                                     file_size = ctx.backend.get_content_size(
                                         path_hash, size_context
-                                    )  # type: ignore[union-attr]
+                                    )
                             except Exception:
                                 # If size retrieval fails, default to 0
                                 pass
@@ -1484,7 +1484,7 @@ class NexusFSMountsMixin:
                                         )
                                         file_size = ctx.backend.get_content_size(
                                             path_hash, size_context
-                                        )  # type: ignore[union-attr]
+                                        )
                                 except Exception:
                                     # If size retrieval fails, default to 0
                                     pass

@@ -166,11 +166,32 @@ class NexusFUSEOperations(Operations):
             if not self.nexus_fs.exists(original_path):
                 raise FuseOSError(errno.ENOENT)
 
-            # Get file content to determine size
-            content = self._get_file_content(original_path, view_type)
-
-            # Get file metadata for permissions
+            # Get file metadata (includes size, permissions, etc.)
             metadata = self._get_metadata(original_path)
+
+            # Get file size efficiently
+            # Priority: 1) Use metadata.size if available, 2) Fetch content as fallback
+            if view_type and view_type != "raw":
+                # Special view - need to fetch content for accurate size
+                content = self._get_file_content(original_path, view_type)
+                file_size = len(content)
+            elif metadata:
+                # Try to get size from metadata (handles both dict and object)
+                meta_size = (
+                    metadata.get("size")
+                    if isinstance(metadata, dict)
+                    else getattr(metadata, "size", 0)
+                )
+                if meta_size and meta_size > 0:
+                    file_size = meta_size
+                else:
+                    # Fallback: fetch content to get size
+                    content = self._get_file_content(original_path, None)
+                    file_size = len(content)
+            else:
+                # No metadata: fetch content to get size (for backward compatibility)
+                content = self._get_file_content(original_path, None)
+                file_size = len(content)
 
             # Return file attributes
             now = time.time()
@@ -223,7 +244,7 @@ class NexusFUSEOperations(Operations):
             attrs = {
                 "st_mode": stat.S_IFREG | file_mode,
                 "st_nlink": 1,
-                "st_size": len(content),
+                "st_size": file_size,
                 "st_ctime": now,
                 "st_mtime": now,
                 "st_atime": now,

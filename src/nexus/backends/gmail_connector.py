@@ -743,7 +743,10 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             return False
 
     def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
-        """Get email content size.
+        """Get email content size (cache-first, efficient).
+
+        Performance optimization: Checks cache first to avoid API calls during
+        ls -la operations. Only hits Gmail API if not cached.
 
         Args:
             content_hash: Content hash (ignored)
@@ -759,7 +762,15 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         if context is None or not hasattr(context, "backend_path"):
             raise ValueError("Gmail connector requires backend_path in OperationContext")
 
-        # Read content to get size
+        # OPTIMIZATION: Check cache first (efficient - no API call)
+        # This is crucial for ls -la performance with many files
+        if hasattr(context, "virtual_path") and context.virtual_path:
+            cached_size = self._get_size_from_cache(context.virtual_path)
+            if cached_size is not None:
+                return cached_size
+
+        # Fallback: Read content to get size (hits Gmail API)
+        # This only happens when file is not cached
         content = self.read_content(content_hash, context)
         return len(content)
 

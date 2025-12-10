@@ -1366,11 +1366,26 @@ class NexusFSMountsMixin:
                             import hashlib
 
                             path_hash = hashlib.sha256(start_backend_path.encode()).hexdigest()
+
+                            # Get actual file size from backend
+                            file_size = 0
+                            try:
+                                if hasattr(ctx.backend, "get_content_size"):
+                                    from nexus.core.operation_context import OperationContext
+
+                                    size_context = OperationContext(backend_path=start_backend_path)
+                                    file_size = ctx.backend.get_content_size(  # type: ignore[union-attr]
+                                        path_hash, size_context
+                                    )
+                            except Exception:
+                                # If size retrieval fails, default to 0
+                                pass
+
                             meta = FileMetadata(
                                 path=start_virtual_path,
                                 backend_name=ctx.backend.name,  # type: ignore[union-attr]
                                 physical_path=start_backend_path,
-                                size=0,
+                                size=file_size,
                                 etag=path_hash,
                                 created_at=now,
                                 modified_at=now,
@@ -1457,11 +1472,28 @@ class NexusFSMountsMixin:
                                 import hashlib
 
                                 path_hash = hashlib.sha256(entry_backend_path.encode()).hexdigest()
+
+                                # Get actual file size from backend
+                                file_size = 0
+                                try:
+                                    if hasattr(ctx.backend, "get_content_size"):
+                                        from nexus.core.operation_context import OperationContext
+
+                                        size_context = OperationContext(
+                                            backend_path=entry_backend_path
+                                        )
+                                        file_size = ctx.backend.get_content_size(  # type: ignore[union-attr]
+                                            path_hash, size_context
+                                        )
+                                except Exception:
+                                    # If size retrieval fails, default to 0
+                                    pass
+
                                 meta = FileMetadata(
                                     path=entry_virtual_path,
                                     backend_name=ctx.backend.name,  # type: ignore[union-attr]
                                     physical_path=entry_backend_path,
-                                    size=0,
+                                    size=file_size,
                                     etag=path_hash,
                                     created_at=now,
                                     modified_at=now,

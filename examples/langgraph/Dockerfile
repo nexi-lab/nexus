@@ -63,5 +63,10 @@ EXPOSE 2024
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD curl -f http://localhost:${LANGGRAPH_PORT}/ok || exit 1
 
+# Tell Docker to send SIGINT instead of SIGTERM for graceful shutdown
+# Uvicorn handles SIGINT properly and triggers the lifespan shutdown
+STOPSIGNAL SIGINT
+
 # Run the LangGraph server
-CMD ["sh", "-c", "langgraph dev --allow-blocking --host ${LANGGRAPH_HOST} --port ${LANGGRAPH_PORT}"]
+# Use exec to make langgraph the PID 1 process (not sh)
+CMD ["sh", "-c", "exec langgraph dev --allow-blocking --host ${LANGGRAPH_HOST} --port ${LANGGRAPH_PORT}"]

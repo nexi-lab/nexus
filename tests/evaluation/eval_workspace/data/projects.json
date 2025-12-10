@@ -1,0 +1,82 @@
+{
+  "projects": [
+    {
+      "id": "proj_001",
+      "name": "API Gateway Redesign",
+      "description": "Modernize the API gateway with improved rate limiting and caching",
+      "owner_id": "usr_001",
+      "status": "completed",
+      "priority": "high",
+      "created_at": "2024-01-20T10:00:00Z",
+      "completed_at": "2024-03-01T16:00:00Z",
+      "team_size": 4,
+      "budget_usd": 75000
+    },
+    {
+      "id": "proj_002",
+      "name": "User Authentication Overhaul",
+      "description": "Implement JWT-based authentication with refresh tokens",
+      "owner_id": "usr_001",
+      "status": "completed",
+      "priority": "critical",
+      "created_at": "2024-01-10T09:00:00Z",
+      "completed_at": "2024-02-28T17:00:00Z",
+      "team_size": 3,
+      "budget_usd": 50000
+    },
+    {
+      "id": "proj_003",
+      "name": "Database Migration",
+      "description": "Migrate from sync to async database operations",
+      "owner_id": "usr_002",
+      "status": "completed",
+      "priority": "high",
+      "created_at": "2024-02-01T08:00:00Z",
+      "completed_at": "2024-03-10T15:00:00Z",
+      "team_size": 2,
+      "budget_usd": 30000
+    },
+    {
+      "id": "proj_004",
+      "name": "Caching Layer Implementation",
+      "description": "Add Redis-based distributed caching with L1/L2 tiers",
+      "owner_id": "usr_003",
+      "status": "active",
+      "priority": "medium",
+      "created_at": "2024-03-01T10:00:00Z",
+      "completed_at": null,
+      "team_size": 2,
+      "budget_usd": 25000
+    },
+    {
+      "id": "proj_005",
+      "name": "Mobile App Development",
+      "description": "Native iOS and Android applications",
+      "owner_id": "usr_004",
+      "status": "active",
+      "priority": "high",
+      "created_at": "2024-02-15T11:00:00Z",
+      "completed_at": null,
+      "team_size": 5,
+      "budget_usd": 150000
+    },
+    {
+      "id": "proj_006",
+      "name": "Security Audit",
+      "description": "Comprehensive security review and penetration testing",
+      "owner_id": "usr_001",
+      "status": "completed",
+      "priority": "critical",
+      "created_at": "2024-01-05T09:00:00Z",
+      "completed_at": "2024-01-25T18:00:00Z",
+      "team_size": 2,
+      "budget_usd": 40000
+    }
+  ],
+  "summary": {
+    "total": 6,
+    "completed": 4,
+    "active": 2,
+    "total_budget_usd": 370000
+  }
+}

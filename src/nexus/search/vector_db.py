@@ -206,9 +206,9 @@ class VectorDatabase:
             try:
                 conn.execute(text("ALTER TABLE document_chunks ADD COLUMN embedding vector(1536)"))
                 conn.commit()
-            except OSError:
-                # Column might already exist (duplicate column error)
-                pass
+            except Exception:
+                # Column might already exist (duplicate column error) - rollback and continue
+                conn.rollback()
 
         # Create GIN index for text search
         try:
@@ -220,9 +220,9 @@ class VectorDatabase:
             """)
             )
             conn.commit()
-        except OSError:
-            # Index might already exist
-            pass
+        except Exception:
+            # Index might already exist - rollback and continue
+            conn.rollback()
 
         # Create HNSW index for vector search (only if pgvector available)
         if vec_available:

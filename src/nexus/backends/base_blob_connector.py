@@ -611,7 +611,7 @@ class BaseBlobStorageConnector(Backend):
             and hasattr(context, "virtual_path")
             and context.virtual_path
         ):
-            cached_size = self._get_size_from_cache(context.virtual_path)  # type: ignore[attr-defined]
+            cached_size = self._get_size_from_cache(context.virtual_path)
             if cached_size is not None:
                 assert isinstance(cached_size, int), "Cache size must be int"
                 return cached_size

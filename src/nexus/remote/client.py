@@ -2921,6 +2921,117 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("sync_mount", params)
         return result  # type: ignore[no-any-return]
 
+    def sync_mount_async(
+        self,
+        mount_point: str,
+        path: str | None = None,
+        recursive: bool = True,
+        dry_run: bool = False,
+        sync_content: bool = True,
+        include_patterns: builtins.list[str] | None = None,
+        exclude_patterns: builtins.list[str] | None = None,
+        generate_embeddings: bool = False,
+    ) -> dict[str, Any]:
+        """Start an async sync job for a mount point (Issue #609).
+
+        Unlike sync_mount() which blocks until completion, this method returns
+        immediately with a job_id that can be used to monitor progress.
+
+        Args:
+            mount_point: Virtual path of mount to sync (required)
+            path: Specific path within mount to sync
+            recursive: If True, sync all subdirectories recursively
+            dry_run: If True, only report what would be synced
+            sync_content: If True, also sync content to cache
+            include_patterns: Glob patterns to include
+            exclude_patterns: Glob patterns to exclude
+            generate_embeddings: If True, generate embeddings
+
+        Returns:
+            Dictionary with job info:
+                - job_id: UUID of the sync job
+                - status: Initial status ("pending")
+                - mount_point: Mount being synced
+
+        Example:
+            >>> result = nx.sync_mount_async("/mnt/gmail")
+            >>> job_id = result["job_id"]
+            >>> status = nx.get_sync_job(job_id)
+        """
+        params: dict[str, Any] = {
+            "mount_point": mount_point,
+            "recursive": recursive,
+            "dry_run": dry_run,
+            "sync_content": sync_content,
+            "generate_embeddings": generate_embeddings,
+        }
+
+        if path is not None:
+            params["path"] = path
+        if include_patterns is not None:
+            params["include_patterns"] = include_patterns
+        if exclude_patterns is not None:
+            params["exclude_patterns"] = exclude_patterns
+
+        result = self._call_rpc("sync_mount_async", params)
+        return result  # type: ignore[no-any-return]
+
+    def get_sync_job(self, job_id: str) -> dict[str, Any] | None:
+        """Get the status and progress of a sync job.
+
+        Args:
+            job_id: UUID of the sync job
+
+        Returns:
+            Job details dict or None if not found
+
+        Example:
+            >>> job = nx.get_sync_job("abc123")
+            >>> print(f"Status: {job['status']}, Progress: {job['progress_pct']}%")
+        """
+        result = self._call_rpc("get_sync_job", {"job_id": job_id})
+        return result  # type: ignore[no-any-return]
+
+    def cancel_sync_job(self, job_id: str) -> dict[str, Any]:
+        """Cancel a running sync job.
+
+        Args:
+            job_id: UUID of the sync job to cancel
+
+        Returns:
+            Dictionary with result:
+                - success: True if cancellation was requested
+                - job_id: The job ID
+                - message: Status message
+        """
+        result = self._call_rpc("cancel_sync_job", {"job_id": job_id})
+        return result  # type: ignore[no-any-return]
+
+    def list_sync_jobs(
+        self,
+        mount_point: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> builtins.list[dict[str, Any]]:
+        """List sync jobs with optional filters.
+
+        Args:
+            mount_point: Filter by mount point
+            status: Filter by status (pending, running, completed, failed, cancelled)
+            limit: Maximum number of jobs to return
+
+        Returns:
+            List of job dicts, ordered by created_at descending
+        """
+        params: dict[str, Any] = {"limit": limit}
+        if mount_point is not None:
+            params["mount_point"] = mount_point
+        if status is not None:
+            params["status"] = status
+
+        result = self._call_rpc("list_sync_jobs", params)
+        return result  # type: ignore[no-any-return]
+
     # ============================================================
     # Workspace and Memory Management
     # ============================================================

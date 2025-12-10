@@ -1225,6 +1225,8 @@ class AsyncRemoteNexusFS:
         language: str,
         code: str,
         timeout: int = 300,
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run code in a sandbox (async).
@@ -1234,6 +1236,8 @@ class AsyncRemoteNexusFS:
             language: Programming language ("python", "javascript", "bash")
             code: Code to execute
             timeout: Execution timeout in seconds (default: 300)
+            nexus_url: Nexus server URL to inject into code as NEXUS_URL env var
+            nexus_api_key: Nexus API key to inject into code as NEXUS_API_KEY env var
             context: Operation context
 
         Returns:
@@ -1245,6 +1249,10 @@ class AsyncRemoteNexusFS:
             "code": code,
             "timeout": timeout,
         }
+        if nexus_url is not None:
+            params["nexus_url"] = nexus_url
+        if nexus_api_key is not None:
+            params["nexus_api_key"] = nexus_api_key
         if context is not None:
             params["context"] = context
         # Use execution timeout + 10 seconds buffer for HTTP read timeout

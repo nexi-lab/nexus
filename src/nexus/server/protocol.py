@@ -1214,6 +1214,43 @@ class SyncMountParams:
     generate_embeddings: bool = False
 
 
+@dataclass
+class SyncMountAsyncParams:
+    """Parameters for sync_mount_async() method (Issue #609)."""
+
+    mount_point: str
+    path: str | None = None
+    recursive: bool = True
+    dry_run: bool = False
+    sync_content: bool = True
+    include_patterns: list[str] | None = None
+    exclude_patterns: list[str] | None = None
+    generate_embeddings: bool = False
+
+
+@dataclass
+class GetSyncJobParams:
+    """Parameters for get_sync_job() method (Issue #609)."""
+
+    job_id: str
+
+
+@dataclass
+class CancelSyncJobParams:
+    """Parameters for cancel_sync_job() method (Issue #609)."""
+
+    job_id: str
+
+
+@dataclass
+class ListSyncJobsParams:
+    """Parameters for list_sync_jobs() method (Issue #609)."""
+
+    mount_point: str | None = None
+    status: str | None = None
+    limit: int = 50
+
+
 # Skills management parameter dataclasses
 @dataclass
 class SkillsCreateParams:
@@ -1497,6 +1534,10 @@ METHOD_PARAMS = {
     "load_mount": LoadMountParams,
     "delete_saved_mount": DeleteSavedMountParams,
     "sync_mount": SyncMountParams,
+    "sync_mount_async": SyncMountAsyncParams,
+    "get_sync_job": GetSyncJobParams,
+    "cancel_sync_job": CancelSyncJobParams,
+    "list_sync_jobs": ListSyncJobsParams,
     # Skills management methods
     "skills_create": SkillsCreateParams,
     "skills_create_from_content": SkillsCreateFromContentParams,

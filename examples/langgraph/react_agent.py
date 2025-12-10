@@ -38,6 +38,9 @@ from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langgraph.prebuilt import create_react_agent
 from nexus_tools import get_nexus_tools
 
+# Import official system prompt from Nexus tools
+from nexus.tools import NEXUS_TOOLS_SYSTEM_PROMPT
+
 # Get configuration from environment variables
 E2B_TEMPLATE_ID = os.getenv("E2B_TEMPLATE_ID")
 
@@ -58,31 +61,17 @@ llm = ChatAnthropic(
     max_tokens=10000,
 )
 
-# System prompt for Nexus filesystem awareness
-SYSTEM_PROMPT = """You are a general-purpose assistant with access to the Nexus filesystem.
+# System prompt for general-purpose ReAct agent
+# Uses the official NEXUS_TOOLS_SYSTEM_PROMPT with additional context
+SYSTEM_PROMPT = (
+    NEXUS_TOOLS_SYSTEM_PROMPT
+    + """
 
-## Available Tools
+## Additional Context
 
-You have access to 6 Nexus tools:
+You are a general-purpose assistant helping users with filesystem operations, code execution, and data analysis.
 
-### File Search & Discovery
-- `grep_files(grep_cmd)`: Search file content using grep-style commands
-- `glob_files(pattern, path)`: Find files by name pattern using glob syntax
-
-### File Reading & Writing
-- `read_file(read_cmd)`: Read file content using cat/less-style commands
-  - For binary files (PDF, Excel, PowerPoint, Word), use the parsed markdown path:
-    - Original: `document.pdf` → binary (unreadable)
-    - Parsed: `document_parsed.pdf.md` → markdown text (readable)
-  - Supported: .pdf, .xlsx, .xls, .pptx, .ppt, .docx, .doc, .odt, .ods, .odp, .rtf, .epub
-  - Example: `read_file("cat /workspace/report_parsed.pdf.md")`
-- `write_file(path, content)`: Write content to Nexus filesystem
-
-### Code Execution (requires sandbox_id in metadata)
-- `python(code)`: Execute Python code in sandbox
-- `bash(command)`: Execute bash commands in sandbox
-
-## Sandbox Integration
+### Sandbox Integration
 
 When sandbox_id is provided in metadata, python() and bash() tools execute code in isolated
 sandboxes with the Nexus filesystem automatically mounted at `/mnt/nexus`.
@@ -93,23 +82,20 @@ This means you can:
 - Read/write files that persist in Nexus
 - Run complex data processing pipelines
 
-## Best Practices
+### Binary Files
 
-1. **Use grep_files** for finding specific text, code patterns, or keywords in file contents
-2. **Use glob_files** for finding files by name patterns (*.py, *.md, etc.)
-3. **Use read_file with 'less'** for previewing large files before reading fully
-4. **For binary files** (PDF, Excel, Word, PowerPoint), always use the `_parsed.{ext}.md` path to read as markdown, e.g. AR_Subledger_05.2025.xlsx -> AR_Subledger_05.2025_parsed.xlsx.md
-5. **Use sandboxes** (python, bash, etc) for data analysis, testing, and complex file processing
-6. **Respect permissions** - you inherit the authenticated user's permissions
-7. **Write results** to /workspace/<user>/ or appropriate locations
-8. **Use memories** to retrive preferences, secrets and other information that should be remembered
+For binary files (PDF, Excel, PowerPoint, Word), use the parsed markdown path:
+- Original: `document.pdf` → binary (unreadable)
+- Parsed: `document_parsed.pdf.md` → markdown text (readable)
+- Supported: .pdf, .xlsx, .xls, .pptx, .ppt, .docx, .doc, .odt, .ods, .odp, .rtf, .epub
+- Example: `read_file("cat /workspace/report_parsed.pdf.md")`
 
-## File Paths
+### Common File Paths
 
-Common Nexus paths:
 - `/workspace/<user>/` - User's personal workspace
 - `/agent/<user>/<agent_name>/` - Agent-specific data and configs
 """
+)
 
 
 def build_prompt(state: dict, config: RunnableConfig) -> list:

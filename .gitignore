@@ -93,7 +93,7 @@ cython_debug/
 
 # Rust
 target/
-Cargo.lock
+# Cargo.lock - keep it for reproducible builds (needed for Docker)
 
 # Nexus specific data directories
 nexus-data/

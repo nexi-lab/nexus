@@ -1799,7 +1799,7 @@ class NexusFSMountsMixin:
             # This handles the case when called from synchronous context
             import threading
 
-            def run_async():
+            def run_async() -> None:
                 asyncio.run(sync_manager.start_job(job_id, self))  # type: ignore[arg-type]
 
             thread = threading.Thread(target=run_async, daemon=True)

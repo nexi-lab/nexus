@@ -585,19 +585,22 @@ async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:
 # ============================================================================
 
 
-def _handle_read(params: Any, context: Any) -> dict[str, Any]:
-    """Handle read method."""
-    import base64
+def _handle_read(params: Any, context: Any) -> bytes | dict[str, Any]:
+    """Handle read method.
 
+    Returns raw bytes which will be encoded by encode_rpc_message using
+    the standard {__type__: 'bytes', data: ...} format.
+    """
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
 
     result = nexus_fs.read(params.path, context=context)
 
-    # Encode bytes as base64
+    # Return raw bytes - encode_rpc_message will convert to {__type__: 'bytes', data: ...}
     if isinstance(result, bytes):
-        return {"content": base64.b64encode(result).decode("utf-8"), "encoding": "base64"}
-    return {"content": result, "encoding": "utf-8"}
+        return result
+    # If result is already a dict (e.g., with metadata), return as-is
+    return result
 
 
 def _handle_write(params: Any, context: Any) -> dict[str, Any]:

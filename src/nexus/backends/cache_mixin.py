@@ -620,6 +620,20 @@ class CacheConnectorMixin:
             )
             session.add(cache_model)
 
+        # Update file_paths.size_bytes to keep it consistent with cache
+        # This ensures ls -la shows correct sizes even before cache lookup
+        try:
+            file_path_stmt = select(FilePathModel).where(FilePathModel.path_id == path_id)
+            file_path_result = session.execute(file_path_stmt)
+            file_path = file_path_result.scalar_one_or_none()
+            if file_path and file_path.size_bytes != original_size:
+                file_path.size_bytes = original_size
+                file_path.updated_at = now
+                logger.debug(f"[CACHE] Updated file_paths.size_bytes: {path} = {original_size}")
+        except Exception as e:
+            # Don't fail cache write if file_paths update fails
+            logger.warning(f"[CACHE] Failed to update file_paths.size_bytes for {path}: {e}")
+
         session.commit()
 
         entry = CacheEntry(
@@ -808,6 +822,35 @@ class CacheConnectorMixin:
 
             except Exception as e:
                 logger.error(f"[CACHE] Failed to prepare cache entry for {path}: {e}")
+
+        # Update file_paths.size_bytes for all cached entries (bulk update for efficiency)
+        # This keeps file_paths consistent with cache
+        try:
+            if cache_entries:
+                # Build map of path_id -> size for bulk update
+                size_updates = {ce.path_id: ce.original_size for ce in cache_entries}
+
+                # Get all FilePathModel entries in bulk
+                file_path_stmt = select(FilePathModel).where(
+                    FilePathModel.path_id.in_(list(size_updates.keys()))
+                )
+                file_path_result = session.execute(file_path_stmt)
+                file_paths = file_path_result.scalars().all()
+
+                # Update size_bytes for each
+                updated_count = 0
+                for file_path in file_paths:
+                    new_size = size_updates.get(file_path.path_id)
+                    if new_size and file_path.size_bytes != new_size:
+                        file_path.size_bytes = new_size
+                        file_path.updated_at = now
+                        updated_count += 1
+
+                if updated_count > 0:
+                    logger.info(f"[CACHE] Updated {updated_count} file_paths.size_bytes entries")
+        except Exception as e:
+            # Don't fail batch write if file_paths update fails
+            logger.warning(f"[CACHE] Failed to update file_paths.size_bytes in batch: {e}")
 
         # Commit all changes in single transaction
         session.commit()
@@ -1735,3 +1778,36 @@ class CacheConnectorMixin:
         """
         # TODO: Integrate with SemanticSearch.index_document()
         pass
+
+    def _get_size_from_cache(self, path: str) -> int | None:
+        """Get file size from cache (efficient, no backend call).
+
+        This checks both L1 (memory) and L2 (database) cache for the file's
+        original size. This is much more efficient than fetching content or
+        calling the backend API.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            File size in bytes, or None if not in cache
+
+        Performance:
+            - L1 hit: <1ms (memory lookup)
+            - L2 hit: ~5-10ms (single DB query)
+            - Miss: None returned, caller should fall back to backend
+        """
+        if not self._has_caching():
+            return None
+
+        try:
+            # Check cache (L1 + L2)
+            entry = self._read_from_cache(path, original=False)
+            if entry and not entry.stale:
+                logger.debug(f"[CACHE] SIZE HIT: {path} ({entry.original_size} bytes)")
+                return entry.original_size
+            logger.debug(f"[CACHE] SIZE MISS: {path}")
+        except Exception as e:
+            logger.debug(f"[CACHE] SIZE ERROR for {path}: {e}")
+
+        return None

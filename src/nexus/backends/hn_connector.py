@@ -474,8 +474,18 @@ class HNConnectorBackend(Backend, CacheConnectorMixin):
         content_hash: str,
         context: "OperationContext | None" = None,
     ) -> int:
-        """Get content size (estimated)."""
-        # Return approximate size - actual size varies
+        """Get content size (cache-first, efficient).
+
+        Performance optimization: Checks cache first for actual size.
+        Falls back to 10KB estimate if not cached.
+        """
+        # OPTIMIZATION: Check cache first for actual size
+        if context and hasattr(context, "virtual_path") and context.virtual_path:
+            cached_size = self._get_size_from_cache(context.virtual_path)
+            if cached_size is not None:
+                return cached_size
+
+        # Fallback: Return approximate size estimate
         return 10 * 1024  # 10 KB estimate
 
     def get_ref_count(

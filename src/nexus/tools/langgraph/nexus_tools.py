@@ -28,19 +28,12 @@ from typing import Annotated, Any
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
-from langgraph.graph import MessagesState
 from langgraph.prebuilt import InjectedState
 
 from nexus.remote import RemoteNexusFS
 
 
-class NexusAgentState(MessagesState):
-    """State for Nexus LangGraph agent."""
-
-    context: dict[str, Any] | None = None
-
-
-def get_nexus_tools() -> list[Any]:
+def get_nexus_tools():
     """
     Create LangGraph tools that connect to Nexus server with per-request authentication.
 
@@ -61,21 +54,12 @@ def get_nexus_tools() -> list[Any]:
         )
     """
 
-    def _get_nexus_client(
-        state: Annotated[NexusAgentState, InjectedState], config: RunnableConfig
-    ) -> RemoteNexusFS:
+    def _get_nexus_client(config: RunnableConfig) -> RemoteNexusFS:
         """Create authenticated RemoteNexusFS from config.
 
         Requires authentication via metadata.x_auth: "Bearer <token>"
         """
         # Get API key from metadata.x_auth (required)
-        if (x_auth := state.get("context", {}).get("x_auth")) and (
-            server_url := state.get("context", {}).get("nexus_server_url")
-        ):
-            api_key = x_auth.removeprefix("Bearer ").strip()
-            if not api_key:
-                raise ValueError("Invalid x_auth format. Expected 'Bearer <token>', got: " + x_auth)
-            return RemoteNexusFS(server_url=server_url, api_key=api_key)
         metadata = config.get("metadata", {})
         x_auth = metadata.get("x_auth", "")
         server_url = metadata.get("nexus_server_url", "")
@@ -97,8 +81,8 @@ def get_nexus_tools() -> list[Any]:
     @tool
     def grep_files(
         pattern: str,
-        state: Annotated[NexusAgentState, InjectedState],
         config: RunnableConfig,
+        state: Annotated[Any, InjectedState] = None,  # noqa: ARG001
         path: str = "/",
         file_pattern: str | None = None,
         ignore_case: bool = False,
@@ -108,7 +92,7 @@ def get_nexus_tools() -> list[Any]:
 
         Args:
             pattern: Text/regex pattern to search for
-            state: Agent state (provided by framework)
+            state: Agent state (injected by LangGraph, not used directly)
             config: Runtime configuration (provided by framework)
             path: Directory to search (default: "/")
             file_pattern: Optional glob pattern to filter files (e.g., "*.py", "**/*.md")
@@ -123,7 +107,7 @@ def get_nexus_tools() -> list[Any]:
         """
         try:
             # Get authenticated client
-            nx = _get_nexus_client(state, config)
+            nx = _get_nexus_client(config)
 
             # Execute grep with provided parameters
             results = nx.grep(
@@ -176,21 +160,23 @@ def get_nexus_tools() -> list[Any]:
     @tool
     def glob_files(
         pattern: str,
-        state: Annotated[NexusAgentState, InjectedState],
         config: RunnableConfig,
+        state: Annotated[Any, InjectedState] = None,  # noqa: ARG001
         path: str = "/",
     ) -> str:
         """Find files by name pattern.
 
         Args:
             pattern: Glob pattern (e.g., "*.py", "**/*.md", "test_*.py")
+            state: Agent state (injected by LangGraph, not used directly)
+            config: Runtime configuration (provided by framework)
             path: Directory to search (default "/")
 
         Examples: glob_files("*.py", "/workspace"), glob_files("**/*.md")
         """
         try:
             # Get authenticated client
-            nx = _get_nexus_client(state, config)
+            nx = _get_nexus_client(config)
 
             files = nx.glob(pattern, path)
 
@@ -211,7 +197,9 @@ def get_nexus_tools() -> list[Any]:
 
     @tool
     def read_file(
-        read_cmd: str, state: Annotated[NexusAgentState, InjectedState], config: RunnableConfig
+        read_cmd: str,
+        config: RunnableConfig,
+        state: Annotated[Any, InjectedState] = None,  # noqa: ARG001
     ) -> str:
         """Read file content.
 
@@ -221,6 +209,8 @@ def get_nexus_tools() -> list[Any]:
                      - less: First 100 lines preview
                      - start: Starting line number (1-indexed, optional)
                      - end: Ending line number (inclusive, optional)
+            state: Agent state (injected by LangGraph, not used directly)
+            config: Runtime configuration (provided by framework)
 
         Examples:
             "cat /workspace/README.md" - read entire file
@@ -230,8 +220,7 @@ def get_nexus_tools() -> list[Any]:
         """
         try:
             # Get authenticated client
-            nx = _get_nexus_client(state, config)
-
+            nx = _get_nexus_client(config)
             # Parse read command
             parts = shlex.split(read_cmd.strip())
             if not parts:
@@ -282,33 +271,32 @@ def get_nexus_tools() -> list[Any]:
             # Read file content
             if path.startswith("/mnt/nexus"):
                 path = path[len("/mnt/nexus") :]
-            raw_content = nx.read(path)
+
+            content = nx.read(path)
 
             # Handle dict response (when return_metadata=True or edge cases)
-            if isinstance(raw_content, dict):
+            if isinstance(content, dict):
                 # Extract content and encoding from metadata dict
-                encoding = raw_content.get("encoding", "")
-                content_value = raw_content.get("content")
+                encoding = content.get("encoding", "")
+                content_value = content.get("content")
                 if content_value is None:
-                    return f"Error: nx.read() returned dict without 'content' key: {raw_content}"
-                raw_content = content_value
+                    return f"Error: nx.read() returned dict without 'content' key: {content}"
+                content = content_value
 
                 # Decode base64 if needed
-                if encoding == "base64" and isinstance(raw_content, str):
+                if encoding == "base64" and isinstance(content, str):
                     import base64
 
-                    raw_content = base64.b64decode(raw_content)
+                    content = base64.b64decode(content)
 
-            # Handle bytes and ensure we have a string
-            if isinstance(raw_content, bytes):
-                content_str = raw_content.decode("utf-8")
-            elif isinstance(raw_content, str):
-                content_str = raw_content
-            else:
-                return f"Error: Unexpected content type from {path}: {type(raw_content)}"
+            # Handle bytes
+            if isinstance(content, bytes):
+                content = content.decode("utf-8")
+            elif not isinstance(content, str):
+                return f"Error: Unexpected content type from {path}: {type(content)}"
 
             # Split into lines for line-based operations
-            lines = content_str.split("\n")
+            lines = content.split("\n")
             total_lines = len(lines)
 
             # Validate line range if specified
@@ -334,13 +322,13 @@ def get_nexus_tools() -> list[Any]:
 
                 # Extract lines
                 selected_lines = lines[start_idx:end_idx]
-                range_content = "\n".join(selected_lines)
+                content = "\n".join(selected_lines)
 
                 # Check content length and return error if too large
                 max_content_length = 30000
-                if len(range_content) > max_content_length:
+                if len(content) > max_content_length:
                     return (
-                        f"Error: Requested content is too large ({len(range_content)} characters). "
+                        f"Error: Requested content is too large ({len(content)} characters). "
                         f"Maximum allowed is {max_content_length} characters. "
                         f"Requested lines {start_line or 1}-{end_line or total_lines} from {path}. "
                         f"Try a smaller line range."
@@ -349,14 +337,14 @@ def get_nexus_tools() -> list[Any]:
                 output = (
                     f"Content of {path} (lines {start_line or 1}-{end_idx} of {total_lines}):\n\n"
                 )
-                output += range_content
+                output += content
                 return output
 
             # Check content length and return error if too large (for full file)
             max_content_length = 30000
-            if len(content_str) > max_content_length:
+            if len(content) > max_content_length:
                 return (
-                    f"Error: File {path} is too large ({len(content_str)} characters). "
+                    f"Error: File {path} is too large ({len(content)} characters). "
                     f"Maximum allowed is {max_content_length} characters. "
                     f"Use 'less {path}' to preview first 100 lines, or use line range like 'cat {path} 1 100'."
                 )
@@ -370,11 +358,11 @@ def get_nexus_tools() -> list[Any]:
                     output += f"\n\n... ({total_lines - 100} more lines)"
                 else:
                     output = f"Content of {path} ({total_lines} lines):\n\n"
-                    output += content_str
+                    output += content
             else:
                 # For 'cat', show full content
-                output = f"Content of {path} ({len(content_str)} characters):\n\n"
-                output += content_str
+                output = f"Content of {path} ({len(content)} characters):\n\n"
+                output += content
 
             return output
 
@@ -387,20 +375,22 @@ def get_nexus_tools() -> list[Any]:
     def write_file(
         path: str,
         content: str,
-        state: Annotated[NexusAgentState, InjectedState],
         config: RunnableConfig,
+        state: Annotated[Any, InjectedState] = None,  # noqa: ARG001
     ) -> str:
         """Write content to file. Creates parent directories automatically, overwrites if exists.
 
         Args:
             path: Absolute file path (e.g., "/reports/summary.md")
             content: Text content to write
+            state: Agent state (injected by LangGraph, not used directly)
+            config: Runtime configuration (provided by framework)
 
         Examples: write_file("/reports/summary.md", "# Summary\\n..."), write_file("/data/results.txt", "...")
         """
         try:
             # Get authenticated client
-            nx = _get_nexus_client(state, config)
+            nx = _get_nexus_client(config)
 
             # Convert string to bytes for Nexus
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
@@ -423,17 +413,21 @@ def get_nexus_tools() -> list[Any]:
     # Nexus Sandbox Tools
     @tool
     def python(
-        code: str, state: Annotated[NexusAgentState, InjectedState], config: RunnableConfig
+        code: str,
+        config: RunnableConfig,
+        state: Annotated[Any, InjectedState] = None,  # noqa: ARG001
     ) -> str:
         """Execute Python code in sandbox. Use print() for output.
 
         Args:
             code: Python code (multi-line supported)
+            state: Agent state (injected by LangGraph, not used directly)
+            config: Runtime configuration (provided by framework)
 
         Examples: python("print('Hello')"), python("import pandas as pd\\nprint(pd.DataFrame({'a': [1,2,3]}))")
         """
         try:
-            nx = _get_nexus_client(state, config)
+            nx = _get_nexus_client(config)
 
             # Get sandbox_id from metadata
             metadata = config.get("metadata", {})
@@ -476,17 +470,21 @@ def get_nexus_tools() -> list[Any]:
 
     @tool
     def bash(
-        command: str, state: Annotated[NexusAgentState, InjectedState], config: RunnableConfig
+        command: str,
+        config: RunnableConfig,
+        state: Annotated[Any, InjectedState] = None,  # noqa: ARG001
     ) -> str:
         """Execute bash commands in sandbox. Supports pipes, redirects. Changes persist in session.
 
         Args:
             command: Bash command to execute
+            state: Agent state (injected by LangGraph, not used directly)
+            config: Runtime configuration (provided by framework)
 
         Examples: bash("ls -la"), bash("echo 'Hello'"), bash("cat file.txt | grep pattern")
         """
         try:
-            nx = _get_nexus_client(state, config)
+            nx = _get_nexus_client(config)
 
             # Get sandbox_id from metadata
             metadata = config.get("metadata", {})
@@ -530,14 +528,19 @@ def get_nexus_tools() -> list[Any]:
     # Memory Tools
     @tool
     def query_memories(
-        state: Annotated[NexusAgentState, InjectedState], config: RunnableConfig
+        config: RunnableConfig,
+        state: Annotated[Any, InjectedState] = None,  # noqa: ARG001
     ) -> str:
         """Query all stored active memory records. Returns content, namespace, scope, importance.
+
+        Args:
+            state: Agent state (injected by LangGraph, not used directly)
+            config: Runtime configuration (provided by framework)
 
         Example: query_memories()
         """
         try:
-            nx = _get_nexus_client(state, config)
+            nx = _get_nexus_client(config)
 
             # Query active memories using RemoteMemory API
             memories = nx.memory.query(state="active", limit=100)

@@ -1103,6 +1103,7 @@ class SandboxConnectParams:
     mount_path: str = "/mnt/nexus"
     nexus_url: str | None = None  # Nexus server URL for mounting
     nexus_api_key: str | None = None  # Nexus API key for mounting
+    agent_id: str | None = None  # Agent ID for version attribution (issue #418)
     context: dict | None = None
 
 

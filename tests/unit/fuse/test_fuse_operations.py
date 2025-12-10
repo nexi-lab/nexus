@@ -887,3 +887,112 @@ class TestComplexPaths:
 
         assert fd > 0
         assert fuse_ops.open_files[fd]["path"] == special_path
+
+
+class TestMetadataObjSize:
+    """Test that MetadataObj properly includes size attribute (fix for issue #624)."""
+
+    def test_metadata_obj_has_size_attribute(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
+        """Test that MetadataObj includes size from get_metadata response."""
+        # Mock get_metadata to return size
+        mock_nexus_fs.get_metadata = MagicMock(
+            return_value={
+                "path": "/test/file.txt",
+                "size": 12345,
+                "owner": "user",
+                "group": "group",
+                "mode": 0o644,
+                "is_directory": False,
+            }
+        )
+        mock_nexus_fs.exists.return_value = True
+        mock_nexus_fs.is_directory.return_value = False
+
+        # Get metadata through _get_metadata
+        metadata = fuse_ops._get_metadata("/test/file.txt")
+
+        # Verify size attribute exists and has correct value
+        assert metadata is not None
+        assert hasattr(metadata, "size")
+        assert metadata.size == 12345
+
+    def test_getattr_uses_metadata_size(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
+        """Test that getattr uses size from metadata instead of fetching content."""
+        # Mock get_metadata to return size
+        mock_nexus_fs.get_metadata = MagicMock(
+            return_value={
+                "path": "/test/large_file.bin",
+                "size": 1_000_000,  # 1MB
+                "owner": "user",
+                "group": "group",
+                "mode": 0o644,
+                "is_directory": False,
+            }
+        )
+        mock_nexus_fs.exists.return_value = True
+        mock_nexus_fs.is_directory.return_value = False
+
+        # Get file attributes
+        attrs = fuse_ops.getattr("/test/large_file.bin")
+
+        # Verify size from metadata is used
+        assert attrs["st_size"] == 1_000_000
+
+        # Verify read() was NOT called (we used metadata size, not content)
+        mock_nexus_fs.read.assert_not_called()
+
+    def test_metadata_obj_size_zero_is_valid(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
+        """Test that size=0 is a valid value (not treated as missing)."""
+        # Mock get_metadata to return size=0 (empty file)
+        mock_nexus_fs.get_metadata = MagicMock(
+            return_value={
+                "path": "/test/empty.txt",
+                "size": 0,
+                "owner": "user",
+                "group": "group",
+                "mode": 0o644,
+                "is_directory": False,
+            }
+        )
+        mock_nexus_fs.exists.return_value = True
+        mock_nexus_fs.is_directory.return_value = False
+
+        # Get metadata
+        metadata = fuse_ops._get_metadata("/test/empty.txt")
+
+        # Verify size is 0 (not None or missing)
+        assert metadata is not None
+        assert hasattr(metadata, "size")
+        assert metadata.size == 0
+
+    def test_metadata_obj_missing_size_returns_none(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
+        """Test that missing size in metadata dict returns None (not crash)."""
+        # Mock get_metadata to return dict WITHOUT size
+        mock_nexus_fs.get_metadata = MagicMock(
+            return_value={
+                "path": "/test/file.txt",
+                # size missing
+                "owner": "user",
+                "group": "group",
+                "mode": 0o644,
+                "is_directory": False,
+            }
+        )
+        mock_nexus_fs.exists.return_value = True
+        mock_nexus_fs.is_directory.return_value = False
+
+        # Get metadata
+        metadata = fuse_ops._get_metadata("/test/file.txt")
+
+        # Verify size attribute exists but is None
+        assert metadata is not None
+        assert hasattr(metadata, "size")
+        assert metadata.size is None

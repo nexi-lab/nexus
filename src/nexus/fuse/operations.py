@@ -169,15 +169,29 @@ class NexusFUSEOperations(Operations):
             # Get file metadata (includes size, permissions, etc.)
             metadata = self._get_metadata(original_path)
 
-            # Get file size from metadata (efficient - no content fetch)
-            # For special views (like _parsed.pdf.md), we need to fetch content to get accurate size
+            # Get file size efficiently
+            # Priority: 1) Use metadata.size if available, 2) Fetch content as fallback
             if view_type and view_type != "raw":
                 # Special view - need to fetch content for accurate size
                 content = self._get_file_content(original_path, view_type)
                 file_size = len(content)
+            elif metadata:
+                # Try to get size from metadata (handles both dict and object)
+                meta_size = (
+                    metadata.get("size")
+                    if isinstance(metadata, dict)
+                    else getattr(metadata, "size", 0)
+                )
+                if meta_size and meta_size > 0:
+                    file_size = meta_size
+                else:
+                    # Fallback: fetch content to get size
+                    content = self._get_file_content(original_path, None)
+                    file_size = len(content)
             else:
-                # Normal file or .raw view - use metadata size (efficient)
-                file_size = metadata.size if metadata else 0
+                # No metadata: fetch content to get size (for backward compatibility)
+                content = self._get_file_content(original_path, None)
+                file_size = len(content)
 
             # Return file attributes
             now = time.time()

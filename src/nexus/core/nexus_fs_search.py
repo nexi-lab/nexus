@@ -224,15 +224,24 @@ class NexusFSSearchMixin:
                     if details:
                         from datetime import datetime
 
-                        return [
-                            {
-                                "path": entry_path,
-                                "size": 0,
-                                "modified_at": datetime.now().isoformat(),
-                                "etag": "",
-                            }
-                            for entry_path in all_paths
-                        ]
+                        # Get actual sizes from file_paths table
+                        results_with_details = []
+                        for entry_path in all_paths:
+                            # Try to get size from metadata (file_paths table)
+                            file_meta = self.metadata.get(entry_path)
+                            file_size = (
+                                file_meta.size if file_meta and hasattr(file_meta, "size") else 0
+                            )
+
+                            results_with_details.append(
+                                {
+                                    "path": entry_path,
+                                    "size": file_size,
+                                    "modified_at": datetime.now().isoformat(),
+                                    "etag": "",
+                                }
+                            )
+                        return results_with_details
                     return all_paths
             except PermissionDeniedError:
                 # Re-raise permission errors - don't fall through to metadata listing

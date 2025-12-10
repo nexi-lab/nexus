@@ -1008,6 +1008,7 @@ class NexusFUSEOperations(Operations):
                 class MetadataObj:
                     def __init__(self, d: dict[str, Any]):
                         self.path = d.get("path")
+                        self.size = d.get("size")
                         self.owner = d.get("owner")
                         self.group = d.get("group")
                         self.mode = d.get("mode")

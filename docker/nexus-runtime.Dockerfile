@@ -14,7 +14,7 @@
 #   Used automatically by DockerSandboxProvider
 #   Or manually: docker run -it --cap-add SYS_ADMIN nexus-runtime:latest
 
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # Metadata
 ARG NEXUS_VERSION=latest
@@ -58,9 +58,17 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 RUN useradd -m -u 1000 -s /bin/bash nexus && \
     echo "nexus ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# Install Nexus CLI with FUSE support (latest from PyPI)
+# Copy local Nexus source code
+COPY pyproject.toml uv.lock* README.md Cargo.toml ./nexus-src/
+COPY src/ ./nexus-src/src/
+COPY rust/ ./nexus-src/rust/
+COPY Cargo.lock ./nexus-src/
+COPY alembic/ ./nexus-src/alembic/
+COPY alembic.ini ./nexus-src/
+
+# Install Nexus CLI with FUSE support (from local source with latest fix)
 # This allows the sandbox to mount Nexus filesystems via FUSE
-RUN pip install --no-cache-dir 'nexus-ai-fs[fuse]'
+RUN pip install --no-cache-dir './nexus-src[fuse]'
 
 # Install data science and utility packages (matching E2B sandbox)
 # These packages enable Python code execution for data analysis, ML, and visualization

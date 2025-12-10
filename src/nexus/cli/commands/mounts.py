@@ -315,6 +315,7 @@ def mount_info(mount_point: str, show_config: bool, backend_config: BackendConfi
 )
 @click.option("--embeddings", is_flag=True, help="Generate embeddings for semantic search")
 @click.option("--dry-run", is_flag=True, help="Show what would be synced without making changes")
+@click.option("--async", "run_async", is_flag=True, help="Run sync in background (returns job ID)")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @add_backend_options
 def sync_mount(
@@ -325,6 +326,7 @@ def sync_mount(
     exclude: tuple[str, ...],
     embeddings: bool,
     dry_run: bool,
+    run_async: bool,
     output_json: bool,
     backend_config: BackendConfig,
 ) -> None:
@@ -357,6 +359,9 @@ def sync_mount(
 
         # Dry run to see what would be synced
         nexus mounts sync /mnt/gcs --dry-run
+
+        # Run sync in background (async)
+        nexus mounts sync /mnt/gmail --async
     """
     try:
         # Get filesystem (works with both local and remote)
@@ -365,6 +370,42 @@ def sync_mount(
         # Convert tuples to lists for include/exclude
         include_patterns = list(include) if include else None
         exclude_patterns = list(exclude) if exclude else None
+
+        # Handle async mode (Issue #609)
+        if run_async:
+            if mount_point is None:
+                console.print("[red]Error:[/red] --async requires a mount point")
+                console.print("[yellow]Hint:[/yellow] Use: nexus mounts sync /mnt/xxx --async")
+                sys.exit(1)
+
+            try:
+                result = nx.sync_mount_async(  # type: ignore[attr-defined]
+                    mount_point=mount_point,
+                    path=path,
+                    recursive=True,
+                    dry_run=dry_run,
+                    sync_content=not no_cache,
+                    include_patterns=include_patterns,
+                    exclude_patterns=exclude_patterns,
+                    generate_embeddings=embeddings,
+                )
+            except AttributeError:
+                console.print("[red]Error:[/red] This Nexus instance doesn't support async sync")
+                console.print("[yellow]Hint:[/yellow] Make sure you're using Nexus >= 0.6.0")
+                sys.exit(1)
+
+            if output_json:
+                import json as json_lib
+
+                console.print(json_lib.dumps(result, indent=2))
+            else:
+                console.print(f"[green]Job started:[/green] {result['job_id']}")
+                console.print(f"  Mount: {result['mount_point']}")
+                console.print(f"  Status: {result['status']}")
+                console.print()
+                console.print("[dim]Monitor progress with:[/dim]")
+                console.print(f"  nexus mounts sync-status {result['job_id']}")
+            return
 
         if not output_json:
             if mount_point:
@@ -452,6 +493,273 @@ def sync_mount(
                 console.print("[cyan]Dry run complete - no changes made[/cyan]")
             else:
                 console.print("[green]✓[/green] Sync complete")
+
+    except Exception as e:
+        handle_error(e)
+
+
+@mounts_group.command(name="sync-status")
+@click.argument("job_id", type=str, required=False, default=None)
+@click.option("--watch", is_flag=True, help="Watch progress until completion")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@add_backend_options
+def sync_status(
+    job_id: str | None,
+    watch: bool,
+    output_json: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """Show sync job status and progress.
+
+    If JOB_ID is provided, shows status of that specific job.
+    If no JOB_ID, shows recent running jobs.
+
+    Examples:
+        # Show status of a specific job
+        nexus mounts sync-status abc123
+
+        # Watch progress until completion
+        nexus mounts sync-status abc123 --watch
+
+        # List recent running jobs
+        nexus mounts sync-status
+    """
+    import time
+
+    try:
+        nx = get_filesystem(backend_config)
+
+        if job_id:
+            # Show specific job
+            try:
+                job = nx.get_sync_job(job_id)  # type: ignore[attr-defined]
+            except AttributeError:
+                console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
+                sys.exit(1)
+
+            if not job:
+                console.print(f"[red]Error:[/red] Job not found: {job_id}")
+                sys.exit(1)
+
+            if output_json:
+                import json as json_lib
+
+                console.print(json_lib.dumps(job, indent=2))
+                return
+
+            # Initial display
+            _display_job_status(job)
+
+            # Watch mode
+            if watch and job["status"] in ("pending", "running"):
+                console.print()
+                console.print("[dim]Watching progress (Ctrl+C to stop)...[/dim]")
+                try:
+                    while True:
+                        time.sleep(2)
+                        job = nx.get_sync_job(job_id)  # type: ignore[attr-defined]
+                        if not job:
+                            break
+                        # Clear and redisplay
+                        console.print("\033[2J\033[H", end="")  # Clear screen
+                        _display_job_status(job)
+                        if job["status"] not in ("pending", "running"):
+                            break
+                except KeyboardInterrupt:
+                    console.print("\n[dim]Stopped watching[/dim]")
+        else:
+            # List recent running jobs
+            try:
+                jobs = nx.list_sync_jobs(status="running", limit=10)  # type: ignore[attr-defined]
+            except AttributeError:
+                console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
+                sys.exit(1)
+
+            if output_json:
+                import json as json_lib
+
+                console.print(json_lib.dumps(jobs, indent=2))
+                return
+
+            if not jobs:
+                console.print("[yellow]No running sync jobs[/yellow]")
+                console.print("[dim]Use 'nexus mounts sync-jobs' to see all jobs[/dim]")
+                return
+
+            console.print(f"[bold cyan]Running Sync Jobs ({len(jobs)})[/bold cyan]")
+            console.print()
+            for job in jobs:
+                console.print(f"  [bold]{job['id'][:8]}...[/bold]")
+                console.print(f"    Mount: {job['mount_point']}")
+                console.print(f"    Progress: {job['progress_pct']}%")
+                console.print()
+
+    except Exception as e:
+        handle_error(e)
+
+
+def _display_job_status(job: dict) -> None:
+    """Display job status in a formatted way."""
+    status_colors = {
+        "pending": "yellow",
+        "running": "cyan",
+        "completed": "green",
+        "failed": "red",
+        "cancelled": "yellow",
+    }
+    status = job["status"]
+    color = status_colors.get(status, "white")
+
+    console.print(f"[bold cyan]Sync Job: {job['id']}[/bold cyan]")
+    console.print()
+    console.print(f"  Mount: [bold]{job['mount_point']}[/bold]")
+    console.print(f"  Status: [{color}]{status}[/{color}]")
+    console.print(f"  Progress: {job['progress_pct']}%")
+
+    if job.get("progress_detail"):
+        detail = job["progress_detail"]
+        if detail.get("files_scanned"):
+            console.print(f"  Files scanned: {detail['files_scanned']}")
+        if detail.get("current_path"):
+            path = detail["current_path"]
+            if len(path) > 50:
+                path = "..." + path[-47:]
+            console.print(f"  Current: {path}")
+
+    if job.get("created_at"):
+        console.print(f"  Created: {job['created_at']}")
+    if job.get("started_at"):
+        console.print(f"  Started: {job['started_at']}")
+    if job.get("completed_at"):
+        console.print(f"  Completed: {job['completed_at']}")
+
+    if job.get("error_message"):
+        console.print()
+        console.print(f"  [red]Error: {job['error_message']}[/red]")
+
+    if job.get("result"):
+        console.print()
+        console.print("  [bold]Results:[/bold]")
+        result = job["result"]
+        console.print(f"    Files scanned: {result.get('files_scanned', 0)}")
+        console.print(f"    Files created: {result.get('files_created', 0)}")
+        console.print(f"    Files updated: {result.get('files_updated', 0)}")
+        console.print(f"    Cache synced: {result.get('cache_synced', 0)}")
+
+
+@mounts_group.command(name="sync-cancel")
+@click.argument("job_id", type=str)
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@add_backend_options
+def sync_cancel(
+    job_id: str,
+    output_json: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """Cancel a running sync job.
+
+    Examples:
+        nexus mounts sync-cancel abc123
+    """
+    try:
+        nx = get_filesystem(backend_config)
+
+        try:
+            result = nx.cancel_sync_job(job_id)  # type: ignore[attr-defined]
+        except AttributeError:
+            console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
+            sys.exit(1)
+
+        if output_json:
+            import json as json_lib
+
+            console.print(json_lib.dumps(result, indent=2))
+        else:
+            if result["success"]:
+                console.print(f"[green]Cancellation requested for job {job_id}[/green]")
+                console.print("[dim]Job will stop at next checkpoint[/dim]")
+            else:
+                console.print(f"[red]Failed:[/red] {result['message']}")
+                sys.exit(1)
+
+    except Exception as e:
+        handle_error(e)
+
+
+@mounts_group.command(name="sync-jobs")
+@click.option("--mount", type=str, default=None, help="Filter by mount point")
+@click.option(
+    "--status",
+    type=click.Choice(["pending", "running", "completed", "failed", "cancelled"]),
+    default=None,
+    help="Filter by status",
+)
+@click.option("--limit", type=int, default=20, help="Maximum jobs to show")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@add_backend_options
+def sync_jobs(
+    mount: str | None,
+    status: str | None,
+    limit: int,
+    output_json: bool,
+    backend_config: BackendConfig,
+) -> None:
+    """List sync jobs.
+
+    Examples:
+        # List all recent jobs
+        nexus mounts sync-jobs
+
+        # List jobs for a specific mount
+        nexus mounts sync-jobs --mount /mnt/gmail
+
+        # List only failed jobs
+        nexus mounts sync-jobs --status failed
+    """
+    try:
+        nx = get_filesystem(backend_config)
+
+        try:
+            jobs = nx.list_sync_jobs(mount_point=mount, status=status, limit=limit)  # type: ignore[attr-defined]
+        except AttributeError:
+            console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
+            sys.exit(1)
+
+        if output_json:
+            import json as json_lib
+
+            console.print(json_lib.dumps(jobs, indent=2))
+            return
+
+        if not jobs:
+            console.print("[yellow]No sync jobs found[/yellow]")
+            return
+
+        status_colors = {
+            "pending": "yellow",
+            "running": "cyan",
+            "completed": "green",
+            "failed": "red",
+            "cancelled": "yellow",
+        }
+
+        console.print(f"[bold cyan]Sync Jobs ({len(jobs)} shown)[/bold cyan]")
+        console.print()
+
+        for job in jobs:
+            job_status = job["status"]
+            color = status_colors.get(job_status, "white")
+            job_id_short = job["id"][:8]
+
+            console.print(
+                f"  [bold]{job_id_short}...[/bold]  "
+                f"[{color}]{job_status:10}[/{color}]  "
+                f"{job['progress_pct']:3}%  "
+                f"{job['mount_point']}"
+            )
+
+        console.print()
+        console.print("[dim]Use 'nexus mounts sync-status <job_id>' for details[/dim]")
 
     except Exception as e:
         handle_error(e)

@@ -11,6 +11,7 @@ This module contains mount management operations:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -21,6 +22,9 @@ if TYPE_CHECKING:
     from nexus.core.mount_manager import MountManager
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
+
+# Type alias for progress callback: (files_scanned: int, current_path: str) -> None
+ProgressCallback = Callable[[int, str], None]
 
 
 @dataclass
@@ -39,6 +43,8 @@ class SyncMountContext:
     exclude_patterns: list[str] | None
     generate_embeddings: bool
     context: OperationContext | None
+    # Progress callback for async sync (Issue #609)
+    progress_callback: ProgressCallback | None = None
     # Additional fields populated during sync
     backend: Any | None = None
     created_by: str | None = None
@@ -999,6 +1005,7 @@ class NexusFSMountsMixin:
         exclude_patterns: list[str] | None = None,
         generate_embeddings: bool = False,
         context: OperationContext | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         """Sync metadata and content from connector backend(s) to Nexus database.
 
@@ -1022,6 +1029,9 @@ class NexusFSMountsMixin:
             exclude_patterns: Glob patterns to exclude (e.g., ["*.pyc", ".git/*"])
             generate_embeddings: If True, generate embeddings for semantic search (default: False)
             context: Operation context containing user/subject information (automatically provided by RPC server)
+            progress_callback: Optional callback for progress updates (Issue #609).
+                              Called with (files_scanned: int, current_path: str).
+                              Used by async sync jobs to track progress.
 
         Returns:
             Dictionary with sync results:
@@ -1074,6 +1084,7 @@ class NexusFSMountsMixin:
                 exclude_patterns=exclude_patterns,
                 generate_embeddings=generate_embeddings,
                 context=context,
+                progress_callback=progress_callback,
             )
 
         # Initialize statistics upfront for clearer data flow
@@ -1100,6 +1111,7 @@ class NexusFSMountsMixin:
             exclude_patterns=exclude_patterns,
             generate_embeddings=generate_embeddings,
             context=context,
+            progress_callback=progress_callback,
         )
 
         # STEP 2: Setup and validation
@@ -1127,6 +1139,7 @@ class NexusFSMountsMixin:
         exclude_patterns: list[str] | None,
         generate_embeddings: bool,
         context: Any,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         """Step 1: Sync all connector mounts when mount_point is None.
 
@@ -1139,6 +1152,7 @@ class NexusFSMountsMixin:
             exclude_patterns: Patterns to exclude
             generate_embeddings: Whether to generate embeddings
             context: Operation context
+            progress_callback: Optional callback for progress updates
 
         Returns:
             Dictionary with aggregated sync statistics
@@ -1189,6 +1203,7 @@ class NexusFSMountsMixin:
                     exclude_patterns=exclude_patterns,
                     generate_embeddings=generate_embeddings,
                     context=context,
+                    progress_callback=progress_callback,
                 )
 
                 # Aggregate stats
@@ -1455,6 +1470,21 @@ class NexusFSMountsMixin:
                         # Process file
                         stats["files_scanned"] = stats["files_scanned"] + 1  # type: ignore[operator]
 
+                        # Call progress callback if provided (Issue #609)
+                        if ctx.progress_callback:
+                            try:
+                                ctx.progress_callback(
+                                    int(stats["files_scanned"]),  # type: ignore[arg-type]
+                                    entry_virtual_path,
+                                )
+                            except Exception as cb_error:
+                                # Re-raise cancellation, log other errors
+                                from nexus.core.sync_job_manager import SyncCancelled
+
+                                if isinstance(cb_error, SyncCancelled):
+                                    raise
+                                logger.warning(f"Progress callback error: {cb_error}")
+
                         # Track this file as found in backend
                         files_found_in_backend.add(entry_virtual_path)
 
@@ -1680,3 +1710,203 @@ class NexusFSMountsMixin:
             error_msg = f"Failed to sync content cache via backend.sync(): {e}"
             cast(list[str], stats["errors"]).append(error_msg)
             logger.warning(error_msg)
+
+    # =========================================================================
+    # Async Sync Methods (Issue #609)
+    # =========================================================================
+
+    @rpc_expose(description="Start async sync job for a mount")
+    def sync_mount_async(
+        self,
+        mount_point: str,
+        path: str | None = None,
+        recursive: bool = True,
+        dry_run: bool = False,
+        sync_content: bool = True,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Start an async sync job for a mount point.
+
+        Unlike sync_mount() which blocks until completion, this method returns
+        immediately with a job_id that can be used to monitor progress.
+
+        Args:
+            mount_point: Virtual path of mount to sync (required for async)
+            path: Specific path within mount to sync
+            recursive: If True, sync all subdirectories recursively
+            dry_run: If True, only report what would be synced
+            sync_content: If True, also sync content to cache
+            include_patterns: Glob patterns to include
+            exclude_patterns: Glob patterns to exclude
+            generate_embeddings: If True, generate embeddings
+            context: Operation context (automatically provided by RPC server)
+
+        Returns:
+            Dictionary with job info:
+                - job_id: UUID of the sync job
+                - status: Initial status ("pending")
+                - mount_point: Mount being synced
+
+        Raises:
+            ValueError: If mount_point is None (required for async)
+
+        Example:
+            >>> result = nx.sync_mount_async("/mnt/gmail")
+            >>> job_id = result["job_id"]
+            >>> # Monitor progress
+            >>> status = nx.get_sync_job(job_id)
+            >>> print(f"Progress: {status['progress_pct']}%")
+        """
+        import asyncio
+
+        from nexus.core.sync_job_manager import SyncJobManager
+
+        if mount_point is None:
+            raise ValueError("mount_point is required for async sync")
+
+        # Get user_id from context
+        user_id = None
+        if context:
+            user_id = getattr(context, "subject_id", None)
+
+        # Build sync params dict
+        sync_params = {
+            "path": path,
+            "recursive": recursive,
+            "dry_run": dry_run,
+            "sync_content": sync_content,
+            "include_patterns": include_patterns,
+            "exclude_patterns": exclude_patterns,
+            "generate_embeddings": generate_embeddings,
+        }
+
+        # Create sync job manager
+        sync_manager = SyncJobManager(self.metadata.SessionLocal)  # type: ignore[attr-defined]
+
+        # Create job record
+        job_id = sync_manager.create_job(mount_point, sync_params, user_id)
+
+        # Schedule the job to start (non-blocking)
+        # Get or create event loop and schedule the task
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(sync_manager.start_job(job_id, self))  # type: ignore[arg-type]
+        except RuntimeError:
+            # No running loop - create one for the task
+            # This handles the case when called from synchronous context
+            import threading
+
+            def run_async() -> None:
+                asyncio.run(sync_manager.start_job(job_id, self))  # type: ignore[arg-type]
+
+            thread = threading.Thread(target=run_async, daemon=True)
+            thread.start()
+
+        return {
+            "job_id": job_id,
+            "status": "pending",
+            "mount_point": mount_point,
+        }
+
+    @rpc_expose(description="Get sync job status and progress")
+    def get_sync_job(self, job_id: str) -> dict[str, Any] | None:
+        """Get the status and progress of a sync job.
+
+        Args:
+            job_id: UUID of the sync job
+
+        Returns:
+            Job details dict or None if not found:
+                - id: Job UUID
+                - mount_point: Mount being synced
+                - status: pending, running, completed, failed, cancelled
+                - progress_pct: Progress percentage (0-100)
+                - progress_detail: Detailed progress info
+                - created_at, started_at, completed_at: Timestamps
+                - result: Final sync stats (if completed)
+                - error_message: Error details (if failed)
+
+        Example:
+            >>> job = nx.get_sync_job("abc123")
+            >>> if job:
+            ...     print(f"Status: {job['status']}, Progress: {job['progress_pct']}%")
+        """
+        from nexus.core.sync_job_manager import SyncJobManager
+
+        sync_manager = SyncJobManager(self.metadata.SessionLocal)  # type: ignore[attr-defined]
+        return sync_manager.get_job(job_id)
+
+    @rpc_expose(description="Cancel a running sync job")
+    def cancel_sync_job(self, job_id: str) -> dict[str, Any]:
+        """Cancel a running sync job.
+
+        Args:
+            job_id: UUID of the sync job to cancel
+
+        Returns:
+            Dictionary with result:
+                - success: True if cancellation was requested
+                - job_id: The job ID
+                - message: Status message
+
+        Example:
+            >>> result = nx.cancel_sync_job("abc123")
+            >>> if result["success"]:
+            ...     print("Cancellation requested")
+        """
+        from nexus.core.sync_job_manager import SyncJobManager
+
+        sync_manager = SyncJobManager(self.metadata.SessionLocal)  # type: ignore[attr-defined]
+        success = sync_manager.cancel_job(job_id)
+
+        if success:
+            return {
+                "success": True,
+                "job_id": job_id,
+                "message": "Cancellation requested",
+            }
+        else:
+            job = sync_manager.get_job(job_id)
+            if not job:
+                return {
+                    "success": False,
+                    "job_id": job_id,
+                    "message": "Job not found",
+                }
+            else:
+                return {
+                    "success": False,
+                    "job_id": job_id,
+                    "message": f"Cannot cancel job with status: {job['status']}",
+                }
+
+    @rpc_expose(description="List sync jobs")
+    def list_sync_jobs(
+        self,
+        mount_point: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List sync jobs with optional filters.
+
+        Args:
+            mount_point: Filter by mount point
+            status: Filter by status (pending, running, completed, failed, cancelled)
+            limit: Maximum number of jobs to return (default: 50)
+
+        Returns:
+            List of job dicts, ordered by created_at descending
+
+        Example:
+            >>> # List all recent jobs
+            >>> jobs = nx.list_sync_jobs()
+            >>> # List running jobs for a specific mount
+            >>> jobs = nx.list_sync_jobs(mount_point="/mnt/gmail", status="running")
+        """
+        from nexus.core.sync_job_manager import SyncJobManager
+
+        sync_manager = SyncJobManager(self.metadata.SessionLocal)  # type: ignore[attr-defined]
+        return sync_manager.list_jobs(mount_point=mount_point, status=status, limit=limit)

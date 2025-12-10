@@ -1374,6 +1374,88 @@ class MountConfigModel(Base):
             raise ValidationError(f"priority must be non-negative, got {self.priority}")
 
 
+class SyncJobModel(Base):
+    """Async sync job tracking for long-running mount synchronization.
+
+    Tracks progress, status, and results of async sync_mount operations.
+    Supports cancellation and progress monitoring via API/CLI.
+
+    Example workflow:
+        1. User calls sync_mount_async("/mnt/gmail") -> returns job_id
+        2. Job runs in background, updating progress_pct and progress_detail
+        3. User polls get_sync_job(job_id) to monitor progress
+        4. User can call cancel_sync_job(job_id) to abort
+        5. On completion, result contains final sync stats
+    """
+
+    __tablename__ = "sync_jobs"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Mount being synced
+    mount_point: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+
+    # Job status: pending, running, completed, failed, cancelled
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+
+    # Progress tracking (0-100)
+    progress_pct: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Detailed progress info (JSON)
+    # Example: {"files_scanned": 50, "files_total_estimate": 200, "current_path": "/emails/inbox/msg123.eml"}
+    progress_detail: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
+
+    # Sync parameters (JSON) - stored for reference/resumability
+    # Example: {"path": "/inbox", "include_patterns": ["*.eml"], "sync_content": true}
+    sync_params: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Who created this job
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Final result (JSON) - populated on completion
+    # Example: {"files_scanned": 200, "files_created": 50, "cache_synced": 200, ...}
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
+
+    # Error message (if status == 'failed')
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_sync_jobs_mount_point", "mount_point"),
+        Index("idx_sync_jobs_status", "status"),
+        Index("idx_sync_jobs_created_at", "created_at"),
+        Index("idx_sync_jobs_created_by", "created_by"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<SyncJobModel(id={self.id}, mount_point={self.mount_point}, status={self.status}, progress={self.progress_pct}%)>"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for API responses."""
+        return {
+            "id": self.id,
+            "mount_point": self.mount_point,
+            "status": self.status,
+            "progress_pct": self.progress_pct,
+            "progress_detail": json.loads(self.progress_detail) if self.progress_detail else None,
+            "sync_params": json.loads(self.sync_params) if self.sync_params else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "created_by": self.created_by,
+            "result": json.loads(self.result) if self.result else None,
+            "error_message": self.error_message,
+        }
+
+
 # === Workspace & Memory Registry Models ===
 
 

@@ -130,7 +130,7 @@ def mount(
         if daemon:
             # Daemon mode: double-fork BEFORE mounting
             import os
-            import sys
+            # Note: sys is already imported at module level
 
             # First fork
             pid = os.fork()

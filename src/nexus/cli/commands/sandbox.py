@@ -666,6 +666,13 @@ def sandbox_status(
     envvar="NEXUS_DATA_DIR",
     help="Nexus data directory",
 )
+@click.option(
+    "--agent-id",
+    type=str,
+    default=None,
+    help="Agent ID for version attribution. "
+    "When set, file modifications will be attributed to this agent.",
+)
 def connect_sandbox(
     sandbox_id: str,
     provider: str,
@@ -675,6 +682,7 @@ def connect_sandbox(
     nexus_api_key: str | None,
     json_output: bool,
     data_dir: str | None,  # noqa: ARG001
+    agent_id: str | None,
 ) -> None:
     """Connect and mount Nexus to a user-managed sandbox.
 
@@ -712,6 +720,7 @@ def connect_sandbox(
             mount_path=mount_path,
             nexus_url=nexus_url,
             nexus_api_key=nexus_api_key,
+            agent_id=agent_id,
         )
 
         if json_output:

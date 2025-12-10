@@ -463,6 +463,7 @@ class DockerSandboxProvider(SandboxProvider):
         mount_path: str,
         nexus_url: str,
         api_key: str,
+        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Mount Nexus filesystem inside Docker sandbox via FUSE.
 
@@ -471,6 +472,8 @@ class DockerSandboxProvider(SandboxProvider):
             mount_path: Path where to mount (e.g., /mnt/nexus)
             nexus_url: Nexus server URL
             api_key: Nexus API key
+            agent_id: Optional agent ID for version attribution (issue #418).
+                When set, file modifications will be attributed to this agent.
 
         Returns:
             Mount status dict
@@ -554,6 +557,7 @@ class DockerSandboxProvider(SandboxProvider):
         logger.info(
             f"[MOUNT-STEP-4] nexus_url={nexus_url}, "
             f"api_key={'***' + api_key[-10:] if api_key else 'None'}"
+            + (f", agent_id={agent_id}" if agent_id else "")
         )
         base_mount = (
             f"sudo NEXUS_API_KEY={api_key} "
@@ -561,6 +565,9 @@ class DockerSandboxProvider(SandboxProvider):
             f"--remote-url {nexus_url} "
             f"--allow-other"
         )
+        # Add agent-id for version attribution (issue #418)
+        if agent_id:
+            base_mount += f" --agent-id {agent_id}"
         mount_cmd = f"nohup {base_mount} > /tmp/nexus-mount.log 2>&1 &"
         logger.info(f"[MOUNT-STEP-4] Mount command: {mount_cmd}")
 

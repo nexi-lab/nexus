@@ -1408,6 +1408,7 @@ class AsyncRemoteNexusFS:
         mount_path: str = "/mnt/nexus",
         nexus_url: str | None = None,
         nexus_api_key: str | None = None,
+        agent_id: str | None = None,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Connect and mount Nexus to a sandbox (async).
@@ -1419,6 +1420,8 @@ class AsyncRemoteNexusFS:
             mount_path: Path to mount Nexus in sandbox
             nexus_url: Nexus server URL (uses client's URL if None)
             nexus_api_key: Nexus API key (uses client's key if None)
+            agent_id: Agent ID for version attribution (issue #418).
+                When set, file modifications will be attributed to this agent.
             context: Operation context
 
         Returns:
@@ -1441,6 +1444,8 @@ class AsyncRemoteNexusFS:
         params["nexus_url"] = nexus_url
         params["nexus_api_key"] = nexus_api_key
 
+        if agent_id is not None:
+            params["agent_id"] = agent_id
         if context is not None:
             params["context"] = context
         result = await self._call_rpc("sandbox_connect", params)

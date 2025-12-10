@@ -3757,6 +3757,7 @@ class NexusFS(
         mount_path: str = "/mnt/nexus",
         nexus_url: str | None = None,
         nexus_api_key: str | None = None,
+        agent_id: str | None = None,
         context: dict | None = None,
     ) -> dict:
         """Connect and mount Nexus to a sandbox (Nexus-managed or user-managed).
@@ -3772,6 +3773,8 @@ class NexusFS(
             mount_path: Path where Nexus will be mounted in sandbox (default: /mnt/nexus)
             nexus_url: Nexus server URL (auto-detected if not provided)
             nexus_api_key: Nexus API key (from context if not provided)
+            agent_id: Agent ID for version attribution (issue #418).
+                When set, file modifications will be attributed to this agent.
             context: Operation context
 
         Returns:
@@ -3812,6 +3815,7 @@ class NexusFS(
             mount_path=mount_path,
             nexus_url=nexus_url,
             nexus_api_key=nexus_api_key,
+            agent_id=agent_id,
         )
         return result
 

@@ -491,11 +491,19 @@ class ScopedFilesystem:
         mount_path: str = "/mnt/nexus",
         nexus_url: str | None = None,
         nexus_api_key: str | None = None,
+        agent_id: str | None = None,
         context: dict | None = None,
     ) -> dict[Any, Any]:
         """Connect to user-managed sandbox."""
         return self._fs.sandbox_connect(
-            sandbox_id, provider, sandbox_api_key, mount_path, nexus_url, nexus_api_key, context
+            sandbox_id,
+            provider,
+            sandbox_api_key,
+            mount_path,
+            nexus_url,
+            nexus_api_key,
+            agent_id,
+            context,
         )
 
     def sandbox_disconnect(

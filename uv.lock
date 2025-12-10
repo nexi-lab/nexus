@@ -2432,6 +2432,11 @@ test = [
     { name = "pytest-xdist" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "freezegun" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
@@ -2507,6 +2512,9 @@ requires-dist = [
     { name = "uvloop", marker = "sys_platform != 'win32'", specifier = ">=0.22.1" },
 ]
 provides-extras = ["performance", "dev", "test", "fuse", "postgres", "semantic-search", "semantic-search-remote", "all"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "freezegun", specifier = ">=1.5.5" }]
 
 [[package]]
 name = "nodeenv"

@@ -307,6 +307,7 @@ class E2BSandboxProvider(SandboxProvider):
         mount_path: str,
         nexus_url: str,
         api_key: str,
+        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Mount Nexus filesystem inside E2B sandbox via FUSE.
 
@@ -315,6 +316,8 @@ class E2BSandboxProvider(SandboxProvider):
             mount_path: Path where to mount Nexus (e.g., /home/user/nexus)
             nexus_url: Nexus server URL
             api_key: Nexus API key for authentication
+            agent_id: Optional agent ID for version attribution (issue #418).
+                When set, file modifications will be attributed to this agent.
 
         Returns:
             Mount status dict with success, mount_path, message, files_visible
@@ -432,6 +435,7 @@ class E2BSandboxProvider(SandboxProvider):
         # Use nohup to run in background
         logger.info(
             f"Mounting with nexus_url={nexus_url}, api_key={'***' + api_key[-10:] if api_key else 'None'}"
+            + (f", agent_id={agent_id}" if agent_id else "")
         )
         base_mount = (
             f"sudo NEXUS_API_KEY={api_key} "
@@ -439,6 +443,9 @@ class E2BSandboxProvider(SandboxProvider):
             f"--remote-url {nexus_url} "
             f"--allow-other"
         )
+        # Add agent-id for version attribution (issue #418)
+        if agent_id:
+            base_mount += f" --agent-id {agent_id}"
         mount_cmd = f"nohup {base_mount} > /tmp/nexus-mount.log 2>&1 &"
         logger.debug(f"Mount command: {mount_cmd}")
 

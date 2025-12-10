@@ -545,6 +545,7 @@ class SandboxManager:
         mount_path: str = "/mnt/nexus",
         nexus_url: str | None = None,
         nexus_api_key: str | None = None,
+        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Connect and mount Nexus to a sandbox (Nexus-managed or user-managed).
 
@@ -559,6 +560,8 @@ class SandboxManager:
             mount_path: Path where Nexus will be mounted in sandbox
             nexus_url: Nexus server URL (required for mounting)
             nexus_api_key: Nexus API key (required for mounting)
+            agent_id: Optional agent ID for version attribution (issue #418).
+                When set, file modifications will be attributed to this agent.
 
         Returns:
             Dict with connection details (sandbox_id, provider, mount_path, mounted_at, mount_status)
@@ -588,6 +591,7 @@ class SandboxManager:
             mount_path=mount_path,
             nexus_url=nexus_url,
             api_key=nexus_api_key,
+            agent_id=agent_id,
         )
 
         now = datetime.now(UTC)

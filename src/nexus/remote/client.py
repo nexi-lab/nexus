@@ -3821,6 +3821,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         mount_path: str = "/mnt/nexus",
         nexus_url: str | None = None,
         nexus_api_key: str | None = None,
+        agent_id: str | None = None,
         context: dict | None = None,
     ) -> dict:
         """Connect and mount Nexus to a sandbox (Nexus-managed or user-managed).
@@ -3836,6 +3837,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             mount_path: Path where Nexus will be mounted (default: /mnt/nexus)
             nexus_url: Nexus server URL (auto-detected from client if not provided)
             nexus_api_key: Nexus API key (auto-detected from client if not provided)
+            agent_id: Agent ID for version attribution (issue #418).
+                When set, file modifications will be attributed to this agent.
             context: Operation context
 
         Returns:
@@ -3846,11 +3849,12 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             >>> sb = nx.sandbox_create("my-box")
             >>> nx.sandbox_connect(sb['sandbox_id'], mount_path="/mnt/nexus")
 
-            >>> # Mount in user-managed sandbox
+            >>> # Mount in user-managed sandbox with agent attribution
             >>> nx.sandbox_connect(
             ...     sandbox_id="sb_xxx",
             ...     sandbox_api_key="your_e2b_key",
-            ...     mount_path="/mnt/nexus"
+            ...     mount_path="/mnt/nexus",
+            ...     agent_id="my-agent"
             ... )
         """
         params: dict[str, Any] = {
@@ -3871,6 +3875,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         params["nexus_url"] = nexus_url
         params["nexus_api_key"] = nexus_api_key
 
+        if agent_id is not None:
+            params["agent_id"] = agent_id
         if context is not None:
             params["context"] = context
         result = self._call_rpc("sandbox_connect", params)

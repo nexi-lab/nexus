@@ -158,6 +158,7 @@ class SandboxProvider(ABC):
         mount_path: str,
         nexus_url: str,
         api_key: str,
+        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Mount Nexus filesystem inside sandbox via FUSE.
 
@@ -166,6 +167,8 @@ class SandboxProvider(ABC):
             mount_path: Path inside sandbox where to mount
             nexus_url: Nexus server URL
             api_key: API key for authentication
+            agent_id: Optional agent ID for version attribution (issue #418).
+                When set, file modifications will be attributed to this agent.
 
         Returns:
             Mount status dict with:

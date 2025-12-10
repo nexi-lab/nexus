@@ -113,6 +113,13 @@ def start_background_mount_sync(nx: NexusFilesystem) -> None:
     is_flag=True,
     help="Enable FUSE debug output",
 )
+@click.option(
+    "--agent-id",
+    type=str,
+    default=None,
+    help="Agent ID for version attribution (e.g., 'my-agent'). "
+    "When set, file modifications will be attributed to this agent.",
+)
 @add_backend_options
 def mount(
     mount_point: str,
@@ -120,6 +127,7 @@ def mount(
     daemon: bool,
     allow_other: bool,
     debug: bool,
+    agent_id: str | None,
     backend_config: BackendConfig,
 ) -> None:
     """Mount Nexus filesystem to a local path.
@@ -162,6 +170,11 @@ def mount(
         # Get filesystem instance (handles both remote and local backends)
         nx: NexusFilesystem = get_filesystem(backend_config)
 
+        # Set agent_id on remote filesystem for version attribution (issue #418)
+        # Only RemoteNexusFS has a settable agent_id property
+        if agent_id and hasattr(nx, "_agent_id"):
+            nx.agent_id = agent_id  # type: ignore[misc]
+
         # Create mount point if it doesn't exist
         mount_path = Path(mount_point)
         mount_path.mkdir(parents=True, exist_ok=True)
@@ -176,6 +189,8 @@ def mount(
             console.print(f"  Backend: [cyan]{backend_config.backend}[/cyan]")
         if daemon:
             console.print("  [yellow]Running in background (daemon mode)[/yellow]")
+        if agent_id:
+            console.print(f"  Agent ID: [cyan]{agent_id}[/cyan]")
 
         console.print()
         console.print("[bold cyan]Virtual File Views:[/bold cyan]")

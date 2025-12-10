@@ -39,6 +39,12 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
+# Disable proxy for httpx (used by MCP client)
+# See: https://github.com/modelcontextprotocol/python-sdk/issues/1299
+os.environ["NO_PROXY"] = "*"
+os.environ["HTTP_PROXY"] = ""
+os.environ["HTTPS_PROXY"] = ""
+
 try:
     import anthropic
 except ImportError:
@@ -139,6 +145,94 @@ def load_evaluation_file(path: Path) -> list[QAPair]:
                 qa_pairs.append(QAPair(question=question, answer=answer))
 
     return qa_pairs
+
+
+# ============================================================
+# Test Data Setup Functions
+# ============================================================
+
+# Path to local test data files
+EVAL_WORKSPACE_LOCAL = Path(__file__).parent / "eval_workspace"
+# Remote path in Nexus
+EVAL_WORKSPACE_REMOTE = "/eval_workspace"
+
+
+async def check_data_exists(session: ClientSession) -> bool:
+    """Check if test data already exists in Nexus."""
+    try:
+        result = await session.call_tool(
+            "nexus_list_files", arguments={"path": EVAL_WORKSPACE_REMOTE}
+        )
+        if result.content:
+            text = (
+                result.content[0].text
+                if hasattr(result.content[0], "text")
+                else str(result.content[0])
+            )
+            # Check if we have files (not just an empty directory or error)
+            return "src" in text or "data" in text or "docs" in text
+    except Exception:
+        pass
+    return False
+
+
+async def upload_test_data(session: ClientSession) -> tuple[int, int]:
+    """Upload test data files to Nexus using MCP write_file.
+
+    Returns:
+        Tuple of (success_count, failed_count)
+    """
+    if not EVAL_WORKSPACE_LOCAL.exists():
+        print(f"Error: Local eval_workspace not found at {EVAL_WORKSPACE_LOCAL}")
+        return 0, 0
+
+    # Find all files to upload
+    files_to_upload = []
+    for path in EVAL_WORKSPACE_LOCAL.rglob("*"):
+        if path.is_file():
+            relative = path.relative_to(EVAL_WORKSPACE_LOCAL)
+            remote_path = f"{EVAL_WORKSPACE_REMOTE}/{relative}"
+            files_to_upload.append((path, remote_path))
+
+    print(f"Uploading {len(files_to_upload)} test data files to Nexus...")
+
+    success = 0
+    failed = 0
+
+    for local_path, remote_path in files_to_upload:
+        try:
+            content = local_path.read_text()
+            result = await session.call_tool(
+                "nexus_write_file",
+                arguments={
+                    "path": remote_path,
+                    "content": content,
+                },
+            )
+
+            # Check result
+            if result.content:
+                text = (
+                    result.content[0].text
+                    if hasattr(result.content[0], "text")
+                    else str(result.content[0])
+                )
+                if "error" in text.lower() or "denied" in text.lower():
+                    print(f"  FAILED: {remote_path} - {text[:100]}")
+                    failed += 1
+                else:
+                    print(f"  OK: {remote_path}")
+                    success += 1
+            else:
+                print(f"  OK: {remote_path}")
+                success += 1
+
+        except Exception as e:
+            print(f"  FAILED: {remote_path} - {e}")
+            failed += 1
+
+    print(f"\nUpload complete: {success} success, {failed} failed")
+    return success, failed
 
 
 async def evaluate_question_with_mcp(
@@ -302,6 +396,7 @@ async def run_evaluation_async(
     output_file: Path | None = None,
     transport: str = "http",
     mcp_url: str = "http://localhost:8081/mcp",
+    setup_data: bool = False,
 ) -> list[EvaluationResult]:
     """Run evaluation on all QA pairs using MCP integration.
 
@@ -374,6 +469,21 @@ async def run_evaluation_async(
                         for tool in tools_response.tools
                     ]
                     print(f"Connected to MCP server with {len(tools)} tools")
+
+                    # Setup test data if needed
+                    if setup_data:
+                        print("\n--setup flag specified, uploading test data...")
+                        await upload_test_data(session)
+                    else:
+                        # Check if data exists, upload if not
+                        data_exists = await check_data_exists(session)
+                        if not data_exists:
+                            print("\nTest data not found in Nexus, uploading...")
+                            success, failed = await upload_test_data(session)
+                            if failed > 0:
+                                print(f"Warning: {failed} files failed to upload")
+                        else:
+                            print("Test data already exists in Nexus")
 
                     # Evaluate each question
                     for i, qa in enumerate(qa_pairs, 1):
@@ -528,9 +638,12 @@ def run_evaluation(
     output_file: Path | None = None,
     transport: str = "http",
     mcp_url: str = "http://localhost:8081/mcp",
+    setup_data: bool = False,
 ) -> list[EvaluationResult]:
     """Run evaluation (synchronous wrapper)."""
-    return asyncio.run(run_evaluation_async(eval_file, model, output_file, transport, mcp_url))
+    return asyncio.run(
+        run_evaluation_async(eval_file, model, output_file, transport, mcp_url, setup_data)
+    )
 
 
 def generate_report(results: list[EvaluationResult], model: str) -> str:
@@ -615,6 +728,11 @@ def main() -> None:
         default=default_mcp_url,
         help=f"MCP server URL (for http transport, default: http://$MCP_HOST:$MCP_PORT/mcp or {default_mcp_url})",
     )
+    parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="Force upload test data even if it already exists",
+    )
 
     args = parser.parse_args()
 
@@ -622,7 +740,9 @@ def main() -> None:
         print(f"Error: Evaluation file not found: {args.eval_file}")
         sys.exit(1)
 
-    run_evaluation(args.eval_file, args.model, args.output, args.transport, args.mcp_url)
+    run_evaluation(
+        args.eval_file, args.model, args.output, args.transport, args.mcp_url, args.setup
+    )
 
 
 if __name__ == "__main__":

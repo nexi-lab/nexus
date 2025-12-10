@@ -1,0 +1,79 @@
+# Application Configuration
+# Environment: production
+# Last Updated: March 2024
+
+app:
+  name: nexus-platform
+  version: 1.5.0
+  environment: production
+  debug: false
+
+server:
+  host: 0.0.0.0
+  port: 8080
+  workers: 4
+  timeout: 30
+
+database:
+  host: db.internal.nexus.com
+  port: 5432
+  name: nexus_prod
+  pool_size: 20
+  max_overflow: 10
+  pool_timeout: 30
+  connection_recycle: 3600
+
+redis:
+  host: redis.internal.nexus.com
+  port: 6379
+  db: 0
+  password: ${REDIS_PASSWORD}
+
+cache:
+  l1_max_size: 1000
+  l1_ttl_seconds: 300
+  l2_ttl_seconds: 3600
+  key_prefix: "nexus:cache:"
+
+auth:
+  jwt_secret: ${JWT_SECRET}
+  jwt_algorithm: HS256
+  access_token_expire_hours: 24
+  refresh_token_expire_days: 30
+  bcrypt_rounds: 12
+
+rate_limit:
+  window_seconds: 60
+  anonymous_limit: 100
+  authenticated_limit: 1000
+  admin_limit: 5000
+
+file_storage:
+  backend: s3
+  bucket: nexus-files-prod
+  max_size_mb: 50
+  allowed_extensions:
+    - pdf
+    - doc
+    - docx
+    - xls
+    - xlsx
+    - png
+    - jpg
+    - gif
+
+logging:
+  level: INFO
+  format: json
+  output: stdout
+
+monitoring:
+  prometheus_port: 9090
+  health_check_path: /health
+  metrics_path: /metrics
+
+features:
+  webhooks_enabled: true
+  email_notifications: true
+  sms_notifications: false
+  two_factor_auth: true

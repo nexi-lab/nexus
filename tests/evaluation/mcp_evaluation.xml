@@ -12,41 +12,120 @@ Guidelines:
 - Questions should require multiple tool calls
 - Answers must be single, verifiable values
 
-To add new questions:
-1. Use the mcp-builder skill to explore the MCP server
-2. Create realistic, complex questions based on actual data
-3. Verify answers by solving questions yourself
-4. Ensure answers won't change over time
+Test Data Location: /data/eval_workspace/
+- src/core/auth.py - Authentication with bcrypt, JWT tokens
+- src/core/database.py - Async database with connection pooling
+- src/core/cache.py - Two-tier caching (L1 local, L2 Redis)
+- src/api/handlers.py - API handlers with rate limiting
+- src/api/middleware.py - Request processing middleware
+- src/utils/retry.py - Retry with exponential backoff
+- docs/architecture.md - System architecture documentation
+- docs/api-guide.md - API developer documentation
+- config/settings.yaml - Application configuration
+- tests/test_auth.py - Unit tests for authentication
+- data/users.json - User data (6 users)
+- data/projects.json - Project data (6 projects)
 -->
 <evaluation>
-    <!-- Example questions - replace with real questions after exploring actual data -->
-
+    <!--
+    Question 1: Semantic Search - Password Security
+    Tests: semantic_search capability to find related concepts
+    Requires understanding that "cryptographic strength" relates to bcrypt rounds
+    -->
     <qa_pair>
-        <question>Using the Nexus MCP server, create a test directory at /eval_test, write a file named "hello.txt" with content "Hello World", then read it back. What is the exact content of the file?</question>
-        <answer>Hello World</answer>
-    </qa_pair>
-
-    <qa_pair>
-        <question>Create three files in /eval_search: "a.py" containing "def foo(): pass", "b.py" containing "def bar(): pass", and "c.txt" containing "text only". Using glob search, how many .py files are in /eval_search?</question>
-        <answer>2</answer>
-    </qa_pair>
-
-    <qa_pair>
-        <question>Write a file at /eval_grep/code.py with content "# TODO: implement\ndef main():\n    # TODO: fix\n    pass". Using grep search for "TODO", how many matches are found in this file?</question>
-        <answer>2</answer>
+        <question>Using the Nexus MCP server to explore the eval_workspace codebase, find the cryptographic strength parameter (number of bcrypt rounds) used for password hashing in the authentication system. Provide just the number.</question>
+        <answer>12</answer>
     </qa_pair>
 
     <!--
-    TODO: Add more complex questions after exploring real Nexus data:
-
-    <qa_pair>
-        <question>Find all Python files in the workspace that define a class. Which file has the most class definitions? Provide the filename only.</question>
-        <answer>models.py</answer>
-    </qa_pair>
-
-    <qa_pair>
-        <question>Search for files containing "async def" and count how many unique files have async functions. What is the count?</question>
-        <answer>15</answer>
-    </qa_pair>
+    Question 2: Data Aggregation - Calculate from JSON
+    Tests: read_file, JSON parsing, arithmetic
+    Requires reading projects.json and summing budgets of completed projects
     -->
+    <qa_pair>
+        <question>In the eval_workspace data directory, read the projects.json file and calculate the total combined budget in USD of all projects with status "completed". Provide the number only.</question>
+        <answer>195000</answer>
+    </qa_pair>
+
+    <!--
+    Question 3: Semantic Search - Session Duration
+    Tests: semantic_search for "session duration" or "login timeout"
+    Answer found in auth.py as TOKEN_EXPIRY_HOURS
+    -->
+    <qa_pair>
+        <question>Search the eval_workspace codebase to find how many hours a user's JWT authentication token remains valid before expiring. Provide just the number of hours.</question>
+        <answer>24</answer>
+    </qa_pair>
+
+    <!--
+    Question 4: Data Query - Role Count
+    Tests: read_file, JSON querying
+    Count users with role="editor" in users.json
+    -->
+    <qa_pair>
+        <question>Read the users.json file in the eval_workspace data directory and count how many users have the "editor" role. Provide just the count.</question>
+        <answer>3</answer>
+    </qa_pair>
+
+    <!--
+    Question 5: Cross-file Verification - Config Value
+    Tests: grep or semantic_search across multiple files
+    Pool size appears in database.py, settings.yaml, and architecture.md
+    -->
+    <qa_pair>
+        <question>Search the eval_workspace codebase to find the database connection pool size configured for the production environment. This value should be consistent across configuration and documentation files. Provide just the number.</question>
+        <answer>20</answer>
+    </qa_pair>
+
+    <!--
+    Question 6: Performance Metric Extraction
+    Tests: semantic_search for performance metrics
+    Cache hit ratio documented in cache.py and architecture.md
+    -->
+    <qa_pair>
+        <question>Find the documented cache hit ratio percentage for the production caching system in the eval_workspace. Look in either code comments or documentation. Provide the percentage as a decimal number (e.g., 94.7).</question>
+        <answer>94.7</answer>
+    </qa_pair>
+
+    <!--
+    Question 7: Security Feature - Rate Limiting
+    Tests: semantic_search for "brute force" or "failed attempts"
+    MAX_LOGIN_ATTEMPTS in auth.py
+    -->
+    <qa_pair>
+        <question>Search the eval_workspace authentication code to find how many failed login attempts are allowed per minute before rate limiting kicks in. Provide just the number.</question>
+        <answer>5</answer>
+    </qa_pair>
+
+    <!--
+    Question 8: File Pattern Counting
+    Tests: glob pattern matching
+    Count .py files in src/ directory
+    -->
+    <qa_pair>
+        <question>Use glob to count how many Python source files (*.py) exist in the eval_workspace src directory and its subdirectories. Provide just the count.</question>
+        <answer>6</answer>
+    </qa_pair>
+
+    <!--
+    Question 9: Documentation Extraction - File Limits
+    Tests: read_file or grep on documentation
+    MAX_FILE_SIZE_MB in handlers.py, also in api-guide.md
+    -->
+    <qa_pair>
+        <question>Search the eval_workspace API documentation or code to find the maximum allowed file upload size in megabytes. Provide just the number.</question>
+        <answer>50</answer>
+    </qa_pair>
+
+    <!--
+    Question 10: Cross-reference Query - Admin Projects
+    Tests: Multiple file reads and cross-referencing
+    1. Find admin user in users.json (usr_001)
+    2. Count projects with owner_id=usr_001 in projects.json
+    -->
+    <qa_pair>
+        <question>In the eval_workspace, first find the user with the "admin" role from users.json, then count how many projects in projects.json are owned by that admin user. Provide just the count.</question>
+        <answer>3</answer>
+    </qa_pair>
+
 </evaluation>

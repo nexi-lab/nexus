@@ -283,19 +283,44 @@ try:
     database_url = os.getenv('NEXUS_DATABASE_URL')
 
     async def init_semantic_search():
-        """Initialize semantic search in keyword-only mode."""
+        """Initialize semantic search (defaults to keyword-only for safety)."""
         backend = LocalBackend(data_dir)
         nx = NexusFS(backend, db_path=database_url)
 
-        # Initialize in keyword-only mode (no API key needed)
-        await nx.initialize_semantic_search(
-            embedding_provider=None,  # Keyword-only mode
-            chunk_size=512,
-            chunk_strategy="semantic"
-        )
+        # Check if explicitly requested to use vector embeddings
+        # Default: keyword-only mode (safer, more stable)
+        semantic_mode = os.getenv('NEXUS_SEMANTIC_MODE', 'keyword')
+
+        if semantic_mode == 'semantic':
+            # Only use embeddings if explicitly requested
+            openai_api_key = os.getenv('OPENAI_API_KEY')
+            if openai_api_key and openai_api_key != 'your-openai-api-key':
+                await nx.initialize_semantic_search(
+                    embedding_provider="openai",
+                    api_key=openai_api_key,
+                    chunk_size=512,
+                    chunk_strategy="semantic"
+                )
+                print("✓ Semantic search initialized (OpenAI embeddings - experimental)")
+            else:
+                print("WARNING: NEXUS_SEMANTIC_MODE=semantic but no valid OPENAI_API_KEY found")
+                print("Falling back to keyword-only mode")
+                await nx.initialize_semantic_search(
+                    embedding_provider=None,
+                    chunk_size=512,
+                    chunk_strategy="semantic"
+                )
+                print("✓ Semantic search initialized (keyword-only mode)")
+        else:
+            # Default: keyword-only mode (PostgreSQL FTS)
+            await nx.initialize_semantic_search(
+                embedding_provider=None,
+                chunk_size=512,
+                chunk_strategy="semantic"
+            )
+            print("✓ Semantic search initialized (keyword-only mode)")
 
         nx.close()
-        print("✓ Semantic search initialized (keyword-only mode)")
 
     asyncio.run(init_semantic_search())
 

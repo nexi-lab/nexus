@@ -9,7 +9,10 @@ dependencies = [
     "langchain-anthropic>=0.2.0",
     "langchain-openai>=0.2.0",
     "nexus-ai-fs>=0.5.3",
-    "langgraph-cli[inmem]>=0.4.4",
+    "langgraph-cli==0.3.6",
+    "langgraph-api==0.2.130",
+    "langgraph-checkpoint-sqlite>=2.0.0",  # Required for .langgraph_api persistence
+    "langgraph-checkpoint>=3.0.1",
     "e2b-code-interpreter>=1.0.0",
     "tavily-python>=0.3.0",
     "firecrawl-py>=1.0.0",

@@ -583,7 +583,10 @@ class BaseBlobStorageConnector(Backend):
 
     def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         """
-        Get content size using backend_path.
+        Get content size using backend_path (cache-first, efficient).
+
+        Performance optimization: Checks cache first to avoid API calls during
+        ls -la operations. Only hits cloud storage API if not cached.
 
         Args:
             content_hash: Content hash (ignored)
@@ -600,6 +603,20 @@ class BaseBlobStorageConnector(Backend):
         if not context or not context.backend_path:
             raise ValueError(f"{self.name} connector requires backend_path in OperationContext")
 
+        # OPTIMIZATION: Check cache first (efficient - no API call)
+        # This is crucial for ls -la performance with many files
+        # Only available if connector uses CacheConnectorMixin
+        if (
+            hasattr(self, "_get_size_from_cache")
+            and hasattr(context, "virtual_path")
+            and context.virtual_path
+        ):
+            cached_size = self._get_size_from_cache(context.virtual_path)  # type: ignore
+            if cached_size is not None:
+                return cached_size
+
+        # Fallback: Get size from cloud storage API
+        # This only happens when file is not cached
         blob_path = self._get_blob_path(context.backend_path)
 
         try:

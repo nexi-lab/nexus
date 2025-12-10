@@ -166,11 +166,18 @@ class NexusFUSEOperations(Operations):
             if not self.nexus_fs.exists(original_path):
                 raise FuseOSError(errno.ENOENT)
 
-            # Get file content to determine size
-            content = self._get_file_content(original_path, view_type)
-
-            # Get file metadata for permissions
+            # Get file metadata (includes size, permissions, etc.)
             metadata = self._get_metadata(original_path)
+
+            # Get file size from metadata (efficient - no content fetch)
+            # For special views (like _parsed.pdf.md), we need to fetch content to get accurate size
+            if view_type and view_type != "raw":
+                # Special view - need to fetch content for accurate size
+                content = self._get_file_content(original_path, view_type)
+                file_size = len(content)
+            else:
+                # Normal file or .raw view - use metadata size (efficient)
+                file_size = metadata.size if metadata else 0
 
             # Return file attributes
             now = time.time()
@@ -223,7 +230,7 @@ class NexusFUSEOperations(Operations):
             attrs = {
                 "st_mode": stat.S_IFREG | file_mode,
                 "st_nlink": 1,
-                "st_size": len(content),
+                "st_size": file_size,
                 "st_ctime": now,
                 "st_mtime": now,
                 "st_atime": now,

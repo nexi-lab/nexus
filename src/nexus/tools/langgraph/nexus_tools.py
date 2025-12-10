@@ -24,16 +24,28 @@ Authentication:
 """
 
 import shlex
-from typing import Annotated, Any
+from typing import Annotated, Any, NotRequired, TypedDict
 
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
 
 from nexus.remote import RemoteNexusFS
 
 
-def get_nexus_tools():
+class NexusAgentState(TypedDict):
+    """State schema for Nexus LangGraph agents.
+
+    Attributes:
+        messages: List of messages in the conversation
+        context: Optional context dict containing auth and server info
+    """
+
+    messages: list[Any]
+    context: NotRequired[dict[str, Any]]
+
+
+def get_nexus_tools() -> list[BaseTool]:
     """
     Create LangGraph tools that connect to Nexus server with per-request authentication.
 
@@ -54,15 +66,23 @@ def get_nexus_tools():
         )
     """
 
-    def _get_nexus_client(config: RunnableConfig) -> RemoteNexusFS:
-        """Create authenticated RemoteNexusFS from config.
+    def _get_nexus_client(
+        config: RunnableConfig, state: dict[str, Any] | None = None
+    ) -> RemoteNexusFS:
+        """Create authenticated RemoteNexusFS from config or state.
 
-        Requires authentication via metadata.x_auth: "Bearer <token>"
+        Requires authentication via metadata.x_auth: "Bearer <token>" or state["context"]["x_auth"]
         """
-        # Get API key from metadata.x_auth (required)
+        # Get API key from metadata.x_auth or state.context
         metadata = config.get("metadata", {})
         x_auth = metadata.get("x_auth", "")
         server_url = metadata.get("nexus_server_url", "")
+
+        # Fallback to state context if metadata is empty
+        if not x_auth and state:
+            context = state.get("context", {})
+            x_auth = context.get("x_auth", "")
+            server_url = server_url or context.get("nexus_server_url", "")
 
         if not x_auth:
             raise ValueError(
@@ -107,7 +127,7 @@ def get_nexus_tools():
         """
         try:
             # Get authenticated client
-            nx = _get_nexus_client(config)
+            nx = _get_nexus_client(config, state)
 
             # Execute grep with provided parameters
             results = nx.grep(
@@ -176,7 +196,7 @@ def get_nexus_tools():
         """
         try:
             # Get authenticated client
-            nx = _get_nexus_client(config)
+            nx = _get_nexus_client(config, state)
 
             files = nx.glob(pattern, path)
 
@@ -220,7 +240,7 @@ def get_nexus_tools():
         """
         try:
             # Get authenticated client
-            nx = _get_nexus_client(config)
+            nx = _get_nexus_client(config, state)
             # Parse read command
             parts = shlex.split(read_cmd.strip())
             if not parts:
@@ -289,14 +309,17 @@ def get_nexus_tools():
 
                     content = base64.b64decode(content)
 
-            # Handle bytes
+            # Handle bytes - decode to str
+            content_str: str
             if isinstance(content, bytes):
-                content = content.decode("utf-8")
-            elif not isinstance(content, str):
+                content_str = content.decode("utf-8")
+            elif isinstance(content, str):
+                content_str = content
+            else:
                 return f"Error: Unexpected content type from {path}: {type(content)}"
 
             # Split into lines for line-based operations
-            lines = content.split("\n")
+            lines = content_str.split("\n")
             total_lines = len(lines)
 
             # Validate line range if specified
@@ -322,13 +345,13 @@ def get_nexus_tools():
 
                 # Extract lines
                 selected_lines = lines[start_idx:end_idx]
-                content = "\n".join(selected_lines)
+                content_str = "\n".join(selected_lines)
 
                 # Check content length and return error if too large
                 max_content_length = 30000
-                if len(content) > max_content_length:
+                if len(content_str) > max_content_length:
                     return (
-                        f"Error: Requested content is too large ({len(content)} characters). "
+                        f"Error: Requested content is too large ({len(content_str)} characters). "
                         f"Maximum allowed is {max_content_length} characters. "
                         f"Requested lines {start_line or 1}-{end_line or total_lines} from {path}. "
                         f"Try a smaller line range."
@@ -337,14 +360,14 @@ def get_nexus_tools():
                 output = (
                     f"Content of {path} (lines {start_line or 1}-{end_idx} of {total_lines}):\n\n"
                 )
-                output += content
+                output += content_str
                 return output
 
             # Check content length and return error if too large (for full file)
             max_content_length = 30000
-            if len(content) > max_content_length:
+            if len(content_str) > max_content_length:
                 return (
-                    f"Error: File {path} is too large ({len(content)} characters). "
+                    f"Error: File {path} is too large ({len(content_str)} characters). "
                     f"Maximum allowed is {max_content_length} characters. "
                     f"Use 'less {path}' to preview first 100 lines, or use line range like 'cat {path} 1 100'."
                 )
@@ -358,11 +381,11 @@ def get_nexus_tools():
                     output += f"\n\n... ({total_lines - 100} more lines)"
                 else:
                     output = f"Content of {path} ({total_lines} lines):\n\n"
-                    output += content
+                    output += content_str
             else:
                 # For 'cat', show full content
-                output = f"Content of {path} ({len(content)} characters):\n\n"
-                output += content
+                output = f"Content of {path} ({len(content_str)} characters):\n\n"
+                output += content_str
 
             return output
 
@@ -390,7 +413,7 @@ def get_nexus_tools():
         """
         try:
             # Get authenticated client
-            nx = _get_nexus_client(config)
+            nx = _get_nexus_client(config, state)
 
             # Convert string to bytes for Nexus
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content

@@ -66,7 +66,7 @@ class TestGrepFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = grep_tool("async def", state, config)
+            result = grep_tool("async def", config, state)
 
         assert "/test.py:10:async def test():" in result
         assert "/main.py:5:async def main():" in result
@@ -93,7 +93,7 @@ class TestGrepFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = grep_tool("pattern", state, config, path="/workspace")
+            result = grep_tool("pattern", config, state, path="/workspace")
 
         mock_nx.grep.assert_called_once_with(
             pattern="pattern",
@@ -119,7 +119,7 @@ class TestGrepFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            grep_tool("pattern", state, config, ignore_case=True)
+            grep_tool("pattern", config, state, ignore_case=True)
 
         mock_nx.grep.assert_called_once_with(
             pattern="pattern",
@@ -145,7 +145,7 @@ class TestGrepFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = grep_tool("import pandas", state, config, file_pattern="**/*.py")
+            result = grep_tool("import pandas", config, state, file_pattern="**/*.py")
 
         mock_nx.grep.assert_called_once_with(
             pattern="import pandas",
@@ -170,7 +170,7 @@ class TestGrepFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            grep_tool("pattern", state, config, max_results=50)
+            grep_tool("pattern", config, state, max_results=50)
 
         mock_nx.grep.assert_called_once_with(
             pattern="pattern",
@@ -198,8 +198,8 @@ class TestGrepFilesTool:
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
             result = grep_tool(
                 "error",
-                state,
                 config,
+                state,
                 path="/logs",
                 file_pattern="*.log",
                 ignore_case=True,
@@ -232,7 +232,7 @@ class TestGrepFilesTool:
         with patch(
             "nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx
         ) as mock_fs_class:
-            grep_tool("test", state, config)
+            grep_tool("test", config, state)
 
         # Should use state context
         mock_fs_class.assert_called_once_with(
@@ -247,7 +247,7 @@ class TestGrepFilesTool:
         state = {}
         config: RunnableConfig = {"metadata": {}}
 
-        result = grep_tool("test", state, config)
+        result = grep_tool("test", config, state)
         assert "Missing x_auth" in result
 
     def test_grep_invalid_auth_format(self):
@@ -260,7 +260,7 @@ class TestGrepFilesTool:
             "metadata": {"x_auth": "Bearer ", "nexus_server_url": "http://localhost:8080"}
         }
 
-        result = grep_tool("test", state, config)
+        result = grep_tool("test", config, state)
         assert "Invalid x_auth format" in result
 
     def test_grep_truncates_long_lines(self):
@@ -278,7 +278,7 @@ class TestGrepFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = grep_tool("pattern", state, config)
+            result = grep_tool("pattern", config, state)
 
         assert "..." in result
         assert len(result) < len(long_content)
@@ -298,7 +298,7 @@ class TestGrepFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = grep_tool("pattern", state, config)
+            result = grep_tool("pattern", config, state)
 
         assert "Found 100 matches" in result
         assert "and 50 more matches" in result
@@ -319,7 +319,7 @@ class TestGrepFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = grep_tool("pattern", state, config, max_results=10)
+            result = grep_tool("pattern", config, state, max_results=10)
 
         # Should show all 10 results without "more matches" message
         assert "Found 10 matches" in result
@@ -346,7 +346,7 @@ class TestGlobFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = glob_tool("*.py", state, config)
+            result = glob_tool("*.py", config, state)
 
         assert "Found 3 files" in result
         assert "/file1.py" in result
@@ -366,7 +366,7 @@ class TestGlobFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            glob_tool("**/*.md", state, config, path="/workspace")
+            glob_tool("**/*.md", config, state, path="/workspace")
 
         mock_nx.glob.assert_called_once_with("**/*.md", "/workspace")
 
@@ -384,7 +384,7 @@ class TestGlobFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = glob_tool("*.xyz", state, config)
+            result = glob_tool("*.xyz", config, state)
 
         assert "No files found" in result
 
@@ -403,7 +403,7 @@ class TestGlobFilesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = glob_tool("*.py", state, config)
+            result = glob_tool("*.py", config, state)
 
         assert "and 50 more files" in result
 
@@ -425,7 +425,7 @@ class TestReadFileTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = read_tool("cat /test.txt", state, config)
+            result = read_tool("cat /test.txt", config, state)
 
         assert "Hello World" in result
         assert "Line 2" in result
@@ -447,7 +447,7 @@ class TestReadFileTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = read_tool("less /test.txt", state, config)
+            result = read_tool("less /test.txt", config, state)
 
         assert "Preview of" in result
         assert "first 100 of 150 lines" in result
@@ -468,7 +468,7 @@ class TestReadFileTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = read_tool("cat /test.txt 5 10", state, config)
+            result = read_tool("cat /test.txt 5 10", config, state)
 
         assert "lines 5-10" in result
         assert "Line 5" in result
@@ -489,7 +489,7 @@ class TestReadFileTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = read_tool("/test.txt", state, config)
+            result = read_tool("/test.txt", config, state)
 
         assert "Error: File /test.txt is too large" in result
 
@@ -507,7 +507,7 @@ class TestReadFileTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = read_tool("/missing.txt", state, config)
+            result = read_tool("/missing.txt", config, state)
 
         assert "Error: File not found" in result
 
@@ -529,7 +529,7 @@ class TestWriteFileTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = write_tool("/test.txt", "Hello World", state, config)
+            result = write_tool("/test.txt", "Hello World", config, state)
 
         assert "Successfully wrote" in result
         assert "11 bytes" in result
@@ -549,7 +549,7 @@ class TestWriteFileTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            write_tool("/mnt/nexus/test.txt", "Content", state, config)
+            write_tool("/mnt/nexus/test.txt", "Content", config, state)
 
         mock_nx.write.assert_called_once_with("/test.txt", b"Content")
 
@@ -567,7 +567,7 @@ class TestWriteFileTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = write_tool("/test.txt", "Content", state, config)
+            result = write_tool("/test.txt", "Content", config, state)
 
         assert "Error writing file" in result
         assert "Permission denied" in result
@@ -599,7 +599,7 @@ class TestPythonTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = python_tool("print('Hello World')\nprint(42)", state, config)
+            result = python_tool("print('Hello World')\nprint(42)", config, state)
 
         assert "Output:" in result
         assert "Hello World" in result
@@ -635,7 +635,7 @@ class TestPythonTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = python_tool("print(x)", state, config)
+            result = python_tool("print(x)", config, state)
 
         assert "Errors:" in result
         assert "NameError" in result
@@ -650,7 +650,7 @@ class TestPythonTool:
             "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
         }
 
-        result = python_tool("print('test')", state, config)
+        result = python_tool("print('test')", config, state)
         assert "Error: sandbox_id not found" in result
 
 
@@ -680,7 +680,7 @@ class TestBashTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = bash_tool("ls -la", state, config)
+            result = bash_tool("ls -la", config, state)
 
         assert "Output:" in result
         assert "file1.txt" in result
@@ -695,7 +695,7 @@ class TestBashTool:
             "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
         }
 
-        result = bash_tool("echo test", state, config)
+        result = bash_tool("echo test", config, state)
         assert "Error: sandbox_id not found" in result
 
 
@@ -724,7 +724,7 @@ class TestQueryMemoriesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = memory_tool(state, config)
+            result = memory_tool(config, state)
 
         assert "Found 2 memories" in result
         assert "User prefers Python" in result
@@ -746,7 +746,7 @@ class TestQueryMemoriesTool:
         }
 
         with patch("nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx):
-            result = memory_tool(state, config)
+            result = memory_tool(config, state)
 
         assert "No memories found" in result
 

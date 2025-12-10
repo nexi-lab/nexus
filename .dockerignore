@@ -121,8 +121,9 @@ Dockerfile*
 # Frontend (not needed in backend image)
 nexus-frontend/
 
-# Examples (not needed in production)
-examples/
+# Examples (not needed in production, except langgraph)
+examples/*
+!examples/langgraph
 
 # Scripts (dev-only - exclude shell scripts and most Python scripts)
 scripts/*.sh
@@ -140,6 +141,6 @@ test_*.py
 
 # Build artifacts
 target/
-Cargo.lock
+# Cargo.lock - needed for reproducible builds
 .ruff_cache/
 .mypy_cache/

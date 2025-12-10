@@ -1,7 +1,7 @@
 # Nexus LangGraph Agent Server - Production Dockerfile
 # Multi-stage build for optimal image size
 
-FROM python:3.12-slim AS builder
+FROM python:3.13-slim AS builder
 
 # Install build dependencies (including build-essential for Rust linking)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -14,33 +14,46 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv for faster dependency installation
 RUN pip install --no-cache-dir uv
 
-# Copy project files
-WORKDIR /app
-COPY pyproject.toml ./
-COPY *.py ./
-COPY langgraph.json ./
+# Copy parent nexus source code first (needed for local nexus-ai-fs installation)
+WORKDIR /build
+COPY src ./nexus-src/src
+COPY rust ./nexus-src/rust
+COPY Cargo.toml ./nexus-src/
+COPY Cargo.lock ./nexus-src/
+COPY pyproject.toml ./nexus-src/
+COPY README.md ./nexus-src/
+COPY uv.lock ./nexus-src/
 
-# Install dependencies to system (not editable for multi-stage build)
+# Install local nexus-ai-fs first
+RUN uv pip install --system /build/nexus-src
+
+# Copy examples/langgraph project files
+WORKDIR /app
+COPY examples/langgraph/pyproject.toml ./
+COPY examples/langgraph/*.py ./
+COPY examples/langgraph/langgraph.json ./
+
+# Install dependencies (will skip nexus-ai-fs since already installed)
 RUN uv pip install --system .
 
 # ============================================
 # Production image
 # ============================================
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Python packages from builder
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+# Copy Python packages and CLI tools from builder
+COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin/langgraph /usr/local/bin/langgraph
 
 # Copy application files
 WORKDIR /app
-COPY *.py ./
-COPY langgraph.json ./
+COPY examples/langgraph/*.py ./
+COPY examples/langgraph/langgraph.json ./
 
 # Create non-root user for security
 RUN useradd -r -m -u 1000 -s /bin/bash nexus && \

@@ -214,8 +214,8 @@ services:
   # ============================================
   langgraph:
     build:
-      context: ./examples/langgraph
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: examples/langgraph/Dockerfile
     image: nexus-langgraph:latest
     container_name: nexus-langgraph
     restart: unless-stopped

@@ -45,6 +45,9 @@ from langchain_anthropic import ChatAnthropic
 from langgraph.prebuilt import create_react_agent
 from nexus_tools import get_nexus_tools
 
+# Import official system prompt from Nexus tools
+from nexus.tools import DATA_ANALYSIS_AGENT_SYSTEM_PROMPT
+
 # Get configuration from environment variables
 E2B_TEMPLATE_ID = os.getenv("E2B_TEMPLATE_ID")
 
@@ -66,7 +69,14 @@ llm = ChatAnthropic(
 )
 
 # System prompt for talent search agent
-SYSTEM_PROMPT = """You are a Talent & Company Search Agent specialized in finding people and companies from YAML datasets.
+# Extends the official DATA_ANALYSIS_AGENT_SYSTEM_PROMPT with domain-specific instructions
+SYSTEM_PROMPT = (
+    DATA_ANALYSIS_AGENT_SYSTEM_PROMPT
+    + """
+
+## Talent & Company Search Specialization
+
+You are a Talent & Company Search Agent specialized in finding people and companies from YAML datasets.
 
 ## Data Location
 
@@ -179,6 +189,7 @@ User: "Find AI engineers in Austin"
 → Use `python()` to parse YAML and filter by experience/skills
 → Format results clearly with name, headline, relevant experience
 """
+)
 
 # Create prebuilt ReAct agent with system prompt
 agent = create_react_agent(

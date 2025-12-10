@@ -272,14 +272,14 @@ clean_all_data() {
     echo "${STEP_PREFIX}Removing sandbox containers..."
     docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
 
-    # Step 2: Stop and remove all nexus-related containers
+    # Step 2: Stop and remove all nexus-related containers (with graceful shutdown)
     echo "${STEP_PREFIX}Removing all nexus-related containers..."
-    docker ps -a --filter "name=nexus" -q | xargs -r docker stop 2>/dev/null || true
+    docker ps -a --filter "name=nexus" -q | xargs -r docker stop --timeout 30 2>/dev/null || true
     docker ps -a --filter "name=nexus" -q | xargs -r docker rm 2>/dev/null || true
 
     # Step 3: Stop and remove containers via docker-compose (this also removes volumes)
     echo "${STEP_PREFIX}Stopping docker-compose services..."
-    docker compose -f "$COMPOSE_FILE" down -v 2>/dev/null || true
+    docker compose -f "$COMPOSE_FILE" down -v --timeout 30 2>/dev/null || true
 
     # Step 4: Remove all volumes explicitly (including those with project prefixes)
     echo "${STEP_PREFIX}Removing all volumes (including PostgreSQL data)..."
@@ -319,11 +319,12 @@ cmd_start() {
 
     echo "🧹 Stopping and removing all existing Nexus containers..."
     # Stop and remove all containers with 'nexus' in the name (including manually started ones)
-    docker ps -a --filter "name=nexus" -q | xargs -r docker stop 2>/dev/null || true
+    # Use --timeout 30 to allow graceful shutdown (especially for LangGraph checkpoint saving)
+    docker ps -a --filter "name=nexus" -q | xargs -r docker stop --timeout 30 2>/dev/null || true
     docker ps -a --filter "name=nexus" -q | xargs -r docker rm 2>/dev/null || true
 
     # Also use docker-compose down to clean up networks and volumes
-    docker compose -f "$COMPOSE_FILE" down
+    docker compose -f "$COMPOSE_FILE" down --timeout 30
     echo ""
 
     echo "🚀 Starting Nexus services..."
@@ -382,11 +383,12 @@ cmd_build() {
 
     echo "🧹 Stopping and removing all existing Nexus containers..."
     # Stop and remove all containers with 'nexus' in the name (including manually started ones)
-    docker ps -a --filter "name=nexus" -q | xargs -r docker stop 2>/dev/null || true
+    # Use --timeout 30 to allow graceful shutdown (especially for LangGraph checkpoint saving)
+    docker ps -a --filter "name=nexus" -q | xargs -r docker stop --timeout 30 2>/dev/null || true
     docker ps -a --filter "name=nexus" -q | xargs -r docker rm 2>/dev/null || true
 
     # Also use docker-compose down to clean up networks and volumes
-    docker compose -f "$COMPOSE_FILE" down
+    docker compose -f "$COMPOSE_FILE" down --timeout 30
     echo ""
 
     echo "🚀 Starting services with new images..."
@@ -401,20 +403,22 @@ cmd_build() {
 cmd_stop() {
     print_banner
     echo "🛑 Stopping Nexus services..."
+    echo "   (Using 30s timeout for graceful shutdown - saves LangGraph checkpoints)"
     echo ""
 
-    docker compose -f "$COMPOSE_FILE" down
+    docker compose -f "$COMPOSE_FILE" down --timeout 30
 
     echo ""
-    echo "✅ Services stopped!"
+    echo "✅ Services stopped gracefully!"
 }
 
 cmd_restart() {
     print_banner
     echo "🔄 Restarting Nexus services..."
+    echo "   (Using 30s timeout for graceful shutdown - saves LangGraph checkpoints)"
     echo ""
 
-    docker compose -f "$COMPOSE_FILE" restart
+    docker compose -f "$COMPOSE_FILE" restart --timeout 30
 
     echo ""
     echo "✅ Services restarted!"

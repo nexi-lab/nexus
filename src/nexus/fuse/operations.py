@@ -11,11 +11,11 @@ import logging
 import os
 import stat
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from fuse import FuseOSError, Operations
 
-from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
 from nexus.core.filters import is_os_metadata_file
 from nexus.core.virtual_views import (
     get_parsed_content,
@@ -28,7 +28,52 @@ if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
     from nexus.fuse.mount import MountMode
 
+# Import remote exceptions for better error handling (may not be available in all contexts)
+try:
+    from nexus.remote.client import (
+        RemoteConnectionError,
+        RemoteFilesystemError,
+        RemoteTimeoutError,
+    )
+
+    HAS_REMOTE_EXCEPTIONS = True
+except ImportError:
+    HAS_REMOTE_EXCEPTIONS = False
+    RemoteConnectionError = None  # type: ignore[misc,assignment]
+    RemoteFilesystemError = None  # type: ignore[misc,assignment]
+    RemoteTimeoutError = None  # type: ignore[misc,assignment]
+
 logger = logging.getLogger(__name__)
+
+
+def _handle_remote_exception(e: Exception, operation: str, path: str, **context: Any) -> NoReturn:
+    """Handle remote-specific exceptions with better error messages.
+
+    Args:
+        e: The exception that occurred
+        operation: The FUSE operation name (e.g., "READ", "GETATTR")
+        path: The file path being accessed
+        **context: Additional context to include in log message
+
+    Raises:
+        FuseOSError: With appropriate errno based on exception type
+    """
+    context_str = ", ".join(f"{k}={v}" for k, v in context.items()) if context else ""
+
+    if HAS_REMOTE_EXCEPTIONS:
+        if RemoteTimeoutError is not None and isinstance(e, RemoteTimeoutError):
+            logger.error(f"[FUSE-{operation}] Timeout: {path} - {e} ({context_str})")
+            raise FuseOSError(errno.ETIMEDOUT) from e
+        if RemoteConnectionError is not None and isinstance(e, RemoteConnectionError):
+            logger.error(f"[FUSE-{operation}] Connection error: {path} - {e}")
+            raise FuseOSError(errno.ECONNREFUSED) from e
+        if RemoteFilesystemError is not None and isinstance(e, RemoteFilesystemError):
+            logger.error(f"[FUSE-{operation}] Remote error: {path} - {e}")
+            raise FuseOSError(errno.EIO) from e
+
+    # Log with stack trace for debugging unexpected errors
+    logger.exception(f"[FUSE-{operation}] Unexpected error: {path} ({context_str})")
+    raise FuseOSError(errno.EIO) from e
 
 
 class NexusFUSEOperations(Operations):
@@ -193,13 +238,15 @@ class NexusFUSEOperations(Operations):
             if elapsed > 0.01:  # Log if >10ms
                 logger.info(f"[FUSE-PERF] getattr UNCACHED: path={path}, {elapsed:.3f}s")
             return attrs
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
         except FuseOSError:
             raise
+        except NexusFileNotFoundError:
+            raise FuseOSError(errno.ENOENT) from None
+        except NexusPermissionError as e:
+            logger.error(f"[FUSE-GETATTR] Permission denied: {path} - {e}")
+            raise FuseOSError(errno.EACCES) from e
         except Exception as e:
-            logger.error(f"Error getting attributes for {path}: {e}")
-            raise FuseOSError(errno.EIO) from e
+            _handle_remote_exception(e, "GETATTR", path)
 
     def readdir(self, path: str, fh: int | None = None) -> list[str]:  # noqa: ARG002
         """Read directory contents.
@@ -284,11 +331,15 @@ class NexusFUSEOperations(Operations):
                 f"[FUSE-PERF] readdir DONE: path={path}, {len(entries)} entries, {total_elapsed:.3f}s total"
             )
             return entries
+        except FuseOSError:
+            raise
         except NexusFileNotFoundError:
             raise FuseOSError(errno.ENOENT) from None
+        except NexusPermissionError as e:
+            logger.error(f"[FUSE-READDIR] Permission denied: {path} - {e}")
+            raise FuseOSError(errno.EACCES) from e
         except Exception as e:
-            logger.error(f"Error reading directory {path}: {e}")
-            raise FuseOSError(errno.EIO) from e
+            _handle_remote_exception(e, "READDIR", path)
 
     # ============================================================
     # File I/O Operations
@@ -327,13 +378,15 @@ class NexusFUSEOperations(Operations):
             }
 
             return fd
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
         except FuseOSError:
             raise
+        except NexusFileNotFoundError:
+            raise FuseOSError(errno.ENOENT) from None
+        except NexusPermissionError as e:
+            logger.error(f"[FUSE-OPEN] Permission denied: {path} - {e}")
+            raise FuseOSError(errno.EACCES) from e
         except Exception as e:
-            logger.error(f"Error opening file {path}: {e}")
-            raise FuseOSError(errno.EIO) from e
+            _handle_remote_exception(e, "OPEN", path, flags=flags)
 
     def read(self, path: str, size: int, offset: int, fh: int) -> bytes:
         """Read file content.
@@ -361,11 +414,16 @@ class NexusFUSEOperations(Operations):
 
             # Return requested slice
             return content[offset : offset + size]
+        except FuseOSError:
+            raise
         except NexusFileNotFoundError:
+            logger.error(f"[FUSE-READ] File not found: {path}")
             raise FuseOSError(errno.ENOENT) from None
+        except NexusPermissionError as e:
+            logger.error(f"[FUSE-READ] Permission denied: {path} - {e}")
+            raise FuseOSError(errno.EACCES) from e
         except Exception as e:
-            logger.error(f"Error reading file {path}: {e}")
-            raise FuseOSError(errno.EIO) from e
+            _handle_remote_exception(e, "READ", path, fh=fh, size=size, offset=offset)
 
     def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
         """Write file content.
@@ -427,9 +485,11 @@ class NexusFUSEOperations(Operations):
             return len(data)
         except FuseOSError:
             raise
+        except NexusPermissionError as e:
+            logger.error(f"[FUSE-WRITE] Permission denied: {path} - {e}")
+            raise FuseOSError(errno.EACCES) from e
         except Exception as e:
-            logger.error(f"Error writing to file {path}: {e}")
-            raise FuseOSError(errno.EIO) from e
+            _handle_remote_exception(e, "WRITE", path, offset=offset, data_len=len(data))
 
     def release(self, path: str, fh: int) -> None:  # noqa: ARG002
         """Release (close) a file.
@@ -493,9 +553,11 @@ class NexusFUSEOperations(Operations):
             return fd
         except FuseOSError:
             raise
+        except NexusPermissionError as e:
+            logger.error(f"[FUSE-CREATE] Permission denied: {path} - {e}")
+            raise FuseOSError(errno.EACCES) from e
         except Exception as e:
-            logger.error(f"Error creating file {path}: {e}")
-            raise FuseOSError(errno.EIO) from e
+            _handle_remote_exception(e, "CREATE", path)
 
     def unlink(self, path: str) -> None:
         """Delete a file.
@@ -519,13 +581,15 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(original_path)
             if path != original_path:
                 self.cache.invalidate_path(path)
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
         except FuseOSError:
             raise
+        except NexusFileNotFoundError:
+            raise FuseOSError(errno.ENOENT) from None
+        except NexusPermissionError as e:
+            logger.error(f"[FUSE-UNLINK] Permission denied: {path} - {e}")
+            raise FuseOSError(errno.EACCES) from e
         except Exception as e:
-            logger.error(f"Error deleting file {path}: {e}")
-            raise FuseOSError(errno.EIO) from e
+            _handle_remote_exception(e, "UNLINK", path)
 
     def mkdir(self, path: str, mode: int) -> None:  # noqa: ARG002
         """Create a directory.
@@ -545,9 +609,11 @@ class NexusFUSEOperations(Operations):
             self.nexus_fs.mkdir(path, parents=True, exist_ok=True)
         except FuseOSError:
             raise
+        except NexusPermissionError as e:
+            logger.error(f"[FUSE-MKDIR] Permission denied: {path} - {e}")
+            raise FuseOSError(errno.EACCES) from e
         except Exception as e:
-            logger.error(f"Error creating directory {path}: {e}")
-            raise FuseOSError(errno.EIO) from e
+            _handle_remote_exception(e, "MKDIR", path)
 
     def rmdir(self, path: str) -> None:
         """Remove a directory.
@@ -564,13 +630,15 @@ class NexusFUSEOperations(Operations):
                 raise FuseOSError(errno.EROFS)
 
             self.nexus_fs.rmdir(path, recursive=False)
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
         except FuseOSError:
             raise
+        except NexusFileNotFoundError:
+            raise FuseOSError(errno.ENOENT) from None
+        except NexusPermissionError as e:
+            logger.error(f"[FUSE-RMDIR] Permission denied: {path} - {e}")
+            raise FuseOSError(errno.EACCES) from e
         except Exception as e:
-            logger.error(f"Error removing directory {path}: {e}")
-            raise FuseOSError(errno.EIO) from e
+            _handle_remote_exception(e, "RMDIR", path)
 
     def rename(self, old: str, new: str) -> None:
         """Rename/move a file or directory.
@@ -655,13 +723,15 @@ class NexusFUSEOperations(Operations):
                 self.cache.invalidate_path(old)
             if new != new_path:
                 self.cache.invalidate_path(new)
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
         except FuseOSError:
             raise
+        except NexusFileNotFoundError:
+            raise FuseOSError(errno.ENOENT) from None
+        except NexusPermissionError as e:
+            logger.error(f"[FUSE-RENAME] Permission denied: {old} -> {new} - {e}")
+            raise FuseOSError(errno.EACCES) from e
         except Exception as e:
-            logger.error(f"Error renaming {old} to {new}: {e}")
-            raise FuseOSError(errno.EIO) from e
+            _handle_remote_exception(e, "RENAME", old, new_path=new)
 
     # ============================================================
     # File Attribute Modification
@@ -694,13 +764,15 @@ class NexusFUSEOperations(Operations):
             if path != original_path:
                 self.cache.invalidate_path(path)
 
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
         except FuseOSError:
             raise
+        except NexusFileNotFoundError:
+            raise FuseOSError(errno.ENOENT) from None
+        except NexusPermissionError as e:
+            logger.error(f"[FUSE-CHMOD] Permission denied: {path} - {e}")
+            raise FuseOSError(errno.EACCES) from e
         except Exception as e:
-            logger.error(f"Error changing mode for {path}: {e}")
-            raise FuseOSError(errno.EIO) from e
+            _handle_remote_exception(e, "CHMOD", path, mode=oct(mode))
 
     def chown(self, path: str, uid: int, gid: int) -> None:
         """Change file ownership.
@@ -761,13 +833,15 @@ class NexusFUSEOperations(Operations):
                 # Windows doesn't have pwd/grp modules - silently ignore
                 pass
 
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
         except FuseOSError:
             raise
+        except NexusFileNotFoundError:
+            raise FuseOSError(errno.ENOENT) from None
+        except NexusPermissionError as e:
+            logger.error(f"[FUSE-CHOWN] Permission denied: {path} - {e}")
+            raise FuseOSError(errno.EACCES) from e
         except Exception as e:
-            logger.error(f"Error changing ownership for {path}: {e}")
-            raise FuseOSError(errno.EIO) from e
+            _handle_remote_exception(e, "CHOWN", path, uid=uid, gid=gid)
 
     def truncate(self, path: str, length: int, fh: int | None = None) -> None:  # noqa: ARG002
         """Truncate file to specified length.
@@ -810,9 +884,11 @@ class NexusFUSEOperations(Operations):
                 self.cache.invalidate_path(path)
         except FuseOSError:
             raise
+        except NexusPermissionError as e:
+            logger.error(f"[FUSE-TRUNCATE] Permission denied: {path} - {e}")
+            raise FuseOSError(errno.EACCES) from e
         except Exception as e:
-            logger.error(f"Error truncating file {path}: {e}")
-            raise FuseOSError(errno.EIO) from e
+            _handle_remote_exception(e, "TRUNCATE", path, length=length)
 
     def utimens(self, path: str, times: tuple[float, float] | None = None) -> None:
         """Update file access and modification times.

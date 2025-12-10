@@ -19,10 +19,10 @@ version: '3.8'
 
 services:
   # ============================================
-  # PostgreSQL Database
+  # PostgreSQL Database with pgvector extension
   # ============================================
   postgres:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg16
     container_name: nexus-postgres
     restart: unless-stopped
     environment:
@@ -117,11 +117,20 @@ services:
 
       # Configuration file path (evaluation config with semantic_search enabled)
       NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.evaluation.yaml}
+
+      # Semantic search mode (explicitly enable OpenAI embeddings for evaluation)
+      # Options: 'keyword' (default, FTS only) or 'semantic' (OpenAI embeddings - experimental)
+      NEXUS_SEMANTIC_MODE: semantic
+
+      # OpenAI API key for semantic search embeddings
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       # Persistent data directory (local backend)
       - nexus-data:/app/data
       # Configuration files (includes config.evaluation.yaml)
       - ./configs:/app/configs:ro
+      # Evaluation test data (mount local eval_workspace for testing)
+      - ./tests/evaluation/eval_workspace:/app/eval_data:ro
       # GCS credentials (auto-detected - see docker-gcs-setup.sh)
       # Automatically finds credentials from: gcloud, ./gcs-credentials.json, or GCS_CREDENTIALS_PATH
       - ${GCS_CREDENTIALS_PATH:-./gcs-credentials.json}:/app/gcs-credentials.json:ro

@@ -982,7 +982,16 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         result = self._call_rpc("read", {"path": path, "return_metadata": return_metadata})
 
-        # Handle base64-encoded content from RPC response
+        # Handle standard bytes format: {__type__: 'bytes', data: '...'}
+        # This is the format from encode_rpc_message in protocol.py
+        if isinstance(result, dict) and result.get("__type__") == "bytes" and "data" in result:
+            decoded_content = base64.b64decode(result["data"])
+            if return_metadata:
+                return {"content": decoded_content}
+            return decoded_content
+
+        # Handle legacy format: {content: '...', encoding: 'base64'}
+        # (kept for backward compatibility with older servers)
         if isinstance(result, dict) and "content" in result:
             content = result["content"]
             encoding = result.get("encoding", "base64")
@@ -1003,6 +1012,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             else:
                 # Return just the bytes
                 return decoded_content
+
+        # Handle raw bytes (if result is already bytes)
+        if isinstance(result, bytes):
+            return result
 
         return result  # type: ignore[no-any-return]
 

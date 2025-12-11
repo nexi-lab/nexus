@@ -13,6 +13,7 @@ Authentication (Recommended):
 """
 
 import json
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from google.cloud import storage
@@ -276,6 +277,114 @@ class GCSBackend(Backend):
             raise BackendError(
                 f"Failed to read content: {e}", backend="gcs", path=content_hash
             ) from e
+
+    def stream_content(
+        self,
+        content_hash: str,
+        chunk_size: int = 8192,
+        context: "OperationContext | None" = None,
+    ) -> Any:
+        """
+        Stream content from GCS in chunks without loading entire file into memory.
+
+        Uses GCS's streaming download to yield chunks progressively.
+
+        Args:
+            content_hash: SHA-256 hash as hex string
+            chunk_size: Size of each chunk in bytes (default: 8KB)
+            context: Operation context (ignored for GCS backend)
+
+        Yields:
+            bytes: Chunks of file content
+        """
+        import io
+
+        content_path = self._hash_to_path(content_hash)
+
+        try:
+            blob = self.bucket.blob(content_path)
+
+            if not blob.exists():
+                raise NexusFileNotFoundError(content_hash)
+
+            # Use streaming download with BytesIO buffer
+            buffer = io.BytesIO()
+            blob.download_to_file(buffer)
+            buffer.seek(0)
+
+            while True:
+                chunk = buffer.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+
+        except NotFound as e:
+            raise NexusFileNotFoundError(content_hash) from e
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to stream content: {e}", backend="gcs", path=content_hash
+            ) from e
+
+    def write_stream(
+        self,
+        chunks: Iterator[bytes],
+        context: "OperationContext | None" = None,
+    ) -> str:
+        """
+        Write content from an iterator of chunks.
+
+        Streams chunks to temp file, then uploads to GCS.
+        Uses same hash algorithm as write_content() for consistency.
+
+        Args:
+            chunks: Iterator yielding byte chunks
+            context: Operation context (ignored for GCS backend)
+
+        Returns:
+            Content hash (BLAKE3 or SHA-256 as hex string)
+        """
+        import tempfile
+
+        try:
+            # Write chunks to temp file while collecting for hashing
+            # Note: We collect for hashing to match hash_content() algorithm
+            collected_chunks: list[bytes] = []
+
+            with tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024) as tmp:
+                for chunk in chunks:
+                    tmp.write(chunk)
+                    collected_chunks.append(chunk)
+
+                # Compute hash using same algorithm as write_content
+                content = b"".join(collected_chunks)
+                content_hash = self._compute_hash(content)
+                total_size = len(content)
+
+                content_path = self._hash_to_path(content_hash)
+                blob = self.bucket.blob(content_path)
+
+                # Check if content already exists
+                if blob.exists():
+                    # Increment ref_count
+                    metadata = self._read_metadata(content_hash)
+                    metadata["ref_count"] = metadata.get("ref_count", 0) + 1
+                    self._write_metadata(content_hash, metadata)
+                    return content_hash
+
+                # Upload from temp file
+                tmp.seek(0)
+                blob.upload_from_file(tmp, timeout=300)
+
+                # Create metadata
+                metadata = {"ref_count": 1, "size": total_size}
+                self._write_metadata(content_hash, metadata)
+
+                return content_hash
+
+        except Exception as e:
+            raise BackendError(f"Failed to write stream: {e}", backend="gcs", path="stream") from e
 
     def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         """Delete content by hash with reference counting.

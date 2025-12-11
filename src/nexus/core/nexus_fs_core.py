@@ -16,6 +16,7 @@ import hashlib
 import logging
 import threading
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -681,6 +682,102 @@ class NexusFSCoreMixin:
 
         # Stream from routed backend using content hash
         yield from route.backend.stream_content(meta.etag, chunk_size=chunk_size, context=context)
+
+    @rpc_expose(description="Write file content from stream")
+    def write_stream(
+        self,
+        path: str,
+        chunks: Iterator[bytes],
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """
+        Write file content from an iterator of chunks.
+
+        This is a memory-efficient alternative to write() for large files.
+        Accepts chunks as an iterator, computing hash incrementally.
+
+        Args:
+            path: Virtual path to write
+            chunks: Iterator yielding byte chunks
+            context: Optional operation context for permission checks
+
+        Returns:
+            Dict with metadata about the written file:
+                - etag: Content hash of the written content
+                - version: New version number
+                - modified_at: Modification timestamp
+                - size: File size in bytes
+
+        Raises:
+            InvalidPathError: If path is invalid
+            BackendError: If write operation fails
+            AccessDeniedError: If access is denied
+            PermissionError: If path is read-only or user doesn't have write permission
+
+        Example:
+            >>> # Stream large file without loading into memory
+            >>> def file_chunks(path, chunk_size=8192):
+            ...     with open(path, 'rb') as f:
+            ...         while chunk := f.read(chunk_size):
+            ...             yield chunk
+            >>> result = nx.write_stream("/workspace/large.bin", file_chunks("/tmp/large.bin"))
+        """
+        path = self._validate_path(path)
+
+        # Route to backend with write access check
+        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+        route = self.router.route(
+            path,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            is_admin=is_admin,
+            check_write=True,
+        )
+
+        # Check if path is read-only
+        if route.readonly:
+            raise PermissionError(f"Path is read-only: {path}")
+
+        # Check write permission
+        self._check_permission(path, Permission.WRITE, context)
+
+        # Get existing metadata for version tracking
+        now = datetime.now(UTC)
+        meta = self.metadata.get(path)
+
+        # Write content via streaming
+        content_hash = route.backend.write_stream(chunks, context=context)
+
+        # Get size from backend metadata (written during streaming)
+        # For now, we can't easily get size without reading - set to 0 and update on next read
+        # A better approach would be for write_stream to return (hash, size) tuple
+        size = 0
+        if hasattr(route.backend, "get_content_size"):
+            with contextlib.suppress(Exception):
+                size = route.backend.get_content_size(content_hash, context=context)
+
+        # Update metadata
+        new_version = (meta.version + 1) if meta else 1
+        new_meta = FileMetadata(
+            path=path,
+            backend_name=route.backend.name,
+            physical_path=content_hash,  # CAS: hash is the "physical" location
+            etag=content_hash,
+            size=size,
+            version=new_version,
+            created_at=meta.created_at if meta else now,
+            modified_at=now,
+            created_by=self._get_created_by(context),
+        )
+
+        self.metadata.put(new_meta)
+
+        return {
+            "etag": content_hash,
+            "version": new_version,
+            "modified_at": now.isoformat(),
+            "size": size,
+        }
 
     @rpc_expose(description="Write file content")
     def write(

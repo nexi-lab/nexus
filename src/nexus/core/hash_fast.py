@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -164,3 +165,21 @@ def get_hash_backend() -> str:
         return "python-blake3"
     else:
         return "sha256"
+
+
+def create_hasher() -> Any:
+    """Create an incremental hasher for streaming content.
+
+    Returns a hasher object with .update(chunk) and .hexdigest() methods.
+    Uses BLAKE3 if available, otherwise SHA-256.
+
+    Example:
+        >>> hasher = create_hasher()
+        >>> for chunk in file_chunks:
+        ...     hasher.update(chunk)
+        >>> content_hash = hasher.hexdigest()
+    """
+    if _PYTHON_BLAKE3_AVAILABLE and _python_blake3 is not None:
+        return _python_blake3.blake3()
+    else:
+        return hashlib.sha256()

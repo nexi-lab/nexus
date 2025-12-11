@@ -5,6 +5,7 @@ combining content-addressable storage (CAS) with directory operations.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -179,6 +180,45 @@ class Backend(ABC):
         content = self.read_content(content_hash, context=context)
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
+
+    def write_stream(
+        self,
+        chunks: Iterator[bytes],
+        context: "OperationContext | None" = None,
+    ) -> str:
+        """
+        Write content from an iterator of chunks and return its content hash.
+
+        This is a memory-efficient alternative to write_content() for large files.
+        Instead of requiring entire content in memory, accepts chunks as an iterator.
+        Computes hash incrementally while streaming.
+
+        Args:
+            chunks: Iterator yielding byte chunks
+            context: Operation context with user/tenant info (optional, for user-scoped backends)
+
+        Returns:
+            Content hash (SHA-256 as hex string)
+
+        Raises:
+            BackendError: If write operation fails
+
+        Example:
+            >>> # Stream large file without loading into memory
+            >>> def file_chunks(path, chunk_size=8192):
+            ...     with open(path, 'rb') as f:
+            ...         while chunk := f.read(chunk_size):
+            ...             yield chunk
+            >>> content_hash = backend.write_stream(file_chunks('/large/file.bin'))
+
+        Note:
+            Default implementation collects all chunks and calls write_content().
+            Backends should override for true streaming with incremental hashing.
+        """
+        # Default implementation: collect chunks and call write_content()
+        # Backends can override for true streaming with incremental hashing
+        content = b"".join(chunks)
+        return self.write_content(content, context=context)
 
     @abstractmethod
     def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:

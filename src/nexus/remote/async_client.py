@@ -24,6 +24,7 @@ import builtins
 import logging
 import time
 import uuid
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
@@ -499,6 +500,37 @@ class AsyncRemoteNexusFS:
                 "if_match": if_match,
                 "if_none_match": if_none_match,
                 "force": force,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    async def write_stream(
+        self,
+        path: str,
+        chunks: Iterator[bytes],
+        context: Any = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Write file content from an iterator of chunks (async).
+
+        This is a memory-efficient alternative to write() for large files.
+        Note: For remote client, chunks are collected and sent as single request.
+
+        Args:
+            path: Virtual path to write
+            chunks: Iterator yielding byte chunks
+            context: Unused in remote client (handled server-side)
+
+        Returns:
+            Dict with metadata (etag, version, modified_at, size)
+        """
+        # Collect chunks for RPC call (streaming over RPC not yet supported)
+        content = b"".join(chunks)
+
+        result = await self._call_rpc(
+            "write_stream",
+            {
+                "path": path,
+                "chunks": content,  # Send as single blob
             },
         )
         return result  # type: ignore[no-any-return]

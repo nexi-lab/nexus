@@ -15,10 +15,10 @@
 #   ./docker-start.sh --env=production   # Use production environment files
 #
 # Services:
-#   - postgres:    PostgreSQL database (port 5432)
-#   - nexus:       Nexus RPC server (port 8080)
-#   - langgraph:   LangGraph agent server (port 2024)
-#   - frontend:    React web UI (port 5173)
+#   - postgres:      PostgreSQL database (port 5432)
+#   - nexus:         Nexus RPC server (port 8080)
+#   - langgraph:     LangGraph agent server (port 2024)
+#   - frontend-dev:  React web UI with hot reload (port 5173, dev mode)
 
 set -e  # Exit on error
 
@@ -247,10 +247,16 @@ check_frontend_repo() {
 show_services() {
     cat << EOF
 📦 Services:
-   • postgres    - PostgreSQL database (port 5432)
-   • nexus       - Nexus RPC server (port 8080)
-   • langgraph   - LangGraph agent (port 2024)
-   • frontend    - React web UI (port 5173)
+   • postgres      - PostgreSQL database (port 5432)
+   • nexus         - Nexus RPC server (port 8080)
+   • langgraph     - LangGraph agent (port 2024)
+   • frontend-dev  - React web UI with hot reload (port 5173)
+
+💡 Development Mode (Hot Reload Enabled):
+   Changes to nexus-frontend/src/* will auto-reload in the browser.
+
+   To use production mode instead:
+     docker compose -f docker-compose.demo.yml --profile production up frontend
 EOF
     echo ""
 }
@@ -592,14 +598,14 @@ cmd_urls() {
 ║                      🌐 Access URLs                              ║
 ╚═══════════════════════════════════════════════════════════════════╝
 
-  🎨 Frontend:        http://localhost:5173
+  🎨 Frontend (Dev):  http://localhost:5173  (Hot reload enabled)
   🔧 Nexus API:       http://localhost:8080
   🔮 LangGraph:       http://localhost:2024
   🗄️  PostgreSQL:     localhost:5432
 
   📊 Health Checks:
      • Nexus:         curl http://localhost:8080/health
-     • Frontend:      curl http://localhost:5173/health
+     • Frontend:      curl http://localhost:5173
      • LangGraph:     curl http://localhost:2024/ok
 
 ╔═══════════════════════════════════════════════════════════════════╗
@@ -614,11 +620,12 @@ cmd_urls() {
   Docker commands:
     All logs:        docker compose -f docker-compose.demo.yml logs -f
     Nexus logs:      docker logs -f nexus-server
-    Frontend logs:   docker logs -f nexus-frontend
+    Frontend logs:   docker logs -f nexus-frontend-dev
     LangGraph logs:  docker logs -f nexus-langgraph
 
   Shell access:
     Nexus:           docker exec -it nexus-server sh
+    Frontend:        docker exec -it nexus-frontend-dev sh
     PostgreSQL:      docker exec -it nexus-postgres psql -U postgres -d nexus
 
 EOF

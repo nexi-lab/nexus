@@ -264,8 +264,9 @@ services:
         max-file: "3"
 
   # ============================================
-  # Frontend (React + Vite)
+  # Frontend (React + Vite) - Production Build
   # ============================================
+  # Use --profile production to start this instead of dev
   frontend:
     build:
       context: ../nexus-frontend
@@ -290,6 +291,56 @@ services:
       - "${FRONTEND_PORT:-5173}:80"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    profiles:
+      - production
+
+  # ============================================
+  # Frontend Dev (React + Vite) - Hot Reload
+  # ============================================
+  frontend-dev:
+    build:
+      context: ../nexus-frontend
+      dockerfile: Dockerfile
+      target: builder  # Build only the builder stage
+    image: nexus-frontend:dev
+    container_name: nexus-frontend-dev
+    restart: unless-stopped
+    depends_on:
+      nexus:
+        condition: service_healthy
+    environment:
+      # Frontend configuration
+      VITE_NEXUS_API_URL: ${VITE_NEXUS_API_URL:-http://localhost:8080}
+      VITE_LANGGRAPH_API_URL: ${VITE_LANGGRAPH_API_URL:-http://localhost:2024}
+      VITE_NEXUS_SERVER_URL: ${VITE_NEXUS_SERVER_URL:-http://nexus:8080}
+    volumes:
+      # Mount source code for hot reload
+      - ../nexus-frontend/src:/app/src:delegated
+      - ../nexus-frontend/public:/app/public:delegated
+      - ../nexus-frontend/index.html:/app/index.html:ro
+      - ../nexus-frontend/vite.config.ts:/app/vite.config.ts:ro
+      - ../nexus-frontend/tsconfig.json:/app/tsconfig.json:ro
+      - ../nexus-frontend/tsconfig.app.json:/app/tsconfig.app.json:ro
+      - ../nexus-frontend/tsconfig.node.json:/app/tsconfig.node.json:ro
+      - ../nexus-frontend/.env:/app/.env:ro
+      - ../nexus-frontend/.env.local:/app/.env.local:ro
+      # Don't mount node_modules (use container's version)
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5173"]
       interval: 30s
       timeout: 10s
       retries: 3

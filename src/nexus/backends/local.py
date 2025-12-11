@@ -7,6 +7,7 @@ import os
 import platform
 import shutil
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -471,7 +472,7 @@ class LocalBackend(Backend):
         return result
 
     def stream_content(
-        self, content_hash: str, chunk_size: int = 8192, _context: "OperationContext | None" = None
+        self, content_hash: str, chunk_size: int = 8192, context: "OperationContext | None" = None
     ) -> Any:
         """
         Stream content from disk in chunks without loading entire file into memory.
@@ -482,7 +483,7 @@ class LocalBackend(Backend):
         Args:
             content_hash: SHA-256 hash as hex string
             chunk_size: Size of each chunk in bytes (default: 8KB)
-            _context: Operation context (ignored for local backend)
+            context: Operation context (ignored for local backend)
         """
         content_path = self._hash_to_path(content_hash)
 
@@ -505,6 +506,91 @@ class LocalBackend(Backend):
             raise BackendError(
                 f"Failed to stream content: {e}", backend="local", path=content_hash
             ) from e
+
+    def write_stream(
+        self,
+        chunks: "Iterator[bytes]",
+        context: "OperationContext | None" = None,
+    ) -> str:
+        """
+        Write content from an iterator of chunks.
+
+        Streams content to disk while collecting for hashing.
+        Uses same hash algorithm as write_content() for consistency.
+
+        Args:
+            chunks: Iterator yielding byte chunks
+            context: Operation context (ignored for local backend)
+
+        Returns:
+            Content hash (BLAKE3 or SHA-256 as hex string)
+        """
+        # Write to temp file while collecting chunks for hashing
+        # Note: We collect chunks for hashing to ensure consistency with hash_content()
+        # which may use Rust BLAKE3. True streaming hash requires matching incremental hasher.
+        tmp_path = None
+        collected_chunks: list[bytes] = []
+
+        try:
+            # Create temp file in CAS directory for atomic move
+            self.cas_root.mkdir(parents=True, exist_ok=True)
+
+            with tempfile.NamedTemporaryFile(
+                mode="wb", dir=self.cas_root, delete=False
+            ) as tmp_file:
+                tmp_path = Path(tmp_file.name)
+
+                for chunk in chunks:
+                    tmp_file.write(chunk)
+                    collected_chunks.append(chunk)
+
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+
+            # Compute hash using same algorithm as write_content
+            content = b"".join(collected_chunks)
+            content_hash = self._compute_hash(content)
+            total_size = len(content)
+            content_path = self._hash_to_path(content_hash)
+
+            # Acquire lock before checking/writing
+            lock_path = self._get_lock_path(content_hash)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with self._lock_file(lock_path):
+                if content_path.exists():
+                    # Content exists - increment ref_count, discard temp file
+                    metadata = self._read_metadata(content_hash)
+                    metadata["ref_count"] = metadata.get("ref_count", 0) + 1
+                    self._write_metadata(content_hash, metadata)
+
+                    # Clean up temp file
+                    if tmp_path is not None and tmp_path.exists():
+                        tmp_path.unlink()
+                    tmp_path = None
+
+                    return content_hash
+
+                # Content doesn't exist - move temp file to final location
+                content_path.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(str(tmp_path), str(content_path))
+                tmp_path = None  # Successfully moved
+
+                # Create metadata with ref_count=1
+                metadata = {"ref_count": 1, "size": total_size}
+                self._write_metadata(content_hash, metadata)
+
+                return content_hash
+
+        except OSError as e:
+            raise BackendError(
+                f"Failed to write stream: {e}", backend="local", path="stream"
+            ) from e
+        finally:
+            # Clean up temp file if it still exists
+            if tmp_path is not None and tmp_path.exists():
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink()
 
     def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         """Delete content by hash with reference counting.

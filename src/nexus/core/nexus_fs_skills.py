@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.exceptions import ValidationError
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
@@ -852,6 +853,10 @@ class NexusFSSkillsMixin:
                 format=format,
                 include_dependencies=include_dependencies,
             )
+
+            # Check if export succeeded
+            if zip_bytes is None:
+                raise ValidationError(f"Failed to export skill '{skill_name}'")
 
             # Encode to base64
             zip_base64 = base64.b64encode(zip_bytes).decode("utf-8")

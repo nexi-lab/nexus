@@ -1,5 +1,6 @@
 """Skill importer for ZIP/archive packages."""
 
+import io
 import logging
 import re
 import tempfile
@@ -113,7 +114,7 @@ class SkillImporter:
 
             try:
                 # Extract ZIP
-                with zipfile.ZipFile(zipfile.io.BytesIO(zip_data), "r") as zip_ref:
+                with zipfile.ZipFile(io.BytesIO(zip_data), "r") as zip_ref:
                     zip_ref.extractall(tmpdir_path)
                     logger.info(f"Extracted ZIP to {tmpdir_path}")
             except zipfile.BadZipFile as e:
@@ -196,7 +197,7 @@ class SkillImporter:
 
             # Extract ZIP
             try:
-                with zipfile.ZipFile(zipfile.io.BytesIO(zip_data), "r") as zip_ref:
+                with zipfile.ZipFile(io.BytesIO(zip_data), "r") as zip_ref:
                     zip_ref.extractall(tmpdir_path)
             except zipfile.BadZipFile as e:
                 return {
@@ -340,8 +341,7 @@ class SkillImporter:
 
         try:
             # Check if directory exists
-            stat_result = self._filesystem.stat(target_path, context=context)
-            return stat_result is not None
+            return self._filesystem.exists(target_path)
         except Exception:
             # Path doesn't exist, no conflict
             return False
@@ -403,7 +403,7 @@ class SkillImporter:
             context: Operation context for permission checks
         """
         # Create target directory
-        self._filesystem.mkdir(target_path, parents=True, exist_ok=True, context=context)
+        self._filesystem.mkdir(target_path, parents=True, exist_ok=True)
 
         # Copy all files recursively
         for item in source_dir.rglob("*"):

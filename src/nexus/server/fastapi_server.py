@@ -117,19 +117,64 @@ _app_state = AppState()
 async def get_auth_result(
     authorization: str | None = Header(None, alias="Authorization"),
     x_agent_id: str | None = Header(None, alias="X-Agent-ID"),
+    x_nexus_subject: str | None = Header(None, alias="X-Nexus-Subject"),
+    x_nexus_tenant_id: str | None = Header(None, alias="X-Nexus-Tenant-ID"),
 ) -> dict[str, Any] | None:
     """Validate authentication and return auth result.
 
     Args:
         authorization: Bearer token from Authorization header
         x_agent_id: Optional agent ID header
+        x_nexus_subject: Optional identity hint header (e.g., "user:alice")
+        x_nexus_tenant_id: Optional tenant hint header
 
     Returns:
         Auth result dict or None if not authenticated
     """
+
+    def _parse_subject_header(value: str) -> tuple[str | None, str | None]:
+        parts = value.split(":", 1)
+        if len(parts) != 2:
+            return (None, None)
+        subject_type, subject_id = parts[0].strip(), parts[1].strip()
+        if not subject_type or not subject_id:
+            return (None, None)
+        return (subject_type, subject_id)
+
     # No auth configured = open access
     if not _app_state.api_key and not _app_state.auth_provider:
-        return {"authenticated": True, "is_admin": False, "subject_type": None, "subject_id": None}
+        # In open access mode, we still want a stable identity for permission checks.
+        # Prefer explicit identity headers; otherwise, best-effort infer from sk- style keys.
+        subject_type: str | None = None
+        subject_id: str | None = None
+        tenant_id: str | None = x_nexus_tenant_id
+
+        if x_nexus_subject:
+            st, sid = _parse_subject_header(x_nexus_subject)
+            subject_type, subject_id = st, sid
+        elif authorization and authorization.startswith("Bearer "):
+            token = authorization[7:]
+            # Best-effort: infer tenant/user from DatabaseAPIKeyAuth format
+            # Format: sk-<tenant>_<user>_<id>_<random-hex>
+            if token.startswith("sk-"):
+                remainder = token[len("sk-") :]
+                parts = remainder.split("_")
+                if len(parts) >= 2:
+                    inferred_tenant = parts[0] or None
+                    inferred_user = parts[1] or None
+                    tenant_id = tenant_id or inferred_tenant
+                    subject_type = "user"
+                    subject_id = inferred_user
+
+        return {
+            "authenticated": True,
+            "is_admin": False,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "tenant_id": tenant_id,
+            "metadata": {"open_access": True},
+            "x_agent_id": x_agent_id,
+        }
 
     if not authorization:
         return None
@@ -651,21 +696,29 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
     return {"files": entries}
 
 
-def _handle_delete(params: Any, _context: Any) -> dict[str, Any]:
+def _handle_delete(params: Any, context: Any) -> dict[str, Any]:
     """Handle delete method."""
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
-    # Note: delete() doesn't support context parameter in NexusFilesystem
-    nexus_fs.delete(params.path)
+    # IMPORTANT: NexusFS.delete supports context and permissions depend on it.
+    # Some older NexusFilesystem implementations may not accept context, so fall back safely.
+    try:
+        nexus_fs.delete(params.path, context=context)
+    except TypeError:
+        nexus_fs.delete(params.path)
     return {"deleted": True}
 
 
-def _handle_rename(params: Any, _context: Any) -> dict[str, Any]:
+def _handle_rename(params: Any, context: Any) -> dict[str, Any]:
     """Handle rename method."""
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
-    # Note: rename() doesn't support context parameter in NexusFilesystem
-    nexus_fs.rename(params.old_path, params.new_path)
+    # IMPORTANT: NexusFS.rename supports context and permissions depend on it.
+    # Some older NexusFilesystem implementations may not accept context, so fall back safely.
+    try:
+        nexus_fs.rename(params.old_path, params.new_path, context=context)
+    except TypeError:
+        nexus_fs.rename(params.old_path, params.new_path)
     return {"renamed": True}
 
 

@@ -40,6 +40,7 @@ from nexus_tools import get_nexus_tools
 
 # Import official system prompt from Nexus tools
 from nexus.tools import NEXUS_TOOLS_SYSTEM_PROMPT
+from nexus.tools.langgraph.nexus_tools import list_skills
 
 # Get configuration from environment variables
 E2B_TEMPLATE_ID = os.getenv("E2B_TEMPLATE_ID")
@@ -110,6 +111,37 @@ def build_prompt(state: dict, config: RunnableConfig) -> list:
 
     # Build system prompt with optional context
     system_content = SYSTEM_PROMPT
+
+    # Add available skills to the system prompt
+    try:
+        skills_result = list_skills(config, tier="all")
+        skills_data = skills_result.get("skills", [])
+
+        if skills_data:
+            system_content += "\n\n## Available Skills\n\n"
+            system_content += "The following skills are available in the Nexus system that you can reference or use:\n\n"
+
+            for i, skill in enumerate(skills_data, 1):
+                name = skill.get("name", "Unknown")
+                description = skill.get("description", "No description")
+                tier = skill.get("tier", "N/A")
+                version = skill.get("version", "N/A")
+                file_path = skill.get("file_path", None)
+
+                system_content += f"{i}. **{name}**"
+                if version and version != "N/A":
+                    system_content += f" (v{version})"
+                system_content += f" [{tier}]\n"
+                system_content += f"   {description}\n"
+                if file_path:
+                    system_content += f"   Path: `{file_path}`\n"
+                system_content += "\n"
+
+            system_content += f"Total: {len(skills_data)} skills available\n"
+    except Exception as e:
+        # If skills listing fails, continue without skills (don't break the agent)
+        print(f"Warning: Could not fetch skills: {e}")
+
     if opened_file_path:
         system_content += f"""
 

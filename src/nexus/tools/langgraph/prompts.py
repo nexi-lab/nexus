@@ -37,7 +37,7 @@ NEXUS_TOOLS_SYSTEM_PROMPT = """You have access to Nexus filesystem and sandbox t
 - Use `less` for previewing large files (shows first 100 lines)
 - Break complex operations into steps (read, process, write)
 - Check file existence before reading with `glob_files`
-- Use `python` or `bash` for data processing, analysis, or complex operations
+- Use `python` or `bash` for data processing, analysis, or complex operations, add /mnt/nexus prefix to the paths to access the Nexus filesystem when using the sandbox tools.
 """
 
 # Coding agent system prompt

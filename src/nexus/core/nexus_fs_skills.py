@@ -136,7 +136,7 @@ class NexusFSSkillsMixin:
         template: str = "basic",
         tier: str = "user",
         author: str | None = None,
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Create a new skill from template.
 
@@ -160,7 +160,7 @@ class NexusFSSkillsMixin:
                 template=template,
                 tier=tier,
                 author=author,
-                context=_context,
+                context=context,
             )
             return {
                 "skill_path": skill_path,
@@ -181,7 +181,7 @@ class NexusFSSkillsMixin:
         author: str | None = None,
         source_url: str | None = None,
         metadata: dict[str, Any] | None = None,
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Create a skill from custom content.
 
@@ -209,7 +209,7 @@ class NexusFSSkillsMixin:
                 author=author,
                 source_url=source_url,
                 metadata=metadata,
-                context=_context,
+                context=context,
             )
             return {
                 "skill_path": skill_path,
@@ -233,7 +233,7 @@ class NexusFSSkillsMixin:
         extract_tables: bool = False,
         extract_images: bool = False,
         _author: str | None = None,  # Unused: plugin manages authorship
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Create a skill from file or URL (auto-detects type).
 
@@ -349,7 +349,7 @@ class NexusFSSkillsMixin:
         self,
         tier: str | None = None,
         include_metadata: bool = True,
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """List all skills.
 
@@ -364,7 +364,7 @@ class NexusFSSkillsMixin:
         registry = self._get_skill_registry()
 
         async def list_skills() -> dict[str, Any]:
-            await registry.discover(context=_context)
+            await registry.discover(context=context)
             skills = registry.list_skills(tier=tier, include_metadata=include_metadata)
 
             # Convert SkillMetadata objects to dicts
@@ -398,7 +398,7 @@ class NexusFSSkillsMixin:
     def skills_info(
         self,
         skill_name: str,
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Get detailed skill information.
 
@@ -412,7 +412,7 @@ class NexusFSSkillsMixin:
         registry = self._get_skill_registry()
 
         async def get_info() -> dict[str, Any]:
-            await registry.discover(context=_context)
+            await registry.discover(context=context)
             metadata = registry.get_metadata(skill_name)
 
             skill_info = {
@@ -446,7 +446,7 @@ class NexusFSSkillsMixin:
         target_name: str,
         tier: str = "agent",
         author: str | None = None,
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Fork an existing skill.
 
@@ -464,7 +464,7 @@ class NexusFSSkillsMixin:
         registry = self._get_skill_registry()
 
         async def fork() -> dict[str, Any]:
-            await registry.discover(context=_context)
+            await registry.discover(context=context)
             forked_path = await manager.fork_skill(
                 source_name=source_name,
                 target_name=target_name,
@@ -486,7 +486,7 @@ class NexusFSSkillsMixin:
         skill_name: str,
         source_tier: str = "agent",
         target_tier: str = "tenant",
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Publish skill to another tier.
 
@@ -522,7 +522,7 @@ class NexusFSSkillsMixin:
         query: str,
         tier: str | None = None,
         limit: int = 10,
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Search skills by description.
 
@@ -552,7 +552,7 @@ class NexusFSSkillsMixin:
         submitted_by: str,
         reviewers: list[str] | None = None,
         comments: str | None = None,
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Submit a skill for approval.
 
@@ -592,7 +592,7 @@ class NexusFSSkillsMixin:
         reviewer_type: str = "user",
         comments: str | None = None,
         tenant_id: str | None = None,
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Approve a skill for publication.
 
@@ -634,7 +634,7 @@ class NexusFSSkillsMixin:
         reviewer_type: str = "user",
         comments: str | None = None,
         tenant_id: str | None = None,
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Reject a skill for publication.
 

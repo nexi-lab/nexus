@@ -612,8 +612,10 @@ async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:
     for param_name, _param in sig.parameters.items():
         if param_name == "self":
             continue
-        elif param_name == "context":
-            kwargs["context"] = context
+        # Support both "context" and "_context" parameter names.
+        # Skills methods intentionally use "_context" to avoid shadowing/conflicts.
+        elif param_name in ("context", "_context"):
+            kwargs[param_name] = context
         elif hasattr(params, param_name):
             kwargs[param_name] = getattr(params, param_name)
 

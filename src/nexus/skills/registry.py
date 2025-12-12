@@ -163,13 +163,16 @@ class SkillRegistry:
                 logger.debug(f"Tier {tier} not available for context")
                 continue
 
-            count = await self._discover_tier(tier, tier_path)
+            # Pass through context so listing/reads respect caller permissions.
+            count = await self._discover_tier(tier, tier_path, context=context)
             discovered_count += count
 
         logger.info(f"Discovered {discovered_count} skills from {len(tiers)} tiers")
         return discovered_count
 
-    async def _discover_tier(self, tier: str, tier_path: str) -> int:
+    async def _discover_tier(
+        self, tier: str, tier_path: str, context: OperationContext | None = None
+    ) -> int:
         """Discover skills from a single tier.
 
         Args:
@@ -185,7 +188,7 @@ class SkillRegistry:
             # so we check is_directory() first (which works for implicit dirs)
             # and fall back to trying to list the directory
             try:
-                is_dir = self._filesystem.is_directory(tier_path)
+                is_dir = self._filesystem.is_directory(tier_path, context=context)
             except Exception:
                 # Directory check failed, try to list anyway
                 is_dir = False
@@ -194,7 +197,9 @@ class SkillRegistry:
                 # Try to list the directory - if it has files, it exists
                 try:
                     # list() returns list[str] when details=False
-                    files_raw = self._filesystem.list(tier_path, recursive=True, details=False)
+                    files_raw = self._filesystem.list(
+                        tier_path, recursive=True, details=False, context=context
+                    )
                     files_list: list[str] = files_raw  # type: ignore[assignment]
                     if not files_list:
                         logger.debug(f"Tier path has no files: {tier_path}")
@@ -212,7 +217,9 @@ class SkillRegistry:
                 # Directory exists, list it
                 try:
                     # list() returns list[str] when details=False
-                    files_raw = self._filesystem.list(tier_path, recursive=True, details=False)
+                    files_raw = self._filesystem.list(
+                        tier_path, recursive=True, details=False, context=context
+                    )
                     str_files: list[str] = files_raw  # type: ignore[assignment]
                     skill_files = [
                         f
@@ -240,7 +247,7 @@ class SkillRegistry:
         for skill_file in skill_files:
             try:
                 # Parse metadata only (progressive disclosure)
-                metadata = self._parse_metadata(skill_file, tier)
+                metadata = self._parse_metadata(skill_file, tier, context=context)
 
                 # Skip if parsing failed (e.g., CAS error)
                 if metadata is None:
@@ -277,7 +284,9 @@ class SkillRegistry:
 
         return count
 
-    def _parse_metadata(self, file_path: str, tier: str) -> SkillMetadata | None:
+    def _parse_metadata(
+        self, file_path: str, tier: str, context: OperationContext | None = None
+    ) -> SkillMetadata | None:
         """Parse skill metadata from file.
 
         Args:
@@ -290,7 +299,7 @@ class SkillRegistry:
         if self._filesystem:
             # Use NexusFS to read content and parse directly
             try:
-                raw_content = self._filesystem.read(file_path)
+                raw_content = self._filesystem.read(file_path, context=context)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 content = raw_content.decode("utf-8")
@@ -371,7 +380,7 @@ class SkillRegistry:
         # Load full content
         try:
             if self._filesystem:
-                raw_content = self._filesystem.read(metadata.file_path or "")
+                raw_content = self._filesystem.read(metadata.file_path or "", context=context)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 content = raw_content.decode("utf-8")

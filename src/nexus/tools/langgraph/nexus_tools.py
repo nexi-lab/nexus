@@ -15,7 +15,7 @@ Nexus Tools:
 
 These tools enable agents to interact with a remote Nexus filesystem and execute
 code in isolated Nexus-managed sandboxes, allowing them to search, read, analyze, persist
-data, and run code across agent runs.
+data, run code, and discover reusable skills across agent runs.
 
 Authentication:
     API key is REQUIRED via metadata.x_auth: "Bearer <token>"
@@ -24,7 +24,7 @@ Authentication:
 """
 
 import shlex
-from typing import Annotated, Any, NotRequired, TypedDict
+from typing import Annotated, Any
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
@@ -33,16 +33,96 @@ from langgraph.prebuilt import InjectedState
 from nexus.remote import RemoteNexusFS
 
 
-class NexusAgentState(TypedDict):
-    """State schema for Nexus LangGraph agents.
+def _get_nexus_client(config: RunnableConfig, state: dict[str, Any] | None = None) -> RemoteNexusFS:
+    """Create authenticated RemoteNexusFS from config or state.
 
-    Attributes:
-        messages: List of messages in the conversation
-        context: Optional context dict containing auth and server info
+    Requires authentication via metadata.x_auth: "Bearer <token>" or state["context"]["x_auth"]
     """
+    # Get API key from metadata.x_auth or state.context
+    metadata = config.get("metadata", {})
+    x_auth = metadata.get("x_auth", "")
+    server_url = metadata.get("nexus_server_url", "")
 
-    messages: list[Any]
-    context: NotRequired[dict[str, Any]]
+    # Fallback to state context if metadata is empty
+    if not x_auth and state:
+        context = state.get("context", {})
+        x_auth = context.get("x_auth", "")
+        server_url = server_url or context.get("nexus_server_url", "")
+
+    if not x_auth:
+        raise ValueError(
+            "Missing x_auth in metadata. "
+            "Frontend must pass API key via metadata: {'x_auth': 'Bearer <token>'}"
+        )
+
+    # Strip "Bearer " prefix if present
+    api_key = x_auth.removeprefix("Bearer ").strip()
+
+    if not api_key:
+        raise ValueError("Invalid x_auth format. Expected 'Bearer <token>', got: " + x_auth)
+
+    return RemoteNexusFS(server_url=server_url, api_key=api_key)
+
+
+def list_skills(
+    config: RunnableConfig,
+    state: Annotated[Any, InjectedState] = None,
+    tier: str = "all",
+    include_metadata: bool = True,
+) -> dict[str, Any]:
+    """List available skills from Nexus.
+
+    This is a standalone function (not a LangGraph tool) that returns skill data
+    for programmatic use in agents or scripts.
+
+    Args:
+        config: Runtime configuration (provided by framework) containing auth metadata
+        state: Agent state (injected by LangGraph, not used directly)
+        tier: Tier filter - "all" (default), "agent", "user", "tenant", or "system"
+        include_metadata: Whether to include full metadata (default: True)
+
+    Available Tiers:
+        - "all": Show skills from all tiers (default)
+        - "agent": Agent-level skills
+        - "user": User-level skills
+        - "tenant": Tenant-wide skills
+        - "system": System-level skills
+
+    Returns:
+        Dictionary with:
+            - "skills": List of skill dictionaries with name, description, version, tier, etc.
+            - "count": Total number of skills
+            - "tier": Filter tier (if specified)
+
+    Examples:
+        >>> from langchain_core.runnables import RunnableConfig
+        >>> from nexus.tools.langgraph.nexus_tools import list_skills
+        >>>
+        >>> config = RunnableConfig(metadata={
+        ...     "x_auth": "Bearer sk-your-api-key",
+        ...     "nexus_server_url": "http://localhost:8080"
+        ... })
+        >>>
+        >>> # Get all skills (default)
+        >>> result = list_skills(config)
+        >>> print(f"Found {result['count']} skills")
+        >>>
+        >>> # Explicit "all"
+        >>> result = list_skills(config, tier="all")
+        >>>
+        >>> # Filter by specific tier
+        >>> result = list_skills(config, tier="system")
+        >>> print(f"Found {result['count']} system skills")
+        >>>
+        >>> # Get user-level skills
+        >>> result = list_skills(config, tier="user")
+    """
+    nx = _get_nexus_client(config, state)
+
+    # Map "all" to None for the backend API
+    tier_filter = None if tier == "all" else tier
+
+    return nx.skills_list(tier=tier_filter, include_metadata=include_metadata)
 
 
 def get_nexus_tools() -> list[BaseTool]:
@@ -65,38 +145,6 @@ def get_nexus_tools() -> list[BaseTool]:
             metadata={"x_auth": "Bearer sk-your-api-key"}
         )
     """
-
-    def _get_nexus_client(
-        config: RunnableConfig, state: dict[str, Any] | None = None
-    ) -> RemoteNexusFS:
-        """Create authenticated RemoteNexusFS from config or state.
-
-        Requires authentication via metadata.x_auth: "Bearer <token>" or state["context"]["x_auth"]
-        """
-        # Get API key from metadata.x_auth or state.context
-        metadata = config.get("metadata", {})
-        x_auth = metadata.get("x_auth", "")
-        server_url = metadata.get("nexus_server_url", "")
-
-        # Fallback to state context if metadata is empty
-        if not x_auth and state:
-            context = state.get("context", {})
-            x_auth = context.get("x_auth", "")
-            server_url = server_url or context.get("nexus_server_url", "")
-
-        if not x_auth:
-            raise ValueError(
-                "Missing x_auth in metadata. "
-                "Frontend must pass API key via metadata: {'x_auth': 'Bearer <token>'}"
-            )
-
-        # Strip "Bearer " prefix if present
-        api_key = x_auth.removeprefix("Bearer ").strip()
-
-        if not api_key:
-            raise ValueError("Invalid x_auth format. Expected 'Bearer <token>', got: " + x_auth)
-
-        return RemoteNexusFS(server_url=server_url, api_key=api_key)
 
     @tool
     def grep_files(

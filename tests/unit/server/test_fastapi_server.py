@@ -153,3 +153,30 @@ def test_handle_rename_passes_context_to_filesystem():
 
     assert result == {"renamed": True}
     assert fs.calls == [("/a.txt", "/b.txt", ctx)]
+
+
+@pytest.mark.asyncio
+async def test_auto_dispatch_injects__context_param():
+    """FastAPI RPC auto-dispatch should inject context into `_context` too.
+
+    Some RPC methods (historically skills) used `_context` rather than `context`.
+    """
+
+    async def fn(_context: OperationContext | None = None):
+        assert _context is not None
+        return {"subject_id": _context.subject_id, "tenant_id": _context.tenant_id}
+
+    fas._app_state.exposed_methods = {"dummy": fn}
+
+    ctx = OperationContext(
+        user="admin",
+        groups=[],
+        subject_type="user",
+        subject_id="admin",
+        tenant_id="default",
+        is_admin=True,
+    )
+    params = SimpleNamespace()
+
+    result = await fas._auto_dispatch("dummy", params, ctx)
+    assert result == {"subject_id": "admin", "tenant_id": "default"}

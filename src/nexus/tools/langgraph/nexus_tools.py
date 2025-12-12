@@ -12,7 +12,6 @@ Nexus Tools:
 5. python: Execute Python code in Nexus-managed sandbox
 6. bash: Execute bash commands in Nexus-managed sandbox
 7. query_memories: Query and retrieve stored memory records
-8. explore_skills: Explore and list available skills from Nexus
 
 These tools enable agents to interact with a remote Nexus filesystem and execute
 code in isolated Nexus-managed sandboxes, allowing them to search, read, analyze, persist
@@ -641,71 +640,6 @@ def get_nexus_tools() -> list[BaseTool]:
         except Exception as e:
             return f"Error querying memories: {str(e)}"
 
-    # Skills Tools
-    @tool
-    def explore_skills(
-        config: RunnableConfig,
-        state: Annotated[Any, InjectedState] = None,  # noqa: ARG001
-        tier: str | None = None,
-    ) -> str:
-        """Explore and list available skills from Nexus.
-
-        Lists all available skills with their metadata. Skills are reusable AI agent capabilities
-        organized in a three-tier hierarchy (agent > tenant > system).
-
-        Args:
-            config: Runtime configuration (provided by framework)
-            state: Agent state (injected by LangGraph, not used directly)
-            tier: Optional tier filter ("agent", "user", "tenant", or "system")
-
-        Examples:
-            explore_skills() - List all skills
-            explore_skills(tier="system") - List only system skills
-            explore_skills(tier="user") - List only user skills
-        """
-        try:
-            # Get authenticated client
-            nx = _get_nexus_client(config, state)
-
-            # Call skills_list RPC endpoint
-            result = nx.skills_list(tier=tier, include_metadata=True)
-
-            skills_data = result.get("skills", [])
-            total_count = result.get("count", 0)
-
-            if not skills_data:
-                tier_msg = f" in tier '{tier}'" if tier else ""
-                return f"No skills found{tier_msg}"
-
-            # Format results
-            output_lines = [f"Found {total_count} skills:\n"]
-
-            for i, skill in enumerate(skills_data, 1):
-                name = skill.get("name", "Unknown")
-                description = skill.get("description", "No description")
-                version = skill.get("version", "N/A")
-                skill_tier = skill.get("tier", "N/A")
-                author = skill.get("author", "N/A")
-
-                # Truncate description if too long
-                if len(description) > 100:
-                    description = description[:97] + "..."
-
-                output_lines.append(f"\n{i}. {name} (v{version})")
-                output_lines.append(f"   Description: {description}")
-                output_lines.append(f"   Tier: {skill_tier}")
-                if author != "N/A":
-                    output_lines.append(f"   Author: {author}")
-
-            # Add summary footer
-            if tier:
-                output_lines.append(f"\n[Showing skills from tier: {tier}]")
-
-            return "\n".join(output_lines)
-
-        except Exception as e:
-            return f"Error exploring skills: {str(e)}"
-
     # Return all tools
     tools = [
         grep_files,
@@ -715,7 +649,6 @@ def get_nexus_tools() -> list[BaseTool]:
         python,
         bash,
         query_memories,
-        explore_skills,
     ]
 
     return tools

@@ -19,6 +19,7 @@ Backend-specific implementations:
 
 import mimetypes
 from abc import abstractmethod
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from nexus.backends.backend import Backend
@@ -505,6 +506,96 @@ class BaseBlobStorageConnector(Backend):
                 backend=self.name,
                 path=blob_path,
             ) from e
+
+    def stream_content(
+        self,
+        content_hash: str,
+        chunk_size: int = 8192,
+        context: "OperationContext | None" = None,
+    ) -> Iterator[bytes]:
+        """
+        Stream content from blob storage in chunks.
+
+        This is a memory-efficient alternative to read_content() for large files.
+        Yields chunks as an iterator, allowing processing of files larger than RAM.
+
+        For connector backends with versioning enabled:
+        - content_hash is the version ID (cloud-specific)
+        - Streams that specific version
+
+        For connector backends without versioning:
+        - content_hash is ignored (just metadata hash)
+        - Always streams current content from backend_path
+
+        Args:
+            content_hash: Version ID (if versioning) or hash (if not)
+            chunk_size: Size of each chunk in bytes (default: 8KB)
+            context: Operation context with backend_path
+
+        Yields:
+            bytes: Chunks of file content
+
+        Raises:
+            ValueError: If backend_path is not provided in context
+            NexusFileNotFoundError: If file doesn't exist
+            BackendError: If stream operation fails
+        """
+        if not context or not context.backend_path:
+            raise ValueError(
+                f"{self.name} connector requires backend_path in OperationContext. "
+                "This backend reads files from actual paths, not CAS hashes."
+            )
+
+        # Get actual blob path from backend_path
+        blob_path = self._get_blob_path(context.backend_path)
+
+        try:
+            # Determine if we should use version ID
+            version_id = None
+            if self.versioning_enabled and content_hash and self._is_version_id(content_hash):
+                version_id = content_hash
+
+            # Stream blob (subclass can override _stream_blob for optimized streaming)
+            yield from self._stream_blob(blob_path, chunk_size, version_id)
+
+        except (NexusFileNotFoundError, BackendError):
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to stream content from {blob_path}: {e}",
+                backend=self.name,
+                path=blob_path,
+            ) from e
+
+    def _stream_blob(
+        self,
+        blob_path: str,
+        chunk_size: int = 8192,
+        version_id: str | None = None,
+    ) -> Iterator[bytes]:
+        """
+        Stream blob content in chunks.
+
+        Default implementation downloads entire blob and yields in chunks.
+        Subclasses should override for true streaming from cloud storage.
+
+        Args:
+            blob_path: Full blob path (including prefix)
+            chunk_size: Size of each chunk in bytes
+            version_id: Optional version ID for versioned reads
+
+        Yields:
+            bytes: Chunks of file content
+
+        Raises:
+            NexusFileNotFoundError: If blob doesn't exist
+            BackendError: If stream operation fails
+        """
+        # Default implementation: download and chunk
+        # Subclasses can override for true streaming
+        content, _ = self._download_blob(blob_path, version_id)
+        for i in range(0, len(content), chunk_size):
+            yield content[i : i + chunk_size]
 
     def _is_version_id(self, value: str) -> bool:
         """

@@ -1,10 +1,12 @@
-"""Unit tests for streaming support in backends (Issue #516)."""
+"""Unit tests for streaming support in backends (Issue #516, #480)."""
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from nexus.backends.backend import Backend
+from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.local import LocalBackend
 from nexus.core.hash_fast import create_hasher, hash_content
 
@@ -223,3 +225,334 @@ class TestCreateHasher:
         full_hash = hasher2.hexdigest()
 
         assert incremental_hash == full_hash
+
+
+class TestBaseBlobConnectorStreamContent:
+    """Test stream_content in BaseBlobStorageConnector (Issue #480)."""
+
+    def test_stream_content_default_yields_chunks(self) -> None:
+        """Test default stream_content yields chunks from _stream_blob."""
+
+        class TestConnector(BaseBlobStorageConnector):
+            """Minimal test connector."""
+
+            def __init__(self) -> None:
+                super().__init__(bucket_name="test-bucket", prefix="")
+
+            @property
+            def name(self) -> str:
+                return "test_connector"
+
+            def _upload_blob(self, blob_path, content, content_type):
+                return "test-version"
+
+            def _download_blob(self, blob_path, version_id=None):
+                # Return test content
+                return b"Hello World!", "v1"
+
+            def _delete_blob(self, blob_path):
+                pass
+
+            def _blob_exists(self, blob_path):
+                return True
+
+            def _get_blob_size(self, blob_path):
+                return 12
+
+            def _list_blobs(self, prefix, delimiter="/"):
+                return [], []
+
+            def _create_directory_marker(self, blob_path):
+                pass
+
+            def _copy_blob(self, source_path, dest_path):
+                pass
+
+        connector = TestConnector()
+
+        # Create mock context with backend_path
+        context = MagicMock()
+        context.backend_path = "test/file.txt"
+
+        chunks = list(connector.stream_content("hash", chunk_size=5, context=context))
+
+        # Should yield chunks of size 5
+        assert b"".join(chunks) == b"Hello World!"
+        assert len(chunks) == 3  # "Hello" + " Worl" + "d!"
+
+    def test_stream_content_requires_backend_path(self) -> None:
+        """Test stream_content raises ValueError without backend_path."""
+
+        class TestConnector(BaseBlobStorageConnector):
+            @property
+            def name(self) -> str:
+                return "test"
+
+            def __init__(self) -> None:
+                super().__init__(bucket_name="test", prefix="")
+
+            def _upload_blob(self, blob_path, content, content_type):
+                return ""
+
+            def _download_blob(self, blob_path, version_id=None):
+                return b"", None
+
+            def _delete_blob(self, blob_path):
+                pass
+
+            def _blob_exists(self, blob_path):
+                return False
+
+            def _get_blob_size(self, blob_path):
+                return 0
+
+            def _list_blobs(self, prefix, delimiter="/"):
+                return [], []
+
+            def _create_directory_marker(self, blob_path):
+                pass
+
+            def _copy_blob(self, source_path, dest_path):
+                pass
+
+        connector = TestConnector()
+
+        with pytest.raises(ValueError, match="requires backend_path"):
+            list(connector.stream_content("hash", context=None))
+
+    def test_stream_content_custom_stream_blob(self) -> None:
+        """Test that subclass can override _stream_blob for true streaming."""
+
+        class StreamingConnector(BaseBlobStorageConnector):
+            """Connector with custom _stream_blob implementation."""
+
+            def __init__(self) -> None:
+                super().__init__(bucket_name="test", prefix="")
+                self.stream_blob_called = False
+
+            @property
+            def name(self) -> str:
+                return "streaming_test"
+
+            def _upload_blob(self, blob_path, content, content_type):
+                return ""
+
+            def _download_blob(self, blob_path, version_id=None):
+                return b"should not be called", None
+
+            def _stream_blob(self, blob_path, chunk_size=8192, version_id=None):
+                """Custom streaming implementation."""
+                self.stream_blob_called = True
+                yield b"chunk1"
+                yield b"chunk2"
+                yield b"chunk3"
+
+            def _delete_blob(self, blob_path):
+                pass
+
+            def _blob_exists(self, blob_path):
+                return True
+
+            def _get_blob_size(self, blob_path):
+                return 18
+
+            def _list_blobs(self, prefix, delimiter="/"):
+                return [], []
+
+            def _create_directory_marker(self, blob_path):
+                pass
+
+            def _copy_blob(self, source_path, dest_path):
+                pass
+
+        connector = StreamingConnector()
+        context = MagicMock()
+        context.backend_path = "test/file.txt"
+
+        chunks = list(connector.stream_content("hash", context=context))
+
+        assert connector.stream_blob_called
+        assert chunks == [b"chunk1", b"chunk2", b"chunk3"]
+
+
+class TestReadRangeRPC:
+    """Test read_range RPC endpoint (Issue #480)."""
+
+    def test_read_range_basic(self, tmp_path: Path) -> None:
+        """Test basic read_range functionality."""
+        from nexus.backends.local import LocalBackend
+        from nexus.core.nexus_fs import NexusFS
+
+        data_dir = tmp_path / "data"
+        db_path = tmp_path / "metadata.db"
+        nx = NexusFS(
+            backend=LocalBackend(data_dir),
+            db_path=db_path,
+            auto_parse=False,
+            enforce_permissions=False,
+        )
+
+        try:
+            # Write a test file
+            content = b"0123456789ABCDEF"
+            nx.write("/test.txt", content)
+
+            # Read ranges
+            assert nx.read_range("/test.txt", 0, 5) == b"01234"
+            assert nx.read_range("/test.txt", 5, 10) == b"56789"
+            assert nx.read_range("/test.txt", 10, 16) == b"ABCDEF"
+        finally:
+            nx.close()
+
+    def test_read_range_validates_parameters(self, tmp_path: Path) -> None:
+        """Test read_range validates start/end parameters."""
+        from nexus.backends.local import LocalBackend
+        from nexus.core.nexus_fs import NexusFS
+
+        data_dir = tmp_path / "data"
+        db_path = tmp_path / "metadata.db"
+        nx = NexusFS(
+            backend=LocalBackend(data_dir),
+            db_path=db_path,
+            auto_parse=False,
+            enforce_permissions=False,
+        )
+
+        try:
+            nx.write("/test.txt", b"test content")
+
+            # Negative start should raise
+            with pytest.raises(ValueError, match="non-negative"):
+                nx.read_range("/test.txt", -1, 5)
+
+            # end < start should raise
+            with pytest.raises(ValueError, match="end.*must be >= start"):
+                nx.read_range("/test.txt", 10, 5)
+        finally:
+            nx.close()
+
+    def test_read_range_empty_range(self, tmp_path: Path) -> None:
+        """Test read_range with empty range (start == end)."""
+        from nexus.backends.local import LocalBackend
+        from nexus.core.nexus_fs import NexusFS
+
+        data_dir = tmp_path / "data"
+        db_path = tmp_path / "metadata.db"
+        nx = NexusFS(
+            backend=LocalBackend(data_dir),
+            db_path=db_path,
+            auto_parse=False,
+            enforce_permissions=False,
+        )
+
+        try:
+            nx.write("/test.txt", b"test content")
+
+            # Empty range should return empty bytes
+            assert nx.read_range("/test.txt", 5, 5) == b""
+        finally:
+            nx.close()
+
+    def test_read_range_beyond_file_size(self, tmp_path: Path) -> None:
+        """Test read_range when range extends beyond file size."""
+        from nexus.backends.local import LocalBackend
+        from nexus.core.nexus_fs import NexusFS
+
+        data_dir = tmp_path / "data"
+        db_path = tmp_path / "metadata.db"
+        nx = NexusFS(
+            backend=LocalBackend(data_dir),
+            db_path=db_path,
+            auto_parse=False,
+            enforce_permissions=False,
+        )
+
+        try:
+            content = b"short"
+            nx.write("/test.txt", content)
+
+            # Range beyond file size should return available content
+            result = nx.read_range("/test.txt", 0, 100)
+            assert result == content
+        finally:
+            nx.close()
+
+
+class TestStatRPC:
+    """Test stat() RPC endpoint (Issue #480)."""
+
+    def test_stat_returns_metadata_without_content(self, tmp_path: Path) -> None:
+        """Test stat() returns file metadata without reading file content."""
+        from nexus.backends.local import LocalBackend
+        from nexus.core.nexus_fs import NexusFS
+
+        data_dir = tmp_path / "data"
+        db_path = tmp_path / "metadata.db"
+        nx = NexusFS(
+            backend=LocalBackend(data_dir),
+            db_path=db_path,
+            auto_parse=False,
+            enforce_permissions=False,
+        )
+
+        try:
+            # Write a test file
+            content = b"Hello, World!"
+            nx.write("/test.txt", content)
+
+            # stat() should return metadata
+            info = nx.stat("/test.txt")
+
+            assert info["size"] == len(content)
+            assert info["etag"] is not None
+            assert info["version"] is not None
+            assert info["is_directory"] is False
+        finally:
+            nx.close()
+
+    def test_stat_file_not_found(self, tmp_path: Path) -> None:
+        """Test stat() raises error for non-existent file."""
+        from nexus.backends.local import LocalBackend
+        from nexus.core.exceptions import NexusFileNotFoundError
+        from nexus.core.nexus_fs import NexusFS
+
+        data_dir = tmp_path / "data"
+        db_path = tmp_path / "metadata.db"
+        nx = NexusFS(
+            backend=LocalBackend(data_dir),
+            db_path=db_path,
+            auto_parse=False,
+            enforce_permissions=False,
+        )
+
+        try:
+            with pytest.raises(NexusFileNotFoundError):
+                nx.stat("/nonexistent.txt")
+        finally:
+            nx.close()
+
+    def test_stat_directory(self, tmp_path: Path) -> None:
+        """Test stat() on a directory."""
+        from nexus.backends.local import LocalBackend
+        from nexus.core.nexus_fs import NexusFS
+
+        data_dir = tmp_path / "data"
+        db_path = tmp_path / "metadata.db"
+        nx = NexusFS(
+            backend=LocalBackend(data_dir),
+            db_path=db_path,
+            auto_parse=False,
+            enforce_permissions=False,
+        )
+
+        try:
+            # Create a file in a subdirectory to make an implicit directory
+            nx.write("/subdir/file.txt", b"content")
+
+            # stat() on the directory should work
+            info = nx.stat("/subdir")
+
+            assert info["is_directory"] is True
+            assert info["size"] == 0
+        finally:
+            nx.close()

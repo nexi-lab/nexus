@@ -31,7 +31,7 @@ class MockFilesystem:
         search_path = path if path.endswith("/") else path + "/"
         return any(f.startswith(search_path) for f in self._files)
 
-    def is_directory(self, path: str) -> bool:
+    def is_directory(self, path: str, context=None) -> bool:
         """Check if path is a directory."""
         if path in self._files:
             return False  # It's a file
@@ -46,6 +46,8 @@ class MockFilesystem:
         recursive: bool = True,
         details: bool = False,
         prefix: str | None = None,
+        show_parsed: bool = True,
+        context=None,
     ) -> list[str] | list[dict]:
         """List files in directory."""
         if not path.endswith("/"):
@@ -67,10 +69,13 @@ class MockFilesystem:
             return [{"path": f, "size": len(self._files[f])} for f in files]
         return files
 
-    def read(self, path: str) -> bytes:
+    def read(self, path: str, context=None, return_metadata: bool = False) -> bytes:
         """Read file content."""
         if path not in self._files:
             raise FileNotFoundError(f"File not found: {path}")
+        if return_metadata:
+            # Minimal shape needed by protocol; tests here only expect bytes.
+            return {"content": self._files[path]}
         return self._files[path]
 
 

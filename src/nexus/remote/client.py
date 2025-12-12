@@ -4380,6 +4380,78 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("skills_list_approvals", params)
         return result  # type: ignore[no-any-return]
 
+    def skills_import(
+        self,
+        zip_data: str,
+        tier: str = "user",
+        allow_overwrite: bool = False,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Import skill from ZIP package.
+
+        Args:
+            zip_data: Base64-encoded ZIP file data
+            tier: Target tier ('user', 'agent', 'tenant', 'system')
+            allow_overwrite: Allow overwriting existing skills
+            _context: Operation context (optional)
+
+        Returns:
+            Dict with imported_skills, skill_paths, tier
+        """
+        params: dict[str, Any] = {
+            "zip_data": zip_data,
+            "tier": tier,
+            "allow_overwrite": allow_overwrite,
+        }
+        result = self._call_rpc("skills_import", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_validate_zip(
+        self,
+        zip_data: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Validate skill ZIP package without importing.
+
+        Args:
+            zip_data: Base64-encoded ZIP file data
+            _context: Operation context (optional)
+
+        Returns:
+            Dict with valid, skills_found, errors, warnings
+        """
+        params: dict[str, Any] = {
+            "zip_data": zip_data,
+        }
+        result = self._call_rpc("skills_validate_zip", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_export(
+        self,
+        skill_name: str,
+        format: str = "generic",
+        include_dependencies: bool = False,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Export skill to ZIP package.
+
+        Args:
+            skill_name: Name of skill to export
+            format: Export format ('generic' or 'claude')
+            include_dependencies: Include dependent skills
+            _context: Operation context (optional)
+
+        Returns:
+            Dict with skill_name, zip_data (base64), size_bytes, format
+        """
+        params: dict[str, Any] = {
+            "skill_name": skill_name,
+            "format": format,
+            "include_dependencies": include_dependencies,
+        }
+        result = self._call_rpc("skills_export", params)
+        return result  # type: ignore[no-any-return]
+
     # ============================================================
     # OAuth Operations
     # ============================================================

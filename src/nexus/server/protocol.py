@@ -1375,6 +1375,31 @@ class SkillsListApprovalsParams:
     skill_name: str | None = None
 
 
+@dataclass
+class SkillsImportParams:
+    """Parameters for skills_import method."""
+
+    zip_data: str
+    tier: str = "user"
+    allow_overwrite: bool = False
+
+
+@dataclass
+class SkillsValidateZipParams:
+    """Parameters for skills_validate_zip method."""
+
+    zip_data: str
+
+
+@dataclass
+class SkillsExportParams:
+    """Parameters for skills_export method."""
+
+    skill_name: str
+    format: str = "generic"
+    include_dependencies: bool = False
+
+
 # OAuth management methods (v0.9.0)
 @dataclass
 class OAuthListProvidersParams:
@@ -1551,6 +1576,9 @@ METHOD_PARAMS = {
     "skills_approve": SkillsApproveParams,
     "skills_reject": SkillsRejectParams,
     "skills_list_approvals": SkillsListApprovalsParams,
+    "skills_import": SkillsImportParams,
+    "skills_validate_zip": SkillsValidateZipParams,
+    "skills_export": SkillsExportParams,
     # OAuth management methods (v0.9.0)
     "oauth_list_providers": OAuthListProvidersParams,
     "oauth_get_auth_url": OAuthGetAuthUrlParams,

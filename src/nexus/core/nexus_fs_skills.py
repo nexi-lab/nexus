@@ -3,11 +3,14 @@
 This module contains skills management operations exposed via RPC:
 - skills_create: Create a new skill from template
 - skills_create_from_content: Create a skill from web content
+- skills_create_from_file: Create skill from file or URL (auto-detects type)
 - skills_list: List all skills
 - skills_info: Get detailed skill information
 - skills_fork: Fork an existing skill
 - skills_publish: Publish skill to another tier
 - skills_search: Search skills by description
+- skills_import: Import skill from .zip/.skill package
+- skills_validate_zip: Validate skill ZIP package without importing
 - skills_export: Export skill to .zip package
 - skills_validate: Validate skill format
 - skills_submit_approval: Submit skill for approval
@@ -712,3 +715,152 @@ class NexusFSSkillsMixin:
             return {"approvals": approvals_data, "count": len(approvals_data)}
 
         return self._run_async_skill_operation(list_approvals())
+
+    @rpc_expose(description="Import skill from .zip/.skill package")
+    def skills_import(
+        self,
+        zip_data: str,
+        tier: str = "user",
+        allow_overwrite: bool = False,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Import skill from ZIP package.
+
+        Args:
+            zip_data: Base64 encoded ZIP file bytes
+            tier: Target tier (user/system)
+            allow_overwrite: Allow overwriting existing skills
+            context: Operation context with user_id, tenant_id
+
+        Returns:
+            {
+                "imported_skills": ["skill-name"],
+                "skill_paths": ["/skills/users/{user_id}/skill-name/"],
+                "tier": "user"
+            }
+
+        Raises:
+            ValidationError: Invalid ZIP structure or skill format
+            PermissionDeniedError: Insufficient permissions
+        """
+        import base64
+
+        from nexus.core.nexus_fs import NexusFilesystem
+        from nexus.skills.importer import SkillImporter
+
+        # Permission check: system tier requires admin
+        if tier == "system" and context and not getattr(context, "is_admin", False):
+            from nexus.core.exceptions import PermissionDeniedError
+
+            raise PermissionDeniedError("Only admins can import to system tier")
+
+        # Decode base64 ZIP data
+        zip_bytes = base64.b64decode(zip_data)
+
+        # Get importer
+        from typing import cast
+
+        registry = self._get_skill_registry()
+        importer = SkillImporter(cast(NexusFilesystem, self), registry)
+
+        # Import skill
+        async def import_skill() -> dict[str, Any]:
+            return await importer.import_from_zip(
+                zip_data=zip_bytes,
+                tier=tier,
+                allow_overwrite=allow_overwrite,
+                context=context,
+            )
+
+        return self._run_async_skill_operation(import_skill())
+
+    @rpc_expose(description="Validate skill ZIP package without importing")
+    def skills_validate_zip(
+        self,
+        zip_data: str,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Validate skill ZIP package.
+
+        Args:
+            zip_data: Base64 encoded ZIP file bytes
+            context: Operation context
+
+        Returns:
+            {
+                "valid": bool,
+                "skills_found": ["skill-name"],
+                "errors": ["error message"],
+                "warnings": ["warning message"]
+            }
+        """
+        import base64
+
+        from nexus.core.nexus_fs import NexusFilesystem
+        from nexus.skills.importer import SkillImporter
+
+        zip_bytes = base64.b64decode(zip_data)
+
+        from typing import cast
+
+        registry = self._get_skill_registry()
+        importer = SkillImporter(cast(NexusFilesystem, self), registry)
+
+        async def validate() -> dict[str, Any]:
+            return await importer.validate_zip(zip_bytes)
+
+        return self._run_async_skill_operation(validate())
+
+    @rpc_expose(description="Export skill to .zip package")
+    def skills_export(
+        self,
+        skill_name: str,
+        format: str = "generic",
+        include_dependencies: bool = False,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Export skill to ZIP package.
+
+        Args:
+            skill_name: Name of skill to export
+            format: Export format (generic, claude)
+            include_dependencies: Include skill dependencies
+            context: Operation context
+
+        Returns:
+            {
+                "skill_name": str,
+                "zip_data": str,  # Base64 encoded
+                "size_bytes": int,
+                "format": str
+            }
+        """
+        import base64
+
+        from nexus.skills.exporter import SkillExporter
+
+        registry = self._get_skill_registry()
+        exporter = SkillExporter(registry)
+
+        async def export() -> dict[str, Any]:
+            await registry.discover(context=context)
+
+            # Export to bytes
+            zip_bytes = await exporter.export_skill(
+                name=skill_name,
+                output_path=None,  # Return bytes
+                format=format,
+                include_dependencies=include_dependencies,
+            )
+
+            # Encode to base64
+            zip_base64 = base64.b64encode(zip_bytes).decode("utf-8")
+
+            return {
+                "skill_name": skill_name,
+                "zip_data": zip_base64,
+                "size_bytes": len(zip_bytes),
+                "format": format,
+            }
+
+        return self._run_async_skill_operation(export())

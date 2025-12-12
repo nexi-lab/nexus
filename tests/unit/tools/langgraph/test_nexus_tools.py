@@ -11,7 +11,7 @@ pytest.importorskip("langgraph")
 from langchain_core.runnables import RunnableConfig
 
 from nexus.remote import RemoteNexusFS
-from nexus.tools.langgraph.nexus_tools import NexusAgentState, get_nexus_tools
+from nexus.tools.langgraph.nexus_tools import get_nexus_tools
 
 
 class TestGetNexusTools:
@@ -749,24 +749,3 @@ class TestQueryMemoriesTool:
             result = memory_tool(config, state)
 
         assert "No memories found" in result
-
-
-class TestNexusAgentState:
-    """Tests for NexusAgentState."""
-
-    def test_state_has_context_field(self):
-        """Test that NexusAgentState accepts context field."""
-        state: NexusAgentState = {
-            "messages": [],
-            "context": {"x_auth": "Bearer token", "nexus_server_url": "http://localhost:8080"},
-        }
-
-        assert "context" in state
-        assert state["context"]["x_auth"] == "Bearer token"
-
-    def test_state_context_optional(self):
-        """Test that context field is optional."""
-        state: NexusAgentState = {"messages": []}
-
-        # Should not raise error
-        assert "messages" in state

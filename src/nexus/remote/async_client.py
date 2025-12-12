@@ -750,16 +750,80 @@ class AsyncRemoteNexusFS:
         )
         return result  # type: ignore[no-any-return]
 
+    async def stat(
+        self,
+        path: str,
+        context: Any = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Get file metadata without reading content (async).
+
+        This is useful for getting file size before streaming, or checking
+        file properties without the overhead of reading large files.
+
+        Args:
+            path: Virtual path to stat
+            context: Unused in remote client
+
+        Returns:
+            Dict with file metadata:
+                - size: File size in bytes
+                - etag: Content hash
+                - version: Version number
+                - modified_at: Last modification timestamp
+                - is_directory: Whether path is a directory
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+        """
+        result = await self._call_rpc("stat", {"path": path})
+        return result  # type: ignore[no-any-return]
+
+    async def read_range(
+        self,
+        path: str,
+        start: int,
+        end: int,
+        context: Any = None,  # noqa: ARG002
+    ) -> bytes:
+        """Read a specific byte range from a file (async).
+
+        This method enables memory-efficient streaming by fetching file content
+        in chunks without loading the entire file into memory.
+
+        Args:
+            path: Virtual path to read
+            start: Start byte offset (inclusive, 0-indexed)
+            end: End byte offset (exclusive)
+            context: Unused in remote client
+
+        Returns:
+            bytes: Content from start to end (exclusive)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            ValueError: If start/end are invalid
+        """
+        result = await self._call_rpc(
+            "read_range",
+            {"path": path, "start": start, "end": end},
+        )
+        # Result should be bytes (base64-decoded by protocol)
+        if isinstance(result, str):
+            import base64
+
+            return base64.b64decode(result)
+        return result  # type: ignore[no-any-return]
+
     async def stream(
         self,
         path: str,
         chunk_size: int = 8192,
         context: Any = None,  # noqa: ARG002
     ) -> Any:
-        """Stream file content in chunks (async generator).
+        """Stream file content in chunks using server-side range reads (async generator).
 
-        Note: Streaming over RPC is not efficient. This method reads the entire
-        file and yields it in chunks. For true streaming, use direct file access.
+        This method fetches file content in chunks using read_range() RPC calls,
+        avoiding loading the entire file into memory at once.
 
         Args:
             path: Virtual path to stream
@@ -773,11 +837,19 @@ class AsyncRemoteNexusFS:
             >>> async for chunk in nx.stream("/large/file.bin"):
             ...     process(chunk)
         """
-        content = await self.read(path)
-        assert isinstance(content, bytes), "Expected bytes from read()"
+        # Get file size using stat() - does NOT read file content
+        info = await self.stat(path)
+        file_size = info.get("size") or 0
 
-        for i in range(0, len(content), chunk_size):
-            yield content[i : i + chunk_size]
+        # Stream using read_range() calls
+        offset = 0
+        while offset < file_size:
+            end = min(offset + chunk_size, file_size)
+            chunk = await self.read_range(path, offset, end)
+            if not chunk:
+                break
+            yield chunk
+            offset += len(chunk)
 
     async def write_batch(
         self,

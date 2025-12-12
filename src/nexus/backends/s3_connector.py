@@ -29,6 +29,7 @@ Authentication:
 """
 
 import logging
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import boto3
@@ -419,6 +420,63 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         except Exception as e:
             raise BackendError(
                 f"Failed to download blob from {blob_path}: {e}",
+                backend="s3_connector",
+                path=blob_path,
+            ) from e
+
+    def _stream_blob(
+        self,
+        blob_path: str,
+        chunk_size: int = 8192,
+        version_id: str | None = None,
+    ) -> Iterator[bytes]:
+        """
+        Stream blob content from S3 in chunks.
+
+        Uses S3's StreamingBody for true streaming without loading entire file.
+
+        Args:
+            blob_path: Full S3 object key
+            chunk_size: Size of each chunk in bytes
+            version_id: Optional S3 version ID
+
+        Yields:
+            bytes: Chunks of file content
+
+        Raises:
+            NexusFileNotFoundError: If blob doesn't exist
+            BackendError: If stream operation fails
+        """
+        try:
+            # Build get parameters
+            get_params: dict = {"Bucket": self.bucket_name, "Key": blob_path}
+
+            # Add version ID if provided
+            if version_id:
+                get_params["VersionId"] = version_id
+
+            response = self.client.get_object(**get_params)
+
+            # S3's StreamingBody supports chunked iteration
+            streaming_body = response["Body"]
+
+            # Use iter_chunks for efficient streaming
+            yield from streaming_body.iter_chunks(chunk_size=chunk_size)
+
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code in ("404", "NoSuchKey"):
+                raise NexusFileNotFoundError(blob_path) from e
+            raise BackendError(
+                f"Failed to stream blob from {blob_path}: {e}",
+                backend="s3_connector",
+                path=blob_path,
+            ) from e
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to stream blob from {blob_path}: {e}",
                 backend="s3_connector",
                 path=blob_path,
             ) from e

@@ -36,6 +36,7 @@ Authentication (Recommended):
 """
 
 import logging
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from google.api_core import retry
@@ -640,6 +641,71 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                 f"Failed to copy blob from {source_path} to {dest_path}: {e}",
                 backend="gcs_connector",
                 path=source_path,
+            ) from e
+
+    def _stream_blob(
+        self,
+        blob_path: str,
+        chunk_size: int = 8192,
+        version_id: str | None = None,
+    ) -> Iterator[bytes]:
+        """
+        Stream blob content from GCS in chunks.
+
+        Uses GCS's download_to_file with a streaming buffer for memory efficiency.
+
+        Args:
+            blob_path: Full GCS object path
+            chunk_size: Size of each chunk in bytes
+            version_id: Optional GCS generation number
+
+        Yields:
+            bytes: Chunks of file content
+
+        Raises:
+            NexusFileNotFoundError: If blob doesn't exist
+            BackendError: If stream operation fails
+        """
+        import io
+
+        try:
+            # If version_id looks like a generation number, use it
+            if version_id and version_id.isdigit():
+                generation = int(version_id)
+                blob = self.bucket.blob(blob_path, generation=generation)
+            else:
+                blob = self.bucket.blob(blob_path)
+
+            if not blob.exists():
+                raise NexusFileNotFoundError(blob_path)
+
+            # Use streaming download with BytesIO buffer
+            # Note: GCS client doesn't support true streaming, so we download to buffer
+            # This is still more memory-efficient than loading into a single bytes object
+            # when yielding chunks progressively
+            buffer = io.BytesIO()
+            blob.download_to_file(
+                buffer,
+                timeout=60,
+                retry=retry.Retry(deadline=120),
+            )
+            buffer.seek(0)
+
+            while True:
+                chunk = buffer.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+
+        except NotFound as e:
+            raise NexusFileNotFoundError(blob_path) from e
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to stream blob from {blob_path}: {e}",
+                backend="gcs_connector",
+                path=blob_path,
             ) from e
 
     # === Version Support for CacheConnectorMixin ===

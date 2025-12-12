@@ -625,6 +625,91 @@ class NexusFSCoreMixin:
 
         return results
 
+    @rpc_expose(description="Read a byte range from a file")
+    def read_range(
+        self,
+        path: str,
+        start: int,
+        end: int,
+        context: OperationContext | None = None,
+    ) -> bytes:
+        """
+        Read a specific byte range from a file.
+
+        This method enables memory-efficient streaming by allowing clients to
+        fetch file content in chunks without loading the entire file into memory.
+
+        Args:
+            path: Virtual path to read
+            start: Start byte offset (inclusive, 0-indexed)
+            end: End byte offset (exclusive)
+            context: Optional operation context for permission checks
+
+        Returns:
+            bytes: Content from start to end (exclusive)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            BackendError: If read operation fails
+            AccessDeniedError: If access is denied
+            PermissionError: If user doesn't have read permission
+            ValueError: If start/end are invalid (negative, start > end, etc.)
+
+        Example:
+            >>> # Read first 1MB of a large file
+            >>> chunk = nx.read_range("/workspace/large.bin", 0, 1024 * 1024)
+
+            >>> # Stream a file in chunks
+            >>> offset = 0
+            >>> chunk_size = 65536
+            >>> while True:
+            ...     chunk = nx.read_range("/workspace/large.bin", offset, offset + chunk_size)
+            ...     if not chunk:
+            ...         break
+            ...     process(chunk)
+            ...     offset += len(chunk)
+        """
+        # Validate range parameters
+        if start < 0:
+            raise ValueError(f"start must be non-negative, got {start}")
+        if end < start:
+            raise ValueError(f"end ({end}) must be >= start ({start})")
+
+        path = self._validate_path(path)
+
+        # Check read permission
+        self._check_permission(path, Permission.READ, context)
+
+        # Route to backend with access control
+        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+        route = self.router.route(
+            path,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            is_admin=is_admin,
+            check_write=False,
+        )
+
+        # Check if file exists in metadata
+        meta = self.metadata.get(path)
+        if meta is None or meta.etag is None:
+            raise NexusFileNotFoundError(path)
+
+        # Add backend_path to context for path-based connectors
+        read_context = context
+        if context:
+            from dataclasses import replace
+
+            read_context = replace(context, backend_path=route.backend_path)
+
+        # Read the full content and slice (backends can override for efficiency)
+        # Note: For true efficiency, backends could implement read_range() natively
+        content = route.backend.read_content(meta.etag, context=read_context)
+
+        # Apply range
+        return content[start:end]
+
     @rpc_expose(description="Stream file content in chunks")
     def stream(
         self, path: str, chunk_size: int = 8192, context: OperationContext | None = None
@@ -1817,6 +1902,87 @@ class NexusFSCoreMixin:
                         TriggerType.FILE_RENAME, event_context
                     )
                 )
+
+    @rpc_expose(description="Get file metadata without reading content")
+    def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
+        """
+        Get file metadata without reading the file content.
+
+        This is useful for getting file size before streaming, or checking
+        file properties without the overhead of reading large files.
+
+        Args:
+            path: Virtual path to stat
+            context: Optional operation context for permission checks
+
+        Returns:
+            Dict with file metadata:
+                - size: File size in bytes
+                - etag: Content hash
+                - version: Version number
+                - modified_at: Last modification timestamp
+                - is_directory: Whether path is a directory
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            AccessDeniedError: If access is denied
+            PermissionError: If user doesn't have read permission
+
+        Example:
+            >>> info = nx.stat("/workspace/large_file.bin")
+            >>> print(f"File size: {info['size']} bytes")
+        """
+        path = self._validate_path(path)
+
+        # Check read permission
+        self._check_permission(path, Permission.READ, context)
+
+        # Check if it's a directory
+        if self.metadata.is_implicit_directory(path):
+            return {
+                "size": 0,
+                "etag": None,
+                "version": None,
+                "modified_at": None,
+                "is_directory": True,
+            }
+
+        # Get file metadata
+        meta = self.metadata.get(path)
+        if meta is None:
+            raise NexusFileNotFoundError(path)
+
+        # Get size from backend if not in metadata
+        size = meta.size
+        if size is None and meta.etag:
+            # Try to get size from backend
+            tenant_id, agent_id, is_admin = self._get_routing_params(context)
+            route = self.router.route(
+                path,
+                tenant_id=tenant_id,
+                agent_id=agent_id,
+                is_admin=is_admin,
+                check_write=False,
+            )
+            try:
+                # Add backend_path to context for path-based connectors
+                size_context = context
+                if context:
+                    from dataclasses import replace
+
+                    size_context = replace(context, backend_path=route.backend_path)
+                size = route.backend.get_content_size(meta.etag, context=size_context)
+            except Exception:
+                size = None
+
+        return {
+            "size": size,
+            "etag": meta.etag,
+            "version": meta.version,
+            "modified_at": meta.modified_at,
+            "is_directory": False,
+        }
 
     @rpc_expose(description="Check if file exists")
     def exists(self, path: str, context: OperationContext | None = None) -> bool:

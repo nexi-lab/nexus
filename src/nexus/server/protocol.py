@@ -1462,6 +1462,50 @@ class MCPConnectParams:
     reuse_nexus_token: bool = True
 
 
+@dataclass
+class MCPListMountsParams:
+    """Parameters for mcp_list_mounts method."""
+
+    tier: str | None = None
+    include_unmounted: bool = True
+
+
+@dataclass
+class MCPListToolsParams:
+    """Parameters for mcp_list_tools method."""
+
+    name: str
+
+
+@dataclass
+class MCPMountParams:
+    """Parameters for mcp_mount method."""
+
+    name: str
+    transport: str | None = None
+    command: str | None = None
+    url: str | None = None
+    args: list[str] | None = None
+    env: dict[str, str] | None = None
+    headers: dict[str, str] | None = None
+    description: str | None = None
+    tier: str = "system"
+
+
+@dataclass
+class MCPUnmountParams:
+    """Parameters for mcp_unmount method."""
+
+    name: str
+
+
+@dataclass
+class MCPSyncParams:
+    """Parameters for mcp_sync method."""
+
+    name: str
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -1588,6 +1632,11 @@ METHOD_PARAMS = {
     "oauth_test_credential": OAuthTestCredentialParams,
     # MCP/Klavis integration methods
     "mcp_connect": MCPConnectParams,
+    "mcp_list_mounts": MCPListMountsParams,
+    "mcp_list_tools": MCPListToolsParams,
+    "mcp_mount": MCPMountParams,
+    "mcp_unmount": MCPUnmountParams,
+    "mcp_sync": MCPSyncParams,
     # ACE (Adaptive Concurrency Engine) methods
     "ace_start_trajectory": AceStartTrajectoryParams,
     "ace_log_trajectory_step": AceLogTrajectoryStepParams,

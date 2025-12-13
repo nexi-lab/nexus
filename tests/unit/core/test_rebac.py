@@ -962,7 +962,6 @@ def enhanced_rebac_manager(engine):
     manager.close()
 
 
-@pytest.mark.skip(reason="Hanging in CI - needs investigation")
 def test_list_objects_direct_permission(enhanced_rebac_manager):
     """Test listing objects with direct permission."""
     # Grant alice direct_owner on multiple files
@@ -1008,7 +1007,6 @@ def test_list_objects_direct_permission(enhanced_rebac_manager):
     assert "/workspace/bob_file.txt" not in object_ids
 
 
-@pytest.mark.skip(reason="Hanging in CI - needs investigation")
 def test_list_objects_with_path_prefix(enhanced_rebac_manager):
     """Test listing objects with path prefix filter."""
     # Grant alice access to files in different directories
@@ -1045,7 +1043,6 @@ def test_list_objects_with_path_prefix(enhanced_rebac_manager):
     assert "/workspace/project1/file.txt" in object_ids
 
 
-@pytest.mark.skip(reason="Hanging in CI - needs investigation")
 def test_list_objects_pagination(enhanced_rebac_manager):
     """Test pagination of listed objects."""
     # Create 10 files for alice
@@ -1089,7 +1086,6 @@ def test_list_objects_pagination(enhanced_rebac_manager):
     assert len(all_ids) == 10
 
 
-@pytest.mark.skip(reason="Hanging in CI - needs investigation")
 def test_list_objects_via_group_membership(enhanced_rebac_manager):
     """Test listing objects accessible via group membership."""
     # Alice is member of developers group
@@ -1130,7 +1126,6 @@ def test_list_objects_via_group_membership(enhanced_rebac_manager):
     assert "/workspace/project/code.py" in object_ids
 
 
-@pytest.mark.skip(reason="Hanging in CI - needs investigation")
 def test_list_objects_empty_result(enhanced_rebac_manager):
     """Test listing objects when user has no access."""
     # No permissions granted to charlie
@@ -1144,7 +1139,6 @@ def test_list_objects_empty_result(enhanced_rebac_manager):
     assert len(objects) == 0
 
 
-@pytest.mark.skip(reason="Hanging in CI - needs investigation")
 def test_list_objects_sorted_by_path(enhanced_rebac_manager):
     """Test that results are sorted by object_id for consistent pagination."""
     # Create files in non-alphabetical order

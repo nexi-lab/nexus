@@ -1797,13 +1797,19 @@ class ReBACManager:
                 tupleset_relation = ttu["tupleset"]
                 computed_userset = ttu["computedUserset"]
 
+                # Pattern 1 (parent-style): Find objects where (obj, tupleset_relation, ?)
                 related_objects = self._find_related_objects(obj, tupleset_relation)
+                # Pattern 2 (group-style): Find subjects where (?, tupleset_relation, obj)
+                related_subjects = self._find_subjects_with_relation(obj, tupleset_relation)
+
                 path_entry["tupleToUserset"] = {
                     "tupleset": tupleset_relation,
                     "computedUserset": computed_userset,
                     "found_parents": [(o.entity_type, o.entity_id) for o in related_objects],
+                    "found_subjects": [(s.entity_type, s.entity_id) for s in related_subjects],
                 }
 
+                # Check parent-style relations
                 for related_obj in related_objects:
                     ttu_sub_paths: list[dict[str, Any]] = []
                     if self._compute_permission_with_explanation(
@@ -1817,6 +1823,25 @@ class ReBACManager:
                     ):
                         path_entry["granted"] = True
                         path_entry["sub_paths"] = ttu_sub_paths
+                        path_entry["pattern"] = "parent"
+                        paths.append(path_entry)
+                        return True
+
+                # Check group-style relations
+                for related_subj in related_subjects:
+                    ttu_sub_paths = []
+                    if self._compute_permission_with_explanation(
+                        subject,
+                        computed_userset,
+                        related_subj,
+                        visited.copy(),
+                        depth + 1,
+                        ttu_sub_paths,
+                        tenant_id,
+                    ):
+                        path_entry["granted"] = True
+                        path_entry["sub_paths"] = ttu_sub_paths
+                        path_entry["pattern"] = "group"
                         paths.append(path_entry)
                         return True
 
@@ -2050,10 +2075,11 @@ class ReBACManager:
                 tupleset_relation = ttu["tupleset"]
                 computed_userset = ttu["computedUserset"]
 
-                # Find all objects related via tupleset
+                # Pattern 1 (parent-style): Find objects where (obj, tupleset_relation, ?)
+                # Example: (child_file, "parent", parent_dir) -> check subject has computed_userset on parent_dir
                 related_objects = self._find_related_objects(obj, tupleset_relation)
                 logger.debug(
-                    f"  [depth={depth}] 🔍 Found {len(related_objects)} related objects via tupleset '{tupleset_relation}': {[(o.entity_type, o.entity_id) for o in related_objects]}"
+                    f"  [depth={depth}] 🔍 Pattern 1 (parent): Found {len(related_objects)} related objects via tupleset '{tupleset_relation}': {[(o.entity_type, o.entity_id) for o in related_objects]}"
                 )
 
                 # Check if subject has computed_userset on any related object
@@ -2071,14 +2097,42 @@ class ReBACManager:
                         tenant_id,
                     ):
                         logger.debug(
-                            f"  [depth={depth}] ✅ GRANTED via tupleToUserset through {related_obj}"
+                            f"  [depth={depth}] ✅ GRANTED via tupleToUserset (parent pattern) through {related_obj}"
                         )
                         return True
                     else:
                         logger.debug(f"  [depth={depth}] ❌ DENIED for {related_obj}")
 
+                # Pattern 2 (group-style): Find subjects where (?, tupleset_relation, obj)
+                # Example: (group, "direct_viewer", file) -> check subject has computed_userset on group
+                related_subjects = self._find_subjects_with_relation(obj, tupleset_relation)
                 logger.debug(
-                    f"  [depth={depth}] 🚫 tupleToUserset: No related objects granted permission"
+                    f"  [depth={depth}] 🔍 Pattern 2 (group): Found {len(related_subjects)} subjects with '{tupleset_relation}' on {obj}: {[(s.entity_type, s.entity_id) for s in related_subjects]}"
+                )
+
+                # Check if subject has computed_userset on any related subject (typically group membership)
+                for i, related_subj in enumerate(related_subjects):
+                    logger.debug(
+                        f"  [depth={depth}] 🔍 [{i + 1}/{len(related_subjects)}] Checking if {subject} has '{computed_userset}' on {related_subj}..."
+                    )
+                    if self._compute_permission(
+                        subject,
+                        computed_userset,
+                        related_subj,
+                        visited.copy(),
+                        depth + 1,
+                        context,
+                        tenant_id,
+                    ):
+                        logger.debug(
+                            f"  [depth={depth}] ✅ GRANTED via tupleToUserset (group pattern) through {related_subj}"
+                        )
+                        return True
+                    else:
+                        logger.debug(f"  [depth={depth}] ❌ DENIED for {related_subj}")
+
+                logger.debug(
+                    f"  [depth={depth}] 🚫 tupleToUserset: No related objects/subjects granted permission"
                 )
 
             return False
@@ -2455,6 +2509,65 @@ class ReBACManager:
                 logger.debug(f"      ❌ No related objects found for ({obj}, '{relation}', ?)")
             else:
                 logger.debug(f"      📊 Total related objects found: {len(results)}")
+
+            return results
+
+    def _find_subjects_with_relation(self, obj: Entity, relation: str) -> list[Entity]:
+        """Find all subjects that have a relation to obj.
+
+        For group-style tupleToUserset traversal, finds subjects where: (subject, relation, obj)
+        Example: Finding groups with direct_viewer on file X means finding tuples where:
+          - subject = any (typically a group)
+          - relation = "direct_viewer"
+          - object = file X
+
+        This is the reverse of _find_related_objects and is used for group permission
+        inheritance patterns like: group_viewer -> find groups with direct_viewer -> check member.
+
+        Args:
+            obj: Object entity (the object in the tuple)
+            relation: Relation type (e.g., "direct_viewer")
+
+        Returns:
+            List of subject entities (the subjects from matching tuples)
+        """
+        logger.debug(
+            f"      🔎 _find_subjects_with_relation: Looking for tuples where (?, '{relation}', {obj})"
+        )
+
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            # Query for tuples where obj is the OBJECT
+            # This handles group relations: (group, "direct_viewer", file)
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    SELECT subject_type, subject_id
+                    FROM rebac_tuples
+                    WHERE object_type = ? AND object_id = ?
+                      AND relation = ?
+                      AND (expires_at IS NULL OR expires_at >= ?)
+                    """
+                ),
+                (
+                    obj.entity_type,
+                    obj.entity_id,
+                    relation,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+
+            results = []
+            for row in cursor.fetchall():
+                entity = Entity(row["subject_type"], row["subject_id"])
+                results.append(entity)
+                logger.debug(f"      ✅ Found subject with relation: {entity}")
+
+            if not results:
+                logger.debug(f"      ❌ No subjects found for (?, '{relation}', {obj})")
+            else:
+                logger.debug(f"      📊 Total subjects found: {len(results)}")
 
             return results
 

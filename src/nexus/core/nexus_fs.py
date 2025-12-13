@@ -30,6 +30,7 @@ from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.nexus_fs_llm import NexusFSLLMMixin
+from nexus.core.nexus_fs_mcp import NexusFSMCPMixin
 from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
 from nexus.core.nexus_fs_oauth import NexusFSOAuthMixin
 from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
@@ -53,6 +54,7 @@ class NexusFS(
     NexusFSMountsMixin,
     NexusFSOAuthMixin,
     NexusFSSkillsMixin,
+    NexusFSMCPMixin,
     NexusFSLLMMixin,
     NexusFilesystem,
 ):

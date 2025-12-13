@@ -295,6 +295,233 @@ class TestSkillsList:
             assert result["count"] == 2
             assert len(result["skills"]) == 2
 
+    def test_skills_list_with_preference_filtering_enabled_only(self, nx: NexusFS) -> None:
+        """Test listing skills filtered by preferences (enabled_only=True)."""
+        with (
+            patch.object(nx, "_get_skill_registry") as mock_get_registry,
+            patch("nexus.skills.SkillPreferenceManager") as MockPrefMgr,
+        ):
+            # Setup skill registry
+            mock_registry = MagicMock()
+            mock_registry.discover = AsyncMock()
+            mock_registry.list_skills.return_value = [
+                MagicMock(
+                    name="skill1",
+                    description="Skill 1",
+                    version="1.0.0",
+                    author="alice",
+                    tier="agent",
+                    file_path="/skills/agent/skill1.md",
+                    requires=[],
+                    created_at=None,
+                    modified_at=None,
+                ),
+                MagicMock(
+                    name="skill2",
+                    description="Skill 2",
+                    version="1.0.0",
+                    author="bob",
+                    tier="tenant",
+                    file_path="/skills/tenant/skill2.md",
+                    requires=[],
+                    created_at=None,
+                    modified_at=None,
+                ),
+                MagicMock(
+                    name="skill3",
+                    description="Skill 3",
+                    version="1.0.0",
+                    author="charlie",
+                    tier="system",
+                    file_path="/skills/system/skill3.md",
+                    requires=[],
+                    created_at=None,
+                    modified_at=None,
+                ),
+            ]
+            mock_get_registry.return_value = mock_registry
+
+            # Setup preference manager
+            mock_pref_mgr = MagicMock()
+            mock_pref_mgr.filter_enabled_skills.return_value = [
+                "skill1",
+                "skill3",
+            ]  # skill2 is disabled
+            MockPrefMgr.return_value = mock_pref_mgr
+
+            # Mock session context manager
+            mock_session = MagicMock()
+            mock_session.__enter__ = MagicMock(return_value=mock_session)
+            mock_session.__exit__ = MagicMock(return_value=False)
+            nx.metadata.SessionLocal = MagicMock(return_value=mock_session)
+
+            result = nx.skills_list(
+                user_id="test_user",
+                agent_id="test_agent",
+                enabled_only=True,
+            )
+
+            assert "skills" in result
+            assert "count" in result
+            assert result["count"] == 2
+            assert len(result["skills"]) == 2
+            skill_names = [s["name"] for s in result["skills"]]
+            assert "skill1" in skill_names
+            assert "skill3" in skill_names
+            assert "skill2" not in skill_names
+
+            # Verify preference manager was called
+            mock_pref_mgr.filter_enabled_skills.assert_called_once()
+            call_args = mock_pref_mgr.filter_enabled_skills.call_args
+            assert call_args[1]["user_id"] == "test_user"
+            assert call_args[1]["agent_id"] == "test_agent"
+            assert set(call_args[1]["skill_names"]) == {"skill1", "skill2", "skill3"}
+
+    def test_skills_list_with_preference_filtering_disabled_only(self, nx: NexusFS) -> None:
+        """Test listing skills filtered by preferences (enabled_only=False)."""
+        with (
+            patch.object(nx, "_get_skill_registry") as mock_get_registry,
+            patch("nexus.skills.SkillPreferenceManager") as MockPrefMgr,
+        ):
+            # Setup skill registry
+            mock_registry = MagicMock()
+            mock_registry.discover = AsyncMock()
+            mock_registry.list_skills.return_value = [
+                MagicMock(
+                    name="skill1",
+                    description="Skill 1",
+                    version="1.0.0",
+                    author="alice",
+                    tier="agent",
+                    file_path="/skills/agent/skill1.md",
+                    requires=[],
+                    created_at=None,
+                    modified_at=None,
+                ),
+                MagicMock(
+                    name="skill2",
+                    description="Skill 2",
+                    version="1.0.0",
+                    author="bob",
+                    tier="tenant",
+                    file_path="/skills/tenant/skill2.md",
+                    requires=[],
+                    created_at=None,
+                    modified_at=None,
+                ),
+            ]
+            mock_get_registry.return_value = mock_registry
+
+            # Setup preference manager - skill2 is disabled
+            mock_pref_mgr = MagicMock()
+            mock_pref_mgr.filter_enabled_skills.return_value = ["skill1"]  # Only skill1 is enabled
+            MockPrefMgr.return_value = mock_pref_mgr
+
+            # Mock session context manager
+            mock_session = MagicMock()
+            mock_session.__enter__ = MagicMock(return_value=mock_session)
+            mock_session.__exit__ = MagicMock(return_value=False)
+            nx.metadata.SessionLocal = MagicMock(return_value=mock_session)
+
+            result = nx.skills_list(
+                user_id="test_user",
+                agent_id="test_agent",
+                enabled_only=False,
+            )
+
+            assert "skills" in result
+            assert result["count"] == 1
+            assert result["skills"][0]["name"] == "skill2"  # Only disabled skill
+
+    def test_skills_list_with_preference_filtering_all_with_flags(self, nx: NexusFS) -> None:
+        """Test listing skills with preference flags (enabled_only=None)."""
+        with (
+            patch.object(nx, "_get_skill_registry") as mock_get_registry,
+            patch("nexus.skills.SkillPreferenceManager") as MockPrefMgr,
+        ):
+            # Setup skill registry
+            mock_registry = MagicMock()
+            mock_registry.discover = AsyncMock()
+            mock_registry.list_skills.return_value = [
+                MagicMock(
+                    name="skill1",
+                    description="Skill 1",
+                    version="1.0.0",
+                    author="alice",
+                    tier="agent",
+                    file_path="/skills/agent/skill1.md",
+                    requires=[],
+                    created_at=None,
+                    modified_at=None,
+                ),
+                MagicMock(
+                    name="skill2",
+                    description="Skill 2",
+                    version="1.0.0",
+                    author="bob",
+                    tier="tenant",
+                    file_path="/skills/tenant/skill2.md",
+                    requires=[],
+                    created_at=None,
+                    modified_at=None,
+                ),
+            ]
+            mock_get_registry.return_value = mock_registry
+
+            # Setup preference manager
+            mock_pref_mgr = MagicMock()
+            mock_pref_mgr.filter_enabled_skills.return_value = [
+                "skill1"
+            ]  # skill1 enabled, skill2 disabled
+            MockPrefMgr.return_value = mock_pref_mgr
+
+            # Mock session context manager
+            mock_session = MagicMock()
+            mock_session.__enter__ = MagicMock(return_value=mock_session)
+            mock_session.__exit__ = MagicMock(return_value=False)
+            nx.metadata.SessionLocal = MagicMock(return_value=mock_session)
+
+            result = nx.skills_list(
+                user_id="test_user",
+                agent_id="test_agent",
+                enabled_only=None,  # Return all with flags
+            )
+
+            assert "skills" in result
+            assert result["count"] == 2
+            # Check that enabled flags are set
+            skill1 = next(s for s in result["skills"] if s["name"] == "skill1")
+            skill2 = next(s for s in result["skills"] if s["name"] == "skill2")
+            assert skill1["enabled"] is True
+            assert skill2["enabled"] is False
+
+    def test_skills_list_without_preferences(self, nx: NexusFS) -> None:
+        """Test listing skills without preference filtering (no user_id/agent_id)."""
+        with patch.object(nx, "_get_skill_registry") as mock_get_registry:
+            mock_registry = MagicMock()
+            mock_registry.discover = AsyncMock()
+            mock_registry.list_skills.return_value = [
+                MagicMock(
+                    name="skill1",
+                    description="Skill 1",
+                    version="1.0.0",
+                    author="alice",
+                    tier="agent",
+                    file_path="/skills/agent/skill1.md",
+                    requires=[],
+                    created_at=None,
+                    modified_at=None,
+                ),
+            ]
+            mock_get_registry.return_value = mock_registry
+
+            result = nx.skills_list()
+
+            assert "skills" in result
+            assert result["count"] == 1
+            # Should not have enabled field when no preferences
+            assert "enabled" not in result["skills"][0]
+
     def test_skills_list_by_tier(self, nx: NexusFS) -> None:
         """Test listing skills filtered by tier."""
         with patch.object(nx, "_get_skill_registry") as mock_get_registry:

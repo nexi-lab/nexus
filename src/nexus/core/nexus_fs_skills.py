@@ -353,19 +353,47 @@ class NexusFSSkillsMixin:
         self,
         tier: str | None = None,
         include_metadata: bool = True,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        enabled_only: bool | None = None,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """List all skills.
+        """List all skills, optionally filtered by user preferences.
 
         Args:
             tier: Filter by tier (agent/tenant/system)
             include_metadata: Include full metadata (default: True)
-            context: Operation context
+            user_id: Optional user ID to filter by preferences. **Requires agent_id if provided.**
+            agent_id: Optional agent ID to filter by preferences. **Required if user_id provided.**
+            enabled_only: If True and user_id/agent_id provided, return only enabled skills.
+                         If False, return only disabled skills. If None, return all skills.
+                         **Requires both user_id and agent_id to be provided.**
+            context: Operation context (user_id/agent_id extracted from context if not provided)
 
         Returns:
-            Dict with skills list
+            Dict with skills list, filtered by preferences if user_id/agent_id provided
+
+        Raises:
+            ValueError: If enabled_only is provided without user_id/agent_id, or if user_id
+                       is provided without agent_id
         """
         registry = self._get_skill_registry()
+
+        # Extract user_id and agent_id from context if not provided
+        if user_id is None and context is not None:
+            user_id = getattr(context, "user_id", None)
+        if agent_id is None and context is not None:
+            agent_id = getattr(context, "agent_id", None)
+
+        # Validate parameters
+        if enabled_only is not None and not (user_id and agent_id):
+            raise ValueError(
+                "enabled_only parameter requires both user_id and agent_id to be provided"
+            )
+        if user_id and not agent_id:
+            raise ValueError(
+                "agent_id is required when user_id is provided for preference filtering"
+            )
 
         async def list_skills() -> dict[str, Any]:
             await registry.discover(context=context)
@@ -393,6 +421,37 @@ class NexusFSSkillsMixin:
                 else:
                     # It's already a string (skill name)
                     skills_data.append(skill)
+
+            # Filter by preferences if user_id and agent_id are provided
+            if user_id and agent_id and skills_data:
+                from nexus.skills import SkillPreferenceManager
+
+                # Extract skill names (always dicts when include_metadata=True)
+                skill_names = [skill["name"] for skill in skills_data]
+
+                # Filter by preferences
+                with self.metadata.SessionLocal() as session:
+                    pref_mgr = SkillPreferenceManager(session)
+                    enabled_skill_names = pref_mgr.filter_enabled_skills(
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        skill_names=skill_names,
+                        tenant_id=getattr(context, "tenant_id", None) if context else None,
+                    )
+
+                    enabled_set = set(enabled_skill_names)
+
+                    # Filter skills_data based on enabled_only parameter
+                    if enabled_only is None:
+                        # Return all skills with enabled flags
+                        for skill in skills_data:
+                            skill["enabled"] = skill["name"] in enabled_set
+                    elif enabled_only is True:
+                        # Return only enabled skills
+                        skills_data = [s for s in skills_data if s["name"] in enabled_set]
+                    else:  # enabled_only is False
+                        # Return only disabled skills
+                        skills_data = [s for s in skills_data if s["name"] not in enabled_set]
 
             return {"skills": skills_data, "count": len(skills_data)}
 
@@ -869,3 +928,274 @@ class NexusFSSkillsMixin:
             }
 
         return self._run_async_skill_operation(export())
+
+    # ============================================================================
+    # Skill Preference Methods (Agent Skill Access Control)
+    # ============================================================================
+
+    @rpc_expose(description="Set skill preference for an agent")
+    def set_skill_preference(
+        self,
+        user_id: str,
+        agent_id: str,
+        skill_name: str,
+        enabled: bool,
+        tenant_id: str | None = None,
+        reason: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Set skill preference for an agent.
+
+        Args:
+            user_id: User ID
+            agent_id: Agent ID
+            skill_name: Name of the skill
+            enabled: Whether the skill is enabled
+            tenant_id: Optional tenant ID (extracted from context if not provided)
+            reason: Optional reason for the preference
+            context: Operation context
+
+        Returns:
+            Preference details
+        """
+        from nexus.skills import SkillPreferenceManager
+
+        # Extract tenant_id from context if not provided
+        if tenant_id is None and context is not None:
+            tenant_id = getattr(context, "tenant_id", None)
+
+        with self.metadata.SessionLocal() as session:
+            pref_mgr = SkillPreferenceManager(session)
+
+            pref = pref_mgr.set_preference(
+                user_id=user_id,
+                agent_id=agent_id,
+                skill_name=skill_name,
+                enabled=enabled,
+                tenant_id=tenant_id,
+                reason=reason,
+            )
+
+            return {
+                "preference_id": pref.preference_id,
+                "user_id": pref.user_id,
+                "agent_id": pref.agent_id,
+                "skill_name": pref.skill_name,
+                "enabled": pref.enabled,
+                "tenant_id": pref.tenant_id,
+                "reason": pref.reason,
+                "created_at": pref.created_at.isoformat() if pref.created_at else None,
+                "updated_at": pref.updated_at.isoformat() if pref.updated_at else None,
+            }
+
+    @rpc_expose(description="Get skill preference for an agent")
+    def get_skill_preference(
+        self,
+        user_id: str,
+        agent_id: str,
+        skill_name: str,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Get skill preference for an agent.
+
+        Args:
+            user_id: User ID
+            agent_id: Agent ID
+            skill_name: Name of the skill
+            context: Operation context
+
+        Returns:
+            Preference details or null if not found
+        """
+        from nexus.skills import SkillPreferenceManager
+
+        with self.metadata.SessionLocal() as session:
+            pref_mgr = SkillPreferenceManager(session)
+
+            pref = pref_mgr.get_preference(
+                user_id=user_id,
+                agent_id=agent_id,
+                skill_name=skill_name,
+            )
+
+            if pref is None:
+                return {"preference": None}
+
+            return {
+                "preference": {
+                    "preference_id": pref.preference_id,
+                    "user_id": pref.user_id,
+                    "agent_id": pref.agent_id,
+                    "skill_name": pref.skill_name,
+                    "enabled": pref.enabled,
+                    "tenant_id": pref.tenant_id,
+                    "reason": pref.reason,
+                    "created_at": pref.created_at.isoformat() if pref.created_at else None,
+                    "updated_at": pref.updated_at.isoformat() if pref.updated_at else None,
+                }
+            }
+
+    @rpc_expose(description="Check if a skill is enabled for an agent")
+    def is_skill_enabled(
+        self,
+        user_id: str,
+        agent_id: str,
+        skill_name: str,
+        tenant_id: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Check if a skill is enabled for an agent.
+
+        Args:
+            user_id: User ID
+            agent_id: Agent ID
+            skill_name: Name of the skill
+            tenant_id: Optional tenant ID (extracted from context if not provided)
+            context: Operation context
+
+        Returns:
+            Dictionary with enabled boolean
+        """
+        from nexus.skills import SkillPreferenceManager
+
+        # Extract tenant_id from context if not provided
+        if tenant_id is None and context is not None:
+            tenant_id = getattr(context, "tenant_id", None)
+
+        with self.metadata.SessionLocal() as session:
+            pref_mgr = SkillPreferenceManager(session)
+
+            enabled = pref_mgr.is_skill_enabled(
+                user_id=user_id,
+                agent_id=agent_id,
+                skill_name=skill_name,
+                tenant_id=tenant_id,
+            )
+
+            return {"enabled": enabled}
+
+    @rpc_expose(description="List skill preferences for a user/agent")
+    def list_skill_preferences(
+        self,
+        user_id: str,
+        agent_id: str | None = None,
+        tenant_id: str | None = None,
+        enabled_only: bool | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """List skill preferences for a user/agent.
+
+        Args:
+            user_id: User ID (required)
+            agent_id: Optional agent ID filter. If provided, returns preferences for that specific agent.
+                     If None, returns all preferences for the user across all agents.
+            tenant_id: Optional tenant ID (extracted from context if not provided)
+            enabled_only: If True, return only enabled skills. If False, return only disabled skills.
+                         If None, return all preferences regardless of enabled status.
+            context: Operation context
+
+        Returns:
+            List of preferences matching the criteria
+        """
+        from nexus.skills import SkillPreferenceManager
+
+        # Extract tenant_id from context if not provided
+        if tenant_id is None and context is not None:
+            tenant_id = getattr(context, "tenant_id", None)
+
+        with self.metadata.SessionLocal() as session:
+            pref_mgr = SkillPreferenceManager(session)
+
+            prefs = pref_mgr.list_user_preferences(
+                user_id=user_id,
+                agent_id=agent_id,
+                enabled_only=enabled_only,
+            )
+
+            return {
+                "preferences": [
+                    {
+                        "preference_id": p.preference_id,
+                        "user_id": p.user_id,
+                        "agent_id": p.agent_id,
+                        "skill_name": p.skill_name,
+                        "enabled": p.enabled,
+                        "tenant_id": p.tenant_id,
+                        "reason": p.reason,
+                        "created_at": p.created_at.isoformat() if p.created_at else None,
+                        "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+                    }
+                    for p in prefs
+                ]
+            }
+
+    @rpc_expose(description="Delete a skill preference")
+    def delete_skill_preference(
+        self,
+        user_id: str,
+        agent_id: str,
+        skill_name: str,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Delete a skill preference.
+
+        Args:
+            user_id: User ID
+            agent_id: Agent ID
+            skill_name: Name of the skill
+            context: Operation context
+
+        Returns:
+            Success status
+        """
+        from nexus.skills import SkillPreferenceManager
+
+        with self.metadata.SessionLocal() as session:
+            pref_mgr = SkillPreferenceManager(session)
+
+            deleted = pref_mgr.delete_preference(
+                user_id=user_id,
+                agent_id=agent_id,
+                skill_name=skill_name,
+            )
+
+            return {"success": deleted, "deleted": deleted}
+
+    @rpc_expose(description="Filter skills to only those enabled for an agent")
+    def filter_enabled_skills(
+        self,
+        user_id: str,
+        agent_id: str,
+        skill_names: list[str],
+        tenant_id: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Filter skills to only those enabled for an agent.
+
+        Args:
+            user_id: User ID
+            agent_id: Agent ID
+            skill_names: List of skill names to filter
+            tenant_id: Optional tenant ID (extracted from context if not provided)
+            context: Operation context
+
+        Returns:
+            List of enabled skill names
+        """
+        from nexus.skills import SkillPreferenceManager
+
+        # Extract tenant_id from context if not provided
+        if tenant_id is None and context is not None:
+            tenant_id = getattr(context, "tenant_id", None)
+
+        with self.metadata.SessionLocal() as session:
+            pref_mgr = SkillPreferenceManager(session)
+
+            enabled_skills = pref_mgr.filter_enabled_skills(
+                user_id=user_id,
+                agent_id=agent_id,
+                skill_names=skill_names,
+                tenant_id=tenant_id,
+            )
+
+            return {"enabled_skills": enabled_skills}

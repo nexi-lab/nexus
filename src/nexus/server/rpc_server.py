@@ -722,6 +722,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 "last_used_at": api_key.last_used_at.isoformat() if api_key.last_used_at else None,
             }
 
+    # ========== Skill Preference Methods ==========
+
     def _get_backend_info(self) -> dict[str, Any]:
         """Get backend configuration information.
 

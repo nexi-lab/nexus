@@ -1298,6 +1298,9 @@ class SkillsListParams:
 
     tier: str | None = None
     include_metadata: bool = True
+    user_id: str | None = None
+    agent_id: str | None = None
+    enabled_only: bool | None = None
 
 
 @dataclass
@@ -1398,6 +1401,67 @@ class SkillsExportParams:
     skill_name: str
     format: str = "generic"
     include_dependencies: bool = False
+
+
+# Skill preference methods (agent skill access control)
+@dataclass
+class SetSkillPreferenceParams:
+    """Parameters for set_skill_preference method."""
+
+    user_id: str
+    agent_id: str
+    skill_name: str
+    enabled: bool
+    tenant_id: str | None = None
+    reason: str | None = None
+
+
+@dataclass
+class GetSkillPreferenceParams:
+    """Parameters for get_skill_preference method."""
+
+    user_id: str
+    agent_id: str
+    skill_name: str
+
+
+@dataclass
+class IsSkillEnabledParams:
+    """Parameters for is_skill_enabled method."""
+
+    user_id: str
+    agent_id: str
+    skill_name: str
+    tenant_id: str | None = None
+
+
+@dataclass
+class ListSkillPreferencesParams:
+    """Parameters for list_skill_preferences method."""
+
+    user_id: str
+    agent_id: str | None = None
+    tenant_id: str | None = None
+    enabled_only: bool | None = None
+
+
+@dataclass
+class DeleteSkillPreferenceParams:
+    """Parameters for delete_skill_preference method."""
+
+    user_id: str
+    agent_id: str
+    skill_name: str
+
+
+@dataclass
+class FilterEnabledSkillsParams:
+    """Parameters for filter_enabled_skills method."""
+
+    user_id: str
+    agent_id: str
+    skill_names: list[str]
+    tenant_id: str | None = None
 
 
 # OAuth management methods (v0.9.0)
@@ -1579,6 +1643,13 @@ METHOD_PARAMS = {
     "skills_import": SkillsImportParams,
     "skills_validate_zip": SkillsValidateZipParams,
     "skills_export": SkillsExportParams,
+    # Skill preference methods (agent skill access control)
+    "set_skill_preference": SetSkillPreferenceParams,
+    "get_skill_preference": GetSkillPreferenceParams,
+    "is_skill_enabled": IsSkillEnabledParams,
+    "list_skill_preferences": ListSkillPreferencesParams,
+    "delete_skill_preference": DeleteSkillPreferenceParams,
+    "filter_enabled_skills": FilterEnabledSkillsParams,
     # OAuth management methods (v0.9.0)
     "oauth_list_providers": OAuthListProvidersParams,
     "oauth_get_auth_url": OAuthGetAuthUrlParams,

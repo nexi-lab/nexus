@@ -90,6 +90,7 @@ from nexus.skills.mcp_models import (
 from nexus.skills.mcp_mount import MCPMountError, MCPMountManager
 from nexus.skills.models import Skill, SkillExportManifest, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
+from nexus.skills.preferences import SkillPreference, SkillPreferenceManager
 from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import (
     SkillDependencyError,
@@ -140,6 +141,9 @@ __all__ = [
     "SkillAuditLogger",
     "AuditLogEntry",
     "AuditAction",
+    # Preferences
+    "SkillPreferenceManager",
+    "SkillPreference",
     # Protocols
     "NexusFilesystem",
     # MCP Integration

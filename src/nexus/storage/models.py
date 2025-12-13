@@ -2355,3 +2355,90 @@ class SystemSettingsModel(Base):
         # Don't show value for sensitive settings
         value_display = "***" if self.is_sensitive else self.value[:50]
         return f"<SystemSettingsModel(key={self.key}, value={value_display})>"
+
+
+class SkillUserPreferenceModel(Base):
+    """User preferences for granting/revoking skills to agents.
+
+    This table controls which skills a user grants access to for their agents.
+    Users can revoke skills from specific agents for safety or access control.
+
+    Default behavior: Skills are granted (enabled) unless explicitly revoked.
+
+    Examples:
+        # User "alice" revokes "sql-query" skill from agent "chatbot" for safety
+        SkillUserPreferenceModel(
+            user_id="alice",
+            agent_id="chatbot",
+            skill_name="sql-query",
+            enabled=False,
+            reason="Safety: prevent direct database access"
+        )
+
+        # User "bob" grants "code-review" to agent "dev-assistant"
+        SkillUserPreferenceModel(
+            user_id="bob",
+            agent_id="dev-assistant",
+            skill_name="code-review",
+            enabled=True
+        )
+    """
+
+    __tablename__ = "skill_user_preferences"
+
+    # Primary key
+    preference_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    # User/Agent identification
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, index=True
+    )  # Required: which agent to grant/revoke skill access
+
+    # Tenant isolation
+    tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+
+    # Skill identification
+    skill_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # Preference value
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )  # Boolean: True=granted/enabled, False=revoked/disabled
+
+    # Metadata
+    reason: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # Why was skill access granted/revoked (for audit)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    # Composite indexes for efficient lookups
+    __table_args__ = (
+        # Unique constraint: one preference per (user, skill, agent) combination
+        Index("idx_skill_pref_unique", "user_id", "skill_name", "agent_id", unique=True),
+        # Lookup user preferences for a skill
+        Index("idx_skill_pref_user_skill", "user_id", "skill_name", "agent_id"),
+        # Find all preferences for a user
+        Index("idx_skill_pref_user", "user_id", "agent_id"),
+        # Tenant-scoped lookup
+        Index("idx_skill_pref_tenant", "tenant_id", "user_id"),
+        # Find all users who disabled a specific skill (admin/analytics)
+        Index("idx_skill_pref_skill_name", "skill_name", "enabled"),
+    )
+
+    def __repr__(self) -> str:
+        enabled_str = "granted" if self.enabled else "revoked"
+        return (
+            f"<SkillUserPreferenceModel(user_id={self.user_id}, "
+            f"agent_id={self.agent_id}, skill_name={self.skill_name}, {enabled_str})>"
+        )

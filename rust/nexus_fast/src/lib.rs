@@ -1063,6 +1063,7 @@ fn add_direct_subjects(
 ///   List of (object_type, object_id) tuples that subject can access
 #[pyfunction]
 #[pyo3(signature = (subject_type, subject_id, permission, object_type, tuples, namespace_configs, path_prefix=None, limit=1000, offset=0))]
+#[allow(clippy::too_many_arguments)]
 fn list_objects_for_subject<'py>(
     py: Python<'py>,
     subject_type: String,

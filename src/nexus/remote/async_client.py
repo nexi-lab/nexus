@@ -1864,6 +1864,108 @@ class AsyncRemoteNexusFS:
         result = await self._call_rpc("mcp_get_oauth_url", params)
         return result  # type: ignore[no-any-return]
 
+    async def mcp_list_mounts(
+        self,
+        tier: str | None = None,
+        include_unmounted: bool = True,
+    ) -> builtins.list[dict[str, Any]]:
+        """List MCP server mounts.
+
+        Args:
+            tier: Filter by tier (user/tenant/system)
+            include_unmounted: Include unmounted configurations (default: True)
+
+        Returns:
+            List of MCP mount info dicts
+        """
+        params: dict[str, Any] = {"include_unmounted": include_unmounted}
+        if tier is not None:
+            params["tier"] = tier
+        result = await self._call_rpc("mcp_list_mounts", params)
+        return result  # type: ignore[no-any-return]
+
+    async def mcp_list_tools(self, name: str) -> builtins.list[dict[str, Any]]:
+        """List tools from a specific MCP mount.
+
+        Args:
+            name: MCP mount name
+
+        Returns:
+            List of tool info dicts
+        """
+        result = await self._call_rpc("mcp_list_tools", {"name": name})
+        return result  # type: ignore[no-any-return]
+
+    async def mcp_mount(
+        self,
+        name: str,
+        transport: str | None = None,
+        command: str | None = None,
+        url: str | None = None,
+        args: builtins.list[str] | None = None,
+        env: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+        description: str | None = None,
+        tier: str = "system",
+    ) -> dict[str, Any]:
+        """Mount an MCP server.
+
+        Args:
+            name: Mount name
+            transport: Transport type (stdio/sse/klavis)
+            command: Command for stdio transport
+            url: URL for sse transport
+            args: Command arguments
+            env: Environment variables
+            headers: HTTP headers
+            description: Mount description
+            tier: Target tier
+
+        Returns:
+            Dict with mount info
+        """
+        params: dict[str, Any] = {"name": name, "tier": tier}
+        if transport is not None:
+            params["transport"] = transport
+        if command is not None:
+            params["command"] = command
+        if url is not None:
+            params["url"] = url
+        if args is not None:
+            params["args"] = args
+        if env is not None:
+            params["env"] = env
+        if headers is not None:
+            params["headers"] = headers
+        if description is not None:
+            params["description"] = description
+        result = await self._call_rpc("mcp_mount", params)
+        return result  # type: ignore[no-any-return]
+
+    async def mcp_unmount(self, name: str) -> dict[str, Any]:
+        """Unmount an MCP server.
+
+        Args:
+            name: MCP mount name
+
+        Returns:
+            Dict with success status
+        """
+        result = await self._call_rpc("mcp_unmount", {"name": name})
+        return result  # type: ignore[no-any-return]
+
+    async def mcp_sync(self, name: str) -> dict[str, Any]:
+        """Sync tools from an MCP server.
+
+        Args:
+            name: MCP mount name
+
+        Returns:
+            Dict with tool count
+        """
+        result = await self._call_rpc("mcp_sync", {"name": name})
+        return result  # type: ignore[no-any-return]
+
 
 class AsyncRemoteMemory:
     """Async Remote Memory API client.

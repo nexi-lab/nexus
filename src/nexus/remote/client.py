@@ -4729,6 +4729,155 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("mcp_get_oauth_url", params)
         return result  # type: ignore[no-any-return]
 
+    def mcp_list_mounts(
+        self,
+        tier: str | None = None,
+        include_unmounted: bool = True,
+    ) -> builtins.list[dict[str, Any]]:
+        """List MCP server mounts.
+
+        Args:
+            tier: Filter by tier (user/tenant/system)
+            include_unmounted: Include unmounted configurations (default: True)
+
+        Returns:
+            List of MCP mount info dicts with:
+                - name: Mount name
+                - description: Mount description
+                - transport: Transport type (stdio/sse/klavis)
+                - mounted: Whether currently mounted
+                - tool_count: Number of discovered tools
+                - last_sync: Last sync timestamp (ISO format)
+                - tools_path: Path to tools directory
+
+        Examples:
+            >>> mounts = nx.mcp_list_mounts()
+            >>> for m in mounts:
+            ...     print(f"{m['name']}: {m['tool_count']} tools")
+        """
+        params: dict[str, Any] = {"include_unmounted": include_unmounted}
+        if tier is not None:
+            params["tier"] = tier
+        result = self._call_rpc("mcp_list_mounts", params)
+        return result  # type: ignore[no-any-return]
+
+    def mcp_list_tools(self, name: str) -> builtins.list[dict[str, Any]]:
+        """List tools from a specific MCP mount.
+
+        Args:
+            name: MCP mount name (from mcp_list_mounts)
+
+        Returns:
+            List of tool info dicts with:
+                - name: Tool name
+                - description: Tool description
+                - input_schema: JSON schema for tool input
+
+        Examples:
+            >>> tools = nx.mcp_list_tools("github")
+            >>> for t in tools:
+            ...     print(f"{t['name']}: {t['description']}")
+        """
+        result = self._call_rpc("mcp_list_tools", {"name": name})
+        return result  # type: ignore[no-any-return]
+
+    def mcp_mount(
+        self,
+        name: str,
+        transport: str | None = None,
+        command: str | None = None,
+        url: str | None = None,
+        args: builtins.list[str] | None = None,
+        env: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+        description: str | None = None,
+        tier: str = "system",
+    ) -> dict[str, Any]:
+        """Mount an MCP server.
+
+        Args:
+            name: Mount name (unique identifier)
+            transport: Transport type (stdio/sse/klavis). Auto-detected if not specified.
+            command: Command to run MCP server (for stdio transport)
+            url: URL of remote MCP server (for sse transport)
+            args: Command arguments (for stdio transport)
+            env: Environment variables
+            headers: HTTP headers (for sse transport)
+            description: Mount description
+            tier: Target tier (user/tenant/system, default: system)
+
+        Returns:
+            Dict with mount info:
+                - name: Mount name
+                - transport: Transport type
+                - mounted: Whether successfully mounted
+                - tool_count: Number of tools (after sync)
+
+        Examples:
+            >>> # Mount local MCP server
+            >>> result = nx.mcp_mount(
+            ...     name="github",
+            ...     command="npx -y @modelcontextprotocol/server-github",
+            ...     env={"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_xxx"}
+            ... )
+        """
+        params: dict[str, Any] = {"name": name, "tier": tier}
+        if transport is not None:
+            params["transport"] = transport
+        if command is not None:
+            params["command"] = command
+        if url is not None:
+            params["url"] = url
+        if args is not None:
+            params["args"] = args
+        if env is not None:
+            params["env"] = env
+        if headers is not None:
+            params["headers"] = headers
+        if description is not None:
+            params["description"] = description
+        result = self._call_rpc("mcp_mount", params)
+        return result  # type: ignore[no-any-return]
+
+    def mcp_unmount(self, name: str) -> dict[str, Any]:
+        """Unmount an MCP server.
+
+        Args:
+            name: MCP mount name
+
+        Returns:
+            Dict with:
+                - success: Whether unmount succeeded
+                - name: Mount name
+
+        Examples:
+            >>> result = nx.mcp_unmount("github")
+            >>> print(result["success"])
+        """
+        result = self._call_rpc("mcp_unmount", {"name": name})
+        return result  # type: ignore[no-any-return]
+
+    def mcp_sync(self, name: str) -> dict[str, Any]:
+        """Sync/refresh tools from an MCP server.
+
+        Re-discovers available tools from the mounted MCP server
+        and updates the local tool definitions.
+
+        Args:
+            name: MCP mount name
+
+        Returns:
+            Dict with:
+                - name: Mount name
+                - tool_count: Number of tools discovered
+
+        Examples:
+            >>> result = nx.mcp_sync("github")
+            >>> print(f"Synced {result['tool_count']} tools")
+        """
+        result = self._call_rpc("mcp_sync", {"name": name})
+        return result  # type: ignore[no-any-return]
+
     def close(self) -> None:
         """Close the client and release resources."""
         self.session.close()

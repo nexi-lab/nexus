@@ -1770,7 +1770,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             object_type=object_type,
             tenant_id=tenant_id,
             tuples=tuples,
-            namespace_configs=namespace_configs,
+            _namespace_configs=namespace_configs,
             path_prefix=path_prefix,
             limit=limit,
             offset=offset,

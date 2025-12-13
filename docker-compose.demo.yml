@@ -132,8 +132,8 @@ services:
       # Configuration file path (defaults to config.demo.yaml if not specified)
       NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}
     volumes:
-      # Persistent data directory (local backend)
-      - nexus-data:/app/data
+      # Persistent data directory (local backend) - shared with local development
+      - ./nexus-data:/app/data
       # Configuration files (includes config.demo.yaml for auto-mounting backends)
       - ./configs:/app/configs:ro
       # GCS credentials (auto-detected - see docker-gcs-setup.sh)
@@ -308,8 +308,8 @@ services:
 volumes:
   postgres-data:
     driver: local
-  nexus-data:
-    driver: local
+  # nexus-data: Using local directory ./nexus-data instead of Docker volume
+  # This allows sharing data between Docker and local development
 
 # ============================================
 # Networks

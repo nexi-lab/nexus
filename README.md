@@ -556,6 +556,37 @@ pre-commit install  # Install pre-commit hooks for code quality checks
 pytest tests/
 ```
 
+#### Local Development (Without Docker Rebuild)
+
+For faster development iteration, run the Nexus server locally while keeping other services in Docker:
+
+```bash
+# 1. Start Docker services (postgres, langgraph, frontend)
+./docker-start.sh
+
+# 2. Stop the Docker nexus-server (we'll run it locally)
+docker stop nexus-server
+
+# 3. Start the local Nexus server
+./local-nexus.sh --start
+
+# 4. Make code changes and restart as needed
+# Press Ctrl+C to stop, then ./local-nexus.sh --start again
+
+# 5. When done, restart Docker nexus-server
+docker start nexus-server
+```
+
+**Benefits:**
+- ⚡ **Fast iteration**: No Docker rebuild needed (saves 30-60 seconds per change)
+- 🐛 **Easy debugging**: Attach debugger directly to Python process
+- 🔄 **Shared data**: Docker and local both use `./nexus-data/` directory
+- 🎯 **Simple**: One script, reuses existing config
+
+**Commands:**
+- `./local-nexus.sh --start` - Start local server
+- `./local-nexus.sh --stop` - Stop local server
+
 ## Support
 
 - **Issues**: [GitHub Issues](https://github.com/nexi-lab/nexus/issues)

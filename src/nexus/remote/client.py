@@ -4234,12 +4234,34 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         self,
         tier: str | None = None,
         include_metadata: bool = True,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        enabled_only: bool | None = None,
         _context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """List all skills."""
+        """List all skills, optionally filtered by user preferences.
+
+        Args:
+            tier: Filter by tier (agent/tenant/system)
+            include_metadata: Include full metadata (default: True)
+            user_id: Optional user ID to filter by preferences
+            agent_id: Optional agent ID to filter by preferences (required if user_id provided)
+            enabled_only: If True and user_id/agent_id provided, return only enabled skills.
+                         If False, return only disabled skills. If None, return all skills.
+            _context: Operation context (optional)
+
+        Returns:
+            Dict with skills list, filtered by preferences if user_id/agent_id provided
+        """
         params: dict[str, Any] = {"include_metadata": include_metadata}
         if tier is not None:
             params["tier"] = tier
+        if user_id is not None:
+            params["user_id"] = user_id
+        if agent_id is not None:
+            params["agent_id"] = agent_id
+        if enabled_only is not None:
+            params["enabled_only"] = enabled_only
         result = self._call_rpc("skills_list", params)
         return result  # type: ignore[no-any-return]
 
@@ -4450,6 +4472,190 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             "include_dependencies": include_dependencies,
         }
         result = self._call_rpc("skills_export", params)
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # Skill Preference Methods (Agent Skill Access Control)
+    # ============================================================
+
+    def set_skill_preference(
+        self,
+        user_id: str,
+        agent_id: str,
+        skill_name: str,
+        enabled: bool,
+        tenant_id: str | None = None,
+        reason: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Set skill preference for an agent.
+
+        Args:
+            user_id: User ID
+            agent_id: Agent ID
+            skill_name: Name of the skill
+            enabled: Whether the skill is enabled
+            tenant_id: Optional tenant ID
+            reason: Optional reason for the preference
+            _context: Operation context (optional)
+
+        Returns:
+            Preference details
+        """
+        params: dict[str, Any] = {
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "skill_name": skill_name,
+            "enabled": enabled,
+        }
+        if tenant_id is not None:
+            params["tenant_id"] = tenant_id
+        if reason is not None:
+            params["reason"] = reason
+        result = self._call_rpc("set_skill_preference", params)
+        return result  # type: ignore[no-any-return]
+
+    def get_skill_preference(
+        self,
+        user_id: str,
+        agent_id: str,
+        skill_name: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Get skill preference for an agent.
+
+        Args:
+            user_id: User ID
+            agent_id: Agent ID
+            skill_name: Name of the skill
+            _context: Operation context (optional)
+
+        Returns:
+            Preference details or null if not found
+        """
+        params: dict[str, Any] = {
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "skill_name": skill_name,
+        }
+        result = self._call_rpc("get_skill_preference", params)
+        return result  # type: ignore[no-any-return]
+
+    def is_skill_enabled(
+        self,
+        user_id: str,
+        agent_id: str,
+        skill_name: str,
+        tenant_id: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Check if a skill is enabled for an agent.
+
+        Args:
+            user_id: User ID
+            agent_id: Agent ID
+            skill_name: Name of the skill
+            tenant_id: Optional tenant ID
+            _context: Operation context (optional)
+
+        Returns:
+            Dictionary with enabled boolean
+        """
+        params: dict[str, Any] = {
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "skill_name": skill_name,
+        }
+        if tenant_id is not None:
+            params["tenant_id"] = tenant_id
+        result = self._call_rpc("is_skill_enabled", params)
+        return result  # type: ignore[no-any-return]
+
+    def list_skill_preferences(
+        self,
+        user_id: str,
+        agent_id: str | None = None,
+        tenant_id: str | None = None,
+        enabled_only: bool | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """List skill preferences for a user/agent.
+
+        Args:
+            user_id: User ID (required)
+            agent_id: Optional agent ID filter
+            tenant_id: Optional tenant ID
+            enabled_only: If True, return only enabled skills. If False, return only disabled skills.
+                         If None, return all preferences regardless of enabled status.
+            _context: Operation context (optional)
+
+        Returns:
+            List of preferences matching the criteria
+        """
+        params: dict[str, Any] = {"user_id": user_id}
+        if agent_id is not None:
+            params["agent_id"] = agent_id
+        if tenant_id is not None:
+            params["tenant_id"] = tenant_id
+        if enabled_only is not None:
+            params["enabled_only"] = enabled_only
+        result = self._call_rpc("list_skill_preferences", params)
+        return result  # type: ignore[no-any-return]
+
+    def delete_skill_preference(
+        self,
+        user_id: str,
+        agent_id: str,
+        skill_name: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Delete a skill preference.
+
+        Args:
+            user_id: User ID
+            agent_id: Agent ID
+            skill_name: Name of the skill
+            _context: Operation context (optional)
+
+        Returns:
+            Success status
+        """
+        params: dict[str, Any] = {
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "skill_name": skill_name,
+        }
+        result = self._call_rpc("delete_skill_preference", params)
+        return result  # type: ignore[no-any-return]
+
+    def filter_enabled_skills(
+        self,
+        user_id: str,
+        agent_id: str,
+        skill_names: list[str],
+        tenant_id: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Filter skills to only those enabled for an agent.
+
+        Args:
+            user_id: User ID
+            agent_id: Agent ID
+            skill_names: List of skill names to filter
+            tenant_id: Optional tenant ID
+            _context: Operation context (optional)
+
+        Returns:
+            List of enabled skill names
+        """
+        params: dict[str, Any] = {
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "skill_names": skill_names,
+        }
+        if tenant_id is not None:
+            params["tenant_id"] = tenant_id
+        result = self._call_rpc("filter_enabled_skills", params)
         return result  # type: ignore[no-any-return]
 
     # ============================================================

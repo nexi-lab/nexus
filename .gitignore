@@ -140,7 +140,6 @@ secrets/
 *.encrypted
 
 # Data directories
-data/
 uploads/
 downloads/
 

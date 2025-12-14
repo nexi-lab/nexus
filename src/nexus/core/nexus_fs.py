@@ -2690,6 +2690,11 @@ class NexusFS(
         if context is None and hasattr(self, "_operation_context"):
             context = self._operation_context
 
+        # Create the directory if it doesn't exist
+        # Workspaces must exist as directories before they can be registered
+        if not self.exists(path, context=context):
+            self.mkdir(path, parents=True, exist_ok=True, context=context)
+
         config = self._workspace_registry.register_workspace(
             path=path,
             name=name,
@@ -3149,8 +3154,9 @@ class NexusFS(
 
         # Create agent directory structure
         # Extract agent name from agent_id (format: user_id,agent_name)
+        # Use new namespace convention: /tenant:<tenant_id>/user:<user_id>/agent/<agent_id>
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
-        agent_dir = f"/agent/{user_id}/{agent_name_part}"
+        agent_dir = f"/tenant:{tenant_id}/user:{user_id}/agent/{agent_name_part}"
         config_path = f"{agent_dir}/config.yaml"
 
         # Create initial config data
@@ -3228,6 +3234,23 @@ class NexusFS(
 
         entities = self._entity_registry.get_entities_by_type("agent")
         result = []
+
+        # Query API keys for all agents in one go for efficiency
+        from sqlalchemy import select
+
+        from nexus.storage.models import APIKeyModel
+
+        session = self.metadata.SessionLocal()
+        try:
+            # Get all agent API keys
+            agent_keys_stmt = select(APIKeyModel).where(
+                APIKeyModel.subject_type == "agent",
+                APIKeyModel.revoked == 0,  # Only active keys
+            )
+            agent_keys = {key.subject_id: key for key in session.scalars(agent_keys_stmt).all()}
+        finally:
+            session.close()
+
         for e in entities:
             import json
 
@@ -3250,6 +3273,43 @@ class NexusFS(
             if "description" in metadata:
                 agent_info["description"] = metadata["description"]
 
+            # Check if agent has an API key
+            agent_key = agent_keys.get(e.entity_id)
+            if agent_key:
+                agent_info["has_api_key"] = True
+                agent_info["inherit_permissions"] = bool(agent_key.inherit_permissions)
+            else:
+                agent_info["has_api_key"] = False
+                # If no API key, try to read from config.yaml or use default True
+                # Agents without API keys typically inherit permissions by default
+                inherit_perms = None
+                try:
+                    # Extract user_id and agent_name from agent_id (format: user_id,agent_name)
+                    if "," in e.entity_id:
+                        user_id, agent_name = e.entity_id.split(",", 1)
+                        # Try to read from config.yaml (use default tenant for now)
+                        config_path = (
+                            f"/tenant:default/user:{user_id}/agent/{agent_name}/config.yaml"
+                        )
+                        try:
+                            config_content = self.read(
+                                config_path, context=self._parse_context(_context)
+                            )
+                            import yaml
+
+                            if isinstance(config_content, bytes):
+                                config_data = yaml.safe_load(config_content.decode("utf-8"))
+                                inherit_perms = config_data.get("inherit_permissions")
+                        except Exception:
+                            pass  # If can't read config, will use default
+                except Exception:
+                    pass
+
+                # Default to True if not found (agents without API keys inherit by default)
+                agent_info["inherit_permissions"] = (
+                    bool(inherit_perms) if inherit_perms is not None else True
+                )
+
             result.append(agent_info)
 
         return result
@@ -3263,12 +3323,14 @@ class NexusFS(
             context: Operation context (optional)
 
         Returns:
-            Agent info dict or None if not found
+            Agent info dict with all fields (same as list_agents) plus api_key if available, or None if not found
 
         Example:
             >>> agent = nx.get_agent("data_analyst")
             >>> if agent:
             ...     print(f"Owner: {agent['user_id']}")
+            ...     if agent.get('api_key'):
+            ...         print(f"Has API key: {agent['api_key'][:10]}...")
         """
         if not self._entity_registry:
             from nexus.core.entity_registry import EntityRegistry
@@ -3300,6 +3362,146 @@ class NexusFS(
         if "description" in metadata:
             agent_info["description"] = metadata["description"]
 
+        # Check if agent has an API key (same logic as list_agents)
+        from sqlalchemy import select
+
+        from nexus.storage.models import APIKeyModel
+
+        session = self.metadata.SessionLocal()
+        try:
+            # Check if agent has an API key in database
+            agent_key_stmt = select(APIKeyModel).where(
+                APIKeyModel.subject_type == "agent",
+                APIKeyModel.subject_id == agent_id,
+                APIKeyModel.revoked == 0,  # Only active keys
+            )
+            agent_key = session.scalar(agent_key_stmt)
+
+            if agent_key:
+                agent_info["has_api_key"] = True
+                agent_info["inherit_permissions"] = bool(agent_key.inherit_permissions)
+
+                # Read config.yaml file to get API key and other config fields
+                try:
+                    # Extract user_id and agent_name from agent_id (format: user_id,agent_name)
+                    if "," in entity.entity_id:
+                        user_id, agent_name = entity.entity_id.split(",", 1)
+                        # Get tenant_id from context
+                        ctx = self._parse_context(_context)
+                        tenant_id = self._extract_tenant_id(_context) or "default"
+                        config_path = (
+                            f"/tenant:{tenant_id}/user:{user_id}/agent/{agent_name}/config.yaml"
+                        )
+                        try:
+                            config_content = self.read(config_path, context=ctx)
+                            import yaml
+
+                            if isinstance(config_content, bytes):
+                                config_data = yaml.safe_load(config_content.decode("utf-8"))
+                                # Return API key from config if available
+                                if config_data.get("api_key"):
+                                    agent_info["api_key"] = config_data["api_key"]
+
+                                # Check metadata first, then top-level for config fields
+                                # Config fields can be in metadata (from provision script) or at top-level
+                                metadata = config_data.get("metadata", {})
+                                if isinstance(metadata, dict):
+                                    # Platform and endpoint_url are often in metadata
+                                    if metadata.get("platform"):
+                                        agent_info["platform"] = metadata["platform"]
+                                    if metadata.get("endpoint_url"):
+                                        agent_info["endpoint_url"] = metadata["endpoint_url"]
+                                    # agent_id in metadata is the LangGraph graph/assistant ID (e.g., "agent")
+                                    if metadata.get("agent_id"):
+                                        agent_info["config_agent_id"] = metadata["agent_id"]
+
+                                # Fall back to top-level if not in metadata
+                                if not agent_info.get("platform") and config_data.get("platform"):
+                                    agent_info["platform"] = config_data["platform"]
+                                if not agent_info.get("endpoint_url") and config_data.get(
+                                    "endpoint_url"
+                                ):
+                                    agent_info["endpoint_url"] = config_data["endpoint_url"]
+                                # Only use top-level agent_id if config_agent_id not set and it's different from full agent_id
+                                if (
+                                    not agent_info.get("config_agent_id")
+                                    and config_data.get("agent_id")
+                                    and config_data["agent_id"] != entity.entity_id
+                                ):
+                                    # Only use if it's actually a LangGraph graph ID, not the full agent_id
+                                    agent_info["config_agent_id"] = config_data["agent_id"]
+
+                            if config_data.get("system_prompt"):
+                                agent_info["system_prompt"] = config_data["system_prompt"]
+                            if config_data.get("tools"):
+                                agent_info["tools"] = config_data["tools"]
+                        except Exception:
+                            # If can't read config, that's okay - agent might not have config file yet
+                            pass
+                except Exception:
+                    pass
+            else:
+                agent_info["has_api_key"] = False
+                # If no API key, try to read from config.yaml or use default True
+                inherit_perms = None
+                try:
+                    # Extract user_id and agent_name from agent_id (format: user_id,agent_name)
+                    if "," in entity.entity_id:
+                        user_id, agent_name = entity.entity_id.split(",", 1)
+                        ctx = self._parse_context(_context)
+                        tenant_id = self._extract_tenant_id(_context) or "default"
+                        config_path = (
+                            f"/tenant:{tenant_id}/user:{user_id}/agent/{agent_name}/config.yaml"
+                        )
+                        try:
+                            config_content = self.read(config_path, context=ctx)
+                            import yaml
+
+                            if isinstance(config_content, bytes):
+                                config_data = yaml.safe_load(config_content.decode("utf-8"))
+                                inherit_perms = config_data.get("inherit_permissions")
+
+                                # Check metadata first, then top-level for config fields
+                                metadata = config_data.get("metadata", {})
+                                if isinstance(metadata, dict):
+                                    if metadata.get("platform"):
+                                        agent_info["platform"] = metadata["platform"]
+                                    if metadata.get("endpoint_url"):
+                                        agent_info["endpoint_url"] = metadata["endpoint_url"]
+                                    # agent_id in metadata is the LangGraph graph/assistant ID
+                                    if metadata.get("agent_id"):
+                                        agent_info["config_agent_id"] = metadata["agent_id"]
+
+                                # Fall back to top-level if not in metadata
+                                if not agent_info.get("platform") and config_data.get("platform"):
+                                    agent_info["platform"] = config_data["platform"]
+                                if not agent_info.get("endpoint_url") and config_data.get(
+                                    "endpoint_url"
+                                ):
+                                    agent_info["endpoint_url"] = config_data["endpoint_url"]
+                                if (
+                                    not agent_info.get("config_agent_id")
+                                    and config_data.get("agent_id")
+                                    and config_data["agent_id"] != entity.entity_id
+                                ):
+                                    agent_info["config_agent_id"] = config_data["agent_id"]
+
+                                if config_data.get("system_prompt"):
+                                    agent_info["system_prompt"] = config_data["system_prompt"]
+                                if config_data.get("tools"):
+                                    agent_info["tools"] = config_data["tools"]
+                        except Exception:
+                            pass  # If can't read config, will use default
+                except Exception:
+                    pass
+
+                # Default to True if not found (agents without API keys inherit by default)
+                agent_info["inherit_permissions"] = (
+                    bool(inherit_perms) if inherit_perms is not None else True
+                )
+        finally:
+            session.close()
+
         return agent_info
 
     @rpc_expose(description="Delete an agent")
@@ -3323,12 +3525,15 @@ class NexusFS(
 
             self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
 
-        # Get agent info before deletion to extract user_id
+        # Get agent info before deletion to extract user_id and tenant_id
         try:
             # Agent ID format: user_id,agent_name
             if "," in agent_id:
                 user_id, agent_name_part = agent_id.split(",", 1)
-                agent_dir = f"/agent/{user_id}/{agent_name_part}"
+                # Get tenant_id from context or use default
+                tenant_id = self._extract_tenant_id(_context) or "default"
+                # Use new namespace convention: /tenant:<tenant_id>/user:<user_id>/agent/<agent_id>
+                agent_dir = f"/tenant:{tenant_id}/user:{user_id}/agent/{agent_name_part}"
 
                 # Delete agent directory and config
                 try:
@@ -3773,13 +3978,16 @@ class NexusFS(
 
             from nexus.core.sandbox_manager import SandboxManager
 
-            # Initialize sandbox manager with E2B credentials
+            # Initialize sandbox manager with E2B credentials and config for Docker provider
             session = self.metadata.SessionLocal()
+            # Pass config if available (needed for Docker provider initialization)
+            config = getattr(self, "_config", None)
             self._sandbox_manager = SandboxManager(
                 db_session=session,
                 e2b_api_key=os.getenv("E2B_API_KEY"),
                 e2b_team_id=os.getenv("E2B_TEAM_ID"),
                 e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
+                config=config,  # Pass config for Docker provider
             )
 
     @staticmethod

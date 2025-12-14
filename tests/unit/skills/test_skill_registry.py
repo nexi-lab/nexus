@@ -150,24 +150,24 @@ async def test_discover_from_local_filesystem() -> None:
     """Test discovering skills from local filesystem."""
     with tempfile.TemporaryDirectory() as tmpdir:
         # Create skill files
-        agent_dir = Path(tmpdir) / "agent"
-        agent_dir.mkdir()
+        user_dir = Path(tmpdir) / "user"
+        user_dir.mkdir()
 
-        skill1_file = agent_dir / "skill-1" / "SKILL.md"
+        skill1_file = user_dir / "skill-1" / "SKILL.md"
         skill1_file.parent.mkdir()
         skill1_file.write_bytes(SKILL_1)
 
-        skill2_file = agent_dir / "skill-2" / "SKILL.md"
+        skill2_file = user_dir / "skill-2" / "SKILL.md"
         skill2_file.parent.mkdir()
         skill2_file.write_bytes(SKILL_2)
 
         # Temporarily override tier path for testing
         original_paths = SkillRegistry.TIER_PATHS.copy()
-        SkillRegistry.TIER_PATHS = {"agent": str(agent_dir)}
+        SkillRegistry.TIER_PATHS = {"user": str(user_dir)}
 
         try:
             registry = SkillRegistry()
-            count = await registry.discover(tiers=["agent"])
+            count = await registry.discover(tiers=["user"])
 
             assert count == 2
             assert "skill-1" in registry.list_skills()
@@ -181,13 +181,13 @@ async def test_discover_from_mock_filesystem() -> None:
     """Test discovering skills from mock filesystem."""
     fs = MockFilesystem(
         {
-            "/skills/agent/skill-1/SKILL.md": SKILL_1,
-            "/skills/agent/skill-2/SKILL.md": SKILL_2,
+            "/skills/user/skill-1/SKILL.md": SKILL_1,
+            "/skills/user/skill-2/SKILL.md": SKILL_2,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    count = await registry.discover(tiers=["agent"])
+    count = await registry.discover(tiers=["user"])
 
     assert count == 2
     assert "skill-1" in registry.list_skills()
@@ -198,11 +198,11 @@ async def test_discover_from_mock_filesystem() -> None:
 async def test_discover_tier_priority() -> None:
     """Test that higher priority tiers override lower priority."""
     # Skill with same name in different tiers
-    agent_skill = b"""---
+    user_skill = b"""---
 name: duplicate-skill
-description: Agent version
+description: User version
 ---
-Agent content
+User content
 """
 
     tenant_skill = b"""---
@@ -214,7 +214,7 @@ Tenant content
 
     fs = MockFilesystem(
         {
-            "/skills/agent/duplicate-skill/SKILL.md": agent_skill,
+            "/skills/user/duplicate-skill/SKILL.md": user_skill,
             "/skills/tenant/duplicate-skill/SKILL.md": tenant_skill,
         }
     )
@@ -222,10 +222,10 @@ Tenant content
     registry = SkillRegistry(filesystem=fs)
     await registry.discover()  # Discover from all tiers
 
-    # Agent tier has higher priority
+    # User tier has higher priority
     metadata = registry.get_metadata("duplicate-skill")
-    assert metadata.description == "Agent version"
-    assert metadata.tier == "agent"
+    assert metadata.description == "User version"
+    assert metadata.tier == "user"
 
 
 @pytest.mark.asyncio
@@ -233,12 +233,12 @@ async def test_get_skill_lazy_loading() -> None:
     """Test that skills are loaded lazily (on-demand)."""
     fs = MockFilesystem(
         {
-            "/skills/agent/skill-1/SKILL.md": SKILL_1,
+            "/skills/user/skill-1/SKILL.md": SKILL_1,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     # After discovery, skill should be in metadata index but not cache
     assert "skill-1" in registry.list_skills()
@@ -259,12 +259,12 @@ async def test_get_skill_from_cache() -> None:
     """Test that subsequent get_skill calls use cache."""
     fs = MockFilesystem(
         {
-            "/skills/agent/skill-1/SKILL.md": SKILL_1,
+            "/skills/user/skill-1/SKILL.md": SKILL_1,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     # First call - loads from filesystem
     skill1 = await registry.get_skill("skill-1")
@@ -289,12 +289,12 @@ async def test_get_metadata() -> None:
     """Test getting skill metadata without loading full content."""
     fs = MockFilesystem(
         {
-            "/skills/agent/skill-1/SKILL.md": SKILL_1,
+            "/skills/user/skill-1/SKILL.md": SKILL_1,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     # Get metadata - should not load full content
     metadata = registry.get_metadata("skill-1")
@@ -320,13 +320,13 @@ async def test_list_skills() -> None:
     """Test listing skills."""
     fs = MockFilesystem(
         {
-            "/skills/agent/skill-1/SKILL.md": SKILL_1,
-            "/skills/agent/skill-2/SKILL.md": SKILL_2,
+            "/skills/user/skill-1/SKILL.md": SKILL_1,
+            "/skills/user/skill-2/SKILL.md": SKILL_2,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     skills = registry.list_skills()
     assert "skill-1" in skills
@@ -338,7 +338,7 @@ async def test_list_skills_by_tier() -> None:
     """Test listing skills filtered by tier."""
     fs = MockFilesystem(
         {
-            "/skills/agent/agent-skill/SKILL.md": SKILL_1,
+            "/skills/user/agent-skill/SKILL.md": SKILL_1,
             "/skills/tenant/tenant-skill/SKILL.md": SKILL_2,
         }
     )
@@ -346,7 +346,7 @@ async def test_list_skills_by_tier() -> None:
     registry = SkillRegistry(filesystem=fs)
     await registry.discover()
 
-    agent_skills = registry.list_skills(tier="agent")
+    agent_skills = registry.list_skills(tier="user")
     assert len(agent_skills) == 1
     assert "skill-1" in agent_skills
 
@@ -360,12 +360,12 @@ async def test_list_skills_with_metadata() -> None:
     """Test listing skills with metadata included."""
     fs = MockFilesystem(
         {
-            "/skills/agent/skill-1/SKILL.md": SKILL_1,
+            "/skills/user/skill-1/SKILL.md": SKILL_1,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     metadata_list = registry.list_skills(include_metadata=True)
     assert len(metadata_list) == 1
@@ -378,14 +378,14 @@ async def test_resolve_dependencies() -> None:
     """Test resolving skill dependencies."""
     fs = MockFilesystem(
         {
-            "/skills/agent/skill-1/SKILL.md": SKILL_1,
-            "/skills/agent/skill-2/SKILL.md": SKILL_2,
-            "/skills/agent/skill-3/SKILL.md": SKILL_3,
+            "/skills/user/skill-1/SKILL.md": SKILL_1,
+            "/skills/user/skill-2/SKILL.md": SKILL_2,
+            "/skills/user/skill-3/SKILL.md": SKILL_3,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     # Skill 3 depends on skill-2, which depends on skill-1
     deps = await registry.resolve_dependencies("skill-3")
@@ -399,13 +399,13 @@ async def test_resolve_dependencies_circular() -> None:
     """Test that circular dependencies are detected."""
     fs = MockFilesystem(
         {
-            "/skills/agent/skill-a/SKILL.md": SKILL_CIRCULAR_A,
-            "/skills/agent/skill-b/SKILL.md": SKILL_CIRCULAR_B,
+            "/skills/user/skill-a/SKILL.md": SKILL_CIRCULAR_A,
+            "/skills/user/skill-b/SKILL.md": SKILL_CIRCULAR_B,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     # Should detect circular dependency
     with pytest.raises(SkillDependencyError, match="Circular dependency detected"):
@@ -417,13 +417,13 @@ async def test_resolve_dependencies_missing() -> None:
     """Test that missing dependencies raise error."""
     fs = MockFilesystem(
         {
-            "/skills/agent/skill-2/SKILL.md": SKILL_2,
+            "/skills/user/skill-2/SKILL.md": SKILL_2,
             # skill-1 is missing (but skill-2 requires it)
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     # Should raise error for missing dependency
     with pytest.raises(SkillNotFoundError, match="Skill not found: skill-1"):
@@ -435,13 +435,13 @@ async def test_get_skill_with_dependencies() -> None:
     """Test loading skill with dependencies."""
     fs = MockFilesystem(
         {
-            "/skills/agent/skill-1/SKILL.md": SKILL_1,
-            "/skills/agent/skill-2/SKILL.md": SKILL_2,
+            "/skills/user/skill-1/SKILL.md": SKILL_1,
+            "/skills/user/skill-2/SKILL.md": SKILL_2,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     # Load skill-2 with dependencies
     await registry.get_skill("skill-2", load_dependencies=True)
@@ -456,12 +456,12 @@ async def test_clear_cache() -> None:
     """Test clearing skill cache."""
     fs = MockFilesystem(
         {
-            "/skills/agent/skill-1/SKILL.md": SKILL_1,
+            "/skills/user/skill-1/SKILL.md": SKILL_1,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     # Load skill
     await registry.get_skill("skill-1")
@@ -480,12 +480,12 @@ async def test_clear_all() -> None:
     """Test clearing all skills and caches."""
     fs = MockFilesystem(
         {
-            "/skills/agent/skill-1/SKILL.md": SKILL_1,
+            "/skills/user/skill-1/SKILL.md": SKILL_1,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
     await registry.get_skill("skill-1")
 
     # Clear everything
@@ -501,7 +501,7 @@ async def test_discover_nonexistent_tier() -> None:
     fs = MockFilesystem({})
 
     registry = SkillRegistry(filesystem=fs)
-    count = await registry.discover(tiers=["agent"])
+    count = await registry.discover(tiers=["user"])
 
     # Should return 0, not raise error
     assert count == 0
@@ -512,12 +512,12 @@ async def test_registry_repr() -> None:
     """Test registry string representation."""
     fs = MockFilesystem(
         {
-            "/skills/agent/skill-1/SKILL.md": SKILL_1,
+            "/skills/user/skill-1/SKILL.md": SKILL_1,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     repr_str = repr(registry)
     assert "SkillRegistry" in repr_str

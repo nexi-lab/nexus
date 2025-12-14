@@ -83,7 +83,7 @@ class TokenManager:
 
         Args:
             db_path: Path to SQLite database (deprecated, use db_url)
-            db_url: Database URL (e.g., 'sqlite:///path/to/db')
+            db_url: Database URL (e.g., 'sqlite:///path/to/db' or 'postgresql://user:pass@host/db')
             encryption_key: Fernet encryption key (base64-encoded)
 
         Example:

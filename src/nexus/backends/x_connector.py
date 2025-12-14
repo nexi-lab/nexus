@@ -158,10 +158,13 @@ class XConnectorBackend(Backend):
         # Initialize TokenManager
         from nexus.server.auth.token_manager import TokenManager
 
-        if token_manager_db.startswith(("postgresql://", "sqlite://", "mysql://")):
-            self.token_manager = TokenManager(db_url=token_manager_db)
+        # Resolve database URL using base class method (checks TOKEN_MANAGER_DB env var)
+        resolved_db = self.resolve_database_url(token_manager_db)
+
+        if resolved_db.startswith(("postgresql://", "sqlite://", "mysql://")):
+            self.token_manager = TokenManager(db_url=resolved_db)
         else:
-            self.token_manager = TokenManager(db_path=token_manager_db)
+            self.token_manager = TokenManager(db_path=resolved_db)
 
         self.user_email = user_email
         self.cache_ttl = cache_ttl or CACHE_TTL

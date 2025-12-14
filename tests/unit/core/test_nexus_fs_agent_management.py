@@ -529,10 +529,27 @@ class TestDeleteAgentCleanup:
             context=context,
         )
 
-        # Manually remove directory (parse context first)
+        # Manually remove directory - use admin context to bypass permission checks
         agent_dir = "/agent/alice/test_agent"
+        from nexus.core.permissions import OperationContext
+
         ctx = nx._parse_context(context)
-        nx.rmdir(agent_dir, recursive=True, context=ctx, is_admin=True)
+        # Create admin context to bypass permission checks
+        admin_ctx = OperationContext(
+            user=ctx.user,
+            groups=ctx.groups,
+            tenant_id=ctx.tenant_id,
+            agent_id=ctx.agent_id,
+            is_admin=True,
+            is_system=False,
+        )
+        # Temporarily disable permission enforcement for this test
+        original_enforce = nx._enforce_permissions
+        nx._enforce_permissions = False
+        try:
+            nx.rmdir(agent_dir, recursive=True, context=admin_ctx)
+        finally:
+            nx._enforce_permissions = original_enforce
 
         # Delete agent should still succeed
         result = nx.delete_agent("alice,test_agent", _context=context)

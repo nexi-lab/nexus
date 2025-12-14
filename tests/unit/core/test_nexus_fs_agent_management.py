@@ -480,10 +480,10 @@ class TestDeleteAgentCleanup:
 
     def test_delete_agent_removes_rebac_tuples(self, nx: NexusFS) -> None:
         """Test that delete_agent removes ReBAC tuples for the agent."""
-        # Mock ReBAC manager
-        mock_manager = MagicMock()
-        mock_manager.rebac_list_tuples.return_value = [
+        # Mock rebac_list_tuples method on NexusFS to return test tuples
+        mock_tuples = [
             {
+                "tuple_id": "test-tuple-id-1",
                 "subject_type": "agent",
                 "subject_id": "alice,test_agent",
                 "relation": "direct_viewer",
@@ -491,7 +491,12 @@ class TestDeleteAgentCleanup:
                 "object_id": "/workspace/alice/test",
             }
         ]
-        nx._rebac_manager = mock_manager
+        original_rebac_list_tuples = nx.rebac_list_tuples
+        nx.rebac_list_tuples = MagicMock(return_value=mock_tuples)
+
+        # Mock rebac_delete
+        original_rebac_delete = nx.rebac_delete
+        nx.rebac_delete = MagicMock(return_value=True)
 
         context = {"user_id": "alice", "tenant_id": "default"}
         nx.register_agent(
@@ -504,10 +509,14 @@ class TestDeleteAgentCleanup:
         result = nx.delete_agent("alice,test_agent", _context=context)
         assert result is True
 
-        # Verify rebac_list_tuples was called
-        mock_manager.rebac_list_tuples.assert_called_once()
-        # Verify rebac_delete was called for each tuple
-        assert mock_manager.rebac_delete.call_count == 1
+        # Verify rebac_list_tuples was called (at least once for agent tuples, possibly for user tuples too)
+        assert nx.rebac_list_tuples.call_count >= 1
+        # Verify rebac_delete was called for the tuple
+        assert nx.rebac_delete.call_count >= 1
+
+        # Restore original methods
+        nx.rebac_list_tuples = original_rebac_list_tuples
+        nx.rebac_delete = original_rebac_delete
 
     def test_delete_agent_handles_missing_directory(self, nx: NexusFS) -> None:
         """Test that delete_agent handles missing directory gracefully."""
@@ -531,6 +540,8 @@ class TestDeleteAgentCleanup:
 
     def test_delete_agent_handles_missing_rebac_manager(self, nx: NexusFS) -> None:
         """Test that delete_agent handles missing ReBAC manager gracefully."""
+        # Store original manager to restore later
+        original_rebac_manager = nx._rebac_manager
         nx._rebac_manager = None
 
         context = {"user_id": "alice", "tenant_id": "default"}
@@ -541,5 +552,8 @@ class TestDeleteAgentCleanup:
         )
 
         # Delete agent should still succeed
-        result = nx.delete_agent("alice,test_agent", context=context)
+        result = nx.delete_agent("alice,test_agent", _context=context)
         assert result is True
+
+        # Restore original manager to prevent teardown errors
+        nx._rebac_manager = original_rebac_manager

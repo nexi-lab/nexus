@@ -4232,7 +4232,7 @@ class NexusFS(
         self.metadata.close()
 
         # Close ReBACManager to release database connection
-        if hasattr(self, "_rebac_manager"):
+        if hasattr(self, "_rebac_manager") and self._rebac_manager is not None:
             self._rebac_manager.close()
 
         # Close AuditStore to release database connection

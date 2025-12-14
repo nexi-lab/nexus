@@ -89,15 +89,19 @@ class SkillImporter:
 
         Args:
             zip_data: ZIP file bytes
-            tier: Target tier (user/system)
+            tier: Target tier (personal/tenant/system)
             allow_overwrite: Allow overwriting existing skills
             context: Operation context with user_id, tenant_id
 
         Returns:
             {
                 "imported_skills": ["skill-name"],
-                "skill_paths": ["/skills/users/{user_id}/skill-name/"],
-                "tier": "user"
+                "skill_paths": [
+                    "/tenant:<tid>/user:<uid>/skill/<skill-name>/" for personal,
+                    "/tenant:<tid>/skill/<skill-name>/" for tenant,
+                    "/skill/<skill-name>/" for system
+                ],
+                "tier": "personal" | "tenant" | "system"
             }
 
         Raises:
@@ -356,23 +360,42 @@ class SkillImporter:
 
         Args:
             skill_name: Name of skill
-            tier: Target tier (user/system)
-            context: Operation context
+            tier: Target tier (personal/tenant/system)
+            context: Operation context with tenant_id and user_id
 
         Returns:
-            Target path string (e.g., /skills/system/skill-name/)
+            Target path string:
+            - personal: /tenant:<tid>/user:<uid>/skill/<skill_name>/
+            - tenant: /tenant:<tid>/skill/<skill_name>/
+            - system: /skill/<skill_name>/
         """
         if tier == "system":
-            return f"/skills/system/{skill_name}/"
+            return f"/skill/{skill_name}/"
 
-        # User tier
-        if context:
+        if not context:
+            raise ValueError("Context required for personal/tenant tier skills")
+
+        tenant_id = context.tenant_id or "default"
+
+        if tier == "personal":
+            # Personal: /tenant:<tid>/user:<uid>/skill/<skill_name>/
+            user_id = context.user_id or getattr(context, "user", None)
+            if not user_id:
+                raise ValueError("user_id required for personal tier skills")
+            return f"/tenant:{tenant_id}/user:{user_id}/skill/{skill_name}/"
+
+        if tier == "tenant":
+            # Tenant: /tenant:<tid>/skill/<skill_name>/
+            return f"/tenant:{tenant_id}/skill/{skill_name}/"
+
+        # Legacy user tier support (for backward compatibility)
+        if tier == "user":
             user_id = context.user_id or getattr(context, "user", None)
             if user_id:
                 return f"/skills/users/{user_id}/{skill_name}/"
+            return f"/skills/user/{skill_name}/"
 
-        # Fallback to legacy path
-        return f"/skills/user/{skill_name}/"
+        raise ValueError(f"Unknown tier: {tier}. Must be 'personal', 'tenant', or 'system'")
 
     def _find_skill_directory(self, extracted_path: Path, skill_name: str) -> Path | None:
         """Find skill directory in extracted ZIP.

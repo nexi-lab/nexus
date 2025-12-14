@@ -1860,7 +1860,7 @@ class ReBACManager:
         # P0-6: Explicit deny on graph traversal limit exceeded
         # Security policy: ALWAYS deny when graph is too deep (never allow)
         if depth > self.max_depth:
-            logger.warning(
+            logger.debug(
                 f"ReBAC graph traversal depth limit exceeded (max={self.max_depth}): "
                 f"DENYING permission '{permission}' for {subject} -> {obj}"
             )

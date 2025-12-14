@@ -75,9 +75,12 @@ class SandboxManager:
         # Initialize Docker provider if available (no API key needed)
         if DOCKER_PROVIDER_AVAILABLE:
             try:
-                docker_config = config.docker if config else None
+                docker_config = config.docker if config and hasattr(config, "docker") else None
                 self.providers["docker"] = DockerSandboxProvider(docker_config=docker_config)
                 logger.info("Docker provider initialized successfully")
+            except RuntimeError as e:
+                # RuntimeError from DockerSandboxProvider means Docker daemon not available
+                logger.info(f"Docker provider not available: {e}")
             except Exception as e:
                 logger.warning(f"Failed to initialize Docker provider: {e}")
 
@@ -118,12 +121,13 @@ class SandboxManager:
             elif "e2b" in self.providers:
                 provider = "e2b"
             else:
-                raise ValueError("No sandbox providers available")
+                available = ", ".join(self.providers.keys()) if self.providers else "none"
+                raise ValueError(f"No sandbox providers available. Available providers: {available}")
 
         # Check provider availability
         if provider not in self.providers:
-            available = ", ".join(self.providers.keys())
-            raise ValueError(f"Provider '{provider}' not available. Available: {available}")
+            available = ", ".join(self.providers.keys()) if self.providers else "none"
+            raise ValueError(f"Provider '{provider}' not available. Available providers: {available}")
 
         # Check name uniqueness for active sandboxes only
         # Allow reusing name if existing sandbox is stopped/paused
@@ -572,8 +576,8 @@ class SandboxManager:
         """
         # Check provider availability
         if provider not in self.providers:
-            available = ", ".join(self.providers.keys())
-            raise ValueError(f"Provider '{provider}' not available. Available: {available}")
+            available = ", ".join(self.providers.keys()) if self.providers else "none"
+            raise ValueError(f"Provider '{provider}' not available. Available providers: {available}")
 
         if not nexus_url or not nexus_api_key:
             raise ValueError("Both nexus_url and nexus_api_key required for mounting")
@@ -634,8 +638,8 @@ class SandboxManager:
         """
         # Check provider availability
         if provider not in self.providers:
-            available = ", ".join(self.providers.keys())
-            raise ValueError(f"Provider '{provider}' not available. Available: {available}")
+            available = ", ".join(self.providers.keys()) if self.providers else "none"
+            raise ValueError(f"Provider '{provider}' not available. Available providers: {available}")
 
         if not sandbox_api_key:
             raise ValueError(f"Sandbox API key required for provider '{provider}'")

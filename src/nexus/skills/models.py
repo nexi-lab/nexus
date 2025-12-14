@@ -72,9 +72,11 @@ class SkillMetadata:
             )
 
         # Validate tier if provided
-        if self.tier and self.tier not in ("agent", "tenant", "system"):
+        # Accept personal/user as valid tiers (personal is alias for user)
+        valid_tiers = ("agent", "tenant", "system", "personal", "user")
+        if self.tier and self.tier not in valid_tiers:
             raise ValidationError(
-                f"skill tier must be 'agent', 'tenant', or 'system', got '{self.tier}'"
+                f"skill tier must be one of {valid_tiers}, got '{self.tier}'"
             )
 
         # Validate skill_type

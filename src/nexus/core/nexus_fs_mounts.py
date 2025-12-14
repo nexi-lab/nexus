@@ -11,17 +11,22 @@ This module contains mount management operations:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from nexus.backends.backend import Backend
+from nexus.core.context_utils import get_database_url, get_tenant_id, get_user_identity
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.core.mount_manager import MountManager
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
+
+# Module-level logger
+logger = logging.getLogger(__name__)
 
 # Type alias for progress callback: (files_scanned: int, current_path: str) -> None
 ProgressCallback = Callable[[int, str], None]
@@ -79,10 +84,6 @@ class NexusFSMountsMixin:
             mount_point: The virtual path of the mount
             context: Operation context containing user/subject information
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         logger.info(f"Setting up mount point: {mount_point}")
 
         # Create directory entry for the mount point
@@ -105,13 +106,13 @@ class NexusFSMountsMixin:
 
         try:
             # Get tenant and subject info from context
-            tenant_id = context.tenant_id if hasattr(context, "tenant_id") else "default"
-            subject_type = context.subject_type if hasattr(context, "subject_type") else "user"
+            tenant_id = get_tenant_id(context)
+            subject_type, subject_id = get_user_identity(context)
 
             # Create permission tuple using rebac_create method
-            if hasattr(self, "rebac_create"):
+            if hasattr(self, "rebac_create") and subject_id:
                 tuple_id = self.rebac_create(
-                    subject=(subject_type, context.subject_id),
+                    subject=(subject_type, subject_id),
                     relation="direct_owner",
                     object=("file", mount_point),
                     tenant_id=tenant_id,
@@ -146,10 +147,6 @@ class NexusFSMountsMixin:
         Returns:
             True if skill was generated, False otherwise
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         try:
             from nexus.backends.service_map import ServiceMap
             from nexus.skills.skill_generator import generate_skill_md
@@ -270,27 +267,17 @@ class NexusFSMountsMixin:
         """
         # Auto-inject token_manager_db for OAuth-backed connectors
         if (
-            backend_type in ("gdrive_connector", "x_connector")
+            backend_type in ("gdrive_connector", "gmail_connector", "x_connector")
             and "token_manager_db" not in backend_config
         ):
-            # Get database URL from NexusFS config or metadata store
-            database_url = None
-            if (
-                hasattr(self, "_config")
-                and self._config
-                and hasattr(self._config, "db_path")
-                and self._config.db_path
-            ):
-                database_url = self._config.db_path
-            elif hasattr(self, "metadata") and hasattr(self.metadata, "database_url"):
-                database_url = self.metadata.database_url
-
-            if not database_url:
+            # Use centralized database URL resolution
+            try:
+                database_url = get_database_url(self)
+                backend_config = {**backend_config, "token_manager_db": database_url}
+            except RuntimeError as e:
                 raise RuntimeError(
-                    f"Cannot create {backend_type} mount: No database path configured. "
-                    "Either pass 'token_manager_db' in backend_config or configure NexusFS with a database."
+                    f"Cannot create {backend_type} mount: {e}"
                 )
-            backend_config = {**backend_config, "token_manager_db": database_url}
 
         # Import backend classes dynamically
         backend: Backend
@@ -436,10 +423,6 @@ class NexusFSMountsMixin:
             >>> result = nx.remove_mount("/personal/alice")
             >>> print(f"Removed: {result['removed']}, Dir deleted: {result['directory_deleted']}")
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         result: dict[str, Any] = {
             "removed": False,
             "directory_deleted": False,
@@ -472,9 +455,7 @@ class NexusFSMountsMixin:
             if hasattr(self, "hierarchy_manager") and hasattr(
                 self.hierarchy_manager, "remove_parent_tuples"
             ):
-                tenant_id = (
-                    context.tenant_id if context and hasattr(context, "tenant_id") else "default"
-                )
+                tenant_id = get_tenant_id(context)
                 tuples_removed = self.hierarchy_manager.remove_parent_tuples(mount_point, tenant_id)
                 result["permissions_cleaned"] += tuples_removed
                 logger.info(f"Removed {tuples_removed} parent tuples for {mount_point}")
@@ -486,9 +467,7 @@ class NexusFSMountsMixin:
         # Remove direct_owner permission tuple for the mount point
         try:
             if hasattr(self, "rebac_delete_object_tuples"):
-                tenant_id = (
-                    context.tenant_id if context and hasattr(context, "tenant_id") else "default"
-                )
+                tenant_id = get_tenant_id(context)
                 deleted = self.rebac_delete_object_tuples(
                     object=("file", mount_point), tenant_id=tenant_id
                 )
@@ -757,31 +736,17 @@ class NexusFSMountsMixin:
         if isinstance(backend_config, str):
             backend_config = json.loads(backend_config)
 
-        # Normalize token_manager_db for OAuth-backed mounts (gdrive_connector, x_connector)
-        # According to docs, token_manager_db should come from NexusFS config db_path, not from saved config
+        # Normalize token_manager_db for OAuth-backed mounts (gdrive_connector, gmail_connector, x_connector)
+        # Use centralized database URL resolution
         backend_type = mount_config["backend_type"]
-        if backend_type in ("gdrive_connector", "x_connector"):
-            # Priority: config.db_path > metadata.database_url
-            database_url = None
-
-            # First, try to get db_path from config (preferred)
-            if (
-                hasattr(self, "_config")
-                and self._config
-                and hasattr(self._config, "db_path")
-                and self._config.db_path
-            ):
-                database_url = self._config.db_path
-            # Fallback to metadata store database URL
-            elif hasattr(self, "metadata") and hasattr(self.metadata, "database_url"):
-                database_url = self.metadata.database_url
-
-            if not database_url:
+        if backend_type in ("gdrive_connector", "gmail_connector", "x_connector"):
+            try:
+                database_url = get_database_url(self)
+                backend_config["token_manager_db"] = database_url
+            except RuntimeError as e:
                 raise RuntimeError(
-                    f"Cannot load {backend_type} mount: No database path configured in NexusFS config or metadata store"
+                    f"Cannot load {backend_type} mount: {e}"
                 )
-
-            backend_config["token_manager_db"] = database_url
 
         # Activate the mount
         return self.add_mount(
@@ -860,10 +825,6 @@ class NexusFSMountsMixin:
             >>> result = nx.load_all_saved_mounts()  # Fast startup
             >>> nx.sync_mount("/mnt/gcs")  # Sync when ready
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         if not hasattr(self, "mount_manager") or self.mount_manager is None:
             logger.warning("Mount manager not available, skipping mount restoration")
             return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
@@ -1157,10 +1118,6 @@ class NexusFSMountsMixin:
         Returns:
             Dictionary with aggregated sync statistics
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         logger.info("[SYNC_MOUNT] No mount_point specified, syncing all connector mounts")
         all_mounts = self.list_mounts()
 
@@ -1245,10 +1202,6 @@ class NexusFSMountsMixin:
             ValueError: If mount not found
             RuntimeError: If backend doesn't support list_dir
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         # Extract created_by from context
         if (
             ctx.context
@@ -1321,14 +1274,11 @@ class NexusFSMountsMixin:
         Returns:
             MetadataSyncResult with stats and files found in backend
         """
-        import logging
         from collections import deque
         from datetime import UTC, datetime
         from typing import cast
 
         from nexus.core.metadata import FileMetadata
-
-        logger = logging.getLogger(__name__)
 
         # Track all files found in backend (for deletion detection)
         files_found_in_backend: set[str] = set()
@@ -1578,10 +1528,7 @@ class NexusFSMountsMixin:
             files_found_in_backend: Set of files found during metadata scan
             stats: Statistics dictionary to update
         """
-        import logging
         from typing import cast
-
-        logger = logging.getLogger(__name__)
 
         # Only check deletions if we synced from root (path=None)
         if ctx.dry_run or ctx.path is not None:
@@ -1653,10 +1600,7 @@ class NexusFSMountsMixin:
             ctx: Sync mount context
             stats: Statistics dictionary to update
         """
-        import logging
         from typing import cast
-
-        logger = logging.getLogger(__name__)
 
         if not ctx.sync_content or ctx.dry_run:
             return

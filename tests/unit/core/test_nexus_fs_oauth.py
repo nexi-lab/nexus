@@ -932,5 +932,128 @@ class TestNexusFSOAuthMixin:
             MockFactory.assert_called_once_with(config=None)
 
 
+    def test_get_token_manager_uses_context_utils(self):
+        """Test that _get_token_manager uses context_utils.get_database_url."""
+        class TestMixin(NexusFSOAuthMixin):
+            def __init__(self):
+                self.db_path = "/tmp/test.db"
+                self._token_manager = None
+
+        mixin = TestMixin()
+
+        with (
+            patch("nexus.core.nexus_fs_oauth.get_database_url") as mock_get_db_url,
+            patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
+        ):
+            mock_get_db_url.return_value = "/tmp/test.db"
+            mock_tm = Mock()
+            MockTM.return_value = mock_tm
+
+            manager = mixin._get_token_manager()
+
+            # Verify get_database_url was called
+            mock_get_db_url.assert_called_once_with(mixin)
+            assert manager == mock_tm
+
+    @pytest.mark.asyncio
+    async def test_oauth_exchange_code_uses_context_utils_tenant_id(
+        self, mock_oauth_mixin, mock_token_manager
+    ):
+        """Test that oauth_exchange_code uses context_utils.get_tenant_id."""
+        from nexus.core.context_utils import get_tenant_id
+        from nexus.core.permissions import OperationContext
+
+        mock_oauth_mixin._token_manager = mock_token_manager
+
+        context = OperationContext(
+            user="alice",
+            tenant_id="acme_corp",
+            subject_type="user",
+            subject_id="alice",
+        )
+
+        with (
+            patch("nexus.core.context_utils.get_tenant_id") as mock_get_tenant,
+            patch.dict(
+                "os.environ",
+                {
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_ID": "test_client_id",
+                    "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET": "test_secret",
+                },
+            ),
+            patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
+        ):
+            mock_get_tenant.return_value = "acme_corp"
+            mock_provider = Mock()
+            mock_provider.exchange_code = AsyncMock(
+                return_value={"access_token": "token", "refresh_token": "refresh"}
+            )
+            MockProvider.return_value = mock_provider
+
+            await mock_oauth_mixin.oauth_exchange_code(
+                provider="google",
+                code="test_code",
+                user_email="test@example.com",
+                context=context,
+            )
+
+            # Verify get_tenant_id was called with context
+            mock_get_tenant.assert_called_with(context)
+
+    @pytest.mark.asyncio
+    async def test_oauth_list_credentials_uses_context_utils_tenant_id(
+        self, mock_oauth_mixin, mock_token_manager
+    ):
+        """Test that oauth_list_credentials uses context_utils.get_tenant_id."""
+        from nexus.core.context_utils import get_tenant_id
+        from nexus.core.permissions import OperationContext
+
+        mock_oauth_mixin._token_manager = mock_token_manager
+        mock_token_manager.list_credentials.return_value = []
+
+        context = OperationContext(
+            user="alice",
+            tenant_id="acme_corp",
+            subject_type="user",
+            subject_id="alice",
+        )
+
+        with patch("nexus.core.nexus_fs_oauth.get_tenant_id") as mock_get_tenant:
+            mock_get_tenant.return_value = "acme_corp"
+
+            await mock_oauth_mixin.oauth_list_credentials(context=context)
+
+            # Verify get_tenant_id was called with context
+            mock_get_tenant.assert_called_with(context)
+
+    def test_get_token_manager_priority_order(self):
+        """Test that get_database_url priority order is respected."""
+        import os
+
+        class TestMixin(NexusFSOAuthMixin):
+            def __init__(self):
+                self._config = Mock()
+                self._config.db_path = "sqlite:///config.db"
+                self.db_path = "sqlite:///obj.db"
+                self.metadata = Mock()
+                self.metadata.database_url = "postgresql://localhost/metadata"
+                self._token_manager = None
+
+        mixin = TestMixin()
+
+        # Test env var priority
+        with (
+            patch.dict(os.environ, {"TOKEN_MANAGER_DB": "postgresql://localhost/env"}),
+            patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
+        ):
+            mock_tm = Mock()
+            MockTM.return_value = mock_tm
+
+            manager = mixin._get_token_manager()
+
+            # Should use env var
+            MockTM.assert_called_once_with(db_url="postgresql://localhost/env")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

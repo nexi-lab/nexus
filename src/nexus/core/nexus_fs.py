@@ -2901,9 +2901,9 @@ class NexusFS(
         metadata: dict | None = None,
         api_key: str | None = None,
         inherit_permissions: bool | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Create agent config.yaml data structure."""
-        config_data = {
+        config_data: dict[str, Any] = {
             "agent_id": agent_id,
             "name": name,
             "user_id": user_id,
@@ -2925,14 +2925,15 @@ class NexusFS(
     def _write_agent_config(
         self,
         config_path: str,
-        config_data: dict,
+        config_data: dict[str, Any],
         context: dict | Any | None,
     ) -> None:
         """Write agent config.yaml file."""
         import yaml
 
         config_yaml = yaml.dump(config_data, default_flow_style=False, sort_keys=False)
-        self.write(config_path, config_yaml.encode("utf-8"), context=context)
+        ctx = self._parse_context(context)
+        self.write(config_path, config_yaml.encode("utf-8"), context=ctx)
 
     def _create_agent_directory(
         self,
@@ -2940,7 +2941,7 @@ class NexusFS(
         user_id: str,
         agent_dir: str,
         config_path: str,
-        config_data: dict,
+        config_data: dict[str, Any],
         context: dict | Any | None,
     ) -> None:
         """Create agent directory, config file, and grant ReBAC permissions."""
@@ -2949,8 +2950,11 @@ class NexusFS(
         logger = logging.getLogger(__name__)
 
         try:
+            # Parse context to OperationContext
+            ctx = self._parse_context(context)
+
             # Create agent directory
-            self.mkdir(agent_dir, parents=True, exist_ok=True, context=context)
+            self.mkdir(agent_dir, parents=True, exist_ok=True, context=ctx)
 
             # Write config.yaml
             self._write_agent_config(config_path, config_data, context)
@@ -2975,24 +2979,16 @@ class NexusFS(
                     logger.warning(f"Failed to grant direct_owner to agent for {agent_dir}: {e}")
 
                 # Grant user permissions to access agent's directory
-                from nexus.core.permissions_enhanced import PermissionName
-
-                for permission in [
-                    PermissionName.READ,
-                    PermissionName.WRITE,
-                    PermissionName.DELETE,
-                ]:
-                    try:
-                        self._rebac_manager.rebac_grant(
-                            subject=("user", user_id),
-                            permission=permission.value,
-                            object=("directory", agent_dir),
-                            tenant_id=tenant_id,
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to grant {permission.value} to user for {agent_dir}: {e}"
-                        )
+                # Use direct_owner relation for full access
+                try:
+                    self._rebac_manager.rebac_write(
+                        subject=("user", user_id),
+                        relation="direct_owner",
+                        object=("file", agent_dir),
+                        tenant_id=tenant_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to grant owner permission to user for {agent_dir}: {e}")
 
         except Exception as e:
             logger.warning(f"Failed to create agent directory or config: {e}")
@@ -3336,9 +3332,10 @@ class NexusFS(
 
                 # Delete agent directory and config
                 try:
-                    if self.exists(agent_dir, context=_context):
+                    ctx = self._parse_context(_context)
+                    if self.exists(agent_dir, context=ctx):
                         # Use admin override for cleanup during agent deletion
-                        self.rmdir(agent_dir, recursive=True, context=_context, is_admin=True)
+                        self.rmdir(agent_dir, recursive=True, context=ctx, is_admin=True)
                 except Exception as e:
                     import logging
 
@@ -3365,11 +3362,13 @@ class NexusFS(
                     result = session.execute(stmt)
                     session.commit()
 
-                    if result.rowcount > 0:
+                    # Get rowcount from result (SQLAlchemy 2.0+)
+                    rowcount = result.rowcount if hasattr(result, "rowcount") else 0
+                    if rowcount > 0:
                         import logging
 
                         logger = logging.getLogger(__name__)
-                        logger.info(f"Revoked {result.rowcount} API key(s) for agent {agent_id}")
+                        logger.info(f"Revoked {rowcount} API key(s) for agent {agent_id}")
                 except Exception as e:
                     import logging
 
@@ -3383,34 +3382,22 @@ class NexusFS(
                 if self._rebac_manager:
                     import logging
 
-                    from nexus.core.permissions_enhanced import PermissionName
-
                     logger = logging.getLogger(__name__)
-                    tenant_id = (
-                        getattr(_context, "tenant_id", None)
-                        if _context and not isinstance(_context, dict)
-                        else None
-                    )
 
-                    # List all ReBAC tuples for this agent
+                    # List all ReBAC tuples for this agent using nexus_fs method
                     try:
-                        tuples = self._rebac_manager.rebac_list_tuples(
-                            subject_type="agent",
-                            subject_id=agent_id,
-                            tenant_id=tenant_id or "default",
+                        tuples = self.rebac_list_tuples(
+                            subject=("agent", agent_id),
                         )
 
-                        # Delete each tuple
+                        # Delete each tuple by tuple_id
                         deleted_count = 0
                         for tuple_data in tuples:
                             try:
-                                self._rebac_manager.rebac_delete(
-                                    subject=(tuple_data["subject_type"], tuple_data["subject_id"]),
-                                    relation=tuple_data["relation"],
-                                    object=(tuple_data["object_type"], tuple_data["object_id"]),
-                                    tenant_id=tenant_id or "default",
-                                )
-                                deleted_count += 1
+                                tuple_id = tuple_data.get("tuple_id")
+                                if tuple_id:
+                                    self.rebac_delete(tuple_id=tuple_id)
+                                    deleted_count += 1
                             except Exception as e:
                                 logger.warning(f"Failed to delete ReBAC tuple: {e}")
 
@@ -3422,18 +3409,19 @@ class NexusFS(
                         logger.warning(f"Failed to delete ReBAC tuples for agent {agent_id}: {e}")
 
                     # Revoke user's permissions on agent directory
+                    # List tuples for user on agent directory and delete them
                     try:
-                        for permission in [
-                            PermissionName.READ,
-                            PermissionName.WRITE,
-                            PermissionName.DELETE,
-                        ]:
-                            self._rebac_manager.rebac_revoke(
-                                subject=("user", user_id),
-                                permission=permission.value,
-                                object=("directory", agent_dir),
-                                tenant_id=tenant_id,
-                            )
+                        user_tuples = self.rebac_list_tuples(
+                            subject=("user", user_id),
+                            object=("file", agent_dir),
+                        )
+                        for tuple_data in user_tuples:
+                            tuple_id = tuple_data.get("tuple_id")
+                            if tuple_id:
+                                try:
+                                    self.rebac_delete(tuple_id=tuple_id)
+                                except Exception as e:
+                                    logger.warning(f"Failed to delete user permission tuple: {e}")
                     except Exception as e:
                         logger.warning(
                             f"Failed to revoke user permissions for agent directory: {e}"

@@ -49,10 +49,10 @@ class SkillRegistry:
     """
 
     # Tier priority (higher = checked first, wins on name conflict)
-    # agent (under user) > user > tenant > system
+    # personal > tenant > system
     TIER_PRIORITY = {
-        "agent": 4,
-        "user": 3,
+        "personal": 3,
+        "user": 3,  # Legacy alias for personal
         "tenant": 2,
         "system": 1,
     }
@@ -60,21 +60,23 @@ class SkillRegistry:
     # Default tier paths (without context) - for backward compatibility
     # Use get_tier_paths(context) for context-aware paths
     TIER_PATHS = {
-        "agent": "/skills/agent/",  # Legacy path, prefer user paths with context
         "user": "/skills/user/",  # Legacy path, prefer /skills/users/{user_id}/
         "tenant": "/skills/tenant/",  # Legacy path, prefer /skills/tenants/{tenant_id}/
-        "system": "/skills/system/",
+        "system": "/skill/",
     }
 
     @staticmethod
     def get_tier_paths(context: OperationContext | None = None) -> dict[str, str]:
         """Get context-aware tier paths for skill discovery.
 
-        Structure:
-            /skills/system/                           - System-wide skills (priority 1)
-            /skills/tenants/{tenant_id}/              - Tenant shared skills (priority 2)
-            /skills/users/{user_id}/                  - User personal skills (priority 3)
-            /skills/users/{user_id}/agents/{agent_id}/ - Agent-specific skills (priority 4)
+        Structure (new namespace convention):
+            /skill/                                            - System-wide skills (priority 1)
+            /tenant:<tenant_id>/skill/                         - Tenant shared skills (priority 2)
+            /tenant:<tenant_id>/user:<user_id>/skill/          - User personal skills (priority 3)
+
+        Legacy paths (for backward compatibility):
+            /skills/tenants/{tenant_id}/                        - Old tenant path
+            /skills/users/{user_id}/                            - Old user path
 
         Args:
             context: Operation context with user_id, tenant_id, agent_id
@@ -82,19 +84,19 @@ class SkillRegistry:
         Returns:
             Dict mapping tier name to path (only tiers available for this context)
         """
-        paths = {"system": "/skills/system/"}
+        paths = {"system": "/skill/"}
 
         if context:
-            if context.tenant_id:
-                paths["tenant"] = f"/skills/tenants/{context.tenant_id}/"
+            tenant_id = context.tenant_id or "default"
+
+            # Tenant-level skills: /tenant:<tid>/skill/
+            paths["tenant"] = f"/tenant:{tenant_id}/skill/"
 
             # Check user_id first (v0.5.0+), then fall back to user (legacy field)
             user_id = context.user_id or getattr(context, "user", None)
             if user_id:
-                paths["user"] = f"/skills/users/{user_id}/"
-
-                if context.agent_id:
-                    paths["agent"] = f"/skills/users/{user_id}/agents/{context.agent_id}/"
+                # Personal skills: /tenant:<tid>/user:<uid>/skill/
+                paths["personal"] = f"/tenant:{tenant_id}/user:{user_id}/skill/"
 
         return paths
 
@@ -209,6 +211,7 @@ class SkillRegistry:
                         for f in files_list
                         if isinstance(f, str) and Path(f).name.upper() == "SKILL.MD"
                     ]
+                    logger.debug(f"Found {len(skill_files)} SKILL.md files in {tier_path}")
                 except Exception as e:
                     # Directory doesn't exist or can't be listed
                     logger.debug(f"Tier path does not exist or cannot be listed: {tier_path} ({e})")
@@ -226,6 +229,7 @@ class SkillRegistry:
                         for f in str_files
                         if isinstance(f, str) and Path(f).name.upper() == "SKILL.MD"
                     ]
+                    logger.debug(f"Found {len(skill_files)} SKILL.md files in {tier_path}")
                 except Exception as e:
                     logger.error(f"Failed to list tier directory {tier_path}: {e}")
                     return 0
@@ -276,7 +280,12 @@ class SkillRegistry:
                 self._tier_index[tier].append(metadata.name)
                 count += 1
 
-                logger.debug(f"Discovered skill '{metadata.name}' from {tier}: {skill_file}")
+                logger.warning(
+                    f"SkillRegistry: Discovered skill '{metadata.name}' from tier '{tier}' at {skill_file}"
+                )
+                logger.warning(
+                    f"SkillRegistry: Skill metadata.tier={metadata.tier}, indexed under _tier_index['{tier}']"
+                )
 
             except SkillParseError as e:
                 logger.warning(f"Failed to parse skill {skill_file}: {e}")

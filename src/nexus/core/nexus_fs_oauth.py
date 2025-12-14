@@ -25,6 +25,7 @@ import logging
 import secrets
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.context_utils import get_database_url, get_tenant_id
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
@@ -67,28 +68,8 @@ class NexusFSOAuthMixin:
         if not hasattr(self, "_token_manager") or self._token_manager is None:
             from nexus.server.auth.token_manager import TokenManager
 
-            # Priority: config.db_path > self.db_path > metadata.database_url
-            db_path = None
-
-            # First, try to get db_path from config (preferred)
-            if (
-                hasattr(self, "_config")
-                and self._config
-                and hasattr(self._config, "db_path")
-                and self._config.db_path
-            ):
-                db_path = self._config.db_path
-            # Second, try self.db_path (stored during initialization)
-            elif hasattr(self, "db_path") and self.db_path:
-                db_path = str(self.db_path)
-            # Fallback to metadata store database URL
-            elif hasattr(self, "metadata") and hasattr(self.metadata, "database_url"):
-                db_path = self.metadata.database_url
-
-            if not db_path:
-                raise RuntimeError(
-                    "Cannot initialize TokenManager: No database path configured in NexusFS config, db_path, or metadata store"
-                )
+            # Use centralized database URL resolution
+            db_path = get_database_url(self)
 
             # TokenManager accepts db_url for any database type, or db_path for SQLite
             if db_path.startswith(("postgresql://", "mysql://", "sqlite://")):
@@ -335,9 +316,7 @@ class NexusFSOAuthMixin:
 
         # Store credential
         token_manager = self._get_token_manager()
-        tenant_id = (
-            context.tenant_id if context and hasattr(context, "tenant_id") else None
-        ) or "default"
+        tenant_id = get_tenant_id(context)
 
         # Extract user_id from context (Nexus user identity)
         # This may differ from user_email (OAuth provider email)
@@ -540,9 +519,7 @@ class NexusFSOAuthMixin:
         """
         token_manager = self._get_token_manager()
         # Default to 'default' tenant if not specified to match mount configurations
-        tenant_id = (
-            context.tenant_id if context and hasattr(context, "tenant_id") else None
-        ) or "default"
+        tenant_id = get_tenant_id(context)
 
         # Extract current user's identity from context
         # Use user_id (preferred) or user (legacy) from context
@@ -609,9 +586,7 @@ class NexusFSOAuthMixin:
         """
         token_manager = self._get_token_manager()
         # Default to 'default' tenant if not specified to match mount configurations
-        tenant_id = (
-            context.tenant_id if context and hasattr(context, "tenant_id") else None
-        ) or "default"
+        tenant_id = get_tenant_id(context)
 
         # Extract current user's identity from context
         current_user_id = None
@@ -692,9 +667,7 @@ class NexusFSOAuthMixin:
         """
         token_manager = self._get_token_manager()
         # Default to 'default' tenant if not specified to match mount configurations
-        tenant_id = (
-            context.tenant_id if context and hasattr(context, "tenant_id") else None
-        ) or "default"
+        tenant_id = get_tenant_id(context)
 
         # Extract current user's identity from context
         current_user_id = None

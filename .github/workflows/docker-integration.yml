@@ -620,6 +620,27 @@ jobs:
 
           echo "🎉 User permission grant test completed successfully!"
 
+      - name: Agent Permission Integration Test
+        run: |
+          echo "🤖 Running agent permission integration test..."
+          echo ""
+
+          # Make script executable
+          chmod +x scripts/test_agent_permissions.sh
+
+          # Run the test script
+          # Note: The script expects the server to be running on localhost:8080
+          # and will use the default admin API key from local-dev.env
+          cd "${{ github.workspace }}"
+          ./scripts/test_agent_permissions.sh
+
+          if [ $? -eq 0 ]; then
+            echo "✅ Agent permission integration test completed successfully!"
+          else
+            echo "❌ Agent permission integration test failed"
+            exit 1
+          fi
+
       - name: Agent Permission Management Test
         run: |
           echo "🤖 Testing agent permission management..."

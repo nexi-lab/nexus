@@ -114,6 +114,7 @@ class DockerSandboxProvider(SandboxProvider):
                         "Cannot connect to Docker. Make sure Docker is running.\n"
                         "For Colima users: Try 'colima start'"
                     ) from e
+
         self.default_image = default_image
         self.cleanup_interval = cleanup_interval
         self.auto_pull = auto_pull
@@ -121,14 +122,11 @@ class DockerSandboxProvider(SandboxProvider):
         self.cpu_limit = cpu_limit
         self.docker_config = docker_config
 
-        # Read Docker network from env var if not provided
+        # Initialize network name (optional - only required for Docker Compose)
         import os
 
         self.network_name = network_name or os.environ.get("NEXUS_DOCKER_NETWORK")
-        if not self.network_name:
-            raise RuntimeError(
-                "NEXUS_DOCKER_NETWORK environment variable must be set for Docker Compose deployments"
-            )
+        # Note: network_name is optional - if not set, containers will use default bridge network
 
         # Cache for active containers
         self._containers: dict[str, ContainerInfo] = {}
@@ -814,7 +812,9 @@ class DockerSandboxProvider(SandboxProvider):
             mem_limit=self.memory_limit,
             cpu_quota=int(self.cpu_limit * 100000),
             cpu_period=100000,
-            network_mode=self.network_name,
+            network_mode=self.network_name
+            if self.network_name
+            else None,  # Only set if network_name is provided
             remove=False,  # Don't auto-remove, we'll handle cleanup
         )
 

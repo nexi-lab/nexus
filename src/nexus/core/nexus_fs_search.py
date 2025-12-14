@@ -111,7 +111,7 @@ class NexusFSSearchMixin:
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.warning(
+        logger.debug(
             f"[LIST-DEBUG-START] list() called with path={path}, recursive={recursive}, details={details}"
         )
 
@@ -124,10 +124,10 @@ class NexusFSSearchMixin:
         # Check if path routes to a dynamic API-backed connector (e.g., x_connector)
         # These connectors have virtual directories that don't exist in metadata
         if path and path != "/":
-            logger.warning(f"[LIST-DEBUG] Entering dynamic connector check for path={path}")
+            logger.debug(f"[LIST-DEBUG] Entering dynamic connector check for path={path}")
             try:
                 tenant_id, agent_id, is_admin = self._get_routing_params(context)
-                logger.warning(
+                logger.debug(
                     f"[LIST-DEBUG] routing_params: tenant_id={tenant_id}, is_admin={is_admin}"
                 )
                 route = self.router.route(
@@ -466,7 +466,7 @@ class NexusFSSearchMixin:
             # Combine and sort
             all_results = file_results + dir_results
             all_results.sort(key=lambda x: str(x["path"]))
-            logger.warning(
+            logger.debug(
                 f"[LIST-DEBUG] Returning {len(all_results)} results (details=True), path={path}, recursive={recursive}"
             )
             return all_results
@@ -475,7 +475,7 @@ class NexusFSSearchMixin:
             file_paths = [meta.path for meta in results if meta.mime_type != "inode/directory"]
             all_paths = file_paths + sorted(directories)
             all_paths.sort()
-            logger.warning(
+            logger.debug(
                 f"[LIST-DEBUG] Returning {len(all_paths)} paths (details=False), path={path}, recursive={recursive}, file_paths={len(file_paths)}, directories={len(directories)}"
             )
             return all_paths

@@ -485,10 +485,10 @@ class SkillManager:
         self,
         source_name: str,
         target_name: str,
-        tier: str = "agent",
+        tier: str = "user",
         author: str | None = None,
         creator_id: str | None = None,
-        creator_type: str = "agent",
+        creator_type: str = "user",
         tenant_id: str | None = None,
     ) -> str:
         """Fork an existing skill with lineage tracking.

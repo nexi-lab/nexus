@@ -141,7 +141,7 @@ class WorkspaceRegistry:
         from nexus.storage.models import MemoryConfigModel, WorkspaceConfigModel
 
         with self.metadata.SessionLocal() as session:
-            # Load workspaces
+            # Load workspaces - merge with existing cache (don't clear it)
             workspaces = session.query(WorkspaceConfigModel).all()
             for ws in workspaces:
                 metadata_dict = json.loads(ws.extra_metadata) if ws.extra_metadata else {}
@@ -154,7 +154,7 @@ class WorkspaceRegistry:
                     metadata=metadata_dict,
                 )
 
-            # Load memories
+            # Load memories - merge with existing cache (don't clear it)
             memories = session.query(MemoryConfigModel).all()
             for mem in memories:
                 if mem.path is None:
@@ -374,6 +374,9 @@ class WorkspaceRegistry:
         Returns:
             List of WorkspaceConfig objects
         """
+        # Reload from database to ensure we have the latest workspaces
+        # This handles the case where workspaces are registered after the server starts
+        self._load_from_db()
         return list(self._workspaces.values())
 
     # === Memory Management ===

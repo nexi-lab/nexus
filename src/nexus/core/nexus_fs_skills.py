@@ -22,10 +22,13 @@ This module contains skills management operations exposed via RPC:
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.exceptions import ValidationError
 from nexus.core.rpc_decorator import rpc_expose
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -729,15 +732,15 @@ class NexusFSSkillsMixin:
 
         Args:
             zip_data: Base64 encoded ZIP file bytes
-            tier: Target tier (user/system)
+            tier: Target tier (personal/tenant/system)
             allow_overwrite: Allow overwriting existing skills
             context: Operation context with user_id, tenant_id
 
         Returns:
             {
                 "imported_skills": ["skill-name"],
-                "skill_paths": ["/skills/users/{user_id}/skill-name/"],
-                "tier": "user"
+                "skill_paths": ["/tenant:<tid>/user:<uid>/skill/<skill_name>/"],
+                "tier": "personal"
             }
 
         Raises:
@@ -749,7 +752,7 @@ class NexusFSSkillsMixin:
         from nexus.core.nexus_fs import NexusFilesystem
         from nexus.skills.importer import SkillImporter
 
-        # Permission check: system tier requires admin
+        # Permission check: system tier requires admin (users cannot add system skills)
         if tier == "system" and context and not getattr(context, "is_admin", False):
             from nexus.core.exceptions import PermissionDeniedError
 

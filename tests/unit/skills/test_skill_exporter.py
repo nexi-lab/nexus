@@ -98,12 +98,12 @@ async def test_export_skill_to_bytes() -> None:
     """Test exporting a skill to bytes."""
     fs = MockFilesystem(
         {
-            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/user/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
     zip_bytes = await exporter.export_skill("simple-skill", output_path=None, format="generic")
@@ -123,12 +123,12 @@ async def test_export_skill_to_file() -> None:
     """Test exporting a skill to a file."""
     fs = MockFilesystem(
         {
-            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/user/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
 
@@ -152,13 +152,13 @@ async def test_export_skill_with_dependencies() -> None:
     """Test exporting a skill with its dependencies."""
     fs = MockFilesystem(
         {
-            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
-            "/skills/agent/complex-skill/SKILL.md": SKILL_WITH_DEPS,
+            "/skills/user/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/user/complex-skill/SKILL.md": SKILL_WITH_DEPS,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
     zip_bytes = await exporter.export_skill(
@@ -178,13 +178,13 @@ async def test_export_skill_without_dependencies() -> None:
     """Test exporting a skill without its dependencies."""
     fs = MockFilesystem(
         {
-            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
-            "/skills/agent/complex-skill/SKILL.md": SKILL_WITH_DEPS,
+            "/skills/user/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/user/complex-skill/SKILL.md": SKILL_WITH_DEPS,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
     zip_bytes = await exporter.export_skill(
@@ -204,12 +204,12 @@ async def test_export_manifest_content() -> None:
     """Test that manifest.json contains correct information."""
     fs = MockFilesystem(
         {
-            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/user/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
     zip_bytes = await exporter.export_skill("simple-skill", format="claude")
@@ -242,12 +242,12 @@ async def test_export_invalid_format() -> None:
     """Test that exporting with invalid format raises error."""
     fs = MockFilesystem(
         {
-            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/user/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
 
@@ -268,12 +268,12 @@ description: A very large skill
 
     fs = MockFilesystem(
         {
-            "/skills/agent/large-skill/SKILL.md": large_content,
+            "/skills/user/large-skill/SKILL.md": large_content,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
 
@@ -294,12 +294,12 @@ description: A very large skill
 
     fs = MockFilesystem(
         {
-            "/skills/agent/large-skill/SKILL.md": large_content,
+            "/skills/user/large-skill/SKILL.md": large_content,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
 
@@ -313,12 +313,12 @@ async def test_validate_export() -> None:
     """Test validating export without creating package."""
     fs = MockFilesystem(
         {
-            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/user/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
 
@@ -342,12 +342,12 @@ description: A very large skill
 
     fs = MockFilesystem(
         {
-            "/skills/agent/large-skill/SKILL.md": large_content,
+            "/skills/user/large-skill/SKILL.md": large_content,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
 
@@ -364,12 +364,12 @@ async def test_import_skill() -> None:
     # Create a skill package
     fs = MockFilesystem(
         {
-            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/user/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
 
@@ -381,7 +381,7 @@ async def test_import_skill() -> None:
         # Import to a different directory
         import_dir = Path(tmpdir) / "imported"
         imported = await exporter.import_skill(
-            str(export_path), tier="agent", output_dir=str(import_dir)
+            str(export_path), tier="user", output_dir=str(import_dir)
         )
 
         assert "simple-skill" in imported
@@ -393,12 +393,12 @@ async def test_import_skill_from_bytes() -> None:
     """Test importing skills from bytes (file-like object)."""
     fs = MockFilesystem(
         {
-            "/skills/agent/simple-skill/SKILL.md": SKILL_SIMPLE,
+            "/skills/user/simple-skill/SKILL.md": SKILL_SIMPLE,
         }
     )
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
 
@@ -409,7 +409,7 @@ async def test_import_skill_from_bytes() -> None:
         # Import from bytes
         import_dir = Path(tmpdir) / "imported"
         zip_buffer = io.BytesIO(zip_bytes)
-        imported = await exporter.import_skill(zip_buffer, tier="agent", output_dir=str(import_dir))
+        imported = await exporter.import_skill(zip_buffer, tier="user", output_dir=str(import_dir))
 
         assert "simple-skill" in imported
         assert (import_dir / "simple-skill" / "SKILL.md").exists()

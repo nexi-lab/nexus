@@ -87,7 +87,7 @@ def make_rpc_call(
             print(f"❌ RPC Error: {result['error']}")
             sys.exit(1)
 
-        return result
+        return dict(result)  # type: ignore[arg-type]
     except requests.exceptions.RequestException as e:
         print(f"❌ Request failed: {e}")
         sys.exit(1)
@@ -390,8 +390,32 @@ def test_agent_with_api_key(base_url: str, api_key: str) -> None:
 
     # Step 3: Test agent API key access - should only see agent config directory
     print("Step 3: Testing agent API key access (should only see agent config directory)...")
-    agent_dir = f"/agent/admin/{agent_name}"
+    # Agent directory uses the new namespace: /tenant:{tenant_id}/user:{user_id}/agent/{agent_name}
+    agent_dir = f"/tenant:default/user:admin/agent/{agent_name}"
 
+    # First, check if agent can see its own directory
+    list_agent_dir_params = {
+        "path": agent_dir,
+        "recursive": False,
+        "details": True,
+    }
+
+    list_agent_dir_result = make_rpc_call(
+        base_url=base_url,
+        method="list",
+        params=list_agent_dir_params,
+        api_key=agent_api_key,
+        request_id=94,
+    )
+
+    agent_dir_files = list_agent_dir_result.get("result", {}).get("files", [])
+    if len(agent_dir_files) > 0:
+        print(f"   ✅ Agent can access its own directory: {agent_dir}")
+        print(f"   Found {len(agent_dir_files)} item(s) in agent directory")
+    else:
+        print(f"   ⚠️  Agent directory appears empty or inaccessible: {agent_dir}")
+
+    # Also check root to see what the agent can see
     list_params = {
         "path": "/",
         "recursive": False,
@@ -407,30 +431,25 @@ def test_agent_with_api_key(base_url: str, api_key: str) -> None:
     )
 
     files = list_result.get("result", {}).get("files", [])
-    print(f"   Agent can see {len(files)} item(s) at root:")
-
-    # Check that only agent directory is visible
     visible_paths = [f.get("path") for f in files]
+    print(f"   Agent can see {len(files)} item(s) at root:")
     print(f"   Visible paths: {visible_paths}")
 
-    # Should only see /agent directory (or the specific agent directory)
-    if len(files) == 0:
-        print("❌ ERROR: Agent cannot see any files (should at least see /agent)")
+    # Agent should be able to see /tenant:default (its tenant)
+    # and should be able to access its own agent directory
+    has_tenant_access = "/tenant:default" in visible_paths
+    has_agent_dir_access = len(agent_dir_files) > 0
+
+    if not has_tenant_access and not has_agent_dir_access:
+        print("❌ ERROR: Agent cannot see its tenant or access its own directory")
+        print(f"   Visible paths at root: {visible_paths}")
+        print(f"   Agent directory: {agent_dir}")
         sys.exit(1)
 
-    # Check if agent can see /agent or the specific agent directory
-    has_agent_access = False
-    for file_info in files:
-        path = file_info.get("path", "")
-        if path == "/agent" or path == agent_dir or path.startswith("/agent/"):
-            has_agent_access = True
-            print(f"   ✅ Agent can access: {path}")
-            break
-
-    if not has_agent_access:
-        print(f"❌ ERROR: Agent cannot see /agent directory or {agent_dir}")
-        print(f"   Visible paths: {visible_paths}")
-        sys.exit(1)
+    if has_tenant_access:
+        print("   ✅ Agent can see tenant: /tenant:default")
+    if has_agent_dir_access:
+        print(f"   ✅ Agent can access its own directory: {agent_dir}")
 
     # Verify agent cannot see other directories (workspace, memory, etc.)
     restricted_paths = ["/workspace", "/memory", "/resources", "/skills", "/connectors"]
@@ -650,14 +669,15 @@ def test_agent_with_api_key_and_inheritance(base_url: str, api_key: str) -> None
         print("❌ ERROR: Agent cannot see any files")
         sys.exit(1)
 
-    # Verify agent can see agent directory
-    has_agent_access = any(
-        f.get("path") == "/agent" or f.get("path").startswith("/agent/") for f in files
+    # Verify agent can see tenant (full permissions should allow access)
+    has_tenant_access = any(
+        f.get("path") == "/tenant:default" or f.get("path").startswith("/tenant:default/")
+        for f in files
     )
-    if not has_agent_access:
-        print("❌ ERROR: Agent cannot see /agent directory")
+    if not has_tenant_access:
+        print("❌ ERROR: Agent cannot see /tenant:default (should have full access)")
         sys.exit(1)
-    print("   ✅ Agent can access: /agent")
+    print("   ✅ Agent can access: /tenant:default")
 
     # Verify agent can see workspace (full permissions)
     has_workspace_access = any(
@@ -925,11 +945,30 @@ def test_agent_with_granular_permissions(base_url: str, api_key: str) -> None:
     root_paths = [f.get("path") for f in root_files]
     print(f"   Agent can see {len(root_files)} item(s) at root: {root_paths}")
 
-    # Should see /agent directory
-    if "/agent" not in root_paths:
-        print("   ❌ ERROR: Agent cannot see /agent directory")
+    # Should see /tenant:default (agent's tenant) or its own agent directory
+    agent_dir = f"/tenant:default/user:admin/agent/{agent_name}"
+    has_tenant_access = "/tenant:default" in root_paths
+
+    # Also check if agent can access its own directory
+    list_agent_dir_result = make_rpc_call(
+        base_url=base_url,
+        method="list",
+        params={"path": agent_dir, "recursive": False, "details": True},
+        api_key=agent_api_key,
+        request_id=96,
+    )
+    agent_dir_files = list_agent_dir_result.get("result", {}).get("files", [])
+    has_agent_dir_access = len(agent_dir_files) > 0
+
+    if not has_tenant_access and not has_agent_dir_access:
+        print(
+            f"   ❌ ERROR: Agent cannot see /tenant:default or access its own directory {agent_dir}"
+        )
         sys.exit(1)
-    print("   ✅ Agent can access: /agent")
+    if has_tenant_access:
+        print("   ✅ Agent can access: /tenant:default")
+    if has_agent_dir_access:
+        print(f"   ✅ Agent can access its own directory: {agent_dir}")
 
     # Test access to granted skill
     print(f"   Testing access to {skill_path}...")

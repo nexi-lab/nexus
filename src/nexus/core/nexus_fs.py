@@ -3022,7 +3022,7 @@ class NexusFS(
         if owner_key and owner_key.expires_at:
             # Use owner's key expiration as maximum
             now = datetime.now(UTC)
-            owner_expires = owner_key.expires_at
+            owner_expires: datetime = owner_key.expires_at
             if owner_expires.tzinfo is None:
                 owner_expires = owner_expires.replace(tzinfo=UTC)
 

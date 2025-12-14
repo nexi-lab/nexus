@@ -19,12 +19,12 @@ script_dir = Path(__file__).parent
 src_dir = script_dir.parent / "src"
 sys.path.insert(0, str(src_dir))
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, select  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
 
-from nexus.core.entity_registry import EntityRegistry
-from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-from nexus.storage.models import APIKeyModel
+from nexus.core.entity_registry import EntityRegistry  # noqa: E402
+from nexus.server.auth.database_key import DatabaseAPIKeyAuth  # noqa: E402
+from nexus.storage.models import APIKeyModel  # noqa: E402
 
 
 def setup_admin_api_key(

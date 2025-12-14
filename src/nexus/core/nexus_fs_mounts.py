@@ -275,7 +275,7 @@ class NexusFSMountsMixin:
                 database_url = get_database_url(self)
                 backend_config = {**backend_config, "token_manager_db": database_url}
             except RuntimeError as e:
-                raise RuntimeError(f"Cannot create {backend_type} mount: {e}")
+                raise RuntimeError(f"Cannot create {backend_type} mount: {e}") from e
 
         # Import backend classes dynamically
         backend: Backend
@@ -742,7 +742,7 @@ class NexusFSMountsMixin:
                 database_url = get_database_url(self)
                 backend_config["token_manager_db"] = database_url
             except RuntimeError as e:
-                raise RuntimeError(f"Cannot load {backend_type} mount: {e}")
+                raise RuntimeError(f"Cannot load {backend_type} mount: {e}") from e
 
         # Activate the mount
         return self.add_mount(

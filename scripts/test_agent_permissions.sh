@@ -124,74 +124,36 @@ echo -e "${BLUE}  Creating API key for agent...${NC}"
 # Generate a unique API key
 TEST_AGENT_API_KEY="sk-test_agent_$(openssl rand -hex 16)"
 
-# Use the database to create the API key
-# Determine Python interpreter (prefer venv)
-if [ -f "${PROJECT_DIR}/.venv/bin/python" ]; then
-    PYTHON="${PROJECT_DIR}/.venv/bin/python"
-elif command -v uv >/dev/null 2>&1; then
-    PYTHON="uv run python"
+# Get database URL
+DATABASE_URL="${NEXUS_DATABASE_URL:-${POSTGRES_URL}}"
+
+# Use the standalone script to create the API key
+# Prefer uv run for CI compatibility
+if command -v uv >/dev/null 2>&1; then
+    uv run python "${SCRIPT_DIR}/create_test_agent_key.py" \
+        "$DATABASE_URL" \
+        "$TEST_AGENT_API_KEY" \
+        "$TEST_AGENT_ID" \
+        "$USER_ID" \
+        "$TENANT_ID" \
+        "$TEST_AGENT_NAME"
+elif [ -f "${PROJECT_DIR}/.venv/bin/python" ]; then
+    "${PROJECT_DIR}/.venv/bin/python" "${SCRIPT_DIR}/create_test_agent_key.py" \
+        "$DATABASE_URL" \
+        "$TEST_AGENT_API_KEY" \
+        "$TEST_AGENT_ID" \
+        "$USER_ID" \
+        "$TENANT_ID" \
+        "$TEST_AGENT_NAME"
 else
-    PYTHON="python3"
+    python3 "${SCRIPT_DIR}/create_test_agent_key.py" \
+        "$DATABASE_URL" \
+        "$TEST_AGENT_API_KEY" \
+        "$TEST_AGENT_ID" \
+        "$USER_ID" \
+        "$TENANT_ID" \
+        "$TEST_AGENT_NAME"
 fi
-
-$PYTHON -c "
-import os
-import sys
-from pathlib import Path
-from datetime import datetime, UTC
-
-# Add src to path for imports
-script_dir = Path('${SCRIPT_DIR}')
-src_dir = script_dir.parent / 'src'
-sys.path.insert(0, str(src_dir))
-
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-from nexus.storage.models import APIKeyModel
-
-database_url = os.getenv('NEXUS_DATABASE_URL', '${POSTGRES_URL}')
-engine = create_engine(database_url)
-SessionFactory = sessionmaker(bind=engine)
-
-# Create API key
-with SessionFactory() as session:
-    key_hash = DatabaseAPIKeyAuth._hash_key('${TEST_AGENT_API_KEY}')
-
-    # Check if key already exists for this agent
-    existing = session.execute(
-        select(APIKeyModel).where(
-            APIKeyModel.subject_type == 'agent',
-            APIKeyModel.subject_id == '${TEST_AGENT_ID}',
-            APIKeyModel.tenant_id == '${TENANT_ID}'
-        )
-    ).scalar_one_or_none()
-
-    if existing:
-        print('Updating existing API key', file=sys.stderr)
-        existing.key_hash = key_hash
-    else:
-        print('Creating new API key', file=sys.stderr)
-        api_key = APIKeyModel(
-            key_hash=key_hash,
-            user_id='${USER_ID}',
-            subject_type='agent',
-            subject_id='${TEST_AGENT_ID}',
-            tenant_id='${TENANT_ID}',
-            is_admin=0,
-            name='${TEST_AGENT_NAME} Test Key',
-            created_at=datetime.now(UTC),
-            expires_at=None,
-            revoked=0,
-            revoked_at=None,
-            last_used_at=None,
-            inherit_permissions=0,
-        )
-        session.add(api_key)
-
-    session.commit()
-    print('${TEST_AGENT_API_KEY}')
-"
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✓ API key created for ${TEST_AGENT_NAME}${NC}"

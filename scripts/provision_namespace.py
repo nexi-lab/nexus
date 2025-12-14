@@ -327,9 +327,7 @@ def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
             if not skill_creator_path:
                 # Try to find it by checking all keys (maybe the name is slightly different)
                 matching_keys = [
-                    k
-                    for k in skill_paths_map.keys()
-                    if "skill" in k.lower() and "creator" in k.lower()
+                    k for k in skill_paths_map if "skill" in k.lower() and "creator" in k.lower()
                 ]
                 if matching_keys:
                     skill_creator_path = skill_paths_map[matching_keys[0]]
@@ -455,7 +453,7 @@ def provision_default_skills(
             skill_paths = result.get("skill_paths", [])
 
             # Map skill names to their paths
-            for skill_name, skill_path in zip(imported_skills, skill_paths):
+            for skill_name, skill_path in zip(imported_skills, skill_paths, strict=True):
                 skill_paths_map[skill_name] = skill_path
                 print(f"  ✓ Successfully imported skill '{skill_name}' to {skill_path}")
 
@@ -696,10 +694,7 @@ def main() -> None:
     print("=" * 60 + "\n")
 
     # Connect to Nexus
-    if args.config:
-        nx = nexus.connect(config=args.config)
-    else:
-        nx = nexus.connect()
+    nx = nexus.connect(config=args.config) if args.config else nexus.connect()
 
     try:
         # Provision resources

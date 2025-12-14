@@ -72,7 +72,7 @@ def get_user_identity(context: Any) -> tuple[str, str | None]:
     return (subject_type, subject_id)
 
 
-def get_database_url(obj: Any, context: Any = None) -> str:
+def get_database_url(obj: Any, context: Any = None) -> str:  # noqa: ARG001
     """
     Get database URL with standard priority resolution.
 

@@ -25,7 +25,7 @@ from nexus.storage.models import APIKeyModel, Base
 script_dir = Path(__file__).parent.parent.parent.parent / "scripts"
 sys.path.insert(0, str(script_dir))
 
-from setup_admin_api_key import setup_admin_api_key
+from setup_admin_api_key import setup_admin_api_key  # noqa: E402
 
 
 @pytest.fixture

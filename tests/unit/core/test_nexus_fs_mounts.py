@@ -13,6 +13,7 @@ Tests cover mount management operations:
 
 from __future__ import annotations
 
+import contextlib
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -713,16 +714,12 @@ class TestMountContextUtilsIntegration:
             mock_get_db_url.return_value = str(temp_dir / "token_manager.db")
 
             # This should use get_database_url for gdrive_connector
-            try:
+            with contextlib.suppress(Exception):
                 nx.add_mount(
                     mount_point="/mnt/gdrive",
                     backend_type="gdrive_connector",
                     backend_config={},
                 )
-            except Exception:
-                # May fail due to missing OAuth config, but we just want to verify
-                # that get_database_url was called
-                pass
 
             # Verify get_database_url was called
             mock_get_db_url.assert_called()

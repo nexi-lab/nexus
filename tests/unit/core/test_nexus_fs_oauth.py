@@ -1047,7 +1047,7 @@ class TestNexusFSOAuthMixin:
             mock_tm = Mock()
             MockTM.return_value = mock_tm
 
-            manager = mixin._get_token_manager()
+            mixin._get_token_manager()
 
             # Should use env var
             MockTM.assert_called_once_with(db_url="postgresql://localhost/env")

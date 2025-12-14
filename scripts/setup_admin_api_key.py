@@ -112,7 +112,7 @@ def setup_admin_api_key(
         return False
 
 
-def main():
+def main() -> None:
     """Main entry point for CLI usage."""
     if len(sys.argv) < 3:
         print(

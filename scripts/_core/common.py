@@ -11,11 +11,11 @@ from typing import Any
 
 def safe_operation(
     operation_name: str,
-    operation_fn: Callable,
-    *args,
+    operation_fn: Callable[..., Any],
+    *args: Any,
     on_success: Callable[[Any], None] | None = None,
     on_error: Callable[[Exception], None] | None = None,
-    **kwargs,
+    **kwargs: Any,
 ) -> Any | None:
     """
     Execute an operation with consistent error handling and output.

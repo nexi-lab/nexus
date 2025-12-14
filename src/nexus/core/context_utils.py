@@ -32,7 +32,7 @@ def get_tenant_id(context: Any) -> str:
         'default'
     """
     if context and hasattr(context, "tenant_id") and context.tenant_id:
-        return context.tenant_id
+        return str(context.tenant_id)
     return "default"
 
 

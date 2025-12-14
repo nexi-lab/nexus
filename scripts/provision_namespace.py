@@ -12,6 +12,7 @@ import os
 import re
 import uuid
 from pathlib import Path
+from typing import Any
 
 from _core.agent_manager import create_standard_agents, grant_agent_resource_access
 
@@ -69,7 +70,7 @@ def user_path(tenant_id: str, user_id: str, resource_type: str, resource_id: str
     return f"/tenant:{tenant_id}/user:{user_id}/{resource_type}/{resource_id}"
 
 
-def provision_system_resources(nx):
+def provision_system_resources(nx: Any) -> None:
     """Create system-wide resources."""
     # Create system context for provisioning
     # Note: Using admin user context as system context may not be fully supported
@@ -120,7 +121,7 @@ def provision_system_resources(nx):
         print(f"  ✗ Failed to create system skill: {e}")
 
 
-def provision_tenant_resources(nx, tenant_id: str):
+def provision_tenant_resources(nx: Any, tenant_id: str) -> None:
     """Create tenant-wide resources."""
     # Create admin context for provisioning
     context = OperationContext(
@@ -161,7 +162,7 @@ def provision_tenant_resources(nx, tenant_id: str):
         print(f"  ✗ Failed to create tenant connector: {e}")
 
 
-def provision_admin_user_folders(nx, tenant_id: str):
+def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
     """Create folder structure for admin user with proper permissions."""
     print(f"Creating admin user folders for {tenant_id}/admin...")
 
@@ -394,7 +395,7 @@ def provision_admin_user_folders(nx, tenant_id: str):
 
 
 def provision_default_skills(
-    nx, tenant_id: str, user_id: str, context: OperationContext
+    nx: Any, tenant_id: str, user_id: str, context: OperationContext
 ) -> dict[str, str]:
     """Import default skills from pre-zipped .skill files in data/skills/.
 
@@ -598,7 +599,7 @@ def ensure_admin_api_key(tenant_id: str = "default", env_file: str = ".env") -> 
             return None
 
 
-def provision_user_resources(nx, tenant_id: str, user_id: str):
+def provision_user_resources(nx: Any, tenant_id: str, user_id: str) -> None:
     """Create user-owned resources."""
     print(f"Creating user resources for {tenant_id}/{user_id}...")
 
@@ -672,7 +673,7 @@ def provision_user_resources(nx, tenant_id: str, user_id: str):
         )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Provision Nexus with namespace convention")
     parser.add_argument("--tenant", default="default", help="Tenant ID (default: default)")
     parser.add_argument("--user", help="User ID (optional, for user resources)")

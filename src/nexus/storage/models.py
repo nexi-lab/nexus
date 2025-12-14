@@ -1264,6 +1264,13 @@ class APIKeyModel(Base):
     tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     is_admin: Mapped[int] = mapped_column(Integer, default=0)  # SQLite: bool as Integer
 
+    # Permission inheritance (v0.5.1)
+    inherit_permissions: Mapped[int] = mapped_column(
+        Integer,
+        default=0,  # Default: NO inheritance for new keys (principle of least privilege)
+        nullable=False,
+    )
+
     # Metadata
     name: Mapped[str] = mapped_column(String(255), nullable=False)  # Human-readable name
 

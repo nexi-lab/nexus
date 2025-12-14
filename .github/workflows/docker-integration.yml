@@ -620,6 +620,33 @@ jobs:
 
           echo "🎉 User permission grant test completed successfully!"
 
+      - name: Agent Permission Management Test
+        run: |
+          echo "🤖 Testing agent permission management..."
+          echo ""
+
+          # Use known dummy API key (set in .env) for admin
+          ADMIN_API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          echo "Using admin API key: ${ADMIN_API_KEY:0:20}..."
+          echo ""
+
+          # Install required Python packages if not already available
+          python3 -m pip install requests --quiet || true
+
+          # Run the agent permission management test script
+          echo "📋 Running agent permission management test script..."
+          python3 scripts/test_agent_permission_management.py \
+            --api-key "$ADMIN_API_KEY" \
+            --base-url http://localhost:8080 \
+            --cleanup-old-agents
+
+          if [ $? -eq 0 ]; then
+            echo "✅ Agent permission management test completed successfully!"
+          else
+            echo "❌ Agent permission management test failed"
+            exit 1
+          fi
+
       - name: Authenticate gcloud with service account
         run: |
           echo "🔐 Authenticating gcloud with service account..."

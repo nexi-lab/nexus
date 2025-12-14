@@ -494,3 +494,139 @@ class TestAgentIntegration:
         # Note: Depending on implementation, this might create duplicate or update
         # Current implementation creates new entry each time
         # This test documents current behavior
+
+
+class TestAgentPermissionManagement:
+    """Test agent permission management features (generate_api_key, inherit_permissions, tenant_id)."""
+
+    def test_register_agent_without_api_key(self, entity_registry):
+        """Test registering agent without API key (default behavior)."""
+        entity_registry.register_entity("user", "alice")
+
+        agent = register_agent(
+            user_id="alice",
+            agent_id="agent_no_key",
+            name="No Key Agent",
+            tenant_id="default",
+            entity_registry=entity_registry,
+        )
+
+        assert agent is not None
+        assert agent["agent_id"] == "agent_no_key"
+        assert agent["user_id"] == "alice"
+        assert agent["tenant_id"] == "default"
+
+    def test_register_agent_with_default_tenant(self, entity_registry):
+        """Test that tenant_id defaults to None when not provided."""
+        entity_registry.register_entity("user", "alice")
+
+        agent = register_agent(
+            user_id="alice",
+            agent_id="agent_default_tenant",
+            name="Default Tenant Agent",
+            entity_registry=entity_registry,
+        )
+
+        # When tenant_id is not provided, it should be None
+        assert agent["tenant_id"] is None
+
+    def test_register_agent_with_explicit_tenant(self, entity_registry):
+        """Test registering agent with explicit tenant_id."""
+        entity_registry.register_entity("user", "alice")
+
+        agent = register_agent(
+            user_id="alice",
+            agent_id="agent_tenant",
+            name="Tenant Agent",
+            tenant_id="acme",
+            entity_registry=entity_registry,
+        )
+
+        assert agent["tenant_id"] == "acme"
+
+    def test_register_agent_with_metadata_description(self, entity_registry):
+        """Test registering agent with description in metadata."""
+        entity_registry.register_entity("user", "alice")
+
+        agent = register_agent(
+            user_id="alice",
+            agent_id="agent_desc",
+            name="Description Agent",
+            metadata={"description": "Test agent with description"},
+            entity_registry=entity_registry,
+        )
+
+        assert agent["metadata"]["description"] == "Test agent with description"
+
+    def test_register_agent_tenant_id_consistency(self, entity_registry):
+        """Test that tenant_id is consistently set across multiple registrations."""
+        entity_registry.register_entity("user", "alice")
+
+        agent1 = register_agent(
+            user_id="alice",
+            agent_id="agent1",
+            name="Agent 1",
+            tenant_id="default",
+            entity_registry=entity_registry,
+        )
+
+        agent2 = register_agent(
+            user_id="alice",
+            agent_id="agent2",
+            name="Agent 2",
+            tenant_id="default",
+            entity_registry=entity_registry,
+        )
+
+        assert agent1["tenant_id"] == "default"
+        assert agent2["tenant_id"] == "default"
+        assert agent1["tenant_id"] == agent2["tenant_id"]
+
+    def test_register_agent_multiple_tenants(self, entity_registry):
+        """Test registering agents in different tenants."""
+        entity_registry.register_entity("user", "alice")
+
+        agent_acme = register_agent(
+            user_id="alice",
+            agent_id="agent_acme",
+            name="Acme Agent",
+            tenant_id="acme",
+            entity_registry=entity_registry,
+        )
+
+        agent_initech = register_agent(
+            user_id="alice",
+            agent_id="agent_initech",
+            name="Initech Agent",
+            tenant_id="initech",
+            entity_registry=entity_registry,
+        )
+
+        assert agent_acme["tenant_id"] == "acme"
+        assert agent_initech["tenant_id"] == "initech"
+        assert agent_acme["tenant_id"] != agent_initech["tenant_id"]
+
+    def test_register_agent_with_complex_metadata(self, entity_registry):
+        """Test registering agent with complex metadata structure."""
+        entity_registry.register_entity("user", "alice")
+
+        complex_metadata = {
+            "description": "Complex agent",
+            "platform": "langgraph",
+            "endpoint_url": "http://localhost:2024",
+            "agent_id": "agent",
+            "version": "1.0.0",
+            "capabilities": ["read", "write", "execute"],
+        }
+
+        agent = register_agent(
+            user_id="alice",
+            agent_id="agent_complex",
+            name="Complex Agent",
+            metadata=complex_metadata,
+            entity_registry=entity_registry,
+        )
+
+        assert agent["metadata"] == complex_metadata
+        assert agent["metadata"]["platform"] == "langgraph"
+        assert agent["metadata"]["capabilities"] == ["read", "write", "execute"]

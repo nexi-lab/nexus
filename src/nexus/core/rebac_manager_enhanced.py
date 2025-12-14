@@ -1739,6 +1739,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         # Get namespace configs
         namespace_configs = self._get_namespace_configs_dict()
 
+        logger.debug(
+            f"[LIST-OBJECTS] Namespace configs: file relations={len(namespace_configs.get('file', {}).get('relations', {}))} permissions={len(namespace_configs.get('file', {}).get('permissions', {}))}"
+        )
+
         # Try Rust implementation first (much faster)
         if RUST_AVAILABLE:
             try:

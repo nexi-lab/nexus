@@ -100,6 +100,12 @@ struct ReBACGraph {
     /// Value: List of objects related via that relation
     adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>>,
 
+    /// Reverse adjacency list for finding subjects that have relation to object: O(1)
+    /// Key: (object_type, object_id, relation)
+    /// Value: List of subjects with that relation to the object
+    /// Used by tupleToUserset to find entities that have a relation on an object
+    reverse_adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>>,
+
     /// Userset index for group-based permissions: O(1) lookup
     /// Key: (object_type, object_id, relation)
     /// Value: List of usersets that grant this permission (e.g., group:eng#member)
@@ -111,6 +117,7 @@ impl ReBACGraph {
     fn from_tuples(tuples: &[ReBACTuple]) -> Self {
         let mut tuple_index = AHashMap::new();
         let mut adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
+        let mut reverse_adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
         let mut userset_index: AHashMap<UsersetKey, Vec<UsersetEntry>> = AHashMap::new();
 
         for tuple in tuples {
@@ -144,8 +151,8 @@ impl ReBACGraph {
                 tuple_index.insert(tuple_key, true);
             }
 
-            // Build adjacency list for finding related objects
-            // This is used for tupleToUserset traversal
+            // Build adjacency list for finding related objects (subject -> objects)
+            // Used for list_objects: given subject, find objects they have relation to
             let adj_key = (
                 tuple.subject_type.clone(),
                 tuple.subject_id.clone(),
@@ -155,11 +162,27 @@ impl ReBACGraph {
                 entity_type: tuple.object_type.clone(),
                 entity_id: tuple.object_id.clone(),
             });
+
+            // Build reverse adjacency list for finding subjects (object -> subjects)
+            // Used for tupleToUserset: given object+relation, find entities with that relation
+            let rev_adj_key = (
+                tuple.object_type.clone(),
+                tuple.object_id.clone(),
+                tuple.relation.clone(),
+            );
+            reverse_adjacency_list
+                .entry(rev_adj_key)
+                .or_default()
+                .push(Entity {
+                    entity_type: tuple.subject_type.clone(),
+                    entity_id: tuple.subject_id.clone(),
+                });
         }
 
         ReBACGraph {
             tuple_index,
             adjacency_list,
+            reverse_adjacency_list,
             userset_index,
         }
     }
@@ -177,14 +200,16 @@ impl ReBACGraph {
     }
 
     /// Find related objects in O(1) time using adjacency list
+    /// Find entities that have a relation TO the object (reverse lookup)
+    /// Used by tupleToUserset: given object+relation, find subjects with that relation
     fn find_related_objects(&self, object: &Entity, relation: &str) -> Vec<Entity> {
-        let adj_key = (
+        let rev_adj_key = (
             object.entity_type.clone(),
             object.entity_id.clone(),
             relation.to_string(),
         );
-        self.adjacency_list
-            .get(&adj_key)
+        self.reverse_adjacency_list
+            .get(&rev_adj_key)
             .cloned()
             .unwrap_or_default()
     }

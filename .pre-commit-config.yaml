@@ -24,15 +24,14 @@ repos:
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
-  # DISABLED: Type checking (10-30s) - runs in CI instead
-  # Uncomment to re-enable:
-  # - repo: https://github.com/pre-commit/mirrors-mypy
-  #   rev: v1.8.0
-  #   hooks:
-  #     - id: mypy
-  #       additional_dependencies: [pydantic, types-PyYAML, alembic, sqlalchemy, cachetools, types-cachetools, types-requests]
-  #       args: [--ignore-missing-imports]
-  #       exclude: ^(tests/|alembic/|examples/)
+  # Type checking (10-30s) - enabled for local type error detection
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [pydantic, types-PyYAML, alembic, sqlalchemy, cachetools, types-cachetools, types-requests]
+        args: [--ignore-missing-imports]
+        exclude: ^(tests/|alembic/|examples/)
 
   - repo: local
     hooks:

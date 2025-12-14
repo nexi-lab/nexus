@@ -966,13 +966,14 @@ class TestNexusFSOAuthMixin:
 
         context = OperationContext(
             user="alice",
+            groups=[],
             tenant_id="acme_corp",
             subject_type="user",
             subject_id="alice",
         )
 
         with (
-            patch("nexus.core.context_utils.get_tenant_id") as mock_get_tenant,
+            patch("nexus.core.nexus_fs_oauth.get_tenant_id") as mock_get_tenant,
             patch.dict(
                 "os.environ",
                 {
@@ -984,9 +985,16 @@ class TestNexusFSOAuthMixin:
         ):
             mock_get_tenant.return_value = "acme_corp"
             mock_provider = Mock()
-            mock_provider.exchange_code = AsyncMock(
-                return_value={"access_token": "token", "refresh_token": "refresh"}
-            )
+
+            # Create a simple object that can have attributes set
+            class CredentialObj:
+                def __init__(self):
+                    self.access_token = "token"
+                    self.refresh_token = "refresh"
+                    self.expires_at = None  # Add expires_at attribute
+
+            mock_credential = CredentialObj()
+            mock_provider.exchange_code = AsyncMock(return_value=mock_credential)
             MockProvider.return_value = mock_provider
 
             await mock_oauth_mixin.oauth_exchange_code(
@@ -1011,6 +1019,7 @@ class TestNexusFSOAuthMixin:
 
         context = OperationContext(
             user="alice",
+            groups=[],
             tenant_id="acme_corp",
             subject_type="user",
             subject_id="alice",

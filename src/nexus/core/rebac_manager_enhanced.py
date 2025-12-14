@@ -1957,12 +1957,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         configs: dict[str, Any] = {}
         for obj_type in ["file", "group", "tenant", "memory"]:
             namespace = self.get_namespace(obj_type)
-            if namespace:
+            if namespace and namespace.config:
                 configs[obj_type] = {
-                    "relations": namespace.relations if hasattr(namespace, "relations") else {},
-                    "permissions": namespace.permissions
-                    if hasattr(namespace, "permissions")
-                    else {},
+                    "relations": namespace.config.get("relations", {}),
+                    "permissions": namespace.config.get("permissions", {}),
                 }
         return configs
 

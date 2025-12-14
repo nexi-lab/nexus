@@ -3297,8 +3297,9 @@ class NexusFS(
                             )
                             import yaml
 
-                            config_data = yaml.safe_load(config_content.decode("utf-8"))
-                            inherit_perms = config_data.get("inherit_permissions")
+                            if isinstance(config_content, bytes):
+                                config_data = yaml.safe_load(config_content.decode("utf-8"))
+                                inherit_perms = config_data.get("inherit_permissions")
                         except Exception:
                             pass  # If can't read config, will use default
                 except Exception:
@@ -3395,39 +3396,40 @@ class NexusFS(
                             config_content = self.read(config_path, context=ctx)
                             import yaml
 
-                            config_data = yaml.safe_load(config_content.decode("utf-8"))
-                            # Return API key from config if available
-                            if config_data.get("api_key"):
-                                agent_info["api_key"] = config_data["api_key"]
+                            if isinstance(config_content, bytes):
+                                config_data = yaml.safe_load(config_content.decode("utf-8"))
+                                # Return API key from config if available
+                                if config_data.get("api_key"):
+                                    agent_info["api_key"] = config_data["api_key"]
 
-                            # Check metadata first, then top-level for config fields
-                            # Config fields can be in metadata (from provision script) or at top-level
-                            metadata = config_data.get("metadata", {})
-                            if isinstance(metadata, dict):
-                                # Platform and endpoint_url are often in metadata
-                                if metadata.get("platform"):
-                                    agent_info["platform"] = metadata["platform"]
-                                if metadata.get("endpoint_url"):
-                                    agent_info["endpoint_url"] = metadata["endpoint_url"]
-                                # agent_id in metadata is the LangGraph graph/assistant ID (e.g., "agent")
-                                if metadata.get("agent_id"):
-                                    agent_info["config_agent_id"] = metadata["agent_id"]
+                                # Check metadata first, then top-level for config fields
+                                # Config fields can be in metadata (from provision script) or at top-level
+                                metadata = config_data.get("metadata", {})
+                                if isinstance(metadata, dict):
+                                    # Platform and endpoint_url are often in metadata
+                                    if metadata.get("platform"):
+                                        agent_info["platform"] = metadata["platform"]
+                                    if metadata.get("endpoint_url"):
+                                        agent_info["endpoint_url"] = metadata["endpoint_url"]
+                                    # agent_id in metadata is the LangGraph graph/assistant ID (e.g., "agent")
+                                    if metadata.get("agent_id"):
+                                        agent_info["config_agent_id"] = metadata["agent_id"]
 
-                            # Fall back to top-level if not in metadata
-                            if not agent_info.get("platform") and config_data.get("platform"):
-                                agent_info["platform"] = config_data["platform"]
-                            if not agent_info.get("endpoint_url") and config_data.get(
-                                "endpoint_url"
-                            ):
-                                agent_info["endpoint_url"] = config_data["endpoint_url"]
-                            # Only use top-level agent_id if config_agent_id not set and it's different from full agent_id
-                            if (
-                                not agent_info.get("config_agent_id")
-                                and config_data.get("agent_id")
-                                and config_data["agent_id"] != entity.entity_id
-                            ):
-                                # Only use if it's actually a LangGraph graph ID, not the full agent_id
-                                agent_info["config_agent_id"] = config_data["agent_id"]
+                                # Fall back to top-level if not in metadata
+                                if not agent_info.get("platform") and config_data.get("platform"):
+                                    agent_info["platform"] = config_data["platform"]
+                                if not agent_info.get("endpoint_url") and config_data.get(
+                                    "endpoint_url"
+                                ):
+                                    agent_info["endpoint_url"] = config_data["endpoint_url"]
+                                # Only use top-level agent_id if config_agent_id not set and it's different from full agent_id
+                                if (
+                                    not agent_info.get("config_agent_id")
+                                    and config_data.get("agent_id")
+                                    and config_data["agent_id"] != entity.entity_id
+                                ):
+                                    # Only use if it's actually a LangGraph graph ID, not the full agent_id
+                                    agent_info["config_agent_id"] = config_data["agent_id"]
 
                             if config_data.get("system_prompt"):
                                 agent_info["system_prompt"] = config_data["system_prompt"]
@@ -3455,38 +3457,39 @@ class NexusFS(
                             config_content = self.read(config_path, context=ctx)
                             import yaml
 
-                            config_data = yaml.safe_load(config_content.decode("utf-8"))
-                            inherit_perms = config_data.get("inherit_permissions")
+                            if isinstance(config_content, bytes):
+                                config_data = yaml.safe_load(config_content.decode("utf-8"))
+                                inherit_perms = config_data.get("inherit_permissions")
 
-                            # Check metadata first, then top-level for config fields
-                            metadata = config_data.get("metadata", {})
-                            if isinstance(metadata, dict):
-                                if metadata.get("platform"):
-                                    agent_info["platform"] = metadata["platform"]
-                                if metadata.get("endpoint_url"):
-                                    agent_info["endpoint_url"] = metadata["endpoint_url"]
-                                # agent_id in metadata is the LangGraph graph/assistant ID
-                                if metadata.get("agent_id"):
-                                    agent_info["config_agent_id"] = metadata["agent_id"]
+                                # Check metadata first, then top-level for config fields
+                                metadata = config_data.get("metadata", {})
+                                if isinstance(metadata, dict):
+                                    if metadata.get("platform"):
+                                        agent_info["platform"] = metadata["platform"]
+                                    if metadata.get("endpoint_url"):
+                                        agent_info["endpoint_url"] = metadata["endpoint_url"]
+                                    # agent_id in metadata is the LangGraph graph/assistant ID
+                                    if metadata.get("agent_id"):
+                                        agent_info["config_agent_id"] = metadata["agent_id"]
 
-                            # Fall back to top-level if not in metadata
-                            if not agent_info.get("platform") and config_data.get("platform"):
-                                agent_info["platform"] = config_data["platform"]
-                            if not agent_info.get("endpoint_url") and config_data.get(
-                                "endpoint_url"
-                            ):
-                                agent_info["endpoint_url"] = config_data["endpoint_url"]
-                            if (
-                                not agent_info.get("config_agent_id")
-                                and config_data.get("agent_id")
-                                and config_data["agent_id"] != entity.entity_id
-                            ):
-                                agent_info["config_agent_id"] = config_data["agent_id"]
+                                # Fall back to top-level if not in metadata
+                                if not agent_info.get("platform") and config_data.get("platform"):
+                                    agent_info["platform"] = config_data["platform"]
+                                if not agent_info.get("endpoint_url") and config_data.get(
+                                    "endpoint_url"
+                                ):
+                                    agent_info["endpoint_url"] = config_data["endpoint_url"]
+                                if (
+                                    not agent_info.get("config_agent_id")
+                                    and config_data.get("agent_id")
+                                    and config_data["agent_id"] != entity.entity_id
+                                ):
+                                    agent_info["config_agent_id"] = config_data["agent_id"]
 
-                            if config_data.get("system_prompt"):
-                                agent_info["system_prompt"] = config_data["system_prompt"]
-                            if config_data.get("tools"):
-                                agent_info["tools"] = config_data["tools"]
+                                if config_data.get("system_prompt"):
+                                    agent_info["system_prompt"] = config_data["system_prompt"]
+                                if config_data.get("tools"):
+                                    agent_info["tools"] = config_data["tools"]
                         except Exception:
                             pass  # If can't read config, will use default
                 except Exception:

@@ -100,6 +100,12 @@ struct ReBACGraph {
     /// Value: List of objects related via that relation
     adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>>,
 
+    /// Reverse adjacency list for finding subjects that have relation to object: O(1)
+    /// Key: (object_type, object_id, relation)
+    /// Value: List of subjects with that relation to the object
+    /// Used by tupleToUserset to find entities that have a relation on an object
+    reverse_adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>>,
+
     /// Userset index for group-based permissions: O(1) lookup
     /// Key: (object_type, object_id, relation)
     /// Value: List of usersets that grant this permission (e.g., group:eng#member)
@@ -111,6 +117,7 @@ impl ReBACGraph {
     fn from_tuples(tuples: &[ReBACTuple]) -> Self {
         let mut tuple_index = AHashMap::new();
         let mut adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
+        let mut reverse_adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
         let mut userset_index: AHashMap<UsersetKey, Vec<UsersetEntry>> = AHashMap::new();
 
         for tuple in tuples {
@@ -144,8 +151,8 @@ impl ReBACGraph {
                 tuple_index.insert(tuple_key, true);
             }
 
-            // Build adjacency list for finding related objects
-            // This is used for tupleToUserset traversal
+            // Build adjacency list for finding related objects (subject -> objects)
+            // Used for list_objects: given subject, find objects they have relation to
             let adj_key = (
                 tuple.subject_type.clone(),
                 tuple.subject_id.clone(),
@@ -155,11 +162,27 @@ impl ReBACGraph {
                 entity_type: tuple.object_type.clone(),
                 entity_id: tuple.object_id.clone(),
             });
+
+            // Build reverse adjacency list for finding subjects (object -> subjects)
+            // Used for tupleToUserset: given object+relation, find entities with that relation
+            let rev_adj_key = (
+                tuple.object_type.clone(),
+                tuple.object_id.clone(),
+                tuple.relation.clone(),
+            );
+            reverse_adjacency_list
+                .entry(rev_adj_key)
+                .or_default()
+                .push(Entity {
+                    entity_type: tuple.subject_type.clone(),
+                    entity_id: tuple.subject_id.clone(),
+                });
         }
 
         ReBACGraph {
             tuple_index,
             adjacency_list,
+            reverse_adjacency_list,
             userset_index,
         }
     }
@@ -177,14 +200,16 @@ impl ReBACGraph {
     }
 
     /// Find related objects in O(1) time using adjacency list
+    /// Find entities that have a relation TO the object (reverse lookup)
+    /// Used by tupleToUserset: given object+relation, find subjects with that relation
     fn find_related_objects(&self, object: &Entity, relation: &str) -> Vec<Entity> {
-        let adj_key = (
+        let rev_adj_key = (
             object.entity_type.clone(),
             object.entity_id.clone(),
             relation.to_string(),
         );
-        self.adjacency_list
-            .get(&adj_key)
+        self.reverse_adjacency_list
+            .get(&rev_adj_key)
             .cloned()
             .unwrap_or_default()
     }
@@ -1041,12 +1066,255 @@ fn add_direct_subjects(
     }
 }
 
+/// List objects that a subject can access with a given permission
+/// This is the inverse of expand_subjects - instead of "who has permission on Y",
+/// it answers "what objects can subject X access"
+///
+/// Uses the adjacency_list index for O(1) lookups per relation, then validates
+/// each candidate object with full permission expansion.
+///
+/// Args:
+///   subject_type: Type of subject (e.g., "user", "agent")
+///   subject_id: ID of subject (e.g., "alice")
+///   permission: Permission to check (e.g., "read", "write")
+///   object_type: Type of objects to find (e.g., "file")
+///   tuples: List of ReBAC relationship tuples
+///   namespace_configs: Namespace configuration for permission expansion
+///   path_prefix: Optional path prefix filter (e.g., "/workspace/")
+///   limit: Maximum number of results to return
+///   offset: Number of results to skip (for pagination)
+///
+/// Returns:
+///   List of (object_type, object_id) tuples that subject can access
+#[pyfunction]
+#[pyo3(signature = (subject_type, subject_id, permission, object_type, tuples, namespace_configs, path_prefix=None, limit=1000, offset=0))]
+#[allow(clippy::too_many_arguments)]
+fn list_objects_for_subject<'py>(
+    py: Python<'py>,
+    subject_type: String,
+    subject_id: String,
+    permission: String,
+    object_type: String,
+    tuples: &Bound<PyList>,
+    namespace_configs: &Bound<PyDict>,
+    path_prefix: Option<String>,
+    limit: usize,
+    offset: usize,
+) -> PyResult<Bound<'py, PyList>> {
+    // Parse tuples from Python
+    let rebac_tuples: Vec<ReBACTuple> = tuples
+        .iter()
+        .map(|item| {
+            let dict: Bound<'_, PyDict> = item.extract()?;
+            Ok(ReBACTuple {
+                subject_type: dict.get_item("subject_type")?.unwrap().extract()?,
+                subject_id: dict.get_item("subject_id")?.unwrap().extract()?,
+                subject_relation: dict
+                    .get_item("subject_relation")?
+                    .and_then(|v| v.extract().ok()),
+                relation: dict.get_item("relation")?.unwrap().extract()?,
+                object_type: dict.get_item("object_type")?.unwrap().extract()?,
+                object_id: dict.get_item("object_id")?.unwrap().extract()?,
+            })
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+
+    // Parse namespace configs
+    let mut namespaces = AHashMap::new();
+    for (key, value) in namespace_configs.iter() {
+        let obj_type: String = key.extract()?;
+        let config_dict: Bound<'_, PyDict> = value.extract()?;
+        let json_module = py.import("json")?;
+        let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
+        let config_json: String = config_json_py.extract()?;
+        let config: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
+        })?;
+        namespaces.insert(obj_type, config);
+    }
+
+    // Release GIL for computation
+    let objects = py.detach(|| {
+        let subject = Entity {
+            entity_type: subject_type,
+            entity_id: subject_id,
+        };
+
+        // Build graph indexes for fast lookups
+        let graph = ReBACGraph::from_tuples(&rebac_tuples);
+
+        // Find all candidate objects the subject might have access to
+        let mut candidate_objects: AHashSet<Entity> = AHashSet::new();
+
+        // Step 1: Find direct relations from subject to objects
+        // Look up adjacency list for all relations that might grant the permission
+        collect_candidate_objects_for_subject(
+            &subject,
+            &permission,
+            &object_type,
+            &graph,
+            &namespaces,
+            &mut candidate_objects,
+        );
+
+        // Step 2: Find objects accessible through group membership
+        // First, find all groups the subject belongs to
+        let groups = find_subject_groups(&subject, &graph);
+        for group in &groups {
+            collect_candidate_objects_for_subject(
+                group,
+                &permission,
+                &object_type,
+                &graph,
+                &namespaces,
+                &mut candidate_objects,
+            );
+        }
+
+        // Step 3: Verify each candidate with full permission check
+        // This handles complex permission rules (union, tupleToUserset, etc.)
+        let mut verified_objects: Vec<Entity> = Vec::new();
+        let mut memo_cache: MemoCache = AHashMap::new();
+
+        for candidate in candidate_objects {
+            // Apply path prefix filter early (before expensive permission check)
+            if let Some(ref prefix) = path_prefix {
+                if !candidate.entity_id.starts_with(prefix) {
+                    continue;
+                }
+            }
+
+            // Verify permission with full expansion
+            if compute_permission(
+                &subject,
+                &permission,
+                &candidate,
+                &graph,
+                &namespaces,
+                &mut memo_cache,
+                &mut AHashSet::new(),
+                0,
+            ) {
+                verified_objects.push(candidate);
+            }
+        }
+
+        // Sort by object_id for consistent pagination
+        verified_objects.sort_by(|a, b| a.entity_id.cmp(&b.entity_id));
+
+        // Apply pagination
+        verified_objects
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect::<Vec<_>>()
+    });
+
+    // Convert to Python list of tuples
+    let py_list = PyList::empty(py);
+    for obj in objects {
+        let tuple = PyTuple::new(py, &[obj.entity_type, obj.entity_id])?;
+        py_list.append(tuple)?;
+    }
+
+    Ok(py_list)
+}
+
+/// Collect candidate objects that a subject might have access to via direct relations
+fn collect_candidate_objects_for_subject(
+    subject: &Entity,
+    permission: &str,
+    object_type: &str,
+    graph: &ReBACGraph,
+    namespaces: &AHashMap<String, NamespaceConfig>,
+    candidates: &mut AHashSet<Entity>,
+) {
+    // Get all relations that might grant this permission
+    let relations = get_permission_relations(permission, object_type, namespaces);
+
+    for relation in relations {
+        // Look up adjacency list: (subject_type, subject_id, relation) -> objects
+        let adj_key = (
+            subject.entity_type.clone(),
+            subject.entity_id.clone(),
+            relation.clone(),
+        );
+        if let Some(objects) = graph.adjacency_list.get(&adj_key) {
+            for obj in objects {
+                if obj.entity_type == object_type {
+                    candidates.insert(obj.clone());
+                }
+            }
+        }
+    }
+}
+
+/// Get all relations that can grant a permission (including via union/inheritance)
+fn get_permission_relations(
+    permission: &str,
+    object_type: &str,
+    namespaces: &AHashMap<String, NamespaceConfig>,
+) -> Vec<String> {
+    let mut expanded: AHashSet<String> = AHashSet::new();
+    let mut to_expand: Vec<String> = vec![permission.to_string()];
+
+    // Check namespace config for permission expansion
+    if let Some(namespace) = namespaces.get(object_type) {
+        // Step 1: Get usersets that grant this permission
+        // e.g., "read" -> ["viewer", "editor", "owner"]
+        if let Some(usersets) = namespace.permissions.get(permission) {
+            to_expand.extend(usersets.iter().cloned());
+        }
+
+        // Step 2: Recursively expand each userset through unions
+        // e.g., "owner" -> ["direct_owner", "parent_owner", "group_owner"]
+        while let Some(rel) = to_expand.pop() {
+            if expanded.contains(&rel) {
+                continue;
+            }
+            expanded.insert(rel.clone());
+
+            // Check if this relation has a union
+            if let Some(RelationConfig::Union { union }) = namespace.relations.get(&rel) {
+                for member in union {
+                    if !expanded.contains(member) {
+                        to_expand.push(member.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    expanded.into_iter().collect()
+}
+
+/// Find all groups that a subject belongs to
+fn find_subject_groups(subject: &Entity, graph: &ReBACGraph) -> Vec<Entity> {
+    let mut groups = Vec::new();
+
+    // Look for membership relations: subject -> member -> group
+    let membership_relations = ["member", "member-of"];
+    for rel in membership_relations {
+        let adj_key = (
+            subject.entity_type.clone(),
+            subject.entity_id.clone(),
+            rel.to_string(),
+        );
+        if let Some(group_entities) = graph.adjacency_list.get(&adj_key) {
+            groups.extend(group_entities.iter().cloned());
+        }
+    }
+
+    groups
+}
+
 /// Python module definition
 #[pymodule]
 fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compute_permissions_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(compute_permission_single, m)?)?;
     m.add_function(wrap_pyfunction!(expand_subjects, m)?)?;
+    m.add_function(wrap_pyfunction!(list_objects_for_subject, m)?)?;
     m.add_function(wrap_pyfunction!(grep_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(glob_match_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(filter_paths, m)?)?;

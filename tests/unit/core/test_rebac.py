@@ -941,3 +941,221 @@ def test_dynamic_viewer_no_config_returns_none(rebac_manager):
     )
 
     assert config is None, "Should return None when no dynamic_viewer config exists"
+
+
+# ============================================================================
+# Tests for rebac_list_objects (Issue #291)
+# ============================================================================
+
+
+@pytest.fixture
+def enhanced_rebac_manager(engine):
+    """Create an EnhancedReBACManager for testing rebac_list_objects."""
+    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+
+    manager = EnhancedReBACManager(
+        engine=engine,
+        cache_ttl_seconds=300,
+        max_depth=10,
+    )
+    yield manager
+    manager.close()
+
+
+def test_list_objects_direct_permission(enhanced_rebac_manager):
+    """Test listing objects with direct permission."""
+    # Grant alice direct_owner on multiple files
+    enhanced_rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="direct_owner",
+        object=("file", "/workspace/file1.txt"),
+        tenant_id="test_tenant",
+    )
+    enhanced_rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="direct_owner",
+        object=("file", "/workspace/file2.txt"),
+        tenant_id="test_tenant",
+    )
+    enhanced_rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="direct_viewer",
+        object=("file", "/workspace/file3.txt"),
+        tenant_id="test_tenant",
+    )
+    # Bob has access to different file
+    enhanced_rebac_manager.rebac_write(
+        subject=("user", "bob"),
+        relation="direct_owner",
+        object=("file", "/workspace/bob_file.txt"),
+        tenant_id="test_tenant",
+    )
+
+    # List objects alice can read
+    objects = enhanced_rebac_manager.rebac_list_objects(
+        subject=("user", "alice"),
+        permission="read",
+        object_type="file",
+        tenant_id="test_tenant",
+    )
+
+    # Alice should see her 3 files but not bob's
+    object_ids = [obj_id for _, obj_id in objects]
+    assert "/workspace/file1.txt" in object_ids
+    assert "/workspace/file2.txt" in object_ids
+    assert "/workspace/file3.txt" in object_ids
+    assert "/workspace/bob_file.txt" not in object_ids
+
+
+def test_list_objects_with_path_prefix(enhanced_rebac_manager):
+    """Test listing objects with path prefix filter."""
+    # Grant alice access to files in different directories
+    enhanced_rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="direct_owner",
+        object=("file", "/workspace/project1/file.txt"),
+        tenant_id="test_tenant",
+    )
+    enhanced_rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="direct_owner",
+        object=("file", "/workspace/project2/file.txt"),
+        tenant_id="test_tenant",
+    )
+    enhanced_rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="direct_owner",
+        object=("file", "/shared/doc.txt"),
+        tenant_id="test_tenant",
+    )
+
+    # List only files in /workspace/project1/
+    objects = enhanced_rebac_manager.rebac_list_objects(
+        subject=("user", "alice"),
+        permission="read",
+        object_type="file",
+        tenant_id="test_tenant",
+        path_prefix="/workspace/project1/",
+    )
+
+    object_ids = [obj_id for _, obj_id in objects]
+    assert len(object_ids) == 1
+    assert "/workspace/project1/file.txt" in object_ids
+
+
+def test_list_objects_pagination(enhanced_rebac_manager):
+    """Test pagination of listed objects."""
+    # Create 10 files for alice
+    for i in range(10):
+        enhanced_rebac_manager.rebac_write(
+            subject=("user", "alice"),
+            relation="direct_owner",
+            object=("file", f"/workspace/file{i:02d}.txt"),
+            tenant_id="test_tenant",
+        )
+
+    # Get first page (5 items)
+    page1 = enhanced_rebac_manager.rebac_list_objects(
+        subject=("user", "alice"),
+        permission="read",
+        object_type="file",
+        tenant_id="test_tenant",
+        limit=5,
+        offset=0,
+    )
+    assert len(page1) == 5
+
+    # Get second page (5 items)
+    page2 = enhanced_rebac_manager.rebac_list_objects(
+        subject=("user", "alice"),
+        permission="read",
+        object_type="file",
+        tenant_id="test_tenant",
+        limit=5,
+        offset=5,
+    )
+    assert len(page2) == 5
+
+    # Pages should not overlap
+    page1_ids = {obj_id for _, obj_id in page1}
+    page2_ids = {obj_id for _, obj_id in page2}
+    assert page1_ids.isdisjoint(page2_ids)
+
+    # Together should cover all 10 files
+    all_ids = page1_ids | page2_ids
+    assert len(all_ids) == 10
+
+
+def test_list_objects_via_group_membership(enhanced_rebac_manager):
+    """Test listing objects accessible via group membership."""
+    # Alice is member of developers group
+    enhanced_rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="member",
+        object=("group", "developers"),
+        tenant_id="test_tenant",
+    )
+
+    # Developers group has access to project files
+    enhanced_rebac_manager.rebac_write(
+        subject=("group", "developers"),
+        relation="direct_viewer",
+        object=("file", "/workspace/project/code.py"),
+        tenant_id="test_tenant",
+    )
+
+    # Alice also has direct access to her personal file
+    enhanced_rebac_manager.rebac_write(
+        subject=("user", "alice"),
+        relation="direct_owner",
+        object=("file", "/workspace/alice/notes.txt"),
+        tenant_id="test_tenant",
+    )
+
+    # List all objects alice can read
+    objects = enhanced_rebac_manager.rebac_list_objects(
+        subject=("user", "alice"),
+        permission="read",
+        object_type="file",
+        tenant_id="test_tenant",
+    )
+
+    object_ids = [obj_id for _, obj_id in objects]
+    # Should include both direct and group-based access
+    assert "/workspace/alice/notes.txt" in object_ids
+    assert "/workspace/project/code.py" in object_ids
+
+
+def test_list_objects_empty_result(enhanced_rebac_manager):
+    """Test listing objects when user has no access."""
+    # No permissions granted to charlie
+    objects = enhanced_rebac_manager.rebac_list_objects(
+        subject=("user", "charlie"),
+        permission="read",
+        object_type="file",
+        tenant_id="test_tenant",
+    )
+
+    assert len(objects) == 0
+
+
+def test_list_objects_sorted_by_path(enhanced_rebac_manager):
+    """Test that results are sorted by object_id for consistent pagination."""
+    # Create files in non-alphabetical order
+    for path in ["/z.txt", "/a.txt", "/m.txt", "/b.txt"]:
+        enhanced_rebac_manager.rebac_write(
+            subject=("user", "alice"),
+            relation="direct_owner",
+            object=("file", path),
+            tenant_id="test_tenant",
+        )
+
+    objects = enhanced_rebac_manager.rebac_list_objects(
+        subject=("user", "alice"),
+        permission="read",
+        object_type="file",
+        tenant_id="test_tenant",
+    )
+
+    object_ids = [obj_id for _, obj_id in objects]
+    assert object_ids == sorted(object_ids), "Results should be sorted alphabetically"

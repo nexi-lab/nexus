@@ -530,3 +530,138 @@ def expand_subjects_with_fallback(
         "Python fallback for expand_subjects not implemented in rebac_fast.py. "
         "Use ReBACManager._expand_permission directly."
     )
+
+
+def list_objects_for_subject_rust(
+    subject_type: str,
+    subject_id: str,
+    permission: str,
+    object_type: str,
+    tuples: list[dict[str, Any]],
+    namespace_configs: dict[str, Any],
+    path_prefix: str | None = None,
+    limit: int = 1000,
+    offset: int = 0,
+) -> list[tuple[str, str]]:
+    """
+    List objects that a subject can access using Rust implementation.
+
+    This is the inverse of expand_subjects - instead of "who has permission on Y",
+    it answers "what objects can subject X access".
+
+    Optimized for the common case of finding files a user can read/write.
+
+    Args:
+        subject_type: Type of subject (e.g., "user", "agent")
+        subject_id: Subject identifier (e.g., "alice")
+        permission: Permission to check (e.g., "read", "write")
+        object_type: Type of objects to find (e.g., "file")
+        tuples: List of ReBAC relationship dictionaries
+        namespace_configs: Dict mapping object_type -> namespace config
+        path_prefix: Optional path prefix filter (e.g., "/workspace/")
+        limit: Maximum number of results to return (default: 1000)
+        offset: Number of results to skip for pagination (default: 0)
+
+    Returns:
+        List of (object_type, object_id) tuples that subject can access
+
+    Raises:
+        RuntimeError: If Rust extension is not available
+    """
+    if not RUST_AVAILABLE:
+        raise RuntimeError(
+            "Rust acceleration not available. Install with: "
+            "cd rust/nexus_fast && maturin develop --release"
+        )
+
+    # Use external module which has list_objects_for_subject
+    if _external_module is None:
+        raise RuntimeError(
+            "Rust list_objects_for_subject not available. "
+            "Install nexus_fast: cd rust/nexus_fast && maturin develop --release"
+        )
+
+    try:
+        import time
+
+        start = time.perf_counter()
+        result = _external_module.list_objects_for_subject(
+            subject_type,
+            subject_id,
+            permission,
+            object_type,
+            tuples,
+            namespace_configs,
+            path_prefix,
+            limit,
+            offset,
+        )
+        elapsed = time.perf_counter() - start
+        logger.debug(
+            f"[RUST-LIST-OBJECTS] List {object_type}s with {permission} for "
+            f"{subject_type}:{subject_id} (prefix={path_prefix}) "
+            f"found {len(result)} objects ({elapsed * 1000:.2f}ms)"
+        )
+        # Convert from list of tuples to list of tuples (already correct format)
+        return [(t[0], t[1]) for t in result]
+    except Exception as e:
+        logger.error(f"Rust list_objects_for_subject failed: {e}", exc_info=True)
+        raise
+
+
+def list_objects_for_subject_with_fallback(
+    subject_type: str,
+    subject_id: str,
+    permission: str,
+    object_type: str,
+    tuples: list[dict[str, Any]],
+    namespace_configs: dict[str, Any],
+    path_prefix: str | None = None,
+    limit: int = 1000,
+    offset: int = 0,
+    force_python: bool = False,
+) -> list[tuple[str, str]]:
+    """
+    List objects for subject with automatic fallback to Python.
+
+    This is the recommended interface for listing accessible objects. It uses Rust
+    if available, falling back to Python implementation if Rust is unavailable.
+
+    Args:
+        subject_type: Type of subject (e.g., "user", "agent")
+        subject_id: Subject identifier
+        permission: Permission to check
+        object_type: Type of objects to find
+        tuples: List of ReBAC relationship dictionaries
+        namespace_configs: Dict mapping object_type -> namespace config
+        path_prefix: Optional path prefix filter
+        limit: Maximum number of results
+        offset: Number of results to skip
+        force_python: Force use of Python implementation
+
+    Returns:
+        List of (object_type, object_id) tuples
+    """
+    if _external_module is not None and not force_python:
+        try:
+            return list_objects_for_subject_rust(
+                subject_type,
+                subject_id,
+                permission,
+                object_type,
+                tuples,
+                namespace_configs,
+                path_prefix,
+                limit,
+                offset,
+            )
+        except Exception as e:
+            logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
+            # Fall through to Python
+
+    # Fallback: Python implementation
+    # Note: The caller should implement Python fallback in rebac_manager.py
+    raise NotImplementedError(
+        "Python fallback for list_objects_for_subject not implemented in rebac_fast.py. "
+        "Use ReBACManager.rebac_list_objects directly."
+    )

@@ -1230,31 +1230,37 @@ fn get_permission_relations(
     object_type: &str,
     namespaces: &AHashMap<String, NamespaceConfig>,
 ) -> Vec<String> {
-    let mut relations = vec![permission.to_string()];
+    let mut expanded: AHashSet<String> = AHashSet::new();
+    let mut to_expand: Vec<String> = vec![permission.to_string()];
 
     // Check namespace config for permission expansion
     if let Some(namespace) = namespaces.get(object_type) {
-        // If permission is defined, get the usersets it expands to
+        // Step 1: Get usersets that grant this permission
+        // e.g., "read" -> ["viewer", "editor", "owner"]
         if let Some(usersets) = namespace.permissions.get(permission) {
-            relations.extend(usersets.iter().cloned());
+            to_expand.extend(usersets.iter().cloned());
         }
 
-        // If permission is a relation with union, get all relations in the union
-        if let Some(RelationConfig::Union { union }) = namespace.relations.get(permission) {
-            relations.extend(union.iter().cloned());
+        // Step 2: Recursively expand each userset through unions
+        // e.g., "owner" -> ["direct_owner", "parent_owner", "group_owner"]
+        while let Some(rel) = to_expand.pop() {
+            if expanded.contains(&rel) {
+                continue;
+            }
+            expanded.insert(rel.clone());
+
+            // Check if this relation has a union
+            if let Some(RelationConfig::Union { union }) = namespace.relations.get(&rel) {
+                for member in union {
+                    if !expanded.contains(member) {
+                        to_expand.push(member.clone());
+                    }
+                }
+            }
         }
     }
 
-    // Add common relations that often grant permissions
-    // These are typically defined in the "file" namespace
-    let common_relations = ["direct_owner", "owner", "direct_reader", "direct_writer"];
-    for rel in common_relations {
-        if !relations.contains(&rel.to_string()) {
-            relations.push(rel.to_string());
-        }
-    }
-
-    relations
+    expanded.into_iter().collect()
 }
 
 /// Find all groups that a subject belongs to

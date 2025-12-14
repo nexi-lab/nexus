@@ -118,61 +118,49 @@ curl -s -X POST "${SERVER_URL}/api/nfs/register_entity" \
 
 echo -e "${GREEN}✓ Agent registered in entity registry${NC}"
 
-# Create API key for the agent using the Python script
+# Create API key for the agent using the admin_create_key API endpoint
 echo -e "${BLUE}  Creating API key for agent...${NC}"
 
-# Generate a unique API key
-TEST_AGENT_API_KEY="sk-test_agent_$(openssl rand -hex 16)"
+# Use the admin_create_key API endpoint to create the agent key
+CREATE_KEY_RESPONSE=$(curl -s -X POST "${SERVER_URL}/api/nfs/admin_create_key" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${ADMIN_API_KEY}" \
+  -d "{
+    \"jsonrpc\": \"2.0\",
+    \"method\": \"admin_create_key\",
+    \"params\": {
+      \"user_id\": \"${USER_ID}\",
+      \"name\": \"${TEST_AGENT_NAME} Test Key\",
+      \"subject_type\": \"agent\",
+      \"subject_id\": \"${TEST_AGENT_ID}\",
+      \"tenant_id\": \"${TENANT_ID}\",
+      \"is_admin\": false
+    },
+    \"id\": 3
+  }")
 
-# Get database URL
-DATABASE_URL="${NEXUS_DATABASE_URL:-${POSTGRES_URL}}"
-
-# Use the standalone script to create the API key
-# Try running inside Docker container first (where dependencies are installed)
-# Then fall back to local execution
-if docker ps --format '{{.Names}}' | grep -q "^nexus-server$"; then
-    # Run inside Docker container where dependencies are available
-    docker exec nexus-server python3 /app/scripts/create_test_agent_key.py \
-        "$DATABASE_URL" \
-        "$TEST_AGENT_API_KEY" \
-        "$TEST_AGENT_ID" \
-        "$USER_ID" \
-        "$TENANT_ID" \
-        "$TEST_AGENT_NAME"
-elif command -v uv >/dev/null 2>&1; then
-    # Use uv run if available (installs dependencies if needed)
-    uv run python "${SCRIPT_DIR}/create_test_agent_key.py" \
-        "$DATABASE_URL" \
-        "$TEST_AGENT_API_KEY" \
-        "$TEST_AGENT_ID" \
-        "$USER_ID" \
-        "$TENANT_ID" \
-        "$TEST_AGENT_NAME"
-elif [ -f "${PROJECT_DIR}/.venv/bin/python" ]; then
-    "${PROJECT_DIR}/.venv/bin/python" "${SCRIPT_DIR}/create_test_agent_key.py" \
-        "$DATABASE_URL" \
-        "$TEST_AGENT_API_KEY" \
-        "$TEST_AGENT_ID" \
-        "$USER_ID" \
-        "$TENANT_ID" \
-        "$TEST_AGENT_NAME"
-else
-    python3 "${SCRIPT_DIR}/create_test_agent_key.py" \
-        "$DATABASE_URL" \
-        "$TEST_AGENT_API_KEY" \
-        "$TEST_AGENT_ID" \
-        "$USER_ID" \
-        "$TENANT_ID" \
-        "$TEST_AGENT_NAME"
-fi
-
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✓ API key created for ${TEST_AGENT_NAME}${NC}"
-    echo -e "${BLUE}  API Key: ${TEST_AGENT_API_KEY:0:30}...${NC}"
-else
+# Check if the request was successful
+ERROR_CODE=$(echo "$CREATE_KEY_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
+if [ -n "$ERROR_CODE" ]; then
+    ERROR_MESSAGE=$(echo "$CREATE_KEY_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
     echo -e "${RED}✗ Failed to create API key${NC}"
+    echo "   Error code: $ERROR_CODE"
+    echo "   Error message: $ERROR_MESSAGE"
+    echo "   Response: $CREATE_KEY_RESPONSE"
     exit 1
 fi
+
+# Extract the API key from the response
+TEST_AGENT_API_KEY=$(echo "$CREATE_KEY_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('result', {}).get('api_key', ''))" 2>/dev/null || echo "")
+
+if [ -z "$TEST_AGENT_API_KEY" ]; then
+    echo -e "${RED}✗ Failed to extract API key from response${NC}"
+    echo "   Response: $CREATE_KEY_RESPONSE"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ API key created for ${TEST_AGENT_NAME}${NC}"
+echo -e "${BLUE}  API Key: ${TEST_AGENT_API_KEY:0:30}...${NC}"
 echo ""
 
 # Step 3: Test initial access (should only see agent config)

@@ -128,8 +128,19 @@ TEST_AGENT_API_KEY="sk-test_agent_$(openssl rand -hex 16)"
 DATABASE_URL="${NEXUS_DATABASE_URL:-${POSTGRES_URL}}"
 
 # Use the standalone script to create the API key
-# Prefer uv run for CI compatibility
-if command -v uv >/dev/null 2>&1; then
+# Try running inside Docker container first (where dependencies are installed)
+# Then fall back to local execution
+if docker ps --format '{{.Names}}' | grep -q "^nexus-server$"; then
+    # Run inside Docker container where dependencies are available
+    docker exec nexus-server python3 /app/scripts/create_test_agent_key.py \
+        "$DATABASE_URL" \
+        "$TEST_AGENT_API_KEY" \
+        "$TEST_AGENT_ID" \
+        "$USER_ID" \
+        "$TENANT_ID" \
+        "$TEST_AGENT_NAME"
+elif command -v uv >/dev/null 2>&1; then
+    # Use uv run if available (installs dependencies if needed)
     uv run python "${SCRIPT_DIR}/create_test_agent_key.py" \
         "$DATABASE_URL" \
         "$TEST_AGENT_API_KEY" \

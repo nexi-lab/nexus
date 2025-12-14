@@ -742,7 +742,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     f"{indent}[depth={depth}] Relation '{permission}' uses tupleToUserset: find via '{tupleset_relation}', check '{computed_userset}' on them"
                 )
 
-                # Find all objects related via tupleset (tenant-scoped)
+                # Pattern 1 (parent-style): Find objects where (obj, tupleset_relation, ?)
+                # Example: (child_file, "parent", parent_dir) -> check subject has computed_userset on parent_dir
                 stats.queries += 1
                 if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
                     raise GraphLimitExceeded(
@@ -753,7 +754,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     obj, tupleset_relation, tenant_id
                 )
                 logger.debug(
-                    f"{indent}[depth={depth}]   Found {len(related_objects)} related objects: {[f'{o.entity_type}:{o.entity_id}' for o in related_objects]}"
+                    f"{indent}[depth={depth}]   Pattern 1 (parent): Found {len(related_objects)} related objects: {[f'{o.entity_type}:{o.entity_id}' for o in related_objects]}"
                 )
 
                 # P0-5: Check fan-out limit
@@ -779,7 +780,49 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         context,
                     ):
                         logger.debug(
-                            f"{indent}← RESULT: True (via tupleToUserset on {related_obj.entity_type}:{related_obj.entity_id})"
+                            f"{indent}← RESULT: True (via tupleToUserset parent pattern on {related_obj.entity_type}:{related_obj.entity_id})"
+                        )
+                        return True
+
+                # Pattern 2 (group-style): Find subjects where (?, tupleset_relation, obj)
+                # Example: (group, "direct_viewer", file) -> check subject has computed_userset on group
+                stats.queries += 1
+                if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
+                    raise GraphLimitExceeded(
+                        "queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries
+                    )
+
+                related_subjects = self._find_subjects_with_relation_tenant_aware(
+                    obj, tupleset_relation, tenant_id
+                )
+                logger.debug(
+                    f"{indent}[depth={depth}]   Pattern 2 (group): Found {len(related_subjects)} subjects with '{tupleset_relation}' on obj: {[f'{s.entity_type}:{s.entity_id}' for s in related_subjects]}"
+                )
+
+                # P0-5: Check fan-out limit for group pattern
+                if self.enable_graph_limits and len(related_subjects) > GraphLimits.MAX_FAN_OUT:
+                    raise GraphLimitExceeded(
+                        "fan_out", GraphLimits.MAX_FAN_OUT, len(related_subjects)
+                    )
+
+                # Check if subject has computed_userset on any related subject (typically group membership)
+                for related_subj in related_subjects:
+                    logger.debug(
+                        f"{indent}  Checking if {subject} has '{computed_userset}' on {related_subj.entity_type}:{related_subj.entity_id}"
+                    )
+                    if self._compute_permission_tenant_aware_with_limits(
+                        subject,
+                        computed_userset,
+                        related_subj,
+                        tenant_id,
+                        visited.copy(),
+                        depth + 1,
+                        start_time,
+                        stats,
+                        context,
+                    ):
+                        logger.debug(
+                            f"{indent}← RESULT: True (via tupleToUserset group pattern on {related_subj.entity_type}:{related_subj.entity_id})"
                         )
                         return True
 
@@ -849,6 +892,69 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             logger.debug(
                 f"_find_related_objects_tenant_aware: Found {len(results)} objects for {obj} via '{relation}': {[str(r) for r in results]}"
+            )
+            return results
+
+    def _find_subjects_with_relation_tenant_aware(
+        self, obj: Entity, relation: str, tenant_id: str
+    ) -> list[Entity]:
+        """Find all subjects that have a relation to obj (tenant-scoped).
+
+        For group-style tupleToUserset traversal, finds subjects where: (subject, relation, obj)
+        Example: Finding groups with direct_viewer on file X means finding tuples where:
+          - subject = any (typically a group)
+          - relation = "direct_viewer"
+          - object = file X
+
+        This is the reverse of _find_related_objects_tenant_aware and is used for group
+        permission inheritance patterns like: group_viewer -> find groups with direct_viewer -> check member.
+
+        Args:
+            obj: Object entity (the object in the tuple)
+            relation: Relation type (e.g., "direct_viewer")
+            tenant_id: Tenant ID to scope the query
+
+        Returns:
+            List of subject entities (the subjects from matching tuples)
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.debug(
+            f"_find_subjects_with_relation_tenant_aware: Looking for (?, '{relation}', {obj})"
+        )
+
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            # Query for tuples where obj is the OBJECT (reverse of parent pattern)
+            # This handles group relations: (group, "direct_viewer", file)
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    SELECT subject_type, subject_id
+                    FROM rebac_tuples
+                    WHERE object_type = ? AND object_id = ?
+                      AND relation = ?
+                      AND tenant_id = ?
+                      AND (expires_at IS NULL OR expires_at >= ?)
+                    """
+                ),
+                (
+                    obj.entity_type,
+                    obj.entity_id,
+                    relation,
+                    tenant_id,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+
+            results = []
+            for row in cursor.fetchall():
+                results.append(Entity(row["subject_type"], row["subject_id"]))
+
+            logger.debug(
+                f"_find_subjects_with_relation_tenant_aware: Found {len(results)} subjects for (?, '{relation}', {obj}): {[str(r) for r in results]}"
             )
             return results
 
@@ -1541,6 +1647,327 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         return results
 
+    def rebac_list_objects(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object_type: str = "file",
+        tenant_id: str | None = None,
+        path_prefix: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[tuple[str, str]]:
+        """List objects that a subject can access with a given permission.
+
+        This is the inverse of rebac_expand - instead of "who has permission on Y",
+        it answers "what objects can subject X access".
+
+        Optimized using Rust for performance. This is useful for:
+        - File browser UI: "Show files I can access" (paginated)
+        - Search results: Filter search hits by permission
+        - Sharing UI: "Show files I own"
+        - Audit: "What does user X have access to?"
+
+        Performance:
+        - Current filter_list approach: O(N) where N = total files
+        - This method: O(M) where M = files user has access to (typically M << N)
+
+        Args:
+            subject: (subject_type, subject_id) tuple, e.g., ("user", "alice")
+            permission: Permission to check (e.g., "read", "write")
+            object_type: Type of objects to find (default: "file")
+            tenant_id: Tenant ID for multi-tenant isolation
+            path_prefix: Optional path prefix filter (e.g., "/workspace/")
+            limit: Maximum number of results to return (default: 1000)
+            offset: Number of results to skip for pagination (default: 0)
+
+        Returns:
+            List of (object_type, object_id) tuples that subject can access,
+            sorted by object_id for consistent pagination
+
+        Examples:
+            >>> # List all files user can read
+            >>> objects = manager.rebac_list_objects(
+            ...     subject=("user", "alice"),
+            ...     permission="read",
+            ...     tenant_id="org_123",
+            ... )
+            >>> for obj_type, obj_id in objects:
+            ...     print(f"{obj_type}: {obj_id}")
+
+            >>> # Paginated listing with path prefix
+            >>> page1 = manager.rebac_list_objects(
+            ...     subject=("user", "alice"),
+            ...     permission="read",
+            ...     path_prefix="/workspace/",
+            ...     limit=50,
+            ...     offset=0,
+            ... )
+            >>> page2 = manager.rebac_list_objects(
+            ...     subject=("user", "alice"),
+            ...     permission="read",
+            ...     path_prefix="/workspace/",
+            ...     limit=50,
+            ...     offset=50,
+            ... )
+        """
+        import logging
+        import time as time_module
+
+        from nexus.core.rebac_fast import (
+            RUST_AVAILABLE,
+            list_objects_for_subject_rust,
+        )
+
+        logger = logging.getLogger(__name__)
+        start_time = time_module.perf_counter()
+
+        subject_type, subject_id = subject
+        tenant_id = tenant_id or "default"
+
+        logger.debug(
+            f"[LIST-OBJECTS] Starting for {subject_type}:{subject_id} "
+            f"permission={permission} object_type={object_type} "
+            f"path_prefix={path_prefix} tenant_id={tenant_id}"
+        )
+
+        # Fetch all relevant tuples for this tenant
+        # This includes direct relations, group memberships, etc.
+        tuples = self._fetch_tuples_for_tenant(tenant_id)
+        logger.debug(f"[LIST-OBJECTS] Fetched {len(tuples)} tuples for tenant {tenant_id}")
+
+        # Get namespace configs
+        namespace_configs = self._get_namespace_configs_dict()
+
+        logger.debug(
+            f"[LIST-OBJECTS] Namespace configs: file relations={len(namespace_configs.get('file', {}).get('relations', {}))} permissions={len(namespace_configs.get('file', {}).get('permissions', {}))}"
+        )
+
+        # Try Rust implementation first (much faster)
+        if RUST_AVAILABLE:
+            try:
+                result = list_objects_for_subject_rust(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    object_type=object_type,
+                    tuples=tuples,
+                    namespace_configs=namespace_configs,
+                    path_prefix=path_prefix,
+                    limit=limit,
+                    offset=offset,
+                )
+                elapsed = (time_module.perf_counter() - start_time) * 1000
+                logger.debug(
+                    f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms"
+                )
+                return result
+            except Exception as e:
+                logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
+                # Fall through to Python implementation
+
+        # Python fallback implementation
+        return self._rebac_list_objects_python(
+            subject_type=subject_type,
+            subject_id=subject_id,
+            permission=permission,
+            object_type=object_type,
+            tenant_id=tenant_id,
+            tuples=tuples,
+            _namespace_configs=namespace_configs,
+            path_prefix=path_prefix,
+            limit=limit,
+            offset=offset,
+        )
+
+    def _rebac_list_objects_python(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        object_type: str,
+        tenant_id: str,
+        tuples: list[dict[str, Any]],
+        _namespace_configs: dict[str, Any],
+        path_prefix: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[tuple[str, str]]:
+        """Python fallback implementation for rebac_list_objects.
+
+        Slower than Rust but provides same functionality when Rust is not available.
+        """
+        import logging
+        import time as time_module
+
+        logger = logging.getLogger(__name__)
+        start_time = time_module.perf_counter()
+
+        subject = Entity(subject_type, subject_id)
+
+        # Build a set of candidate objects from tuples
+        # Look for tuples where subject has any relation to objects of the requested type
+        candidate_objects: set[tuple[str, str]] = set()
+
+        # Get relations that might grant this permission
+        permission_relations = self._get_permission_relations(permission, object_type)
+
+        # Direct relations: subject -> relation -> object
+        for t in tuples:
+            if (
+                t["subject_type"] == subject_type
+                and t["subject_id"] == subject_id
+                and t["object_type"] == object_type
+                and t["relation"] in permission_relations
+            ):
+                candidate_objects.add((t["object_type"], t["object_id"]))
+
+        # Group memberships: find groups subject belongs to
+        groups: list[tuple[str, str]] = []
+        for t in tuples:
+            if (
+                t["subject_type"] == subject_type
+                and t["subject_id"] == subject_id
+                and t["relation"] in ("member", "member-of")
+            ):
+                groups.append((t["object_type"], t["object_id"]))
+
+        # Objects accessible through group membership
+        for group_type, group_id in groups:
+            for t in tuples:
+                if (
+                    t["subject_type"] == group_type
+                    and t["subject_id"] == group_id
+                    and t["object_type"] == object_type
+                    and t["relation"] in permission_relations
+                ):
+                    candidate_objects.add((t["object_type"], t["object_id"]))
+
+        # Apply path prefix filter
+        if path_prefix:
+            candidate_objects = {
+                (obj_type, obj_id)
+                for obj_type, obj_id in candidate_objects
+                if obj_id.startswith(path_prefix)
+            }
+
+        # Verify each candidate with full permission check
+        verified_objects: list[tuple[str, str]] = []
+        for obj_type, obj_id in candidate_objects:
+            obj = Entity(obj_type, obj_id)
+            if self._compute_permission_bulk_helper(
+                subject=subject,
+                permission=permission,
+                obj=obj,
+                tenant_id=tenant_id,
+                tuples_graph=tuples,
+                depth=0,
+            ):
+                verified_objects.append((obj_type, obj_id))
+
+        # Sort and paginate
+        verified_objects.sort(key=lambda x: x[1])
+        result = verified_objects[offset : offset + limit]
+
+        elapsed = (time_module.perf_counter() - start_time) * 1000
+        logger.debug(
+            f"[LIST-OBJECTS] Python completed: {len(result)} objects "
+            f"(from {len(candidate_objects)} candidates) in {elapsed:.1f}ms"
+        )
+
+        return result
+
+    def _get_permission_relations(self, permission: str, object_type: str) -> set[str]:
+        """Get all relations that can grant a permission.
+
+        This expands the permission through the namespace config:
+        1. permission -> usersets (e.g., "read" -> ["viewer", "editor", "owner"])
+        2. Each userset -> its union members (e.g., "viewer" -> ["direct_viewer", ...])
+        """
+        relations: set[str] = set()
+
+        # Check namespace config
+        namespace = self.get_namespace(object_type)
+        if not namespace:
+            # Fallback for missing config
+            return {permission, "direct_owner", "owner"}
+
+        ns_config = namespace.config if hasattr(namespace, "config") else {}
+        permissions_map = ns_config.get("permissions", {})
+        relations_map = ns_config.get("relations", {})
+
+        # Step 1: Get usersets that grant this permission
+        # e.g., "read" -> ["viewer", "editor", "owner"]
+        usersets = permissions_map.get(permission, [permission])
+        if isinstance(usersets, list):
+            relations.update(usersets)
+        else:
+            relations.add(permission)
+
+        # Step 2: Expand each userset through unions
+        # e.g., "viewer" -> ["direct_viewer", "parent_viewer", "group_viewer"]
+        expanded: set[str] = set()
+        to_expand = list(relations)
+
+        while to_expand:
+            rel = to_expand.pop()
+            if rel in expanded:
+                continue
+            expanded.add(rel)
+
+            # Check if this relation has a union
+            rel_config = relations_map.get(rel)
+            if isinstance(rel_config, dict) and "union" in rel_config:
+                union_members = rel_config["union"]
+                if isinstance(union_members, list):
+                    for member in union_members:
+                        if member not in expanded:
+                            to_expand.append(member)
+
+        return expanded
+
+    def _fetch_tuples_for_tenant(self, tenant_id: str) -> list[dict[str, Any]]:
+        """Fetch all ReBAC tuples for a tenant.
+
+        This is used by rebac_list_objects to get the full tuple graph.
+        """
+        from sqlalchemy import text
+
+        with self.engine.connect() as conn:
+            result = conn.execute(
+                text("""
+                    SELECT subject_type, subject_id, subject_relation,
+                           relation, object_type, object_id
+                    FROM rebac_tuples
+                    WHERE tenant_id = :tenant_id
+                      AND (expires_at IS NULL OR expires_at > :now)
+                """),
+                {"tenant_id": tenant_id, "now": datetime.now(UTC)},
+            )
+            return [
+                {
+                    "subject_type": row.subject_type,
+                    "subject_id": row.subject_id,
+                    "subject_relation": row.subject_relation,
+                    "relation": row.relation,
+                    "object_type": row.object_type,
+                    "object_id": row.object_id,
+                }
+                for row in result
+            ]
+
+    def _get_namespace_configs_dict(self) -> dict[str, Any]:
+        """Get namespace configs as a dict for Rust interop."""
+        configs: dict[str, Any] = {}
+        for obj_type in ["file", "group", "tenant", "memory"]:
+            namespace = self.get_namespace(obj_type)
+            if namespace and namespace.config:
+                configs[obj_type] = {
+                    "relations": namespace.config.get("relations", {}),
+                    "permissions": namespace.config.get("permissions", {}),
+                }
+        return configs
+
     def _compute_permission_bulk_helper(
         self,
         subject: Entity,
@@ -1746,16 +2173,15 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 tupleset_relation = ttu["tupleset"]
                 computed_userset = ttu["computedUserset"]
 
-                # Find related objects via tupleset IN MEMORY (no DB query!)
+                # Pattern 1 (parent-style): Find objects where (obj, tupleset_relation, ?)
                 related_objects = self._find_related_objects_in_graph(
                     obj, tupleset_relation, tuples_graph
                 )
                 logger.debug(
-                    f"_compute_permission_bulk_helper [depth={depth}]: Found {len(related_objects)} related objects via '{tupleset_relation}'"
+                    f"_compute_permission_bulk_helper [depth={depth}]: Pattern 1 (parent) found {len(related_objects)} related objects via '{tupleset_relation}'"
                 )
 
                 # Check if subject has computed_userset on any related object
-                result = False
                 for related_obj in related_objects:
                     if self._compute_permission_bulk_helper(
                         subject,
@@ -1769,18 +2195,47 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         memo_stats,
                     ):
                         logger.debug(
-                            f"_compute_permission_bulk_helper [depth={depth}]: GRANTED via tupleToUserset through {related_obj}"
+                            f"_compute_permission_bulk_helper [depth={depth}]: GRANTED via tupleToUserset parent pattern through {related_obj}"
                         )
-                        result = True
-                        break
+                        if bulk_memo_cache is not None:
+                            bulk_memo_cache[memo_key] = True
+                        return True
+
+                # Pattern 2 (group-style): Find subjects where (?, tupleset_relation, obj)
+                related_subjects = self._find_subjects_in_graph(
+                    obj, tupleset_relation, tuples_graph
+                )
+                logger.debug(
+                    f"_compute_permission_bulk_helper [depth={depth}]: Pattern 2 (group) found {len(related_subjects)} subjects with '{tupleset_relation}' on obj"
+                )
+
+                # Check if subject has computed_userset on any related subject (typically group membership)
+                for related_subj in related_subjects:
+                    if self._compute_permission_bulk_helper(
+                        subject,
+                        computed_userset,
+                        related_subj,
+                        tenant_id,
+                        tuples_graph,
+                        depth + 1,
+                        visited.copy(),
+                        bulk_memo_cache,
+                        memo_stats,
+                    ):
+                        logger.debug(
+                            f"_compute_permission_bulk_helper [depth={depth}]: GRANTED via tupleToUserset group pattern through {related_subj}"
+                        )
+                        if bulk_memo_cache is not None:
+                            bulk_memo_cache[memo_key] = True
+                        return True
 
                 logger.debug(
-                    f"_compute_permission_bulk_helper [depth={depth}]: No related objects granted permission"
+                    f"_compute_permission_bulk_helper [depth={depth}]: No related objects/subjects granted permission"
                 )
                 # Store result in memo cache before returning
                 if bulk_memo_cache is not None:
-                    bulk_memo_cache[memo_key] = result
-                return result
+                    bulk_memo_cache[memo_key] = False
+                return False
             return False
 
         # Direct relation check (base case)
@@ -1853,9 +2308,37 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 # The object of this tuple is the related entity
                 related.append(Entity(tuple_data["object_type"], tuple_data["object_id"]))
 
-            # For group inheritance: subject is implicit (we're looking at obj's permissions)
-            # But the tuple structure is: (group#member, "direct_owner", file)
-            # Where we need to check: (user, "member", group) separately
-            # This is handled by the computed_userset check, so we only need the above case
-
         return related
+
+    def _find_subjects_in_graph(
+        self,
+        obj: Entity,
+        tupleset_relation: str,
+        tuples_graph: list[dict[str, Any]],
+    ) -> list[Entity]:
+        """Find all subjects that have a relation to obj in the pre-fetched graph.
+
+        This is used for group-style tupleToUserset traversal. For example:
+        - To find groups with direct_viewer on file: look for tuples (group, "direct_viewer", file)
+
+        Args:
+            obj: Object that subjects have relations to
+            tupleset_relation: Relation name (e.g., "direct_viewer", "direct_owner")
+            tuples_graph: Pre-fetched tuples
+
+        Returns:
+            List of subject Entity objects
+        """
+        subjects = []
+        for tuple_data in tuples_graph:
+            # For group inheritance: (group, "direct_viewer", file)
+            # obj is the file, we want to find groups
+            if (
+                tuple_data["object_type"] == obj.entity_type
+                and tuple_data["object_id"] == obj.entity_id
+                and tuple_data["relation"] == tupleset_relation
+            ):
+                # The subject of this tuple is the related entity
+                subjects.append(Entity(tuple_data["subject_type"], tuple_data["subject_id"]))
+
+        return subjects

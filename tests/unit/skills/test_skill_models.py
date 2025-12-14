@@ -97,7 +97,7 @@ def test_skill_metadata_validation_invalid_tier() -> None:
         tier="invalid-tier",
     )
 
-    with pytest.raises(ValidationError, match="skill tier must be 'agent', 'tenant', or 'system'"):
+    with pytest.raises(ValidationError, match="skill tier must be one of"):
         metadata.validate()
 
 

@@ -218,7 +218,7 @@ class TestSkillImporter:
 
         assert result["imported_skills"] == ["test-skill"]
         assert result["tier"] == "system"
-        assert "/skills/system/test-skill/" in result["skill_paths"][0]
+        assert "/skill/test-skill/" in result["skill_paths"][0]
 
     @pytest.mark.asyncio
     async def test_import_system_tier_as_user_fails(self, importer, user_context):

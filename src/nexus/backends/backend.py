@@ -54,6 +54,7 @@ class Backend(ABC):
             'postgresql://localhost/nexus'
         """
         import os
+
         return os.getenv("TOKEN_MANAGER_DB") or db_param
 
     @property

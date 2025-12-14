@@ -931,9 +931,9 @@ class TestNexusFSOAuthMixin:
             # Verify factory was created with None (will use default)
             MockFactory.assert_called_once_with(config=None)
 
-
     def test_get_token_manager_uses_context_utils(self):
         """Test that _get_token_manager uses context_utils.get_database_url."""
+
         class TestMixin(NexusFSOAuthMixin):
             def __init__(self):
                 self.db_path = "/tmp/test.db"
@@ -960,7 +960,6 @@ class TestNexusFSOAuthMixin:
         self, mock_oauth_mixin, mock_token_manager
     ):
         """Test that oauth_exchange_code uses context_utils.get_tenant_id."""
-        from nexus.core.context_utils import get_tenant_id
         from nexus.core.permissions import OperationContext
 
         mock_oauth_mixin._token_manager = mock_token_manager
@@ -1005,7 +1004,6 @@ class TestNexusFSOAuthMixin:
         self, mock_oauth_mixin, mock_token_manager
     ):
         """Test that oauth_list_credentials uses context_utils.get_tenant_id."""
-        from nexus.core.context_utils import get_tenant_id
         from nexus.core.permissions import OperationContext
 
         mock_oauth_mixin._token_manager = mock_token_manager

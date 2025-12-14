@@ -11,7 +11,6 @@ Usage:
 """
 
 import sys
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,12 +21,15 @@ sys.path.insert(0, str(src_dir))
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
+
 from nexus.core.entity_registry import EntityRegistry
 from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import APIKeyModel
 
 
-def setup_admin_api_key(database_url: str, admin_api_key: str, tenant_id: str = "default", user_id: str = "admin") -> bool:
+def setup_admin_api_key(
+    database_url: str, admin_api_key: str, tenant_id: str = "default", user_id: str = "admin"
+) -> bool:
     """
     Setup admin user and API key in the database.
 
@@ -54,7 +56,7 @@ def setup_admin_api_key(database_url: str, admin_api_key: str, tenant_id: str = 
                 parent_id=tenant_id,
             )
             print(f"✓ Registered user {user_id} in entity registry")
-        except Exception as e:
+        except Exception:
             # User might already exist, that's okay
             print(f"  User {user_id} already exists (or registration skipped)")
 
@@ -97,6 +99,7 @@ def setup_admin_api_key(database_url: str, admin_api_key: str, tenant_id: str = 
             except Exception as e:
                 print(f"ERROR creating API key: {e}", file=sys.stderr)
                 import traceback
+
                 traceback.print_exc()
                 session.rollback()
                 return False
@@ -104,6 +107,7 @@ def setup_admin_api_key(database_url: str, admin_api_key: str, tenant_id: str = 
     except Exception as e:
         print(f"ERROR connecting to database: {e}", file=sys.stderr)
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -111,9 +115,15 @@ def setup_admin_api_key(database_url: str, admin_api_key: str, tenant_id: str = 
 def main():
     """Main entry point for CLI usage."""
     if len(sys.argv) < 3:
-        print("Usage: python setup_admin_api_key.py <database_url> <api_key> [tenant_id] [user_id]", file=sys.stderr)
+        print(
+            "Usage: python setup_admin_api_key.py <database_url> <api_key> [tenant_id] [user_id]",
+            file=sys.stderr,
+        )
         print("\nExample:", file=sys.stderr)
-        print('  python setup_admin_api_key.py "postgresql://localhost/nexus" "sk-admin_key" "default" "admin"', file=sys.stderr)
+        print(
+            '  python setup_admin_api_key.py "postgresql://localhost/nexus" "sk-admin_key" "default" "admin"',
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     database_url = sys.argv[1]

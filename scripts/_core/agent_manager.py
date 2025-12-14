@@ -5,8 +5,7 @@ Provides functions to create and configure standard agent types
 (ImpersonatedUser, UntrustedAgent) with consistent configuration.
 """
 
-from typing import Any, Dict, Optional
-
+from typing import Any
 
 # Default agent configuration metadata
 DEFAULT_AGENT_METADATA = {
@@ -17,11 +16,8 @@ DEFAULT_AGENT_METADATA = {
 
 
 def create_impersonated_user_agent(
-    nx: Any,
-    user_id: str,
-    context: Any,
-    metadata: Optional[Dict[str, Any]] = None
-) -> Optional[Dict[str, Any]]:
+    nx: Any, user_id: str, context: Any, metadata: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """
     Create an ImpersonatedUser agent (digital twin).
 
@@ -55,7 +51,9 @@ def create_impersonated_user_agent(
             metadata=agent_metadata,
             context=context,
         )
-        print(f"  ✓ Created agent 'ImpersonatedUser' (digital twin) at {agent_result.get('config_path', 'N/A')}")
+        print(
+            f"  ✓ Created agent 'ImpersonatedUser' (digital twin) at {agent_result.get('config_path', 'N/A')}"
+        )
         return agent_result
     except Exception as e:
         print(f"  ✗ Failed to create ImpersonatedUser agent: {e}")
@@ -63,11 +61,8 @@ def create_impersonated_user_agent(
 
 
 def create_untrusted_agent(
-    nx: Any,
-    user_id: str,
-    context: Any,
-    metadata: Optional[Dict[str, Any]] = None
-) -> Optional[Dict[str, Any]]:
+    nx: Any, user_id: str, context: Any, metadata: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """
     Create an UntrustedAgent with API key and zero default permissions.
 
@@ -101,7 +96,9 @@ def create_untrusted_agent(
             metadata=agent_metadata,
             context=context,
         )
-        print(f"  ✓ Created agent 'UntrustedAgent' (with API key, zero permissions) at {agent_result.get('config_path', 'N/A')}")
+        print(
+            f"  ✓ Created agent 'UntrustedAgent' (with API key, zero permissions) at {agent_result.get('config_path', 'N/A')}"
+        )
         return agent_result
     except Exception as e:
         print(f"  ✗ Failed to create UntrustedAgent agent: {e}")
@@ -109,11 +106,8 @@ def create_untrusted_agent(
 
 
 def create_standard_agents(
-    nx: Any,
-    user_id: str,
-    context: Any,
-    metadata: Optional[Dict[str, Any]] = None
-) -> Dict[str, Optional[Dict[str, Any]]]:
+    nx: Any, user_id: str, context: Any, metadata: dict[str, Any] | None = None
+) -> dict[str, dict[str, Any] | None]:
     """
     Create both standard agent types (ImpersonatedUser and UntrustedAgent).
 
@@ -136,8 +130,8 @@ def create_standard_agents(
         ...     print(f"API key: {results['untrusted'].get('api_key')}")
     """
     return {
-        'impersonated': create_impersonated_user_agent(nx, user_id, context, metadata),
-        'untrusted': create_untrusted_agent(nx, user_id, context, metadata),
+        "impersonated": create_impersonated_user_agent(nx, user_id, context, metadata),
+        "untrusted": create_untrusted_agent(nx, user_id, context, metadata),
     }
 
 
@@ -146,7 +140,7 @@ def grant_agent_resource_access(
     user_id: str,
     tenant_id: str,
     resource_types: list[str],
-    agent_name: str = "UntrustedAgent"
+    agent_name: str = "UntrustedAgent",
 ) -> int:
     """
     Grant viewer (read-only) permissions to agent for specified resource types.

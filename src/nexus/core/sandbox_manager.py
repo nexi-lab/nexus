@@ -122,12 +122,16 @@ class SandboxManager:
                 provider = "e2b"
             else:
                 available = ", ".join(self.providers.keys()) if self.providers else "none"
-                raise ValueError(f"No sandbox providers available. Available providers: {available}")
+                raise ValueError(
+                    f"No sandbox providers available. Available providers: {available}"
+                )
 
         # Check provider availability
         if provider not in self.providers:
             available = ", ".join(self.providers.keys()) if self.providers else "none"
-            raise ValueError(f"Provider '{provider}' not available. Available providers: {available}")
+            raise ValueError(
+                f"Provider '{provider}' not available. Available providers: {available}"
+            )
 
         # Check name uniqueness for active sandboxes only
         # Allow reusing name if existing sandbox is stopped/paused
@@ -577,7 +581,9 @@ class SandboxManager:
         # Check provider availability
         if provider not in self.providers:
             available = ", ".join(self.providers.keys()) if self.providers else "none"
-            raise ValueError(f"Provider '{provider}' not available. Available providers: {available}")
+            raise ValueError(
+                f"Provider '{provider}' not available. Available providers: {available}"
+            )
 
         if not nexus_url or not nexus_api_key:
             raise ValueError("Both nexus_url and nexus_api_key required for mounting")
@@ -639,7 +645,9 @@ class SandboxManager:
         # Check provider availability
         if provider not in self.providers:
             available = ", ".join(self.providers.keys()) if self.providers else "none"
-            raise ValueError(f"Provider '{provider}' not available. Available providers: {available}")
+            raise ValueError(
+                f"Provider '{provider}' not available. Available providers: {available}"
+            )
 
         if not sandbox_api_key:
             raise ValueError(f"Sandbox API key required for provider '{provider}'")

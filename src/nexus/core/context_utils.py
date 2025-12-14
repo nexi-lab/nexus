@@ -11,7 +11,7 @@ and workspace_registry modules.
 """
 
 import os
-from typing import Any, Optional
+from typing import Any
 
 
 def get_tenant_id(context: Any) -> str:
@@ -36,7 +36,7 @@ def get_tenant_id(context: Any) -> str:
     return "default"
 
 
-def get_user_identity(context: Any) -> tuple[str, Optional[str]]:
+def get_user_identity(context: Any) -> tuple[str, str | None]:
     """
     Extract user identity (type, id) from context.
 
@@ -65,9 +65,9 @@ def get_user_identity(context: Any) -> tuple[str, Optional[str]]:
 
     subject_type = getattr(context, "subject_type", "user") or "user"
     subject_id = (
-        getattr(context, "subject_id", None) or
-        getattr(context, "user_id", None) or
-        getattr(context, "user", None)
+        getattr(context, "subject_id", None)
+        or getattr(context, "user_id", None)
+        or getattr(context, "user", None)
     )
     return (subject_type, subject_id)
 
@@ -100,8 +100,12 @@ def get_database_url(obj: Any, context: Any = None) -> str:
     database_url = os.getenv("TOKEN_MANAGER_DB")
 
     if not database_url:
-        if (hasattr(obj, "_config") and obj._config and
-            hasattr(obj._config, "db_path") and obj._config.db_path):
+        if (
+            hasattr(obj, "_config")
+            and obj._config
+            and hasattr(obj._config, "db_path")
+            and obj._config.db_path
+        ):
             database_url = obj._config.db_path
         elif hasattr(obj, "db_path") and obj.db_path:
             database_url = str(obj.db_path)

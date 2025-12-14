@@ -5,17 +5,18 @@ Provides shared helper functions for error handling, operation execution,
 and consistent output formatting.
 """
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 
 def safe_operation(
     operation_name: str,
     operation_fn: Callable,
     *args,
-    on_success: Optional[Callable[[Any], None]] = None,
-    on_error: Optional[Callable[[Exception], None]] = None,
-    **kwargs
-) -> Optional[Any]:
+    on_success: Callable[[Any], None] | None = None,
+    on_error: Callable[[Exception], None] | None = None,
+    **kwargs,
+) -> Any | None:
     """
     Execute an operation with consistent error handling and output.
 

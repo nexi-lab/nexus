@@ -9,7 +9,6 @@ Tests cover utility functions for extracting and resolving context information:
 
 from __future__ import annotations
 
-import os
 from unittest.mock import Mock
 
 import pytest
@@ -43,6 +42,7 @@ class TestGetTenantId:
 
     def test_get_tenant_id_without_tenant_id_attribute(self):
         """Test that missing tenant_id attribute defaults to 'default'."""
+
         # Use a simple object without tenant_id attribute
         class SimpleContext:
             pass
@@ -119,6 +119,7 @@ class TestGetUserIdentity:
 
     def test_get_user_identity_defaults_subject_type(self):
         """Test that missing subject_type defaults to 'user'."""
+
         # Use a simple object with only subject_id
         class SimpleContext:
             def __init__(self):
@@ -176,6 +177,7 @@ class TestGetDatabaseUrl:
 
     def test_get_database_url_from_obj_db_path(self):
         """Test that obj.db_path is used when config is not available."""
+
         # Use a simple object without _config
         class SimpleObj:
             def __init__(self):
@@ -190,6 +192,7 @@ class TestGetDatabaseUrl:
 
     def test_get_database_url_from_metadata(self):
         """Test that obj.metadata.database_url is used as fallback."""
+
         # Use a simple object without _config or db_path
         class MetadataObj:
             def __init__(self):
@@ -226,6 +229,7 @@ class TestGetDatabaseUrl:
 
     def test_get_database_url_raises_when_none_available(self):
         """Test that RuntimeError is raised when no database URL is configured."""
+
         # Use a simple object with no database configuration
         class EmptyObj:
             pass
@@ -312,6 +316,7 @@ class TestResolveSkillBasePath:
 
     def test_resolve_skill_base_path_without_user_id_attribute(self):
         """Test that missing user_id attribute falls back to tenant_id."""
+
         # Use a simple object with only tenant_id
         class SimpleContext:
             def __init__(self):

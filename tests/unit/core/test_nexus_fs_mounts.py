@@ -16,7 +16,7 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -641,7 +641,6 @@ class TestMountContextUtilsIntegration:
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ):
         """Test that add_mount uses context_utils.get_tenant_id and get_user_identity."""
-        from nexus.core.context_utils import get_tenant_id, get_user_identity
         from nexus.core.permissions import OperationContext
 
         mount_data_dir = temp_dir / "context_mount"
@@ -673,9 +672,7 @@ class TestMountContextUtilsIntegration:
             mock_get_tenant.assert_called_with(context)
             mock_get_user.assert_called_with(context)
 
-    def test_remove_mount_with_context_works(
-        self, nx_with_permissions: NexusFS, temp_dir: Path
-    ):
+    def test_remove_mount_with_context_works(self, nx_with_permissions: NexusFS, temp_dir: Path):
         """Test that remove_mount works correctly with context (uses context_utils internally)."""
         from nexus.core.permissions import OperationContext
 
@@ -730,9 +727,7 @@ class TestMountContextUtilsIntegration:
             # Verify get_database_url was called
             mock_get_db_url.assert_called()
 
-    def test_load_mount_oauth_backend_uses_database_url(
-        self, nx: NexusFS, temp_dir: Path
-    ):
+    def test_load_mount_oauth_backend_uses_database_url(self, nx: NexusFS, temp_dir: Path):
         """Test that load_mount for OAuth backends resolves database URL correctly."""
         # Set up database path
         nx.db_path = temp_dir / "token_manager.db"

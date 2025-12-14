@@ -63,9 +63,7 @@ def database_url(temp_db_file):
 class TestSetupAdminAPIKey:
     """Test suite for setup_admin_api_key function."""
 
-    def test_setup_admin_api_key_creates_new_key(
-        self, engine, session_factory, database_url
-    ):
+    def test_setup_admin_api_key_creates_new_key(self, engine, session_factory, database_url):
         """Test that setup_admin_api_key creates a new admin API key."""
         admin_key = "sk-admin_test_key_12345"
 
@@ -89,9 +87,7 @@ class TestSetupAdminAPIKey:
             assert existing.name == "Admin Bootstrap Key"
             assert existing.revoked == 0
 
-    def test_setup_admin_api_key_verifies_existing_key(
-        self, engine, session_factory, database_url
-    ):
+    def test_setup_admin_api_key_verifies_existing_key(self, engine, session_factory, database_url):
         """Test that setup_admin_api_key verifies existing key without error."""
         admin_key = "sk-admin_existing_key_12345"
 
@@ -111,9 +107,7 @@ class TestSetupAdminAPIKey:
             ).all()
             assert len(keys) == 1
 
-    def test_setup_admin_api_key_registers_user(
-        self, engine, session_factory, database_url
-    ):
+    def test_setup_admin_api_key_registers_user(self, engine, session_factory, database_url):
         """Test that setup_admin_api_key registers user in entity registry."""
         from nexus.core.entity_registry import EntityRegistry
 
@@ -131,16 +125,12 @@ class TestSetupAdminAPIKey:
         assert entity.parent_type == "tenant"
         assert entity.parent_id == "default"
 
-    def test_setup_admin_api_key_with_custom_tenant_id(
-        self, engine, session_factory, database_url
-    ):
+    def test_setup_admin_api_key_with_custom_tenant_id(self, engine, session_factory, database_url):
         """Test setup_admin_api_key with custom tenant_id."""
         admin_key = "sk-admin_custom_tenant"
         tenant_id = "acme_corp"
 
-        result = setup_admin_api_key(
-            database_url, admin_key, tenant_id=tenant_id, user_id="admin"
-        )
+        result = setup_admin_api_key(database_url, admin_key, tenant_id=tenant_id, user_id="admin")
 
         assert result is True
 
@@ -154,16 +144,12 @@ class TestSetupAdminAPIKey:
             assert existing is not None
             assert existing.tenant_id == tenant_id
 
-    def test_setup_admin_api_key_with_custom_user_id(
-        self, engine, session_factory, database_url
-    ):
+    def test_setup_admin_api_key_with_custom_user_id(self, engine, session_factory, database_url):
         """Test setup_admin_api_key with custom user_id."""
         admin_key = "sk-custom_user_key"
         user_id = "superadmin"
 
-        result = setup_admin_api_key(
-            database_url, admin_key, tenant_id="default", user_id=user_id
-        )
+        result = setup_admin_api_key(database_url, admin_key, tenant_id="default", user_id=user_id)
 
         assert result is True
 
@@ -179,9 +165,7 @@ class TestSetupAdminAPIKey:
             assert existing.subject_id == user_id
             assert existing.name == "Superadmin Bootstrap Key"
 
-    def test_setup_admin_api_key_handles_existing_user(
-        self, engine, session_factory, database_url
-    ):
+    def test_setup_admin_api_key_handles_existing_user(self, engine, session_factory, database_url):
         """Test that setup_admin_api_key handles existing user gracefully."""
         from nexus.core.entity_registry import EntityRegistry
 
@@ -205,13 +189,12 @@ class TestSetupAdminAPIKey:
         # This test mocks the database connection since we can't easily set up PostgreSQL
         admin_key = "sk-postgres_test"
 
-        with patch("setup_admin_api_key.create_engine") as mock_engine, patch(
-            "setup_admin_api_key.sessionmaker"
-        ) as mock_sessionmaker, patch(
-            "setup_admin_api_key.EntityRegistry"
-        ) as mock_registry, patch(
-            "setup_admin_api_key.DatabaseAPIKeyAuth"
-        ) as mock_auth:
+        with (
+            patch("setup_admin_api_key.create_engine") as mock_engine,
+            patch("setup_admin_api_key.sessionmaker") as mock_sessionmaker,
+            patch("setup_admin_api_key.EntityRegistry") as mock_registry,
+            patch("setup_admin_api_key.DatabaseAPIKeyAuth") as mock_auth,
+        ):
             # Setup mocks
             mock_session = Mock()
             mock_session_factory = Mock(return_value=mock_session)

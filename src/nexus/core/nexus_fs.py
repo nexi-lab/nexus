@@ -2875,6 +2875,206 @@ class NexusFS(
 
     # ===== Agent Management (v0.5.0) =====
 
+    def _extract_tenant_id(self, context: dict | Any | None) -> str | None:
+        """Extract tenant_id from context (dict or OperationContext)."""
+        if not context:
+            return None
+        if isinstance(context, dict):
+            return context.get("tenant_id")
+        return getattr(context, "tenant_id", None)
+
+    def _extract_user_id(self, context: dict | Any | None) -> str | None:
+        """Extract user_id from context (dict or OperationContext)."""
+        if not context:
+            return None
+        if isinstance(context, dict):
+            return context.get("user_id") or context.get("user")
+        return getattr(context, "user_id", None) or getattr(context, "user", None)
+
+    def _create_agent_config_data(
+        self,
+        agent_id: str,
+        name: str,
+        user_id: str,
+        description: str | None,
+        created_at: str | None,
+        metadata: dict | None = None,
+        api_key: str | None = None,
+        inherit_permissions: bool | None = None,
+    ) -> dict:
+        """Create agent config.yaml data structure."""
+        config_data = {
+            "agent_id": agent_id,
+            "name": name,
+            "user_id": user_id,
+            "description": description,
+            "created_at": created_at,
+        }
+
+        if metadata:
+            config_data["metadata"] = metadata.copy()
+
+        if api_key is not None:
+            config_data["api_key"] = api_key
+
+        if inherit_permissions is not None:
+            config_data["inherit_permissions"] = inherit_permissions
+
+        return config_data
+
+    def _write_agent_config(
+        self,
+        config_path: str,
+        config_data: dict,
+        context: dict | Any | None,
+    ) -> None:
+        """Write agent config.yaml file."""
+        import yaml
+
+        config_yaml = yaml.dump(config_data, default_flow_style=False, sort_keys=False)
+        self.write(config_path, config_yaml.encode("utf-8"), context=context)
+
+    def _create_agent_directory(
+        self,
+        agent_id: str,
+        user_id: str,
+        agent_dir: str,
+        config_path: str,
+        config_data: dict,
+        context: dict | Any | None,
+    ) -> None:
+        """Create agent directory, config file, and grant ReBAC permissions."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        try:
+            # Create agent directory
+            self.mkdir(agent_dir, parents=True, exist_ok=True, context=context)
+
+            # Write config.yaml
+            self._write_agent_config(config_path, config_data, context)
+
+            # Grant ReBAC permissions
+            if self._rebac_manager:
+                tenant_id = self._extract_tenant_id(context) or "default"
+
+                # Grant direct_owner to the agent itself
+                try:
+                    logger.debug(
+                        f"register_agent: Granting direct_owner to agent {agent_id} for {agent_dir}"
+                    )
+                    self._rebac_manager.rebac_write(
+                        subject=("agent", agent_id),
+                        relation="direct_owner",
+                        object=("file", agent_dir),
+                        tenant_id=tenant_id,
+                    )
+                    logger.debug(f"register_agent: Granted direct_owner to agent {agent_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to grant direct_owner to agent for {agent_dir}: {e}")
+
+                # Grant user permissions to access agent's directory
+                from nexus.core.permissions_enhanced import PermissionName
+
+                for permission in [
+                    PermissionName.READ,
+                    PermissionName.WRITE,
+                    PermissionName.DELETE,
+                ]:
+                    try:
+                        self._rebac_manager.rebac_grant(
+                            subject=("user", user_id),
+                            permission=permission.value,
+                            object=("directory", agent_dir),
+                            tenant_id=tenant_id,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to grant {permission.value} to user for {agent_dir}: {e}"
+                        )
+
+        except Exception as e:
+            logger.warning(f"Failed to create agent directory or config: {e}")
+
+    def _determine_agent_key_expiration(
+        self,
+        user_id: str,
+        session: Any,
+    ) -> datetime:
+        """Determine expiration date for agent API key based on owner's key."""
+        from datetime import UTC, datetime, timedelta
+
+        from sqlalchemy import select
+
+        from nexus.storage.models import APIKeyModel
+
+        # Find the owner's active API key (exclude agent keys)
+        stmt = (
+            select(APIKeyModel)
+            .where(
+                APIKeyModel.user_id == user_id,
+                APIKeyModel.revoked == 0,  # Active keys only
+                APIKeyModel.subject_type != "agent",  # Only user keys, not agent keys
+            )
+            .order_by(APIKeyModel.created_at.desc())
+        )  # Get most recent key
+
+        owner_key = session.scalar(stmt)
+
+        # Determine expiration for agent key
+        if owner_key and owner_key.expires_at:
+            # Use owner's key expiration as maximum
+            now = datetime.now(UTC)
+            owner_expires = owner_key.expires_at
+            if owner_expires.tzinfo is None:
+                owner_expires = owner_expires.replace(tzinfo=UTC)
+
+            if owner_expires > now:
+                return owner_expires  # Agent key expires with owner's key
+            else:
+                # Owner's key is expired, cannot create agent API key
+                raise ValueError(
+                    f"Cannot generate API key for agent: Your API key has expired on {owner_expires.isoformat()}. "
+                    "Please renew your API key before creating agent API keys."
+                )
+        else:
+            # No expiration on owner's key or no key found, use default 365 days
+            return datetime.now(UTC) + timedelta(days=365)
+
+    def _create_agent_api_key(
+        self,
+        agent_id: str,
+        user_id: str,
+        inherit_permissions: bool,
+        context: dict | Any | None,
+    ) -> str:
+        """Create API key for agent and return the raw key."""
+        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+
+        tenant_id = self._extract_tenant_id(context)
+        session = self.metadata.SessionLocal()
+
+        try:
+            # Determine expiration based on owner's key
+            expires_at = self._determine_agent_key_expiration(user_id, session)
+
+            # Create the API key
+            _key_id, raw_key = DatabaseAPIKeyAuth.create_key(
+                session,
+                user_id=user_id,
+                name=agent_id,  # Use agent_id format: <user_id>,<agent_name>
+                subject_type="agent",
+                subject_id=agent_id,
+                tenant_id=tenant_id,
+                expires_at=expires_at,
+                inherit_permissions=inherit_permissions,
+            )
+            session.commit()
+            return raw_key
+        finally:
+            session.close()
+
     @rpc_expose(description="Register an AI agent")
     def register_agent(
         self,
@@ -2882,6 +3082,8 @@ class NexusFS(
         name: str,
         description: str | None = None,
         generate_api_key: bool = False,
+        inherit_permissions: bool = False,  # v0.5.1: Default False (zero permissions)
+        metadata: dict | None = None,  # v0.5.1: Optional metadata (platform, endpoint_url, etc.)
         context: dict | None = None,
     ) -> dict:
         """Register an AI agent (v0.5.0).
@@ -2889,11 +3091,17 @@ class NexusFS(
         Agents are persistent identities owned by users. They do NOT have session_id
         or expiry - they live forever until explicitly deleted.
 
+        v0.5.1: Added inherit_permissions for controlling agent permission inheritance.
+
         Args:
             agent_id: Unique agent identifier
             name: Human-readable name
             description: Optional description
             generate_api_key: If True, create API key for agent (not recommended)
+            inherit_permissions: Whether agent inherits owner's permissions (v0.5.1)
+                                Default False (zero permissions, principle of least privilege)
+            metadata: Optional metadata dict (platform, endpoint_url, agent_id, etc.)
+                     Stored in agent's config.yaml for agent configuration
             context: Operation context (user_id extracted from here)
 
         Returns:
@@ -2903,21 +3111,29 @@ class NexusFS(
             >>> # Recommended: No API key (uses user's auth + X-Agent-ID)
             >>> agent = nx.register_agent("data_analyst", "Data Analyst")
             >>> # Agent uses owner's credentials + X-Agent-ID header
+            >>>
+            >>> # With API key but no inheritance (zero permissions)
+            >>> agent = nx.register_agent("secure_agent", "Secure Agent",
+            ...                          generate_api_key=True, inherit_permissions=False)
+            >>> # Agent starts with 0 permissions, needs explicit ReBAC grants
+            >>>
+            >>> # With API key and inheritance (full permissions)
+            >>> agent = nx.register_agent("trusted_agent", "Trusted Agent",
+            ...                          generate_api_key=True, inherit_permissions=True)
+            >>> # Agent inherits all owner's permissions
         """
+        import logging
+
         from nexus.core.agents import register_agent
 
-        # Extract user_id from context
-        # Context can be either dict (from params) or OperationContext (from RPC auth)
-        user_id = None
-        if context:
-            if isinstance(context, dict):
-                user_id = context.get("user_id") or context.get("user")
-            else:
-                # OperationContext object from RPC authentication
-                user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
+        logger = logging.getLogger(__name__)
 
+        # Extract user_id and tenant_id from context
+        user_id = self._extract_user_id(context)
         if not user_id:
             raise ValueError("user_id required in context to register agent")
+
+        tenant_id = self._extract_tenant_id(context) or "default"
 
         # Ensure EntityRegistry is initialized
         if not self._entity_registry:
@@ -2925,33 +3141,73 @@ class NexusFS(
 
             self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
 
-        # Register agent (always without API key first)
+        # Register agent entity (always without API key first)
         agent = register_agent(
             user_id=user_id,
             agent_id=agent_id,
             name=name,
+            tenant_id=tenant_id,
             metadata={"description": description} if description else None,
             entity_registry=self._entity_registry,
         )
 
-        # Optionally generate API key (not recommended)
-        if generate_api_key:
-            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        # Create agent directory structure
+        # Extract agent name from agent_id (format: user_id,agent_name)
+        agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
+        agent_dir = f"/agent/{user_id}/{agent_name_part}"
+        config_path = f"{agent_dir}/config.yaml"
 
-            session = self.metadata.SessionLocal()
+        # Create initial config data
+        config_data = self._create_agent_config_data(
+            agent_id=agent_id,
+            name=name,
+            user_id=user_id,
+            description=description,
+            created_at=agent.get("created_at"),
+            metadata=metadata,
+        )
+
+        # Create directory, config file, and grant ReBAC permissions
+        self._create_agent_directory(
+            agent_id=agent_id,
+            user_id=user_id,
+            agent_dir=agent_dir,
+            config_path=config_path,
+            config_data=config_data,
+            context=context,
+        )
+        agent["config_path"] = config_path
+
+        # Optionally generate API key
+        if generate_api_key:
             try:
-                key_id, raw_key = DatabaseAPIKeyAuth.create_key(
-                    session,
+                raw_key = self._create_agent_api_key(
+                    agent_id=agent_id,
                     user_id=user_id,
-                    name=f"Agent: {name}",
-                    subject_type="agent",
-                    subject_id=agent_id,
+                    inherit_permissions=inherit_permissions,
+                    context=context,
                 )
-                session.commit()
                 agent["api_key"] = raw_key
                 agent["has_api_key"] = True
-            finally:
-                session.close()
+
+                # Update config.yaml with API key information
+                try:
+                    updated_config_data = self._create_agent_config_data(
+                        agent_id=agent_id,
+                        name=name,
+                        user_id=user_id,
+                        description=description,
+                        created_at=agent.get("created_at"),
+                        metadata=metadata,
+                        api_key=raw_key,
+                        inherit_permissions=inherit_permissions,
+                    )
+                    self._write_agent_config(config_path, updated_config_data, context)
+                except Exception as e:
+                    logger.warning(f"Failed to update config with API key: {e}")
+            except Exception as e:
+                logger.error(f"Failed to create API key for agent: {e}")
+                raise
         else:
             agent["has_api_key"] = False
 
@@ -3070,6 +3326,123 @@ class NexusFS(
             from nexus.core.entity_registry import EntityRegistry
 
             self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+
+        # Get agent info before deletion to extract user_id
+        try:
+            # Agent ID format: user_id,agent_name
+            if "," in agent_id:
+                user_id, agent_name_part = agent_id.split(",", 1)
+                agent_dir = f"/agent/{user_id}/{agent_name_part}"
+
+                # Delete agent directory and config
+                try:
+                    if self.exists(agent_dir, context=_context):
+                        # Use admin override for cleanup during agent deletion
+                        self.rmdir(agent_dir, recursive=True, context=_context, is_admin=True)
+                except Exception as e:
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Failed to delete agent directory {agent_dir}: {e}")
+
+                # Delete ALL API keys associated with this agent
+                session = self.metadata.SessionLocal()
+                try:
+                    from sqlalchemy import update
+
+                    from nexus.storage.models import APIKeyModel
+
+                    # Revoke (soft delete) all API keys for this agent
+                    stmt = (
+                        update(APIKeyModel)
+                        .where(
+                            APIKeyModel.subject_type == "agent",
+                            APIKeyModel.subject_id == agent_id,
+                            APIKeyModel.revoked == 0,  # Only active keys
+                        )
+                        .values(revoked=1)  # Mark as revoked
+                    )
+                    result = session.execute(stmt)
+                    session.commit()
+
+                    if result.rowcount > 0:
+                        import logging
+
+                        logger = logging.getLogger(__name__)
+                        logger.info(f"Revoked {result.rowcount} API key(s) for agent {agent_id}")
+                except Exception as e:
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Failed to revoke API keys for agent {agent_id}: {e}")
+                    session.rollback()
+                finally:
+                    session.close()
+
+                # Delete ALL ReBAC permissions for this agent
+                if self._rebac_manager:
+                    import logging
+
+                    from nexus.core.permissions_enhanced import PermissionName
+
+                    logger = logging.getLogger(__name__)
+                    tenant_id = (
+                        getattr(_context, "tenant_id", None)
+                        if _context and not isinstance(_context, dict)
+                        else None
+                    )
+
+                    # List all ReBAC tuples for this agent
+                    try:
+                        tuples = self._rebac_manager.rebac_list_tuples(
+                            subject_type="agent",
+                            subject_id=agent_id,
+                            tenant_id=tenant_id or "default",
+                        )
+
+                        # Delete each tuple
+                        deleted_count = 0
+                        for tuple_data in tuples:
+                            try:
+                                self._rebac_manager.rebac_delete(
+                                    subject=(tuple_data["subject_type"], tuple_data["subject_id"]),
+                                    relation=tuple_data["relation"],
+                                    object=(tuple_data["object_type"], tuple_data["object_id"]),
+                                    tenant_id=tenant_id or "default",
+                                )
+                                deleted_count += 1
+                            except Exception as e:
+                                logger.warning(f"Failed to delete ReBAC tuple: {e}")
+
+                        if deleted_count > 0:
+                            logger.info(
+                                f"Deleted {deleted_count} ReBAC tuple(s) for agent {agent_id}"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Failed to delete ReBAC tuples for agent {agent_id}: {e}")
+
+                    # Revoke user's permissions on agent directory
+                    try:
+                        for permission in [
+                            PermissionName.READ,
+                            PermissionName.WRITE,
+                            PermissionName.DELETE,
+                        ]:
+                            self._rebac_manager.rebac_revoke(
+                                subject=("user", user_id),
+                                permission=permission.value,
+                                object=("directory", agent_dir),
+                                tenant_id=tenant_id,
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to revoke user permissions for agent directory: {e}"
+                        )
+        except Exception as e:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to cleanup agent resources: {e}")
 
         return self._entity_registry.delete_entity("agent", agent_id)
 

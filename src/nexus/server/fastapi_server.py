@@ -85,6 +85,7 @@ class WhoamiResponse(BaseModel):
     subject_id: str | None = None
     tenant_id: str | None = None
     is_admin: bool = False
+    inherit_permissions: bool = True  # v0.5.1: Whether agent inherits owner's permissions
     user: str | None = None
 
 
@@ -172,6 +173,7 @@ async def get_auth_result(
             "subject_type": subject_type,
             "subject_id": subject_id,
             "tenant_id": tenant_id,
+            "inherit_permissions": True,  # Open access mode always inherits
             "metadata": {"open_access": True},
             "x_agent_id": x_agent_id,
         }
@@ -195,6 +197,9 @@ async def get_auth_result(
             "subject_type": result.subject_type,
             "subject_id": result.subject_id,
             "tenant_id": result.tenant_id,
+            "inherit_permissions": result.inherit_permissions
+            if hasattr(result, "inherit_permissions")
+            else True,
             "metadata": result.metadata if hasattr(result, "metadata") else {},
             "x_agent_id": x_agent_id,
         }
@@ -207,6 +212,7 @@ async def get_auth_result(
                 "is_admin": True,
                 "subject_type": "user",
                 "subject_id": "admin",
+                "inherit_permissions": True,  # Static admin key always inherits
             }
         return None
 
@@ -411,6 +417,7 @@ def _register_routes(app: FastAPI) -> None:
             subject_id=auth_result.get("subject_id"),
             tenant_id=auth_result.get("tenant_id"),
             is_admin=auth_result.get("is_admin", False),
+            inherit_permissions=auth_result.get("inherit_permissions", True),
             user=auth_result.get("subject_id"),
         )
 

@@ -134,16 +134,27 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 f"[key: {api_key.key_id}, tenant: {api_key.tenant_id}]"
             )
 
+            # v0.5.1: Get inherit_permissions flag (default True if not set)
+            inherit_perms = (
+                bool(api_key.inherit_permissions)
+                if hasattr(api_key, "inherit_permissions")
+                else True
+            )
+
             return AuthResult(
                 authenticated=True,
                 subject_type=subject_type,
                 subject_id=subject_id,
                 tenant_id=api_key.tenant_id,
                 is_admin=bool(api_key.is_admin),  # Convert from SQLite Integer to bool
+                inherit_permissions=inherit_perms,  # v0.5.1: Permission inheritance control
                 metadata={
                     "key_id": api_key.key_id,
                     "key_name": api_key.name,
                     "legacy_user_id": api_key.user_id,  # For backward compatibility
+                    "expires_at": api_key.expires_at.isoformat()
+                    if api_key.expires_at
+                    else None,  # API key expiration
                 },
             )
 
@@ -206,11 +217,13 @@ class DatabaseAPIKeyAuth(AuthProvider):
         tenant_id: str | None = None,
         is_admin: bool = False,
         expires_at: datetime | None = None,
+        inherit_permissions: bool = False,  # v0.5.1: Default False (zero permissions)
     ) -> tuple[str, str]:
         """Create a new API key in the database.
 
         P0-5: Generates key with proper prefix and entropy
         v0.5.0 ACE: Supports agent keys with custom subject IDs
+        v0.5.1: Permission inheritance control for agents
 
         Args:
             session: SQLAlchemy session
@@ -222,6 +235,8 @@ class DatabaseAPIKeyAuth(AuthProvider):
             tenant_id: Optional tenant identifier
             is_admin: Whether this key has admin privileges
             expires_at: Optional expiry datetime (UTC)
+            inherit_permissions: Whether agent inherits owner's permissions - v0.5.1 NEW
+                                Default False (zero permissions, principle of least privilege)
 
         Returns:
             Tuple of (key_id, raw_key)
@@ -286,6 +301,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
             expires_at=expires_at,
             subject_type=subject_type,  # v0.5.0: "user" or "agent"
             subject_id=final_subject_id,  # v0.5.0: Actual identity
+            inherit_permissions=int(inherit_permissions),  # v0.5.1: Permission inheritance control
         )
 
         session.add(api_key)

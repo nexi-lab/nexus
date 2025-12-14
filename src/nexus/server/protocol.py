@@ -636,12 +636,17 @@ class DiffVersionsParams:
 
 @dataclass
 class RegisterAgentParams:
-    """Parameters for register_agent() method (v0.5.0)."""
+    """Parameters for register_agent() method (v0.5.0).
+
+    v0.5.1: Added inherit_permissions for permission control and metadata for flexible config.
+    """
 
     agent_id: str
     name: str
     description: str | None = None
     generate_api_key: bool = False
+    inherit_permissions: bool = False  # v0.5.1: Default False (zero permissions)
+    metadata: dict | None = None  # v0.5.1: Optional metadata (platform, endpoint_url, etc.)
     context: dict | None = None  # For compatibility with NexusFS signature
 
 

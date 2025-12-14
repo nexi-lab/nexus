@@ -15,6 +15,7 @@ class AuthResult:
         subject_id: Unique identifier for the subject (e.g., "alice", "agent_123", "session_abc")
         tenant_id: Optional tenant/organization identifier (metadata only, not used for identity)
         is_admin: Whether this subject has admin privileges
+        inherit_permissions: Whether agent inherits owner's permissions (v0.5.1)
         metadata: Optional additional metadata about the subject
 
     Note:
@@ -40,6 +41,7 @@ class AuthResult:
     subject_id: str | None = None
     tenant_id: str | None = None
     is_admin: bool = False
+    inherit_permissions: bool = True  # v0.5.1: Default True for backward compatibility
     metadata: dict[str, Any] | None = None
 
 

@@ -119,6 +119,9 @@ class OperationContext:
     subject_type: str = "user"  # Default to "user" for backward compatibility
     subject_id: str | None = None  # If None, uses self.user
 
+    # v0.5.1: Permission inheritance control
+    inherit_permissions: bool = True  # Default True for backward compatibility
+
     # P0-4: Admin capabilities and audit trail
     admin_capabilities: set[str] = field(default_factory=set)  # Scoped admin capabilities
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))  # Audit trail correlation ID
@@ -470,33 +473,38 @@ class PermissionEnforcer:
                 f"[_check_rebac] No parent directory permissions found (checked: {checked_parents})"
             )
 
-        # 3. v0.5.0 ACE: Agent inheritance from user
+        # 3. v0.5.0 ACE: Agent inheritance from user (v0.5.1: conditional on inherit_permissions flag)
         # If subject is an agent, check if the agent's owner (user) has permission
         if context.subject_type == "agent" and context.agent_id and self.entity_registry:
             logger.debug(f"[_check_rebac] Checking agent inheritance for agent={context.agent_id}")
-            # Look up agent's owner
-            parent = self.entity_registry.get_parent(
-                entity_type="agent", entity_id=context.agent_id
-            )
+            # v0.5.1: Only inherit if inherit_permissions flag is enabled
+            if context.inherit_permissions:
+                logger.debug("[_check_rebac] inherit_permissions=True, checking parent permissions")
+                # Look up agent's owner
+                parent = self.entity_registry.get_parent(
+                    entity_type="agent", entity_id=context.agent_id
+                )
 
-            if parent and parent.entity_type == "user":
-                logger.debug(
-                    f"[_check_rebac] Agent {context.agent_id} owned by user {parent.entity_id}, checking user permission"
-                )
-                # Check if user has permission (using same object type as direct check)
-                user_result = self.rebac_manager.rebac_check(
-                    subject=("user", parent.entity_id),
-                    permission=permission_name,
-                    object=(object_type, object_id),
-                    tenant_id=tenant_id,
-                )
-                logger.debug(f"[_check_rebac] User permission check returned: {user_result}")
-                if user_result:
-                    # ✅ Agent inherits user's permission
+                if parent and parent.entity_type == "user":
                     logger.debug(
-                        f"[_check_rebac] ALLOW (agent {context.agent_id} inherits from user {parent.entity_id})"
+                        f"[_check_rebac] Agent {context.agent_id} owned by user {parent.entity_id}, checking user permission"
                     )
-                    return True
+                    # Check if user has permission (using same object type as direct check)
+                    user_result = self.rebac_manager.rebac_check(
+                        subject=("user", parent.entity_id),
+                        permission=permission_name,
+                        object=(object_type, object_id),
+                        tenant_id=tenant_id,
+                    )
+                    logger.debug(f"[_check_rebac] User permission check returned: {user_result}")
+                    if user_result:
+                        # ✅ Agent inherits user's permission
+                        logger.debug(
+                            f"[_check_rebac] ALLOW (agent {context.agent_id} inherits from user {parent.entity_id})"
+                        )
+                        return True
+            else:
+                logger.debug("[_check_rebac] inherit_permissions=False, skipping inheritance check")
 
         return False
 

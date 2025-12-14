@@ -13,9 +13,11 @@ Tests cover mount management operations:
 
 from __future__ import annotations
 
+import contextlib
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -631,3 +633,136 @@ class TestMountIntegration:
         # Read from each
         assert nx.read("/mnt/one/file.txt") == b"Mount 1"
         assert nx.read("/mnt/two/file.txt") == b"Mount 2"
+
+
+class TestMountContextUtilsIntegration:
+    """Tests for mount operations using context_utils functions."""
+
+    def test_add_mount_uses_context_utils_functions(
+        self, nx_with_permissions: NexusFS, temp_dir: Path
+    ):
+        """Test that add_mount uses context_utils.get_tenant_id and get_user_identity."""
+        from nexus.core.permissions import OperationContext
+
+        mount_data_dir = temp_dir / "context_mount"
+        mount_data_dir.mkdir()
+
+        context = OperationContext(
+            user="alice",
+            groups=[],
+            tenant_id="test_tenant",
+            subject_type="user",
+            subject_id="alice",
+        )
+
+        with (
+            patch("nexus.core.nexus_fs_mounts.get_tenant_id") as mock_get_tenant,
+            patch("nexus.core.nexus_fs_mounts.get_user_identity") as mock_get_user,
+        ):
+            mock_get_tenant.return_value = "test_tenant"
+            mock_get_user.return_value = ("user", "alice")
+
+            nx_with_permissions.add_mount(
+                mount_point="/mnt/context_test",
+                backend_type="local",
+                backend_config={"data_dir": str(mount_data_dir)},
+                context=context,
+            )
+
+            # Verify context_utils functions were called
+            mock_get_tenant.assert_called_with(context)
+            mock_get_user.assert_called_with(context)
+
+    def test_remove_mount_with_context_works(self, nx_with_permissions: NexusFS, temp_dir: Path):
+        """Test that remove_mount works correctly with context (uses context_utils internally)."""
+        from nexus.core.permissions import OperationContext
+
+        mount_data_dir = temp_dir / "remove_context_mount"
+        mount_data_dir.mkdir()
+
+        context = OperationContext(
+            user="alice",
+            groups=[],
+            tenant_id="test_tenant",
+            subject_type="user",
+            subject_id="alice",
+        )
+
+        # Add mount first
+        nx_with_permissions.add_mount(
+            mount_point="/mnt/remove_test",
+            backend_type="local",
+            backend_config={"data_dir": str(mount_data_dir)},
+            context=context,
+        )
+
+        # Remove mount with context - should work correctly
+        result = nx_with_permissions.remove_mount("/mnt/remove_test", context=context)
+
+        # Verify mount was removed
+        assert result["removed"] is True
+        assert not nx_with_permissions.has_mount("/mnt/remove_test")
+
+    def test_add_mount_oauth_backend_uses_context_utils_database_url(
+        self, nx: NexusFS, temp_dir: Path
+    ):
+        """Test that add_mount for OAuth backends uses context_utils.get_database_url."""
+        # Set up database path
+        nx.db_path = temp_dir / "token_manager.db"
+
+        with patch("nexus.core.nexus_fs_mounts.get_database_url") as mock_get_db_url:
+            mock_get_db_url.return_value = str(temp_dir / "token_manager.db")
+
+            # This should use get_database_url for gdrive_connector
+            with contextlib.suppress(Exception):
+                nx.add_mount(
+                    mount_point="/mnt/gdrive",
+                    backend_type="gdrive_connector",
+                    backend_config={},
+                )
+
+            # Verify get_database_url was called
+            mock_get_db_url.assert_called()
+
+    def test_load_mount_oauth_backend_uses_database_url(self, nx: NexusFS, temp_dir: Path):
+        """Test that load_mount for OAuth backends resolves database URL correctly."""
+        # Set up database path
+        nx.db_path = temp_dir / "token_manager.db"
+
+        mount_config = {
+            "mount_point": "/mnt/gmail",
+            "backend_type": "gmail_connector",
+            "backend_config": {},
+        }
+
+        # This should use get_database_url internally for gmail_connector
+        # The function should resolve the database URL from nx.db_path
+        # It may fail due to missing OAuth config, but should not fail due to missing database URL
+        try:
+            nx.load_mount(mount_config)
+        except RuntimeError as e:
+            # Should not fail with "No database path configured" error
+            # (may fail for other reasons like missing OAuth config)
+            assert "No database path configured" not in str(e)
+        except Exception:
+            # Other exceptions are acceptable (e.g., missing OAuth credentials)
+            pass
+
+    def test_add_mount_with_none_context_uses_defaults(
+        self, nx_with_permissions: NexusFS, temp_dir: Path
+    ):
+        """Test that add_mount handles None context gracefully using context_utils defaults."""
+        mount_data_dir = temp_dir / "none_context_mount"
+        mount_data_dir.mkdir()
+
+        # Should not raise error with None context - context_utils provides defaults
+        # This tests that the refactored code works with None context
+        nx_with_permissions.add_mount(
+            mount_point="/mnt/none_context",
+            backend_type="local",
+            backend_config={"data_dir": str(mount_data_dir)},
+            context=None,
+        )
+
+        # Verify mount was created successfully
+        assert nx_with_permissions.has_mount("/mnt/none_context")

@@ -115,10 +115,10 @@ async def test_create_skill_basic_template() -> None:
     manager = SkillManager(filesystem=fs)
 
     path = await manager.create_skill(
-        "test-skill", description="Test skill", template="basic", tier="agent"
+        "test-skill", description="Test skill", template="basic", tier="user"
     )
 
-    assert path == "/skills/agent/test-skill/SKILL.md"
+    assert path == "/skills/user/test-skill/SKILL.md"
     assert fs.exists(path)
 
     # Parse the created skill
@@ -143,11 +143,11 @@ async def test_create_skill_with_author() -> None:
         "test-skill",
         description="Test skill",
         template="basic",
-        tier="agent",
+        tier="user",
         author="Alice",
     )
 
-    path = "/skills/agent/test-skill/SKILL.md"
+    path = "/skills/user/test-skill/SKILL.md"
     content = fs.read(path).decode("utf-8")
     parser = SkillParser()
     skill = parser.parse_content(content)
@@ -174,7 +174,7 @@ async def test_create_skill_different_templates() -> None:
             f"skill-{i}",
             description=f"Skill from {template}",
             template=template,
-            tier="agent",
+            tier="user",
         )
 
         content = fs.read(path).decode("utf-8")
@@ -188,11 +188,11 @@ async def test_create_skill_already_exists() -> None:
     manager = SkillManager(filesystem=fs)
 
     # Create first skill
-    await manager.create_skill("test-skill", description="Test", tier="agent")
+    await manager.create_skill("test-skill", description="Test", tier="user")
 
     # Try to create same skill again
     with pytest.raises(SkillManagerError, match="already exists"):
-        await manager.create_skill("test-skill", description="Test", tier="agent")
+        await manager.create_skill("test-skill", description="Test", tier="user")
 
 
 @pytest.mark.asyncio
@@ -221,11 +221,11 @@ async def test_create_skill_different_tiers() -> None:
     fs = MockFilesystem()
     manager = SkillManager(filesystem=fs)
 
-    tiers = ["agent", "tenant", "system"]
+    tiers = ["user", "tenant", "system"]
     expected_paths = [
-        "/skills/agent/skill-agent/SKILL.md",
+        "/skills/user/skill-user/SKILL.md",
         "/skills/tenant/skill-tenant/SKILL.md",
-        "/skills/system/skill-system/SKILL.md",
+        "/skill/skill-system/SKILL.md",
     ]
 
     for tier, expected_path in zip(tiers, expected_paths, strict=False):
@@ -240,17 +240,17 @@ async def test_fork_skill() -> None:
     fs = MockFilesystem()
 
     # Add existing skill
-    fs.write("/skills/agent/existing-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/user/existing-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
     # Fork the skill
-    path = await manager.fork_skill("existing-skill", "forked-skill", tier="agent")
+    path = await manager.fork_skill("existing-skill", "forked-skill", tier="user")
 
-    assert path == "/skills/agent/forked-skill/SKILL.md"
+    assert path == "/skills/user/forked-skill/SKILL.md"
     assert fs.exists(path)
 
     # Parse forked skill
@@ -275,16 +275,16 @@ async def test_fork_skill() -> None:
 async def test_fork_skill_with_author() -> None:
     """Test forking with custom author."""
     fs = MockFilesystem()
-    fs.write("/skills/agent/existing-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/user/existing-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
-    await manager.fork_skill("existing-skill", "forked-skill", tier="agent", author="Bob")
+    await manager.fork_skill("existing-skill", "forked-skill", tier="user", author="Bob")
 
-    content = fs.read("/skills/agent/forked-skill/SKILL.md").decode("utf-8")
+    content = fs.read("/skills/user/forked-skill/SKILL.md").decode("utf-8")
     assert "author: Bob" in content
 
 
@@ -292,16 +292,16 @@ async def test_fork_skill_with_author() -> None:
 async def test_fork_skill_preserves_dependencies() -> None:
     """Test that forking preserves dependencies."""
     fs = MockFilesystem()
-    fs.write("/skills/agent/existing-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/user/existing-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
-    await manager.fork_skill("existing-skill", "forked-skill")
+    await manager.fork_skill("existing-skill", "forked-skill", tier="user")
 
-    content = fs.read("/skills/agent/forked-skill/SKILL.md").decode("utf-8")
+    content = fs.read("/skills/user/forked-skill/SKILL.md").decode("utf-8")
     parser = SkillParser()
     skill = parser.parse_content(content)
 
@@ -316,53 +316,53 @@ async def test_fork_skill_not_found() -> None:
     manager = SkillManager(filesystem=fs, registry=registry)
 
     with pytest.raises(SkillManagerError, match="not found"):
-        await manager.fork_skill("nonexistent", "forked-skill")
+        await manager.fork_skill("nonexistent", "forked-skill", tier="user")
 
 
 @pytest.mark.asyncio
 async def test_fork_skill_target_exists() -> None:
     """Test that forking to existing name raises error."""
     fs = MockFilesystem()
-    fs.write("/skills/agent/existing-skill/SKILL.md", EXISTING_SKILL)
-    fs.write("/skills/agent/forked-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/user/existing-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/user/forked-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
     with pytest.raises(SkillManagerError, match="already exists"):
-        await manager.fork_skill("existing-skill", "forked-skill")
+        await manager.fork_skill("existing-skill", "forked-skill", tier="user")
 
 
 @pytest.mark.asyncio
 async def test_fork_skill_invalid_target_name() -> None:
     """Test that forking to invalid name raises error."""
     fs = MockFilesystem()
-    fs.write("/skills/agent/existing-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/user/existing-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
     with pytest.raises(SkillManagerError, match="must be alphanumeric"):
-        await manager.fork_skill("existing-skill", "invalid name!")
+        await manager.fork_skill("existing-skill", "invalid name!", tier="user")
 
 
 @pytest.mark.asyncio
 async def test_publish_skill() -> None:
-    """Test publishing a skill from agent to tenant tier."""
+    """Test publishing a skill from user to tenant tier."""
     fs = MockFilesystem()
-    fs.write("/skills/agent/my-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/user/my-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
     # Publish to tenant tier
-    path = await manager.publish_skill("existing-skill", source_tier="agent", target_tier="tenant")
+    path = await manager.publish_skill("existing-skill", source_tier="user", target_tier="tenant")
 
     assert path == "/skills/tenant/existing-skill/SKILL.md"
     assert fs.exists(path)
@@ -378,7 +378,7 @@ async def test_publish_skill() -> None:
 
     # Check publication tracking
     assert "published_from" in content
-    assert "agent" in content
+    assert "user" in content
     assert "published_at" in content
 
 
@@ -386,14 +386,14 @@ async def test_publish_skill() -> None:
 async def test_publish_skill_preserves_content() -> None:
     """Test that publishing preserves skill content."""
     fs = MockFilesystem()
-    fs.write("/skills/agent/my-skill/SKILL.md", EXISTING_SKILL)
+    fs.write("/skills/user/my-skill/SKILL.md", EXISTING_SKILL)
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
-    await manager.publish_skill("existing-skill", source_tier="agent", target_tier="tenant")
+    await manager.publish_skill("existing-skill", source_tier="user", target_tier="tenant")
 
     content = fs.read("/skills/tenant/existing-skill/SKILL.md").decode("utf-8")
     assert "This is the content of the existing skill" in content
@@ -407,7 +407,7 @@ async def test_publish_skill_not_found() -> None:
     manager = SkillManager(filesystem=fs, registry=registry)
 
     with pytest.raises(SkillManagerError, match="not found"):
-        await manager.publish_skill("nonexistent", source_tier="agent", target_tier="tenant")
+        await manager.publish_skill("nonexistent", source_tier="user", target_tier="tenant")
 
 
 @pytest.mark.asyncio
@@ -427,7 +427,7 @@ async def test_publish_skill_invalid_target_tier() -> None:
     manager = SkillManager(filesystem=fs)
 
     with pytest.raises(SkillManagerError, match="Invalid target tier"):
-        await manager.publish_skill("skill", source_tier="agent", target_tier="invalid")
+        await manager.publish_skill("skill", source_tier="user", target_tier="invalid")
 
 
 @pytest.mark.asyncio
@@ -436,13 +436,13 @@ async def test_create_skill_local_filesystem() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         # Override tier paths for testing
         original_paths = SkillRegistry.TIER_PATHS.copy()
-        SkillRegistry.TIER_PATHS = {"agent": f"{tmpdir}/agent/"}
+        SkillRegistry.TIER_PATHS = {"user": f"{tmpdir}/user/"}
 
         try:
             manager = SkillManager()
 
             path = await manager.create_skill(
-                "local-skill", description="Local test skill", tier="agent"
+                "local-skill", description="Local test skill", tier="user"
             )
 
             # Check file exists on local filesystem
@@ -463,21 +463,21 @@ async def test_fork_skill_local_filesystem() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         # Override tier paths
         original_paths = SkillRegistry.TIER_PATHS.copy()
-        SkillRegistry.TIER_PATHS = {"agent": f"{tmpdir}/agent/"}
+        SkillRegistry.TIER_PATHS = {"user": f"{tmpdir}/user/"}
 
         try:
             # Create source skill
-            source_dir = Path(tmpdir) / "agent" / "source-skill"
+            source_dir = Path(tmpdir) / "user" / "source-skill"
             source_dir.mkdir(parents=True)
             (source_dir / "SKILL.md").write_bytes(EXISTING_SKILL)
 
             registry = SkillRegistry()
-            await registry.discover(tiers=["agent"])
+            await registry.discover(tiers=["user"])
 
             manager = SkillManager(registry=registry)
 
             # Fork skill
-            path = await manager.fork_skill("existing-skill", "forked-local", tier="agent")
+            path = await manager.fork_skill("existing-skill", "forked-local", tier="user")
 
             # Check file exists
             assert Path(path).exists()
@@ -516,12 +516,12 @@ description: Generates code from specifications
 Content
 """
 
-    fs.write("/skills/agent/code-analyzer/SKILL.md", skill1)
-    fs.write("/skills/agent/data-processor/SKILL.md", skill2)
-    fs.write("/skills/agent/code-generator/SKILL.md", skill3)
+    fs.write("/skills/user/code-analyzer/SKILL.md", skill1)
+    fs.write("/skills/user/data-processor/SKILL.md", skill2)
+    fs.write("/skills/user/code-generator/SKILL.md", skill3)
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
@@ -552,11 +552,11 @@ description: Analyzes data quality
 Content
 """
 
-    fs.write("/skills/agent/skill1/SKILL.md", skill1)
-    fs.write("/skills/agent/skill2/SKILL.md", skill2)
+    fs.write("/skills/user/skill1/SKILL.md", skill1)
+    fs.write("/skills/user/skill2/SKILL.md", skill2)
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
@@ -580,10 +580,10 @@ description: General purpose tool
 Content
 """
 
-    fs.write("/skills/agent/data-analyzer/SKILL.md", skill)
+    fs.write("/skills/user/data-analyzer/SKILL.md", skill)
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
@@ -613,7 +613,7 @@ description: Tenant skill for testing
 Content
 """
 
-    fs.write("/skills/agent/agent-skill/SKILL.md", agent_skill)
+    fs.write("/skills/user/agent-skill/SKILL.md", agent_skill)
     fs.write("/skills/tenant/tenant-skill/SKILL.md", tenant_skill)
 
     registry = SkillRegistry(filesystem=fs)
@@ -621,8 +621,8 @@ Content
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
-    # Search only agent tier
-    results = await manager.search_skills("testing", tier="agent")
+    # Search only user tier
+    results = await manager.search_skills("testing", tier="user")
 
     assert len(results) == 1
     assert results[0][0] == "agent-skill"
@@ -641,10 +641,10 @@ description: Test skill number {i}
 ---
 Content
 """.encode()
-        fs.write(f"/skills/agent/skill-{i}/SKILL.md", skill)
+        fs.write(f"/skills/user/skill-{i}/SKILL.md", skill)
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
@@ -666,10 +666,10 @@ description: Something completely different
 Content
 """
 
-    fs.write("/skills/agent/test-skill/SKILL.md", skill)
+    fs.write("/skills/user/test-skill/SKILL.md", skill)
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
@@ -706,12 +706,12 @@ description: Training documentation generator
 Content
 """
 
-    fs.write("/skills/agent/skill1/SKILL.md", skill1)
-    fs.write("/skills/agent/skill2/SKILL.md", skill2)
-    fs.write("/skills/agent/skill3/SKILL.md", skill3)
+    fs.write("/skills/user/skill1/SKILL.md", skill1)
+    fs.write("/skills/user/skill2/SKILL.md", skill2)
+    fs.write("/skills/user/skill3/SKILL.md", skill3)
 
     registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["agent"])
+    await registry.discover(tiers=["user"])
 
     manager = SkillManager(filesystem=fs, registry=registry)
 

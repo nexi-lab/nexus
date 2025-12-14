@@ -127,8 +127,8 @@ def test_parse_file_with_tier() -> None:
         temp_path = f.name
 
     try:
-        skill = parser.parse_file(temp_path, tier="agent")
-        assert skill.metadata.tier == "agent"
+        skill = parser.parse_file(temp_path, tier="user")
+        assert skill.metadata.tier == "user"
     finally:
         Path(temp_path).unlink()
 

@@ -975,10 +975,10 @@ class ReBACManager:
                     subject_relation = row["subject_relation"]
 
                     self._invalidate_cache_for_tuple(
-                        subject, relation, old_obj, tenant_id, subject_relation
+                        subject, relation, old_obj, tenant_id, subject_relation, conn=conn
                     )
                     self._invalidate_cache_for_tuple(
-                        subject, relation, new_obj, tenant_id, subject_relation
+                        subject, relation, new_obj, tenant_id, subject_relation, conn=conn
                     )
 
                 updated_count += len(rows)
@@ -1124,10 +1124,10 @@ class ReBACManager:
                     subject_relation = row["subject_relation"]
 
                     self._invalidate_cache_for_tuple(
-                        old_subj, relation, obj, tenant_id, subject_relation
+                        old_subj, relation, obj, tenant_id, subject_relation, conn=conn
                     )
                     self._invalidate_cache_for_tuple(
-                        new_subj, relation, obj, tenant_id, subject_relation
+                        new_subj, relation, obj, tenant_id, subject_relation, conn=conn
                     )
 
                 updated_count += len(subject_rows)
@@ -2962,6 +2962,7 @@ class ReBACManager:
         obj: Entity,
         result: bool,
         tenant_id: str | None = None,
+        conn: Any | None = None,
     ) -> None:
         """Cache permission check result in both L1 and L2 caches.
 
@@ -2992,7 +2993,11 @@ class ReBACManager:
         # Use "default" tenant if not specified (for backward compatibility)
         effective_tenant_id = tenant_id if tenant_id is not None else "default"
 
-        with self._connection() as conn:
+        # Use provided connection or create new one (avoids SQLite lock contention)
+        should_close = conn is None
+        if conn is None:
+            conn = self._get_connection()
+        try:
             cursor = self._create_cursor(conn)
 
             # Delete existing cache entry if present
@@ -3042,6 +3047,9 @@ class ReBACManager:
             )
 
             conn.commit()
+        finally:
+            if should_close:
+                conn.close()
 
     def _invalidate_cache_for_tuple(
         self,
@@ -3051,6 +3059,7 @@ class ReBACManager:
         tenant_id: str | None = None,
         subject_relation: str | None = None,
         expires_at: datetime | None = None,
+        conn: Any | None = None,
     ) -> None:
         """Invalidate and optionally recompute cache entries affected by tuple change.
 
@@ -3080,7 +3089,11 @@ class ReBACManager:
         if self._l1_cache:
             self._l1_cache.track_write(obj.entity_id)
 
-        with self._connection() as conn:
+        # Use provided connection or create new one (avoids SQLite lock contention)
+        should_close = conn is None
+        if conn is None:
+            conn = self._get_connection()
+        try:
             cursor = self._create_cursor(conn)
 
             # 1. DIRECT: For simple direct relations, try to eagerly recompute permissions
@@ -3128,7 +3141,9 @@ class ReBACManager:
                                 tenant_id=tenant_id,
                             )
                             # Update cache immediately (not invalidate)
-                            self._cache_check_result(subject, permission, obj, result, tenant_id)
+                            self._cache_check_result(
+                                subject, permission, obj, result, tenant_id, conn=conn
+                            )
                             logger.debug(
                                 f"Eager cache update: ({subject}, {permission}, {obj}) = {result}"
                             )
@@ -3301,6 +3316,9 @@ class ReBACManager:
                 )
 
             conn.commit()
+        finally:
+            if should_close:
+                conn.close()
 
     def _invalidate_cache_for_namespace(self, object_type: str) -> None:
         """Invalidate all cache entries for objects of a given type in both L1 and L2.

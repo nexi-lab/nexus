@@ -1312,6 +1312,277 @@ class NexusFSReBACMixin:
         return False
 
     # =========================================================================
+    # Cross-Tenant Sharing APIs
+    # =========================================================================
+
+    @rpc_expose(description="Share a resource with a specific user (same or different tenant)")
+    def share_with_user(
+        self,
+        resource: tuple[str, str],
+        user_id: str,
+        relation: str = "viewer",
+        tenant_id: str | None = None,
+        user_tenant_id: str | None = None,
+        expires_at: datetime | None = None,
+    ) -> str:
+        """Share a resource with a specific user, regardless of tenant.
+
+        This enables cross-tenant sharing - users from different organizations
+        can be granted access to specific resources.
+
+        Args:
+            resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
+            user_id: User to share with (e.g., "bob@partner-company.com")
+            relation: Permission level - "viewer" (read) or "editor" (read/write)
+            tenant_id: Resource owner's tenant ID (defaults to current tenant)
+            user_tenant_id: Recipient user's tenant ID (for cross-tenant shares)
+            expires_at: Optional expiration datetime for the share
+
+        Returns:
+            Share ID (tuple_id) that can be used to revoke the share
+
+        Raises:
+            RuntimeError: If ReBAC is not available
+            ValueError: If relation is not "viewer" or "editor"
+
+        Examples:
+            >>> # Share file with user in same tenant
+            >>> share_id = nx.share_with_user(
+            ...     resource=("file", "/project/doc.txt"),
+            ...     user_id="alice@mycompany.com",
+            ...     relation="editor"
+            ... )
+
+            >>> # Share file with user in different tenant
+            >>> share_id = nx.share_with_user(
+            ...     resource=("file", "/project/doc.txt"),
+            ...     user_id="bob@partner.com",
+            ...     user_tenant_id="partner-tenant",
+            ...     relation="viewer",
+            ...     expires_at=datetime(2024, 12, 31)
+            ... )
+        """
+        if not hasattr(self, "_rebac_manager"):
+            raise RuntimeError(
+                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+            )
+
+        if relation not in ("viewer", "editor"):
+            raise ValueError(f"relation must be 'viewer' or 'editor', got '{relation}'")
+
+        # Parse expires_at if it's a string (from RPC)
+        expires_dt = None
+        if expires_at is not None:
+            if isinstance(expires_at, str):
+                from datetime import datetime as dt
+
+                expires_dt = dt.fromisoformat(expires_at.replace("Z", "+00:00"))
+            else:
+                expires_dt = expires_at
+
+        # Use shared-with relation which is allowed to cross tenant boundaries
+        # Call underlying manager directly to support cross-tenant parameters
+        return self._rebac_manager.rebac_write(
+            subject=("user", user_id),
+            relation="shared-with",
+            object=resource,
+            tenant_id=tenant_id,
+            subject_tenant_id=user_tenant_id,
+            expires_at=expires_dt,
+            conditions={"permission_level": relation},
+        )
+
+    @rpc_expose(description="Revoke a share by resource and user")
+    def revoke_share(
+        self,
+        resource: tuple[str, str],
+        user_id: str,
+    ) -> bool:
+        """Revoke a share for a specific user on a resource.
+
+        Args:
+            resource: Resource to unshare (e.g., ("file", "/path/to/doc.txt"))
+            user_id: User to revoke access from
+
+        Returns:
+            True if share was revoked, False if no share existed
+
+        Raises:
+            RuntimeError: If ReBAC is not available
+
+        Examples:
+            >>> nx.revoke_share(
+            ...     resource=("file", "/project/doc.txt"),
+            ...     user_id="bob@partner.com"
+            ... )
+            True
+        """
+        if not hasattr(self, "_rebac_manager"):
+            raise RuntimeError(
+                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+            )
+
+        # Find the share tuple
+        tuples = self.rebac_list_tuples(
+            subject=("user", user_id),
+            relation="shared-with",
+            object=resource,
+        )
+
+        if tuples:
+            return self.rebac_delete(tuples[0]["tuple_id"])
+        return False
+
+    @rpc_expose(description="Revoke a share by share ID")
+    def revoke_share_by_id(self, share_id: str) -> bool:
+        """Revoke a share using its ID.
+
+        Args:
+            share_id: The share ID returned by share_with_user()
+
+        Returns:
+            True if share was revoked, False if share didn't exist
+
+        Raises:
+            RuntimeError: If ReBAC is not available
+
+        Examples:
+            >>> share_id = nx.share_with_user(resource, user_id)
+            >>> nx.revoke_share_by_id(share_id)
+            True
+        """
+        if not hasattr(self, "_rebac_manager"):
+            raise RuntimeError(
+                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+            )
+
+        return self.rebac_delete(share_id)
+
+    @rpc_expose(description="List shares I've created (outgoing)")
+    def list_outgoing_shares(
+        self,
+        resource: tuple[str, str] | None = None,
+        tenant_id: str | None = None,  # noqa: ARG002 - Reserved for future tenant filtering
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List shares created by the current tenant (resources shared with others).
+
+        Args:
+            resource: Filter by specific resource (optional)
+            tenant_id: Tenant ID to list shares for (defaults to current tenant)
+            limit: Maximum number of results
+            offset: Number of results to skip
+
+        Returns:
+            List of share info dictionaries with keys:
+            - share_id: Unique share identifier
+            - resource_type: Type of shared resource
+            - resource_id: ID of shared resource
+            - recipient_id: User the resource is shared with
+            - permission_level: "viewer" or "editor"
+            - created_at: When the share was created
+            - expires_at: When the share expires (if set)
+
+        Examples:
+            >>> # List all outgoing shares
+            >>> shares = nx.list_outgoing_shares()
+            >>> for share in shares:
+            ...     print(f"{share['resource_id']} -> {share['recipient_id']}")
+
+            >>> # List shares for a specific file
+            >>> shares = nx.list_outgoing_shares(resource=("file", "/doc.txt"))
+        """
+        if not hasattr(self, "_rebac_manager"):
+            raise RuntimeError(
+                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+            )
+
+        # Query for shared-with tuples
+        # Note: rebac_list_tuples doesn't support tenant_id filtering directly,
+        # so we filter by relation and optionally by resource
+        tuples = self.rebac_list_tuples(
+            relation="shared-with",
+            object=resource,
+        )
+
+        # Transform to share info format
+        shares = []
+        for t in tuples[offset : offset + limit]:
+            share_info = {
+                "share_id": t.get("tuple_id"),
+                "resource_type": t.get("object_type"),
+                "resource_id": t.get("object_id"),
+                "recipient_id": t.get("subject_id"),
+                "permission_level": (t.get("conditions") or {}).get("permission_level", "viewer"),
+                "created_at": t.get("created_at"),
+                "expires_at": t.get("expires_at"),
+            }
+            shares.append(share_info)
+
+        return shares
+
+    @rpc_expose(description="List shares I've received (incoming)")
+    def list_incoming_shares(
+        self,
+        user_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List shares received by a user (resources shared with me).
+
+        This includes cross-tenant shares from other organizations.
+
+        Args:
+            user_id: User ID to list incoming shares for
+            limit: Maximum number of results
+            offset: Number of results to skip
+
+        Returns:
+            List of share info dictionaries with keys:
+            - share_id: Unique share identifier
+            - resource_type: Type of shared resource
+            - resource_id: ID of shared resource
+            - owner_tenant_id: Tenant that owns the resource
+            - permission_level: "viewer" or "editor"
+            - created_at: When the share was created
+            - expires_at: When the share expires (if set)
+
+        Examples:
+            >>> # List all resources shared with me
+            >>> shares = nx.list_incoming_shares(user_id="alice@mycompany.com")
+            >>> for share in shares:
+            ...     print(f"{share['resource_id']} from {share['owner_tenant_id']}")
+        """
+        if not hasattr(self, "_rebac_manager"):
+            raise RuntimeError(
+                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+            )
+
+        # Query for shared-with tuples where this user is the subject
+        # This finds shares across all tenants
+        tuples = self.rebac_list_tuples(
+            subject=("user", user_id),
+            relation="shared-with",
+        )
+
+        # Transform to share info format
+        shares = []
+        for t in tuples[offset : offset + limit]:
+            share_info = {
+                "share_id": t.get("tuple_id"),
+                "resource_type": t.get("object_type"),
+                "resource_id": t.get("object_id"),
+                "owner_tenant_id": t.get("tenant_id"),
+                "permission_level": (t.get("conditions") or {}).get("permission_level", "viewer"),
+                "created_at": t.get("created_at"),
+                "expires_at": t.get("expires_at"),
+            }
+            shares.append(share_info)
+
+        return shares
+
+    # =========================================================================
     # Dynamic Viewer - Column-level Permissions for Data Files
     # =========================================================================
 

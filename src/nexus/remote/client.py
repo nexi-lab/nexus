@@ -26,7 +26,7 @@ import logging
 import time
 import uuid
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
@@ -2654,6 +2654,167 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             >>> made_private = nx.make_private(("profile", "alice"))
         """
         result = self._call_rpc("make_private", {"resource": resource})
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # Cross-Tenant Sharing
+    # ============================================================
+
+    def share_with_user(
+        self,
+        resource: tuple[str, str],
+        user_id: str,
+        relation: str = "viewer",
+        tenant_id: str | None = None,
+        user_tenant_id: str | None = None,
+        expires_at: datetime | None = None,
+    ) -> str:
+        """Share a resource with a specific user (same or different tenant).
+
+        This enables cross-tenant sharing - users from different organizations
+        can be granted access to specific resources.
+
+        Args:
+            resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
+            user_id: User to share with (e.g., "bob@partner-company.com")
+            relation: Permission level - "viewer" (read) or "editor" (read/write)
+            tenant_id: Resource owner's tenant ID (defaults to current tenant)
+            user_tenant_id: Recipient user's tenant ID (for cross-tenant shares)
+            expires_at: Optional expiration datetime for the share
+
+        Returns:
+            Share ID (tuple_id) that can be used to revoke the share
+
+        Examples:
+            >>> # Share with same-tenant user
+            >>> share_id = nx.share_with_user(
+            ...     resource=("file", "/project/doc.txt"),
+            ...     user_id="alice@mycompany.com",
+            ...     relation="editor"
+            ... )
+
+            >>> # Share with cross-tenant user
+            >>> share_id = nx.share_with_user(
+            ...     resource=("file", "/project/doc.txt"),
+            ...     user_id="bob@partner.com",
+            ...     user_tenant_id="partner-tenant",
+            ...     relation="viewer"
+            ... )
+        """
+        result = self._call_rpc(
+            "share_with_user",
+            {
+                "resource": resource,
+                "user_id": user_id,
+                "relation": relation,
+                "tenant_id": tenant_id,
+                "user_tenant_id": user_tenant_id,
+                "expires_at": expires_at.isoformat() if expires_at else None,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def revoke_share(self, resource: tuple[str, str], user_id: str) -> bool:
+        """Revoke a share for a specific user on a resource.
+
+        Args:
+            resource: Resource to unshare (e.g., ("file", "/path/to/doc.txt"))
+            user_id: User to revoke access from
+
+        Returns:
+            True if share was revoked, False if no share existed
+
+        Examples:
+            >>> nx.revoke_share(
+            ...     resource=("file", "/project/doc.txt"),
+            ...     user_id="bob@partner.com"
+            ... )
+            True
+        """
+        result = self._call_rpc(
+            "revoke_share",
+            {"resource": resource, "user_id": user_id},
+        )
+        return result  # type: ignore[no-any-return]
+
+    def revoke_share_by_id(self, share_id: str) -> bool:
+        """Revoke a share using its ID.
+
+        Args:
+            share_id: The share ID returned by share_with_user()
+
+        Returns:
+            True if share was revoked, False if share didn't exist
+
+        Examples:
+            >>> share_id = nx.share_with_user(resource, user_id)
+            >>> nx.revoke_share_by_id(share_id)
+            True
+        """
+        result = self._call_rpc("revoke_share_by_id", {"share_id": share_id})
+        return result  # type: ignore[no-any-return]
+
+    def list_outgoing_shares(
+        self,
+        resource: tuple[str, str] | None = None,
+        tenant_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> builtins.list[dict[str, Any]]:
+        """List shares created by the current tenant (resources shared with others).
+
+        Args:
+            resource: Filter by specific resource (optional)
+            tenant_id: Tenant ID to list shares for (defaults to current tenant)
+            limit: Maximum number of results
+            offset: Number of results to skip
+
+        Returns:
+            List of share info dictionaries
+
+        Examples:
+            >>> shares = nx.list_outgoing_shares()
+            >>> for share in shares:
+            ...     print(f"{share['resource_id']} -> {share['recipient_id']}")
+        """
+        result = self._call_rpc(
+            "list_outgoing_shares",
+            {
+                "resource": resource,
+                "tenant_id": tenant_id,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def list_incoming_shares(
+        self,
+        user_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> builtins.list[dict[str, Any]]:
+        """List shares received by a user (resources shared with me).
+
+        This includes cross-tenant shares from other organizations.
+
+        Args:
+            user_id: User ID to list incoming shares for
+            limit: Maximum number of results
+            offset: Number of results to skip
+
+        Returns:
+            List of share info dictionaries
+
+        Examples:
+            >>> shares = nx.list_incoming_shares(user_id="alice@mycompany.com")
+            >>> for share in shares:
+            ...     print(f"{share['resource_id']} from {share['owner_tenant_id']}")
+        """
+        result = self._call_rpc(
+            "list_incoming_shares",
+            {"user_id": user_id, "limit": limit, "offset": offset},
+        )
         return result  # type: ignore[no-any-return]
 
     # ============================================================

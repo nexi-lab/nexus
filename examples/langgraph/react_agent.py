@@ -39,8 +39,7 @@ from langgraph.prebuilt import create_react_agent
 from nexus_tools import get_nexus_tools
 
 # Import official system prompt from Nexus tools
-from nexus.tools import NEXUS_TOOLS_SYSTEM_PROMPT
-from nexus.tools.langgraph.nexus_tools import list_skills
+from nexus.tools import get_prompt
 
 # Get configuration from environment variables
 E2B_TEMPLATE_ID = os.getenv("E2B_TEMPLATE_ID")
@@ -62,15 +61,21 @@ llm = ChatAnthropic(
     max_tokens=10000,
 )
 
-# System prompt for general-purpose ReAct agent
-# Uses the official NEXUS_TOOLS_SYSTEM_PROMPT with additional context
-SYSTEM_PROMPT = (
-    NEXUS_TOOLS_SYSTEM_PROMPT
-    + """
+
+def build_prompt(state: dict, config: RunnableConfig) -> list:
+    """Build prompt with optional opened file context from metadata.
+
+    This function is called before each LLM invocation and can access
+    the config which includes metadata from the frontend.
+    """
+    # Get complete prompt with skills and opened file context using the convenience function
+    # get_prompt automatically extracts opened_file_path from config.metadata
+    system_content = get_prompt(config, role="general", state=state)
+
+    # Add additional context specific to this agent (sandbox integration, binary files, etc.)
+    system_content += """
 
 ## Additional Context
-
-You are a general-purpose assistant helping users with filesystem operations, code execution, and data analysis.
 
 ### Sandbox Integration
 
@@ -96,61 +101,6 @@ For binary files (PDF, Excel, PowerPoint, Word), use the parsed markdown path:
 - `/workspace/<user>/` - User's personal workspace
 - `/agent/<user>/<agent_name>/` - Agent-specific data and configs
 """
-)
-
-
-def build_prompt(state: dict, config: RunnableConfig) -> list:
-    """Build prompt with optional opened file context from metadata.
-
-    This function is called before each LLM invocation and can access
-    the config which includes metadata from the frontend.
-    """
-    # Extract opened_file_path from metadata
-    metadata = config.get("metadata", {})
-    opened_file_path = metadata.get("opened_file_path")
-
-    # Build system prompt with optional context
-    system_content = SYSTEM_PROMPT
-
-    # Add available skills to the system prompt
-    try:
-        skills_result = list_skills(config, tier="all")
-        skills_data = skills_result.get("skills", [])
-
-        if skills_data:
-            system_content += "\n\n## Available Skills\n\n"
-            system_content += "The following skills are available in the Nexus system that you can reference or use:\n\n"
-
-            for i, skill in enumerate(skills_data, 1):
-                name = skill.get("name", "Unknown")
-                description = skill.get("description", "No description")
-                tier = skill.get("tier", "N/A")
-                version = skill.get("version", "N/A")
-                file_path = skill.get("file_path", None)
-
-                system_content += f"{i}. **{name}**"
-                if version and version != "N/A":
-                    system_content += f" (v{version})"
-                system_content += f" [{tier}]\n"
-                system_content += f"   {description}\n"
-                if file_path:
-                    system_content += f"   Path: `{file_path}`\n"
-                system_content += "\n"
-
-            system_content += f"Total: {len(skills_data)} skills available\n"
-    except Exception as e:
-        # If skills listing fails, continue without skills (don't break the agent)
-        print(f"Warning: Could not fetch skills: {e}")
-
-    if opened_file_path:
-        system_content += f"""
-
-## Current Context
-
-The user currently has the following file open in their editor:
-**{opened_file_path}**
-
-When the user asks questions or requests changes without specifying a file, they are likely referring to this currently opened file. Use this context to provide more relevant and targeted assistance."""
 
     # Return system message + user messages
     return [SystemMessage(content=system_content)] + state["messages"]
@@ -165,28 +115,3 @@ agent = create_react_agent(
     tools=tools,
     prompt=prompt_runnable,
 )
-
-
-if __name__ == "__main__":
-    # Example usage - Note: requires NEXUS_API_KEY to be set for testing
-    import sys
-
-    api_key = os.getenv("NEXUS_API_KEY")
-    if not api_key:
-        print("Error: NEXUS_API_KEY environment variable is required for testing")
-        print("Usage: NEXUS_API_KEY=your-key python react_agent.py")
-        sys.exit(1)
-
-    print("Testing ReAct agent...")
-
-    # Test with opened file context
-    result = agent.invoke(
-        {"messages": [{"role": "user", "content": "What does this file do?"}]},
-        config={
-            "metadata": {
-                "x_auth": f"Bearer {api_key}",
-                "opened_file_path": "/workspace/admin/test.py",  # Optional: simulates opened file
-            }
-        },
-    )
-    print(result)

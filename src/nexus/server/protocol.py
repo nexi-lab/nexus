@@ -499,6 +499,22 @@ class ListIncomingSharesParams:
     offset: int = 0
 
 
+# Public access params
+@dataclass
+class MakePublicParams:
+    """Parameters for make_public() method."""
+
+    resource: tuple[str, str]
+    tenant_id: str | None = None
+
+
+@dataclass
+class MakePrivateParams:
+    """Parameters for make_private() method."""
+
+    resource: tuple[str, str]
+
+
 @dataclass
 class NamespaceCreateParams:
     """Parameters for namespace_create() method."""
@@ -1586,6 +1602,9 @@ METHOD_PARAMS = {
     "revoke_share_by_id": RevokeShareByIdParams,
     "list_outgoing_shares": ListOutgoingSharesParams,
     "list_incoming_shares": ListIncomingSharesParams,
+    # Public access methods
+    "make_public": MakePublicParams,
+    "make_private": MakePrivateParams,
     "namespace_create": NamespaceCreateParams,
     "namespace_get": NamespaceGetParams,
     "namespace_list": NamespaceListParams,
@@ -1741,6 +1760,9 @@ def parse_method_params(method: str, params: dict[str, Any] | None) -> Any:
         "share_with_user",
         "revoke_share",
         "list_outgoing_shares",
+        # Public access methods
+        "make_public",
+        "make_private",
     ]:
         if "subject" in params and isinstance(params["subject"], list):
             params["subject"] = tuple(params["subject"])

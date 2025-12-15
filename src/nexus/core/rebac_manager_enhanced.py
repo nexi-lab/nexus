@@ -32,7 +32,7 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.rebac import Entity
+from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS, Entity
 from nexus.core.rebac_manager_tenant_aware import TenantAwareReBACManager
 
 if TYPE_CHECKING:
@@ -1926,24 +1926,65 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         return expanded
 
-    def _fetch_tuples_for_tenant(self, tenant_id: str) -> list[dict[str, Any]]:
-        """Fetch all ReBAC tuples for a tenant.
+    def _fetch_tuples_for_tenant(
+        self, tenant_id: str, include_cross_tenant_for_user: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Fetch all ReBAC tuples for a tenant, optionally including cross-tenant shares.
 
         This is used by rebac_list_objects to get the full tuple graph.
+
+        Args:
+            tenant_id: The tenant ID to fetch tuples for
+            include_cross_tenant_for_user: If provided, also include cross-tenant shares
+                where this user is the recipient (subject). This enables users to see
+                resources shared with them from other tenants.
+
+        Returns:
+            List of tuple dictionaries for graph traversal
         """
         from sqlalchemy import text
 
         with self.engine.connect() as conn:
-            result = conn.execute(
-                text("""
-                    SELECT subject_type, subject_id, subject_relation,
-                           relation, object_type, object_id
-                    FROM rebac_tuples
-                    WHERE tenant_id = :tenant_id
-                      AND (expires_at IS NULL OR expires_at > :now)
-                """),
-                {"tenant_id": tenant_id, "now": datetime.now(UTC)},
-            )
+            if include_cross_tenant_for_user:
+                # Include same-tenant tuples AND cross-tenant shares to this user
+                # Cross-tenant shares have relation in CROSS_TENANT_ALLOWED_RELATIONS
+                cross_tenant_relations = tuple(CROSS_TENANT_ALLOWED_RELATIONS)
+                result = conn.execute(
+                    text("""
+                        SELECT subject_type, subject_id, subject_relation,
+                               relation, object_type, object_id
+                        FROM rebac_tuples
+                        WHERE (expires_at IS NULL OR expires_at > :now)
+                          AND (
+                              -- Same tenant tuples
+                              tenant_id = :tenant_id
+                              -- OR cross-tenant shares where this user is the recipient
+                              OR (
+                                  relation IN :cross_tenant_relations
+                                  AND subject_type = 'user'
+                                  AND subject_id = :user_id
+                              )
+                          )
+                    """),
+                    {
+                        "tenant_id": tenant_id,
+                        "now": datetime.now(UTC),
+                        "cross_tenant_relations": cross_tenant_relations,
+                        "user_id": include_cross_tenant_for_user,
+                    },
+                )
+            else:
+                # Original behavior: only same-tenant tuples
+                result = conn.execute(
+                    text("""
+                        SELECT subject_type, subject_id, subject_relation,
+                               relation, object_type, object_id
+                        FROM rebac_tuples
+                        WHERE tenant_id = :tenant_id
+                          AND (expires_at IS NULL OR expires_at > :now)
+                    """),
+                    {"tenant_id": tenant_id, "now": datetime.now(UTC)},
+                )
             return [
                 {
                     "subject_type": row.subject_type,

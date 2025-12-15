@@ -42,6 +42,14 @@ from typing import Any
 # Wildcard subject for public access
 WILDCARD_SUBJECT = ("*", "*")
 
+# Relations that are allowed to cross tenant boundaries
+# These relations can link subjects and objects from different tenants
+CROSS_TENANT_ALLOWED_RELATIONS = frozenset(
+    {
+        "shared-with",  # Direct user-to-resource sharing across tenants
+    }
+)
+
 
 class RelationType(StrEnum):
     """Standard relationship types in ReBAC."""

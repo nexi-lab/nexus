@@ -34,7 +34,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.core.rebac import Entity, NamespaceConfig
+from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS, Entity, NamespaceConfig
 from nexus.core.rebac_manager import ReBACManager
 
 logger = logging.getLogger(__name__)
@@ -160,15 +160,27 @@ class TenantAwareReBACManager(ReBACManager):
         subject_tenant_id = subject_tenant_id or tenant_id
         object_tenant_id = object_tenant_id or tenant_id
 
-        # Enforce same-tenant isolation
+        # Check if this relation is allowed to cross tenant boundaries
+        is_cross_tenant_allowed = relation in CROSS_TENANT_ALLOWED_RELATIONS
+
+        # Enforce same-tenant isolation (unless cross-tenant is explicitly allowed)
         if subject_tenant_id != object_tenant_id:
-            raise TenantIsolationError(
-                f"Cannot create cross-tenant relationship: "
-                f"subject in {subject_tenant_id}, object in {object_tenant_id}",
-                subject_tenant_id,
-                object_tenant_id,
-            )
-        if subject_tenant_id != tenant_id:
+            if is_cross_tenant_allowed:
+                # For cross-tenant relations, store with the object's tenant (resource owner)
+                # This ensures the share is visible when querying the resource owner's tenant
+                tenant_id = object_tenant_id
+                logger.info(
+                    f"Cross-tenant share: {subject_tenant_id} -> {object_tenant_id} "
+                    f"(relation={relation}, stored in tenant={tenant_id})"
+                )
+            else:
+                raise TenantIsolationError(
+                    f"Cannot create cross-tenant relationship: "
+                    f"subject in {subject_tenant_id}, object in {object_tenant_id}",
+                    subject_tenant_id,
+                    object_tenant_id,
+                )
+        if subject_tenant_id != tenant_id and not is_cross_tenant_allowed:
             raise TenantIsolationError(
                 f"Subject tenant {subject_tenant_id} does not match tuple tenant {tenant_id}",
                 subject_tenant_id,

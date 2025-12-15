@@ -476,7 +476,7 @@ def _register_routes(app: FastAPI) -> None:
             # encode_rpc_message handles bytes, datetime, etc.
             encoded = encode_rpc_message(success_response)
             # Using Response directly with pre-encoded JSON for performance
-            return Response(content=encoded, media_type="application/json")  # type: ignore[return-value]
+            return Response(content=encoded, media_type="application/json")
 
         except ValueError as e:
             return _error_response(None, RPCErrorCode.INVALID_PARAMS, f"Invalid parameters: {e}")

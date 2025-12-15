@@ -585,14 +585,16 @@ DEFAULT_FILE_NAMESPACE = NamespaceConfig(
             "group_viewer": {
                 "tupleToUserset": {"tupleset": "direct_viewer", "computedUserset": "member"}
             },
-            # Computed relations (union of direct + parent + group)
+            # Cross-tenant sharing relation (PR #645)
+            "shared-with": {},  # Direct user-to-resource sharing across tenants
+            # Computed relations (union of direct + parent + group + shared)
             # HYBRID: Keep unions for better memoization caching
             # Permission checks → 3 unions (viewer, editor, owner) instead of 9 relations
             # This gives better cache hit rates since many files share the same union checks
             # IMPORTANT: Don't nest unions (e.g., editor includes owner) - causes exponential checks
             "owner": {"union": ["direct_owner", "parent_owner", "group_owner"]},
             "editor": {"union": ["direct_editor", "parent_editor", "group_editor"]},
-            "viewer": {"union": ["direct_viewer", "parent_viewer", "group_viewer"]},
+            "viewer": {"union": ["direct_viewer", "parent_viewer", "group_viewer", "shared-with"]},
         },
         # P0-1: Explicit permission-to-userset mapping (Zanzibar-style)
         # HYBRID OPTIMIZATION: Use unions for better memoization

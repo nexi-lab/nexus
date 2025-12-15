@@ -28,7 +28,7 @@ else
     echo -e "${RED}✗ Configuration file not found: ${CONFIG_FILE}${NC}"
     echo "Using fallback default values..."
     # Fallback defaults
-    NEXUS_DATA_DIR="/tmp/nexus-data"
+    NEXUS_DATA_DIR="./nexus-data"
     POSTGRES_USER="nexus_test"
     POSTGRES_PASSWORD="nexus_test_password"
     POSTGRES_DB="tmp_nexus_test"
@@ -61,6 +61,9 @@ get_data_path() {
 parse_args() {
     POSTGRES_URL="$DEFAULT_POSTGRES_URL"
     DATA_DIR="$DEFAULT_DATA_DIR"
+    USE_SQLITE=false
+    START_UI=false
+    START_LANGGRAPH=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -71,6 +74,26 @@ parse_args() {
             --data-dir)
                 DATA_DIR="$2"
                 shift 2
+                ;;
+            --use-sqlite)
+                USE_SQLITE=true
+                shift
+                ;;
+            --ui)
+                START_UI=true
+                shift
+                ;;
+            --no-ui)
+                START_UI=false
+                shift
+                ;;
+            --langgraph)
+                START_LANGGRAPH=true
+                shift
+                ;;
+            --no-langgraph)
+                START_LANGGRAPH=false
+                shift
                 ;;
             *)
                 # Unknown option, pass through
@@ -140,6 +163,88 @@ ensure_postgres_running() {
     fi
 }
 
+# Function to start the frontend
+start_frontend() {
+    local FRONTEND_DIR="${SCRIPT_DIR}/../nexus-frontend"
+
+    if [ ! -d "$FRONTEND_DIR" ]; then
+        echo -e "${RED}ERROR: Frontend directory not found: $FRONTEND_DIR${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}Starting frontend (pnpm run dev)...${NC}"
+
+    # Start frontend in background with VITE_NEXUS_SERVER_URL set to localhost
+    cd "$FRONTEND_DIR"
+    VITE_NEXUS_SERVER_URL=http://localhost:8080 pnpm run dev > /tmp/nexus-frontend.log 2>&1 &
+    local FRONTEND_PID=$!
+    echo $FRONTEND_PID > /tmp/nexus-frontend.pid
+
+    echo -e "${GREEN}✓ Frontend started (PID: $FRONTEND_PID)${NC}"
+    echo "  Logs: /tmp/nexus-frontend.log"
+    echo "  URL: http://localhost:5173"
+    echo "  Nexus Backend: http://localhost:8080"
+
+    cd - > /dev/null
+}
+
+# Function to start langgraph
+start_langgraph() {
+    local LANGGRAPH_DIR="${SCRIPT_DIR}/examples/langgraph"
+
+    if [ ! -d "$LANGGRAPH_DIR" ]; then
+        echo -e "${RED}ERROR: Langgraph directory not found: $LANGGRAPH_DIR${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}Starting langgraph (uv run langgraph dev --allow-blocking)...${NC}"
+
+    # Start langgraph in background
+    cd "$LANGGRAPH_DIR"
+    uv run langgraph dev --allow-blocking > /tmp/nexus-langgraph.log 2>&1 &
+    local LANGGRAPH_PID=$!
+    echo $LANGGRAPH_PID > /tmp/nexus-langgraph.pid
+
+    echo -e "${GREEN}✓ Langgraph started (PID: $LANGGRAPH_PID)${NC}"
+    echo "  Logs: /tmp/nexus-langgraph.log"
+
+    cd - > /dev/null
+}
+
+# Function to stop the frontend
+stop_frontend() {
+    if [ -f /tmp/nexus-frontend.pid ]; then
+        local PID=$(cat /tmp/nexus-frontend.pid)
+        if kill -0 $PID 2>/dev/null; then
+            echo "Stopping frontend (PID: $PID)..."
+            kill -TERM $PID 2>/dev/null || true
+            sleep 1
+            if kill -0 $PID 2>/dev/null; then
+                kill -9 $PID 2>/dev/null || true
+            fi
+            echo -e "${GREEN}✓ Frontend stopped${NC}"
+        fi
+        rm -f /tmp/nexus-frontend.pid
+    fi
+}
+
+# Function to stop langgraph
+stop_langgraph() {
+    if [ -f /tmp/nexus-langgraph.pid ]; then
+        local PID=$(cat /tmp/nexus-langgraph.pid)
+        if kill -0 $PID 2>/dev/null; then
+            echo "Stopping langgraph (PID: $PID)..."
+            kill -TERM $PID 2>/dev/null || true
+            sleep 1
+            if kill -0 $PID 2>/dev/null; then
+                kill -9 $PID 2>/dev/null || true
+            fi
+            echo -e "${GREEN}✓ Langgraph stopped${NC}"
+        fi
+        rm -f /tmp/nexus-langgraph.pid
+    fi
+}
+
 # Function to start the server
 start_server() {
     # Parse arguments
@@ -151,35 +256,43 @@ start_server() {
     echo "╚═══════════════════════════════════════════╝"
     echo ""
 
-    # Check and start PostgreSQL container if needed
-    ensure_postgres_running
+    # Handle database setup based on mode
+    if [ "$USE_SQLITE" = true ]; then
+        echo -e "${GREEN}Using SQLite database (embedded mode)${NC}"
+        # Set SQLite database URL
+        DATA_PATH=$(get_data_path "$DATA_DIR")
+        POSTGRES_URL="sqlite:///${DATA_PATH}/nexus.db"
+    else
+        # Check and start PostgreSQL container if needed
+        ensure_postgres_running
 
-    # Check if 'postgres' hostname resolves to localhost for connectors
-    if ! grep -q "127.0.0.1.*postgres" /etc/hosts 2>/dev/null; then
-        echo ""
-        echo -e "${YELLOW}⚠  For connectors to work, add this to /etc/hosts:${NC}"
-        echo ""
-        echo "    127.0.0.1    postgres"
-        echo ""
-        echo "  Run: sudo bash -c 'echo \"127.0.0.1    postgres\" >> /etc/hosts'"
-        echo ""
-        echo "  (This allows 'postgres:5432' in connector configs to resolve to localhost)"
-        echo ""
-        read -p "Continue without it? (connectors will fail but core server works) [Y/n] " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]] && [[ ! -z $REPLY ]]; then
-            exit 1
+        # Check if 'postgres' hostname resolves to localhost for connectors
+        if ! grep -q "127.0.0.1.*postgres" /etc/hosts 2>/dev/null; then
+            echo ""
+            echo -e "${YELLOW}⚠  For connectors to work, add this to /etc/hosts:${NC}"
+            echo ""
+            echo "    127.0.0.1    postgres"
+            echo ""
+            echo "  Run: sudo bash -c 'echo \"127.0.0.1    postgres\" >> /etc/hosts'"
+            echo ""
+            echo "  (This allows 'postgres:5432' in connector configs to resolve to localhost)"
+            echo ""
+            read -p "Continue without it? (connectors will fail but core server works) [Y/n] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]] && [[ ! -z $REPLY ]]; then
+                exit 1
+            fi
         fi
-    fi
 
-    # Verify PostgreSQL is healthy
-    if docker ps | grep -q "${POSTGRES_CONTAINER}"; then
-        if ! docker exec "${POSTGRES_CONTAINER}" pg_isready -U "${POSTGRES_USER}" > /dev/null 2>&1; then
-            echo -e "${YELLOW}WARNING: PostgreSQL health check failed${NC}"
-        fi
-    elif docker ps | grep -q nexus-postgres; then
-        if ! docker exec nexus-postgres pg_isready -U postgres > /dev/null 2>&1; then
-            echo -e "${YELLOW}WARNING: PostgreSQL health check failed${NC}"
+        # Verify PostgreSQL is healthy
+        if docker ps | grep -q "${POSTGRES_CONTAINER}"; then
+            if ! docker exec "${POSTGRES_CONTAINER}" pg_isready -U "${POSTGRES_USER}" > /dev/null 2>&1; then
+                echo -e "${YELLOW}WARNING: PostgreSQL health check failed${NC}"
+            fi
+        elif docker ps | grep -q nexus-postgres; then
+            if ! docker exec nexus-postgres pg_isready -U postgres > /dev/null 2>&1; then
+                echo -e "${YELLOW}WARNING: PostgreSQL health check failed${NC}"
+            fi
         fi
     fi
 
@@ -240,16 +353,54 @@ start_server() {
     echo -e "${BLUE}Configuration:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  Config File:  ./configs/config.demo.yaml"
-    echo "  Database:     $NEXUS_DB_PATH"
+    if [ "$USE_SQLITE" = true ]; then
+        echo "  Database:     SQLite (${DATA_PATH}/nexus.db)"
+    else
+        echo "  Database:     $NEXUS_DB_PATH"
+    fi
     echo "  Data Dir:     $DATA_PATH"
     echo "  Host:         ${NEXUS_HOST:-0.0.0.0}"
     echo "  Port:         ${NEXUS_PORT:-8080}"
+    if [ "$START_UI" = true ]; then
+        echo "  Frontend:     Enabled"
+    fi
+    if [ "$START_LANGGRAPH" = true ]; then
+        echo "  Langgraph:    Enabled"
+    fi
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo -e "${GREEN}Starting server...${NC}"
+
+    # Start frontend if requested
+    if [ "$START_UI" = true ]; then
+        echo ""
+        start_frontend
+        echo ""
+    fi
+
+    # Start langgraph if requested
+    if [ "$START_LANGGRAPH" = true ]; then
+        echo ""
+        start_langgraph
+        echo ""
+    fi
+
+    echo -e "${GREEN}Starting Nexus server...${NC}"
     echo ""
     echo "Press Ctrl+C to stop"
     echo ""
+
+    # Setup cleanup on exit
+    cleanup() {
+        echo ""
+        echo "Shutting down services..."
+        if [ "$START_UI" = true ]; then
+            stop_frontend
+        fi
+        if [ "$START_LANGGRAPH" = true ]; then
+            stop_langgraph
+        fi
+    }
+    trap cleanup EXIT INT TERM
 
     # Start the Nexus server
     nexus serve \
@@ -261,7 +412,14 @@ start_server() {
 # Function to stop the server
 stop_server() {
     echo ""
-    echo "Stopping local Nexus server..."
+    echo "Stopping local Nexus server and related services..."
+    echo ""
+
+    # Stop frontend
+    stop_frontend
+
+    # Stop langgraph
+    stop_langgraph
 
     # Get all PIDs using port 8080
     PIDS=$(lsof -ti :8080 2>/dev/null || true)
@@ -289,7 +447,7 @@ stop_server() {
             fi
         done
 
-        echo -e "${GREEN}✓ Server stopped${NC}"
+        echo -e "${GREEN}✓ Nexus server stopped${NC}"
         echo ""
     else
         echo "No server running on port 8080"
@@ -308,15 +466,21 @@ init_database() {
     echo "╚═══════════════════════════════════════════╝"
     echo ""
 
-    # Ensure PostgreSQL is running
-    ensure_postgres_running
+    # Stop all running servers first to prevent database lock issues
+    echo "🛑 Stopping all running services..."
+    stop_server
+    echo ""
 
-    # Extract database name from POSTGRES_URL
-    # Format: postgresql://user:pass@host:port/dbname
-    DB_NAME=$(echo "$POSTGRES_URL" | sed -n 's/.*\/\([^?]*\).*/\1/p')
-    DB_USER=$(echo "$POSTGRES_URL" | sed -n 's/.*:\/\/\([^:]*\):.*/\1/p')
-    DB_HOST=$(echo "$POSTGRES_URL" | sed -n 's/.*@\([^:]*\):.*/\1/p')
-    DB_PORT=$(echo "$POSTGRES_URL" | sed -n 's/.*:\([0-9]*\)\/.*/\1/p')
+    # Handle database setup based on mode
+    if [ "$USE_SQLITE" = true ]; then
+        echo -e "${GREEN}Using SQLite database (embedded mode)${NC}"
+        # Set SQLite database URL
+        DATA_PATH=$(get_data_path "$DATA_DIR")
+        POSTGRES_URL="sqlite:///${DATA_PATH}/nexus.db"
+    else
+        # Ensure PostgreSQL is running
+        ensure_postgres_running
+    fi
 
     # Get data directory
     DATA_PATH=$(get_data_path "$DATA_DIR")
@@ -325,7 +489,11 @@ init_database() {
     echo ""
     echo -e "${BLUE}Configuration:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  Database:     $POSTGRES_URL"
+    if [ "$USE_SQLITE" = true ]; then
+        echo "  Database:     SQLite (${DATA_PATH}/nexus.db)"
+    else
+        echo "  Database:     PostgreSQL ($POSTGRES_URL)"
+    fi
     echo "  Data Dir:     $DATA_PATH"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
@@ -339,37 +507,48 @@ init_database() {
     echo ""
     echo "🧹 Clearing existing data..."
 
-    # Use configuration from config file
-    DB_NAME="${POSTGRES_DB}"
-    DB_USER="${POSTGRES_USER}"
-    CONTAINER_NAME="${POSTGRES_CONTAINER}"
-
-    # Clear database - drop and recreate
-    # Note: Must connect to 'postgres' database to drop other databases
-    # Also need to terminate active connections before dropping
-    if docker ps | grep -q "^.*${CONTAINER_NAME}"; then
-        echo "  Terminating connections to database: ${DB_NAME}"
-        docker exec ${CONTAINER_NAME} psql -U ${DB_USER} -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${DB_NAME}' AND pid <> pg_backend_pid();" > /dev/null 2>&1 || true
-        sleep 1
-        echo "  Dropping database: ${DB_NAME}"
-        docker exec ${CONTAINER_NAME} psql -U ${DB_USER} -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME};" > /dev/null 2>&1 || true
-        sleep 1
-        echo "  Creating database: ${DB_NAME}"
-        if docker exec ${CONTAINER_NAME} psql -U ${DB_USER} -d postgres -c "CREATE DATABASE ${DB_NAME};" > /dev/null 2>&1; then
-            echo -e "  ${GREEN}✓ Database cleared${NC}"
+    if [ "$USE_SQLITE" = true ]; then
+        # Remove SQLite database file
+        if [ -f "${DATA_PATH}/nexus.db" ]; then
+            echo "  Removing SQLite database: ${DATA_PATH}/nexus.db"
+            rm -f "${DATA_PATH}/nexus.db"*
+            echo -e "  ${GREEN}✓ SQLite database removed${NC}"
         else
-            echo -e "  ${RED}✗ Failed to create database${NC}"
-            echo "  Trying to see what went wrong..."
-            docker exec ${CONTAINER_NAME} psql -U ${DB_USER} -d postgres -c "CREATE DATABASE ${DB_NAME};" 2>&1 | head -5
-            exit 1
+            echo "  SQLite database doesn't exist, will be created"
         fi
     else
-        echo -e "  ${YELLOW}⚠ PostgreSQL container not found, skipping database clear${NC}"
+        # Use configuration from config file
+        DB_NAME="${POSTGRES_DB}"
+        DB_USER="${POSTGRES_USER}"
+        CONTAINER_NAME="${POSTGRES_CONTAINER}"
+
+        # Clear database - drop and recreate
+        # Note: Must connect to 'postgres' database to drop other databases
+        # Also need to terminate active connections before dropping
+        if docker ps | grep -q "^.*${CONTAINER_NAME}"; then
+            echo "  Terminating connections to database: ${DB_NAME}"
+            docker exec ${CONTAINER_NAME} psql -U ${DB_USER} -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${DB_NAME}' AND pid <> pg_backend_pid();" > /dev/null 2>&1 || true
+            sleep 1
+            echo "  Dropping database: ${DB_NAME}"
+            docker exec ${CONTAINER_NAME} psql -U ${DB_USER} -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME};" > /dev/null 2>&1 || true
+            sleep 1
+            echo "  Creating database: ${DB_NAME}"
+            if docker exec ${CONTAINER_NAME} psql -U ${DB_USER} -d postgres -c "CREATE DATABASE ${DB_NAME};" > /dev/null 2>&1; then
+                echo -e "  ${GREEN}✓ Database cleared${NC}"
+            else
+                echo -e "  ${RED}✗ Failed to create database${NC}"
+                echo "  Trying to see what went wrong..."
+                docker exec ${CONTAINER_NAME} psql -U ${DB_USER} -d postgres -c "CREATE DATABASE ${DB_NAME};" 2>&1 | head -5
+                exit 1
+            fi
+        else
+            echo -e "  ${YELLOW}⚠ PostgreSQL container not found, skipping database clear${NC}"
+        fi
     fi
 
     # Clear data directory
     if [ -d "$DATA_PATH" ]; then
-        echo "  Removing data directory: $DATA_PATH"
+        echo "  Removing data directory contents: $DATA_PATH"
         rm -rf "$DATA_PATH"/*
         echo -e "  ${GREEN}✓ Data directory cleared${NC}"
     else
@@ -456,8 +635,10 @@ init_database() {
     echo "🚀 Starting Nexus server..."
     echo ""
 
-    # Ensure PostgreSQL is running
-    ensure_postgres_running
+    # Ensure PostgreSQL is running (skip if using SQLite)
+    if [ "$USE_SQLITE" != true ]; then
+        ensure_postgres_running
+    fi
 
     # Get data directory path (create if missing)
     DATA_PATH=$(get_data_path "$DATA_DIR")
@@ -532,16 +713,54 @@ init_database() {
     echo -e "${BLUE}Configuration:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  Config File:  ./configs/config.demo.yaml"
-    echo "  Database:     $POSTGRES_URL"
+    if [ "$USE_SQLITE" = true ]; then
+        echo "  Database:     SQLite (${DATA_PATH}/nexus.db)"
+    else
+        echo "  Database:     PostgreSQL ($POSTGRES_URL)"
+    fi
     echo "  Data Dir:     $DATA_PATH"
     echo "  Host:         0.0.0.0"
     echo "  Port:         8080"
+    if [ "$START_UI" = true ]; then
+        echo "  Frontend:     Enabled"
+    fi
+    if [ "$START_LANGGRAPH" = true ]; then
+        echo "  Langgraph:    Enabled"
+    fi
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo -e "${GREEN}Starting server...${NC}"
+
+    # Start frontend if requested
+    if [ "$START_UI" = true ]; then
+        echo ""
+        start_frontend
+        echo ""
+    fi
+
+    # Start langgraph if requested
+    if [ "$START_LANGGRAPH" = true ]; then
+        echo ""
+        start_langgraph
+        echo ""
+    fi
+
+    echo -e "${GREEN}Starting Nexus server...${NC}"
     echo ""
     echo "Press Ctrl+C to stop"
     echo ""
+
+    # Setup cleanup on exit
+    cleanup() {
+        echo ""
+        echo "Shutting down services..."
+        if [ "$START_UI" = true ]; then
+            stop_frontend
+        fi
+        if [ "$START_LANGGRAPH" = true ]; then
+            stop_langgraph
+        fi
+    }
+    trap cleanup EXIT INT TERM
 
     # Wait a moment for server to start, then run provisioning in background
     (
@@ -604,20 +823,38 @@ case "$1" in
         echo "  --init     Initialize database schema"
         echo ""
         echo "Options for --start and --init:"
+        echo "  --use-sqlite          Use SQLite instead of PostgreSQL (no Docker needed)"
         echo "  --postgres-url URL    PostgreSQL connection URL"
         echo "                       (default: $DEFAULT_POSTGRES_URL)"
         echo "  --data-dir PATH       Data directory path"
         echo "                       (default: $DEFAULT_DATA_DIR)"
+        echo "  --ui                  Start the frontend (pnpm run dev in nexus-frontend)"
+        echo "  --no-ui              Don't start the frontend (default)"
+        echo "  --langgraph          Start langgraph dev server"
+        echo "  --no-langgraph       Don't start langgraph (default)"
         echo ""
         echo "Examples:"
+        echo "  # Using PostgreSQL (default):"
         echo "  $0 --start"
         echo "  $0 --init"
+        echo ""
+        echo "  # Using SQLite (no Docker required):"
+        echo "  $0 --start --use-sqlite"
+        echo "  $0 --init --use-sqlite"
+        echo ""
+        echo "  # Start with frontend and langgraph:"
+        echo "  $0 --start --ui --langgraph"
+        echo "  $0 --start --use-sqlite --ui --langgraph"
+        echo ""
+        echo "  # Custom PostgreSQL URL:"
         echo "  $0 --start --postgres-url 'postgresql://user:pass@localhost:5432/db'"
         echo "  $0 --init --postgres-url 'postgresql://user:pass@localhost:5432/db'"
-        echo "  $0 --start --data-dir '/custom/path'"
-        echo "  $0 --start --postgres-url 'postgresql://...' --data-dir '/custom/path'"
         echo ""
-        echo "Workflow:"
+        echo "  # Custom data directory:"
+        echo "  $0 --start --data-dir '/custom/path'"
+        echo "  $0 --start --use-sqlite --data-dir '/custom/path'"
+        echo ""
+        echo "Workflow (PostgreSQL):"
         echo "  1. Initialize database:         ./local-nexus.sh --init"
         echo "  2. Start Docker services:       ./docker-start.sh"
         echo "  3. Stop Docker nexus-server:    docker stop nexus-server"
@@ -625,7 +862,20 @@ case "$1" in
         echo "  5. Make changes and restart:    Ctrl+C then ./local-nexus.sh --start"
         echo "  6. When done:                   docker start nexus-server"
         echo ""
-        echo "Optional: Enable connectors (GDrive, Gmail) in local mode:"
+        echo "Workflow (SQLite - Simpler!):"
+        echo "  1. Initialize database:         ./local-nexus.sh --init --use-sqlite"
+        echo "  2. Start local nexus:           ./local-nexus.sh --start --use-sqlite"
+        echo "  3. Make changes and restart:    Ctrl+C then ./local-nexus.sh --start --use-sqlite"
+        echo ""
+        echo "Workflow (Full Stack Development):"
+        echo "  1. Init with all services:      ./local-nexus.sh --init --use-sqlite --ui --langgraph"
+        echo "     (Database init + starts server, frontend, and langgraph)"
+        echo "  2. Or start separately:         ./local-nexus.sh --start --use-sqlite --ui --langgraph"
+        echo "  3. Access frontend:             http://localhost:3000"
+        echo "  4. Access langgraph:            http://localhost:8123 (or as configured)"
+        echo "  5. Stop all services:           ./local-nexus.sh --stop"
+        echo ""
+        echo "Optional: Enable connectors (GDrive, Gmail) in PostgreSQL mode:"
         echo "  sudo bash -c 'echo \"127.0.0.1    postgres\" >> /etc/hosts'"
         echo "  This maps 'postgres' hostname to localhost for connector database access."
         echo ""

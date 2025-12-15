@@ -815,28 +815,26 @@ class NexusFSSkillsMixin:
 
         return self._run_async_skill_operation(validate())
 
-    @rpc_expose(description="Export skill to .zip package")
+    @rpc_expose(description="Export skill to .skill package")
     def skills_export(
         self,
         skill_name: str,
-        format: str = "generic",
         include_dependencies: bool = False,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Export skill to ZIP package.
+        """Export skill to .skill (ZIP) package.
 
         Args:
             skill_name: Name of skill to export
-            format: Export format (generic, claude)
             include_dependencies: Include skill dependencies
             context: Operation context
 
         Returns:
             {
                 "skill_name": str,
-                "zip_data": str,  # Base64 encoded
+                "zip_data": str,  # Base64 encoded ZIP file
                 "size_bytes": int,
-                "format": str
+                "filename": str  # Suggested filename (e.g., "skill-name.skill")
             }
         """
         import base64
@@ -853,8 +851,8 @@ class NexusFSSkillsMixin:
             zip_bytes = await exporter.export_skill(
                 name=skill_name,
                 output_path=None,  # Return bytes
-                format=format,
                 include_dependencies=include_dependencies,
+                context=context,
             )
 
             # Check if export succeeded
@@ -868,7 +866,7 @@ class NexusFSSkillsMixin:
                 "skill_name": skill_name,
                 "zip_data": zip_base64,
                 "size_bytes": len(zip_bytes),
-                "format": format,
+                "filename": f"{skill_name}.skill",  # Suggested filename with .skill extension (ZIP format)
             }
 
         return self._run_async_skill_operation(export())

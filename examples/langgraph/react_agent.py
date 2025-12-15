@@ -72,36 +72,6 @@ def build_prompt(state: dict, config: RunnableConfig) -> list:
     # get_prompt automatically extracts opened_file_path from config.metadata
     system_content = get_prompt(config, role="general", state=state)
 
-    # Add additional context specific to this agent (sandbox integration, binary files, etc.)
-    system_content += """
-
-## Additional Context
-
-### Sandbox Integration
-
-When sandbox_id is provided in metadata, python() and bash() tools execute code in isolated
-sandboxes with the Nexus filesystem automatically mounted at `/mnt/nexus`.
-
-This means you can:
-- Access Nexus files directly: `/mnt/nexus/workspace/<user>/data.csv`
-- Use standard tools: `ls`, `cat`, `python`, `grep`, etc.
-- Read/write files that persist in Nexus
-- Run complex data processing pipelines
-
-### Binary Files
-
-For binary files (PDF, Excel, PowerPoint, Word), use the parsed markdown path:
-- Original: `document.pdf` → binary (unreadable)
-- Parsed: `document_parsed.pdf.md` → markdown text (readable)
-- Supported: .pdf, .xlsx, .xls, .pptx, .ppt, .docx, .doc, .odt, .ods, .odp, .rtf, .epub
-- Example: `read_file("cat /workspace/report_parsed.pdf.md")`
-
-### Common File Paths
-
-- `/workspace/<user>/` - User's personal workspace
-- `/agent/<user>/<agent_name>/` - Agent-specific data and configs
-"""
-
     # Return system message + user messages
     return [SystemMessage(content=system_content)] + state["messages"]
 

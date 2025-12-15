@@ -99,6 +99,8 @@ RUN pip install --no-cache-dir \
     xarray \
     # Audio processing
     soundfile \
+    # PDF and file creation
+    reportlab \
     # Testing
     pytest \
     # Utilities

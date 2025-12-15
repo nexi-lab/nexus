@@ -438,7 +438,7 @@ def _register_routes(app: FastAPI) -> None:
         method: str,
         request: Request,
         auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> JSONResponse:
+    ) -> Response:
         """Handle RPC method calls."""
         try:
             # Parse request body using decode_rpc_message to handle bytes encoding

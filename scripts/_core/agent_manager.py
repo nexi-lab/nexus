@@ -5,7 +5,7 @@ Provides functions to create and configure standard agent types
 (ImpersonatedUser, UntrustedAgent) with consistent configuration.
 """
 
-from typing import Any
+from typing import Any, cast
 
 # Default agent configuration metadata
 DEFAULT_AGENT_METADATA = {
@@ -42,14 +42,17 @@ def create_impersonated_user_agent(
     agent_id = f"{user_id},ImpersonatedUser"
 
     try:
-        agent_result = nx.register_agent(
-            agent_id=agent_id,
-            name="ImpersonatedUser",
-            description="Digital twin agent - no separate identity, inherits all user permissions",
-            generate_api_key=False,  # No API key - uses user's auth
-            inherit_permissions=True,  # Inherit all user's permissions
-            metadata=agent_metadata,
-            context=context,
+        agent_result = cast(
+            dict[str, Any],
+            nx.register_agent(
+                agent_id=agent_id,
+                name="ImpersonatedUser",
+                description="Digital twin agent - no separate identity, inherits all user permissions",
+                generate_api_key=False,  # No API key - uses user's auth
+                inherit_permissions=True,  # Inherit all user's permissions
+                metadata=agent_metadata,
+                context=context,
+            ),
         )
         print(
             f"  ✓ Created agent 'ImpersonatedUser' (digital twin) at {agent_result.get('config_path', 'N/A')}"
@@ -87,14 +90,17 @@ def create_untrusted_agent(
     agent_id = f"{user_id},UntrustedAgent"
 
     try:
-        agent_result = nx.register_agent(
-            agent_id=agent_id,
-            name="UntrustedAgent",
-            description="Untrusted agent with API key - zero permissions by default, read-only access granted explicitly",
-            generate_api_key=True,  # Has its own API key
-            inherit_permissions=False,  # Zero permissions by default
-            metadata=agent_metadata,
-            context=context,
+        agent_result = cast(
+            dict[str, Any],
+            nx.register_agent(
+                agent_id=agent_id,
+                name="UntrustedAgent",
+                description="Untrusted agent with API key - zero permissions by default, read-only access granted explicitly",
+                generate_api_key=True,  # Has its own API key
+                inherit_permissions=False,  # Zero permissions by default
+                metadata=agent_metadata,
+                context=context,
+            ),
         )
         print(
             f"  ✓ Created agent 'UntrustedAgent' (with API key, zero permissions) at {agent_result.get('config_path', 'N/A')}"

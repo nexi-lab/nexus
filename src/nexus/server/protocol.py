@@ -452,6 +452,69 @@ class RebacListTuplesParams:
     object: tuple[str, str] | None = None
 
 
+# Cross-tenant sharing params
+@dataclass
+class ShareWithUserParams:
+    """Parameters for share_with_user() method."""
+
+    resource: tuple[str, str]
+    user_id: str
+    relation: str = "viewer"
+    tenant_id: str | None = None
+    user_tenant_id: str | None = None
+    expires_at: str | None = None
+
+
+@dataclass
+class RevokeShareParams:
+    """Parameters for revoke_share() method."""
+
+    resource: tuple[str, str]
+    user_id: str
+
+
+@dataclass
+class RevokeShareByIdParams:
+    """Parameters for revoke_share_by_id() method."""
+
+    share_id: str
+
+
+@dataclass
+class ListOutgoingSharesParams:
+    """Parameters for list_outgoing_shares() method."""
+
+    resource: tuple[str, str] | None = None
+    tenant_id: str | None = None
+    limit: int = 100
+    offset: int = 0
+
+
+@dataclass
+class ListIncomingSharesParams:
+    """Parameters for list_incoming_shares() method."""
+
+    user_id: str
+    limit: int = 100
+    offset: int = 0
+
+
+# Public access params
+@dataclass
+class MakePublicParams:
+    """Parameters for make_public() method."""
+
+    resource: tuple[str, str]
+    tenant_id: str | None = None
+
+
+@dataclass
+class MakePrivateParams:
+    """Parameters for make_private() method."""
+
+    resource: tuple[str, str]
+
+
 @dataclass
 class NamespaceCreateParams:
     """Parameters for namespace_create() method."""
@@ -1533,6 +1596,15 @@ METHOD_PARAMS = {
     "rebac_explain": RebacExplainParams,
     "rebac_delete": RebacDeleteParams,
     "rebac_list_tuples": RebacListTuplesParams,
+    # Cross-tenant sharing methods
+    "share_with_user": ShareWithUserParams,
+    "revoke_share": RevokeShareParams,
+    "revoke_share_by_id": RevokeShareByIdParams,
+    "list_outgoing_shares": ListOutgoingSharesParams,
+    "list_incoming_shares": ListIncomingSharesParams,
+    # Public access methods
+    "make_public": MakePublicParams,
+    "make_private": MakePrivateParams,
     "namespace_create": NamespaceCreateParams,
     "namespace_get": NamespaceGetParams,
     "namespace_list": NamespaceListParams,
@@ -1684,11 +1756,20 @@ def parse_method_params(method: str, params: dict[str, Any] | None) -> Any:
         "rebac_expand",
         "rebac_list_tuples",
         "rebac_explain",
+        # Cross-tenant sharing methods
+        "share_with_user",
+        "revoke_share",
+        "list_outgoing_shares",
+        # Public access methods
+        "make_public",
+        "make_private",
     ]:
         if "subject" in params and isinstance(params["subject"], list):
             params["subject"] = tuple(params["subject"])
         if "object" in params and isinstance(params["object"], list):
             params["object"] = tuple(params["object"])
+        if "resource" in params and isinstance(params["resource"], list):
+            params["resource"] = tuple(params["resource"])
 
     try:
         return param_class(**params)

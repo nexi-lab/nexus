@@ -1367,8 +1367,18 @@ class NexusFSReBACMixin:
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
 
-        if relation not in ("viewer", "editor"):
-            raise ValueError(f"relation must be 'viewer' or 'editor', got '{relation}'")
+        # Map user-facing relation to internal tuple relation
+        # These shared-* relations are included in the viewer/editor/owner unions
+        # for proper permission inheritance
+        relation_map = {
+            "viewer": "shared-viewer",
+            "editor": "shared-editor",
+            "owner": "shared-owner",
+        }
+        if relation not in relation_map:
+            raise ValueError(f"relation must be 'viewer', 'editor', or 'owner', got '{relation}'")
+
+        tuple_relation = relation_map[relation]
 
         # Parse expires_at if it's a string (from RPC)
         expires_dt = None
@@ -1380,16 +1390,15 @@ class NexusFSReBACMixin:
             else:
                 expires_dt = expires_at
 
-        # Use shared-with relation which is allowed to cross tenant boundaries
+        # Use shared-* relations which are allowed to cross tenant boundaries
         # Call underlying manager directly to support cross-tenant parameters
         return self._rebac_manager.rebac_write(
             subject=("user", user_id),
-            relation="shared-with",
+            relation=tuple_relation,
             object=resource,
             tenant_id=tenant_id,
             subject_tenant_id=user_tenant_id,
             expires_at=expires_dt,
-            conditions={"permission_level": relation},
         )
 
     @rpc_expose(description="Revoke a share by resource and user")
@@ -1422,15 +1431,16 @@ class NexusFSReBACMixin:
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
 
-        # Find the share tuple
-        tuples = self.rebac_list_tuples(
-            subject=("user", user_id),
-            relation="shared-with",
-            object=resource,
-        )
-
-        if tuples:
-            return self.rebac_delete(tuples[0]["tuple_id"])
+        # Find the share tuple - check all shared-* relations
+        shared_relations = ["shared-viewer", "shared-editor", "shared-owner"]
+        for relation in shared_relations:
+            tuples = self.rebac_list_tuples(
+                subject=("user", user_id),
+                relation=relation,
+                object=resource,
+            )
+            if tuples:
+                return self.rebac_delete(tuples[0]["tuple_id"])
         return False
 
     @rpc_expose(description="Revoke a share by share ID")
@@ -1498,23 +1508,34 @@ class NexusFSReBACMixin:
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
 
-        # Query for shared-with tuples
+        # Query for all shared-* relation tuples
         # Note: rebac_list_tuples doesn't support tenant_id filtering directly,
         # so we filter by relation and optionally by resource
-        tuples = self.rebac_list_tuples(
-            relation="shared-with",
-            object=resource,
-        )
+        shared_relations = ["shared-viewer", "shared-editor", "shared-owner"]
+        all_tuples = []
+        for relation in shared_relations:
+            tuples = self.rebac_list_tuples(
+                relation=relation,
+                object=resource,
+            )
+            all_tuples.extend(tuples)
+
+        # Map relation back to permission level
+        relation_to_level = {
+            "shared-viewer": "viewer",
+            "shared-editor": "editor",
+            "shared-owner": "owner",
+        }
 
         # Transform to share info format
         shares = []
-        for t in tuples[offset : offset + limit]:
+        for t in all_tuples[offset : offset + limit]:
             share_info = {
                 "share_id": t.get("tuple_id"),
                 "resource_type": t.get("object_type"),
                 "resource_id": t.get("object_id"),
                 "recipient_id": t.get("subject_id"),
-                "permission_level": (t.get("conditions") or {}).get("permission_level", "viewer"),
+                "permission_level": relation_to_level.get(t.get("relation") or "", "viewer"),
                 "created_at": t.get("created_at"),
                 "expires_at": t.get("expires_at"),
             }
@@ -1559,22 +1580,33 @@ class NexusFSReBACMixin:
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
 
-        # Query for shared-with tuples where this user is the subject
+        # Query for all shared-* relation tuples where this user is the subject
         # This finds shares across all tenants
-        tuples = self.rebac_list_tuples(
-            subject=("user", user_id),
-            relation="shared-with",
-        )
+        shared_relations = ["shared-viewer", "shared-editor", "shared-owner"]
+        all_tuples = []
+        for relation in shared_relations:
+            tuples = self.rebac_list_tuples(
+                subject=("user", user_id),
+                relation=relation,
+            )
+            all_tuples.extend(tuples)
+
+        # Map relation back to permission level
+        relation_to_level = {
+            "shared-viewer": "viewer",
+            "shared-editor": "editor",
+            "shared-owner": "owner",
+        }
 
         # Transform to share info format
         shares = []
-        for t in tuples[offset : offset + limit]:
+        for t in all_tuples[offset : offset + limit]:
             share_info = {
                 "share_id": t.get("tuple_id"),
                 "resource_type": t.get("object_type"),
                 "resource_id": t.get("object_id"),
                 "owner_tenant_id": t.get("tenant_id"),
-                "permission_level": (t.get("conditions") or {}).get("permission_level", "viewer"),
+                "permission_level": relation_to_level.get(t.get("relation") or "", "viewer"),
                 "created_at": t.get("created_at"),
                 "expires_at": t.get("expires_at"),
             }

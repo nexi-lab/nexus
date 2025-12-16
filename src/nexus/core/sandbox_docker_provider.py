@@ -72,7 +72,7 @@ class DockerSandboxProvider(SandboxProvider):
     def __init__(
         self,
         docker_client: Any | None = None,  # docker.DockerClient | None
-        default_image: str = "nexus-runtime:latest",
+        default_image: str = "nexus-sandbox:latest",
         cleanup_interval: int = 60,
         auto_pull: bool = False,
         memory_limit: str = "512m",
@@ -800,7 +800,7 @@ class DockerSandboxProvider(SandboxProvider):
 
         return self.docker_client.containers.run(
             image=image,
-            command="sleep infinity",
+            # Use image default CMD (sleep infinity in sandbox image)
             detach=True,
             name=container_name,  # Set container name if provided
             cap_add=["SYS_ADMIN"],  # Needed for FUSE
@@ -828,12 +828,12 @@ class DockerSandboxProvider(SandboxProvider):
             self.docker_client.images.get(image_name)
             logger.debug(f"Image {image_name} already exists")
         except NotFound as e:
-            if self.auto_pull:
-                logger.info(f"Pulling image {image_name}...")
-                self.docker_client.images.pull(image_name)
-                logger.info(f"Successfully pulled {image_name}")
-            else:
-                raise RuntimeError(f"Image {image_name} not found and auto_pull is disabled") from e
+            # auto_pull is disabled in local workflow; instruct caller to build the image
+            raise RuntimeError(
+                f"Image {image_name} not found. Build it with:\n"
+                f"  docker build -t {image_name} -f Dockerfile .\n"
+                f"or run docker/build.sh in the repo."
+            ) from e
 
     def _build_command(self, language: str, code: str) -> list[str]:
         """Build execution command for language and code.

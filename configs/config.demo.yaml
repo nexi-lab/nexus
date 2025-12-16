@@ -117,18 +117,18 @@ monitoring:
 
 # Docker sandbox configuration with inline Dockerfile templates
 docker:
-  default_image: nexus-runtime:latest
+  default_image: nexus-sandbox:latest
 
   templates:
     # Use existing base image
     base:
-      image: nexus-runtime:latest
+      image: nexus-sandbox:latest
 
     # ML/AI heavy template with PyTorch, TensorFlow, and transformers
     ml-heavy:
-      image: nexus-runtime-ml:latest
+      image: nexus-sandbox-ml:latest
       dockerfile_override: |
-        FROM nexus-runtime:latest
+        FROM nexus-sandbox:latest
         USER root
 
         RUN apt-get update && apt-get install -y \
@@ -145,9 +145,9 @@ docker:
 
     # Web development template with FastAPI and database tools
     web-dev:
-      image: nexus-runtime-web:latest
+      image: nexus-sandbox-web:latest
       dockerfile_override: |
-        FROM nexus-runtime:latest
+        FROM nexus-sandbox:latest
         USER root
 
         RUN apt-get update && apt-get install -y \

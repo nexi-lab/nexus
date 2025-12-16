@@ -88,7 +88,7 @@ from nexus.skills.mcp_models import (
     MCPToolExample,
 )
 from nexus.skills.mcp_mount import MCPMountError, MCPMountManager
-from nexus.skills.models import Skill, SkillExportManifest, SkillMetadata
+from nexus.skills.models import Skill, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
 from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import (
@@ -107,7 +107,6 @@ __all__ = [
     # Models
     "Skill",
     "SkillMetadata",
-    "SkillExportManifest",
     # Parser
     "SkillParser",
     "SkillParseError",

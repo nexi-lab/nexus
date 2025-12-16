@@ -91,37 +91,37 @@ ADMIN API KEY
 - **LangGraph**: http://localhost:2024
 - **PostgreSQL**: localhost:5432
 
-## docker-start.sh Usage
+## docker-demo.sh Usage
 
-The `docker-start.sh` script provides a convenient interface to manage the Docker environment:
+The `docker-demo.sh` script provides a convenient interface to manage the Docker environment:
 
 ```bash
 # Start all services (default)
-./docker-start.sh
+./docker-demo.sh
 
 # Rebuild images and start
-./docker-start.sh --build
+./docker-demo.sh --build
 
 # View logs in real-time
-./docker-start.sh --logs
+./docker-demo.sh --logs
 
 # Check service status
-./docker-start.sh --status
+./docker-demo.sh --status
 
 # Restart all services
-./docker-start.sh --restart
+./docker-demo.sh --restart
 
 # Stop all services
-./docker-start.sh --stop
+./docker-demo.sh --stop
 
 # Clean everything (remove volumes/data)
-./docker-start.sh --clean
+./docker-demo.sh --clean
 
 # Full initialization (clean + build + start)
-./docker-start.sh --init
+./docker-demo.sh --init
 
 # Show help
-./docker-start.sh --help
+./docker-demo.sh --help
 ```
 
 ## Docker Compose Commands
@@ -512,20 +512,20 @@ docker compose -f docker-compose.demo.yml restart nexus
 
 **Solutions**:
 
-a) **Automatic Fix** (Recommended): The `docker-start.sh` script detects and fixes this automatically. Just wait for the rebuild.
+a) **Automatic Fix** (Recommended): The `docker-demo.sh` script detects and fixes this automatically. Just wait for the rebuild.
 
 b) **Manual Fix**:
 ```bash
 # Using dos2unix (if installed)
 dos2unix docker-entrypoint.sh
-dos2unix docker-start.sh
+dos2unix docker-demo.sh
 
 # Or using sed
 sed -i 's/\r$//' docker-entrypoint.sh
-sed -i 's/\r$//' docker-start.sh
+sed -i 's/\r$//' docker-demo.sh
 
 # Then rebuild
-./docker-start.sh --build
+./docker-demo.sh --build
 ```
 
 c) **Prevention**: Configure Git to not convert line endings:

@@ -56,7 +56,7 @@ echo ""
 echo "🔍 Step 1: Checking server status..."
 if ! curl -s -f "${SERVER_URL}/health" > /dev/null 2>&1; then
     echo -e "${YELLOW}⚠️  Server not running. Please start it first with:${NC}"
-    echo "  ./local-nexus.sh --init"
+    echo "  ./local-demo.sh --start  # (auto-inits if data dir empty)"
     exit 1
 fi
 echo -e "${GREEN}✓ Server is running${NC}"

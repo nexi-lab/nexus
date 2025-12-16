@@ -29,7 +29,6 @@ from nexus.sdk import (
     SkillDependencyError,
     SkillExporter,
     SkillExportError,
-    SkillExportManifest,
     SkillManager,
     SkillManagerError,
     SkillMetadata,
@@ -99,7 +98,6 @@ class TestSDKImports:
         assert SkillParser is not None
         assert Skill is not None
         assert SkillMetadata is not None
-        assert SkillExportManifest is not None
         assert SkillNotFoundError is not None
         assert SkillDependencyError is not None
         assert SkillManagerError is not None

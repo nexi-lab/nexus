@@ -392,6 +392,7 @@ class AsyncRemoteNexusFS:
         path: str,
         context: Any = None,  # noqa: ARG002
         return_metadata: bool = False,
+        parsed: bool = False,
     ) -> bytes | dict[str, Any]:
         """Read file content as bytes (async).
 
@@ -399,13 +400,18 @@ class AsyncRemoteNexusFS:
             path: Virtual path to read
             context: Unused in remote client
             return_metadata: If True, return dict with content and metadata
+            parsed: If True, return parsed text content instead of raw bytes.
+                   Uses the best available parse provider (Unstructured, LlamaParse, MarkItDown).
+                   First checks for cached parsed_text, then parses on-demand if needed.
 
         Returns:
-            File content as bytes, or dict with metadata if requested
+            File content as bytes, or dict with metadata if requested.
+            If parsed=True, returns parsed markdown text as bytes.
         """
         import base64
 
-        result = await self._call_rpc("read", {"path": path, "return_metadata": return_metadata})
+        params = {"path": path, "return_metadata": return_metadata, "parsed": parsed}
+        result = await self._call_rpc("read", params)
 
         # Handle standard bytes format: {__type__: 'bytes', data: '...'}
         # This is the format from encode_rpc_message in protocol.py
@@ -552,7 +558,10 @@ class AsyncRemoteNexusFS:
         Returns:
             True if deleted
         """
-        result = await self._call_rpc("delete", {"path": path, "if_match": if_match})
+        params: dict[str, Any] = {"path": path}
+        if if_match is not None:
+            params["if_match"] = if_match
+        result = await self._call_rpc("delete", params)
         return result  # type: ignore[no-any-return]
 
     async def exists(

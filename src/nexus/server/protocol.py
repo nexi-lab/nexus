@@ -271,6 +271,7 @@ class ReadParams:
 
     path: str
     return_metadata: bool = False  # Return dict with content + metadata
+    parsed: bool = False  # Return parsed text instead of raw bytes
 
 
 @dataclass

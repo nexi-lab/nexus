@@ -150,11 +150,24 @@ class NexusConfig(BaseModel):
     # Parser configurations (v0.2.0)
     parsers: list[dict[str, Any]] | None = Field(
         default=None,
-        description="Custom parser configurations (list of dicts with module, class, priority, enabled)",
+        description="(Deprecated) Custom parser configurations. Use parse_providers instead.",
     )
     auto_parse: bool = Field(
         default=True,
         description="Automatically parse files on upload (default: True)",
+    )
+
+    # Parse provider configurations (v0.8.0)
+    # Supports multiple providers: unstructured, llamaparse, markitdown
+    # Priority determines selection order (higher = preferred)
+    # API keys can be set via environment variables or in config
+    parse_providers: list[dict[str, Any]] | None = Field(
+        default=None,
+        description=(
+            "Parse provider configurations. Each dict can contain: "
+            "name (required), enabled, priority, api_key, api_url, supported_formats. "
+            "Providers: unstructured (API), llamaparse (API), markitdown (local fallback)"
+        ),
     )
 
     # Permission enforcement settings (v0.3.0)
@@ -422,6 +435,47 @@ def _load_from_environment() -> NexusConfig:
                 parsers_list.append(parser_dict)
         if parsers_list:
             env_config["parsers"] = parsers_list
+
+    # Auto-discover parse providers from environment variables
+    # UNSTRUCTURED_API_KEY, LLAMA_CLOUD_API_KEY enable respective providers
+    parse_providers = []
+
+    # Check for Unstructured.io
+    unstructured_key = os.getenv("UNSTRUCTURED_API_KEY")
+    if unstructured_key:
+        parse_providers.append(
+            {
+                "name": "unstructured",
+                "priority": 100,
+                "api_key": unstructured_key,
+                "api_url": os.getenv(
+                    "UNSTRUCTURED_WORKFLOW_ENDPOINT",
+                    "https://api.unstructuredapp.io/general/v0/general",
+                ),
+            }
+        )
+
+    # Check for LlamaParse
+    llamaparse_key = os.getenv("LLAMA_CLOUD_API_KEY")
+    if llamaparse_key:
+        parse_providers.append(
+            {
+                "name": "llamaparse",
+                "priority": 90,
+                "api_key": llamaparse_key,
+            }
+        )
+
+    # Always add MarkItDown as fallback (no API key needed)
+    parse_providers.append(
+        {
+            "name": "markitdown",
+            "priority": 10,
+        }
+    )
+
+    if parse_providers:
+        env_config["parse_providers"] = parse_providers
 
     return NexusConfig(**env_config)
 

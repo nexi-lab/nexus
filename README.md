@@ -1,613 +1,170 @@
-<div align="center">
-  <img src="logo.png" alt="Nexus Logo" width="200"/>
+# Nexus
 
-  # Nexus
+The AI-native filesystem for cognitive agents.
 
-  [![Test](https://github.com/nexi-lab/nexus/actions/workflows/test.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/test.yml)
-  [![Lint](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml)
+[![Watch the demo](docs/images/frontpage.png)](https://youtu.be/bPVQ78Y7Xw4)
 
-  [![PyPI version](https://badge.fury.io/py/nexus-ai-fs.svg)](https://badge.fury.io/py/nexus-ai-fs)
-  [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-  [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+⚠️ **Beta**: Nexus is under active development. APIs may change.
 
-  [Documentation](docs/api/README.md) • [Quickstart](docs/getting-started/quickstart.md) • [PyPI](https://pypi.org/project/nexus-ai-fs/) • [Examples](examples/)
-</div>
+## 🎯 What is Nexus?
 
-**AI-native filesystem for building intelligent agents**
+Nexus is a virtual filesystem server for AI agents. It unifies files, databases, APIs, and SaaS tools into a single path-based API with built-in permissions, memory, semantic search, and skills lifecycle management.
 
-Nexus is an AI-native filesystem that unifies files, memory, and permissions into one programmable layer. Build agents that remember, collaborate securely, and scale effortlessly from prototype to production—without changing code.
+**Humans manage context. Agents operate within it.**
 
-**Made to build AI agents, fast.**
+The Nexus Control Panel lets humans curate the files, memories, permissions, and integrations that agents can access—providing oversight and control while agents focus on execution.
 
-## TL;DR
+This repo contains the open-source [server](src/nexus/server/), [SDK](src/nexus/sdk/), [CLI](src/nexus/cli/), and [examples](examples/).
 
-Nexus is a programmable filesystem for AI agents. It combines storage, memory, and permissions into one layer so agents can securely remember, collaborate, and evolve over time.
+### Highlights
 
-**Jump to:** [Server Mode](#server-mode-recommended-for-production) • [Embedded Mode](#embedded-mode-development--testing-only) • [Permissions](#permission-system-example) • [Core Concepts](#core-concepts) • [Documentation](#documentation)
+**Hero Features**
+- **Universal Connectors** — One API for local files, S3/GCS, Gmail, Google Drive, X/Twitter, and custom MCP servers
+- **Sandboxed Execution** — Run code safely with Docker/E2B integration
+- **Grep Everything** — `nexus grep` and semantic search across all backends with connector cache
+- **Skills System** — Package agent capabilities with versioning, governance, and exporters (LangGraph, MCP, CLI)
 
-## Quick Start
+**Core Platform**
+- **Control Panel** — User management, permissions, integrations, audit & versioning
+- **Runtime Modules** — Workspaces, Memory, Workflows, Files, Skills, Sandbox
+- **ReBAC Permissions** — Zanzibar-style access control with multi-tenant isolation
 
-### Installation
+**Advanced**
+- Event-driven workflows, semantic search + LLM document reading, content deduplication + versioning, 14 MCP tools, plugin system, batch operations
+
+### Design Principles
+
+- **Everything is a File** — Memories, CRM records, MCP servers, and documents all expose the same interface with paths, metadata, and permissions for unified search and composability.
+- **Just-in-Time Retrieval** — Instead of pre-indexing everything, Nexus retrieves exactly what's needed when it's needed, adapting the retrieval strategy to each query.
+
+## 🧑‍💻 Getting Started
+
+### Local Server
+
+```bash
+git clone https://github.com/nexi-lab/nexus.git
+cd nexus
+cp .env.example .env.local
+
+# Set env
+# Required: ANTHROPIC_API_KEY
+# Optional: TAVILY_API_KEY, FIRECRAWL_API_KEY, NEXUS_OAUTH_GOOGLE_CLIENT_ID, NEXUS_OAUTH_GOOGLE_CLIENT_SECRET
+
+./local-demo.sh --start
+```
+
+### Docker Server
+
+```bash
+./docker-demo.sh --init
+./docker-demo.sh --start
+```
+
+### Python SDK
 
 ```bash
 pip install nexus-ai-fs
 ```
 
-### Server Mode (Recommended for Production)
-
-**Why Server Mode?**
-- ✅ Multi-user support with authentication
-- ✅ Centralized permissions and access control
-- ✅ Scalable architecture for production workloads
-- ✅ Thin SDK client (just HTTP calls)
-
-**Step 1: Start the server**
-
-```bash
-# Configure PostgreSQL backend
-export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
-
-# Initialize with authentication
-./scripts/init-nexus-with-auth.sh
-
-# Server runs at http://localhost:8080
-```
-
-**Step 2: Connect from Python**
-
 ```python
 import nexus
 
-# Auto-detect server from environment
-# export NEXUS_URL=http://localhost:8080
-# export NEXUS_API_KEY=your-api-key
-nx = nexus.connect()
-
-# Or provide explicitly
 nx = nexus.connect(config={
     "url": "http://localhost:8080",
-    "api_key": "your-api-key"
-})
-
-# Same API as embedded mode
-nx.write("/workspace/hello.txt", b"Hello, Nexus!")
-content = nx.read("/workspace/hello.txt")
-print(content.decode())  # → Hello, Nexus!
-
-# Agent memory
-nx.memory.store("Python best practices learned from code review")
-memories = nx.memory.query(user_id="alice", scope="project")
-
-# Workflow automation - events trigger automatically!
-from nexus.workflows import WorkflowAPI
-workflows = WorkflowAPI()
-workflows.load("invoice-processor.yaml", enabled=True)
-nx.write("/uploads/invoice.pdf", pdf_data)  # Workflow fires!
-
-# Semantic search
-results = nx.semantic_search("/docs/**/*.md", query="authentication setup")
-
-nx.close()
-```
-
-**Step 3: Manage users and permissions**
-
-```bash
-# Create users and grant permissions
-python3 scripts/create-api-key.py alice "Alice's API key" --days 90
-# Output: sk-alice_abc123_...
-
-nexus rebac create user alice direct_owner file /workspace/project1 \
-  --tenant-id default --remote-url $NEXUS_URL
-
-# Alice can now access with her API key
-export NEXUS_API_KEY='sk-alice_abc123_...'
-nexus write /workspace/project1/data.txt "Alice's data" --remote-url $NEXUS_URL
-```
-
-### Embedded Mode (Development & Testing Only)
-
-**⚠️ Warning:** Embedded mode is suitable for development and testing only. For production, use Server Mode.
-
-**Hello World (10 Seconds)**
-
-```python
-import nexus
-
-# Zero-config start - data stored in ./nexus-data by default
-nx = nexus.connect(config={"mode": "embedded"})
-
-# Write and read a file
-nx.write("/workspace/hello.txt", b"Hello, Nexus!")
-content = nx.read("/workspace/hello.txt")
-print(content.decode())  # → Hello, Nexus!
-
-nx.close()
-```
-
-**Full Features (Embedded)**
-
-```python
-import nexus
-
-# Explicit embedded mode configuration
-nx = nexus.connect(config={
-    "mode": "embedded",
-    "data_dir": "./nexus-data"
+    "api_key": "nxk_..."
 })
 
 # File operations
-nx.write("/workspace/doc.txt", b"Hello Nexus")
-content = nx.read("/workspace/doc.txt")
+nx.write("/workspace/hello.txt", b"Hello, Nexus!")
+print(nx.read("/workspace/hello.txt").decode())
+
+# Search across all backends
+results = nx.grep("TODO", "/workspace")
 
 # Agent memory
-nx.memory.store("Python best practices learned from code review")
-memories = nx.memory.query(user_id="alice", scope="project")
-
-# Workflow automation
-from nexus.workflows import WorkflowAPI
-workflows = WorkflowAPI()
-workflows.load("invoice-processor.yaml", enabled=True)
-nx.write("/uploads/invoice.pdf", pdf_data)  # Workflow fires automatically!
-
-# Semantic search
-results = nx.semantic_search("/docs/**/*.md", query="authentication setup")
-
-# LLM-powered document reading (async)
-import asyncio
-answer = asyncio.run(nx.llm_read(
-    "/docs/**/*.md",
-    "How does authentication work?",
-    model="claude-sonnet-4"
-))
+nx.memory.store("User prefers detailed explanations", memory_type="preference")
+context = nx.memory.query("What does the user prefer?")
 
 nx.close()
 ```
 
-### Mounting Google Cloud Storage Buckets
-
-Mount your Google Cloud Storage buckets to Nexus for unified access across local and cloud storage.
-
-**Prerequisites:**
-- Google Cloud account with a GCS bucket
-- [gcloud CLI](https://cloud.google.com/sdk/docs/install) installed
-
-**Step 1: Create Service Account (Recommended - No Daily Re-auth)**
+### CLI
 
 ```bash
-# Set your project ID
-export PROJECT_ID="your-gcp-project-id"
+pip install nexus-ai-fs
 
-# Create service account
-gcloud iam service-accounts create nexus-storage-sa \
-    --display-name="Nexus Storage Service Account" \
-    --project=$PROJECT_ID
-
-# Grant Storage Admin permissions
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:nexus-storage-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
-    --role="roles/storage.admin"
-
-# Download credentials (save to ./nexus/gcs-credentials.json)
-gcloud iam service-accounts keys create ./gcs-credentials.json \
-    --iam-account=nexus-storage-sa@${PROJECT_ID}.iam.gserviceaccount.com
-
-# These credentials never expire - no daily re-authentication needed!
-```
-
-**Alternative: Use gcloud auth (Development Only)**
-
-For local development only, you can use your personal credentials (requires daily re-auth):
-
-```bash
-# NOT RECOMMENDED for production - requires daily re-authentication
-gcloud auth application-default login
-```
-
-**Step 2: Start Nexus with GCS Credentials (Docker)**
-
-```bash
-cd nexus
-
-# Start/restart Docker services (auto-detects gcloud credentials)
-./docker-start.sh --restart
-
-# Verify credentials are mounted
-docker exec nexus-server ls -lh /app/gcs-credentials.json
-```
-
-**Step 3: Mount Your GCS Bucket**
-
-```python
-import nexus
-
-# Connect to Nexus server
-nx = nexus.connect(config={
-    "url": "http://localhost:8080",
-    "api_key": "your-api-key"
-})
-
-# Mount a GCS bucket at a virtual path
-mount_id = nx.mount_manager.add_mount(
-    mount_point="/cloud/my-bucket",
-    backend_type="gcs_connector",  # Use 'gcs' for CAS-based, 'gcs_connector' for direct path mapping
-    backend_config={
-        "bucket": "your-bucket-name",
-        "project_id": "your-gcp-project-id",
-        "prefix": "optional/path/prefix"  # Optional: mount a specific folder
-    },
-    priority=10,
-    readonly=False
-)
-
-# Access files in your GCS bucket through Nexus
-files = nx.list("/cloud/my-bucket")
-content = nx.read("/cloud/my-bucket/file.txt")
-
-# List all mounts
-mounts = nx.mount_manager.list_mounts()
-for mount in mounts:
-    print(f"{mount['mount_point']}: {mount['backend_type']} (priority={mount['priority']})")
-```
-
-**Alternative: Using curl to test the mount API**
-
-```bash
-curl -X POST http://localhost:8080/api/nfs/add_mount \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "add_mount",
-    "params": {
-      "mount_point": "/cloud/my-bucket",
-      "backend_type": "gcs_connector",
-      "backend_config": {
-        "bucket": "your-bucket-name",
-        "project_id": "your-gcp-project-id"
-      },
-      "priority": 10
-    }
-  }'
-```
-
-**Backend Types:**
-- **`gcs`**: Content-addressable storage (CAS) with deduplication - best for Nexus-managed files
-- **`gcs_connector`**: Direct path mapping to existing GCS buckets - preserves original file structure
-
-**See also:**
-- [Mount Management API Documentation](docs/api/mounts.md)
-- [Multi-Backend Setup Guide](docs/api/configuration.md#multi-backend-support)
-
-### Permission System Example
-
-```bash
-# Grant different permission levels
-nexus rebac create user bob direct_editor file /workspace/project1 \
-  --tenant-id default --remote-url $NEXUS_URL
-# Bob can read/write
-
-nexus rebac create user charlie direct_viewer file /workspace/project1 \
-  --tenant-id default --remote-url $NEXUS_URL
-# Charlie can only read
-
-# Check permissions
-nexus rebac check user charlie write file /workspace/project1 --remote-url $NEXUS_URL
-# Output: ✗ DENIED
-
-nexus rebac check user charlie read file /workspace/project1 --remote-url $NEXUS_URL
-# Output: ✓ GRANTED
-
-# Explain permission paths
-nexus rebac explain user bob write file /workspace/project1 --remote-url $NEXUS_URL
-# Shows: direct_editor → editor → write
-```
-
-## Core Concepts
-
-**Workspace** - A versioned directory for agent state. Create snapshots, rollback changes, and reproduce any historical state for debugging.
-
-**Memory** - Persistent agent knowledge stored as files. Query memories semantically, consolidate learnings automatically, and share across agents within tenants.
-
-**Semantic Search** - Vector-based search across files and memories using natural language queries. Powered by [pgvector](https://github.com/pgvector/pgvector) or [sqlite-vec](https://github.com/asg017/sqlite-vec).
-
-**ReBAC** - [Relationship-Based Access Control](https://research.google/pubs/pub48190/) inspired by Google Zanzibar. Fine-grained permissions with inheritance, multi-tenancy, and delegation.
-
-## Why Nexus?
-
-Nexus combines files, memory, and access control into a single programmable layer. Build agents that persist knowledge, collaborate securely, and scale from local experiments to distributed systems.
-
-**Key Capabilities:**
-- **AI Memory with Learning Loops** - ACE system automatically consolidates agent experiences into reusable knowledge
-- **Database as Files** - Access PostgreSQL, Redis, MongoDB through unified file interface with backend-aware permissions
-- **LLM-Powered Reading** - Query documents with natural language, get answers with citations and cost tracking
-- **Unified Fabric** - Files, databases, vectors, and permissions in one programmable layer
-- **Agent-Native Design** - Built for LLM agents and automation frameworks with event-driven orchestration
-
-**For AI Agent Developers:**
-- **Self-Evolving Memory**: Agents store and retrieve context across sessions with automatic consolidation
-- **Time-Travel Debugging**: Reproduce any agent state with workspace snapshots and version history
-- **Semantic Search**: Find relevant files and memories using natural language queries
-
-**For Enterprise Teams:**
-- **Fine-Grained Permissions**: [ReBAC](https://research.google/pubs/pub48190/) with backend-aware object types (file, table, row-level access) and multi-tenancy
-- **Multi-Backend Abstraction**: Unified file API for storage (S3, GCS, local) and data sources (PostgreSQL, Redis, MongoDB)
-- **Content Deduplication**: Save 30-50% storage costs with content-addressable architecture
-
-**For Platform Engineers:**
-- **Embedded or Remote**: Start local (`pip install`), scale to distributed without code changes
-- **Complete Audit Trail**: Track every operation with built-in versioning and operation logs
-- **Production-Ready**: PostgreSQL backend, API key authentication, and comprehensive observability
-
-## Features at a Glance
-
-| Category | Highlights |
-|----------|-----------|
-| **Storage** | Multi-backend (S3, GCS, local), versioning, 30-50% deduplication savings |
-| **Access Control** | ReBAC (Zanzibar-style), multi-tenancy, permission inheritance |
-| **AI Intelligence** | LLM document Q&A, memory API, semantic search, workspace snapshots, time-travel debugging |
-| **Developer UX** | Embedded/remote parity, full-featured CLI + SDK, 100% feature compatibility |
-| **Extensibility** | Plugin system with lifecycle hooks, custom CLI commands, auto-discovery |
-| **AI Tool Integration** | MCP server for Claude Desktop and other AI agents (14 tools) |
-
-## Performance Highlights
-
-- **4x Faster Uploads** - Batch write API for checkpoint and log files
-- **30-50% Storage Savings** - Content-addressable deduplication
-- **Instant Queries** - Semantic search with vector indexes (pgvector/sqlite-vec)
-- **Zero Downtime** - Optimistic concurrency control for multi-agent access
-
-## Key Features
-
-### Storage & Operations
-- **Multi-Backend Abstraction**: Storage backends (S3, GCS, local) and data backends (PostgreSQL, Redis, MongoDB) through unified file API
-- **Backend-Aware Permissions**: Different object types per backend (file vs. database table vs. row-level access)
-- **Content Deduplication**: 30-50% storage savings via content-addressable architecture
-- **Versioning**: Complete history tracking with rollback and diff capabilities
-- **Batch Operations**: 4x faster bulk uploads for checkpoints and large datasets
-
-### Access Control
-- **ReBAC**: Relationship-based permissions with Google Zanzibar-style authorization
-- **Permission Inheritance**: Directory-based access control with automatic propagation
-- **Multi-Tenancy**: Complete isolation between tenants with namespace support
-- **API Key Authentication**: Database-backed keys with expiration and rotation
-
-### Agent Intelligence
-- **ACE Learning Loops**: Autonomous Cognitive Entity system with trajectories, reflection, and automatic consolidation
-- **LLM Document Reading**: Ask questions about documents with AI-powered answers, citations, and cost tracking
-- **Memory API**: Store, query, and consolidate agent memories with automatic knowledge extraction
-- **Semantic Search**: Vector-based search across files and memories using natural language
-- **Workflow Automation**: Event-driven workflows trigger automatically on file operations - no manual event firing needed
-- **Workspace Snapshots**: Save and restore entire agent workspaces for debugging and reproducibility
-- **Time-Travel**: Access any file at any historical point with content diffs
-
-### Developer Experience
-- **Embedded Mode**: `pip install` and start coding—no infrastructure required
-- **Remote Mode**: Same API, distributed execution with automatic scaling
-- **CLI**: Full-featured command-line interface with remote support
-- **SDK Parity**: 100% feature parity between embedded and remote modes
-
-### Extensibility
-- **Plugin System**: Extend Nexus with custom functionality via Python entry points
-- **Lifecycle Hooks**: React to file operations (before_write, after_read, etc.)
-- **Custom CLI Commands**: Add plugin-specific commands to the `nexus` CLI
-- **Auto-Discovery**: Install plugins with `pip`, no manual registration needed
-- **Official Plugins**: Anthropic integration, Firecrawl web scraping, and more
-
-### AI Tool Integration
-- **Model Context Protocol (MCP)**: Expose Nexus to AI agents via [MCP server](examples/mcp/)
-  - 14 tools for files, search, memory, and workflows
-  - Claude Desktop integration with authenticated remote access
-  - Run `./examples/mcp/quick_test.sh` for 2-minute demo
-  - See [MCP docs](docs/integrations/mcp.md) for setup guide
-
-## Use Cases
-
-**AI Agents** - Memory API for context retention, semantic search for knowledge retrieval
-
-**Multi-Tenant SaaS** - ReBAC for tenant isolation, workspace snapshots for backup/restore
-
-**Document Processing** - Batch uploads with deduplication, semantic search across files
-
-**ML Workflows** - Checkpoint versioning, time-travel debugging for reproducibility
-
-**Extensible Pipelines** - Plugin system (Anthropic, Firecrawl) for custom integrations
-
-📚 **See [examples/](examples/)** for complete AI agent, SaaS, ML, and plugin demos with runnable code.
-
-## Architecture
-
-```mermaid
-%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#e3f2fd','primaryTextColor':'#1a237e','primaryBorderColor':'#5C6BC0','lineColor':'#AB47BC','secondaryColor':'#fce4ec','tertiaryColor':'#fff3e0','fontSize':'14px'}}}%%
-graph TB
-    subgraph agents[" 🤖 AI Agents "]
-        agent1["Agent A<br/>(GPT-4)"]
-        agent2["Agent B<br/>(Claude)"]
-        agent3["Agent C<br/>(Custom)"]
-    end
-
-    subgraph vfs[" 📁 Nexus Virtual File System "]
-        api["Unified VFS API<br/>read() write() list() search()"]
-        memory["💾 Memory API<br/>Persistent learning & context"]
-        rebac["🔒 ReBAC Permissions<br/>Backend-aware object types"]
-        version["📦 Versioning<br/>Snapshots & time-travel"]
-        router["Smart Router<br/>Path → Backend + Object Type"]
-    end
-
-    subgraph backends[" 💾 Storage & Data Backends "]
-        subgraph storage[" File Storage "]
-            local["Local Filesystem<br/>object: file"]
-            gcs["Cloud Storage<br/>object: file"]
-        end
-        subgraph data[" Data Sources "]
-            postgres["PostgreSQL<br/>object: postgres:table/row"]
-            redis["Redis<br/>object: redis:instance/key"]
-            mongo["MongoDB<br/>object: mongo:collection/doc"]
-        end
-    end
-
-    agent1 -.->|"write('/workspace/data.json')"| api
-    agent2 -.->|"read('/db/public/users')"| api
-    agent3 -.->|"memory.store('learned_fact')"| memory
-
-    api --> rebac
-    memory --> rebac
-    rebac <-->|"Check with object type"| router
-    rebac -->|"✓ Allowed"| version
-    version --> router
-
-    router -->|"File operations"| local
-    router -->|"File operations"| gcs
-    router -->|"Queries as files"| postgres
-    router -->|"KV as files"| redis
-    router -->|"Documents as files"| mongo
-
-    style agents fill:#e3f2fd,stroke:#5C6BC0,stroke-width:2px,color:#1a237e
-    style vfs fill:#f3e5f5,stroke:#AB47BC,stroke-width:2px,color:#4a148c
-    style backends fill:#fff3e0,stroke:#FF7043,stroke-width:2px,color:#e65100
-    style storage fill:#e8f5e9,stroke:#4CAF50,stroke-width:1px
-    style data fill:#e1f5fe,stroke:#0288D1,stroke-width:1px
-    style api fill:#5C6BC0,stroke:#3949AB,stroke-width:2px,color:#fff
-    style memory fill:#AB47BC,stroke:#7B1FA2,stroke-width:2px,color:#fff
-    style rebac fill:#EC407A,stroke:#C2185B,stroke-width:2px,color:#fff
-    style version fill:#66BB6A,stroke:#388E3C,stroke-width:2px,color:#fff
-    style router fill:#42A5F5,stroke:#1976D2,stroke-width:2px,color:#fff
-```
-
-**Backend Abstraction:**
-
-Nexus presents everything as files to users, while backends provide appropriate object types for permission control:
-
-- **File Storage** (Local, GCS, S3): Standard file objects
-- **Databases** (PostgreSQL, Redis, MongoDB): Backend-specific objects (tables, keys, documents)
-- **Unified Interface**: All accessed through the same VFS API (read/write/list)
-- **Fine-Grained Permissions**: ReBAC uses backend-appropriate object types (e.g., grant access to a PostgreSQL schema vs. individual rows)
-
-### Deployment Modes
-
-Nexus supports two deployment modes with the same codebase:
-
-| Mode | Use Case | Setup |
-|------|----------|-------|
-| **Embedded** | Development, CLI tools, prototyping | `pip install nexus-ai-fs` |
-| **Server** | Teams, production, multi-tenant | See [Server Setup Guide](docs/api/rpc-api.md) |
-
-**Technology:** Python 3.11+, SQLAlchemy, PostgreSQL/SQLite, [ReBAC](https://research.google/pubs/pub48190/) (Zanzibar-style), [pgvector](https://github.com/pgvector/pgvector)/[sqlite-vec](https://github.com/asg017/sqlite-vec)
-
-See [Configuration Guide](docs/api/configuration.md) for storage backends (S3, GCS, local) and advanced setup.
-
-## Documentation
-
-### Getting Started
-- **[Quickstart Guide](docs/getting-started/quickstart.md)** - Step-by-step setup with authentication
-- **[API Documentation](docs/api/README.md)** - Complete API reference
-- **[CLI Reference](docs/api/cli-reference.md)** - Command-line interface guide
-
-### Core Features
-- **[File Operations](docs/api/file-operations.md)** - Read, write, delete, batch operations
-- **[Permissions](docs/api/permissions.md)** - ReBAC, multi-tenancy, access control
-- **[Memory Management](docs/api/memory-management.md)** - Agent memory API
-- **[Semantic Search](docs/api/semantic-search.md)** - Vector search and embeddings
-- **[Versioning](docs/api/versioning.md)** - History tracking and time-travel
-
-### Advanced Topics
-- **[Configuration](docs/api/configuration.md)** - Backends, environment variables, YAML config
-- **[Remote Server Setup](docs/api/rpc-api.md)** - Deploying Nexus server
-- **[Multi-Backend Usage](docs/api/advanced-usage.md)** - Mounting multiple storage backends
-- **[Plugin Development](docs/development/PLUGIN_DEVELOPMENT.md)** - Extend Nexus with custom plugins
-- **[Development Guide](docs/development/PERMISSIONS_IMPLEMENTATION.md)** - Contributing to Nexus
-
-### Examples
-- **[Python Demos](examples/py_demo/)** - SDK usage examples
-- **[CLI Demos](examples/script_demo/)** - Shell script examples
-- **[Multi-Tenant Demo](examples/multi_tenant/)** - SaaS platform patterns
-- **[Authentication Examples](examples/auth_demo/)** - API key setup and usage
-
-## Security & Configuration
-
-**Security Features:**
-- **ReBAC**: Relationship-based access control (Google Zanzibar-style)
-- **Multi-Tenancy**: Complete tenant isolation
-- **API Keys**: Database-backed authentication with expiration
-- **Audit Trail**: Full operation logging with versioning
-
-**Quick Configuration:**
-```bash
-# Environment variables
-export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
 export NEXUS_URL="http://localhost:8080"
-export NEXUS_API_KEY="sk-alice_abc123_..."
+export NEXUS_API_KEY="nxk_..."
+
+nexus write /workspace/hello.txt "Hello, Nexus!"
+nexus cat /workspace/hello.txt
+nexus grep "TODO" /workspace
+nexus memory store "Important fact" --type fact
 ```
 
-See [Configuration Guide](docs/api/configuration.md) for YAML config, multi-backend setup, and advanced options.
-See [Permissions Guide](docs/api/permissions.md) for detailed security documentation.
+## 💡 Why Nexus?
 
-## Contributing
+| Problem | Nexus Solution |
+|---------|----------------|
+| Fragmented APIs | One path-based API for all connectors |
+| Permission chaos | Zanzibar-style ReBAC with audit trails |
+| Ephemeral memory | Persistent memory with semantic retrieval |
+| Agent silos | Shared workspaces and skills registry |
+| No oversight | Control Panel for human-in-the-loop management |
+| Ad-hoc tools | [Skills lifecycle management](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview) with versioning, governance, and multi-format export |
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+## 🔧 How Nexus Works
 
-### Development Setup
+![Nexus Architecture](docs/images/nexus-architecture.png)
+
+**Access Layer**: Agents connect via CLI, MCP Server, Python SDK, or REST API.
+
+**Application Layer**:
+- *Control Panel* — Humans manage users, permissions, integrations, and audit logs
+- *Runtime* — Core operations (glob, grep, semantic search, file ops, run code) and modules (workspaces, memory, workflows, files, skills, sandbox)
+
+**Infrastructure Layer**: OAuth, ReBAC permissions engine, FUSE mounting, RAG pipelines.
+
+**Cache Layer**: L1 in-memory cache and L2 PostgreSQL cache for vector embeddings, ReBAC tuples, and metadata.
+
+**Connectors**: X/Twitter, MCP servers, Gmail, Local FS, GCS, Google Drive, AWS S3, and custom connectors.
+
+## 📚 Examples
+
+| Framework | Description | Location |
+|-----------|-------------|----------|
+| CrewAI | Multi-agent collaboration | [examples/crewai/](examples/crewai/) |
+| LangGraph | Permission-based workflows | [examples/langgraph_integration/](examples/langgraph_integration/) |
+| Claude SDK | ReAct agent pattern | [examples/claude_agent_sdk/](examples/claude_agent_sdk/) |
+| OpenAI Agents | Multi-tenant with memory | [examples/openai_agents/](examples/openai_agents/) |
+| CLI | 40+ shell demos | [examples/cli/](examples/cli/) |
+
+## 📖 Documentation
+
+- [Installation](docs/getting-started/installation.md)
+- [Quick Start](docs/getting-started/quickstart.md)
+- [Control Panel Guide](docs/portal/overview.md)
+- [API Reference](docs/api/)
+- [Skills System](docs/concepts/skills-system.md)
+- [Multi-Tenant Architecture](docs/MULTI_TENANT.md)
+- [Permissions & ReBAC](docs/PERMISSIONS.md)
+
+## 🤝 Contributing
+
 ```bash
 git clone https://github.com/nexi-lab/nexus.git
 cd nexus
 pip install -e ".[dev]"
-pre-commit install  # Install pre-commit hooks for code quality checks
+pre-commit install
 pytest tests/
 ```
 
-#### Local Development (Without Docker Rebuild)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-For faster development iteration, run the Nexus server locally while keeping other services in Docker:
-
-```bash
-# 1. Start Docker services (postgres, langgraph, frontend)
-./docker-start.sh
-
-# 2. Stop the Docker nexus-server (we'll run it locally)
-docker stop nexus-server
-
-# 3. Start the local Nexus server
-./local-demo.sh --start
-
-# 4. Make code changes and restart as needed
-# Press Ctrl+C to stop, then ./local-demo.sh --start again
-
-# 5. When done, restart Docker nexus-server
-docker start nexus-server
-```
-
-**Benefits:**
-- ⚡ **Fast iteration**: No Docker rebuild needed (saves 30-60 seconds per change)
-- 🐛 **Easy debugging**: Attach debugger directly to Python process
-- 🔄 **Shared data**: Docker and local both use `./nexus-data/` directory
-- 🎯 **Simple**: One script, reuses existing config
-
-**Commands:**
-- `./local-demo.sh --start` - Start local server
-- `./local-demo.sh --stop` - Stop local server
-
-## Support
-
-- **Issues**: [GitHub Issues](https://github.com/nexi-lab/nexus/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/nexi-lab/nexus/discussions)
-- **Roadmap**: [GitHub Projects](https://github.com/nexi-lab/nexus/projects)
-
-⭐ **If you find Nexus useful, please star the repo to support development!**
-
-## Philosophy
-
-Nexus treats data as a first-class citizen in AI systems. Instead of building around files, agents build around knowledge—unified, permissioned, and queryable.
-
-We believe AI infrastructure should be:
-- **Intelligent by default** - Storage that understands semantics, not just bytes
-- **Composable** - Mix and match backends, plugins, and deployment modes
-- **Production-ready** - Security, multi-tenancy, and observability from day one
-
-## License
+## 📝 License
 
 © 2025 Nexi Labs, Inc. Licensed under Apache License 2.0 - See [LICENSE](LICENSE) for details.
 
 ---
 
-**Built for the AI-native era.** [Docs](docs/api/README.md) • [PyPI](https://pypi.org/project/nexus-ai-fs/) • [GitHub](https://github.com/nexi-lab/nexus)
+If Nexus helps your project, please ⭐ the repo!

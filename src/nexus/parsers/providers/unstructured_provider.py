@@ -150,6 +150,7 @@ class UnstructuredProvider(ParseProvider):
             }
 
             # Make API request
+            assert self._api_key is not None, "API key must be set"
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
                     self._api_url,
@@ -232,7 +233,7 @@ class UnstructuredProvider(ParseProvider):
                     **metadata,
                 },
                 structure=structure,
-                chunks=chunks if chunks else None,
+                chunks=chunks if chunks else [],
                 raw_content=full_text,
             )
 

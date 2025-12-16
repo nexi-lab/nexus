@@ -206,7 +206,7 @@ class LlamaParseProvider(ParseProvider):
                     **metadata,
                 },
                 structure=structure,
-                chunks=chunks if chunks else None,
+                chunks=chunks if chunks else [],
                 raw_content=full_text,
             )
 

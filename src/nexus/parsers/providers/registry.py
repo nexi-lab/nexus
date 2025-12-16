@@ -208,9 +208,9 @@ class ProviderRegistry:
                     )
 
             if config:
-                provider = UnstructuredProvider(config)
-                if provider.is_available():
-                    self.register(provider)
+                unstructured_provider = UnstructuredProvider(config)
+                if unstructured_provider.is_available():
+                    self.register(unstructured_provider)
                     registered += 1
         except ImportError as e:
             logger.debug(f"Unstructured provider not available: {e}")
@@ -231,9 +231,9 @@ class ProviderRegistry:
                     )
 
             if config:
-                provider = LlamaParseProvider(config)
-                if provider.is_available():
-                    self.register(provider)
+                llamaparse_provider = LlamaParseProvider(config)
+                if llamaparse_provider.is_available():
+                    self.register(llamaparse_provider)
                     registered += 1
         except ImportError as e:
             logger.debug(f"LlamaParse provider not available: {e}")
@@ -243,9 +243,9 @@ class ProviderRegistry:
             from nexus.parsers.providers.markitdown_provider import MarkItDownProvider
 
             config = config_map.get("markitdown", ProviderConfig(name="markitdown", priority=10))
-            provider = MarkItDownProvider(config)
-            if provider.is_available():
-                self.register(provider)
+            markitdown_provider = MarkItDownProvider(config)
+            if markitdown_provider.is_available():
+                self.register(markitdown_provider)
                 registered += 1
         except ImportError as e:
             logger.warning(f"MarkItDown provider not available: {e}")

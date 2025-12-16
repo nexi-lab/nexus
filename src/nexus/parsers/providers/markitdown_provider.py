@@ -71,7 +71,7 @@ class MarkItDownProvider(ParseProvider):
             config: Provider configuration
         """
         super().__init__(config)
-        self._markitdown = None
+        self._markitdown: Any = None
 
     @property
     def name(self) -> str:

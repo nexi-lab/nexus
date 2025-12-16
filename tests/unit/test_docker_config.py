@@ -13,9 +13,9 @@ class TestDockerImageTemplate:
 
     def test_template_with_image_only(self):
         """Test template with just an image name."""
-        template = DockerImageTemplate(image="nexus-runtime:latest")
+        template = DockerImageTemplate(image="nexus-sandbox:latest")
 
-        assert template.image == "nexus-runtime:latest"
+        assert template.image == "nexus-sandbox:latest"
         assert template.dockerfile is None
         assert template.dockerfile_override is None
         assert template.context == "."
@@ -30,14 +30,14 @@ class TestDockerImageTemplate:
 
     def test_template_with_dockerfile_override(self):
         """Test template with inline Dockerfile override."""
-        dockerfile_content = """FROM nexus-runtime:latest
+        dockerfile_content = """FROM nexus-sandbox:latest
 USER root
 RUN pip install torch
 USER nexus
 """
 
         template = DockerImageTemplate(
-            image="nexus-runtime-ml:latest", dockerfile_override=dockerfile_content
+            image="nexus-sandbox-ml:latest", dockerfile_override=dockerfile_content
         )
 
         assert template.image == "nexus-runtime-ml:latest"
@@ -80,7 +80,7 @@ class TestDockerTemplateConfig:
         config = DockerTemplateConfig()
 
         assert config.templates == {}
-        assert config.default_image == "nexus-runtime:latest"
+        assert config.default_image == "nexus-sandbox:latest"
 
     def test_config_with_custom_default_image(self):
         """Test config with custom default image."""
@@ -91,7 +91,7 @@ class TestDockerTemplateConfig:
     def test_config_with_single_template(self):
         """Test config with one template."""
         config = DockerTemplateConfig(
-            templates={"base": DockerImageTemplate(image="nexus-runtime:latest")}
+            templates={"base": DockerImageTemplate(image="nexus-sandbox:latest")}
         )
 
         assert "base" in config.templates
@@ -101,14 +101,14 @@ class TestDockerTemplateConfig:
         """Test config with multiple templates."""
         config = DockerTemplateConfig(
             templates={
-                "base": DockerImageTemplate(image="nexus-runtime:latest"),
+                "base": DockerImageTemplate(image="nexus-sandbox:latest"),
                 "ml-heavy": DockerImageTemplate(
-                    image="nexus-runtime-ml:latest",
-                    dockerfile_override="FROM nexus-runtime:latest\nRUN pip install torch",
+                    image="nexus-sandbox-ml:latest",
+                    dockerfile_override="FROM nexus-sandbox:latest\nRUN pip install torch",
                 ),
                 "web-dev": DockerImageTemplate(
-                    image="nexus-runtime-web:latest",
-                    dockerfile_override="FROM nexus-runtime:latest\nRUN pip install fastapi",
+                    image="nexus-sandbox-web:latest",
+                    dockerfile_override="FROM nexus-sandbox:latest\nRUN pip install fastapi",
                 ),
             }
         )
@@ -120,31 +120,31 @@ class TestDockerTemplateConfig:
 
         # Verify ml-heavy template
         ml_template = config.templates["ml-heavy"]
-        assert ml_template.image == "nexus-runtime-ml:latest"
+        assert ml_template.image == "nexus-sandbox-ml:latest"
         assert "pip install torch" in ml_template.dockerfile_override
 
     def test_config_from_dict(self):
         """Test creating config from dictionary (YAML-like structure)."""
         config_dict = {
-            "default_image": "nexus-runtime:latest",
+            "default_image": "nexus-sandbox:latest",
             "templates": {
                 "ml-heavy": {
-                    "image": "nexus-runtime-ml:latest",
-                    "dockerfile_override": "FROM nexus-runtime:latest\nUSER root\nRUN pip install torch\nUSER nexus",
+                    "image": "nexus-sandbox-ml:latest",
+                    "dockerfile_override": "FROM nexus-sandbox:latest\nUSER root\nRUN pip install torch\nUSER nexus",
                 }
             },
         }
 
         config = DockerTemplateConfig(**config_dict)
 
-        assert config.default_image == "nexus-runtime:latest"
+        assert config.default_image == "nexus-sandbox:latest"
         assert "ml-heavy" in config.templates
-        assert config.templates["ml-heavy"].image == "nexus-runtime-ml:latest"
+        assert config.templates["ml-heavy"].image == "nexus-sandbox-ml:latest"
         assert config.templates["ml-heavy"].dockerfile_override is not None
 
     def test_config_with_multiline_dockerfile_override(self):
         """Test config with multiline Dockerfile override (YAML-style)."""
-        dockerfile_override = """FROM nexus-runtime:latest
+        dockerfile_override = """FROM nexus-sandbox:latest
 USER root
 
 RUN apt-get update && apt-get install -y \\
@@ -162,13 +162,13 @@ WORKDIR /home/nexus/workspace
         config = DockerTemplateConfig(
             templates={
                 "ml-heavy": DockerImageTemplate(
-                    image="nexus-runtime-ml:latest", dockerfile_override=dockerfile_override
+                    image="nexus-sandbox-ml:latest", dockerfile_override=dockerfile_override
                 )
             }
         )
 
         template = config.templates["ml-heavy"]
-        assert "FROM nexus-runtime:latest" in template.dockerfile_override
+        assert "FROM nexus-sandbox:latest" in template.dockerfile_override
         assert "torch>=2.0.0" in template.dockerfile_override
         assert "tensorflow>=2.13.0" in template.dockerfile_override
 

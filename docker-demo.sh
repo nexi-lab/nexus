@@ -1,18 +1,18 @@
 #!/bin/bash
-# docker-start.sh - Start Nexus services using Docker Compose
+# docker-demo.sh - Start Nexus services using Docker Compose
 #
 # Usage:
-#   ./docker-start.sh                    # Start all services (detached)
-#   ./docker-start.sh --build            # Rebuild images and start
-#   ./docker-start.sh --stop             # Stop all services
-#   ./docker-start.sh --restart          # Restart all services
-#   ./docker-start.sh --logs             # View logs (follow mode)
-#   ./docker-start.sh --status           # Check service status
-#   ./docker-start.sh --clean            # Stop and remove all data (volumes)
-#   ./docker-start.sh --init             # Initialize (clean + build + start)
-#   ./docker-start.sh --init --skip_permission  # Initialize with permissions disabled
-#   ./docker-start.sh --init --yes       # Initialize without confirmation (CI)
-#   ./docker-start.sh --env=production   # Use production environment files
+#   ./docker-demo.sh                    # Start all services (detached)
+#   ./docker-demo.sh --build            # Rebuild images and start
+#   ./docker-demo.sh --stop             # Stop all services
+#   ./docker-demo.sh --restart          # Restart all services
+#   ./docker-demo.sh --logs             # View logs (follow mode)
+#   ./docker-demo.sh --status           # Check service status
+#   ./docker-demo.sh --clean            # Stop and remove all data (volumes)
+#   ./docker-demo.sh --init             # Initialize (clean + build + start)
+#   ./docker-demo.sh --init --skip_permission  # Initialize with permissions disabled
+#   ./docker-demo.sh --init --yes       # Initialize without confirmation (CI)
+#   ./docker-demo.sh --env=production   # Use production environment files
 #
 # Services:
 #   - postgres:    PostgreSQL database (port 5432)
@@ -255,6 +255,31 @@ EOF
     echo ""
 }
 
+run_provisioning() {
+    echo "📦 Running provisioning inside nexus-server..."
+
+    # Get the admin API key from the container (file first, then logs fallback)
+    local API_KEY=""
+    API_KEY=$(docker exec nexus-server cat /app/data/.admin-api-key 2>/dev/null || true)
+    if [ -z "$API_KEY" ]; then
+        API_KEY=$(docker logs nexus-server 2>&1 | grep "API Key:" | tail -1 | awk '{print $3}')
+    fi
+
+    if [ -z "$API_KEY" ]; then
+        echo "⚠️  Could not retrieve admin API key; skipping provisioning"
+        return
+    fi
+
+    # Run provisioning in embedded mode (no NEXUS_URL) so it talks directly to DB/files
+    docker exec \
+        -e NEXUS_API_KEY="$API_KEY" \
+        -e NEXUS_DATABASE_URL="${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@postgres:5432/nexus}" \
+        -e NEXUS_DATA_DIR="/app/data" \
+        nexus-server sh -c "unset NEXUS_URL && cd /app && python3 scripts/provision_namespace.py --tenant protoss" \
+        && echo "✅ Provisioning completed" \
+        || echo "⚠️  Provisioning encountered errors (see container logs)"
+}
+
 clean_all_data() {
     # Utility function to clean all Nexus-related Docker resources
     # Args:
@@ -270,7 +295,7 @@ clean_all_data() {
 
     # Step 1: Remove sandbox containers
     echo "${STEP_PREFIX}Removing sandbox containers..."
-    docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
+    docker ps -a --filter "ancestor=nexus-sandbox:latest" -q | xargs -r docker rm -f 2>/dev/null || true
 
     # Step 2: Stop and remove all nexus-related containers (with graceful shutdown)
     echo "${STEP_PREFIX}Removing all nexus-related containers..."
@@ -297,7 +322,7 @@ clean_all_data() {
         docker images -q --filter "reference=nexus-server:*" | xargs -r docker rmi -f 2>/dev/null || true
         docker images -q --filter "reference=nexus-langgraph:*" | xargs -r docker rmi -f 2>/dev/null || true
         docker images -q --filter "reference=nexus-frontend:*" | xargs -r docker rmi -f 2>/dev/null || true
-        docker images -q --filter "reference=nexus-runtime:*" | xargs -r docker rmi -f 2>/dev/null || true
+        docker images -q --filter "reference=nexus-sandbox:*" | xargs -r docker rmi -f 2>/dev/null || true
     fi
 }
 
@@ -314,7 +339,7 @@ cmd_start() {
     check_frontend_repo
 
     echo "🧹 Cleaning up old sandbox containers..."
-    docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
+    docker ps -a --filter "ancestor=nexus-sandbox:latest" -q | xargs -r docker rm -f 2>/dev/null || true
     echo ""
 
     echo "🧹 Stopping and removing all existing Nexus containers..."
@@ -378,7 +403,7 @@ cmd_build() {
 
     # Only stop containers after successful build
     echo "🧹 Cleaning up old sandbox containers..."
-    docker ps -a --filter "ancestor=nexus-runtime:latest" -q | xargs -r docker rm -f 2>/dev/null || true
+    docker ps -a --filter "ancestor=nexus-sandbox:latest" -q | xargs -r docker rm -f 2>/dev/null || true
     echo ""
 
     echo "🧹 Stopping and removing all existing Nexus containers..."
@@ -457,9 +482,9 @@ cmd_clean() {
     echo ""
 
     if [ "$SKIP_CONFIRM" = false ]; then
-        read -p "Are you sure you want to continue? (yes/no): " CONFIRM
-
-        if [ "$CONFIRM" != "yes" ]; then
+        read -p "Are you sure you want to continue? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             echo ""
             echo "❌ Clean cancelled"
             exit 0
@@ -496,9 +521,9 @@ cmd_init() {
     echo ""
 
     if [ "$SKIP_CONFIRM" = false ]; then
-        read -p "Are you sure you want to continue? (yes/no): " CONFIRM
-
-        if [ "$CONFIRM" != "yes" ]; then
+        read -p "Are you sure you want to continue? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             echo ""
             echo "❌ Initialization cancelled"
             exit 0
@@ -546,6 +571,7 @@ cmd_init() {
     echo ""
     cmd_status
     show_api_key
+    run_provisioning
     cmd_urls
 }
 

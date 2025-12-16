@@ -1,4 +1,4 @@
-# Nexus Runtime Docker Image
+# Nexus Sandbox Docker Image
 #
 # A pre-configured Docker image for Nexus sandboxes with:
 # - Python 3.11 with data science packages (pandas, numpy, matplotlib, scikit-learn, etc.)
@@ -8,11 +8,11 @@
 # - FUSE support for mounting Nexus filesystem
 #
 # Build:
-#   docker build -f docker/nexus-runtime.Dockerfile -t nexus-runtime:latest .
+#   docker build -f docker/nexus-runtime.Dockerfile -t nexus-sandbox:latest .
 #
 # Usage:
 #   Used automatically by DockerSandboxProvider
-#   Or manually: docker run -it --cap-add SYS_ADMIN nexus-runtime:latest
+#   Or manually: docker run -it --cap-add SYS_ADMIN nexus-sandbox:latest
 
 FROM python:3.13-slim
 
@@ -93,7 +93,11 @@ RUN pip install --no-cache-dir \
     # File format support
     openpyxl \
     python-docx \
+    python-pptx \
     xlrd \
+    pillow \
+    pypdf \
+    pdfplumber \
     # Scientific computing
     sympy \
     xarray \

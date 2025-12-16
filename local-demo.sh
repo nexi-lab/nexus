@@ -1,12 +1,12 @@
 #!/bin/bash
-# local-nexus.sh - Run Nexus server locally (outside Docker)
+# local-demo.sh - Run Nexus server locally (outside Docker)
 #
 # This script allows running the Nexus server locally for faster development
 # iteration while keeping other services (postgres, langgraph, frontend) in Docker.
 #
 # Usage:
-#   ./local-nexus.sh --start    # Start the local server
-#   ./local-nexus.sh --stop     # Stop the local server
+#   ./local-demo.sh --start    # Start the local server
+#   ./local-demo.sh --stop     # Stop the local server
 
 set -e
 
@@ -28,7 +28,7 @@ else
     echo -e "${RED}✗ Configuration file not found: ${CONFIG_FILE}${NC}"
     echo "Using fallback default values..."
     # Fallback defaults
-    NEXUS_DATA_DIR="./nexus-data"
+    NEXUS_DATA_DIR="./nexus-data-local"
     POSTGRES_USER="nexus_test"
     POSTGRES_PASSWORD="nexus_test_password"
     POSTGRES_DB="tmp_nexus_test"
@@ -39,10 +39,9 @@ else
     ADMIN_API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 fi
 
-# Set defaults for backward compatibility
-DEFAULT_DATA_DIR="${NEXUS_DATA_DIR}"
-DEFAULT_POSTGRES_URL="${POSTGRES_URL}"
-export TOKEN_MANAGER_DB="$DEFAULT_POSTGRES_URL"
+# Set sane defaults (explicit paths, no legacy overrides)
+DEFAULT_DATA_DIR="${NEXUS_DATA_DIR:-${SCRIPT_DIR}/nexus-data-local}"
+DEFAULT_POSTGRES_URL="${POSTGRES_URL:-postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}}"
 
 # Function to get data directory path
 get_data_path() {
@@ -54,21 +53,47 @@ get_data_path() {
         mkdir -p "$data_dir"
     fi
 
+    # Normalize to absolute path to avoid cwd-related sqlite issues
+    if command -v realpath >/dev/null 2>&1; then
+        data_dir="$(realpath "$data_dir")"
+    else
+        # POSIX fallback
+        data_dir="$(cd "$data_dir" && pwd)"
+    fi
+
     echo "$data_dir"
+}
+
+clean_sqlite_artifacts() {
+    local db_path="$1"
+    local wal="${db_path}-wal"
+    local shm="${db_path}-shm"
+
+    if [ -f "$wal" ]; then
+        rm -f "$wal"
+    fi
+    if [ -f "$shm" ]; then
+        rm -f "$shm"
+    fi
+
+    if [ -f "$db_path" ]; then
+        chmod u+rw "$db_path" || true
+    fi
 }
 
 # Function to parse command-line arguments
 parse_args() {
     POSTGRES_URL="$DEFAULT_POSTGRES_URL"
     DATA_DIR="$DEFAULT_DATA_DIR"
-    USE_SQLITE=false
-    START_UI=false
-    START_LANGGRAPH=false
+    USE_SQLITE=true          # default to SQLite
+    START_UI=true            # default to start UI
+    START_LANGGRAPH=true     # default to start LangGraph
 
     while [[ $# -gt 0 ]]; do
         case $1 in
             --postgres-url)
                 POSTGRES_URL="$2"
+                USE_SQLITE=false  # switch to Postgres if URL provided
                 shift 2
                 ;;
             --data-dir)
@@ -101,6 +126,202 @@ parse_args() {
                 ;;
         esac
     done
+}
+
+# Ensure core Python virtual environment exists and nexus is installed
+ensure_core_python_env() {
+    local venv_path="${SCRIPT_DIR}/.venv"
+    local python_bin="${PYTHON:-python3}"
+
+    if [ ! -d "$venv_path" ]; then
+        echo -e "${YELLOW}Creating Python virtual environment at ${venv_path}${NC}"
+        $python_bin -m venv "$venv_path"
+    fi
+
+    source "$venv_path/bin/activate"
+
+    # Install nexus in editable mode if missing
+    if ! python -c "import nexus" >/dev/null 2>&1; then
+        echo -e "${YELLOW}Installing nexus in editable mode (first-time setup)...${NC}"
+        pip install --upgrade pip
+        pip install -e "${SCRIPT_DIR}"
+    fi
+}
+
+# Ensure frontend deps are installed once before running dev server
+ensure_frontend_ready() {
+    local FRONTEND_DIR="${SCRIPT_DIR}/../nexus-frontend"
+    local FRONTEND_URL="${FRONTEND_REPO_URL:-https://github.com/nexi-lab/nexus-frontend.git}"
+
+    if [ ! -d "$FRONTEND_DIR" ]; then
+        echo -e "${YELLOW}Frontend directory not found: $FRONTEND_DIR${NC}"
+        if ! command -v git >/dev/null 2>&1; then
+            echo -e "${RED}ERROR: git is required to clone the frontend.${NC}"
+            echo "Install git or clone manually:"
+            echo "  git clone $FRONTEND_URL \"$FRONTEND_DIR\""
+            return 1
+        fi
+        echo -e "${YELLOW}Cloning frontend from ${FRONTEND_URL}...${NC}"
+        mkdir -p "$(dirname "$FRONTEND_DIR")"
+        if ! git clone "$FRONTEND_URL" "$FRONTEND_DIR"; then
+            echo -e "${RED}ERROR: Failed to clone frontend repo.${NC}"
+            echo "Try manually:"
+            echo "  git clone $FRONTEND_URL \"$FRONTEND_DIR\""
+            return 1
+        fi
+        echo -e "${GREEN}✓ Frontend cloned to ${FRONTEND_DIR}${NC}"
+    fi
+
+    if ! command -v pnpm >/dev/null 2>&1; then
+        echo -e "${RED}ERROR: pnpm is required. Install with 'corepack enable && npm install -g pnpm'${NC}"
+        return 1
+    fi
+
+    if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
+        echo -e "${YELLOW}Installing frontend dependencies (pnpm install)...${NC}"
+        (cd "$FRONTEND_DIR" && pnpm install)
+    fi
+}
+
+# Ensure LangGraph example env exists and dependencies are installed
+ensure_langgraph_env() {
+    local LANGGRAPH_DIR="${SCRIPT_DIR}/examples/langgraph"
+    local python_bin="${PYTHON:-python3}"
+
+    if [ ! -d "$LANGGRAPH_DIR" ]; then
+        echo -e "${RED}ERROR: Langgraph directory not found: $LANGGRAPH_DIR${NC}"
+        return 1
+    fi
+
+    if [ ! -d "$LANGGRAPH_DIR/.venv" ]; then
+        echo -e "${YELLOW}Creating LangGraph virtual environment at ${LANGGRAPH_DIR}/.venv${NC}"
+        (cd "$LANGGRAPH_DIR" && $python_bin -m venv .venv)
+    fi
+
+    (
+        cd "$LANGGRAPH_DIR"
+        source .venv/bin/activate
+        pip install --upgrade pip >/dev/null 2>&1 || true
+
+        # Ensure nexus editable install is available to langgraph
+        if ! pip show nexus-ai-fs 2>/dev/null | grep -q "Editable project location"; then
+            echo -e "${YELLOW}Installing nexus into LangGraph venv...${NC}"
+            pip install -e "${SCRIPT_DIR}"
+        fi
+
+        # Install langgraph example deps if not present
+        if [ -f "pyproject.toml" ]; then
+            pip install -e .
+        elif [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+        fi
+    )
+}
+
+# Ensure Docker is available and running for langgraph workflows
+ensure_docker_for_langgraph() {
+    # Check binary
+    if ! command -v docker >/dev/null 2>&1; then
+        echo -e "${YELLOW}Docker is required for langgraph demos.${NC}"
+        echo "Install Docker Desktop: https://www.docker.com/products/docker-desktop"
+        read -p "Continue without Docker? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
+        return 0
+    fi
+
+    # Check daemon
+    if ! docker info >/dev/null 2>&1; then
+        echo -e "${YELLOW}Docker is not running. Attempting to start...${NC}"
+        if command -v open >/dev/null 2>&1; then
+            open --background -a Docker || true
+        elif command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl start docker || true
+        fi
+
+        # Wait for Docker to become ready
+        for i in {1..30}; do
+            if docker info >/dev/null 2>&1; then
+                echo -e "${GREEN}✓ Docker is running${NC}"
+                return 0
+            fi
+            sleep 1
+        done
+
+        echo -e "${YELLOW}Docker is still not responding.${NC}"
+        read -p "Continue without Docker? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
+    fi
+}
+
+ensure_docker_sandbox_image() {
+    local image="${NEXUS_SANDBOX_DOCKER_IMAGE:-nexus-sandbox:latest}"
+
+    # If Docker isn't installed, just warn; sandbox calls will fail later with a clear error
+    if ! command -v docker >/dev/null 2>&1; then
+        echo -e "${YELLOW}Docker not installed. Sandbox image check skipped.${NC}"
+        echo "  Install Docker Desktop: https://www.docker.com/products/docker-desktop"
+        return 0
+    fi
+
+    # Ensure daemon is up
+    if ! docker info >/dev/null 2>&1; then
+        echo -e "${YELLOW}Docker is not running. Attempting to start...${NC}"
+        if command -v open >/dev/null 2>&1; then
+            open --background -a Docker || true
+        elif command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl start docker || true
+        fi
+        for i in {1..30}; do
+            if docker info >/dev/null 2>&1; then
+                echo -e "${GREEN}✓ Docker is running${NC}"
+                break
+            fi
+            sleep 1
+        done
+    fi
+
+    # Fast check for image in current Docker context
+    if docker image inspect "${image}" >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ Docker image found: ${image}${NC}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}Docker image '${image}' not found.${NC}"
+    # Prefer docker/build.sh if present to build runtime image (matches docker-demo.sh)
+    if [ -x "${SCRIPT_DIR}/docker/build.sh" ]; then
+        echo -e "${YELLOW}Building sandbox runtime via docker/build.sh ...${NC}"
+        if "${SCRIPT_DIR}/docker/build.sh"; then
+            echo -e "${GREEN}✓ Built sandbox runtime image via docker/build.sh${NC}"
+            docker image inspect "${image}" >/dev/null 2>&1 && return 0
+            echo -e "${YELLOW}Build succeeded but image '${image}' not visible in this Docker context.${NC}"
+        else
+            echo -e "${YELLOW}docker/build.sh failed, falling back to direct docker build...${NC}"
+        fi
+    fi
+
+    echo -e "${YELLOW}Building '${image}' from ${SCRIPT_DIR}/Dockerfile...${NC}"
+    if docker build -t "${image}" -f "${SCRIPT_DIR}/Dockerfile" "${SCRIPT_DIR}"; then
+        echo -e "${GREEN}✓ Built Docker image '${image}'${NC}"
+    else
+        echo -e "${RED}✗ Failed to build Docker image '${image}'${NC}"
+        echo "  You can build manually with:"
+        echo "    docker build -t ${image} -f ${SCRIPT_DIR}/Dockerfile ${SCRIPT_DIR}"
+        return 1
+    fi
+
+    # Final verify
+    if docker image inspect "${image}" >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ Docker image ready: ${image}${NC}"
+    else
+        echo -e "${RED}✗ Image '${image}' still not found after build. Check Docker context (docker context show) and DOCKER_HOST.${NC}"
+        return 1
+    fi
 }
 
 # Function to ensure PostgreSQL is running
@@ -167,10 +388,7 @@ ensure_postgres_running() {
 start_frontend() {
     local FRONTEND_DIR="${SCRIPT_DIR}/../nexus-frontend"
 
-    if [ ! -d "$FRONTEND_DIR" ]; then
-        echo -e "${RED}ERROR: Frontend directory not found: $FRONTEND_DIR${NC}"
-        return 1
-    fi
+    ensure_frontend_ready || return 1
 
     echo -e "${GREEN}Starting frontend (pnpm run dev)...${NC}"
 
@@ -192,23 +410,23 @@ start_frontend() {
 start_langgraph() {
     local LANGGRAPH_DIR="${SCRIPT_DIR}/examples/langgraph"
 
-    if [ ! -d "$LANGGRAPH_DIR" ]; then
-        echo -e "${RED}ERROR: Langgraph directory not found: $LANGGRAPH_DIR${NC}"
-        return 1
-    fi
+    ensure_docker_for_langgraph
+    ensure_langgraph_env || return 1
 
-    echo -e "${GREEN}Starting langgraph (uv run langgraph dev --allow-blocking)...${NC}"
+    echo -e "${GREEN}Starting langgraph (langgraph dev)...${NC}"
 
-    # Start langgraph in background
-    cd "$LANGGRAPH_DIR"
-    uv run langgraph dev --allow-blocking > /tmp/nexus-langgraph.log 2>&1 &
+    # Start langgraph in background with virtual environment activated
+    (
+        cd "$LANGGRAPH_DIR"
+        source .venv/bin/activate
+        langgraph dev > /tmp/nexus-langgraph.log 2>&1
+    ) &
     local LANGGRAPH_PID=$!
     echo $LANGGRAPH_PID > /tmp/nexus-langgraph.pid
 
     echo -e "${GREEN}✓ Langgraph started (PID: $LANGGRAPH_PID)${NC}"
     echo "  Logs: /tmp/nexus-langgraph.log"
-
-    cd - > /dev/null
+    echo "  URL: http://localhost:2024 (default LangGraph port)"
 }
 
 # Function to stop the frontend
@@ -256,12 +474,22 @@ start_server() {
     echo "╚═══════════════════════════════════════════╝"
     echo ""
 
+    # If data directory is empty, auto-init (no prompt)
+    DATA_PATH=$(get_data_path "$DATA_DIR")
+    if [ -z "$(ls -A "$DATA_PATH" 2>/dev/null)" ]; then
+        echo -e "${YELLOW}Data directory is empty: ${DATA_PATH}${NC}"
+        echo -e "${YELLOW}Running init flow automatically...${NC}"
+        AUTO_INIT=true init_database "$@"
+        return
+    fi
+
     # Handle database setup based on mode
     if [ "$USE_SQLITE" = true ]; then
         echo -e "${GREEN}Using SQLite database (embedded mode)${NC}"
         # Set SQLite database URL
         DATA_PATH=$(get_data_path "$DATA_DIR")
         POSTGRES_URL="sqlite:///${DATA_PATH}/nexus.db"
+        clean_sqlite_artifacts "${DATA_PATH}/nexus.db"
     else
         # Check and start PostgreSQL container if needed
         ensure_postgres_running
@@ -301,7 +529,7 @@ start_server() {
         echo -e "${YELLOW}WARNING: Port 8080 is already in use${NC}"
         echo ""
         echo "This is likely the Docker nexus-server. Stop it first:"
-        echo "  docker stop nexus-server"
+        echo "   ./local-demo.sh --stop"
         echo ""
         exit 1
     fi
@@ -325,19 +553,8 @@ start_server() {
     export TOKEN_MANAGER_DB="$POSTGRES_URL"
     export NEXUS_DATA_DIR="$DATA_PATH"
 
-    # Activate virtual environment
-    if [ ! -d .venv ]; then
-        echo -e "${RED}ERROR: Virtual environment not found${NC}"
-        echo ""
-        echo "Create it with:"
-        echo "  python -m venv .venv"
-        echo "  source .venv/bin/activate"
-        echo "  pip install -e ."
-        echo ""
-        exit 1
-    fi
-
-    source .venv/bin/activate
+    # Ensure Python environment is ready (first-time install support)
+    ensure_core_python_env
 
     # Optional: Rebuild Rust extension for better performance
     # Only needed if you've modified the Rust code
@@ -370,6 +587,9 @@ start_server() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
 
+    # Ensure docker sandbox image exists (best-effort)
+    ensure_docker_sandbox_image || true
+
     # Start frontend if requested
     if [ "$START_UI" = true ]; then
         echo ""
@@ -380,6 +600,7 @@ start_server() {
     # Start langgraph if requested
     if [ "$START_LANGGRAPH" = true ]; then
         echo ""
+        ensure_docker_for_langgraph
         start_langgraph
         echo ""
     fi
@@ -471,21 +692,28 @@ init_database() {
     stop_server
     echo ""
 
+    # Get data directory (absolute) and ALWAYS clear it for init
+    DATA_PATH=$(get_data_path "$DATA_DIR")
+    echo "  Removing data directory: $DATA_PATH"
+    rm -rf "$DATA_PATH"
+    mkdir -p "$DATA_PATH"
+    echo -e "  ${GREEN}✓ Data directory reset${NC}"
+
     # Handle database setup based on mode
     if [ "$USE_SQLITE" = true ]; then
         echo -e "${GREEN}Using SQLite database (embedded mode)${NC}"
         # Set SQLite database URL
-        DATA_PATH=$(get_data_path "$DATA_DIR")
         POSTGRES_URL="sqlite:///${DATA_PATH}/nexus.db"
+        clean_sqlite_artifacts "${DATA_PATH}/nexus.db"
     else
         # Ensure PostgreSQL is running
         ensure_postgres_running
     fi
 
-    # Get data directory
-    DATA_PATH=$(get_data_path "$DATA_DIR")
+    # Ensure docker sandbox image exists (strict for init)
+    ensure_docker_sandbox_image || exit 1
 
-    echo -e "${YELLOW}⚠️  This will CLEAR all existing data!${NC}"
+    echo -e "${YELLOW}⚠️  This will DELETE ALL DATA in: ${DATA_PATH}${NC}"
     echo ""
     echo -e "${BLUE}Configuration:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -497,25 +725,22 @@ init_database() {
     echo "  Data Dir:     $DATA_PATH"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    read -p "Are you sure you want to continue? This will DELETE all data! [y/N] " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Aborted."
-        exit 0
+    if [ "${AUTO_INIT:-false}" != "true" ]; then
+        read -p "Are you sure you want to continue? This will DELETE all data in ${DATA_PATH}! [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Aborted."
+            exit 0
+        fi
+    else
+        echo "AUTO_INIT=true, skipping confirmation."
     fi
 
     echo ""
     echo "🧹 Clearing existing data..."
 
     if [ "$USE_SQLITE" = true ]; then
-        # Remove SQLite database file
-        if [ -f "${DATA_PATH}/nexus.db" ]; then
-            echo "  Removing SQLite database: ${DATA_PATH}/nexus.db"
-            rm -f "${DATA_PATH}/nexus.db"*
-            echo -e "  ${GREEN}✓ SQLite database removed${NC}"
-        else
-            echo "  SQLite database doesn't exist, will be created"
-        fi
+        echo "  SQLite database will be recreated at: ${DATA_PATH}/nexus.db"
     else
         # Use configuration from config file
         DB_NAME="${POSTGRES_DB}"
@@ -546,15 +771,7 @@ init_database() {
         fi
     fi
 
-    # Clear data directory
-    if [ -d "$DATA_PATH" ]; then
-        echo "  Removing data directory contents: $DATA_PATH"
-        rm -rf "$DATA_PATH"/*
-        echo -e "  ${GREEN}✓ Data directory cleared${NC}"
-    else
-        echo "  Data directory doesn't exist, will be created"
-    fi
-
+    # Data directory already reset above
     echo ""
 
     # Set up environment variables
@@ -563,19 +780,8 @@ init_database() {
     export TOKEN_MANAGER_DB="$POSTGRES_URL"
     export NEXUS_DATA_DIR="$DATA_PATH"
 
-    # Activate virtual environment
-    if [ ! -d .venv ]; then
-        echo -e "${RED}ERROR: Virtual environment not found${NC}"
-        echo ""
-        echo "Create it with:"
-        echo "  python -m venv .venv"
-        echo "  source .venv/bin/activate"
-        echo "  pip install -e ."
-        echo ""
-        exit 1
-    fi
-
-    source .venv/bin/activate
+    # Ensure Python environment is ready (first-time install support)
+    ensure_core_python_env
 
     # Run database initialization script
     echo "📊 Running database initialization..."
@@ -602,7 +808,13 @@ init_database() {
     # This matches docker-integration.yml for consistency
 
     # Create admin user and API key using the extracted Python script
-    python3 "${SCRIPT_DIR}/scripts/setup_admin_api_key.py" "$NEXUS_DATABASE_URL" "$ADMIN_API_KEY"
+    # Extract tenant from API key format: sk-<tenant>_<user>_<id>_<random-hex>
+    # Default to "default" if extraction fails
+    TENANT_ID="default"
+    if [[ "$ADMIN_API_KEY" =~ ^sk-([^_]+)_ ]]; then
+        TENANT_ID="${BASH_REMATCH[1]}"
+    fi
+    python3 "${SCRIPT_DIR}/scripts/setup_admin_api_key.py" "$NEXUS_DATABASE_URL" "$ADMIN_API_KEY" "$TENANT_ID"
 
     if [ $? -ne 0 ]; then
         echo -e "${RED}✗ Failed to create admin API key${NC}"
@@ -694,19 +906,8 @@ init_database() {
         fi
     fi
 
-    # Activate virtual environment
-    if [ ! -d .venv ]; then
-        echo -e "${RED}ERROR: Virtual environment not found${NC}"
-        echo ""
-        echo "Create it with:"
-        echo "  python -m venv .venv"
-        echo "  source .venv/bin/activate"
-        echo "  pip install -e ."
-        echo ""
-        exit 1
-    fi
-
-    source .venv/bin/activate
+    # Ensure Python environment is ready (first-time install support)
+    ensure_core_python_env
 
     # Display configuration
     echo ""
@@ -740,6 +941,7 @@ init_database() {
     # Start langgraph if requested
     if [ "$START_LANGGRAPH" = true ]; then
         echo ""
+        ensure_docker_for_langgraph
         start_langgraph
         echo ""
     fi
@@ -764,12 +966,13 @@ init_database() {
 
     # Wait a moment for server to start, then run provisioning in background
     (
+        cd "$SCRIPT_DIR"
         sleep 5
         echo ""
         echo "📦 Running provisioning..."
         if [ -f "scripts/provision_namespace.py" ]; then
             # Activate venv in the background process
-            source .venv/bin/activate
+            source "$SCRIPT_DIR/.venv/bin/activate"
             # Set environment variables for embedded mode provisioning
             # Note: Provisioning uses embedded mode (not server mode) because
             # the provisioning script uses context parameters not supported by RemoteNexusFS
@@ -790,6 +993,14 @@ init_database() {
             else
                 echo -e "${YELLOW}⚠ Provisioning encountered errors${NC}"
             fi
+            # After provisioning completes, open frontend if requested
+            if [ "$START_UI" = true ]; then
+                if command -v open >/dev/null 2>&1; then
+                    open "http://localhost:5137" >/dev/null 2>&1 || true
+                elif command -v xdg-open >/dev/null 2>&1; then
+                    xdg-open "http://localhost:5137" >/dev/null 2>&1 || true
+                fi
+            fi
         fi
     ) &
 
@@ -809,38 +1020,31 @@ case "$1" in
     --stop)
         stop_server
         ;;
-    --init)
-        shift  # Remove --init from arguments
-        init_database "$@"
-        ;;
     *)
         echo ""
-        echo "Usage: $0 {--start|--stop|--init} [OPTIONS]"
+        echo "Usage: $0 {--start|--stop} [OPTIONS]"
         echo ""
         echo "Commands:"
         echo "  --start    Start Nexus server locally (outside Docker)"
         echo "  --stop     Stop local Nexus server"
-        echo "  --init     Initialize database schema"
         echo ""
-        echo "Options for --start and --init:"
-        echo "  --use-sqlite          Use SQLite instead of PostgreSQL (no Docker needed)"
+        echo "Options for --start and --stop:"
+        echo "  --use-sqlite   Use SQLite instead of PostgreSQL (default, no Docker needed)"
         echo "  --postgres-url URL    PostgreSQL connection URL"
         echo "                       (default: $DEFAULT_POSTGRES_URL)"
         echo "  --data-dir PATH       Data directory path"
         echo "                       (default: $DEFAULT_DATA_DIR)"
-        echo "  --ui                  Start the frontend (pnpm run dev in nexus-frontend)"
-        echo "  --no-ui              Don't start the frontend (default)"
-        echo "  --langgraph          Start langgraph dev server"
-        echo "  --no-langgraph       Don't start langgraph (default)"
+        echo "  --ui                  Start the frontend (pnpm run dev in nexus-frontend) (default)"
+        echo "  --no-ui              Don't start the frontend"
+        echo "  --langgraph          Start langgraph dev server (default)"
+        echo "  --no-langgraph       Don't start langgraph"
         echo ""
         echo "Examples:"
-        echo "  # Using PostgreSQL (default):"
+        echo "  # Using SQLite (default):"
         echo "  $0 --start"
-        echo "  $0 --init"
         echo ""
-        echo "  # Using SQLite (no Docker required):"
-        echo "  $0 --start --use-sqlite"
-        echo "  $0 --init --use-sqlite"
+        echo "  # Using PostgreSQL:"
+        echo "  $0 --start --postgres-url 'postgresql://user:pass@localhost:5432/db'"
         echo ""
         echo "  # Start with frontend and langgraph:"
         echo "  $0 --start --ui --langgraph"
@@ -848,32 +1052,10 @@ case "$1" in
         echo ""
         echo "  # Custom PostgreSQL URL:"
         echo "  $0 --start --postgres-url 'postgresql://user:pass@localhost:5432/db'"
-        echo "  $0 --init --postgres-url 'postgresql://user:pass@localhost:5432/db'"
         echo ""
         echo "  # Custom data directory:"
         echo "  $0 --start --data-dir '/custom/path'"
         echo "  $0 --start --use-sqlite --data-dir '/custom/path'"
-        echo ""
-        echo "Workflow (PostgreSQL):"
-        echo "  1. Initialize database:         ./local-nexus.sh --init"
-        echo "  2. Start Docker services:       ./docker-start.sh"
-        echo "  3. Stop Docker nexus-server:    docker stop nexus-server"
-        echo "  4. Start local nexus:           ./local-nexus.sh --start"
-        echo "  5. Make changes and restart:    Ctrl+C then ./local-nexus.sh --start"
-        echo "  6. When done:                   docker start nexus-server"
-        echo ""
-        echo "Workflow (SQLite - Simpler!):"
-        echo "  1. Initialize database:         ./local-nexus.sh --init --use-sqlite"
-        echo "  2. Start local nexus:           ./local-nexus.sh --start --use-sqlite"
-        echo "  3. Make changes and restart:    Ctrl+C then ./local-nexus.sh --start --use-sqlite"
-        echo ""
-        echo "Workflow (Full Stack Development):"
-        echo "  1. Init with all services:      ./local-nexus.sh --init --use-sqlite --ui --langgraph"
-        echo "     (Database init + starts server, frontend, and langgraph)"
-        echo "  2. Or start separately:         ./local-nexus.sh --start --use-sqlite --ui --langgraph"
-        echo "  3. Access frontend:             http://localhost:3000"
-        echo "  4. Access langgraph:            http://localhost:8123 (or as configured)"
-        echo "  5. Stop all services:           ./local-nexus.sh --stop"
         echo ""
         echo "Optional: Enable connectors (GDrive, Gmail) in PostgreSQL mode:"
         echo "  sudo bash -c 'echo \"127.0.0.1    postgres\" >> /etc/hosts'"

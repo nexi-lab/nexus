@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Build Nexus Runtime Docker Image
+# Build Nexus Sandbox Docker Image
 #
-# This script builds the nexus-runtime:latest image with all dependencies
+# This script builds the nexus-sandbox:latest image with all dependencies
 # pre-installed for fast sandbox container startup.
 #
 # Usage:
@@ -19,7 +19,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-IMAGE_NAME="nexus-runtime"
+IMAGE_NAME="nexus-sandbox"
 IMAGE_TAG="latest"
 DOCKERFILE="docker/nexus-runtime.Dockerfile"
 BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -31,7 +31,7 @@ else
     NEXUS_VERSION="dev"
 fi
 
-echo -e "${BLUE}=== Building Nexus Runtime Image ===${NC}"
+echo -e "${BLUE}=== Building Nexus Sandbox Image ===${NC}"
 echo
 echo "Image: ${IMAGE_NAME}:${IMAGE_TAG}"
 echo "Nexus Version: ${NEXUS_VERSION}"

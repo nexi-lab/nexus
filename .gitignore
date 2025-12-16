@@ -97,6 +97,7 @@ target/
 
 # Nexus specific data directories
 nexus-data/
+nexus-data-*/
 nexus-workspace/
 nexus-test-*/
 nexus-consent-*/

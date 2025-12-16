@@ -3,7 +3,7 @@
 Setup admin API key in the Nexus database.
 
 This script ensures the admin user exists in the entity registry and creates/verifies
-the admin API key. Extracted from local-nexus.sh for better testability and reuse.
+the admin API key. Extracted from local-demo.sh for better testability and reuse.
 
 Usage:
     python scripts/setup_admin_api_key.py <database_url> <api_key>

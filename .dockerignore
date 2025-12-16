@@ -130,6 +130,8 @@ scripts/*.sh
 scripts/*.py
 # But keep init_database.py for database initialization in Docker
 !scripts/init_database.py
+# Keep provisioning script for docker-start --init
+!scripts/provision_namespace.py
 *.sh
 # But keep docker-entrypoint.sh for container startup
 !docker-entrypoint.sh

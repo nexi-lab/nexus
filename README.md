@@ -14,7 +14,7 @@ Nexus is a virtual filesystem server for AI agents. It unifies files, databases,
 
 The Nexus Control Panel lets humans curate the files, memories, permissions, and integrations that agents can access—providing oversight and control while agents focus on execution.
 
-This repo contains the open-source server, SDK, CLI, and examples.
+This repo contains the open-source [server](src/nexus/server/), [SDK](src/nexus/sdk/), [CLI](src/nexus/cli/), and [examples](examples/).
 
 ### Highlights
 

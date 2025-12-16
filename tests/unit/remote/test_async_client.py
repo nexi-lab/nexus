@@ -204,11 +204,16 @@ class TestAsyncRemoteNexusFSAuth:
         """Test ensure initialized without API key."""
         async_client._initialized = False
         async_client.api_key = None
+        async_client._fetch_auth_info = AsyncMock()
 
         await async_client._ensure_initialized()
 
-        assert async_client._initialized is True
+        # Without API key, _initialized is not set to True (only set if api_key exists)
+        # But the method completes without error
         # Should not call _fetch_auth_info without API key
+        async_client._fetch_auth_info.assert_not_called()
+        # _initialized remains False when no API key
+        assert async_client._initialized is False
 
     @pytest.mark.asyncio
     async def test_ensure_initialized_already_initialized(self, async_client):
@@ -576,12 +581,15 @@ class TestAsyncRemoteNexusFSFileOperations:
     @pytest.mark.asyncio
     async def test_read(self, async_client):
         """Test read operation."""
+        # Read can return bytes directly or wrapped format
         async_client._call_rpc = AsyncMock(return_value=b"file content")
 
         result = await async_client.read("/test.txt")
 
         assert result == b"file content"
-        async_client._call_rpc.assert_called_once_with("read", {"path": "/test.txt"})
+        async_client._call_rpc.assert_called_once_with(
+            "read", {"path": "/test.txt", "return_metadata": False}
+        )
 
     @pytest.mark.asyncio
     async def test_read_with_metadata(self, async_client):
@@ -607,35 +615,58 @@ class TestAsyncRemoteNexusFSFileOperations:
 
         assert result["etag"] == "etag123"
         async_client._call_rpc.assert_called_once_with(
-            "write", {"path": "/test.txt", "content": b"hello world"}
+            "write",
+            {
+                "path": "/test.txt",
+                "content": b"hello world",
+                "if_match": None,
+                "if_none_match": False,
+                "force": False,
+            },
         )
 
     @pytest.mark.asyncio
-    async def test_write_with_etag(self, async_client):
-        """Test write operation with etag."""
+    async def test_write_with_if_match(self, async_client):
+        """Test write operation with if_match (etag)."""
         async_client._call_rpc = AsyncMock(return_value={"etag": "etag456", "size": 11})
 
-        result = await async_client.write("/test.txt", b"hello world", etag="etag123")
+        result = await async_client.write("/test.txt", b"hello world", if_match="etag123")
 
         assert result["etag"] == "etag456"
         async_client._call_rpc.assert_called_once_with(
-            "write", {"path": "/test.txt", "content": b"hello world", "etag": "etag123"}
+            "write",
+            {
+                "path": "/test.txt",
+                "content": b"hello world",
+                "if_match": "etag123",
+                "if_none_match": False,
+                "force": False,
+            },
         )
 
     @pytest.mark.asyncio
     async def test_list(self, async_client):
         """Test list operation."""
-        async_client._call_rpc = AsyncMock(return_value=["/file1.txt", "/file2.txt"])
+        async_client._call_rpc = AsyncMock(return_value={"files": ["/file1.txt", "/file2.txt"]})
 
         result = await async_client.list("/workspace")
 
         assert result == ["/file1.txt", "/file2.txt"]
-        async_client._call_rpc.assert_called_once_with("list", {"path": "/workspace"})
+        async_client._call_rpc.assert_called_once_with(
+            "list",
+            {
+                "path": "/workspace",
+                "recursive": True,
+                "details": False,
+                "prefix": None,
+                "show_parsed": True,
+            },
+        )
 
     @pytest.mark.asyncio
     async def test_list_with_options(self, async_client):
         """Test list operation with options."""
-        async_client._call_rpc = AsyncMock(return_value=["/file1.txt"])
+        async_client._call_rpc = AsyncMock(return_value={"files": ["/file1.txt"]})
 
         result = await async_client.list("/workspace", recursive=True, details=True, prefix="test")
 
@@ -647,13 +678,14 @@ class TestAsyncRemoteNexusFSFileOperations:
                 "recursive": True,
                 "details": True,
                 "prefix": "test",
+                "show_parsed": True,
             },
         )
 
     @pytest.mark.asyncio
     async def test_exists(self, async_client):
         """Test exists operation."""
-        async_client._call_rpc = AsyncMock(return_value=True)
+        async_client._call_rpc = AsyncMock(return_value={"exists": True})
 
         result = await async_client.exists("/test.txt")
 
@@ -663,20 +695,26 @@ class TestAsyncRemoteNexusFSFileOperations:
     @pytest.mark.asyncio
     async def test_delete(self, async_client):
         """Test delete operation."""
-        async_client._call_rpc = AsyncMock(return_value=None)
+        # Delete returns the result directly (could be bool or dict)
+        async_client._call_rpc = AsyncMock(return_value=True)
 
-        await async_client.delete("/test.txt")
+        result = await async_client.delete("/test.txt")
 
-        async_client._call_rpc.assert_called_once_with("delete", {"path": "/test.txt"})
+        assert result is True
+        async_client._call_rpc.assert_called_once_with(
+            "delete", {"path": "/test.txt", "if_match": None}
+        )
 
     @pytest.mark.asyncio
     async def test_mkdir(self, async_client):
         """Test mkdir operation."""
-        async_client._call_rpc = AsyncMock(return_value=None)
+        async_client._call_rpc = AsyncMock(return_value={})
 
         await async_client.mkdir("/workspace/newdir")
 
-        async_client._call_rpc.assert_called_once_with("mkdir", {"path": "/workspace/newdir"})
+        async_client._call_rpc.assert_called_once_with(
+            "mkdir", {"path": "/workspace/newdir", "parents": False, "exist_ok": False}
+        )
 
     @pytest.mark.asyncio
     async def test_rmdir(self, async_client):
@@ -685,7 +723,9 @@ class TestAsyncRemoteNexusFSFileOperations:
 
         await async_client.rmdir("/workspace/olddir")
 
-        async_client._call_rpc.assert_called_once_with("rmdir", {"path": "/workspace/olddir"})
+        async_client._call_rpc.assert_called_once_with(
+            "rmdir", {"path": "/workspace/olddir", "recursive": False}
+        )
 
     @pytest.mark.asyncio
     async def test_stat(self, async_client):

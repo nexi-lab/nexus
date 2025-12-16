@@ -174,9 +174,20 @@ class TestVectorDatabase:
         # Verify execute was called with correct parameters
         mock_session.execute.assert_called_once()
         call_args = mock_session.execute.call_args
-        assert "UPDATE document_chunks" in str(call_args[0][0])
-        assert call_args[1]["embedding"] == embedding
-        assert call_args[1]["chunk_id"] == "chunk-1"
+        # call_args is ((args...), {kwargs...}) or just (args...)
+        # SQLAlchemy execute typically uses: execute(text_obj, params_dict)
+        if len(call_args) == 2 and call_args[1]:
+            # Has kwargs
+            sql_text = call_args[0][0] if call_args[0] else None
+            params = call_args[1]
+        else:
+            # Only positional args
+            sql_text = call_args[0][0] if call_args[0] else None
+            params = call_args[0][1] if len(call_args[0]) > 1 else {}
+
+        assert "UPDATE document_chunks" in str(sql_text)
+        assert params["embedding"] == embedding
+        assert params["chunk_id"] == "chunk-1"
 
     def test_vector_search_unsupported_db(self):
         """Test vector_search with unsupported database."""
@@ -247,11 +258,11 @@ class TestVectorDatabase:
 
         db = VectorDatabase(sqlite_engine)
 
-        # Mock sqlite_vec to be available
-        mock_sqlite_vec = MagicMock()
-        mock_sqlite_vec.load = MagicMock()
+        # Mock sqlite_vec module to be available
+        mock_sqlite_vec_module = MagicMock()
+        mock_sqlite_vec_module.load = MagicMock()
 
-        with patch("nexus.search.vector_db.sqlite_vec", mock_sqlite_vec):
+        with patch("nexus.search.vector_db.sqlite_vec", mock_sqlite_vec_module, create=True):
             db.initialize()
 
         assert db._initialized is True

@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from nexus.core.nexus_fs_oauth import NexusFSOAuthMixin
+from nexus.core.mixins.nexus_fs_oauth import NexusFSOAuthMixin
 
 
 class MockOAuthCredential:
@@ -515,8 +515,12 @@ class TestNexusFSOAuthMixin:
         mock_config = OAuthConfig(providers=mock_providers)
 
         with (
-            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
-            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_token_manager") as mock_tm,
+            patch(
+                "nexus.core.mixins.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory"
+            ) as mock_factory,
+            patch(
+                "nexus.core.mixins.nexus_fs_oauth.NexusFSOAuthMixin._get_token_manager"
+            ) as mock_tm,
         ):
             mock_factory_instance = Mock()
             mock_factory_instance._oauth_config = mock_config
@@ -565,8 +569,12 @@ class TestNexusFSOAuthMixin:
         mock_config = OAuthConfig(providers=mock_providers)
 
         with (
-            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
-            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_token_manager") as mock_tm,
+            patch(
+                "nexus.core.mixins.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory"
+            ) as mock_factory,
+            patch(
+                "nexus.core.mixins.nexus_fs_oauth.NexusFSOAuthMixin._get_token_manager"
+            ) as mock_tm,
         ):
             mock_factory_instance = Mock()
             mock_factory_instance._oauth_config = mock_config
@@ -606,7 +614,9 @@ class TestNexusFSOAuthMixin:
         mock_config = OAuthConfig(providers=mock_providers)
 
         with (
-            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+            patch(
+                "nexus.core.mixins.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory"
+            ) as mock_factory,
             patch.dict(
                 "os.environ",
                 {
@@ -652,7 +662,9 @@ class TestNexusFSOAuthMixin:
         mock_config = OAuthConfig(providers=mock_providers)
 
         with (
-            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+            patch(
+                "nexus.core.mixins.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory"
+            ) as mock_factory,
             patch.dict(
                 "os.environ",
                 {
@@ -698,7 +710,9 @@ class TestNexusFSOAuthMixin:
         )
 
         with (
-            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+            patch(
+                "nexus.core.mixins.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory"
+            ) as mock_factory,
             patch.dict(
                 "os.environ",
                 {
@@ -755,7 +769,9 @@ class TestNexusFSOAuthMixin:
                     "NEXUS_OAUTH_X_CLIENT_ID": "test_client_id",
                 },
             ),
-            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+            patch(
+                "nexus.core.mixins.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory"
+            ) as mock_factory,
         ):
             mock_factory_instance = Mock()
             mock_factory_instance._oauth_config = mock_config
@@ -786,7 +802,7 @@ class TestNexusFSOAuthMixin:
 
         mock_token_manager.store_credential.return_value = "test_cred_id"
 
-        from nexus.core.nexus_fs_oauth import _pkce_cache
+        from nexus.core.mixins.nexus_fs_oauth import _pkce_cache
         from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
 
         # Set up PKCE cache
@@ -817,7 +833,9 @@ class TestNexusFSOAuthMixin:
                     "NEXUS_OAUTH_X_CLIENT_ID": "test_client_id",
                 },
             ),
-            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+            patch(
+                "nexus.core.mixins.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory"
+            ) as mock_factory,
         ):
             mock_factory_instance = Mock()
             mock_factory_instance._oauth_config = mock_config
@@ -870,7 +888,9 @@ class TestNexusFSOAuthMixin:
                     "NEXUS_OAUTH_X_CLIENT_ID": "test_client_id",
                 },
             ),
-            patch("nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory") as mock_factory,
+            patch(
+                "nexus.core.mixins.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory"
+            ) as mock_factory,
         ):
             mock_factory_instance = Mock()
             mock_factory_instance._oauth_config = mock_config
@@ -942,7 +962,7 @@ class TestNexusFSOAuthMixin:
         mixin = TestMixin()
 
         with (
-            patch("nexus.core.nexus_fs_oauth.get_database_url") as mock_get_db_url,
+            patch("nexus.core.mixins.nexus_fs_oauth.get_database_url") as mock_get_db_url,
             patch("nexus.server.auth.token_manager.TokenManager") as MockTM,
         ):
             mock_get_db_url.return_value = "/tmp/test.db"
@@ -1025,7 +1045,7 @@ class TestNexusFSOAuthMixin:
             subject_id="alice",
         )
 
-        with patch("nexus.core.nexus_fs_oauth.get_tenant_id") as mock_get_tenant:
+        with patch("nexus.core.mixins.nexus_fs_oauth.get_tenant_id") as mock_get_tenant:
             mock_get_tenant.return_value = "acme_corp"
 
             await mock_oauth_mixin.oauth_list_credentials(context=context)

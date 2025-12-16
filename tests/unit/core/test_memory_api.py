@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.local import LocalBackend
 from nexus.core.entity_registry import EntityRegistry
-from nexus.core.memory_api import Memory
+from nexus.core.memory.memory_api import Memory
 from nexus.storage.models import Base
 
 
@@ -230,7 +230,7 @@ class TestPhase5BackwardCompatibility:
 
     def test_agent_scoped_memory_isolation(self, session, backend, entity_registry):
         """Test that agent-scoped memories with restrictive permissions are isolated."""
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.core.memory.memory_router import MemoryViewRouter
 
         _memory_api1 = Memory(
             session=session,

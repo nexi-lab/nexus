@@ -443,7 +443,7 @@ class TestPermissionBenchmarks:
     def test_permission_check_bulk_python(self, benchmark, benchmark_nexus):
         """Benchmark bulk permission checking in Python."""
         # Import the Python implementation
-        from nexus.core.rebac_fast import _check_permissions_bulk_python
+        from nexus.core.rebac.rebac_fast import _check_permissions_bulk_python
 
         # Create test data
         checks = [(("user", f"user_{i}"), "read", ("file", f"/file_{i}.txt")) for i in range(100)]
@@ -475,7 +475,7 @@ class TestPermissionBenchmarks:
 
     def test_permission_check_bulk_rust(self, benchmark, benchmark_nexus):
         """Benchmark bulk permission checking in Rust (if available)."""
-        from nexus.core.rebac_fast import RUST_AVAILABLE, check_permissions_bulk_with_fallback
+        from nexus.core.rebac.rebac_fast import RUST_AVAILABLE, check_permissions_bulk_with_fallback
 
         # Create test data
         checks = [(("user", f"user_{i}"), "read", ("file", f"/file_{i}.txt")) for i in range(100)]
@@ -515,7 +515,7 @@ class TestPermissionBenchmarks:
 
     def test_permission_check_scale_1000(self, benchmark, benchmark_nexus):
         """Benchmark 1000 permission checks."""
-        from nexus.core.rebac_fast import check_permissions_bulk_with_fallback
+        from nexus.core.rebac.rebac_fast import check_permissions_bulk_with_fallback
 
         checks = [(("user", f"user_{i}"), "read", ("file", f"/file_{i}.txt")) for i in range(1000)]
 
@@ -661,7 +661,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_tiny_content(self, benchmark):
         """Benchmark hashing tiny content (13 bytes)."""
-        from nexus.core.hash_fast import hash_content
+        from nexus.core.fast.hash_fast import hash_content
 
         content = b"Hello, World!"
 
@@ -670,7 +670,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_1kb_content(self, benchmark):
         """Benchmark hashing 1 KB content."""
-        from nexus.core.hash_fast import hash_content
+        from nexus.core.fast.hash_fast import hash_content
 
         content = b"x" * 1024
 
@@ -679,7 +679,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_64kb_content(self, benchmark):
         """Benchmark hashing 64 KB content."""
-        from nexus.core.hash_fast import hash_content
+        from nexus.core.fast.hash_fast import hash_content
 
         content = b"x" * (64 * 1024)
 
@@ -688,7 +688,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_1mb_content(self, benchmark):
         """Benchmark hashing 1 MB content."""
-        from nexus.core.hash_fast import hash_content
+        from nexus.core.fast.hash_fast import hash_content
 
         content = b"x" * (1024 * 1024)
 
@@ -697,7 +697,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_10mb_content(self, benchmark):
         """Benchmark hashing 10 MB content."""
-        from nexus.core.hash_fast import hash_content
+        from nexus.core.fast.hash_fast import hash_content
 
         content = b"x" * (10 * 1024 * 1024)
 
@@ -706,7 +706,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_smart_256kb_content(self, benchmark):
         """Benchmark smart hashing 256 KB content (threshold)."""
-        from nexus.core.hash_fast import hash_content_smart
+        from nexus.core.fast.hash_fast import hash_content_smart
 
         content = b"x" * (256 * 1024)
 
@@ -715,7 +715,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_smart_1mb_content(self, benchmark):
         """Benchmark smart hashing 1 MB content (uses sampling)."""
-        from nexus.core.hash_fast import hash_content_smart
+        from nexus.core.fast.hash_fast import hash_content_smart
 
         content = b"x" * (1024 * 1024)
 
@@ -724,7 +724,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_hash_smart_10mb_content(self, benchmark):
         """Benchmark smart hashing 10 MB content (uses sampling)."""
-        from nexus.core.hash_fast import hash_content_smart
+        from nexus.core.fast.hash_fast import hash_content_smart
 
         content = b"x" * (10 * 1024 * 1024)
 
@@ -753,7 +753,7 @@ class TestBlake3HashingBenchmarks:
 
     def test_rust_availability(self):
         """Check if Rust acceleration is available."""
-        from nexus.core.hash_fast import is_rust_available
+        from nexus.core.fast.hash_fast import is_rust_available
 
         available = is_rust_available()
         print(f"\n[INFO] Rust BLAKE3 acceleration: {'AVAILABLE' if available else 'NOT AVAILABLE'}")

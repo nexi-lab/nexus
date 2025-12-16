@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.core.workspace_registry import (
+from nexus.core.workspace.workspace_registry import (
     MemoryConfig,
     WorkspaceConfig,
     WorkspaceRegistry,
@@ -125,7 +125,7 @@ class TestWorkspaceRegistry:
     @pytest.fixture
     def registry(self, mock_metadata: MagicMock) -> WorkspaceRegistry:
         """Create registry instance with mocked metadata."""
-        with patch("nexus.core.workspace_registry.WorkspaceRegistry._load_from_db"):
+        with patch("nexus.core.workspace.workspace_registry.WorkspaceRegistry._load_from_db"):
             reg = WorkspaceRegistry(mock_metadata)
             reg._workspaces = {}
             reg._memories = {}
@@ -133,7 +133,7 @@ class TestWorkspaceRegistry:
 
     def test_init(self, mock_metadata: MagicMock) -> None:
         """Test registry initialization."""
-        with patch("nexus.core.workspace_registry.WorkspaceRegistry._load_from_db"):
+        with patch("nexus.core.workspace.workspace_registry.WorkspaceRegistry._load_from_db"):
             registry = WorkspaceRegistry(mock_metadata)
             assert registry.metadata == mock_metadata
             assert registry.rebac_manager is None

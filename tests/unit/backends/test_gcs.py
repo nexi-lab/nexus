@@ -6,7 +6,7 @@ import pytest
 
 from nexus.backends.gcs import GCSBackend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.hash_fast import hash_content
+from nexus.core.fast.hash_fast import hash_content
 
 
 @pytest.fixture

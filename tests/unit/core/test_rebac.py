@@ -17,8 +17,8 @@ import pytest
 from freezegun import freeze_time
 from sqlalchemy import create_engine
 
-from nexus.core.rebac import Entity, NamespaceConfig
-from nexus.core.rebac_manager import ReBACManager
+from nexus.core.rebac.rebac import Entity, NamespaceConfig
+from nexus.core.rebac.rebac_manager import ReBACManager
 from nexus.storage.models import Base
 
 
@@ -863,7 +863,7 @@ def test_dynamic_viewer_column_config(rebac_manager):
     assert tuple_id is not None, "Should create dynamic_viewer tuple"
 
     # Verify the tuple was created by listing
-    from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
+    from nexus.core.mixins.nexus_fs_rebac import NexusFSReBACMixin
 
     # Create a minimal mock that has the required attributes
     class MockNexusFS(NexusFSReBACMixin):
@@ -908,7 +908,7 @@ def test_dynamic_viewer_aggregation_single_value(rebac_manager):
     assert tuple_id is not None
 
     # Verify retrieval
-    from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
+    from nexus.core.mixins.nexus_fs_rebac import NexusFSReBACMixin
 
     class MockNexusFS(NexusFSReBACMixin):
         def __init__(self, rebac_manager):
@@ -928,7 +928,7 @@ def test_dynamic_viewer_aggregation_single_value(rebac_manager):
 
 def test_dynamic_viewer_no_config_returns_none(rebac_manager):
     """Test that get_dynamic_viewer_config returns None when no config exists."""
-    from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
+    from nexus.core.mixins.nexus_fs_rebac import NexusFSReBACMixin
 
     class MockNexusFS(NexusFSReBACMixin):
         def __init__(self, rebac_manager):

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.core.exceptions import NexusPermissionError
-from nexus.core.workspace_manager import WorkspaceManager
+from nexus.core.workspace.workspace_manager import WorkspaceManager
 from nexus.storage.models import WorkspaceSnapshotModel
 
 

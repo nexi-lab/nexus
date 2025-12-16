@@ -511,7 +511,7 @@ class TestStep5ProcessContent:
 
     def test_skip_unchanged_content(self, connector, test_context):
         """Test that unchanged content (matching hash) is skipped."""
-        from nexus.core.hash_fast import hash_content
+        from nexus.core.fast.hash_fast import hash_content
 
         content = b"unchanged content"
         content_hash = hash_content(content)

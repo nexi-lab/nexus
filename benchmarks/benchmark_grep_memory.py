@@ -5,7 +5,7 @@ import time
 
 import psutil
 
-from nexus.core.grep_fast import grep_bulk
+from nexus.core.fast.grep_fast import grep_bulk
 
 
 def test_grep_memory_usage():

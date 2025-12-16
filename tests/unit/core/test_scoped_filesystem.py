@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
-from nexus.core.scoped_filesystem import ScopedFilesystem
+from nexus.core.sync.scoped_filesystem import ScopedFilesystem
 
 
 @pytest.fixture

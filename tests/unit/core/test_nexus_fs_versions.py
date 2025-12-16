@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from nexus.core.exceptions import NexusFileNotFoundError
-from nexus.core.nexus_fs_versions import NexusFSVersionsMixin
+from nexus.core.mixins.nexus_fs_versions import NexusFSVersionsMixin
 
 
 class TestNexusFSVersions:

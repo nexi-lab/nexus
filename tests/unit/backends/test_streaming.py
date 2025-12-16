@@ -8,7 +8,7 @@ import pytest
 from nexus.backends.backend import Backend
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.local import LocalBackend
-from nexus.core.hash_fast import create_hasher, hash_content
+from nexus.core.fast.hash_fast import create_hasher, hash_content
 
 
 class TestBackendWriteStreamDefault:

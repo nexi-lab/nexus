@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS
+from nexus.core.rebac.rebac import CROSS_TENANT_ALLOWED_RELATIONS
 from nexus.core.rebac_manager_tenant_aware import TenantAwareReBACManager, TenantIsolationError
 from nexus.storage.models import Base
 
@@ -368,7 +368,7 @@ class TestCrossTenantRustPathFix:
 
     def test_fetch_tuples_for_rust_includes_cross_tenant(self, enhanced_manager):
         """Test that _fetch_tuples_for_rust includes cross-tenant tuples."""
-        from nexus.core.rebac import Entity
+        from nexus.core.rebac.rebac import Entity
 
         # Create cross-tenant share: partner-tenant user gets access to acme-tenant file
         enhanced_manager.rebac_write(
@@ -432,7 +432,7 @@ class TestCrossTenantPermissionExpansion:
     @pytest.fixture
     def manager_with_namespace(self, engine):
         """Create manager with file namespace for permission expansion."""
-        from nexus.core.rebac import DEFAULT_FILE_NAMESPACE
+        from nexus.core.rebac.rebac import DEFAULT_FILE_NAMESPACE
 
         manager = TenantAwareReBACManager(
             engine=engine,

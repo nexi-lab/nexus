@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
-from nexus.core.nexus_fs_mounts import MetadataSyncResult, SyncMountContext
+from nexus.core.mixins.nexus_fs_mounts import MetadataSyncResult, SyncMountContext
 from nexus.core.permissions import OperationContext
 
 

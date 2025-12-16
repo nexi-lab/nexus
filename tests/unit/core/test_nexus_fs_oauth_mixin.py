@@ -590,7 +590,7 @@ class TestGetPkceVerifier:
     def test_get_pkce_verifier_from_cache(self, nx: NexusFS) -> None:
         """Test getting PKCE verifier from cache."""
         # Store in cache
-        from nexus.core.nexus_fs_oauth import _pkce_cache
+        from nexus.core.mixins.nexus_fs_oauth import _pkce_cache
 
         _pkce_cache["state-123"] = {"code_verifier": "cached-verifier"}
 

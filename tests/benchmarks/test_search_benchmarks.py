@@ -127,13 +127,13 @@ class TestRustGrepBenchmarks:
 
     def test_rust_grep_available(self):
         """Check if Rust grep is available."""
-        from nexus.core.grep_fast import RUST_AVAILABLE
+        from nexus.core.fast.grep_fast import RUST_AVAILABLE
 
         print(f"\n[INFO] Rust grep available: {RUST_AVAILABLE}")
 
     def test_rust_grep_1k_lines(self, benchmark):
         """Benchmark Rust grep in 1K lines."""
-        from nexus.core.grep_fast import RUST_AVAILABLE, grep_bulk
+        from nexus.core.fast.grep_fast import RUST_AVAILABLE, grep_bulk
 
         content = generate_log_content(1000)
         file_contents = {"/test.log": content}
@@ -161,7 +161,7 @@ class TestRustGrepBenchmarks:
 
     def test_rust_grep_10k_lines(self, benchmark):
         """Benchmark Rust grep in 10K lines."""
-        from nexus.core.grep_fast import grep_bulk
+        from nexus.core.fast.grep_fast import grep_bulk
 
         content = generate_log_content(10000)
         file_contents = {"/test.log": content}
@@ -182,7 +182,7 @@ class TestRustGrepBenchmarks:
 
     def test_rust_grep_multiple_files(self, benchmark):
         """Benchmark Rust grep across multiple files."""
-        from nexus.core.grep_fast import grep_bulk
+        from nexus.core.fast.grep_fast import grep_bulk
 
         # Create 10 files with 1K lines each
         file_contents = {f"/file_{i}.log": generate_log_content(1000) for i in range(10)}
@@ -204,7 +204,7 @@ class TestRustGrepBenchmarks:
 
     def test_rust_grep_regex_pattern(self, benchmark):
         """Benchmark Rust grep with regex pattern."""
-        from nexus.core.grep_fast import grep_bulk
+        from nexus.core.fast.grep_fast import grep_bulk
 
         content = generate_code_content(5000)
         file_contents = {"/code.py": content}
@@ -228,7 +228,7 @@ class TestRustGrepBenchmarks:
 
     def test_rust_grep_case_insensitive(self, benchmark):
         """Benchmark Rust grep with case-insensitive search."""
-        from nexus.core.grep_fast import grep_bulk
+        from nexus.core.fast.grep_fast import grep_bulk
 
         content = generate_log_content(5000)
         file_contents = {"/test.log": content}
@@ -287,7 +287,7 @@ class TestGlobPatternBenchmarks:
 
     def test_rust_glob_simple(self, benchmark):
         """Benchmark Rust glob for simple patterns (if available)."""
-        from nexus.core.glob_fast import RUST_AVAILABLE, glob_match_bulk
+        from nexus.core.fast.glob_fast import RUST_AVAILABLE, glob_match_bulk
 
         paths = [f"/dir/file_{i:04d}.txt" for i in range(1000)]
         paths += [f"/dir/file_{i:04d}.py" for i in range(1000)]
@@ -310,7 +310,7 @@ class TestGlobPatternBenchmarks:
 
     def test_rust_glob_multiple_patterns(self, benchmark):
         """Benchmark Rust glob with multiple patterns."""
-        from nexus.core.glob_fast import glob_match_bulk
+        from nexus.core.fast.glob_fast import glob_match_bulk
 
         paths = [f"/dir/file_{i:04d}.txt" for i in range(500)]
         paths += [f"/dir/file_{i:04d}.py" for i in range(500)]
@@ -332,7 +332,7 @@ class TestGlobPatternBenchmarks:
 
     def test_rust_glob_recursive_pattern(self, benchmark):
         """Benchmark Rust glob with recursive pattern (**/*)."""
-        from nexus.core.glob_fast import glob_match_bulk
+        from nexus.core.fast.glob_fast import glob_match_bulk
 
         # Generate paths with directory structure
         paths = []

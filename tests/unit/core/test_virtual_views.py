@@ -1,6 +1,6 @@
 """Tests for virtual views functionality."""
 
-from nexus.core.virtual_views import (
+from nexus.core.workspace.virtual_views import (
     add_virtual_views_to_listing,
     get_parsed_content,
     parse_virtual_path,

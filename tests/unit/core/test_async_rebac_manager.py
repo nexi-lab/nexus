@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.async_rebac_manager import (
+from nexus.core.rebac.async_rebac_manager import (
     AsyncReBACManager,
     create_async_engine_from_url,
 )

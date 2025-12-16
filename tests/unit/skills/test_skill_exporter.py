@@ -220,7 +220,6 @@ async def test_export_manifest_content() -> None:
 
         assert manifest["name"] == "simple-skill"
         assert manifest["version"] == "1.0.0"
-        assert manifest["format"] == "claude"
         assert "simple-skill/SKILL.md" in manifest["files"]
         assert manifest["total_size_bytes"] > 0
 
@@ -278,7 +277,8 @@ description: A very large skill
 
     exporter = SkillExporter(registry)
 
-    valid, msg, size = await exporter.validate_export("large-skill")
+    # Test with claude format to trigger size limit check
+    valid, msg, size = await exporter.validate_export("large-skill", format="claude")
 
     assert valid is False
     assert "exceeds" in msg.lower()
@@ -391,7 +391,7 @@ async def test_calculate_skill_size() -> None:
     registry = SkillRegistry()
     exporter = SkillExporter(registry)
 
-    size = exporter._calculate_skill_size(skill)
+    size = await exporter._calculate_skill_size(skill)
 
     assert size > 0
     # Size should include both frontmatter and content

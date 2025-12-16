@@ -40,7 +40,7 @@ USER nexus
             image="nexus-sandbox-ml:latest", dockerfile_override=dockerfile_content
         )
 
-        assert template.image == "nexus-runtime-ml:latest"
+        assert template.image == "nexus-sandbox-ml:latest"
         assert template.dockerfile is None
         assert template.dockerfile_override == dockerfile_content
 
@@ -95,7 +95,7 @@ class TestDockerTemplateConfig:
         )
 
         assert "base" in config.templates
-        assert config.templates["base"].image == "nexus-runtime:latest"
+        assert config.templates["base"].image == "nexus-sandbox:latest"
 
     def test_config_with_multiple_templates(self):
         """Test config with multiple templates."""

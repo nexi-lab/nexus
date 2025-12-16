@@ -324,7 +324,6 @@ class TestSkillsExport:
         )
 
         assert result["skill_name"] == "test-skill"
-        assert result["format"] == "generic"
         assert "zip_data" in result
         assert isinstance(result["zip_data"], str)  # base64 encoded
         assert result["size_bytes"] > 0

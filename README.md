@@ -124,7 +124,7 @@ nexus memory store "Important fact" --type fact
 
 **Infrastructure Layer**: OAuth, ReBAC permissions engine, FUSE mounting, RAG pipelines.
 
-**Cache Layer**: Vector store for embeddings, ReBAC tuples for fast permission checks, metadata cache.
+**Cache Layer**: L1 in-memory cache and L2 PostgreSQL cache for vector embeddings, ReBAC tuples, and metadata.
 
 **Connectors**: X/Twitter, MCP servers, Gmail, Local FS, GCS, Google Drive, AWS S3, and custom connectors.
 

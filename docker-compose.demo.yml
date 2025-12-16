@@ -2,8 +2,8 @@
 # Complete stack: PostgreSQL + Nexus + LangGraph + MCP + Frontend
 #
 # Usage:
-#   ./docker-start.sh                    # Start with local environment
-#   ./docker-start.sh --env=production   # Start with production environment
+#   ./docker-demo.sh                    # Start with local environment
+#   ./docker-demo.sh --env=production   # Start with production environment
 #
 # Or directly with docker compose:
 #   docker compose -f docker-compose.demo.yml up          # Start all services
@@ -11,7 +11,7 @@
 #   docker compose -f docker-compose.demo.yml down        # Stop all services
 #   docker compose -f docker-compose.demo.yml logs -f     # View logs
 #
-# Environment Files (loaded by docker-start.sh):
+# Environment Files (loaded by docker-demo.sh):
 #   Local mode:      .env.local (or .env) + nexus-frontend/.env.local
 #   Production mode: .env.production + .env.production.secrets + nexus-frontend/.env.production
 #

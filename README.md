@@ -2,7 +2,8 @@
 
 The AI-native filesystem for cognitive agents.
 
-[![Watch the demo](https://img.youtube.com/vi/VIDEO_ID/0.jpg)](https://youtu.be/bPVQ78Y7Xw4)
+[![Watch the demo](docs/images/frontpage.png)](https://youtu.be/bPVQ78Y7Xw4)
+
 ⚠️ **Beta**: Nexus is under active development. APIs may change.
 
 ## 🎯 What is Nexus?

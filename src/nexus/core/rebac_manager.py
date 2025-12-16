@@ -3264,6 +3264,10 @@ class ReBACManager:
                 "owner",
                 "editor",
                 "viewer",
+                # Cross-tenant sharing relations (PR #647)
+                "shared-viewer",
+                "shared-editor",
+                "shared-owner",
             ):
                 # Invalidate all cache entries for paths that are children of this object
                 # Match object_id that starts with obj.entity_id/ (children)

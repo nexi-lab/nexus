@@ -11,8 +11,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.core.entity_registry import EntityRegistry
+from nexus.core.memory.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.core.memory.memory_router import MemoryViewRouter
-from nexus.core.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.core.permissions import OperationContext, Permission
 from nexus.storage.models import Base
 

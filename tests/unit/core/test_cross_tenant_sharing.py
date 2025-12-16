@@ -14,7 +14,10 @@ import pytest
 from sqlalchemy import create_engine
 
 from nexus.core.rebac.rebac import CROSS_TENANT_ALLOWED_RELATIONS
-from nexus.core.rebac_manager_tenant_aware import TenantAwareReBACManager, TenantIsolationError
+from nexus.core.rebac.rebac_manager_tenant_aware import (
+    TenantAwareReBACManager,
+    TenantIsolationError,
+)
 from nexus.storage.models import Base
 
 

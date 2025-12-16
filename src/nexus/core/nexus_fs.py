@@ -226,14 +226,16 @@ class NexusFS(
             # Use explicitly configured providers
             configs = []
             for p in parse_providers:
-                configs.append(ProviderConfig(
-                    name=p.get("name", "unknown"),
-                    enabled=p.get("enabled", True),
-                    priority=p.get("priority", 50),
-                    api_key=p.get("api_key"),
-                    api_url=p.get("api_url"),
-                    supported_formats=p.get("supported_formats"),
-                ))
+                configs.append(
+                    ProviderConfig(
+                        name=p.get("name", "unknown"),
+                        enabled=p.get("enabled", True),
+                        priority=p.get("priority", 50),
+                        api_key=p.get("api_key"),
+                        api_url=p.get("api_url"),
+                        supported_formats=p.get("supported_formats"),
+                    )
+                )
             self.provider_registry.auto_discover(configs)
         else:
             # Auto-discover from environment

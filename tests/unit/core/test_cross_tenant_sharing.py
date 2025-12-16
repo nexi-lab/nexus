@@ -390,15 +390,12 @@ class TestCrossTenantRustPathFix:
         cross_tenant_tuples = [
             t
             for t in tuples
-            if t["relation"] == "shared-editor"
-            and t["subject_id"] == "bob@partner.com"
+            if t["relation"] == "shared-editor" and t["subject_id"] == "bob@partner.com"
         ]
         assert len(cross_tenant_tuples) == 1
         assert cross_tenant_tuples[0]["object_id"] == "/acme/doc.txt"
 
-    def test_fetch_tuples_for_rust_without_subject_excludes_cross_tenant(
-        self, enhanced_manager
-    ):
+    def test_fetch_tuples_for_rust_without_subject_excludes_cross_tenant(self, enhanced_manager):
         """Test that _fetch_tuples_for_rust without subject excludes cross-tenant."""
         # Create cross-tenant share
         enhanced_manager.rebac_write(
@@ -417,8 +414,7 @@ class TestCrossTenantRustPathFix:
         cross_tenant_tuples = [
             t
             for t in tuples
-            if t["relation"] == "shared-editor"
-            and t["subject_id"] == "bob@partner.com"
+            if t["relation"] == "shared-editor" and t["subject_id"] == "bob@partner.com"
         ]
         assert len(cross_tenant_tuples) == 0
 

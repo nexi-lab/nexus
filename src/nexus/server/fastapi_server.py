@@ -359,9 +359,7 @@ def create_app(
         if hasattr(nexus_fs, "metadata") and hasattr(nexus_fs.metadata, "SessionLocal"):
             from nexus.server.subscriptions import SubscriptionManager
 
-            _app_state.subscription_manager = SubscriptionManager(
-                nexus_fs.metadata.SessionLocal
-            )
+            _app_state.subscription_manager = SubscriptionManager(nexus_fs.metadata.SessionLocal)
             # Inject into NexusFS for automatic event broadcasting
             nexus_fs.subscription_manager = _app_state.subscription_manager
             logger.info("Subscription manager initialized and injected into NexusFS")
@@ -802,7 +800,11 @@ async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any
     # For parsed reads, we need to handle async parsing
     # First, read the raw content
     raw_result = await asyncio.to_thread(
-        nexus_fs.read, params.path, context, True, False  # return_metadata=True, parsed=False
+        nexus_fs.read,
+        params.path,
+        context,
+        True,
+        False,  # return_metadata=True, parsed=False
     )
 
     content = raw_result.get("content", b"") if isinstance(raw_result, dict) else raw_result

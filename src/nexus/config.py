@@ -443,30 +443,36 @@ def _load_from_environment() -> NexusConfig:
     # Check for Unstructured.io
     unstructured_key = os.getenv("UNSTRUCTURED_API_KEY")
     if unstructured_key:
-        parse_providers.append({
-            "name": "unstructured",
-            "priority": 100,
-            "api_key": unstructured_key,
-            "api_url": os.getenv(
-                "UNSTRUCTURED_WORKFLOW_ENDPOINT",
-                "https://api.unstructuredapp.io/general/v0/general"
-            ),
-        })
+        parse_providers.append(
+            {
+                "name": "unstructured",
+                "priority": 100,
+                "api_key": unstructured_key,
+                "api_url": os.getenv(
+                    "UNSTRUCTURED_WORKFLOW_ENDPOINT",
+                    "https://api.unstructuredapp.io/general/v0/general",
+                ),
+            }
+        )
 
     # Check for LlamaParse
     llamaparse_key = os.getenv("LLAMA_CLOUD_API_KEY")
     if llamaparse_key:
-        parse_providers.append({
-            "name": "llamaparse",
-            "priority": 90,
-            "api_key": llamaparse_key,
-        })
+        parse_providers.append(
+            {
+                "name": "llamaparse",
+                "priority": 90,
+                "api_key": llamaparse_key,
+            }
+        )
 
     # Always add MarkItDown as fallback (no API key needed)
-    parse_providers.append({
-        "name": "markitdown",
-        "priority": 10,
-    })
+    parse_providers.append(
+        {
+            "name": "markitdown",
+            "priority": 10,
+        }
+    )
 
     if parse_providers:
         env_config["parse_providers"] = parse_providers

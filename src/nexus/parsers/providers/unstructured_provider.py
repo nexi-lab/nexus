@@ -275,10 +275,12 @@ class UnstructuredProvider(ParseProvider):
 
             if element_type in ("Title", "Header"):
                 level = 1 if element_type == "Title" else 2
-                headings.append({
-                    "level": level,
-                    "text": element.get("text", ""),
-                })
+                headings.append(
+                    {
+                        "level": level,
+                        "text": element.get("text", ""),
+                    }
+                )
 
         return {
             "headings": headings,

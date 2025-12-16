@@ -256,7 +256,9 @@ class SubscriptionManager:
         Returns:
             Number of webhooks triggered
         """
-        logger.debug(f"broadcast() called: event={event_type}, tenant={tenant_id}, path={data.get('file_path', 'N/A')}")
+        logger.debug(
+            f"broadcast() called: event={event_type}, tenant={tenant_id}, path={data.get('file_path', 'N/A')}"
+        )
 
         # Get matching subscriptions
         try:
@@ -274,9 +276,7 @@ class SubscriptionManager:
         for sub in subscriptions:
             event_id = f"evt_{uuid.uuid4().hex[:16]}"
             tasks.append(
-                asyncio.create_task(
-                    self._deliver_webhook(sub, event_type, data, event_id)
-                )
+                asyncio.create_task(self._deliver_webhook(sub, event_type, data, event_id))
             )
 
         # Wait for all deliveries (with timeout to not block)
@@ -467,9 +467,7 @@ class SubscriptionManager:
                 await asyncio.sleep(RETRY_DELAYS[attempt])
 
         # All retries failed
-        self._update_delivery_status(
-            subscription.id, success=False, error=last_error
-        )
+        self._update_delivery_status(subscription.id, success=False, error=last_error)
         return False
 
     def _compute_signature(self, subscription_id: str, payload: bytes) -> str | None:
@@ -573,9 +571,7 @@ class SubscriptionManager:
         }
 
         event_id = f"evt_test_{uuid.uuid4().hex[:8]}"
-        success = await self._deliver_webhook(
-            subscription, "file_write", test_data, event_id
-        )
+        success = await self._deliver_webhook(subscription, "file_write", test_data, event_id)
 
         return {
             "success": success,

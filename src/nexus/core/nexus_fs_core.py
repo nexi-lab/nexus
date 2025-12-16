@@ -181,7 +181,9 @@ class NexusFSCoreMixin:
                 parse_info["cached"] = True
                 parse_info["provider"] = self.metadata.get_file_metadata(path, "parser_name")
                 logger.debug(f"Using cached parsed_text for {path}")
-                return cached_text.encode("utf-8") if isinstance(cached_text, str) else cached_text, parse_info
+                return cached_text.encode("utf-8") if isinstance(
+                    cached_text, str
+                ) else cached_text, parse_info
 
             # No cache - parse on demand using provider registry
             if not hasattr(self, "provider_registry") or self.provider_registry is None:
@@ -207,7 +209,9 @@ class NexusFSCoreMixin:
                         from datetime import UTC, datetime
 
                         self.metadata.set_file_metadata(path, "parsed_text", result.text)
-                        self.metadata.set_file_metadata(path, "parsed_at", datetime.now(UTC).isoformat())
+                        self.metadata.set_file_metadata(
+                            path, "parsed_at", datetime.now(UTC).isoformat()
+                        )
                         self.metadata.set_file_metadata(path, "parser_name", provider.name)
                     except Exception as cache_err:
                         logger.warning(f"Failed to cache parsed content for {path}: {cache_err}")
@@ -223,9 +227,7 @@ class NexusFSCoreMixin:
 
         return content, parse_info
 
-    def _get_parsed_content(
-        self, path: str, content: bytes
-    ) -> tuple[bytes, dict[str, Any]]:
+    def _get_parsed_content(self, path: str, content: bytes) -> tuple[bytes, dict[str, Any]]:
         """Get parsed content for a file (sync version).
 
         First checks for cached parsed_text in metadata, then parses on-demand if needed.
@@ -250,11 +252,9 @@ class NexusFSCoreMixin:
             # We're in an async context - can't use asyncio.run
             # Use nest_asyncio or run in thread
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    self._get_parsed_content_async(path, content)
-                )
+                future = executor.submit(asyncio.run, self._get_parsed_content_async(path, content))
                 return future.result()
         except RuntimeError:
             # No running loop - we can create one
@@ -1335,7 +1335,9 @@ class NexusFSCoreMixin:
                 logger = logging.getLogger(__name__)
 
                 def run_workflow() -> None:
-                    logger.debug(f"run_workflow thread started for {event_context.get('file_path')}")
+                    logger.debug(
+                        f"run_workflow thread started for {event_context.get('file_path')}"
+                    )
                     try:
                         asyncio.run(
                             self.workflow_engine.fire_event(  # type: ignore[attr-defined]
@@ -1344,16 +1346,22 @@ class NexusFSCoreMixin:
                         )
                         # v0.8.0: Also broadcast to webhook subscriptions
                         if self.subscription_manager:  # type: ignore[attr-defined]
-                            logger.debug(f"Broadcasting file_write for {event_context.get('file_path')}")
+                            logger.debug(
+                                f"Broadcasting file_write for {event_context.get('file_path')}"
+                            )
                             asyncio.run(
                                 self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                                    "file_write", event_context, event_context.get("tenant_id", "default")
+                                    "file_write",
+                                    event_context,
+                                    event_context.get("tenant_id", "default"),
                                 )
                             )
                         else:
                             logger.debug("subscription_manager not set")
                     except Exception as e:
-                        logger.error(f"Workflow/subscription error for {event_context.get('file_path')}: {e}")
+                        logger.error(
+                            f"Workflow/subscription error for {event_context.get('file_path')}: {e}"
+                        )
 
                 thread = threading.Thread(target=run_workflow, daemon=True)
                 thread.start()
@@ -1865,11 +1873,15 @@ class NexusFSCoreMixin:
                         if self.subscription_manager:  # type: ignore[attr-defined]
                             asyncio.run(
                                 self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                                    "file_delete", event_context, event_context.get("tenant_id", "default")
+                                    "file_delete",
+                                    event_context,
+                                    event_context.get("tenant_id", "default"),
                                 )
                             )
                     except Exception as e:
-                        logger.error(f"Delete event error for {event_context.get('file_path')}: {e}")
+                        logger.error(
+                            f"Delete event error for {event_context.get('file_path')}: {e}"
+                        )
 
                 threading.Thread(target=run_delete_events, daemon=True).start()
 
@@ -2109,7 +2121,9 @@ class NexusFSCoreMixin:
                         if self.subscription_manager:  # type: ignore[attr-defined]
                             asyncio.run(
                                 self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                                    "file_rename", event_context, event_context.get("tenant_id", "default")
+                                    "file_rename",
+                                    event_context,
+                                    event_context.get("tenant_id", "default"),
                                 )
                             )
                     except Exception as e:

@@ -636,9 +636,7 @@ class TenantAwareReBACManager(ReBACManager):
                 row = cursor.fetchone()
                 count = row["count"]
                 if count > 0:
-                    logger.debug(
-                        f"Cross-tenant share found: {subject} -> {relation} -> {obj}"
-                    )
+                    logger.debug(f"Cross-tenant share found: {subject} -> {relation} -> {obj}")
                     return True
 
             # Check 3: Userset-as-subject grants (P0 SECURITY FIX!)

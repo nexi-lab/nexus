@@ -723,7 +723,12 @@ class ReBACManager:
             # where the permission is granted in resource tenant but checked from user tenant.
             if subject_tenant_id is not None and subject_tenant_id != tenant_id:
                 self._invalidate_cache_for_tuple(
-                    subject_entity, relation, object_entity, subject_tenant_id, subject_relation, expires_at
+                    subject_entity,
+                    relation,
+                    object_entity,
+                    subject_tenant_id,
+                    subject_relation,
+                    expires_at,
                 )
 
         return tuple_id

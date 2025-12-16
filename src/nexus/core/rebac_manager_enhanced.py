@@ -559,9 +559,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             # Cache the result
             self._cache_tenant_tuples(tenant_id, tuples)
-            logger.debug(
-                f"[GRAPH-CACHE] Cached {len(tuples)} tuples for tenant {tenant_id}"
-            )
+            logger.debug(f"[GRAPH-CACHE] Cached {len(tuples)} tuples for tenant {tenant_id}")
 
         # CROSS-TENANT FIX: Always fetch cross-tenant shares fresh (small, indexed query)
         # Cross-tenant shares are stored in the resource owner's tenant but need
@@ -648,9 +646,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             return tuples
 
-    def _fetch_cross_tenant_shares(
-        self, tenant_id: str, subject: Entity
-    ) -> list[dict[str, Any]]:
+    def _fetch_cross_tenant_shares(self, tenant_id: str, subject: Entity) -> list[dict[str, Any]]:
         """Fetch cross-tenant shares for a subject.
 
         Cross-tenant shares are stored in the resource owner's tenant but need
@@ -683,7 +679,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     """
                 ),
                 tuple(cross_tenant_relations)
-                + (subject.entity_type, subject.entity_id, tenant_id, datetime.now(UTC).isoformat()),
+                + (
+                    subject.entity_type,
+                    subject.entity_id,
+                    tenant_id,
+                    datetime.now(UTC).isoformat(),
+                ),
             )
 
             tuples = []
@@ -789,9 +790,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
             cursor.execute(
-                self._fix_sql_placeholders(
-                    "SELECT tenant_id FROM rebac_tuples WHERE tuple_id = ?"
-                ),
+                self._fix_sql_placeholders("SELECT tenant_id FROM rebac_tuples WHERE tuple_id = ?"),
                 (tuple_id,),
             )
             row = cursor.fetchone()
@@ -1750,9 +1749,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     """
                 )
                 cross_tenant_params = (
-                    list(cross_tenant_relations)
-                    + subject_params
-                    + [datetime.now(UTC).isoformat()]
+                    list(cross_tenant_relations) + subject_params + [datetime.now(UTC).isoformat()]
                 )
                 cursor.execute(cross_tenant_query, cross_tenant_params)
 
@@ -2033,9 +2030,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         # Fetch all relevant tuples for this tenant
         # This includes direct relations, group memberships, etc.
         # CROSS-TENANT FIX: Include cross-tenant shares where this user is the recipient
-        tuples = self._fetch_tuples_for_tenant(
-            tenant_id, include_cross_tenant_for_user=subject_id
-        )
+        tuples = self._fetch_tuples_for_tenant(tenant_id, include_cross_tenant_for_user=subject_id)
         logger.debug(f"[LIST-OBJECTS] Fetched {len(tuples)} tuples for tenant {tenant_id}")
 
         # Get namespace configs
@@ -2268,9 +2263,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                                   AND subject_id = :user_id
                               )
                           )
-                    """).bindparams(
-                        bindparam("cross_tenant_relations", expanding=True)
-                    ),
+                    """).bindparams(bindparam("cross_tenant_relations", expanding=True)),
                     {
                         "tenant_id": tenant_id,
                         "now": datetime.now(UTC),

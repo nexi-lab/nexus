@@ -230,14 +230,16 @@ class TestGrepFilesTool:
         config: RunnableConfig = {"metadata": {}}
 
         with patch(
-            "nexus.tools.langgraph.nexus_tools.RemoteNexusFS", return_value=mock_nx
-        ) as mock_fs_class:
+            "nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx
+        ) as mock_get_client:
             grep_tool("test", config, state)
 
-        # Should use state context
-        mock_fs_class.assert_called_once_with(
-            server_url="http://localhost:9090", api_key="state-token"
-        )
+        # Should use state context to create client
+        mock_get_client.assert_called_once()
+        # Check that it was called with config and state
+        call_args = mock_get_client.call_args
+        assert call_args[0][0] == config  # First positional arg is config
+        assert call_args[0][1] == state  # Second positional arg is state
 
     def test_grep_missing_auth(self):
         """Test error when auth is missing."""

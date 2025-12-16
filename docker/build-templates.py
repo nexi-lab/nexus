@@ -16,7 +16,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from nexus.config import DockerTemplateConfig
-from nexus.core.docker_image_builder import DockerImageBuilder
+from nexus.core.sandbox.docker_image_builder import DockerImageBuilder
 
 logging.basicConfig(
     level=logging.INFO,

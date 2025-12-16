@@ -30,7 +30,7 @@ if "docker" not in sys.modules:
     sys.modules["docker.errors"] = docker_errors_mock
     sys.modules["docker"].errors = docker_errors_mock
 
-from nexus.core.docker_image_builder import DockerImageBuilder
+from nexus.core.sandbox.docker_image_builder import DockerImageBuilder
 
 
 @pytest.fixture

@@ -3,6 +3,7 @@
 #
 # Usage:
 #   ./docker-demo.sh                    # Start all services (detached)
+#   ./docker-demo.sh --start            # Start all services (auto-starts Docker if needed)
 #   ./docker-demo.sh --build            # Rebuild images and start
 #   ./docker-demo.sh --stop             # Stop all services
 #   ./docker-demo.sh --restart          # Restart all services
@@ -49,17 +50,44 @@ echo ""
 # ============================================
 
 check_docker() {
+    # Check if Docker binary is installed
     if ! command -v docker &> /dev/null; then
         echo "❌ Docker not found. Please install Docker:"
         echo "   https://docs.docker.com/get-docker/"
         exit 1
     fi
 
+    # Check if Docker daemon is running
     if ! docker info > /dev/null 2>&1; then
-        echo "❌ Docker is not running"
-        echo "   Please start Docker Desktop or Docker daemon"
+        echo "⚠️  Docker is not running. Attempting to start..."
+
+        # Try to start Docker based on platform
+        if command -v open >/dev/null 2>&1; then
+            # macOS - start Docker Desktop
+            open --background -a Docker || true
+        elif command -v systemctl >/dev/null 2>&1; then
+            # Linux with systemd
+            echo "   Starting Docker service..."
+            sudo systemctl start docker || true
+        fi
+
+        # Wait for Docker to become ready (up to 30 seconds)
+        echo "   Waiting for Docker to start..."
+        for i in {1..30}; do
+            if docker info >/dev/null 2>&1; then
+                echo "✅ Docker is now running"
+                return 0
+            fi
+            sleep 1
+        done
+
+        # Docker still not running after timeout
+        echo "❌ Docker failed to start automatically"
+        echo "   Please start Docker Desktop or Docker daemon manually"
         exit 1
     fi
+
+    echo "✅ Docker is running"
 }
 
 check_env_file() {
@@ -766,6 +794,7 @@ case "$COMMAND" in
         echo ""
         echo "Options:"
         echo "  (none)          Start all services (detached)"
+        echo "  --start         Start all services (auto-starts Docker if needed)"
         echo "  --build         Rebuild images and start"
         echo "  --stop          Stop all services"
         echo "  --restart       Restart all services"

@@ -69,7 +69,7 @@ COPY configs/ ./configs/
 COPY scripts/ ./scripts/
 # Include bundled skills and data assets
 COPY data/ ./data/
-COPY docker-entrypoint.sh /usr/local/bin/
+COPY scripts/deployment/docker-entrypoint.sh /usr/local/bin/
 
 # Make entrypoint executable
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

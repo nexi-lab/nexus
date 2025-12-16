@@ -255,6 +255,37 @@ EOF
     echo ""
 }
 
+ensure_skills_available() {
+    echo "📦 Ensuring default skills are available..."
+
+    # Create nexus-data directory if it doesn't exist
+    mkdir -p "./nexus-data/skills"
+
+    # Source skills directory (from nexus repo)
+    SKILLS_SOURCE="./data/skills"
+    SKILLS_TARGET="./nexus-data/skills"
+
+    # Check if skills exist in source
+    if [ -d "$SKILLS_SOURCE" ] && [ "$(ls -A $SKILLS_SOURCE/*.skill 2>/dev/null | wc -l)" -gt 0 ]; then
+        # Copy skills to target if they don't exist there
+        if [ "$(ls -A $SKILLS_TARGET/*.skill 2>/dev/null | wc -l)" -eq 0 ]; then
+            echo "  Copying skills from $SKILLS_SOURCE to $SKILLS_TARGET..."
+            cp -r "$SKILLS_SOURCE"/*.skill "$SKILLS_TARGET/" 2>/dev/null || true
+            if [ $? -eq 0 ]; then
+                echo "  ✓ Skills copied successfully"
+            else
+                echo "  ⚠️  Failed to copy some skills (this is OK if they'll be created later)"
+            fi
+        else
+            echo "  ✓ Skills already exist in nexus-data/skills/"
+        fi
+    else
+        echo "  ⚠️  Skills not found in $SKILLS_SOURCE"
+        echo "  This is OK - skills will be created by zip_default_skills.py if needed"
+    fi
+    echo ""
+}
+
 run_provisioning() {
     echo "📦 Running provisioning inside nexus-server..."
 
@@ -356,6 +387,9 @@ cmd_start() {
     echo ""
     show_services
 
+    # Ensure skills are available in nexus-data directory
+    ensure_skills_available
+
     # Start services in detached mode
     docker compose -f "$COMPOSE_FILE" up -d
 
@@ -417,6 +451,10 @@ cmd_build() {
     echo ""
 
     echo "🚀 Starting services with new images..."
+
+    # Ensure skills are available in nexus-data directory
+    ensure_skills_available
+
     docker compose -f "$COMPOSE_FILE" up -d
 
     echo ""
@@ -558,6 +596,10 @@ cmd_init() {
 
     echo ""
     echo "🚀 Step 5/5: Starting services..."
+
+    # Ensure skills are available in nexus-data directory
+    ensure_skills_available
+
     # Export SKIP_PERMISSIONS so Docker Compose can pass it to containers
     if [ "$SKIP_PERMISSIONS" = true ]; then
         export NEXUS_SKIP_PERMISSIONS=true
@@ -572,7 +614,6 @@ cmd_init() {
     cmd_status
     show_api_key
     run_provisioning
-    run_permissioning
     cmd_urls
 }
 

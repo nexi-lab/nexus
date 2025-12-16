@@ -19,7 +19,8 @@ NC='\033[0m' # No Color
 
 # Load configuration from config file
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/configs/local-dev.env"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+CONFIG_FILE="${PROJECT_ROOT}/configs/local-dev.env"
 
 if [ -f "$CONFIG_FILE" ]; then
     source "$CONFIG_FILE"
@@ -40,7 +41,7 @@ else
 fi
 
 # Set sane defaults (explicit paths, no legacy overrides)
-DEFAULT_DATA_DIR="${NEXUS_DATA_DIR:-${SCRIPT_DIR}/nexus-data-local}"
+DEFAULT_DATA_DIR="${NEXUS_DATA_DIR:-${PROJECT_ROOT}/nexus-data-local}"
 DEFAULT_POSTGRES_URL="${POSTGRES_URL:-postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}}"
 
 # Function to get data directory path
@@ -130,7 +131,7 @@ parse_args() {
 
 # Ensure core Python virtual environment exists and nexus is installed
 ensure_core_python_env() {
-    local venv_path="${SCRIPT_DIR}/.venv"
+    local venv_path="${PROJECT_ROOT}/.venv"
     local python_bin="${PYTHON:-python3}"
 
     if [ ! -d "$venv_path" ]; then
@@ -144,13 +145,13 @@ ensure_core_python_env() {
     if ! python -c "import nexus" >/dev/null 2>&1; then
         echo -e "${YELLOW}Installing nexus in editable mode (first-time setup)...${NC}"
         pip install --upgrade pip
-        pip install -e "${SCRIPT_DIR}"
+        pip install -e "${PROJECT_ROOT}"
     fi
 }
 
 # Ensure frontend deps are installed once before running dev server
 ensure_frontend_ready() {
-    local FRONTEND_DIR="${SCRIPT_DIR}/../nexus-frontend"
+    local FRONTEND_DIR="${PROJECT_ROOT}/../nexus-frontend"
     local FRONTEND_URL="${FRONTEND_REPO_URL:-https://github.com/nexi-lab/nexus-frontend.git}"
 
     if [ ! -d "$FRONTEND_DIR" ]; then
@@ -185,7 +186,7 @@ ensure_frontend_ready() {
 
 # Ensure LangGraph example env exists and dependencies are installed
 ensure_langgraph_env() {
-    local LANGGRAPH_DIR="${SCRIPT_DIR}/examples/langgraph"
+    local LANGGRAPH_DIR="${PROJECT_ROOT}/examples/langgraph"
     local python_bin="${PYTHON:-python3}"
 
     if [ ! -d "$LANGGRAPH_DIR" ]; then
@@ -206,7 +207,7 @@ ensure_langgraph_env() {
         # Ensure nexus editable install is available to langgraph
         if ! pip show nexus-ai-fs 2>/dev/null | grep -q "Editable project location"; then
             echo -e "${YELLOW}Installing nexus into LangGraph venv...${NC}"
-            pip install -e "${SCRIPT_DIR}"
+            pip install -e "${PROJECT_ROOT}"
         fi
 
         # Install langgraph example deps if not present
@@ -294,9 +295,9 @@ ensure_docker_sandbox_image() {
 
     echo -e "${YELLOW}Docker image '${image}' not found.${NC}"
     # Prefer docker/build.sh if present to build runtime image (matches docker-demo.sh)
-    if [ -x "${SCRIPT_DIR}/docker/build.sh" ]; then
+    if [ -x "${PROJECT_ROOT}/docker/build.sh" ]; then
         echo -e "${YELLOW}Building sandbox runtime via docker/build.sh ...${NC}"
-        if "${SCRIPT_DIR}/docker/build.sh"; then
+        if "${PROJECT_ROOT}/docker/build.sh"; then
             echo -e "${GREEN}✓ Built sandbox runtime image via docker/build.sh${NC}"
             docker image inspect "${image}" >/dev/null 2>&1 && return 0
             echo -e "${YELLOW}Build succeeded but image '${image}' not visible in this Docker context.${NC}"
@@ -305,13 +306,13 @@ ensure_docker_sandbox_image() {
         fi
     fi
 
-    echo -e "${YELLOW}Building '${image}' from ${SCRIPT_DIR}/Dockerfile...${NC}"
-    if docker build -t "${image}" -f "${SCRIPT_DIR}/Dockerfile" "${SCRIPT_DIR}"; then
+    echo -e "${YELLOW}Building '${image}' from ${PROJECT_ROOT}/Dockerfile...${NC}"
+    if docker build -t "${image}" -f "${PROJECT_ROOT}/Dockerfile" "${PROJECT_ROOT}"; then
         echo -e "${GREEN}✓ Built Docker image '${image}'${NC}"
     else
         echo -e "${RED}✗ Failed to build Docker image '${image}'${NC}"
         echo "  You can build manually with:"
-        echo "    docker build -t ${image} -f ${SCRIPT_DIR}/Dockerfile ${SCRIPT_DIR}"
+        echo "    docker build -t ${image} -f ${PROJECT_ROOT}/Dockerfile ${PROJECT_ROOT}"
         return 1
     fi
 
@@ -386,7 +387,7 @@ ensure_postgres_running() {
 
 # Function to start the frontend
 start_frontend() {
-    local FRONTEND_DIR="${SCRIPT_DIR}/../nexus-frontend"
+    local FRONTEND_DIR="${PROJECT_ROOT}/../nexus-frontend"
 
     ensure_frontend_ready || return 1
 
@@ -408,7 +409,7 @@ start_frontend() {
 
 # Function to start langgraph
 start_langgraph() {
-    local LANGGRAPH_DIR="${SCRIPT_DIR}/examples/langgraph"
+    local LANGGRAPH_DIR="${PROJECT_ROOT}/examples/langgraph"
 
     ensure_docker_for_langgraph
     ensure_langgraph_env || return 1
@@ -814,7 +815,7 @@ init_database() {
     if [[ "$ADMIN_API_KEY" =~ ^sk-([^_]+)_ ]]; then
         TENANT_ID="${BASH_REMATCH[1]}"
     fi
-    python3 "${SCRIPT_DIR}/scripts/setup_admin_api_key.py" "$NEXUS_DATABASE_URL" "$ADMIN_API_KEY" "$TENANT_ID"
+    python3 "${PROJECT_ROOT}/scripts/setup_admin_api_key.py" "$NEXUS_DATABASE_URL" "$ADMIN_API_KEY" "$TENANT_ID"
 
     if [ $? -ne 0 ]; then
         echo -e "${RED}✗ Failed to create admin API key${NC}"
@@ -966,13 +967,13 @@ init_database() {
 
     # Wait a moment for server to start, then run provisioning in background
     (
-        cd "$SCRIPT_DIR"
+        cd "$PROJECT_ROOT"
         sleep 5
         echo ""
         echo "📦 Running provisioning..."
         if [ -f "scripts/provision_namespace.py" ]; then
             # Activate venv in the background process
-            source "$SCRIPT_DIR/.venv/bin/activate"
+            source "$PROJECT_ROOT/.venv/bin/activate"
             # Set environment variables for embedded mode provisioning
             # Note: Provisioning uses embedded mode (not server mode) because
             # the provisioning script uses context parameters not supported by RemoteNexusFS

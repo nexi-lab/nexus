@@ -50,14 +50,14 @@ cp .env.example .env.local
 # Required: ANTHROPIC_API_KEY
 # Optional: TAVILY_API_KEY, FIRECRAWL_API_KEY, NEXUS_OAUTH_GOOGLE_CLIENT_ID, NEXUS_OAUTH_GOOGLE_CLIENT_SECRET
 
-./local-demo.sh --start
+./scripts/dev/local-demo.sh --start
 ```
 
 ### Docker Server
 
 ```bash
-./docker-demo.sh --init
-./docker-demo.sh --start
+./scripts/dev/docker-demo.sh --init
+./scripts/dev/docker-demo.sh --start
 ```
 
 ### Python SDK

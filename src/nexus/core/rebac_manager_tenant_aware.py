@@ -303,7 +303,22 @@ class TenantAwareReBACManager(ReBACManager):
             conn.commit()
 
             # Invalidate cache entries affected by this change
-            self._invalidate_cache_for_tuple(subject_entity, relation, object_entity)
+            self._invalidate_cache_for_tuple(
+                subject_entity, relation, object_entity, tenant_id, subject_relation, expires_at
+            )
+
+            # CROSS-TENANT FIX: If subject is from a different tenant, also invalidate
+            # cache for the subject's tenant. This is critical for cross-tenant shares
+            # where the permission is granted in resource tenant but checked from user tenant.
+            if subject_tenant_id != tenant_id:
+                self._invalidate_cache_for_tuple(
+                    subject_entity,
+                    relation,
+                    object_entity,
+                    subject_tenant_id,
+                    subject_relation,
+                    expires_at,
+                )
 
         return tuple_id
 

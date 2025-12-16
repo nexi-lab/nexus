@@ -18,7 +18,7 @@ on:
       # Docker-related files
       - 'Dockerfile'
       - 'docker-compose*.yml'
-      - 'docker-start.sh'
+      - 'docker-demo.sh'
       - 'docker-entrypoint.sh'
       - '.github/workflows/docker-integration.yml'
       # Core source files that affect Docker integration
@@ -64,7 +64,7 @@ jobs:
           echo '${{ secrets.NEXUS_GCS_CREDENTIALS }}' > gcs-credentials.json
 
           # Create .env.local file with config from GitHub secrets
-          # Note: docker-start.sh looks for .env.local (not .env)
+          # Note: docker-demo.sh looks for .env.local (not .env)
           cat > .env.local << 'EOF'
           # ============================================
           # PostgreSQL Database
@@ -144,13 +144,13 @@ jobs:
             exit 1
           fi
 
-      - name: Make docker-start.sh executable
-        run: chmod +x docker-start.sh
+      - name: Make docker-demo.sh executable
+        run: chmod +x docker-demo.sh
 
-      - name: Test docker-start.sh --init --build
+      - name: Test docker-demo.sh --init --build
         run: |
-          echo "🚀 Testing docker-start.sh --init --build --yes..."
-          ./docker-start.sh --init --build --yes
+          echo "🚀 Testing docker-demo.sh --init --build --yes..."
+          ./docker-demo.sh --init --build --yes
         timeout-minutes: 20
 
       - name: Wait for services to be healthy
@@ -1582,13 +1582,13 @@ jobs:
           echo "  ✅ Tested permission checks"
           echo "  ✅ Tested conflict detection and overwrite"
 
-      - name: Test docker-start.sh --restart
+      - name: Test docker-demo.sh --restart
         run: |
-          echo "🔄 Testing docker-start.sh --restart..."
+          echo "🔄 Testing docker-demo.sh --restart..."
           echo ""
 
           # Restart services
-          ./docker-start.sh --restart
+          ./docker-demo.sh --restart
 
           echo "⏳ Waiting for services to become healthy after restart..."
           MAX_WAIT=180  # 3 minutes
@@ -1659,13 +1659,13 @@ jobs:
           echo "🎉 Restart test completed successfully!"
           echo "   All services recovered and are fully functional."
 
-      - name: Test docker-start.sh --status
+      - name: Test docker-demo.sh --status
         run: |
-          echo "📊 Testing docker-start.sh --status..."
+          echo "📊 Testing docker-demo.sh --status..."
           echo ""
 
           # Run status command and capture output
-          STATUS_OUTPUT=$(./docker-start.sh --status 2>&1)
+          STATUS_OUTPUT=$(./docker-demo.sh --status 2>&1)
           EXIT_CODE=$?
 
           if [ $EXIT_CODE -ne 0 ]; then
@@ -1691,13 +1691,13 @@ jobs:
           echo ""
           echo "🎉 Status test completed successfully!"
 
-      - name: Test docker-start.sh --logs
+      - name: Test docker-demo.sh --logs
         run: |
-          echo "📝 Testing docker-start.sh --logs..."
+          echo "📝 Testing docker-demo.sh --logs..."
           echo ""
 
           # Run logs command in background and capture output for 5 seconds
-          timeout 5s ./docker-start.sh --logs > /tmp/docker_logs_test.txt 2>&1 || true
+          timeout 5s ./docker-demo.sh --logs > /tmp/docker_logs_test.txt 2>&1 || true
 
           # Verify log file has content
           if [ ! -s /tmp/docker_logs_test.txt ]; then
@@ -1718,9 +1718,9 @@ jobs:
           echo ""
           echo "🎉 Logs test completed successfully!"
 
-      - name: Test docker-start.sh --stop
+      - name: Test docker-demo.sh --stop
         run: |
-          echo "🛑 Testing docker-start.sh --stop..."
+          echo "🛑 Testing docker-demo.sh --stop..."
           echo ""
 
           # Record running containers before stop
@@ -1728,7 +1728,7 @@ jobs:
           echo "Containers running before stop: $CONTAINERS_BEFORE"
 
           # Run stop command
-          ./docker-start.sh --stop
+          ./docker-demo.sh --stop
           EXIT_CODE=$?
 
           if [ $EXIT_CODE -ne 0 ]; then
@@ -1784,5 +1784,5 @@ jobs:
         if: always()
         run: |
           echo "🧹 Cleaning up containers..."
-          ./docker-start.sh --stop || true
+          ./docker-demo.sh --stop || true
           docker system prune -af || true

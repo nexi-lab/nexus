@@ -579,7 +579,7 @@ class TestDockerTemplateConfig:
 
         config = DockerTemplateConfig()
         assert config.templates == {}
-        assert config.default_image == "nexus-runtime:latest"
+        assert config.default_image == "nexus-sandbox:latest"
 
     def test_with_templates(self) -> None:
         """Test template configuration with custom templates."""

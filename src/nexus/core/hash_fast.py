@@ -140,7 +140,7 @@ def hash_content_smart(content: bytes) -> str:
     hasher.update(content[mid_start : mid_start + sample_size])  # Middle 64KB
     hasher.update(content[-sample_size:])  # Last 64KB
     hasher.update(len(content).to_bytes(8, byteorder="little"))  # File size
-    return hasher.hexdigest()
+    return str(hasher.hexdigest())
 
 
 def is_rust_available() -> bool:

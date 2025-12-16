@@ -65,7 +65,10 @@ COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini pyproject.toml README.md ./
 COPY configs/ ./configs/
-COPY scripts/init_database.py ./scripts/init_database.py
+# Copy scripts (includes provisioning)
+COPY scripts/ ./scripts/
+# Include bundled skills and data assets
+COPY data/ ./data/
 COPY docker-entrypoint.sh /usr/local/bin/
 
 # Make entrypoint executable

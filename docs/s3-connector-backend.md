@@ -168,17 +168,17 @@ print(files)  # ['hello.txt']
 
 ## Docker Integration
 
-### Using docker-start.sh
+### Using docker-demo.sh
 
-The `docker-start.sh` script automatically detects and mounts AWS credentials:
+The `docker-demo.sh` script automatically detects and mounts AWS credentials:
 
 ```bash
 # Uses ~/.aws/credentials by default
-./docker-start.sh
+./docker-demo.sh
 
 # Or specify custom credentials path
 export AWS_CREDENTIALS_PATH=/path/to/credentials
-./docker-start.sh
+./docker-demo.sh
 ```
 
 ### Manual Docker Configuration

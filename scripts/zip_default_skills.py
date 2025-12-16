@@ -52,7 +52,7 @@ def zip_skill_folder(skill_folder_path: Path, output_path: Path) -> None:
     print(f"  ✓ Created {output_path}")
 
 
-def main():
+def main() -> None:
     """Zip all default skills and save them to data/skills/."""
     # Get the nexus directory (parent of scripts/)
     nexus_dir = Path(__file__).parent.parent

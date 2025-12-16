@@ -106,7 +106,7 @@ async def test_export_skill_to_bytes() -> None:
     await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
-    zip_bytes = await exporter.export_skill("simple-skill", output_path=None, format="generic")
+    zip_bytes = await exporter.export_skill("simple-skill", output_path=None)
 
     assert zip_bytes is not None
     assert len(zip_bytes) > 0
@@ -134,9 +134,7 @@ async def test_export_skill_to_file() -> None:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "simple-skill.zip"
-        result = await exporter.export_skill(
-            "simple-skill", output_path=str(output_path), format="generic"
-        )
+        result = await exporter.export_skill("simple-skill", output_path=str(output_path))
 
         assert result is None  # Returns None when writing to file
         assert output_path.exists()
@@ -212,7 +210,7 @@ async def test_export_manifest_content() -> None:
     await registry.discover(tiers=["user"])
 
     exporter = SkillExporter(registry)
-    zip_bytes = await exporter.export_skill("simple-skill", format="claude")
+    zip_bytes = await exporter.export_skill("simple-skill")
 
     # Read manifest
     zip_buffer = io.BytesIO(zip_bytes)
@@ -222,7 +220,6 @@ async def test_export_manifest_content() -> None:
 
         assert manifest["name"] == "simple-skill"
         assert manifest["version"] == "1.0.0"
-        assert manifest["format"] == "claude"
         assert "simple-skill/SKILL.md" in manifest["files"]
         assert manifest["total_size_bytes"] > 0
 
@@ -234,78 +231,7 @@ async def test_export_skill_not_found() -> None:
     exporter = SkillExporter(registry)
 
     with pytest.raises(SkillExportError, match="Skill not found"):
-        await exporter.export_skill("nonexistent", format="generic")
-
-
-@pytest.mark.asyncio
-async def test_export_invalid_format() -> None:
-    """Test that exporting with invalid format raises error."""
-    fs = MockFilesystem(
-        {
-            "/skills/user/simple-skill/SKILL.md": SKILL_SIMPLE,
-        }
-    )
-
-    registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["user"])
-
-    exporter = SkillExporter(registry)
-
-    with pytest.raises(SkillExportError, match="Unsupported export format"):
-        await exporter.export_skill("simple-skill", format="invalid-format")
-
-
-@pytest.mark.asyncio
-async def test_export_claude_format_size_limit() -> None:
-    """Test that Claude format enforces 8MB size limit."""
-    # Create a large skill (>8MB)
-    large_content = b"""---
-name: large-skill
-description: A very large skill
----
-
-""" + (b"# " + b"A" * 9 * 1024 * 1024)  # > 8MB
-
-    fs = MockFilesystem(
-        {
-            "/skills/user/large-skill/SKILL.md": large_content,
-        }
-    )
-
-    registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["user"])
-
-    exporter = SkillExporter(registry)
-
-    with pytest.raises(SkillExportError, match="exceeds Claude format 8MB limit"):
-        await exporter.export_skill("large-skill", format="claude")
-
-
-@pytest.mark.asyncio
-async def test_export_generic_format_no_size_limit() -> None:
-    """Test that generic format has no size limit."""
-    # Create a large skill (>8MB)
-    large_content = b"""---
-name: large-skill
-description: A very large skill
----
-
-""" + (b"# " + b"A" * 9 * 1024 * 1024)  # > 8MB
-
-    fs = MockFilesystem(
-        {
-            "/skills/user/large-skill/SKILL.md": large_content,
-        }
-    )
-
-    registry = SkillRegistry(filesystem=fs)
-    await registry.discover(tiers=["user"])
-
-    exporter = SkillExporter(registry)
-
-    # Should not raise error for generic format
-    zip_bytes = await exporter.export_skill("large-skill", format="generic")
-    assert zip_bytes is not None
+        await exporter.export_skill("nonexistent")
 
 
 @pytest.mark.asyncio
@@ -322,7 +248,7 @@ async def test_validate_export() -> None:
 
     exporter = SkillExporter(registry)
 
-    valid, msg, size = await exporter.validate_export("simple-skill", format="claude")
+    valid, msg, size = await exporter.validate_export("simple-skill")
 
     assert valid is True
     assert "valid" in msg.lower()
@@ -351,6 +277,7 @@ description: A very large skill
 
     exporter = SkillExporter(registry)
 
+    # Test with claude format to trigger size limit check
     valid, msg, size = await exporter.validate_export("large-skill", format="claude")
 
     assert valid is False
@@ -464,7 +391,7 @@ async def test_calculate_skill_size() -> None:
     registry = SkillRegistry()
     exporter = SkillExporter(registry)
 
-    size = exporter._calculate_skill_size(skill)
+    size = await exporter._calculate_skill_size(skill)
 
     assert size > 0
     # Size should include both frontmatter and content

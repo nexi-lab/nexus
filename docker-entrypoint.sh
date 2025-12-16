@@ -65,6 +65,26 @@ if [ -n "$NEXUS_DATABASE_URL" ]; then
 fi
 
 # ============================================
+# Ensure Skills Directory Exists
+# ============================================
+# The docker-compose mounts ./nexus-data:/app/data, which should contain
+# the skills. The docker-demo.sh script ensures skills are copied there.
+echo ""
+echo "📦 Checking for default skills..."
+
+SKILLS_DIR="/app/data/skills"
+mkdir -p "$SKILLS_DIR"
+
+# Check if skills exist (they should be copied by docker-demo.sh)
+if [ "$(ls -A $SKILLS_DIR/*.skill 2>/dev/null | wc -l)" -gt 0 ]; then
+    SKILL_COUNT=$(ls -1 $SKILLS_DIR/*.skill 2>/dev/null | wc -l)
+    echo -e "${GREEN}✓ Found $SKILL_COUNT skill file(s)${NC}"
+else
+    echo -e "${YELLOW}⚠ No skill files found in $SKILLS_DIR${NC}"
+    echo "  Skills will be imported if available during provisioning"
+fi
+
+# ============================================
 # Initialize Database Schema & Migrations
 # ============================================
 echo ""

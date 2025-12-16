@@ -515,7 +515,7 @@ def ensure_admin_api_key(tenant_id: str = "default", env_file: str = ".env") -> 
 
     # Load .env
     env_vars = load_env_file(env_file)
-    api_key = env_vars.get("NEXUS_API_KEY")
+    api_key: str | None = env_vars.get("NEXUS_API_KEY")
 
     # Get database URL
     database_url = os.getenv("NEXUS_DATABASE_URL")
@@ -529,6 +529,9 @@ def ensure_admin_api_key(tenant_id: str = "default", env_file: str = ".env") -> 
                 print(f"  ℹ  Using API key from {env_file}: {api_key[:20]}...")
                 return api_key
             return None
+
+    # At this point database_url is guaranteed to be a string
+    assert database_url is not None
 
     # Create engine and session
     engine = create_engine(database_url)
@@ -546,7 +549,8 @@ def ensure_admin_api_key(tenant_id: str = "default", env_file: str = ".env") -> 
     with SessionFactory() as session:
         from sqlalchemy import select
 
-        from nexus.server.auth.database_key import APIKeyModel
+        # APIKeyModel lives in storage.models (not database_key)
+        from nexus.storage.models import APIKeyModel
 
         # Check for existing admin keys
         result = session.execute(

@@ -43,7 +43,7 @@ class DockerTemplateConfig(BaseModel):
         description="Map of template name to image/dockerfile configuration",
     )
     default_image: str = Field(
-        default="nexus-runtime:latest",
+        default="nexus-sandbox:latest",
         description="Default image if no template specified",
     )
 

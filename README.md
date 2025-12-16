@@ -568,10 +568,10 @@ For faster development iteration, run the Nexus server locally while keeping oth
 docker stop nexus-server
 
 # 3. Start the local Nexus server
-./local-nexus.sh --start
+./local-demo.sh --start
 
 # 4. Make code changes and restart as needed
-# Press Ctrl+C to stop, then ./local-nexus.sh --start again
+# Press Ctrl+C to stop, then ./local-demo.sh --start again
 
 # 5. When done, restart Docker nexus-server
 docker start nexus-server
@@ -584,8 +584,8 @@ docker start nexus-server
 - 🎯 **Simple**: One script, reuses existing config
 
 **Commands:**
-- `./local-nexus.sh --start` - Start local server
-- `./local-nexus.sh --stop` - Stop local server
+- `./local-demo.sh --start` - Start local server
+- `./local-demo.sh --stop` - Stop local server
 
 ## Support
 

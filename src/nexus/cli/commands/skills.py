@@ -796,7 +796,6 @@ def skills_export(
                 await exporter.export_skill(
                     name=skill_name,
                     output_path=output,
-                    format=format,
                     include_dependencies=include_deps,
                 )
 
@@ -848,7 +847,6 @@ def skills_validate(
 
             valid, message, size_bytes = await exporter.validate_export(
                 name=skill_name,
-                format=format,
                 include_dependencies=True,
             )
 
@@ -911,7 +909,6 @@ def skills_size(
 
             _, _, size_bytes = await exporter.validate_export(
                 name=skill_name,
-                format="generic",
                 include_dependencies=True,
             )
 

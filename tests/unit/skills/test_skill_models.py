@@ -5,7 +5,7 @@ from datetime import datetime
 import pytest
 
 from nexus.core.exceptions import ValidationError
-from nexus.skills.models import Skill, SkillExportManifest, SkillMetadata
+from nexus.skills.models import Skill, SkillMetadata
 
 
 def test_skill_metadata_initialization() -> None:
@@ -145,101 +145,3 @@ def test_skill_validation_invalid_metadata() -> None:
 
     with pytest.raises(ValidationError, match="skill name is required"):
         skill.validate()
-
-
-def test_skill_export_manifest_initialization() -> None:
-    """Test SkillExportManifest initialization."""
-    manifest = SkillExportManifest(name="test-skill")
-
-    assert manifest.name == "test-skill"
-    assert manifest.version is None
-    assert manifest.description == ""
-    assert manifest.format == "generic"
-    assert manifest.exported_at is None
-    assert manifest.files == []
-    assert manifest.total_size_bytes == 0
-
-
-def test_skill_export_manifest_with_all_fields() -> None:
-    """Test SkillExportManifest with all fields."""
-    now = datetime.utcnow()
-    manifest = SkillExportManifest(
-        name="test-skill",
-        version="1.0.0",
-        description="Test skill export",
-        format="claude",
-        exported_at=now,
-        files=["test-skill/SKILL.md"],
-        total_size_bytes=1024,
-    )
-
-    assert manifest.name == "test-skill"
-    assert manifest.version == "1.0.0"
-    assert manifest.description == "Test skill export"
-    assert manifest.format == "claude"
-    assert manifest.exported_at == now
-    assert manifest.files == ["test-skill/SKILL.md"]
-    assert manifest.total_size_bytes == 1024
-
-
-def test_skill_export_manifest_validation() -> None:
-    """Test SkillExportManifest validation."""
-    manifest = SkillExportManifest(
-        name="test-skill",
-        files=["test-skill/SKILL.md"],
-    )
-
-    manifest.validate()  # Should not raise
-
-
-def test_skill_export_manifest_validation_missing_name() -> None:
-    """Test that validation fails when name is missing."""
-    manifest = SkillExportManifest(name="", files=["test.md"])
-
-    with pytest.raises(ValidationError, match="export manifest name is required"):
-        manifest.validate()
-
-
-def test_skill_export_manifest_validation_missing_files() -> None:
-    """Test that validation fails when files list is empty."""
-    manifest = SkillExportManifest(name="test-skill", files=[])
-
-    with pytest.raises(ValidationError, match="export manifest must include at least one file"):
-        manifest.validate()
-
-
-def test_skill_export_manifest_validation_claude_size_limit() -> None:
-    """Test that validation fails when Claude format exceeds 8MB limit."""
-    manifest = SkillExportManifest(
-        name="test-skill",
-        format="claude",
-        files=["test.md"],
-        total_size_bytes=9 * 1024 * 1024,  # 9MB
-    )
-
-    with pytest.raises(ValidationError, match="exceeds Claude format 8MB limit"):
-        manifest.validate()
-
-
-def test_skill_export_manifest_validation_claude_size_under_limit() -> None:
-    """Test that validation passes when Claude format is under 8MB."""
-    manifest = SkillExportManifest(
-        name="test-skill",
-        format="claude",
-        files=["test.md"],
-        total_size_bytes=7 * 1024 * 1024,  # 7MB
-    )
-
-    manifest.validate()  # Should not raise
-
-
-def test_skill_export_manifest_validation_generic_no_limit() -> None:
-    """Test that generic format has no size limit."""
-    manifest = SkillExportManifest(
-        name="test-skill",
-        format="generic",
-        files=["test.md"],
-        total_size_bytes=100 * 1024 * 1024,  # 100MB
-    )
-
-    manifest.validate()  # Should not raise

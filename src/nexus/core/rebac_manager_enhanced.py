@@ -1295,6 +1295,39 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 else:
                     return True  # No conditions, allow
 
+            # Cross-tenant check for shared-* relations (PR #647, #648)
+            # Cross-tenant shares are stored in the resource owner's tenant
+            # but should be visible when checking from the recipient's tenant.
+            from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS
+
+            if relation in CROSS_TENANT_ALLOWED_RELATIONS:
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        SELECT tuple_id FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND relation = ?
+                          AND object_type = ? AND object_id = ?
+                          AND subject_relation IS NULL
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        """
+                    ),
+                    (
+                        subject.entity_type,
+                        subject.entity_id,
+                        relation,
+                        obj.entity_type,
+                        obj.entity_id,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                if cursor.fetchone():
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.debug(f"Cross-tenant share found: {subject} -> {relation} -> {obj}")
+                    return True
+
             # Check for userset-as-subject tuple (e.g., group#member)
             # Find all tuples where object is our target and subject is a userset
             cursor.execute(

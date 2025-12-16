@@ -32,6 +32,11 @@ This repo contains the open-source [server](src/nexus/server/), [SDK](src/nexus/
 **Advanced**
 - Event-driven workflows, semantic search + LLM document reading, content deduplication + versioning, 14 MCP tools, plugin system, batch operations
 
+### Design Principles
+
+- **Everything is a File** — Memories, CRM records, MCP servers, and documents all expose the same interface with paths, metadata, and permissions for unified search and composability.
+- **Just-in-Time Retrieval** — Instead of pre-indexing everything, Nexus retrieves exactly what's needed when it's needed, adapting the retrieval strategy to each query.
+
 ## 🧑‍💻 Getting Started
 
 ### Local Server

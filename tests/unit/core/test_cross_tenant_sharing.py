@@ -45,9 +45,17 @@ def tenant_aware_manager(engine):
 class TestCrossTenantAllowedRelations:
     """Tests for CROSS_TENANT_ALLOWED_RELATIONS configuration."""
 
-    def test_shared_with_is_cross_tenant_allowed(self):
-        """Verify shared-with relation is in the allowed list."""
-        assert "shared-with" in CROSS_TENANT_ALLOWED_RELATIONS
+    def test_shared_viewer_is_cross_tenant_allowed(self):
+        """Verify shared-viewer relation is in the allowed list."""
+        assert "shared-viewer" in CROSS_TENANT_ALLOWED_RELATIONS
+
+    def test_shared_editor_is_cross_tenant_allowed(self):
+        """Verify shared-editor relation is in the allowed list."""
+        assert "shared-editor" in CROSS_TENANT_ALLOWED_RELATIONS
+
+    def test_shared_owner_is_cross_tenant_allowed(self):
+        """Verify shared-owner relation is in the allowed list."""
+        assert "shared-owner" in CROSS_TENANT_ALLOWED_RELATIONS
 
     def test_regular_relations_not_cross_tenant_allowed(self):
         """Verify regular relations are NOT in the allowed list."""
@@ -60,15 +68,27 @@ class TestCrossTenantAllowedRelations:
 class TestCrossTenantSharingWrite:
     """Tests for creating cross-tenant shares."""
 
-    def test_shared_with_allows_cross_tenant(self, tenant_aware_manager):
-        """Test that shared-with relation allows cross-tenant relationships."""
-        # This should succeed - shared-with is allowed to cross tenants
+    def test_shared_viewer_allows_cross_tenant(self, tenant_aware_manager):
+        """Test that shared-viewer relation allows cross-tenant relationships."""
+        # This should succeed - shared-viewer is allowed to cross tenants
         tuple_id = tenant_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
-            relation="shared-with",
+            relation="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
             subject_tenant_id="partner-tenant",  # Different tenant!
+            object_tenant_id="acme-tenant",
+        )
+        assert tuple_id is not None
+
+    def test_shared_editor_allows_cross_tenant(self, tenant_aware_manager):
+        """Test that shared-editor relation allows cross-tenant relationships."""
+        tuple_id = tenant_aware_manager.rebac_write(
+            subject=("user", "bob@partner.com"),
+            relation="shared-editor",
+            object=("file", "/project/doc.txt"),
+            tenant_id="acme-tenant",
+            subject_tenant_id="partner-tenant",
             object_tenant_id="acme-tenant",
         )
         assert tuple_id is not None
@@ -86,12 +106,12 @@ class TestCrossTenantSharingWrite:
                 object_tenant_id="acme-tenant",
             )
 
-    def test_same_tenant_shared_with_allowed(self, tenant_aware_manager):
-        """Test that shared-with also works for same-tenant sharing."""
+    def test_same_tenant_shared_viewer_allowed(self, tenant_aware_manager):
+        """Test that shared-viewer also works for same-tenant sharing."""
         # Same-tenant sharing should work too
         tuple_id = tenant_aware_manager.rebac_write(
             subject=("user", "alice@acme.com"),
-            relation="shared-with",
+            relation="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
             subject_tenant_id="acme-tenant",
@@ -104,7 +124,7 @@ class TestCrossTenantSharingWrite:
         # Create cross-tenant share
         tuple_id = tenant_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
-            relation="shared-with",
+            relation="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
             subject_tenant_id="partner-tenant",
@@ -115,7 +135,7 @@ class TestCrossTenantSharingWrite:
         # Verify tuple exists by checking permission
         result = tenant_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
-            permission="shared-with",
+            permission="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
         )
@@ -130,17 +150,17 @@ class TestCrossTenantSharingPermissionCheck:
         # Create cross-tenant share
         tenant_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
-            relation="shared-with",
+            relation="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
             subject_tenant_id="partner-tenant",
             object_tenant_id="acme-tenant",
         )
 
-        # Check permission - bob should have shared-with on the file
+        # Check permission - bob should have shared-viewer on the file
         result = tenant_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
-            permission="shared-with",
+            permission="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
         )
@@ -151,7 +171,7 @@ class TestCrossTenantSharingPermissionCheck:
         # No share created for charlie
         result = tenant_aware_manager.rebac_check(
             subject=("user", "charlie@other.com"),
-            permission="shared-with",
+            permission="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
         )
@@ -166,7 +186,7 @@ class TestCrossTenantMultipleShares:
         # Create shares from two different tenants
         tuple_id_1 = tenant_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
-            relation="shared-with",
+            relation="shared-viewer",
             object=("file", "/acme/doc1.txt"),
             tenant_id="acme-tenant",
             subject_tenant_id="partner-tenant",
@@ -174,7 +194,7 @@ class TestCrossTenantMultipleShares:
         )
         tuple_id_2 = tenant_aware_manager.rebac_write(
             subject=("user", "charlie@other.com"),
-            relation="shared-with",
+            relation="shared-editor",
             object=("file", "/acme/doc2.txt"),
             tenant_id="acme-tenant",
             subject_tenant_id="other-tenant",
@@ -188,13 +208,13 @@ class TestCrossTenantMultipleShares:
         # Both users should have access
         result_bob = tenant_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
-            permission="shared-with",
+            permission="shared-viewer",
             object=("file", "/acme/doc1.txt"),
             tenant_id="acme-tenant",
         )
         result_charlie = tenant_aware_manager.rebac_check(
             subject=("user", "charlie@other.com"),
-            permission="shared-with",
+            permission="shared-editor",
             object=("file", "/acme/doc2.txt"),
             tenant_id="acme-tenant",
         )
@@ -206,7 +226,7 @@ class TestCrossTenantMultipleShares:
         # Bob receives shares from two different tenants
         tenant_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
-            relation="shared-with",
+            relation="shared-viewer",
             object=("file", "/acme/doc.txt"),
             tenant_id="acme-tenant",
             subject_tenant_id="partner-tenant",
@@ -214,7 +234,7 @@ class TestCrossTenantMultipleShares:
         )
         tenant_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
-            relation="shared-with",
+            relation="shared-viewer",
             object=("file", "/xyz/doc.txt"),
             tenant_id="xyz-tenant",
             subject_tenant_id="partner-tenant",
@@ -224,13 +244,13 @@ class TestCrossTenantMultipleShares:
         # Bob should have access to both resources (checking each in its own tenant)
         result_acme = tenant_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
-            permission="shared-with",
+            permission="shared-viewer",
             object=("file", "/acme/doc.txt"),
             tenant_id="acme-tenant",
         )
         result_xyz = tenant_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
-            permission="shared-with",
+            permission="shared-viewer",
             object=("file", "/xyz/doc.txt"),
             tenant_id="xyz-tenant",
         )
@@ -246,7 +266,7 @@ class TestCrossTenantSharingRevoke:
         # Create cross-tenant share
         tuple_id = tenant_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
-            relation="shared-with",
+            relation="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
             subject_tenant_id="partner-tenant",
@@ -256,7 +276,7 @@ class TestCrossTenantSharingRevoke:
         # Verify share exists
         result = tenant_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
-            permission="shared-with",
+            permission="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
         )
@@ -269,7 +289,7 @@ class TestCrossTenantSharingRevoke:
         # Verify share is gone
         result = tenant_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
-            permission="shared-with",
+            permission="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
         )
@@ -284,7 +304,7 @@ class TestCrossTenantSharingWithExpiration:
         # Create share that expires in the past
         tenant_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
-            relation="shared-with",
+            relation="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
             subject_tenant_id="partner-tenant",
@@ -295,7 +315,7 @@ class TestCrossTenantSharingWithExpiration:
         # Permission check should fail (expired)
         result = tenant_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
-            permission="shared-with",
+            permission="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
         )
@@ -306,7 +326,7 @@ class TestCrossTenantSharingWithExpiration:
         # Create share that expires in the future
         tenant_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
-            relation="shared-with",
+            relation="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
             subject_tenant_id="partner-tenant",
@@ -317,7 +337,7 @@ class TestCrossTenantSharingWithExpiration:
         # Permission check should succeed
         result = tenant_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
-            permission="shared-with",
+            permission="shared-viewer",
             object=("file", "/project/doc.txt"),
             tenant_id="acme-tenant",
         )

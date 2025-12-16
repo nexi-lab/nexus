@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from nexus.core.sandbox_provider import (
+from nexus.core.sandbox.sandbox_provider import (
     CodeExecutionResult,
     ExecutionTimeoutError,
     SandboxCreationError,

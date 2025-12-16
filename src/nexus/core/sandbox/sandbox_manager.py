@@ -13,8 +13,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.core.sandbox_e2b_provider import E2BSandboxProvider
-from nexus.core.sandbox_provider import (
+from nexus.core.sandbox.sandbox_e2b_provider import E2BSandboxProvider
+from nexus.core.sandbox.sandbox_provider import (
     SandboxNotFoundError,
     SandboxProvider,
 )
@@ -22,7 +22,7 @@ from nexus.storage.models import SandboxMetadataModel
 
 # Try to import Docker provider
 try:
-    from nexus.core.sandbox_docker_provider import DockerSandboxProvider
+    from nexus.core.sandbox.sandbox_docker_provider import DockerSandboxProvider
 
     DOCKER_PROVIDER_AVAILABLE = True
 except ImportError:

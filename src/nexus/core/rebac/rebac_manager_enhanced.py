@@ -7,7 +7,7 @@ This module implements critical security and reliability fixes for GA:
 - P0-5: Graph limits and DoS protection
 
 Usage:
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager, ConsistencyLevel
+    from nexus.core.rebac.rebac_manager_enhanced import EnhancedReBACManager, ConsistencyLevel
 
     manager = EnhancedReBACManager(engine)
 
@@ -33,8 +33,8 @@ from enum import Enum
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS, Entity
-from nexus.core.rebac_manager_tenant_aware import TenantAwareReBACManager
+from nexus.core.rebac.rebac import CROSS_TENANT_ALLOWED_RELATIONS, Entity
+from nexus.core.rebac.rebac_manager_tenant_aware import TenantAwareReBACManager
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -236,7 +236,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         # If tenant isolation is disabled, use base ReBACManager implementation
         if not self.enforce_tenant_isolation:
-            from nexus.core.rebac_manager import ReBACManager
+            from nexus.core.rebac.rebac_manager import ReBACManager
 
             logger.debug(f"  -> Falling back to base ReBACManager, base max_depth={self.max_depth}")
             return ReBACManager.rebac_check(self, subject, permission, object, context, tenant_id)
@@ -476,7 +476,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         # Try Rust acceleration first (has proper memoization, prevents timeout)
         try:
-            from nexus.core.rebac_fast import check_permission_single_rust, is_rust_available
+            from nexus.core.rebac.rebac_fast import check_permission_single_rust, is_rust_available
 
             if is_rust_available():
                 # Fetch tuples and namespace configs for Rust
@@ -1298,7 +1298,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             # Cross-tenant check for shared-* relations (PR #647, #648)
             # Cross-tenant shares are stored in the resource owner's tenant
             # but should be visible when checking from the recipient's tenant.
-            from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS
+            from nexus.core.rebac.rebac import CROSS_TENANT_ALLOWED_RELATIONS
 
             if relation in CROSS_TENANT_ALLOWED_RELATIONS:
                 cursor.execute(
@@ -1364,7 +1364,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 # This handles nested groups, union expansion, etc.
                 # NOTE: We create a fresh stats object for this sub-check to avoid
                 # conflating limits across different code paths
-                from nexus.core.rebac_manager_enhanced import TraversalStats
+                from nexus.core.rebac.rebac_manager_enhanced import TraversalStats
 
                 sub_stats = TraversalStats()
                 userset_entity = Entity(userset_type, userset_id)
@@ -1892,7 +1892,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 )
 
         # TRY RUST ACCELERATION FIRST for bulk computation
-        from nexus.core.rebac_fast import check_permissions_bulk_with_fallback, is_rust_available
+        from nexus.core.rebac.rebac_fast import (
+            check_permissions_bulk_with_fallback,
+            is_rust_available,
+        )
 
         rust_success = False
         if is_rust_available() and len(cache_misses) >= 10:
@@ -2086,7 +2089,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         import logging
         import time as time_module
 
-        from nexus.core.rebac_fast import (
+        from nexus.core.rebac.rebac_fast import (
             RUST_AVAILABLE,
             list_objects_for_subject_rust,
         )

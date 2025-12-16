@@ -14,8 +14,8 @@ import fnmatch
 import re
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.core import glob_fast, grep_fast
 from nexus.core.exceptions import PermissionDeniedError
+from nexus.core.fast import glob_fast, grep_fast
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 
@@ -32,7 +32,7 @@ class NexusFSSearchMixin:
     if TYPE_CHECKING:
         from nexus.core.mount_router import MountRouter
         from nexus.core.permissions import PermissionEnforcer
-        from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+        from nexus.core.rebac.rebac_manager_enhanced import EnhancedReBACManager
 
         metadata: SQLAlchemyMetadataStore
         router: MountRouter
@@ -116,7 +116,7 @@ class NexusFSSearchMixin:
         )
 
         # Phase 2 Integration (v0.4.0): Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.core.memory.memory_router import MemoryViewRouter
 
         if path and MemoryViewRouter.is_memory_path(path):
             return self._list_memory_path(path, details)
@@ -1020,7 +1020,7 @@ class NexusFSSearchMixin:
             List of memory paths or metadata dicts.
         """
         from nexus.core.entity_registry import EntityRegistry
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.core.memory.memory_router import MemoryViewRouter
 
         # Parse path to extract filters
         parts = [p for p in path.split("/") if p]

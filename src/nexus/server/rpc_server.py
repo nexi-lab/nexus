@@ -36,7 +36,7 @@ from nexus.core.exceptions import (
 )
 from nexus.core.filters import is_os_metadata_file
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.virtual_views import (
+from nexus.core.workspace.virtual_views import (
     add_virtual_views_to_listing,
     get_parsed_content,
     parse_virtual_path,

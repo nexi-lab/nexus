@@ -18,8 +18,8 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.rebac import Entity
-    from nexus.core.rebac import NamespaceConfig as ReBACNamespaceConfig
+    from nexus.core.rebac.rebac import Entity
+    from nexus.core.rebac.rebac import NamespaceConfig as ReBACNamespaceConfig
 
 
 # Internal type for namespace config dict (not the NamespaceConfig class)
@@ -189,7 +189,7 @@ def _check_permissions_bulk_python(
     This is a simplified implementation. For production, this should delegate
     to the existing ReBACManager._compute_permission logic.
     """
-    from nexus.core.rebac import Entity, NamespaceConfig
+    from nexus.core.rebac.rebac import Entity, NamespaceConfig
 
     # Convert namespace configs to proper format
     namespaces: dict[str, ReBACNamespaceConfig] = {}

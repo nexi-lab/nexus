@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.core.rebac import (
+from nexus.core.rebac.rebac import (
     DEFAULT_FILE_NAMESPACE,
     DEFAULT_GROUP_NAMESPACE,
     DEFAULT_MEMORY_NAMESPACE,
@@ -29,8 +29,8 @@ from nexus.core.rebac import (
     Entity,
     NamespaceConfig,
 )
-from nexus.core.rebac_cache import ReBACPermissionCache
-from nexus.core.rebac_fast import check_permissions_bulk_with_fallback, is_rust_available
+from nexus.core.rebac.rebac_cache import ReBACPermissionCache
+from nexus.core.rebac.rebac_fast import check_permissions_bulk_with_fallback, is_rust_available
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine

@@ -15,11 +15,11 @@ from sqlalchemy import select
 
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
-from nexus.core.hash_fast import hash_content
+from nexus.core.fast.hash_fast import hash_content
 
 if TYPE_CHECKING:
     from nexus.core.entity_registry import EntityRegistry
-    from nexus.core.memory_api import Memory
+    from nexus.core.memory.memory_api import Memory
 from nexus.core.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -28,15 +28,15 @@ from nexus.core.export_import import (
 )
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
+from nexus.core.mixins.nexus_fs_llm import NexusFSLLMMixin
+from nexus.core.mixins.nexus_fs_mcp import NexusFSMCPMixin
+from nexus.core.mixins.nexus_fs_mounts import NexusFSMountsMixin
+from nexus.core.mixins.nexus_fs_oauth import NexusFSOAuthMixin
+from nexus.core.mixins.nexus_fs_rebac import NexusFSReBACMixin
+from nexus.core.mixins.nexus_fs_search import NexusFSSearchMixin
+from nexus.core.mixins.nexus_fs_skills import NexusFSSkillsMixin
+from nexus.core.mixins.nexus_fs_versions import NexusFSVersionsMixin
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
-from nexus.core.nexus_fs_llm import NexusFSLLMMixin
-from nexus.core.nexus_fs_mcp import NexusFSMCPMixin
-from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
-from nexus.core.nexus_fs_oauth import NexusFSOAuthMixin
-from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
-from nexus.core.nexus_fs_search import NexusFSSearchMixin
-from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
-from nexus.core.nexus_fs_versions import NexusFSVersionsMixin
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.core.rpc_decorator import rpc_expose
@@ -266,7 +266,7 @@ class NexusFS(
         )
 
         # P0 Fixes: Initialize EnhancedReBACManager with all GA features
-        from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+        from nexus.core.rebac.rebac_manager_enhanced import EnhancedReBACManager
 
         self._rebac_manager = EnhancedReBACManager(
             engine=self.metadata.engine,  # Use SQLAlchemy engine (supports SQLite + PostgreSQL)
@@ -305,7 +305,7 @@ class NexusFS(
         self._enforce_permissions = enforce_permissions
 
         # P0-3: Initialize HierarchyManager for automatic parent tuple creation
-        from nexus.core.hierarchy_manager import HierarchyManager
+        from nexus.core.mount.hierarchy_manager import HierarchyManager
 
         self._hierarchy_manager = HierarchyManager(
             rebac_manager=self._rebac_manager,
@@ -313,7 +313,7 @@ class NexusFS(
         )
 
         # Initialize workspace registry for managing registered workspaces/memories
-        from nexus.core.workspace_registry import WorkspaceRegistry
+        from nexus.core.workspace.workspace_registry import WorkspaceRegistry
 
         self._workspace_registry = WorkspaceRegistry(
             metadata=self.metadata,
@@ -321,7 +321,7 @@ class NexusFS(
         )
 
         # Initialize mount manager for persistent mount configurations
-        from nexus.core.mount_manager import MountManager
+        from nexus.core.mount.mount_manager import MountManager
 
         self.mount_manager = MountManager(self.metadata.SessionLocal)
 
@@ -335,7 +335,7 @@ class NexusFS(
             pass  # Will be handled by separate load method
 
         # Initialize workspace manager for snapshot/versioning
-        from nexus.core.workspace_manager import WorkspaceManager
+        from nexus.core.workspace.workspace_manager import WorkspaceManager
 
         self._workspace_manager = WorkspaceManager(
             metadata=self.metadata,
@@ -360,7 +360,7 @@ class NexusFS(
         }
 
         # Issue #372: Sandbox manager - lazy initialization
-        from nexus.core.sandbox_manager import SandboxManager
+        from nexus.core.sandbox.sandbox_manager import SandboxManager
 
         self._sandbox_manager: SandboxManager | None = None
 
@@ -498,7 +498,7 @@ class NexusFS(
         """
         if self._memory_api is None:
             from nexus.core.entity_registry import EntityRegistry
-            from nexus.core.memory_api import Memory
+            from nexus.core.memory.memory_api import Memory
 
             # Get or create entity registry (v0.5.0: Pass SessionFactory instead of Session)
             if self._entity_registry is None:
@@ -621,7 +621,7 @@ class NexusFS(
             Memory API instance
         """
         from nexus.core.entity_registry import EntityRegistry
-        from nexus.core.memory_api import Memory
+        from nexus.core.memory.memory_api import Memory
 
         # Get or create entity registry
         if self._entity_registry is None:
@@ -843,7 +843,7 @@ class NexusFS(
 
         # Fix #332: Virtual parsed views (e.g., report_parsed.pdf.md) should inherit
         # permissions from their original files (e.g., report.pdf)
-        from nexus.core.virtual_views import parse_virtual_path
+        from nexus.core.workspace.virtual_views import parse_virtual_path
 
         # Use metadata.exists to avoid circular dependency with self.exists()
         def metadata_exists(check_path: str) -> bool:
@@ -4007,7 +4007,7 @@ class NexusFS(
         if not hasattr(self, "_sandbox_manager") or self._sandbox_manager is None:
             import os
 
-            from nexus.core.sandbox_manager import SandboxManager
+            from nexus.core.sandbox.sandbox_manager import SandboxManager
 
             # Initialize sandbox manager with E2B credentials and config for Docker provider
             session = self.metadata.SessionLocal()

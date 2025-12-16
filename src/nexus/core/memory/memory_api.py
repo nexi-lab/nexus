@@ -13,8 +13,8 @@ from typing import Any, Literal
 from sqlalchemy.orm import Session
 
 from nexus.core.entity_registry import EntityRegistry
-from nexus.core.memory_permission_enforcer import MemoryPermissionEnforcer
-from nexus.core.memory_router import MemoryViewRouter
+from nexus.core.memory.memory_permission_enforcer import MemoryPermissionEnforcer
+from nexus.core.memory.memory_router import MemoryViewRouter
 from nexus.core.permissions import OperationContext, Permission
 
 
@@ -60,7 +60,7 @@ class Memory:
         # Initialize ReBAC manager for permission checks
         from sqlalchemy import Engine
 
-        from nexus.core.rebac_manager import ReBACManager
+        from nexus.core.rebac.rebac_manager import ReBACManager
 
         bind = session.get_bind()
         assert isinstance(bind, Engine), "Expected Engine, got Connection"

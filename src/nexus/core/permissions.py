@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.core.permissions_enhanced import AuditStore
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.core.rebac.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 

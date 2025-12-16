@@ -51,7 +51,6 @@ def setup_uvloop() -> bool:
 
 
 # Imports after setup_uvloop() so it can be called before loading heavy modules
-from nexus.core.async_scoped_filesystem import AsyncScopedFilesystem  # noqa: E402
 from nexus.core.exceptions import (  # noqa: E402
     BackendError,
     InvalidPathError,
@@ -63,14 +62,15 @@ from nexus.core.exceptions import (  # noqa: E402
 )
 from nexus.core.filesystem import NexusFilesystem  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
-from nexus.core.scoped_filesystem import ScopedFilesystem  # noqa: E402
+from nexus.core.sync.async_scoped_filesystem import AsyncScopedFilesystem  # noqa: E402
+from nexus.core.sync.scoped_filesystem import ScopedFilesystem  # noqa: E402
 
 
 # Async ReBAC components (v0.6.0+)
 # Import lazily to avoid circular imports and missing dependencies
 def get_async_rebac_manager() -> type:
     """Get AsyncReBACManager class (lazy import)."""
-    from nexus.core.async_rebac_manager import AsyncReBACManager
+    from nexus.core.rebac.async_rebac_manager import AsyncReBACManager
 
     return AsyncReBACManager
 

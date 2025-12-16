@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 from nexus.core.exceptions import ConflictError
-from nexus.core.hash_fast import hash_content
+from nexus.core.fast.hash_fast import hash_content
 from nexus.core.permissions import OperationContext
 from nexus.storage.models import ContentCacheModel, FilePathModel
 

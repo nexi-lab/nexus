@@ -4,7 +4,7 @@ This module provides BLAKE3 hashing for content-addressable storage,
 with ~3x speedup over SHA-256.
 
 Usage:
-    from nexus.core.hash_fast import hash_content, hash_content_smart
+    from nexus.core.fast.hash_fast import hash_content, hash_content_smart
 
     # Full BLAKE3 hash (for all files)
     content_hash = hash_content(b"file content")

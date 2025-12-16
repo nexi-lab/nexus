@@ -22,7 +22,7 @@ from google.cloud.exceptions import NotFound
 from nexus.backends.backend import Backend
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.hash_fast import hash_content
+from nexus.core.fast.hash_fast import hash_content
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext

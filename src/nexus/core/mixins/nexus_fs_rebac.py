@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.core.rebac.rebac_manager_enhanced import EnhancedReBACManager
 
 
 class NexusFSReBACMixin:
@@ -900,7 +900,7 @@ class NexusFSReBACMixin:
         # Import NamespaceConfig
         import uuid
 
-        from nexus.core.rebac import NamespaceConfig
+        from nexus.core.rebac.rebac import NamespaceConfig
 
         # Create NamespaceConfig object
         ns = NamespaceConfig(
@@ -987,7 +987,7 @@ class NexusFSReBACMixin:
         import uuid
         from datetime import UTC, datetime
 
-        from nexus.core.rebac import NamespaceConfig
+        from nexus.core.rebac.rebac import NamespaceConfig
 
         ns = NamespaceConfig(
             namespace_id=str(uuid.uuid4()),

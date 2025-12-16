@@ -9,7 +9,7 @@ Performance benefits:
 - Integrates seamlessly with FastAPI's async endpoints
 
 Example:
-    from nexus.core.async_rebac_manager import AsyncReBACManager
+    from nexus.core.rebac.async_rebac_manager import AsyncReBACManager
 
     # Create async engine
     engine = create_async_engine("postgresql+asyncpg://...")
@@ -37,8 +37,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS, Entity, NamespaceConfig
-from nexus.core.rebac_cache import ReBACPermissionCache
+from nexus.core.rebac.rebac import CROSS_TENANT_ALLOWED_RELATIONS, Entity, NamespaceConfig
+from nexus.core.rebac.rebac_cache import ReBACPermissionCache
 
 if TYPE_CHECKING:
     pass

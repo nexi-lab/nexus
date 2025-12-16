@@ -6,7 +6,7 @@ This enables filesystem-like permission inheritance where granting access
 to a directory automatically grants access to all children.
 
 Usage:
-    from nexus.core.hierarchy_manager import HierarchyManager
+    from nexus.core.mount.hierarchy_manager import HierarchyManager
 
     manager = HierarchyManager(rebac_manager, enable_inheritance=True)
 
@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.core.rebac.rebac_manager_enhanced import EnhancedReBACManager
 
 
 class HierarchyManager:
@@ -134,7 +134,7 @@ class HierarchyManager:
         # We need to query the database directly since rebac_check
         # would recursively check, not just look for direct tuple
 
-        from nexus.core.rebac import Entity
+        from nexus.core.rebac.rebac import Entity
 
         child_entity = Entity("file", child_path)
         parent_entity = Entity("file", parent_path)

@@ -130,13 +130,13 @@ from nexus.core.exceptions import (
 from nexus.core.filesystem import NexusFilesystem as Filesystem
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext, PermissionEnforcer
-from nexus.core.rebac import WILDCARD_SUBJECT, Entity, ReBACTuple
-from nexus.core.rebac_manager_enhanced import (
+from nexus.core.rebac.rebac import WILDCARD_SUBJECT, Entity, ReBACTuple
+from nexus.core.rebac.rebac_manager_enhanced import (
     CheckResult,
     ConsistencyLevel,
     GraphLimitExceeded,
 )
-from nexus.core.rebac_manager_enhanced import (
+from nexus.core.rebac.rebac_manager_enhanced import (
     EnhancedReBACManager as ReBACManager,
 )
 from nexus.core.router import NamespaceConfig

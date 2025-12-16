@@ -8,7 +8,7 @@ CRITICAL SECURITY FIX: Enforces same-tenant relationships at write time
 and filters all queries by tenant_id.
 
 Usage:
-    from nexus.core.rebac_manager_tenant_aware import TenantAwareReBACManager
+    from nexus.core.rebac.rebac_manager_tenant_aware import TenantAwareReBACManager
 
     manager = TenantAwareReBACManager(engine)
 
@@ -34,8 +34,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS, Entity, NamespaceConfig
-from nexus.core.rebac_manager import ReBACManager
+from nexus.core.rebac.rebac import CROSS_TENANT_ALLOWED_RELATIONS, Entity, NamespaceConfig
+from nexus.core.rebac.rebac_manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -587,7 +587,7 @@ class TenantAwareReBACManager(ReBACManager):
 
             # Check 2: Wildcard/public access
             # Check if wildcard subject (*:*) has the relation (public access)
-            from nexus.core.rebac import WILDCARD_SUBJECT
+            from nexus.core.rebac.rebac import WILDCARD_SUBJECT
 
             if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
                 wildcard_entity = Entity(WILDCARD_SUBJECT[0], WILDCARD_SUBJECT[1])
@@ -623,7 +623,7 @@ class TenantAwareReBACManager(ReBACManager):
             # For shared-* relations, check WITHOUT tenant_id filter because
             # cross-tenant shares are stored in the resource owner's tenant
             # but should be visible from the recipient's tenant.
-            from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS
+            from nexus.core.rebac.rebac import CROSS_TENANT_ALLOWED_RELATIONS
 
             if relation in CROSS_TENANT_ALLOWED_RELATIONS:
                 # Check for cross-tenant share tuples (no tenant filter)

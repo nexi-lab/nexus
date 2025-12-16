@@ -21,7 +21,7 @@ from nexus.core.context_utils import get_database_url, get_tenant_id, get_user_i
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
-    from nexus.core.mount_manager import MountManager
+    from nexus.core.mount.mount_manager import MountManager
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
 
@@ -1425,7 +1425,7 @@ class NexusFSMountsMixin:
                                 )
                             except Exception as cb_error:
                                 # Re-raise cancellation, log other errors
-                                from nexus.core.sync_job_manager import SyncCancelled
+                                from nexus.core.sync.sync_job_manager import SyncCancelled
 
                                 if isinstance(cb_error, SyncCancelled):
                                     raise
@@ -1702,7 +1702,7 @@ class NexusFSMountsMixin:
         """
         import asyncio
 
-        from nexus.core.sync_job_manager import SyncJobManager
+        from nexus.core.sync.sync_job_manager import SyncJobManager
 
         if mount_point is None:
             raise ValueError("mount_point is required for async sync")
@@ -1774,7 +1774,7 @@ class NexusFSMountsMixin:
             >>> if job:
             ...     print(f"Status: {job['status']}, Progress: {job['progress_pct']}%")
         """
-        from nexus.core.sync_job_manager import SyncJobManager
+        from nexus.core.sync.sync_job_manager import SyncJobManager
 
         sync_manager = SyncJobManager(self.metadata.SessionLocal)  # type: ignore[attr-defined]
         return sync_manager.get_job(job_id)
@@ -1797,7 +1797,7 @@ class NexusFSMountsMixin:
             >>> if result["success"]:
             ...     print("Cancellation requested")
         """
-        from nexus.core.sync_job_manager import SyncJobManager
+        from nexus.core.sync.sync_job_manager import SyncJobManager
 
         sync_manager = SyncJobManager(self.metadata.SessionLocal)  # type: ignore[attr-defined]
         success = sync_manager.cancel_job(job_id)
@@ -1846,7 +1846,7 @@ class NexusFSMountsMixin:
             >>> # List running jobs for a specific mount
             >>> jobs = nx.list_sync_jobs(mount_point="/mnt/gmail", status="running")
         """
-        from nexus.core.sync_job_manager import SyncJobManager
+        from nexus.core.sync.sync_job_manager import SyncJobManager
 
         sync_manager = SyncJobManager(self.metadata.SessionLocal)  # type: ignore[attr-defined]
         return sync_manager.list_jobs(mount_point=mount_point, status=status, limit=limit)

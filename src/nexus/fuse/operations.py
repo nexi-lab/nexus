@@ -17,7 +17,7 @@ from fuse import FuseOSError, Operations
 
 from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
 from nexus.core.filters import is_os_metadata_file
-from nexus.core.virtual_views import (
+from nexus.core.workspace.virtual_views import (
     get_parsed_content,
     parse_virtual_path,
     should_add_virtual_views,

@@ -302,7 +302,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Initialize async ReBAC manager if database URL provided
     if _app_state.database_url:
         try:
-            from nexus.core.async_rebac_manager import (
+            from nexus.core.rebac.async_rebac_manager import (
                 AsyncReBACManager,
                 create_async_engine_from_url,
             )

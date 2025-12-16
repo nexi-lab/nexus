@@ -1012,7 +1012,7 @@ def serve(
                             raise
 
                     # Grant admin user ownership
-                    from nexus.core.rebac_manager import ReBACManager
+                    from nexus.core.rebac.rebac_manager import ReBACManager
 
                     rebac = ReBACManager(engine)
                     rebac.rebac_write(

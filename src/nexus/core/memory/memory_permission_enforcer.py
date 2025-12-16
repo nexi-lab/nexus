@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.entity_registry import EntityRegistry
-from nexus.core.memory_router import MemoryViewRouter
+from nexus.core.memory.memory_router import MemoryViewRouter
 from nexus.core.permissions import (
     OperationContext,
     Permission,
@@ -23,7 +23,7 @@ from nexus.core.permissions import (
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.core.rebac.rebac_manager_enhanced import EnhancedReBACManager
 
 
 class MemoryPermissionEnforcer(PermissionEnforcer):

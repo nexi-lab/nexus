@@ -50,7 +50,7 @@ from nexus.core.exceptions import (
     ValidationError,
 )
 from nexus.core.filesystem import NexusFilesystem
-from nexus.core.nexus_fs_llm import NexusFSLLMMixin
+from nexus.core.mixins.nexus_fs_llm import NexusFSLLMMixin
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,

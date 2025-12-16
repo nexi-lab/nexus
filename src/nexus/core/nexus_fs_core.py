@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
-from nexus.core.hash_fast import hash_content
+from nexus.core.fast.hash_fast import hash_content
 from nexus.core.metadata import FileMetadata
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
@@ -326,7 +326,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.core.memory.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._read_memory_path(path, return_metadata, context=context)
@@ -343,7 +343,7 @@ class NexusFSCoreMixin:
             )
 
         # Fix #332: Handle virtual parsed views (e.g., report_parsed.pdf.md)
-        from nexus.core.virtual_views import get_parsed_content, parse_virtual_path
+        from nexus.core.workspace.virtual_views import get_parsed_content, parse_virtual_path
 
         def metadata_exists(check_path: str) -> bool:
             return self.metadata.exists(check_path)
@@ -1062,7 +1062,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.core.memory.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._write_memory_path(path, content)
@@ -1758,7 +1758,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.core.memory.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._delete_memory_path(path, context=context)
@@ -2278,7 +2278,7 @@ class NexusFSCoreMixin:
             NexusFileNotFoundError: If memory doesn't exist.
         """
         from nexus.core.entity_registry import EntityRegistry
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.core.memory.memory_router import MemoryViewRouter
 
         # Get memory via router
         session = self.metadata.SessionLocal()
@@ -2363,7 +2363,7 @@ class NexusFSCoreMixin:
             NexusFileNotFoundError: If memory doesn't exist.
         """
         from nexus.core.entity_registry import EntityRegistry
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.core.memory.memory_router import MemoryViewRouter
 
         # Get memory via router
         session = self.metadata.SessionLocal()

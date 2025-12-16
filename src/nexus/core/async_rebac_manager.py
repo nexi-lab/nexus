@@ -613,7 +613,62 @@ class AsyncReBACManager:
                         }
                     )
 
-            logger.debug(f"Fetched {len(tuples)} tuples for bulk check")
+            # Cross-tenant share tuple fetch (PR #647, #648)
+            # Fetch shared-* tuples for subjects without tenant filter
+            cross_tenant_query = text("""
+                SELECT subject_type, subject_id, subject_relation, relation,
+                       object_type, object_id, conditions, expires_at
+                FROM rebac_tuples
+                WHERE relation IN ('shared-viewer', 'shared-editor', 'shared-owner')
+                  AND (expires_at IS NULL OR expires_at >= :now)
+            """)
+            result = await session.execute(
+                cross_tenant_query,
+                {"now": datetime.now(UTC).isoformat()},
+            )
+            cross_tenant_count = 0
+            for row in result.fetchall():
+                subj = (row[0], row[1])
+                obj = (row[4], row[5])
+                if subj in all_subjects or obj in all_objects:
+                    tuples.append(
+                        {
+                            "subject_type": row[0],
+                            "subject_id": row[1],
+                            "subject_relation": row[2],
+                            "relation": row[3],
+                            "object_type": row[4],
+                            "object_id": row[5],
+                            "conditions": row[6],
+                            "expires_at": row[7],
+                        }
+                    )
+                    cross_tenant_count += 1
+            if cross_tenant_count > 0:
+                logger.debug(f"Fetched {cross_tenant_count} cross-tenant share tuples")
+
+            # Compute parent tuples in memory (PR #648)
+            # For file paths, parent relationships are deterministic from path
+            from pathlib import PurePosixPath
+
+            for obj_type, obj_id in all_objects:
+                if obj_type == "file":
+                    parent_path = str(PurePosixPath(obj_id).parent)
+                    if parent_path != obj_id and parent_path != ".":
+                        tuples.append(
+                            {
+                                "subject_type": "file",
+                                "subject_id": obj_id,
+                                "subject_relation": None,
+                                "relation": "parent",
+                                "object_type": "file",
+                                "object_id": parent_path,
+                                "conditions": None,
+                                "expires_at": None,
+                            }
+                        )
+
+            logger.debug(f"Fetched {len(tuples)} tuples for bulk check (includes computed parents)")
             return tuples
 
     async def _compute_permission_bulk(

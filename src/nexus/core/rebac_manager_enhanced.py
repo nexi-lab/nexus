@@ -30,6 +30,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS, Entity
@@ -1112,6 +1113,17 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             f"_find_related_objects_tenant_aware: obj={obj}, relation={relation}, tenant_id={tenant_id}"
         )
 
+        # For parent relation on files, compute from path instead of querying DB
+        # This handles cross-tenant scenarios where parent tuples are in different tenant
+        if relation == "parent" and obj.entity_type == "file":
+            parent_path = str(PurePosixPath(obj.entity_id).parent)
+            if parent_path != obj.entity_id and parent_path != ".":
+                logger.debug(
+                    f"_find_related_objects_tenant_aware: Computed parent from path: {obj.entity_id} -> {parent_path}"
+                )
+                return [Entity("file", parent_path)]
+            return []
+
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
@@ -1282,6 +1294,39 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         return True
                 else:
                     return True  # No conditions, allow
+
+            # Cross-tenant check for shared-* relations (PR #647, #648)
+            # Cross-tenant shares are stored in the resource owner's tenant
+            # but should be visible when checking from the recipient's tenant.
+            from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS
+
+            if relation in CROSS_TENANT_ALLOWED_RELATIONS:
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        SELECT tuple_id FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND relation = ?
+                          AND object_type = ? AND object_id = ?
+                          AND subject_relation IS NULL
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        """
+                    ),
+                    (
+                        subject.entity_type,
+                        subject.entity_id,
+                        relation,
+                        obj.entity_type,
+                        obj.entity_id,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                if cursor.fetchone():
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.debug(f"Cross-tenant share found: {subject} -> {relation} -> {obj}")
+                    return True
 
             # Check for userset-as-subject tuple (e.g., group#member)
             # Find all tuples where object is our target and subject is a userset
@@ -1773,6 +1818,37 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     logger.debug(
                         f"Fetched {cross_tenant_count} cross-tenant share tuples for subjects"
                     )
+
+                # PR #648: Compute parent relationships in memory (no DB query needed)
+                # For files, parent relationship is deterministic from path:
+                # - /workspace/project/file.txt → parent → /workspace/project
+                # - /workspace/project → parent → /workspace
+                # This enables cross-tenant folder sharing with children without
+                # any additional DB queries or cross-tenant complexity.
+                if ancestor_paths:
+                    computed_parent_count = 0
+                    for file_path in ancestor_paths:
+                        parent_path = str(PurePosixPath(file_path).parent)
+                        # Don't create self-referential parent (root's parent is root)
+                        if parent_path != file_path and parent_path != ".":
+                            tuples_graph.append(
+                                {
+                                    "subject_type": "file",
+                                    "subject_id": file_path,
+                                    "subject_relation": None,
+                                    "relation": "parent",
+                                    "object_type": "file",
+                                    "object_id": parent_path,
+                                    "conditions": None,
+                                    "expires_at": None,
+                                }
+                            )
+                            computed_parent_count += 1
+
+                    if computed_parent_count > 0:
+                        logger.debug(
+                            f"Computed {computed_parent_count} parent tuples in memory for file hierarchy"
+                        )
 
             logger.debug(
                 f"Fetched {len(tuples_graph)} tuples in bulk for graph computation (includes parent hierarchy)"

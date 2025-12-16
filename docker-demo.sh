@@ -275,7 +275,7 @@ run_provisioning() {
         -e NEXUS_API_KEY="$API_KEY" \
         -e NEXUS_DATABASE_URL="${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@postgres:5432/nexus}" \
         -e NEXUS_DATA_DIR="/app/data" \
-        nexus-server sh -c "unset NEXUS_URL && cd /app && python3 scripts/provision_namespace.py --tenant protoss" \
+        nexus-server sh -c "unset NEXUS_URL && cd /app && python3 scripts/provision_namespace.py --tenant default" \
         && echo "✅ Provisioning completed" \
         || echo "⚠️  Provisioning encountered errors (see container logs)"
 }

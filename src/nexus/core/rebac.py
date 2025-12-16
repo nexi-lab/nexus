@@ -15,7 +15,9 @@ Relationship Types:
     - viewer-of: Subject can view object (read-only)
     - editor-of: Subject can edit object (read/write)
     - parent-of: Hierarchical relationship (e.g., folder → file)
-    - shared-with: Sharing relationship
+    - shared-viewer: Cross-tenant read access
+    - shared-editor: Cross-tenant read/write access
+    - shared-owner: Cross-tenant full access
 
 Example:
     # Direct relationship
@@ -46,7 +48,9 @@ WILDCARD_SUBJECT = ("*", "*")
 # These relations can link subjects and objects from different tenants
 CROSS_TENANT_ALLOWED_RELATIONS = frozenset(
     {
-        "shared-with",  # Direct user-to-resource sharing across tenants
+        "shared-viewer",  # Read access via cross-tenant share
+        "shared-editor",  # Read + Write access via cross-tenant share
+        "shared-owner",  # Full access via cross-tenant share
     }
 )
 
@@ -59,7 +63,10 @@ class RelationType(StrEnum):
     VIEWER_OF = "viewer-of"
     EDITOR_OF = "editor-of"
     PARENT_OF = "parent-of"
-    SHARED_WITH = "shared-with"
+    # Cross-tenant sharing relations
+    SHARED_VIEWER = "shared-viewer"
+    SHARED_EDITOR = "shared-editor"
+    SHARED_OWNER = "shared-owner"
 
 
 class EntityType(StrEnum):
@@ -585,14 +592,38 @@ DEFAULT_FILE_NAMESPACE = NamespaceConfig(
             "group_viewer": {
                 "tupleToUserset": {"tupleset": "direct_viewer", "computedUserset": "member"}
             },
-            # Computed relations (union of direct + parent + group)
+            # Cross-tenant sharing relations (PR #645)
+            # These enable share_with_user() to grant access across tenant boundaries
+            # Inheritance works via parent_* relations checking viewer/editor/owner unions
+            "shared-viewer": {},  # Read access via cross-tenant share
+            "shared-editor": {},  # Read + Write access via cross-tenant share
+            "shared-owner": {},  # Full access via cross-tenant share
+            # Computed relations (union of direct + parent + group + shared)
             # HYBRID: Keep unions for better memoization caching
             # Permission checks → 3 unions (viewer, editor, owner) instead of 9 relations
             # This gives better cache hit rates since many files share the same union checks
             # IMPORTANT: Don't nest unions (e.g., editor includes owner) - causes exponential checks
-            "owner": {"union": ["direct_owner", "parent_owner", "group_owner"]},
-            "editor": {"union": ["direct_editor", "parent_editor", "group_editor"]},
-            "viewer": {"union": ["direct_viewer", "parent_viewer", "group_viewer"]},
+            # Note: Higher permission levels include lower ones (owner has editor, editor has viewer)
+            "owner": {"union": ["direct_owner", "parent_owner", "group_owner", "shared-owner"]},
+            "editor": {
+                "union": [
+                    "direct_editor",
+                    "parent_editor",
+                    "group_editor",
+                    "shared-editor",
+                    "shared-owner",
+                ]
+            },
+            "viewer": {
+                "union": [
+                    "direct_viewer",
+                    "parent_viewer",
+                    "group_viewer",
+                    "shared-viewer",
+                    "shared-editor",
+                    "shared-owner",
+                ]
+            },
         },
         # P0-1: Explicit permission-to-userset mapping (Zanzibar-style)
         # HYBRID OPTIMIZATION: Use unions for better memoization

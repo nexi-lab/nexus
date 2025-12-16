@@ -104,6 +104,7 @@ class AppState:
         self.exposed_methods: dict[str, Any] = {}
         self.async_rebac_manager: Any = None
         self.database_url: str | None = None
+        self.subscription_manager: Any = None  # SubscriptionManager for webhooks
 
 
 # Global state (set during app creation)
@@ -316,6 +317,8 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+    if _app_state.subscription_manager:
+        await _app_state.subscription_manager.close()
     if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "close"):
         _app_state.nexus_fs.close()
 
@@ -350,6 +353,18 @@ def create_app(
 
     # Discover exposed methods
     _app_state.exposed_methods = _discover_exposed_methods(nexus_fs)
+
+    # Initialize subscription manager if we have a metadata store
+    try:
+        if hasattr(nexus_fs, "metadata") and hasattr(nexus_fs.metadata, "SessionLocal"):
+            from nexus.server.subscriptions import SubscriptionManager
+
+            _app_state.subscription_manager = SubscriptionManager(nexus_fs.metadata.SessionLocal)
+            # Inject into NexusFS for automatic event broadcasting
+            nexus_fs.subscription_manager = _app_state.subscription_manager
+            logger.info("Subscription manager initialized and injected into NexusFS")
+    except Exception as e:
+        logger.warning(f"Failed to initialize subscription manager: {e}")
 
     # Create app
     app = FastAPI(
@@ -431,6 +446,126 @@ def _register_routes(app: FastAPI) -> None:
             "async": True,
             "methods": list(_app_state.exposed_methods.keys()),
         }
+
+    # =========================================================================
+    # Subscription API Endpoints
+    # =========================================================================
+
+    @app.post("/api/subscriptions", tags=["subscriptions"])
+    async def create_subscription(
+        request: Request,
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> JSONResponse:
+        """Create a new webhook subscription.
+
+        Subscribe to file events (write, delete, rename) with optional path filters.
+        """
+        if not _app_state.subscription_manager:
+            raise HTTPException(status_code=503, detail="Subscription manager not available")
+
+        from nexus.server.subscriptions import SubscriptionCreate
+
+        body = await request.json()
+        data = SubscriptionCreate(**body)
+        tenant_id = auth_result.get("tenant_id") or "default"
+        created_by = auth_result.get("subject_id")
+
+        subscription = _app_state.subscription_manager.create(
+            tenant_id=tenant_id,
+            data=data,
+            created_by=created_by,
+        )
+        return JSONResponse(content=subscription.model_dump(mode="json"), status_code=201)
+
+    @app.get("/api/subscriptions", tags=["subscriptions"])
+    async def list_subscriptions(
+        enabled_only: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> JSONResponse:
+        """List webhook subscriptions for the current tenant."""
+        if not _app_state.subscription_manager:
+            raise HTTPException(status_code=503, detail="Subscription manager not available")
+
+        tenant_id = auth_result.get("tenant_id") or "default"
+        subscriptions = _app_state.subscription_manager.list_subscriptions(
+            tenant_id=tenant_id,
+            enabled_only=enabled_only,
+            limit=limit,
+            offset=offset,
+        )
+        return JSONResponse(
+            content={"subscriptions": [s.model_dump(mode="json") for s in subscriptions]}
+        )
+
+    @app.get("/api/subscriptions/{subscription_id}", tags=["subscriptions"])
+    async def get_subscription(
+        subscription_id: str,
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> JSONResponse:
+        """Get a webhook subscription by ID."""
+        if not _app_state.subscription_manager:
+            raise HTTPException(status_code=503, detail="Subscription manager not available")
+
+        tenant_id = auth_result.get("tenant_id") or "default"
+        subscription = _app_state.subscription_manager.get(subscription_id, tenant_id)
+        if subscription is None:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+        return JSONResponse(content=subscription.model_dump(mode="json"))
+
+    @app.patch("/api/subscriptions/{subscription_id}", tags=["subscriptions"])
+    async def update_subscription(
+        subscription_id: str,
+        request: Request,
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> JSONResponse:
+        """Update a webhook subscription."""
+        if not _app_state.subscription_manager:
+            raise HTTPException(status_code=503, detail="Subscription manager not available")
+
+        from nexus.server.subscriptions import SubscriptionUpdate
+
+        body = await request.json()
+        data = SubscriptionUpdate(**body)
+        tenant_id = auth_result.get("tenant_id") or "default"
+
+        subscription = _app_state.subscription_manager.update(
+            subscription_id=subscription_id,
+            tenant_id=tenant_id,
+            data=data,
+        )
+        if subscription is None:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+        return JSONResponse(content=subscription.model_dump(mode="json"))
+
+    @app.delete("/api/subscriptions/{subscription_id}", tags=["subscriptions"])
+    async def delete_subscription(
+        subscription_id: str,
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> JSONResponse:
+        """Delete a webhook subscription."""
+        if not _app_state.subscription_manager:
+            raise HTTPException(status_code=503, detail="Subscription manager not available")
+
+        tenant_id = auth_result.get("tenant_id") or "default"
+        deleted = _app_state.subscription_manager.delete(subscription_id, tenant_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+        return JSONResponse(content={"deleted": True})
+
+    @app.post("/api/subscriptions/{subscription_id}/test", tags=["subscriptions"])
+    async def test_subscription(
+        subscription_id: str,
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> JSONResponse:
+        """Send a test event to a webhook subscription."""
+        if not _app_state.subscription_manager:
+            raise HTTPException(status_code=503, detail="Subscription manager not available")
+
+        tenant_id = auth_result.get("tenant_id") or "default"
+        result = await _app_state.subscription_manager.test(subscription_id, tenant_id)
+        return JSONResponse(content=result)
 
     # Main RPC endpoint
     @app.post("/api/nfs/{method}")
@@ -562,7 +697,8 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
     # Manual dispatch for core filesystem operations
     # Use asyncio.to_thread to run sync handlers without blocking the event loop
     if method == "read":
-        return await asyncio.to_thread(_handle_read, params, context)
+        # Use async handler for read to support async parsing
+        return await _handle_read_async(params, context)
     elif method == "write":
         return await asyncio.to_thread(_handle_write, params, context)
     elif method == "exists":
@@ -639,8 +775,8 @@ async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:
 # ============================================================================
 
 
-def _handle_read(params: Any, context: Any) -> bytes | dict[str, Any]:
-    """Handle read method.
+async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any]:
+    """Handle read method (async version for parsed reads).
 
     Returns raw bytes which will be encoded by encode_rpc_message using
     the standard {__type__: 'bytes', data: ...} format.
@@ -648,7 +784,74 @@ def _handle_read(params: Any, context: Any) -> bytes | dict[str, Any]:
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
 
-    result = nexus_fs.read(params.path, context=context)
+    # Handle optional parameters
+    return_metadata = getattr(params, "return_metadata", False) or False
+    parsed = getattr(params, "parsed", False) or False
+
+    # If not parsed, use sync read in thread
+    if not parsed:
+        result = await asyncio.to_thread(
+            nexus_fs.read, params.path, context, return_metadata, False
+        )
+        if isinstance(result, bytes):
+            return result
+        return result
+
+    # For parsed reads, we need to handle async parsing
+    # First, read the raw content
+    raw_result = await asyncio.to_thread(
+        nexus_fs.read,
+        params.path,
+        context,
+        True,
+        False,  # return_metadata=True, parsed=False
+    )
+
+    content = raw_result.get("content", b"") if isinstance(raw_result, dict) else raw_result
+
+    # Now parse the content asynchronously
+    if hasattr(nexus_fs, "_get_parsed_content_async"):
+        parsed_content, parse_info = await nexus_fs._get_parsed_content_async(params.path, content)
+    else:
+        # Fallback to sync method in thread
+        parsed_content, parse_info = await asyncio.to_thread(
+            nexus_fs._get_parsed_content, params.path, content
+        )
+
+    if return_metadata:
+        result = {
+            "content": parsed_content,
+            "parsed": parse_info.get("parsed", False),
+            "provider": parse_info.get("provider"),
+            "cached": parse_info.get("cached", False),
+        }
+        if isinstance(raw_result, dict):
+            result["etag"] = raw_result.get("etag")
+            result["version"] = raw_result.get("version")
+            result["modified_at"] = raw_result.get("modified_at")
+            result["size"] = len(parsed_content)
+        return result
+
+    return parsed_content
+
+
+def _handle_read(params: Any, context: Any) -> bytes | dict[str, Any]:
+    """Handle read method (sync version - kept for compatibility).
+
+    Returns raw bytes which will be encoded by encode_rpc_message using
+    the standard {__type__: 'bytes', data: ...} format.
+    """
+    nexus_fs = _app_state.nexus_fs
+    assert nexus_fs is not None
+
+    # Handle optional parameters
+    kwargs: dict[str, Any] = {"context": context}
+    if hasattr(params, "return_metadata") and params.return_metadata is not None:
+        kwargs["return_metadata"] = params.return_metadata
+    if hasattr(params, "parsed") and params.parsed is not None:
+        kwargs["parsed"] = params.parsed
+
+    result = nexus_fs.read(params.path, **kwargs)
 
     # Return raw bytes - encode_rpc_message will convert to {__type__: 'bytes', data: ...}
     if isinstance(result, bytes):

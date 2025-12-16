@@ -30,6 +30,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS, Entity
@@ -1773,6 +1774,37 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     logger.debug(
                         f"Fetched {cross_tenant_count} cross-tenant share tuples for subjects"
                     )
+
+                # PR #648: Compute parent relationships in memory (no DB query needed)
+                # For files, parent relationship is deterministic from path:
+                # - /workspace/project/file.txt → parent → /workspace/project
+                # - /workspace/project → parent → /workspace
+                # This enables cross-tenant folder sharing with children without
+                # any additional DB queries or cross-tenant complexity.
+                if ancestor_paths:
+                    computed_parent_count = 0
+                    for file_path in ancestor_paths:
+                        parent_path = str(PurePosixPath(file_path).parent)
+                        # Don't create self-referential parent (root's parent is root)
+                        if parent_path != file_path and parent_path != ".":
+                            tuples_graph.append(
+                                {
+                                    "subject_type": "file",
+                                    "subject_id": file_path,
+                                    "subject_relation": None,
+                                    "relation": "parent",
+                                    "object_type": "file",
+                                    "object_id": parent_path,
+                                    "conditions": None,
+                                    "expires_at": None,
+                                }
+                            )
+                            computed_parent_count += 1
+
+                    if computed_parent_count > 0:
+                        logger.debug(
+                            f"Computed {computed_parent_count} parent tuples in memory for file hierarchy"
+                        )
 
             logger.debug(
                 f"Fetched {len(tuples_graph)} tuples in bulk for graph computation (includes parent hierarchy)"

@@ -67,7 +67,7 @@ nano .env     # If you have nano installed
 ```bash
 # Make sure Docker Desktop is running (Windows/Mac)
 # Then start all services
-./docker-demo.sh --build
+./scripts/dev/docker-demo.sh --build
 ```
 
 > **Windows Note**: If you see a "CRLF line terminator" error, the script will automatically fix it. Just wait for the rebuild to complete.
@@ -144,8 +144,8 @@ curl -H "Authorization: Bearer $NEXUS_API_KEY" \
 
 - Open the frontend: http://localhost:5173
 - Read the full docs: [DOCKER.md](DOCKER.md)
-- View logs: `./docker-demo.sh --logs`
-- Stop services: `./docker-demo.sh --stop`
+- View logs: `./scripts/dev/docker-demo.sh --logs`
+- Stop services: `./scripts/dev/docker-demo.sh --stop`
 
 ## Common Issues
 
@@ -182,7 +182,7 @@ dos2unix docker-entrypoint.sh
 sed -i 's/\r$//' docker-entrypoint.sh
 
 # Then rebuild
-./docker-demo.sh --build
+./scripts/dev/docker-demo.sh --build
 ```
 
 ### Port already in use

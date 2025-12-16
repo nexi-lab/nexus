@@ -174,11 +174,11 @@ The `docker-demo.sh` script automatically detects and mounts AWS credentials:
 
 ```bash
 # Uses ~/.aws/credentials by default
-./docker-demo.sh
+./scripts/dev/docker-demo.sh
 
 # Or specify custom credentials path
 export AWS_CREDENTIALS_PATH=/path/to/credentials
-./docker-demo.sh
+./scripts/dev/docker-demo.sh
 ```
 
 ### Manual Docker Configuration

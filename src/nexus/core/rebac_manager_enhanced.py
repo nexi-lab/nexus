@@ -195,6 +195,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         self.enable_graph_limits = enable_graph_limits
         # REMOVED: self._version_counter (replaced with DB sequence in Issue #2 fix)
 
+        # PERFORMANCE FIX: Cache tenant tuples to avoid O(T) fetch per permission check
+        # Key: tenant_id, Value: (tuples_list, namespace_configs, cached_at_timestamp)
+        # This dramatically reduces DB queries: from O(T) per check to O(1) amortized
+        self._tenant_graph_cache: dict[str, tuple[list[dict[str, Any]], dict[str, Any], float]] = {}
+        self._tenant_graph_cache_ttl = cache_ttl_seconds  # Reuse existing TTL
+
     def rebac_check(
         self,
         subject: tuple[str, str],
@@ -473,7 +479,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             if is_rust_available():
                 # Fetch tuples and namespace configs for Rust
-                tuples = self._fetch_tuples_for_rust(tenant_id)
+                # CROSS-TENANT FIX: Pass subject to include cross-tenant shares
+                tuples = self._fetch_tuples_for_rust(tenant_id, subject=subject)
                 namespace_configs = self._get_namespace_configs_for_rust()
 
                 result = check_permission_single_rust(
@@ -514,19 +521,105 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         return result
 
-    def _fetch_tuples_for_rust(self, tenant_id: str) -> list[dict[str, Any]]:
-        """Fetch ReBAC tuples for Rust permission computation.
+    def _fetch_tuples_for_rust(
+        self, tenant_id: str, subject: Entity | None = None
+    ) -> list[dict[str, Any]]:
+        """Fetch ReBAC tuples for Rust permission computation with caching.
+
+        PERFORMANCE FIX: This method now caches tenant tuples to avoid O(T) fetches
+        on every permission check. The cache is invalidated on tuple mutations.
+
+        Cache strategy:
+        - Tenant tuples: Cached with TTL (the O(T) part)
+        - Cross-tenant shares: Always fresh (small, indexed query)
 
         Args:
             tenant_id: Tenant ID to scope tuples
+            subject: Optional subject for cross-tenant share lookup
 
         Returns:
             List of tuple dictionaries for Rust
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # PERFORMANCE: Check tenant tuples cache first
+        cached_tuples = self._get_cached_tenant_tuples(tenant_id)
+
+        if cached_tuples is not None:
+            logger.debug(
+                f"[GRAPH-CACHE] Cache HIT for tenant {tenant_id}: {len(cached_tuples)} tuples"
+            )
+            tuples = list(cached_tuples)  # Copy to avoid modifying cache
+        else:
+            # Cache miss - fetch from DB
+            logger.debug(f"[GRAPH-CACHE] Cache MISS for tenant {tenant_id}, fetching from DB")
+            tuples = self._fetch_tenant_tuples_from_db(tenant_id)
+
+            # Cache the result
+            self._cache_tenant_tuples(tenant_id, tuples)
+            logger.debug(
+                f"[GRAPH-CACHE] Cached {len(tuples)} tuples for tenant {tenant_id}"
+            )
+
+        # CROSS-TENANT FIX: Always fetch cross-tenant shares fresh (small, indexed query)
+        # Cross-tenant shares are stored in the resource owner's tenant but need
+        # to be visible when checking permissions from the recipient's tenant.
+        if subject is not None:
+            cross_tenant_tuples = self._fetch_cross_tenant_shares(tenant_id, subject)
+            if cross_tenant_tuples:
+                logger.debug(
+                    f"[GRAPH-CACHE] Fetched {len(cross_tenant_tuples)} cross-tenant shares for {subject}"
+                )
+                tuples.extend(cross_tenant_tuples)
+
+        return tuples
+
+    def _get_cached_tenant_tuples(self, tenant_id: str) -> list[dict[str, Any]] | None:
+        """Get cached tenant tuples if not expired.
+
+        Args:
+            tenant_id: Tenant ID
+
+        Returns:
+            Cached tuples list or None if cache miss/expired
+        """
+        if tenant_id not in self._tenant_graph_cache:
+            return None
+
+        tuples, _namespace_configs, cached_at = self._tenant_graph_cache[tenant_id]
+        age = time.perf_counter() - cached_at
+
+        if age > self._tenant_graph_cache_ttl:
+            # Cache expired
+            del self._tenant_graph_cache[tenant_id]
+            return None
+
+        return tuples
+
+    def _cache_tenant_tuples(self, tenant_id: str, tuples: list[dict[str, Any]]) -> None:
+        """Cache tenant tuples with timestamp.
+
+        Args:
+            tenant_id: Tenant ID
+            tuples: Tuples list to cache
+        """
+        namespace_configs = self._get_namespace_configs_for_rust()
+        self._tenant_graph_cache[tenant_id] = (tuples, namespace_configs, time.perf_counter())
+
+    def _fetch_tenant_tuples_from_db(self, tenant_id: str) -> list[dict[str, Any]]:
+        """Fetch all tuples for a tenant from database.
+
+        Args:
+            tenant_id: Tenant ID
+
+        Returns:
+            List of tuple dictionaries
+        """
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
-            # Fetch all tuples for this tenant (Rust will do the graph traversal)
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
@@ -534,9 +627,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                            object_type, object_id
                     FROM rebac_tuples
                     WHERE tenant_id = ?
+                      AND (expires_at IS NULL OR expires_at > ?)
                     """
                 ),
-                (tenant_id,),
+                (tenant_id, datetime.now(UTC).isoformat()),
             )
 
             tuples = []
@@ -553,6 +647,165 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 )
 
             return tuples
+
+    def _fetch_cross_tenant_shares(
+        self, tenant_id: str, subject: Entity
+    ) -> list[dict[str, Any]]:
+        """Fetch cross-tenant shares for a subject.
+
+        Cross-tenant shares are stored in the resource owner's tenant but need
+        to be visible when checking permissions from the recipient's tenant.
+        This query is indexed and returns only the small number of shares.
+
+        Args:
+            tenant_id: Current tenant ID (to exclude)
+            subject: Subject entity to find shares for
+
+        Returns:
+            List of cross-tenant share tuples
+        """
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            cross_tenant_relations = list(CROSS_TENANT_ALLOWED_RELATIONS)
+            placeholders = ", ".join("?" * len(cross_tenant_relations))
+
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    f"""
+                    SELECT subject_type, subject_id, subject_relation, relation,
+                           object_type, object_id
+                    FROM rebac_tuples
+                    WHERE relation IN ({placeholders})
+                      AND subject_type = ? AND subject_id = ?
+                      AND tenant_id != ?
+                      AND (expires_at IS NULL OR expires_at > ?)
+                    """
+                ),
+                tuple(cross_tenant_relations)
+                + (subject.entity_type, subject.entity_id, tenant_id, datetime.now(UTC).isoformat()),
+            )
+
+            tuples = []
+            for row in cursor.fetchall():
+                tuples.append(
+                    {
+                        "subject_type": row["subject_type"],
+                        "subject_id": row["subject_id"],
+                        "subject_relation": row["subject_relation"],
+                        "relation": row["relation"],
+                        "object_type": row["object_type"],
+                        "object_id": row["object_id"],
+                    }
+                )
+
+            return tuples
+
+    def invalidate_tenant_graph_cache(self, tenant_id: str | None = None) -> None:
+        """Invalidate the tenant graph cache.
+
+        Call this when tuples are created, updated, or deleted.
+
+        Args:
+            tenant_id: Specific tenant to invalidate, or None to clear all
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if tenant_id is None:
+            count = len(self._tenant_graph_cache)
+            self._tenant_graph_cache.clear()
+            logger.debug(f"[GRAPH-CACHE] Cleared all {count} cached tenant graphs")
+        elif tenant_id in self._tenant_graph_cache:
+            del self._tenant_graph_cache[tenant_id]
+            logger.debug(f"[GRAPH-CACHE] Invalidated cache for tenant {tenant_id}")
+
+    def rebac_write(
+        self,
+        subject: tuple[str, str] | tuple[str, str, str],
+        relation: str,
+        object: tuple[str, str],
+        expires_at: datetime | None = None,
+        conditions: dict[str, Any] | None = None,
+        tenant_id: str | None = None,
+        subject_tenant_id: str | None = None,
+        object_tenant_id: str | None = None,
+    ) -> str:
+        """Create a relationship tuple with cache invalidation.
+
+        Overrides parent to invalidate the tenant graph cache after writes.
+
+        Args:
+            subject: (subject_type, subject_id) or (subject_type, subject_id, subject_relation) tuple
+            relation: Relation type
+            object: (object_type, object_id) tuple
+            expires_at: Optional expiration time
+            conditions: Optional JSON conditions
+            tenant_id: Tenant ID for this relationship
+            subject_tenant_id: Subject's tenant
+            object_tenant_id: Object's tenant
+
+        Returns:
+            Tuple ID of created relationship
+        """
+        # Call parent implementation
+        result = super().rebac_write(
+            subject=subject,
+            relation=relation,
+            object=object,
+            expires_at=expires_at,
+            conditions=conditions,
+            tenant_id=tenant_id,
+            subject_tenant_id=subject_tenant_id,
+            object_tenant_id=object_tenant_id,
+        )
+
+        # Invalidate cache for affected tenants
+        effective_tenant = tenant_id or "default"
+        self.invalidate_tenant_graph_cache(effective_tenant)
+
+        # For cross-tenant shares, also invalidate the other tenant
+        if subject_tenant_id and subject_tenant_id != effective_tenant:
+            self.invalidate_tenant_graph_cache(subject_tenant_id)
+        if object_tenant_id and object_tenant_id != effective_tenant:
+            self.invalidate_tenant_graph_cache(object_tenant_id)
+
+        return result
+
+    def rebac_delete(self, tuple_id: str) -> bool:
+        """Delete a relationship tuple with cache invalidation.
+
+        Overrides parent to invalidate the tenant graph cache after deletes.
+
+        Args:
+            tuple_id: ID of tuple to delete
+
+        Returns:
+            True if tuple was deleted, False if not found
+        """
+        # First, get the tuple info to know which tenant to invalidate
+        tenant_id = None
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    "SELECT tenant_id FROM rebac_tuples WHERE tuple_id = ?"
+                ),
+                (tuple_id,),
+            )
+            row = cursor.fetchone()
+            if row:
+                tenant_id = row["tenant_id"]
+
+        # Call parent implementation
+        result = super().rebac_delete(tuple_id)
+
+        # Invalidate cache for the affected tenant
+        if result and tenant_id:
+            self.invalidate_tenant_graph_cache(tenant_id)
+
+        return result
 
     def _get_namespace_configs_for_rust(self) -> dict[str, Any]:
         """Get namespace configurations for Rust permission computation.
@@ -1478,6 +1731,52 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     }
                 )
 
+            # CROSS-TENANT FIX: Also fetch cross-tenant shares for subjects in the check list
+            # Cross-tenant shares are stored in the resource owner's tenant but need to be
+            # visible when checking permissions from the recipient's tenant.
+            # This query is indexed and returns only the small number of cross-tenant tuples.
+            if self.enforce_tenant_isolation:
+                cross_tenant_relations = tuple(CROSS_TENANT_ALLOWED_RELATIONS)
+                # Build placeholders for subject IN clause
+                cross_tenant_subject_placeholders = ", ".join(["(?, ?)"] * len(all_subjects))
+                cross_tenant_query = self._fix_sql_placeholders(
+                    f"""
+                    SELECT subject_type, subject_id, subject_relation, relation,
+                           object_type, object_id, conditions, expires_at
+                    FROM rebac_tuples
+                    WHERE relation IN ({", ".join("?" * len(cross_tenant_relations))})
+                      AND (subject_type, subject_id) IN ({cross_tenant_subject_placeholders})
+                      AND (expires_at IS NULL OR expires_at >= ?)
+                    """
+                )
+                cross_tenant_params = (
+                    list(cross_tenant_relations)
+                    + subject_params
+                    + [datetime.now(UTC).isoformat()]
+                )
+                cursor.execute(cross_tenant_query, cross_tenant_params)
+
+                cross_tenant_count = 0
+                for row in cursor.fetchall():
+                    tuples_graph.append(
+                        {
+                            "subject_type": row["subject_type"],
+                            "subject_id": row["subject_id"],
+                            "subject_relation": row["subject_relation"],
+                            "relation": row["relation"],
+                            "object_type": row["object_type"],
+                            "object_id": row["object_id"],
+                            "conditions": row["conditions"],
+                            "expires_at": row["expires_at"],
+                        }
+                    )
+                    cross_tenant_count += 1
+
+                if cross_tenant_count > 0:
+                    logger.debug(
+                        f"Fetched {cross_tenant_count} cross-tenant share tuples for subjects"
+                    )
+
             logger.debug(
                 f"Fetched {len(tuples_graph)} tuples in bulk for graph computation (includes parent hierarchy)"
             )
@@ -1733,7 +2032,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         # Fetch all relevant tuples for this tenant
         # This includes direct relations, group memberships, etc.
-        tuples = self._fetch_tuples_for_tenant(tenant_id)
+        # CROSS-TENANT FIX: Include cross-tenant shares where this user is the recipient
+        tuples = self._fetch_tuples_for_tenant(
+            tenant_id, include_cross_tenant_for_user=subject_id
+        )
         logger.debug(f"[LIST-OBJECTS] Fetched {len(tuples)} tuples for tenant {tenant_id}")
 
         # Get namespace configs
@@ -1942,13 +2244,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         Returns:
             List of tuple dictionaries for graph traversal
         """
-        from sqlalchemy import text
+        from sqlalchemy import bindparam, text
 
         with self.engine.connect() as conn:
             if include_cross_tenant_for_user:
                 # Include same-tenant tuples AND cross-tenant shares to this user
                 # Cross-tenant shares have relation in CROSS_TENANT_ALLOWED_RELATIONS
-                cross_tenant_relations = tuple(CROSS_TENANT_ALLOWED_RELATIONS)
+                cross_tenant_relations = list(CROSS_TENANT_ALLOWED_RELATIONS)
+                # Use bindparam with expanding=True for IN clause compatibility with SQLite
                 result = conn.execute(
                     text("""
                         SELECT subject_type, subject_id, subject_relation,
@@ -1965,7 +2268,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                                   AND subject_id = :user_id
                               )
                           )
-                    """),
+                    """).bindparams(
+                        bindparam("cross_tenant_relations", expanding=True)
+                    ),
                     {
                         "tenant_id": tenant_id,
                         "now": datetime.now(UTC),

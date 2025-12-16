@@ -2362,3 +2362,121 @@ class SystemSettingsModel(Base):
         # Don't show value for sensitive settings
         value_display = "***" if self.is_sensitive else self.value[:50]
         return f"<SystemSettingsModel(key={self.key}, value={value_display})>"
+
+
+# ============================================================================
+# Event Subscriptions Table
+# ============================================================================
+
+
+class SubscriptionModel(Base):
+    """Webhook subscriptions for event notifications.
+
+    Allows clients to register webhooks that receive real-time notifications
+    when file events (write, delete, rename) occur matching their filters.
+    """
+
+    __tablename__ = "subscriptions"
+
+    # Primary key
+    subscription_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Multi-tenancy
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+
+    # Webhook configuration
+    url: Mapped[str] = mapped_column(Text, nullable=False)  # Webhook URL
+    secret: Mapped[str | None] = mapped_column(String(255), nullable=True)  # HMAC secret
+
+    # Event filters (JSON arrays stored as text)
+    event_types: Mapped[str] = mapped_column(
+        Text, nullable=False, default='["file_write", "file_delete", "file_rename"]'
+    )  # JSON array of event types
+    patterns: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of glob patterns
+
+    # Subscription metadata
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    custom_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)  # Custom JSON metadata
+
+    # State
+    enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # SQLite: bool as int
+
+    # Delivery stats
+    last_delivery_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_delivery_status: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )  # success, failed
+    consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Indexes and constraints
+    __table_args__ = (
+        Index("idx_subscriptions_tenant", "tenant_id"),
+        Index("idx_subscriptions_enabled", "enabled"),
+        Index("idx_subscriptions_url", "url"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<SubscriptionModel(subscription_id={self.subscription_id}, url={self.url[:50]})>"
+
+    def validate(self) -> None:
+        """Validate subscription model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate URL
+        if not self.url:
+            raise ValidationError("url is required")
+        if not self.url.startswith(("http://", "https://")):
+            raise ValidationError("url must be a valid HTTP/HTTPS URL")
+
+        # Validate event_types JSON
+        if self.event_types:
+            try:
+                event_list = json.loads(self.event_types)
+                if not isinstance(event_list, list):
+                    raise ValidationError("event_types must be a JSON array")
+                valid_events = ["file_write", "file_delete", "file_rename", "metadata_change"]
+                for evt in event_list:
+                    if evt not in valid_events:
+                        raise ValidationError(f"Invalid event type: {evt}")
+            except json.JSONDecodeError as e:
+                raise ValidationError(f"event_types must be valid JSON: {e}") from e
+
+        # Validate patterns JSON if provided
+        if self.patterns:
+            try:
+                pattern_list = json.loads(self.patterns)
+                if not isinstance(pattern_list, list):
+                    raise ValidationError("patterns must be a JSON array")
+            except json.JSONDecodeError as e:
+                raise ValidationError(f"patterns must be valid JSON: {e}") from e
+
+    def get_event_types(self) -> list[str]:
+        """Get event types as a Python list."""
+        return json.loads(self.event_types) if self.event_types else []
+
+    def get_patterns(self) -> list[str]:
+        """Get patterns as a Python list."""
+        return json.loads(self.patterns) if self.patterns else []
+
+    def get_metadata(self) -> dict:
+        """Get custom_metadata as a Python dict."""
+        return json.loads(self.custom_metadata) if self.custom_metadata else {}

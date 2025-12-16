@@ -90,6 +90,7 @@ class NexusFS(
         content_cache_size_mb: int = 256,
         auto_parse: bool = True,
         custom_parsers: list[dict[str, Any]] | None = None,
+        parse_providers: list[dict[str, Any]] | None = None,
         enforce_permissions: bool = True,  # P0-6: ENABLED by default for security
         inherit_permissions: bool = True,  # P0-3: Enable automatic parent tuple creation for directory inheritance
         allow_admin_bypass: bool = False,  # P0-4: Allow admin bypass (DEFAULT OFF for production security)
@@ -119,7 +120,9 @@ class NexusFS(
             enable_content_cache: Enable in-memory content caching for faster reads (default: True)
             content_cache_size_mb: Maximum content cache size in megabytes (default: 256)
             auto_parse: Automatically parse files on write (default: True)
-            custom_parsers: Custom parser configurations from config (optional)
+            custom_parsers: (Deprecated) Custom parser configurations. Use parse_providers instead.
+            parse_providers: Parse provider configurations (list of dicts with name, priority, api_key, etc.)
+                           Supports: unstructured (API), llamaparse (API), markitdown (local fallback)
             enforce_permissions: Enable permission enforcement on file operations (default: True)
             inherit_permissions: Enable automatic parent tuple creation for directory inheritance (default: True, P0-3)
             allow_admin_bypass: Allow admin users to bypass permission checks (default: False for security, P0-4)
@@ -205,13 +208,36 @@ class NexusFS(
         # Mount backend
         self.router.add_mount("/", self.backend, priority=0)
 
-        # Initialize parser registry with default MarkItDown parser
+        # Initialize parser registry with default MarkItDown parser (legacy, for auto_parse)
         self.parser_registry = ParserRegistry()
         self.parser_registry.register(MarkItDownParser())
 
-        # Load custom parsers from config
+        # Load custom parsers from config (deprecated)
         if custom_parsers:
             self._load_custom_parsers(custom_parsers)
+
+        # Initialize new provider registry for read(parsed=True) support
+        from nexus.parsers.providers import ProviderRegistry
+        from nexus.parsers.providers.base import ProviderConfig
+
+        self.provider_registry = ProviderRegistry()
+
+        if parse_providers:
+            # Use explicitly configured providers
+            configs = []
+            for p in parse_providers:
+                configs.append(ProviderConfig(
+                    name=p.get("name", "unknown"),
+                    enabled=p.get("enabled", True),
+                    priority=p.get("priority", 50),
+                    api_key=p.get("api_key"),
+                    api_url=p.get("api_url"),
+                    supported_formats=p.get("supported_formats"),
+                ))
+            self.provider_registry.auto_discover(configs)
+        else:
+            # Auto-discover from environment
+            self.provider_registry.auto_discover()
 
         # Track active parser threads for graceful shutdown
         self._parser_threads: list[threading.Thread] = []
@@ -339,6 +365,9 @@ class NexusFS(
         # v0.7.0: Initialize workflow engine for automatic event triggering
         self.enable_workflows = enable_workflows
         self.workflow_engine = workflow_engine
+
+        # v0.8.0: Subscription manager for webhook notifications (set by server)
+        self.subscription_manager: Any = None
 
         if enable_workflows and workflow_engine is None:
             # Auto-create workflow engine with persistent storage using global engine

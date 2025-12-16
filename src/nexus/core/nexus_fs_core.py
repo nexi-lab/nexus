@@ -155,27 +155,143 @@ class NexusFSCoreMixin:
             logger.warning(traceback.format_exc())
             return content
 
+    async def _get_parsed_content_async(
+        self, path: str, content: bytes
+    ) -> tuple[bytes, dict[str, Any]]:
+        """Get parsed content for a file (async version).
+
+        First checks for cached parsed_text in metadata, then parses on-demand if needed.
+        Falls back to raw content if parsing fails.
+
+        Args:
+            path: Virtual path to the file
+            content: Raw file content as bytes
+
+        Returns:
+            Tuple of (parsed_content_bytes, parse_info_dict)
+            parse_info contains: parsed (bool), provider (str or None), cached (bool)
+        """
+        parse_info: dict[str, Any] = {"parsed": False, "provider": None, "cached": False}
+
+        try:
+            # First, check for cached parsed_text in metadata
+            cached_text = self.metadata.get_file_metadata(path, "parsed_text")
+            if cached_text:
+                parse_info["parsed"] = True
+                parse_info["cached"] = True
+                parse_info["provider"] = self.metadata.get_file_metadata(path, "parser_name")
+                logger.debug(f"Using cached parsed_text for {path}")
+                return cached_text.encode("utf-8") if isinstance(cached_text, str) else cached_text, parse_info
+
+            # No cache - parse on demand using provider registry
+            if not hasattr(self, "provider_registry") or self.provider_registry is None:
+                logger.debug(f"No provider registry available for parsing {path}")
+                return content, parse_info
+
+            provider = self.provider_registry.get_provider(path)
+            if not provider:
+                logger.debug(f"No parse provider available for {path}")
+                return content, parse_info
+
+            # Parse the content (async)
+            try:
+                result = await provider.parse(content, path)
+
+                if result and result.text:
+                    parse_info["parsed"] = True
+                    parse_info["provider"] = provider.name
+                    parsed_content = result.text.encode("utf-8")
+
+                    # Cache the result for future reads
+                    try:
+                        from datetime import UTC, datetime
+
+                        self.metadata.set_file_metadata(path, "parsed_text", result.text)
+                        self.metadata.set_file_metadata(path, "parsed_at", datetime.now(UTC).isoformat())
+                        self.metadata.set_file_metadata(path, "parser_name", provider.name)
+                    except Exception as cache_err:
+                        logger.warning(f"Failed to cache parsed content for {path}: {cache_err}")
+
+                    return parsed_content, parse_info
+
+            except Exception as parse_err:
+                logger.warning(f"Failed to parse {path} with {provider.name}: {parse_err}")
+                return content, parse_info
+
+        except Exception as e:
+            logger.warning(f"Error getting parsed content for {path}: {e}")
+
+        return content, parse_info
+
+    def _get_parsed_content(
+        self, path: str, content: bytes
+    ) -> tuple[bytes, dict[str, Any]]:
+        """Get parsed content for a file (sync version).
+
+        First checks for cached parsed_text in metadata, then parses on-demand if needed.
+        Falls back to raw content if parsing fails.
+
+        This is a sync wrapper for _get_parsed_content_async. For async contexts,
+        use _get_parsed_content_async directly.
+
+        Args:
+            path: Virtual path to the file
+            content: Raw file content as bytes
+
+        Returns:
+            Tuple of (parsed_content_bytes, parse_info_dict)
+            parse_info contains: parsed (bool), provider (str or None), cached (bool)
+        """
+        import asyncio
+
+        # Check if we're already in an async context
+        try:
+            loop = asyncio.get_running_loop()
+            # We're in an async context - can't use asyncio.run
+            # Use nest_asyncio or run in thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    self._get_parsed_content_async(path, content)
+                )
+                return future.result()
+        except RuntimeError:
+            # No running loop - we can create one
+            return asyncio.run(self._get_parsed_content_async(path, content))
+
     @rpc_expose(description="Read file content")
     def read(
-        self, path: str, context: OperationContext | None = None, return_metadata: bool = False
+        self,
+        path: str,
+        context: OperationContext | None = None,
+        return_metadata: bool = False,
+        parsed: bool = False,
     ) -> bytes | dict[str, Any]:
         """
-        Read file content as bytes.
+        Read file content as bytes, optionally parsed to text.
 
         Args:
             path: Virtual path to read (supports memory virtual paths)
             context: Optional operation context for permission checks (uses default if not provided)
             return_metadata: If True, return dict with content and metadata (etag, version, modified_at).
                            If False, return only content bytes (default: False)
+            parsed: If True, return parsed text content instead of raw bytes (default: False).
+                   Uses the best available parse provider (Unstructured, LlamaParse, MarkItDown).
+                   First checks for cached parsed_text in metadata, then parses on-demand if needed.
+                   If parsing fails, returns raw content.
 
         Returns:
-            If return_metadata=False: File content as bytes
+            If return_metadata=False and parsed=False: File content as bytes
+            If return_metadata=False and parsed=True: Parsed text content as bytes (UTF-8 markdown)
             If return_metadata=True: Dict with keys:
-                - content: File content as bytes
+                - content: File content as bytes (or parsed text if parsed=True)
                 - etag: Content hash (SHA-256) for optimistic concurrency
                 - version: Current version number
                 - modified_at: Last modification timestamp
                 - size: File size in bytes
+                - parsed: True if content was parsed (only when parsed=True)
+                - provider: Name of parse provider used (only when parsed=True)
 
         Raises:
             NexusFileNotFoundError: If file doesn't exist
@@ -185,10 +301,16 @@ class NexusFSCoreMixin:
             PermissionError: If user doesn't have read permission
 
         Examples:
-            >>> # Read content only
-            >>> content = nx.read("/workspace/data.json")
-            >>> print(content)
-            b'{"key": "value"}'
+            >>> # Read raw content
+            >>> content = nx.read("/workspace/report.pdf")
+            >>> print(type(content))
+            <class 'bytes'>
+
+            >>> # Read parsed content (markdown)
+            >>> content = nx.read("/workspace/report.pdf", parsed=True)
+            >>> print(content.decode())
+            # Report Title
+            ...
 
             >>> # Read with metadata for optimistic concurrency
             >>> result = nx.read("/workspace/data.json", return_metadata=True)
@@ -197,7 +319,8 @@ class NexusFSCoreMixin:
             >>> # Later, write with version check
             >>> nx.write("/workspace/data.json", new_content, if_match=etag)
 
-            >>> # Read memory via virtual path            >>> content = nx.read("/workspace/alice/agent1/memory/facts")
+            >>> # Read memory via virtual path
+            >>> content = nx.read("/workspace/alice/agent1/memory/facts")
             >>> content = nx.read("/memory/by-user/alice/facts")  # Same memory!
         """
         path = self._validate_path(path)
@@ -330,16 +453,23 @@ class NexusFSCoreMixin:
         # Apply dynamic_viewer filtering for CSV files
         content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
 
+        # Handle parsed=True flag - return parsed content instead of raw bytes
+        if parsed:
+            content, parse_info = self._get_parsed_content(path, content)
+
         # Return content with metadata if requested
         if return_metadata:
-            # Update size after filtering
-            return {
+            result = {
                 "content": content,
                 "etag": meta.etag,
                 "version": meta.version,
                 "modified_at": meta.modified_at,
                 "size": len(content),  # Update size after filtering
             }
+            if parsed:
+                result["parsed"] = parse_info.get("parsed", False)
+                result["provider"] = parse_info.get("provider")
+            return result
 
         return content
 
@@ -1056,6 +1186,16 @@ class NexusFSCoreMixin:
 
         self.metadata.put(metadata)
 
+        # Invalidate cached parsed_text when file is updated
+        # This ensures read(parsed=True) re-parses the new content
+        if meta is not None:  # File existed before (update, not create)
+            try:
+                self.metadata.set_file_metadata(path, "parsed_text", None)
+                self.metadata.set_file_metadata(path, "parsed_at", None)
+                self.metadata.set_file_metadata(path, "parser_name", None)
+            except Exception:
+                pass  # Ignore errors - cache invalidation is best-effort
+
         # P0-3: Create parent relationship tuples for file inheritance
         # This enables permission inheritance from parent directories
         import logging
@@ -1179,6 +1319,13 @@ class NexusFSCoreMixin:
                         TriggerType.FILE_WRITE, event_context
                     )
                 )
+                # v0.8.0: Also broadcast to webhook subscriptions
+                if self.subscription_manager:  # type: ignore[attr-defined]
+                    asyncio.create_task(
+                        self.subscription_manager.broadcast(  # type: ignore[attr-defined]
+                            "file_write", event_context, event_context.get("tenant_id", "default")
+                        )
+                    )
             except RuntimeError:
                 # No event loop running - run workflow synchronously in background thread
                 # This happens in synchronous contexts (like DeepAgents)
@@ -1188,14 +1335,25 @@ class NexusFSCoreMixin:
                 logger = logging.getLogger(__name__)
 
                 def run_workflow() -> None:
+                    logger.debug(f"run_workflow thread started for {event_context.get('file_path')}")
                     try:
                         asyncio.run(
                             self.workflow_engine.fire_event(  # type: ignore[attr-defined]
                                 TriggerType.FILE_WRITE, event_context
                             )
                         )
+                        # v0.8.0: Also broadcast to webhook subscriptions
+                        if self.subscription_manager:  # type: ignore[attr-defined]
+                            logger.debug(f"Broadcasting file_write for {event_context.get('file_path')}")
+                            asyncio.run(
+                                self.subscription_manager.broadcast(  # type: ignore[attr-defined]
+                                    "file_write", event_context, event_context.get("tenant_id", "default")
+                                )
+                            )
+                        else:
+                            logger.debug("subscription_manager not set")
                     except Exception as e:
-                        logger.error(f"Workflow error for {event_context.get('file_path')}: {e}")
+                        logger.error(f"Workflow/subscription error for {event_context.get('file_path')}: {e}")
 
                 thread = threading.Thread(target=run_workflow, daemon=True)
                 thread.start()
@@ -1679,13 +1837,41 @@ class NexusFSCoreMixin:
             }
 
             # Fire event asynchronously (don't block file delete)
-            # No event loop running, skip workflow triggering
-            with contextlib.suppress(RuntimeError):
+            try:
+                asyncio.get_running_loop()
                 asyncio.create_task(
                     self.workflow_engine.fire_event(  # type: ignore[attr-defined]
                         TriggerType.FILE_DELETE, event_context
                     )
                 )
+                # v0.8.0: Also broadcast to webhook subscriptions
+                if self.subscription_manager:  # type: ignore[attr-defined]
+                    asyncio.create_task(
+                        self.subscription_manager.broadcast(  # type: ignore[attr-defined]
+                            "file_delete", event_context, event_context.get("tenant_id", "default")
+                        )
+                    )
+            except RuntimeError:
+                # No event loop running - run in background thread
+                import threading
+
+                def run_delete_events() -> None:
+                    try:
+                        asyncio.run(
+                            self.workflow_engine.fire_event(  # type: ignore[attr-defined]
+                                TriggerType.FILE_DELETE, event_context
+                            )
+                        )
+                        if self.subscription_manager:  # type: ignore[attr-defined]
+                            asyncio.run(
+                                self.subscription_manager.broadcast(  # type: ignore[attr-defined]
+                                    "file_delete", event_context, event_context.get("tenant_id", "default")
+                                )
+                            )
+                    except Exception as e:
+                        logger.error(f"Delete event error for {event_context.get('file_path')}: {e}")
+
+                threading.Thread(target=run_delete_events, daemon=True).start()
 
     @rpc_expose(description="Rename/move file")
     def rename(self, old_path: str, new_path: str, context: OperationContext | None = None) -> None:
@@ -1895,13 +2081,41 @@ class NexusFSCoreMixin:
             }
 
             # Fire event asynchronously (don't block file rename)
-            # No event loop running, skip workflow triggering
-            with contextlib.suppress(RuntimeError):
+            try:
+                asyncio.get_running_loop()
                 asyncio.create_task(
                     self.workflow_engine.fire_event(  # type: ignore[attr-defined]
                         TriggerType.FILE_RENAME, event_context
                     )
                 )
+                # v0.8.0: Also broadcast to webhook subscriptions
+                if self.subscription_manager:  # type: ignore[attr-defined]
+                    asyncio.create_task(
+                        self.subscription_manager.broadcast(  # type: ignore[attr-defined]
+                            "file_rename", event_context, event_context.get("tenant_id", "default")
+                        )
+                    )
+            except RuntimeError:
+                # No event loop running - run in background thread
+                import threading
+
+                def run_rename_events() -> None:
+                    try:
+                        asyncio.run(
+                            self.workflow_engine.fire_event(  # type: ignore[attr-defined]
+                                TriggerType.FILE_RENAME, event_context
+                            )
+                        )
+                        if self.subscription_manager:  # type: ignore[attr-defined]
+                            asyncio.run(
+                                self.subscription_manager.broadcast(  # type: ignore[attr-defined]
+                                    "file_rename", event_context, event_context.get("tenant_id", "default")
+                                )
+                            )
+                    except Exception as e:
+                        logger.error(f"Rename event error for {event_context.get('old_path')}: {e}")
+
+                threading.Thread(target=run_rename_events, daemon=True).start()
 
     @rpc_expose(description="Get file metadata without reading content")
     def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:

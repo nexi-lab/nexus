@@ -342,3 +342,201 @@ class TestCrossTenantSharingWithExpiration:
             tenant_id="acme-tenant",
         )
         assert result is True
+
+
+class TestCrossTenantRustPathFix:
+    """Tests for cross-tenant sharing in Rust acceleration path.
+
+    These tests verify that cross-tenant shares work when using the Rust
+    path for permission checks. The key fix is in _fetch_tuples_for_rust()
+    which now includes cross-tenant tuples for the subject.
+    """
+
+    @pytest.fixture
+    def enhanced_manager(self, engine):
+        """Create an enhanced ReBAC manager that has _fetch_tuples_for_rust."""
+        from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+
+        manager = EnhancedReBACManager(
+            engine=engine,
+            cache_ttl_seconds=0,
+            max_depth=10,
+            enforce_tenant_isolation=True,
+        )
+        yield manager
+        manager.close()
+
+    def test_fetch_tuples_for_rust_includes_cross_tenant(self, enhanced_manager):
+        """Test that _fetch_tuples_for_rust includes cross-tenant tuples."""
+        from nexus.core.rebac import Entity
+
+        # Create cross-tenant share: partner-tenant user gets access to acme-tenant file
+        enhanced_manager.rebac_write(
+            subject=("user", "bob@partner.com"),
+            relation="shared-editor",
+            object=("file", "/acme/doc.txt"),
+            tenant_id="acme-tenant",
+            subject_tenant_id="partner-tenant",
+            object_tenant_id="acme-tenant",
+        )
+
+        # Fetch tuples from partner-tenant (Bob's home tenant) WITH subject
+        subject = Entity("user", "bob@partner.com")
+        tuples = enhanced_manager._fetch_tuples_for_rust(
+            tenant_id="partner-tenant", subject=subject
+        )
+
+        # Should include the cross-tenant share even though it's stored in acme-tenant
+        cross_tenant_tuples = [
+            t
+            for t in tuples
+            if t["relation"] == "shared-editor"
+            and t["subject_id"] == "bob@partner.com"
+        ]
+        assert len(cross_tenant_tuples) == 1
+        assert cross_tenant_tuples[0]["object_id"] == "/acme/doc.txt"
+
+    def test_fetch_tuples_for_rust_without_subject_excludes_cross_tenant(
+        self, enhanced_manager
+    ):
+        """Test that _fetch_tuples_for_rust without subject excludes cross-tenant."""
+        # Create cross-tenant share
+        enhanced_manager.rebac_write(
+            subject=("user", "bob@partner.com"),
+            relation="shared-editor",
+            object=("file", "/acme/doc.txt"),
+            tenant_id="acme-tenant",
+            subject_tenant_id="partner-tenant",
+            object_tenant_id="acme-tenant",
+        )
+
+        # Fetch tuples from partner-tenant WITHOUT subject (backward compatibility)
+        tuples = enhanced_manager._fetch_tuples_for_rust(tenant_id="partner-tenant")
+
+        # Should NOT include cross-tenant share (stored in acme-tenant)
+        cross_tenant_tuples = [
+            t
+            for t in tuples
+            if t["relation"] == "shared-editor"
+            and t["subject_id"] == "bob@partner.com"
+        ]
+        assert len(cross_tenant_tuples) == 0
+
+
+class TestCrossTenantPermissionExpansion:
+    """Tests for permission expansion with cross-tenant shares.
+
+    These tests verify that shared-* relations properly grant permissions
+    through the namespace union configuration:
+    - shared-editor grants read and write permissions
+    - shared-viewer grants read permission
+    - shared-owner grants read, write, and owner permissions
+    """
+
+    @pytest.fixture
+    def manager_with_namespace(self, engine):
+        """Create manager with file namespace for permission expansion."""
+        from nexus.core.rebac import DEFAULT_FILE_NAMESPACE
+
+        manager = TenantAwareReBACManager(
+            engine=engine,
+            cache_ttl_seconds=0,
+            max_depth=10,
+            enforce_tenant_isolation=True,
+        )
+        manager.create_namespace(DEFAULT_FILE_NAMESPACE)
+        yield manager
+        manager.close()
+
+    def test_shared_editor_grants_read_permission(self, manager_with_namespace):
+        """Test that shared-editor grants read permission via namespace union."""
+        # Create cross-tenant share with shared-editor
+        manager_with_namespace.rebac_write(
+            subject=("user", "bob@partner.com"),
+            relation="shared-editor",
+            object=("file", "/acme/doc.txt"),
+            tenant_id="acme-tenant",
+            subject_tenant_id="partner-tenant",
+            object_tenant_id="acme-tenant",
+        )
+
+        # Check read permission - should be granted via:
+        # read -> viewer -> shared-editor
+        result = manager_with_namespace.rebac_check(
+            subject=("user", "bob@partner.com"),
+            permission="read",
+            object=("file", "/acme/doc.txt"),
+            tenant_id="acme-tenant",
+        )
+        assert result is True
+
+    def test_shared_editor_grants_write_permission(self, manager_with_namespace):
+        """Test that shared-editor grants write permission via namespace union."""
+        manager_with_namespace.rebac_write(
+            subject=("user", "bob@partner.com"),
+            relation="shared-editor",
+            object=("file", "/acme/doc.txt"),
+            tenant_id="acme-tenant",
+            subject_tenant_id="partner-tenant",
+            object_tenant_id="acme-tenant",
+        )
+
+        # Check write permission - should be granted via:
+        # write -> editor -> shared-editor
+        result = manager_with_namespace.rebac_check(
+            subject=("user", "bob@partner.com"),
+            permission="write",
+            object=("file", "/acme/doc.txt"),
+            tenant_id="acme-tenant",
+        )
+        assert result is True
+
+    def test_shared_viewer_grants_only_read_permission(self, manager_with_namespace):
+        """Test that shared-viewer grants read but NOT write permission."""
+        manager_with_namespace.rebac_write(
+            subject=("user", "bob@partner.com"),
+            relation="shared-viewer",
+            object=("file", "/acme/doc.txt"),
+            tenant_id="acme-tenant",
+            subject_tenant_id="partner-tenant",
+            object_tenant_id="acme-tenant",
+        )
+
+        # Read should be granted
+        read_result = manager_with_namespace.rebac_check(
+            subject=("user", "bob@partner.com"),
+            permission="read",
+            object=("file", "/acme/doc.txt"),
+            tenant_id="acme-tenant",
+        )
+        assert read_result is True
+
+        # Write should NOT be granted (shared-viewer only in viewer union, not editor)
+        write_result = manager_with_namespace.rebac_check(
+            subject=("user", "bob@partner.com"),
+            permission="write",
+            object=("file", "/acme/doc.txt"),
+            tenant_id="acme-tenant",
+        )
+        assert write_result is False
+
+    def test_shared_owner_grants_all_permissions(self, manager_with_namespace):
+        """Test that shared-owner grants read, write, and owner permissions."""
+        manager_with_namespace.rebac_write(
+            subject=("user", "bob@partner.com"),
+            relation="shared-owner",
+            object=("file", "/acme/doc.txt"),
+            tenant_id="acme-tenant",
+            subject_tenant_id="partner-tenant",
+            object_tenant_id="acme-tenant",
+        )
+
+        # All permissions should be granted
+        for permission in ["read", "write", "owner"]:
+            result = manager_with_namespace.rebac_check(
+                subject=("user", "bob@partner.com"),
+                permission=permission,
+                object=("file", "/acme/doc.txt"),
+                tenant_id="acme-tenant",
+            )
+            assert result is True, f"Expected {permission} to be granted"

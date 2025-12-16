@@ -127,7 +127,7 @@ class ProviderRegistry:
 
         if not provider:
             raise ParserError(
-                f"No provider available for file type",
+                "No provider available for file type",
                 path=file_path,
             )
 

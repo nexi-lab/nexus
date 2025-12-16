@@ -805,10 +805,7 @@ async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any
         nexus_fs.read, params.path, context, True, False  # return_metadata=True, parsed=False
     )
 
-    if isinstance(raw_result, dict):
-        content = raw_result.get("content", b"")
-    else:
-        content = raw_result
+    content = raw_result.get("content", b"") if isinstance(raw_result, dict) else raw_result
 
     # Now parse the content asynchronously
     if hasattr(nexus_fs, "_get_parsed_content_async"):

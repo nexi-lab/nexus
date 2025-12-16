@@ -246,7 +246,7 @@ class NexusFSCoreMixin:
 
         # Check if we're already in an async context
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             # We're in an async context - can't use asyncio.run
             # Use nest_asyncio or run in thread
             import concurrent.futures

@@ -131,7 +131,6 @@ class LlamaParseProvider(ParseProvider):
 
         metadata = metadata or {}
         ext = Path(file_path).suffix.lower()
-        filename = Path(file_path).name
 
         try:
             parser = self._get_parser()

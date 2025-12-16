@@ -129,8 +129,9 @@ class UnstructuredProvider(ParseProvider):
         Raises:
             ParserError: If parsing fails
         """
-        import httpx
         from pathlib import Path
+
+        import httpx
 
         metadata = metadata or {}
         filename = Path(file_path).name

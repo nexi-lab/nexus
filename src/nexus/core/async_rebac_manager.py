@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from nexus.core.rebac import Entity, NamespaceConfig
+from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS, Entity, NamespaceConfig
 from nexus.core.rebac_cache import ReBACPermissionCache
 
 if TYPE_CHECKING:
@@ -353,6 +353,33 @@ class AsyncReBACManager:
                 else:
                     return True
 
+            # Cross-tenant check for shared-* relations (PR #647, #648)
+            # Cross-tenant shares are stored in the resource owner's tenant
+            # but should be visible when checking from the recipient's tenant.
+            if relation in CROSS_TENANT_ALLOWED_RELATIONS:
+                cross_tenant_query = text("""
+                    SELECT tuple_id FROM rebac_tuples
+                    WHERE subject_type = :subject_type AND subject_id = :subject_id
+                      AND relation = :relation
+                      AND object_type = :object_type AND object_id = :object_id
+                      AND subject_relation IS NULL
+                      AND (expires_at IS NULL OR expires_at >= :now)
+                """)
+                result = await session.execute(
+                    cross_tenant_query,
+                    {
+                        "subject_type": subject.entity_type,
+                        "subject_id": subject.entity_id,
+                        "relation": relation,
+                        "object_type": obj.entity_type,
+                        "object_id": obj.entity_id,
+                        "now": datetime.now(UTC).isoformat(),
+                    },
+                )
+                if result.fetchone():
+                    logger.debug(f"Cross-tenant share found: {subject} -> {relation} -> {obj}")
+                    return True
+
             # Check userset-as-subject tuples (e.g., group#member)
             query = text("""
                 SELECT subject_type, subject_id, subject_relation
@@ -397,7 +424,17 @@ class AsyncReBACManager:
     ) -> list[Entity]:
         """Find all objects related to obj via relation."""
         async with self._session() as session:
-            # For parent inheritance: (child, "parent", parent)
+            # For parent relation, compute from path instead of querying DB
+            # This handles cross-tenant scenarios where parent tuples are in different tenant
+            if relation == "parent" and obj.entity_type == "file":
+                from pathlib import PurePosixPath
+
+                parent_path = str(PurePosixPath(obj.entity_id).parent)
+                if parent_path != obj.entity_id and parent_path != ".":
+                    return [Entity("file", parent_path)]
+                return []
+
+            # For other relations, query the database
             query = text("""
                 SELECT object_type, object_id
                 FROM rebac_tuples

@@ -2,7 +2,7 @@
 
 The AI-native filesystem for cognitive agents.
 
-
+[![Watch the demo](https://img.youtube.com/vi/VIDEO_ID/0.jpg)](https://youtu.be/bPVQ78Y7Xw4)
 ⚠️ **Beta**: Nexus is under active development. APIs may change.
 
 ## 🎯 What is Nexus?
@@ -38,25 +38,20 @@ This repo contains the open-source server, SDK, CLI, and examples.
 ```bash
 git clone https://github.com/nexi-lab/nexus.git
 cd nexus
-pip install -e ".[dev]"
+cp .env.example .env.local
 
-export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
-./scripts/init-nexus-with-auth.sh
+# Set env
+# Required: ANTHROPIC_API_KEY
+# Optional: TAVILY_API_KEY, FIRECRAWL_API_KEY, NEXUS_OAUTH_GOOGLE_CLIENT_ID, NEXUS_OAUTH_GOOGLE_CLIENT_SECRET
 
-# Server runs at http://localhost:8080
-# Admin API key saved to .nexus-admin-env
+./local-demo.sh --start
 ```
 
 ### Docker Server
 
 ```bash
-cp .env.example .env
-./docker-start.sh --build
-
-# Get admin API key
-docker logs nexus-server 2>&1 | grep "API Key:"
-
-# Server runs at http://localhost:8080
+./docker-demo.sh --init
+./docker-demo.sh --start
 ```
 
 ### Python SDK

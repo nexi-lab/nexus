@@ -1728,7 +1728,7 @@ jobs:
           echo "Containers running before stop: $CONTAINERS_BEFORE"
 
           # Run stop command
-          ./docker-start.sh --stop
+          ./docker-demo.sh --stop
           EXIT_CODE=$?
 
           if [ $EXIT_CODE -ne 0 ]; then

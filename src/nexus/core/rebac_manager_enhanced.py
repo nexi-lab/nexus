@@ -1113,6 +1113,17 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             f"_find_related_objects_tenant_aware: obj={obj}, relation={relation}, tenant_id={tenant_id}"
         )
 
+        # For parent relation on files, compute from path instead of querying DB
+        # This handles cross-tenant scenarios where parent tuples are in different tenant
+        if relation == "parent" and obj.entity_type == "file":
+            parent_path = str(PurePosixPath(obj.entity_id).parent)
+            if parent_path != obj.entity_id and parent_path != ".":
+                logger.debug(
+                    f"_find_related_objects_tenant_aware: Computed parent from path: {obj.entity_id} -> {parent_path}"
+                )
+                return [Entity("file", parent_path)]
+            return []
+
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 

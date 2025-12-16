@@ -679,13 +679,15 @@ class NexusFSReBACMixin:
         subject: tuple[str, str] | None = None,
         relation: str | None = None,
         object: tuple[str, str] | None = None,
+        relation_in: list[str] | None = None,
     ) -> list[dict]:
         """List relationship tuples matching filters.
 
         Args:
             subject: Optional (subject_type, subject_id) filter
-            relation: Optional relation type filter
+            relation: Optional relation type filter (mutually exclusive with relation_in)
             object: Optional (object_type, object_id) filter
+            relation_in: Optional list of relation types to filter (mutually exclusive with relation)
 
         Returns:
             List of tuple dictionaries with keys:
@@ -714,6 +716,12 @@ class NexusFSReBACMixin:
                     'expires_at': None
                 }
             ]
+
+            >>> # List tuples with multiple relation types (single query)
+            >>> nx.rebac_list_tuples(
+            ...     subject=("user", "alice"),
+            ...     relation_in=["shared-viewer", "shared-editor", "shared-owner"]
+            ... )
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
@@ -723,7 +731,7 @@ class NexusFSReBACMixin:
         # Build query
         conn = self._rebac_manager._get_connection()
         query = "SELECT * FROM rebac_tuples WHERE 1=1"
-        params = []
+        params: list = []
 
         if subject:
             query += " AND subject_type = ? AND subject_id = ?"
@@ -732,6 +740,11 @@ class NexusFSReBACMixin:
         if relation:
             query += " AND relation = ?"
             params.append(relation)
+        elif relation_in:
+            # N+1 FIX: Support multiple relations in a single query
+            placeholders = ", ".join("?" * len(relation_in))
+            query += f" AND relation IN ({placeholders})"
+            params.extend(relation_in)
 
         if object:
             query += " AND object_type = ? AND object_id = ?"
@@ -1431,16 +1444,14 @@ class NexusFSReBACMixin:
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
 
-        # Find the share tuple - check all shared-* relations
-        shared_relations = ["shared-viewer", "shared-editor", "shared-owner"]
-        for relation in shared_relations:
-            tuples = self.rebac_list_tuples(
-                subject=("user", user_id),
-                relation=relation,
-                object=resource,
-            )
-            if tuples:
-                return self.rebac_delete(tuples[0]["tuple_id"])
+        # Find the share tuple - use single query with relation_in (N+1 FIX)
+        tuples = self.rebac_list_tuples(
+            subject=("user", user_id),
+            relation_in=["shared-viewer", "shared-editor", "shared-owner"],
+            object=resource,
+        )
+        if tuples:
+            return self.rebac_delete(tuples[0]["tuple_id"])
         return False
 
     @rpc_expose(description="Revoke a share by share ID")
@@ -1508,17 +1519,11 @@ class NexusFSReBACMixin:
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
 
-        # Query for all shared-* relation tuples
-        # Note: rebac_list_tuples doesn't support tenant_id filtering directly,
-        # so we filter by relation and optionally by resource
-        shared_relations = ["shared-viewer", "shared-editor", "shared-owner"]
-        all_tuples = []
-        for relation in shared_relations:
-            tuples = self.rebac_list_tuples(
-                relation=relation,
-                object=resource,
-            )
-            all_tuples.extend(tuples)
+        # Query for all shared-* relation tuples (N+1 FIX: single query with relation_in)
+        all_tuples = self.rebac_list_tuples(
+            relation_in=["shared-viewer", "shared-editor", "shared-owner"],
+            object=resource,
+        )
 
         # Map relation back to permission level
         relation_to_level = {
@@ -1581,15 +1586,11 @@ class NexusFSReBACMixin:
             )
 
         # Query for all shared-* relation tuples where this user is the subject
-        # This finds shares across all tenants
-        shared_relations = ["shared-viewer", "shared-editor", "shared-owner"]
-        all_tuples = []
-        for relation in shared_relations:
-            tuples = self.rebac_list_tuples(
-                subject=("user", user_id),
-                relation=relation,
-            )
-            all_tuples.extend(tuples)
+        # This finds shares across all tenants (N+1 FIX: single query with relation_in)
+        all_tuples = self.rebac_list_tuples(
+            subject=("user", user_id),
+            relation_in=["shared-viewer", "shared-editor", "shared-owner"],
+        )
 
         # Map relation back to permission level
         relation_to_level = {

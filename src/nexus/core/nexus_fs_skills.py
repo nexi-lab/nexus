@@ -820,6 +820,7 @@ class NexusFSSkillsMixin:
         self,
         skill_name: str,
         include_dependencies: bool = False,
+        format: str = "generic",
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Export skill to .skill (ZIP) package.
@@ -852,6 +853,7 @@ class NexusFSSkillsMixin:
                 name=skill_name,
                 output_path=None,  # Return bytes
                 include_dependencies=include_dependencies,
+                format=format,
                 context=context,
             )
 

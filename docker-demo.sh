@@ -572,6 +572,7 @@ cmd_init() {
     cmd_status
     show_api_key
     run_provisioning
+    run_permissioning
     cmd_urls
 }
 

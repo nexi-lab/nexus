@@ -30,7 +30,14 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
 
+from nexus.remote import RemoteNexusFS  # re-export for backward compatibility
 from nexus.tools._client import _get_nexus_client
+
+__all__ = [
+    "RemoteNexusFS",
+    "get_nexus_tools",
+    "list_skills",
+]
 
 
 def list_skills(

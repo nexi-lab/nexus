@@ -319,7 +319,6 @@ class TestSkillsExport:
 
         result = nx.skills_export(
             skill_name="test-skill",
-            format="generic",
             include_dependencies=False,
             context=user_context,
         )
@@ -348,7 +347,6 @@ class TestSkillsExport:
 
         result = nx.skills_export(
             skill_name="test-skill",
-            format="generic",
             include_dependencies=True,
             context=user_context,
         )
@@ -365,13 +363,11 @@ class TestSkillsExport:
 
         result = nx.skills_export(
             skill_name="test-skill",
-            format="claude",
             include_dependencies=False,
             context=user_context,
         )
 
         assert result["skill_name"] == "test-skill"
-        assert result["format"] == "claude"
 
 
 class TestBase64EncodingDecoding:

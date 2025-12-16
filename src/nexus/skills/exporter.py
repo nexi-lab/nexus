@@ -1,6 +1,7 @@
 """Skill export functionality for creating .skill (ZIP) packages."""
 
 import io
+import json
 import logging
 import zipfile
 from pathlib import Path
@@ -46,6 +47,7 @@ class SkillExporter:
         name: str,
         output_path: str | Path | None = None,
         include_dependencies: bool = True,
+        format: str = "generic",
         context: Any = None,
     ) -> bytes | None:
         """Export a skill to .skill (zip) format.
@@ -69,6 +71,11 @@ class SkillExporter:
             >>> # Get zip bytes
             >>> zip_bytes = await exporter.export_skill("analyze-code")
         """
+        # Validate format
+        supported_formats = {"generic", "claude"}
+        if format not in supported_formats:
+            raise SkillExportError(f"Unsupported export format: {format}")
+
         # Load skill
         try:
             skill = await self._registry.get_skill(name, context=context, load_dependencies=False)
@@ -93,6 +100,7 @@ class SkillExporter:
             # Track files and total size
             files_added = []
             total_size = 0
+            manifest_files: list[str] = []
 
             # Add skills (export entire skill directory)
             for skill_obj in skills_to_export:
@@ -101,12 +109,27 @@ class SkillExporter:
                 )
                 files_added.extend(skill_files)
                 total_size += skill_size
+                manifest_files.extend(skill_files)
 
             # Basic validation
             if not files_added:
                 raise SkillExportError(f"No files found to export for skill '{name}'")
 
+            # Add manifest.json
+            manifest = {
+                "name": skill.metadata.name,
+                "version": skill.metadata.version or "unknown",
+                "format": format,
+                "files": manifest_files,
+                "total_size_bytes": total_size,
+            }
+            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+
             logger.info(f"Exported skill '{name}' ({total_size} bytes, {len(files_added)} files)")
+
+        # Enforce format-specific limits
+        if format == "claude" and total_size > 8 * 1024 * 1024:
+            raise SkillExportError("Skill package exceeds Claude format 8MB limit")
 
         # Get zip bytes
         zip_bytes = zip_buffer.getvalue()
@@ -375,6 +398,7 @@ class SkillExporter:
         self,
         name: str,
         include_dependencies: bool = True,
+        format: str = "generic",
         context: Any = None,
     ) -> tuple[bool, str, int]:
         """Validate that a skill can be exported without actually creating the package.
@@ -393,6 +417,10 @@ class SkillExporter:
             ...     print(f"Cannot export: {msg}")
         """
         try:
+            supported_formats = {"generic", "claude"}
+            if format not in supported_formats:
+                return False, f"Unsupported export format: {format}", 0
+
             # Load skill
             skill = await self._registry.get_skill(name, context=context, load_dependencies=False)
 
@@ -407,6 +435,9 @@ class SkillExporter:
                 for dep_name in dep_names:
                     dep_skill = await self._registry.get_skill(dep_name, context=context)
                     total_size += await self._calculate_skill_size(dep_skill, context)
+
+            if format == "claude" and total_size > 8 * 1024 * 1024:
+                return False, "Skill export exceeds Claude format 8MB limit", total_size
 
             return True, "Export is valid", total_size
 

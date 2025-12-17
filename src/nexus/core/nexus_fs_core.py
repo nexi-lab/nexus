@@ -1938,8 +1938,11 @@ class NexusFSCoreMixin:
         if new_route.readonly:
             raise PermissionError(f"Cannot rename to read-only path: {new_path}")
 
-        # Check if source exists
-        if not self.metadata.exists(old_path):
+        # Check if source exists (explicit metadata or implicit directory)
+        is_implicit_dir = not self.metadata.exists(
+            old_path
+        ) and self.metadata.is_implicit_directory(old_path)
+        if not self.metadata.exists(old_path) and not is_implicit_dir:
             raise NexusFileNotFoundError(old_path)
 
         # Capture snapshot before operation for undo capability
@@ -1995,7 +1998,8 @@ class NexusFSCoreMixin:
 
         # Check if this is a directory BEFORE renaming (important!)
         # After rename, the old path won't have children anymore
-        is_directory = self.metadata.is_implicit_directory(old_path)
+        # is_implicit_dir was already computed above - also check for explicit directory
+        is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
 
         # For path-based connector backends, we need to move the actual file
         # in the backend storage (not just metadata)
@@ -2491,16 +2495,21 @@ class NexusFSCoreMixin:
                 path = self._validate_path(path)
                 meta = self.metadata.get(path)
 
-                if meta is None:
+                # Check for implicit directory (exists because it has files beneath it)
+                is_implicit_dir = meta is None and self.metadata.is_implicit_directory(path)
+
+                if meta is None and not is_implicit_dir:
                     results[path] = {"success": False, "error": "File not found"}
                     continue
 
-                # Check if this is a directory
-                is_dir = meta.mime_type == "inode/directory"
+                # Check if this is a directory (explicit or implicit)
+                is_dir = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
 
                 if is_dir:
                     # Use rmdir for directories
-                    self._rmdir_internal(path, recursive=recursive, context=context)
+                    self._rmdir_internal(
+                        path, recursive=recursive, context=context, is_implicit=is_implicit_dir
+                    )
                 else:
                     # Use delete for files
                     self.delete(path, context=context)
@@ -2516,8 +2525,17 @@ class NexusFSCoreMixin:
         path: str,
         recursive: bool = False,
         context: OperationContext | None = None,
+        is_implicit: bool | None = None,
     ) -> None:
-        """Internal rmdir implementation without RPC decoration."""
+        """Internal rmdir implementation without RPC decoration.
+
+        Args:
+            path: Directory path to remove
+            recursive: If True, delete non-empty directories
+            context: Operation context for permission checks
+            is_implicit: If True, directory is implicit (no metadata, exists due to child files).
+                        If None, will be auto-detected.
+        """
         import contextlib
         import errno
 
@@ -2538,13 +2556,16 @@ class NexusFSCoreMixin:
         # Check write permission
         self._check_permission(path, Permission.WRITE, context)
 
-        # Check if path exists
+        # Check if path exists (explicit or implicit)
         meta = self.metadata.get(path)
-        if meta is None:
+        if is_implicit is None:
+            is_implicit = meta is None and self.metadata.is_implicit_directory(path)
+
+        if meta is None and not is_implicit:
             raise NexusFileNotFoundError(path)
 
-        # Check if it's a directory
-        if meta.mime_type != "inode/directory":
+        # Check if it's a directory (skip for implicit dirs - they're always directories)
+        if meta is not None and meta.mime_type != "inode/directory":
             raise OSError(errno.ENOTDIR, "Not a directory", path)
 
         # Get files in directory
@@ -2569,8 +2590,9 @@ class NexusFSCoreMixin:
         with contextlib.suppress(NexusFileNotFoundError):
             route.backend.rmdir(route.backend_path, recursive=recursive)
 
-        # Delete the directory metadata
-        self.metadata.delete(path)
+        # Delete the directory metadata (only if explicit directory)
+        if not is_implicit:
+            self.metadata.delete(path)
 
     @rpc_expose(description="Rename/move multiple files")
     def rename_bulk(

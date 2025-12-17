@@ -166,8 +166,11 @@ class LocalTestRunner(TestRunner):
         print_header("Bulk Operations Test (Local Mode)")
         print_info(f"Data directory: {self.data_dir}")
 
+        # Use a database in the temp directory to ensure isolation between test runs
+        db_path = Path(self.data_dir) / "nexus-test.db"
         backend = LocalBackend(self.data_dir)
-        nx = NexusFS(backend=backend)
+        # Disable permission enforcement for local testing to avoid permission errors
+        nx = NexusFS(backend=backend, db_path=db_path, enforce_permissions=False)
 
         try:
             self._run_tests(nx)
@@ -284,9 +287,9 @@ class LocalTestRunner(TestRunner):
             "delete_bulk correctly handles mixed results", first_ok and second_ok and third_fail
         )
 
-        # Test 5: delete_bulk with recursive
-        print_header("Test 5: delete_bulk with recursive directory deletion")
-        print_test("Deleting directory with recursive=True")
+        # Test 5: delete_bulk with recursive (explicit directory)
+        print_header("Test 5: delete_bulk with recursive directory deletion (explicit)")
+        print_test("Deleting EXPLICIT directory with recursive=True")
 
         nx.mkdir(f"{self.base}/to_delete", exist_ok=True)
         nx.write(f"{self.base}/to_delete/a.txt", b"file a")
@@ -300,11 +303,64 @@ class LocalTestRunner(TestRunner):
         success = result.get(f"{self.base}/to_delete", {}).get("success", False) and not nx.exists(
             f"{self.base}/to_delete"
         )
-        self.record("delete_bulk with recursive=True works correctly", success)
+        self.record("delete_bulk with recursive=True works for explicit directory", success)
+
+        # Test 6: delete_bulk on IMPLICIT directory
+        print_header("Test 6: delete_bulk on IMPLICIT directory")
+        print_test("Deleting IMPLICIT directory (no mkdir, just files under it)")
+
+        # Create files directly without mkdir - this creates an implicit directory
+        nx.write(f"{self.base}/implicit_dir/file1.txt", b"file 1")
+        nx.write(f"{self.base}/implicit_dir/file2.txt", b"file 2")
+        nx.write(f"{self.base}/implicit_dir/nested/file3.txt", b"file 3")
+
+        # Verify the implicit directory exists
+        implicit_exists = nx.exists(f"{self.base}/implicit_dir")
+        print_info(f"Implicit directory exists: {implicit_exists}")
+
+        result = nx.delete_bulk([f"{self.base}/implicit_dir"], recursive=True)
+        print_info(f"Result: {result}")
+
+        success = result.get(f"{self.base}/implicit_dir", {}).get(
+            "success", False
+        ) and not nx.exists(f"{self.base}/implicit_dir")
+        self.record("delete_bulk works for IMPLICIT directory", success)
+
+        # Test 7: rename_bulk on IMPLICIT directory
+        print_header("Test 7: rename_bulk on IMPLICIT directory")
+        print_test("Renaming IMPLICIT directory (no mkdir, just files under it)")
+
+        # Create another implicit directory
+        nx.write(f"{self.base}/implicit_rename/a.txt", b"file a")
+        nx.write(f"{self.base}/implicit_rename/b.txt", b"file b")
+
+        # Verify it exists
+        implicit_exists = nx.exists(f"{self.base}/implicit_rename")
+        print_info(f"Implicit directory exists before rename: {implicit_exists}")
+
+        result = nx.rename_bulk([(f"{self.base}/implicit_rename", f"{self.base}/implicit_renamed")])
+        print_info(f"Result: {result}")
+
+        # Check the rename worked
+        old_gone = not nx.exists(f"{self.base}/implicit_rename")
+        new_exists = nx.exists(f"{self.base}/implicit_renamed")
+        files_moved = nx.exists(f"{self.base}/implicit_renamed/a.txt") and nx.exists(
+            f"{self.base}/implicit_renamed/b.txt"
+        )
+
+        success = (
+            result.get(f"{self.base}/implicit_rename", {}).get("success", False)
+            and old_gone
+            and new_exists
+            and files_moved
+        )
+        self.record("rename_bulk works for IMPLICIT directory", success)
 
         # Cleanup
         print_header("Cleanup")
-        nx.delete_bulk([self.base, f"{self.base}/subdir"], recursive=True)
+        nx.delete_bulk(
+            [self.base, f"{self.base}/subdir", f"{self.base}/implicit_renamed"], recursive=True
+        )
         print_success("Test directory cleaned up")
 
 
@@ -448,9 +504,9 @@ class RemoteTestRunner(TestRunner):
             "delete_bulk correctly handles mixed results", first_ok and second_ok and third_fail
         )
 
-        # Test 5: delete_bulk with recursive
-        print_header("Test 5: delete_bulk with recursive directory deletion")
-        print_test("Deleting directory with recursive=True")
+        # Test 5: delete_bulk with recursive (explicit directory)
+        print_header("Test 5: delete_bulk with recursive directory deletion (explicit)")
+        print_test("Deleting EXPLICIT directory with recursive=True")
 
         await nx.mkdir(f"{self.base}/to_delete", exist_ok=True)
         await nx.write(f"{self.base}/to_delete/a.txt", b"file a")
@@ -464,11 +520,66 @@ class RemoteTestRunner(TestRunner):
         success = result.get(f"{self.base}/to_delete", {}).get(
             "success", False
         ) and not await nx.exists(f"{self.base}/to_delete")
-        self.record("delete_bulk with recursive=True works correctly", success)
+        self.record("delete_bulk with recursive=True works for explicit directory", success)
+
+        # Test 6: delete_bulk on IMPLICIT directory
+        print_header("Test 6: delete_bulk on IMPLICIT directory")
+        print_test("Deleting IMPLICIT directory (no mkdir, just files under it)")
+
+        # Create files directly without mkdir - this creates an implicit directory
+        await nx.write(f"{self.base}/implicit_dir/file1.txt", b"file 1")
+        await nx.write(f"{self.base}/implicit_dir/file2.txt", b"file 2")
+        await nx.write(f"{self.base}/implicit_dir/nested/file3.txt", b"file 3")
+
+        # Verify the implicit directory exists
+        implicit_exists = await nx.exists(f"{self.base}/implicit_dir")
+        print_info(f"Implicit directory exists: {implicit_exists}")
+
+        result = await nx.delete_bulk([f"{self.base}/implicit_dir"], recursive=True)
+        print_info(f"Result: {result}")
+
+        success = result.get(f"{self.base}/implicit_dir", {}).get(
+            "success", False
+        ) and not await nx.exists(f"{self.base}/implicit_dir")
+        self.record("delete_bulk works for IMPLICIT directory", success)
+
+        # Test 7: rename_bulk on IMPLICIT directory
+        print_header("Test 7: rename_bulk on IMPLICIT directory")
+        print_test("Renaming IMPLICIT directory (no mkdir, just files under it)")
+
+        # Create another implicit directory
+        await nx.write(f"{self.base}/implicit_rename/a.txt", b"file a")
+        await nx.write(f"{self.base}/implicit_rename/b.txt", b"file b")
+
+        # Verify it exists
+        implicit_exists = await nx.exists(f"{self.base}/implicit_rename")
+        print_info(f"Implicit directory exists before rename: {implicit_exists}")
+
+        result = await nx.rename_bulk(
+            [(f"{self.base}/implicit_rename", f"{self.base}/implicit_renamed")]
+        )
+        print_info(f"Result: {result}")
+
+        # Check the rename worked
+        old_gone = not await nx.exists(f"{self.base}/implicit_rename")
+        new_exists = await nx.exists(f"{self.base}/implicit_renamed")
+        files_moved = await nx.exists(f"{self.base}/implicit_renamed/a.txt") and await nx.exists(
+            f"{self.base}/implicit_renamed/b.txt"
+        )
+
+        success = (
+            result.get(f"{self.base}/implicit_rename", {}).get("success", False)
+            and old_gone
+            and new_exists
+            and files_moved
+        )
+        self.record("rename_bulk works for IMPLICIT directory", success)
 
         # Cleanup
         print_header("Cleanup")
-        await nx.delete_bulk([self.base, f"{self.base}/subdir"], recursive=True)
+        await nx.delete_bulk(
+            [self.base, f"{self.base}/subdir", f"{self.base}/implicit_renamed"], recursive=True
+        )
         print_success("Test directory cleaned up")
 
 

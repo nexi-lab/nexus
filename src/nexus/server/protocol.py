@@ -320,6 +320,21 @@ class RenameParams:
 
 
 @dataclass
+class DeleteBulkParams:
+    """Parameters for delete_bulk() method."""
+
+    paths: list[str]
+    recursive: bool = False
+
+
+@dataclass
+class RenameBulkParams:
+    """Parameters for rename_bulk() method."""
+
+    renames: list[tuple[str, str]]
+
+
+@dataclass
 class ExistsParams:
     """Parameters for exists() method."""
 
@@ -1582,6 +1597,8 @@ METHOD_PARAMS = {
     "append": AppendParams,
     "delete": DeleteParams,
     "rename": RenameParams,
+    "delete_bulk": DeleteBulkParams,
+    "rename_bulk": RenameBulkParams,
     "exists": ExistsParams,
     "list": ListParams,
     "glob": GlobParams,

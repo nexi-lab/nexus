@@ -10,6 +10,7 @@ For SQLite compatibility:
 import json
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import (
     BigInteger,
@@ -2471,12 +2472,30 @@ class SubscriptionModel(Base):
 
     def get_event_types(self) -> list[str]:
         """Get event types as a Python list."""
-        return json.loads(self.event_types) if self.event_types else []
+        if not self.event_types:
+            return []
+
+        data = json.loads(self.event_types)
+        if not isinstance(data, list):
+            return []
+
+        return [str(evt) for evt in data]
 
     def get_patterns(self) -> list[str]:
         """Get patterns as a Python list."""
-        return json.loads(self.patterns) if self.patterns else []
+        if not self.patterns:
+            return []
 
-    def get_metadata(self) -> dict:
+        data = json.loads(self.patterns)
+        if not isinstance(data, list):
+            return []
+
+        return [str(pattern) for pattern in data]
+
+    def get_metadata(self) -> dict[str, Any]:
         """Get custom_metadata as a Python dict."""
-        return json.loads(self.custom_metadata) if self.custom_metadata else {}
+        if not self.custom_metadata:
+            return {}
+
+        data = json.loads(self.custom_metadata)
+        return data if isinstance(data, dict) else {}

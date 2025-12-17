@@ -159,6 +159,7 @@ class SandboxProvider(ABC):
         nexus_url: str,
         api_key: str,
         agent_id: str | None = None,
+        skip_dependency_checks: bool = False,
     ) -> dict[str, Any]:
         """Mount Nexus filesystem inside sandbox via FUSE.
 
@@ -169,6 +170,8 @@ class SandboxProvider(ABC):
             api_key: API key for authentication
             agent_id: Optional agent ID for version attribution (issue #418).
                 When set, file modifications will be attributed to this agent.
+            skip_dependency_checks: If True, skip nexus/fusepy installation checks.
+                Use for templates with pre-installed dependencies to save ~10s.
 
         Returns:
             Mount status dict with:

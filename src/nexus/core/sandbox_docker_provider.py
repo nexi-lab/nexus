@@ -462,6 +462,7 @@ class DockerSandboxProvider(SandboxProvider):
         nexus_url: str,
         api_key: str,
         agent_id: str | None = None,
+        skip_dependency_checks: bool = False,  # noqa: ARG002 - Not used for Docker (always installs)
     ) -> dict[str, Any]:
         """Mount Nexus filesystem inside Docker sandbox via FUSE.
 
@@ -472,6 +473,8 @@ class DockerSandboxProvider(SandboxProvider):
             api_key: Nexus API key
             agent_id: Optional agent ID for version attribution (issue #418).
                 When set, file modifications will be attributed to this agent.
+            skip_dependency_checks: Ignored for Docker (always checks/installs deps).
+                Provided for interface compatibility with E2B provider.
 
         Returns:
             Mount status dict

@@ -2472,30 +2472,15 @@ class SubscriptionModel(Base):
 
     def get_event_types(self) -> list[str]:
         """Get event types as a Python list."""
-        if not self.event_types:
-            return []
-
-        data = json.loads(self.event_types)
-        if not isinstance(data, list):
-            return []
-
-        return [str(evt) for evt in data]
+        result: list[str] = json.loads(self.event_types) if self.event_types else []
+        return result
 
     def get_patterns(self) -> list[str]:
         """Get patterns as a Python list."""
-        if not self.patterns:
-            return []
-
-        data = json.loads(self.patterns)
-        if not isinstance(data, list):
-            return []
-
-        return [str(pattern) for pattern in data]
+        result: list[str] = json.loads(self.patterns) if self.patterns else []
+        return result
 
     def get_metadata(self) -> dict[str, Any]:
         """Get custom_metadata as a Python dict."""
-        if not self.custom_metadata:
-            return {}
-
-        data = json.loads(self.custom_metadata)
-        return data if isinstance(data, dict) else {}
+        result: dict[str, Any] = json.loads(self.custom_metadata) if self.custom_metadata else {}
+        return result

@@ -33,23 +33,64 @@ Backward Compatibility:
 
 The main nexus module re-exports core functionality for backward compatibility.
 New projects should use nexus.sdk for a cleaner API.
+
+PERFORMANCE NOTE:
+-----------------
+This module uses lazy imports to minimize startup time. Heavy modules like
+nexus.skills, nexus.core.nexus_fs, and nexus.remote are only loaded when
+first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 """
 
 __version__ = "0.6.3"
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.backends.backend import Backend
-from nexus.backends.local import LocalBackend
-from nexus.config import NexusConfig, load_config
+# =============================================================================
+# LAZY IMPORTS for performance optimization
+# =============================================================================
+# These modules are imported lazily via __getattr__ to avoid loading heavy
+# dependencies (skills, nexus_fs, remote) on module import.
+# This significantly speeds up CLI startup and FUSE mount initialization.
 
-# Lazy import GCSBackend to avoid loading google.cloud.storage + opentelemetry on startup
-# This significantly speeds up CLI startup when GCS is not used
 if TYPE_CHECKING:
-    from nexus.backends.gcs import GCSBackend as _GCSBackend
+    # Type hints for IDE support - these don't trigger actual imports
+    from pathlib import Path
+
+    from nexus.backends.backend import Backend
+    from nexus.backends.gcs import GCSBackend
+    from nexus.backends.local import LocalBackend
+    from nexus.config import NexusConfig, load_config
+    from nexus.core.exceptions import (
+        BackendError,
+        InvalidPathError,
+        MetadataError,
+        NexusError,
+        NexusFileNotFoundError,
+        NexusPermissionError,
+    )
+    from nexus.core.filesystem import NexusFilesystem
+    from nexus.core.nexus_fs import NexusFS
+    from nexus.core.router import NamespaceConfig
+    from nexus.remote import RemoteNexusFS
+    from nexus.skills import (
+        Skill,
+        SkillDependencyError,
+        SkillExporter,
+        SkillExportError,
+        SkillManager,
+        SkillManagerError,
+        SkillMetadata,
+        SkillNotFoundError,
+        SkillParseError,
+        SkillParser,
+        SkillRegistry,
+    )
+
+# =============================================================================
+# Lightweight imports (always loaded) - these are fast
+# =============================================================================
 from nexus.core.exceptions import (
     BackendError,
     InvalidPathError,
@@ -58,34 +99,71 @@ from nexus.core.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
-from nexus.core.filesystem import NexusFilesystem
-from nexus.core.nexus_fs import NexusFS
-from nexus.core.router import NamespaceConfig
-from nexus.remote import RemoteNexusFS
 
-# Skills system
-from nexus.skills import (
-    Skill,
-    SkillDependencyError,
-    SkillExporter,
-    SkillExportError,
-    SkillManager,
-    SkillManagerError,
-    SkillMetadata,
-    SkillNotFoundError,
-    SkillParseError,
-    SkillParser,
-    SkillRegistry,
-)
+# Module-level cache for lazy imports
+_lazy_imports_cache: dict[str, Any] = {}
 
-# Planned imports for future modules:
-# from nexus.core.client import NexusClient
-# from nexus.interface import NexusInterface
+# Mapping of attribute names to their import paths
+_LAZY_IMPORTS = {
+    # Backends
+    "Backend": ("nexus.backends.backend", "Backend"),
+    "LocalBackend": ("nexus.backends.local", "LocalBackend"),
+    "GCSBackend": ("nexus.backends.gcs", "GCSBackend"),
+    # Config
+    "NexusConfig": ("nexus.config", "NexusConfig"),
+    "load_config": ("nexus.config", "load_config"),
+    # Core - heavy
+    "NexusFilesystem": ("nexus.core.filesystem", "NexusFilesystem"),
+    "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
+    "NamespaceConfig": ("nexus.core.router", "NamespaceConfig"),
+    # Remote - needed for FUSE mount
+    "RemoteNexusFS": ("nexus.remote", "RemoteNexusFS"),
+    # Skills - very heavy
+    "Skill": ("nexus.skills", "Skill"),
+    "SkillDependencyError": ("nexus.skills", "SkillDependencyError"),
+    "SkillExporter": ("nexus.skills", "SkillExporter"),
+    "SkillExportError": ("nexus.skills", "SkillExportError"),
+    "SkillManager": ("nexus.skills", "SkillManager"),
+    "SkillManagerError": ("nexus.skills", "SkillManagerError"),
+    "SkillMetadata": ("nexus.skills", "SkillMetadata"),
+    "SkillNotFoundError": ("nexus.skills", "SkillNotFoundError"),
+    "SkillParseError": ("nexus.skills", "SkillParseError"),
+    "SkillParser": ("nexus.skills", "SkillParser"),
+    "SkillRegistry": ("nexus.skills", "SkillRegistry"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy import for heavy dependencies.
+
+    This function is called when an attribute is not found in the module.
+    It loads the requested module/class on demand, significantly reducing
+    import time for simple use cases.
+    """
+    # Check cache first
+    if name in _lazy_imports_cache:
+        return _lazy_imports_cache[name]
+
+    # Check if this is a lazy import
+    if name in _LAZY_IMPORTS:
+        module_path, attr_name = _LAZY_IMPORTS[name]
+        import importlib
+
+        module = importlib.import_module(module_path)
+        value = getattr(module, attr_name)
+        _lazy_imports_cache[name] = value
+        return value
+
+    # Special case: connect function (defined below but needs lazy deps)
+    if name == "connect":
+        return connect
+
+    raise AttributeError(f"module 'nexus' has no attribute {name!r}")
 
 
 def connect(
-    config: str | Path | dict | NexusConfig | None = None,
-) -> NexusFilesystem:
+    config: "str | Path | dict | NexusConfig | None" = None,
+) -> "NexusFilesystem":
     """
     Connect to Nexus filesystem.
 
@@ -145,6 +223,15 @@ def connect(
     """
     import os
     import warnings
+    from pathlib import Path
+
+    # Lazy load dependencies
+    from nexus.backends.backend import Backend
+    from nexus.backends.local import LocalBackend
+    from nexus.config import NexusConfig, load_config
+    from nexus.core.nexus_fs import NexusFS
+    from nexus.core.router import NamespaceConfig
+    from nexus.remote import RemoteNexusFS
 
     # Load configuration
     cfg = load_config(config)
@@ -309,7 +396,7 @@ __all__ = [
     # Backends
     "LocalBackend",
     "GCSBackend",
-    # Exceptions
+    # Exceptions (always loaded - lightweight)
     "NexusError",
     "NexusFileNotFoundError",
     "NexusPermissionError",
@@ -331,12 +418,3 @@ __all__ = [
     "SkillParseError",
     "SkillExportError",
 ]
-
-
-def __getattr__(name: str) -> Any:
-    """Lazy import for heavy dependencies like GCSBackend."""
-    if name == "GCSBackend":
-        from nexus.backends.gcs import GCSBackend
-
-        return GCSBackend
-    raise AttributeError(f"module 'nexus' has no attribute {name!r}")

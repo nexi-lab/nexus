@@ -454,7 +454,7 @@ class TestDockerImageBuilder:
     def test_initialization_without_docker_package(self, monkeypatch):
         """Test that initialization fails gracefully when docker package is not available."""
         # Mock DOCKER_AVAILABLE to False
-        import nexus.core.docker_image_builder as builder_module
+        import nexus.core.sandbox.docker_image_builder as builder_module
 
         monkeypatch.setattr(builder_module, "DOCKER_AVAILABLE", False)
 

@@ -358,7 +358,7 @@ class TestCrossTenantRustPathFix:
     @pytest.fixture
     def enhanced_manager(self, engine):
         """Create an enhanced ReBAC manager that has _fetch_tuples_for_rust."""
-        from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+        from nexus.core.rebac.rebac_manager_enhanced import EnhancedReBACManager
 
         manager = EnhancedReBACManager(
             engine=engine,

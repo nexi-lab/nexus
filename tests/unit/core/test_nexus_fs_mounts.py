@@ -656,8 +656,8 @@ class TestMountContextUtilsIntegration:
         )
 
         with (
-            patch("nexus.core.nexus_fs_mounts.get_tenant_id") as mock_get_tenant,
-            patch("nexus.core.nexus_fs_mounts.get_user_identity") as mock_get_user,
+            patch("nexus.core.mixins.nexus_fs_mounts.get_tenant_id") as mock_get_tenant,
+            patch("nexus.core.mixins.nexus_fs_mounts.get_user_identity") as mock_get_user,
         ):
             mock_get_tenant.return_value = "test_tenant"
             mock_get_user.return_value = ("user", "alice")
@@ -710,7 +710,7 @@ class TestMountContextUtilsIntegration:
         # Set up database path
         nx.db_path = temp_dir / "token_manager.db"
 
-        with patch("nexus.core.nexus_fs_mounts.get_database_url") as mock_get_db_url:
+        with patch("nexus.core.mixins.nexus_fs_mounts.get_database_url") as mock_get_db_url:
             mock_get_db_url.return_value = str(temp_dir / "token_manager.db")
 
             # This should use get_database_url for gdrive_connector

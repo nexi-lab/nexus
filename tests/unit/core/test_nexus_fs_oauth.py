@@ -127,7 +127,7 @@ class TestNexusFSOAuthMixin:
         mock_config = OAuthConfig(providers=mock_providers)
 
         with patch(
-            "nexus.core.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory"
+            "nexus.core.mixins.nexus_fs_oauth.NexusFSOAuthMixin._get_oauth_factory"
         ) as mock_factory:
             mock_factory_instance = Mock()
             mock_factory_instance._oauth_config = mock_config
@@ -993,7 +993,7 @@ class TestNexusFSOAuthMixin:
         )
 
         with (
-            patch("nexus.core.nexus_fs_oauth.get_tenant_id") as mock_get_tenant,
+            patch("nexus.core.mixins.nexus_fs_oauth.get_tenant_id") as mock_get_tenant,
             patch.dict(
                 "os.environ",
                 {

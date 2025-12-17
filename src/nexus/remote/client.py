@@ -1291,6 +1291,57 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         """Rename/move a file (metadata-only operation)."""
         self._call_rpc("rename", {"old_path": old_path, "new_path": new_path})
 
+    def delete_bulk(
+        self,
+        paths: builtins.list[str],
+        recursive: bool = False,
+    ) -> dict[str, dict]:
+        """Delete multiple files or directories in a single operation.
+
+        Each path is processed independently - failures on one don't affect others.
+
+        Args:
+            paths: List of paths to delete
+            recursive: If True, delete non-empty directories (like rm -rf)
+
+        Returns:
+            Dictionary mapping each path to its result:
+                {"success": True} or {"success": False, "error": "error message"}
+
+        Example:
+            >>> results = nx.delete_bulk(['/a.txt', '/b.txt', '/folder'])
+            >>> for path, result in results.items():
+            ...     if result['success']:
+            ...         print(f"Deleted {path}")
+        """
+        result = self._call_rpc("delete_bulk", {"paths": paths, "recursive": recursive})
+        return result  # type: ignore[no-any-return]
+
+    def rename_bulk(
+        self,
+        renames: builtins.list[tuple[str, str]],
+    ) -> dict[str, dict]:
+        """Rename/move multiple files in a single operation.
+
+        Each rename is processed independently - failures on one don't affect others.
+        This is a metadata-only operation (instant, regardless of file size).
+
+        Args:
+            renames: List of (old_path, new_path) tuples
+
+        Returns:
+            Dictionary mapping each old_path to its result:
+                {"success": True, "new_path": "..."} or {"success": False, "error": "..."}
+
+        Example:
+            >>> results = nx.rename_bulk([
+            ...     ('/old1.txt', '/new1.txt'),
+            ...     ('/old2.txt', '/new2.txt'),
+            ... ])
+        """
+        result = self._call_rpc("rename_bulk", {"renames": renames})
+        return result  # type: ignore[no-any-return]
+
     def exists(self, path: str) -> bool:
         """Check if a file exists."""
         result = self._call_rpc("exists", {"path": path})

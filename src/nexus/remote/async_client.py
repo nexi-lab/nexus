@@ -564,6 +564,34 @@ class AsyncRemoteNexusFS:
         result = await self._call_rpc("delete", params)
         return result  # type: ignore[no-any-return]
 
+    async def delete_bulk(
+        self,
+        paths: builtins.list[str],
+        recursive: bool = False,
+        context: Any = None,  # noqa: ARG002
+    ) -> dict[str, dict]:
+        """Delete multiple files or directories in a single operation (async).
+
+        Each path is processed independently - failures on one don't affect others.
+
+        Args:
+            paths: List of paths to delete
+            recursive: If True, delete non-empty directories (like rm -rf)
+            context: Unused in remote client
+
+        Returns:
+            Dictionary mapping each path to its result:
+                {"success": True} or {"success": False, "error": "error message"}
+
+        Example:
+            >>> results = await nx.delete_bulk(['/a.txt', '/b.txt', '/folder'])
+            >>> for path, result in results.items():
+            ...     if result['success']:
+            ...         print(f"Deleted {path}")
+        """
+        result = await self._call_rpc("delete_bulk", {"paths": paths, "recursive": recursive})
+        return result  # type: ignore[no-any-return]
+
     async def exists(
         self,
         path: str,
@@ -711,6 +739,33 @@ class AsyncRemoteNexusFS:
             New file metadata dict
         """
         result = await self._call_rpc("rename", {"old_path": old_path, "new_path": new_path})
+        return result  # type: ignore[no-any-return]
+
+    async def rename_bulk(
+        self,
+        renames: builtins.list[tuple[str, str]],
+        context: Any = None,  # noqa: ARG002
+    ) -> dict[str, dict]:
+        """Rename/move multiple files in a single operation (async).
+
+        Each rename is processed independently - failures on one don't affect others.
+        This is a metadata-only operation (instant, regardless of file size).
+
+        Args:
+            renames: List of (old_path, new_path) tuples
+            context: Unused in remote client
+
+        Returns:
+            Dictionary mapping each old_path to its result:
+                {"success": True, "new_path": "..."} or {"success": False, "error": "..."}
+
+        Example:
+            >>> results = await nx.rename_bulk([
+            ...     ('/old1.txt', '/new1.txt'),
+            ...     ('/old2.txt', '/new2.txt'),
+            ... ])
+        """
+        result = await self._call_rpc("rename_bulk", {"renames": renames})
         return result  # type: ignore[no-any-return]
 
     async def append(

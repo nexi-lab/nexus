@@ -2454,3 +2454,159 @@ class NexusFSCoreMixin:
             "timed_out": timed_out,
             "timeout_threads": timeout_threads,
         }
+
+    @rpc_expose(description="Delete multiple files/directories")
+    def delete_bulk(
+        self,
+        paths: list[str],
+        recursive: bool = False,
+        context: OperationContext | None = None,
+    ) -> dict[str, dict]:
+        """
+        Delete multiple files or directories in a single operation.
+
+        Each path is processed independently - failures on one path don't affect others.
+        Directories require recursive=True to delete non-empty directories.
+
+        Args:
+            paths: List of virtual paths to delete
+            recursive: If True, delete non-empty directories (like rm -rf)
+            context: Optional operation context for permission checks
+
+        Returns:
+            Dictionary mapping each path to its result:
+                {"success": True} or {"success": False, "error": "error message"}
+
+        Example:
+            >>> results = nx.delete_bulk(['/a.txt', '/b.txt', '/folder'])
+            >>> for path, result in results.items():
+            ...     if result['success']:
+            ...         print(f"Deleted {path}")
+            ...     else:
+            ...         print(f"Failed {path}: {result['error']}")
+        """
+        results = {}
+        for path in paths:
+            try:
+                path = self._validate_path(path)
+                meta = self.metadata.get(path)
+
+                if meta is None:
+                    results[path] = {"success": False, "error": "File not found"}
+                    continue
+
+                # Check if this is a directory
+                is_dir = meta.mime_type == "inode/directory"
+
+                if is_dir:
+                    # Use rmdir for directories
+                    self._rmdir_internal(path, recursive=recursive, context=context)
+                else:
+                    # Use delete for files
+                    self.delete(path, context=context)
+
+                results[path] = {"success": True}
+            except Exception as e:
+                results[path] = {"success": False, "error": str(e)}
+
+        return results
+
+    def _rmdir_internal(
+        self,
+        path: str,
+        recursive: bool = False,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Internal rmdir implementation without RPC decoration."""
+        import contextlib
+        import errno
+
+        path = self._validate_path(path)
+        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+
+        route = self.router.route(
+            path,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            is_admin=is_admin,
+            check_write=True,
+        )
+
+        if route.readonly:
+            raise PermissionError(f"Cannot remove read-only directory: {path}")
+
+        # Check write permission
+        self._check_permission(path, Permission.WRITE, context)
+
+        # Check if path exists
+        meta = self.metadata.get(path)
+        if meta is None:
+            raise NexusFileNotFoundError(path)
+
+        # Check if it's a directory
+        if meta.mime_type != "inode/directory":
+            raise OSError(errno.ENOTDIR, "Not a directory", path)
+
+        # Get files in directory
+        dir_path = path if path.endswith("/") else path + "/"
+        files_in_dir = self.metadata.list(dir_path)
+
+        if files_in_dir and not recursive:
+            raise OSError(errno.ENOTEMPTY, "Directory not empty", path)
+
+        if recursive and files_in_dir:
+            # Delete content from backend for each file
+            for file_meta in files_in_dir:
+                if file_meta.etag and file_meta.mime_type != "inode/directory":
+                    with contextlib.suppress(Exception):
+                        route.backend.delete_content(file_meta.etag)
+
+            # Batch delete from metadata store
+            file_paths = [file_meta.path for file_meta in files_in_dir]
+            self.metadata.delete_batch(file_paths)
+
+        # Remove directory in backend
+        with contextlib.suppress(NexusFileNotFoundError):
+            route.backend.rmdir(route.backend_path, recursive=recursive)
+
+        # Delete the directory metadata
+        self.metadata.delete(path)
+
+    @rpc_expose(description="Rename/move multiple files")
+    def rename_bulk(
+        self,
+        renames: list[tuple[str, str]],
+        context: OperationContext | None = None,
+    ) -> dict[str, dict]:
+        """
+        Rename/move multiple files in a single operation.
+
+        Each rename is processed independently - failures on one don't affect others.
+        This is a metadata-only operation (instant, regardless of file size).
+
+        Args:
+            renames: List of (old_path, new_path) tuples
+            context: Optional operation context for permission checks
+
+        Returns:
+            Dictionary mapping each old_path to its result:
+                {"success": True, "new_path": "..."} or {"success": False, "error": "..."}
+
+        Example:
+            >>> results = nx.rename_bulk([
+            ...     ('/old1.txt', '/new1.txt'),
+            ...     ('/old2.txt', '/new2.txt'),
+            ... ])
+            >>> for old_path, result in results.items():
+            ...     if result['success']:
+            ...         print(f"Renamed {old_path} -> {result['new_path']}")
+        """
+        results = {}
+        for old_path, new_path in renames:
+            try:
+                self.rename(old_path, new_path, context=context)
+                results[old_path] = {"success": True, "new_path": new_path}
+            except Exception as e:
+                results[old_path] = {"success": False, "error": str(e)}
+
+        return results

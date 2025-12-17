@@ -184,6 +184,7 @@ archive/
 *_COMPLETE.md
 examples/e2b/nexus
 examples/cli/
+!examples/cli/test_bulk_operations.py
 
 # GCS credentials - never commit!
 gcs-credentials.json

@@ -1623,6 +1623,44 @@ class NexusFS(
             "mode": 0o644,  # -rw-r--r--
         }
 
+    @rpc_expose(description="Get ETag (content hash) for HTTP caching")
+    def get_etag(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> str | None:
+        """Get the ETag (content hash) for a file without reading content.
+
+        This method is optimized for HTTP caching - it retrieves only the
+        content hash from metadata, not the actual content. Use this for
+        efficient If-None-Match / 304 Not Modified checks.
+
+        For local backend: Returns content_hash from file_paths table.
+        For connectors: Returns content_hash from content_cache table (if cached).
+
+        Args:
+            path: Virtual file path
+            context: Operation context
+
+        Returns:
+            Content hash (ETag) if available, None otherwise
+
+        Examples:
+            >>> etag = fs.get_etag("/workspace/file.txt")
+            >>> if etag == request.headers.get("If-None-Match"):
+            ...     return Response(status_code=304)
+        """
+        _ = context  # Reserved for future permission checks
+        normalized = self._validate_path(path, allow_root=False)
+
+        # Get file metadata (lightweight - doesn't read content)
+        file_meta = self.metadata.get(normalized)
+        if file_meta is None:
+            return None
+
+        # Return the etag (content_hash) from metadata
+        return file_meta.etag
+
     def _get_backend_directory_entries(
         self, path: str, context: OperationContext | None = None
     ) -> set[str]:

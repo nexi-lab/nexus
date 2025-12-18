@@ -748,6 +748,74 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         except Exception:
             return None
 
+    def generate_signed_url(
+        self,
+        path: str,
+        expires_in: int = 3600,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, str | int]:
+        """
+        Generate a signed URL for direct download from GCS.
+
+        This allows clients to download files directly from GCS, bypassing the
+        Nexus server. The URL is time-limited and includes a signature.
+
+        Args:
+            path: Virtual file path (or backend_path from context)
+            expires_in: URL expiration time in seconds (default: 1 hour, max: 7 days)
+            context: Operation context with optional backend_path
+
+        Returns:
+            Dict with:
+            - url: Signed download URL
+            - expires_in: Expiration time in seconds
+            - method: HTTP method ("GET")
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            BackendError: If URL generation fails
+        """
+        from datetime import timedelta
+
+        try:
+            # Get backend path
+            if context and context.backend_path:
+                backend_path = context.backend_path
+            else:
+                backend_path = path.lstrip("/")
+
+            blob_path = self._get_blob_path(backend_path)
+            blob = self.bucket.blob(blob_path)
+
+            # Verify file exists
+            if not blob.exists():
+                raise NexusFileNotFoundError(path)
+
+            # Clamp expires_in to GCS max (7 days = 604800 seconds)
+            expires_in = min(expires_in, 604800)
+
+            # Generate signed URL using V4 signing
+            url = blob.generate_signed_url(
+                version="v4",
+                expiration=timedelta(seconds=expires_in),
+                method="GET",
+            )
+
+            return {
+                "url": url,
+                "expires_in": expires_in,
+                "method": "GET",
+            }
+
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to generate signed URL for {path}: {e}",
+                backend="gcs_connector",
+                path=path,
+            ) from e
+
     # === Override Content Operations with Caching ===
 
     def read_content(

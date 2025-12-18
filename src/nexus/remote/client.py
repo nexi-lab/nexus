@@ -1347,6 +1347,22 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("exists", {"path": path})
         return result["exists"]  # type: ignore[no-any-return]
 
+    def get_etag(self, path: str) -> str | None:
+        """Get the ETag (content hash) for a file without reading content.
+
+        This method is optimized for HTTP caching - it retrieves only the
+        content hash from metadata, not the actual content.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            Content hash (ETag) if available, None otherwise
+        """
+        result = self._call_rpc("get_etag", {"path": path})
+        etag = result.get("etag")
+        return str(etag) if etag is not None else None
+
     # ============================================================
     # File Discovery Operations
     # ============================================================

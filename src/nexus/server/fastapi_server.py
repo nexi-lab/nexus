@@ -33,6 +33,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
+from starlette.middleware.gzip import GZipMiddleware
 
 from nexus.core.exceptions import (
     ConflictError,
@@ -383,6 +384,10 @@ def create_app(
         allow_headers=["*"],
     )
 
+    # Add Gzip compression middleware (60-80% response size reduction)
+    # Only compress responses > 1000 bytes, compression level 6 (good balance)
+    app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
+
     # Register routes
     _register_routes(app)
 
@@ -599,8 +604,55 @@ def _register_routes(app: FastAPI) -> None:
             # Get operation context
             context = get_operation_context(auth_result)
 
+            # Early 304 check for read operations - check ETag BEFORE reading content
+            # This avoids downloading/reading content if client already has it cached
+            if_none_match = request.headers.get("If-None-Match")
+            if (
+                method == "read"
+                and if_none_match
+                and hasattr(params, "path")
+                and _app_state.nexus_fs
+            ):
+                try:
+                    # Get ETag from metadata without reading content (fast!)
+                    cached_etag = _app_state.nexus_fs.get_etag(params.path, context=context)
+                    if cached_etag:
+                        client_etag = if_none_match.strip('"')
+                        if client_etag == cached_etag:
+                            # ETag matches - return 304 without reading content
+                            logger.debug(f"Early 304: {params.path} (ETag match, no content read)")
+                            return Response(
+                                status_code=304,
+                                headers={
+                                    "ETag": f'"{cached_etag}"',
+                                    "Cache-Control": "private, max-age=60",
+                                },
+                            )
+                except Exception as e:
+                    # If ETag check fails, fall through to normal read
+                    logger.debug(f"Early ETag check failed for {params.path}: {e}")
+
             # Dispatch method
             result = await _dispatch_method(method, params, context)
+
+            # Build response with cache headers (includes ETag for read operations)
+            headers = _get_cache_headers(method, result)
+
+            # Late 304 check - fallback for cases where early check didn't apply
+            # (e.g., ETag computed from response content)
+            if if_none_match and "ETag" in headers:
+                # Strip quotes and compare
+                client_etag = if_none_match.strip('"')
+                server_etag = headers["ETag"].strip('"')
+                if client_etag == server_etag:
+                    # Return 304 Not Modified - no body needed
+                    return Response(
+                        status_code=304,
+                        headers={
+                            "ETag": headers["ETag"],
+                            "Cache-Control": headers.get("Cache-Control", ""),
+                        },
+                    )
 
             # Success response - use encode_rpc_message for proper serialization
             success_response = {
@@ -610,8 +662,9 @@ def _register_routes(app: FastAPI) -> None:
             }
             # encode_rpc_message handles bytes, datetime, etc.
             encoded = encode_rpc_message(success_response)
+
             # Using Response directly with pre-encoded JSON for performance
-            return Response(content=encoded, media_type="application/json")
+            return Response(content=encoded, media_type="application/json", headers=headers)
 
         except ValueError as e:
             return _error_response(None, RPCErrorCode.INVALID_PARAMS, f"Invalid parameters: {e}")
@@ -640,6 +693,64 @@ def _register_routes(app: FastAPI) -> None:
         except Exception as e:
             logger.exception(f"Error executing method {method}")
             return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}")
+
+
+def _get_cache_headers(method: str, result: Any) -> dict[str, str]:
+    """Generate appropriate cache headers based on method and result.
+
+    Cache strategy:
+    - Read operations: Cache with ETag for validation
+    - List/glob operations: Short cache with private scope
+    - Write/delete operations: No cache
+    - Metadata operations: Short cache
+
+    Args:
+        method: RPC method name
+        result: Response result
+
+    Returns:
+        Dict of HTTP cache headers
+    """
+    import hashlib
+
+    headers: dict[str, str] = {}
+
+    # Read operations - cache with ETag
+    if method == "read":
+        # Generate ETag from content or etag in result
+        if isinstance(result, bytes):
+            etag = hashlib.md5(result).hexdigest()
+            headers["ETag"] = f'"{etag}"'
+            headers["Cache-Control"] = "private, max-age=60"
+        elif isinstance(result, dict):
+            if "etag" in result:
+                headers["ETag"] = f'"{result["etag"]}"'
+            elif "content" in result and isinstance(result["content"], bytes):
+                etag = hashlib.md5(result["content"]).hexdigest()
+                headers["ETag"] = f'"{etag}"'
+            # If returning download_url, allow caching the URL itself
+            if "download_url" in result:
+                headers["Cache-Control"] = "private, max-age=300"
+            else:
+                headers["Cache-Control"] = "private, max-age=60"
+
+    # List and glob operations - short cache
+    elif method in ("list", "glob", "search"):
+        headers["Cache-Control"] = "private, max-age=30"
+
+    # Metadata operations - short cache
+    elif method in ("get_metadata", "exists", "is_directory"):
+        headers["Cache-Control"] = "private, max-age=60"
+
+    # Write/delete operations - no cache
+    elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir"):
+        headers["Cache-Control"] = "no-store"
+
+    # Default for other methods - no cache
+    else:
+        headers["Cache-Control"] = "private, no-cache"
+
+    return headers
 
 
 def _error_response(
@@ -775,11 +886,79 @@ async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:
 # ============================================================================
 
 
+def _generate_download_url(
+    path: str, context: Any, expires_in: int = 3600
+) -> dict[str, Any] | None:
+    """Generate presigned/signed URL for direct download if backend supports it.
+
+    This enables clients to download files directly from S3/GCS, bypassing
+    the Nexus server for improved performance on large files.
+
+    Args:
+        path: Virtual file path
+        context: Operation context
+        expires_in: URL expiration time in seconds
+
+    Returns:
+        Dict with download_url, expires_in, method if supported, None otherwise
+    """
+    nexus_fs = _app_state.nexus_fs
+    if nexus_fs is None:
+        return None
+
+    try:
+        # Get the backend for this path via router
+        route = nexus_fs.router.route(path)
+        backend = route.backend
+        backend_path = route.backend_path
+
+        # Check if backend supports presigned URLs
+        # S3 connector
+        if hasattr(backend, "generate_presigned_url"):
+            # Update context with backend_path
+            from dataclasses import replace
+
+            if context and hasattr(context, "backend_path"):
+                context = replace(context, backend_path=backend_path)
+            result = backend.generate_presigned_url(backend_path, expires_in, context)
+            return {
+                "download_url": result["url"],
+                "expires_in": result["expires_in"],
+                "method": result["method"],
+                "backend": "s3",
+            }
+
+        # GCS connector
+        if hasattr(backend, "generate_signed_url"):
+            # Update context with backend_path
+            from dataclasses import replace
+
+            if context and hasattr(context, "backend_path"):
+                context = replace(context, backend_path=backend_path)
+            result = backend.generate_signed_url(backend_path, expires_in, context)
+            return {
+                "download_url": result["url"],
+                "expires_in": result["expires_in"],
+                "method": result["method"],
+                "backend": "gcs",
+            }
+
+        # Backend doesn't support presigned URLs
+        return None
+
+    except Exception as e:
+        logger.warning(f"Failed to generate download URL for {path}: {e}")
+        return None
+
+
 async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any]:
     """Handle read method (async version for parsed reads).
 
     Returns raw bytes which will be encoded by encode_rpc_message using
     the standard {__type__: 'bytes', data: ...} format.
+
+    If return_url=True and the backend supports it (S3/GCS connectors),
+    returns a presigned URL instead of file content for direct download.
     """
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
@@ -787,15 +966,26 @@ async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any
     # Handle optional parameters
     return_metadata = getattr(params, "return_metadata", False) or False
     parsed = getattr(params, "parsed", False) or False
+    return_url = getattr(params, "return_url", False) or False
+    expires_in = getattr(params, "expires_in", 3600) or 3600
+
+    # Handle return_url - generate presigned URL for direct download
+    if return_url:
+        result = await asyncio.to_thread(_generate_download_url, params.path, context, expires_in)
+        if result:
+            return result
+        # Fall through to normal read if URL generation not supported
 
     # If not parsed, use sync read in thread
     if not parsed:
-        result = await asyncio.to_thread(
-            nexus_fs.read, params.path, context, return_metadata, False
+        read_result: bytes | dict[str, Any] = await asyncio.to_thread(
+            nexus_fs.read,
+            params.path,
+            context,
+            return_metadata,
+            False,
         )
-        if isinstance(result, bytes):
-            return result
-        return result
+        return read_result
 
     # For parsed reads, we need to handle async parsing
     # First, read the raw content
@@ -1108,10 +1298,13 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
 
 
 def _handle_admin_list_keys(params: Any, context: Any) -> dict[str, Any]:
-    """Handle admin_list_keys method."""
+    """Handle admin_list_keys method.
+
+    Performance optimized: All filtering happens in SQL instead of Python.
+    """
     from datetime import UTC, datetime
 
-    from sqlalchemy import select
+    from sqlalchemy import func, or_, select
 
     from nexus.storage.models import APIKeyModel
 
@@ -1124,6 +1317,7 @@ def _handle_admin_list_keys(params: Any, context: Any) -> dict[str, Any]:
     with auth_provider.session_factory() as session:
         stmt = select(APIKeyModel)
 
+        # Apply all filters in SQL for performance
         if params.user_id:
             stmt = stmt.where(APIKeyModel.user_id == params.user_id)
         if params.tenant_id:
@@ -1133,23 +1327,24 @@ def _handle_admin_list_keys(params: Any, context: Any) -> dict[str, Any]:
         if not params.include_revoked:
             stmt = stmt.where(APIKeyModel.revoked == 0)
 
+        # Filter expired keys in SQL (not Python) for correct pagination
+        if not params.include_expired:
+            now = datetime.now(UTC)
+            stmt = stmt.where(
+                or_(
+                    APIKeyModel.expires_at.is_(None),
+                    APIKeyModel.expires_at > now,
+                )
+            )
+
+        # Get total count before pagination (for accurate total)
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total = session.scalar(count_stmt) or 0
+
+        # Apply pagination
+        stmt = stmt.order_by(APIKeyModel.created_at.desc())
         stmt = stmt.limit(params.limit).offset(params.offset)
         api_keys = list(session.scalars(stmt).all())
-
-        # Filter expired keys if needed
-        now = datetime.now(UTC)
-        if not params.include_expired:
-            api_keys = [
-                key
-                for key in api_keys
-                if not key.expires_at
-                or (
-                    key.expires_at.replace(tzinfo=UTC)
-                    if key.expires_at.tzinfo is None
-                    else key.expires_at
-                )
-                > now
-            ]
 
         keys = []
         for key in api_keys:
@@ -1170,7 +1365,7 @@ def _handle_admin_list_keys(params: Any, context: Any) -> dict[str, Any]:
                 }
             )
 
-        return {"keys": keys, "total": len(keys)}
+        return {"keys": keys, "total": total}
 
 
 def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
@@ -1276,19 +1471,38 @@ def _handle_admin_update_key(params: Any, context: Any) -> dict[str, Any]:
 
 
 def run_server(
-    app: FastAPI,
+    app: FastAPI | str,
     host: str = "0.0.0.0",
     port: int = 8080,
     log_level: str = "info",
+    workers: int | None = None,
 ) -> None:
     """Run the FastAPI server with uvicorn.
 
     Args:
-        app: FastAPI application
+        app: FastAPI application instance or import string (e.g., "nexus.server:app")
         host: Host to bind to
         port: Port to bind to
         log_level: Logging level
+        workers: Number of worker processes (default: 1, or NEXUS_WORKERS env var)
+            - For multi-worker mode, pass app as string import path
+            - Set to 0 or None for single worker (recommended for development)
+            - Set to CPU count for production (e.g., 4 for 4-core machine)
+
+    Production deployment for multi-worker:
+        # Option 1: Use uvicorn CLI with workers
+        uvicorn nexus.server.fastapi_server:app --host 0.0.0.0 --port 8080 --workers 4
+
+        # Option 2: Use gunicorn with uvicorn workers (recommended)
+        gunicorn nexus.server.fastapi_server:app -w 4 -k uvicorn.workers.UvicornWorker
+
+    Environment variables:
+        NEXUS_WORKERS: Number of workers (default: 1)
+        NEXUS_HOST: Host to bind (default: 0.0.0.0)
+        NEXUS_PORT: Port to bind (default: 8080)
     """
+    import os
+
     import uvicorn
 
     from nexus.core import setup_uvloop
@@ -1298,7 +1512,28 @@ def run_server(
     if setup_uvloop():
         logger.info("uvloop installed as default event loop policy")
 
-    uvicorn.run(app, host=host, port=port, log_level=log_level)
+    # Get workers from parameter or environment variable
+    if workers is None:
+        workers = int(os.environ.get("NEXUS_WORKERS", "1"))
+
+    # Multi-worker mode requires app to be a string import path
+    if workers > 1 and not isinstance(app, str):
+        logger.warning(
+            f"Multi-worker mode (workers={workers}) requires app to be a string import path. "
+            "Falling back to single worker. For production, use: "
+            "uvicorn nexus.server.fastapi_server:app --workers N"
+        )
+        workers = 1
+
+    logger.info(f"Starting Nexus server on {host}:{port} with {workers} worker(s)")
+
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level=log_level,
+        workers=workers if workers > 1 else None,
+    )
 
 
 def run_server_from_config(

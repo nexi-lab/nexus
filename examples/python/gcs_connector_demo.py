@@ -221,10 +221,10 @@ def demo_with_server():
     # Cleanup
     print_section("6. Cleanup")
 
-    nx.rm(f"{mount_point}/hello.txt")
-    nx.rm(f"{mount_point}/data.json")
-    nx.rm(f"{mount_point}/subdir/nested.txt")
-    nx.rmdir(f"{mount_point}/subdir")
+    nx.delete(f"{mount_point}/hello.txt")
+    nx.delete(f"{mount_point}/data.json")
+    nx.delete(f"{mount_point}/subdir/nested.txt")
+    nx.delete(f"{mount_point}/subdir")
     print_success("Cleaned up test files")
 
     nx.remove_mount(mount_point)

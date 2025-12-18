@@ -1,0 +1,56 @@
+[package]
+name = "nexus-fuse"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance FUSE client for Nexus filesystem"
+license = "Apache-2.0"
+repository = "https://github.com/nexi-lab/nexus"
+
+[dependencies]
+# FUSE filesystem
+fuser = "0.14"
+
+# HTTP client for Nexus server communication (rustls for fast compilation)
+reqwest = { version = "0.11", default-features = false, features = ["json", "blocking", "rustls-tls"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# CLI argument parsing
+clap = { version = "4", features = ["derive", "env"] }
+
+# Caching
+lru = "0.12"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Base64 for content encoding
+base64 = "0.22"
+
+# SQLite for persistent caching
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Home directory for cache location
+dirs = "5"
+
+# URL encoding
+urlencoding = "2"
+
+# Date/time parsing
+chrono = "0.4"
+
+# Libc for FUSE types
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

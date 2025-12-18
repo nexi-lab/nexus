@@ -835,16 +835,39 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         start_time: float,
         stats: TraversalStats,
         context: dict[str, Any] | None = None,
+        memo: dict[tuple[str, str, str, str, str], bool] | None = None,
     ) -> bool:
-        """Compute permission with P0-5 limits enforced at each step."""
+        """Compute permission with P0-5 limits enforced at each step.
 
-        # DEBUG: Add detailed logging
+        PERF FIX: Added memo dict for cross-branch memoization.
+        - visited: prevents cycles within a single path (copied per branch)
+        - memo: caches results across ALL branches (shared, never copied)
+        """
         import logging
 
         logger = logging.getLogger(__name__)
         indent = "  " * depth
+
+        # Initialize memo on first call
+        if memo is None:
+            memo = {}
+
+        # PERF FIX: Check memo cache first (shared across all branches)
+        memo_key = (
+            subject.entity_type,
+            subject.entity_id,
+            permission,
+            obj.entity_type,
+            obj.entity_id,
+        )
+        if memo_key in memo:
+            cached_result = memo[memo_key]
+            stats.cache_hits += 1
+            logger.debug(f"{indent}[MEMO-HIT] {memo_key} = {cached_result}")
+            return cached_result
+
         logger.debug(
-            f"{indent}→ [ENTER depth={depth}] CHECK: {subject.entity_type}:{subject.entity_id} has '{permission}' on {obj.entity_type}:{obj.entity_id}?"
+            f"{indent}┌─[PERM-CHECK depth={depth}] {subject.entity_type}:{subject.entity_id} → '{permission}' → {obj.entity_type}:{obj.entity_id}"
         )
 
         # P0-5: Check execution time (using perf_counter for monotonic measurement)
@@ -859,14 +882,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         stats.max_depth_reached = max(stats.max_depth_reached, depth)
 
-        # Check for cycles
-        visit_key = (
-            subject.entity_type,
-            subject.entity_id,
-            permission,
-            obj.entity_type,
-            obj.entity_id,
-        )
+        # Check for cycles (within this traversal path only)
+        visit_key = memo_key  # Same key format
         if visit_key in visited:
             logger.debug(f"{indent}← CYCLE DETECTED, returning False")
             return False
@@ -888,6 +905,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 subject, permission, obj, tenant_id, context
             )
             logger.debug(f"{indent}← RESULT: {result}")
+            memo[memo_key] = result  # Cache result
             return result
 
         # FIX: Check if permission is a mapped permission (e.g., "write" -> ["editor", "owner"])
@@ -895,31 +913,42 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if namespace.has_permission(permission):
             usersets = namespace.get_permission_usersets(permission)
             if usersets:
-                logger.debug(
-                    f"{indent}[depth={depth}] Permission '{permission}' maps to relations: {usersets} for {obj}"
+                logger.info(
+                    f"{indent}├─[PERM-MAPPING] Permission '{permission}' maps to relations: {usersets}"
                 )
                 # Permission is defined as a mapping to relations (e.g., write -> [editor, owner])
                 # Check if subject has ANY of the relations that grant this permission
-                for relation in usersets:
-                    logger.debug(
-                        f"{indent}[depth={depth}]   Checking if {subject} has relation '{relation}'"
+                for i, relation in enumerate(usersets):
+                    logger.info(
+                        f"{indent}├─[PERM-REL {i + 1}/{len(usersets)}] Checking relation '{relation}' for permission '{permission}'"
                     )
-                    result = self._compute_permission_tenant_aware_with_limits(
-                        subject,
-                        relation,
-                        obj,
-                        tenant_id,
-                        visited.copy(),
-                        depth + 1,
-                        start_time,
-                        stats,
-                        context,
-                    )
-                    logger.debug(f"{indent}[depth={depth}]   → Result for '{relation}': {result}")
-                    if result:
-                        logger.debug(f"{indent}[depth={depth}] ✅ GRANTED (via '{relation}')")
-                        return True
-                logger.debug(f"{indent}[depth={depth}] ❌ DENIED (no relations granted access)")
+                    try:
+                        result = self._compute_permission_tenant_aware_with_limits(
+                            subject,
+                            relation,
+                            obj,
+                            tenant_id,
+                            visited.copy(),  # Copy visited to prevent false cycles
+                            depth + 1,
+                            start_time,
+                            stats,
+                            context,
+                            memo,  # Share memo across all branches for memoization
+                        )
+                        logger.debug(f"{indent}│ └─[RESULT] '{relation}' = {result}")
+                        if result:
+                            logger.debug(f"{indent}└─[✅ GRANTED] via relation '{relation}'")
+                            memo[memo_key] = True  # Cache positive result
+                            return True
+                    except Exception as e:
+                        logger.error(
+                            f"{indent}│ └─[ERROR] Exception while checking '{relation}': {type(e).__name__}: {e}"
+                        )
+                        raise
+                logger.debug(
+                    f"{indent}└─[❌ DENIED] No relations granted access for permission '{permission}'"
+                )
+                memo[memo_key] = False  # Cache negative result
                 return False
 
         # If permission is not mapped, try as a direct relation
@@ -935,14 +964,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 subject, permission, obj, tenant_id, context
             )
             logger.debug(f"{indent}← RESULT: {result}")
+            memo[memo_key] = result  # Cache result
             return result
 
         # Handle union (OR of multiple relations)
         if namespace.has_union(permission):
             union_relations = namespace.get_union_relations(permission)
-            logger.debug(
-                f"{indent}[depth={depth}] Relation '{permission}' is union of: {union_relations}"
-            )
+            logger.info(f"{indent}├─[UNION] Relation '{permission}' expands to: {union_relations}")
 
             # P0-5: Check fan-out limit
             if self.enable_graph_limits and len(union_relations) > GraphLimits.MAX_FAN_OUT:
@@ -950,7 +978,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             for i, rel in enumerate(union_relations):
                 logger.debug(
-                    f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] Checking union member '{rel}'..."
+                    f"{indent}│ ├─[UNION {i + 1}/{len(union_relations)}] Checking: '{rel}'"
                 )
                 try:
                     result = self._compute_permission_tenant_aware_with_limits(
@@ -958,17 +986,17 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         rel,
                         obj,
                         tenant_id,
-                        visited.copy(),
+                        visited.copy(),  # Copy visited to prevent false cycles
                         depth + 1,
                         start_time,
                         stats,
                         context,
+                        memo,  # Share memo across all branches
                     )
-                    logger.debug(
-                        f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] Result for '{rel}': {result}"
-                    )
+                    logger.debug(f"{indent}│ │ └─[RESULT] '{rel}' = {result}")
                     if result:
-                        logger.debug(f"{indent}[depth={depth}] ✅ GRANTED via union member '{rel}'")
+                        logger.debug(f"{indent}└─[✅ GRANTED] via union member '{rel}'")
+                        memo[memo_key] = True  # Cache positive result
                         return True
                 except GraphLimitExceeded as e:
                     logger.error(
@@ -982,7 +1010,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     )
                     # Re-raise to maintain error handling semantics
                     raise
-            logger.debug(f"{indent}[depth={depth}] ❌ DENIED - no union members granted access")
+            logger.debug(f"{indent}└─[❌ DENIED] - no union members granted access")
+            memo[memo_key] = False  # Cache negative result
             return False
 
         # Handle tupleToUserset (indirect relation via another object)
@@ -991,8 +1020,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             if ttu:
                 tupleset_relation = ttu["tupleset"]
                 computed_userset = ttu["computedUserset"]
-                logger.debug(
-                    f"{indent}[depth={depth}] Relation '{permission}' uses tupleToUserset: find via '{tupleset_relation}', check '{computed_userset}' on them"
+                logger.info(
+                    f"{indent}├─[TTU] '{permission}' = tupleToUserset(tupleset='{tupleset_relation}', computed='{computed_userset}')"
                 )
 
                 # Pattern 1 (parent-style): Find objects where (obj, tupleset_relation, ?)
@@ -1006,8 +1035,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 related_objects = self._find_related_objects_tenant_aware(
                     obj, tupleset_relation, tenant_id
                 )
-                logger.debug(
-                    f"{indent}[depth={depth}]   Pattern 1 (parent): Found {len(related_objects)} related objects: {[f'{o.entity_type}:{o.entity_id}' for o in related_objects]}"
+                logger.info(
+                    f"{indent}│ ├─[TTU-PARENT] Found {len(related_objects)} objects via '{tupleset_relation}': {[f'{o.entity_type}:{o.entity_id}' for o in related_objects]}"
                 )
 
                 # P0-5: Check fan-out limit
@@ -1026,19 +1055,30 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         computed_userset,
                         related_obj,
                         tenant_id,
-                        visited.copy(),
+                        visited.copy(),  # Copy visited to prevent false cycles
                         depth + 1,
                         start_time,
                         stats,
                         context,
+                        memo,  # Share memo across all branches
                     ):
                         logger.debug(
                             f"{indent}← RESULT: True (via tupleToUserset parent pattern on {related_obj.entity_type}:{related_obj.entity_id})"
                         )
+                        memo[memo_key] = True  # Cache positive result
                         return True
 
                 # Pattern 2 (group-style): Find subjects where (?, tupleset_relation, obj)
                 # Example: (group, "direct_viewer", file) -> check subject has computed_userset on group
+                # IMPORTANT: Only apply Pattern 2 for group membership patterns (direct_* relations)
+                # NOT for parent relations which would cause exponential blow-up checking all children
+                if tupleset_relation == "parent":
+                    logger.debug(
+                        f"{indent}│ └─[TTU-SKIP] Skipping Pattern 2 for 'parent' tupleset (not a group pattern)"
+                    )
+                    memo[memo_key] = False
+                    return False
+
                 stats.queries += 1
                 if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
                     raise GraphLimitExceeded(
@@ -1068,18 +1108,21 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         computed_userset,
                         related_subj,
                         tenant_id,
-                        visited.copy(),
+                        visited.copy(),  # Copy visited to prevent false cycles
                         depth + 1,
                         start_time,
                         stats,
                         context,
+                        memo,  # Share memo across all branches
                     ):
                         logger.debug(
                             f"{indent}← RESULT: True (via tupleToUserset group pattern on {related_subj.entity_type}:{related_subj.entity_id})"
                         )
+                        memo[memo_key] = True  # Cache positive result
                         return True
 
             logger.debug(f"{indent}← RESULT: False (tupleToUserset found no access)")
+            memo[memo_key] = False  # Cache negative result
             return False
 
         # Direct relation check
@@ -1091,6 +1134,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject, permission, obj, tenant_id, context
         )
         logger.debug(f"{indent}← [EXIT depth={depth}] Direct relation result: {result}")
+        memo[memo_key] = result  # Cache result
         return result
 
     def _find_related_objects_tenant_aware(
@@ -1242,13 +1286,21 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         Returns:
             True if direct relation exists within the tenant
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # EXTENSIVE DEBUG LOGGING
+        logger.info(
+            f"[DIRECT-CHECK] Checking: ({subject.entity_type}:{subject.entity_id}) "
+            f"has '{relation}' on ({obj.entity_type}:{obj.entity_id})? tenant={tenant_id}"
+        )
+
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
             # Check for direct concrete subject tuple (with ABAC conditions support)
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
+            query = """
                     SELECT tuple_id, conditions FROM rebac_tuples
                     WHERE subject_type = ? AND subject_id = ?
                       AND relation = ?
@@ -1257,19 +1309,21 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                       AND subject_relation IS NULL
                       AND (expires_at IS NULL OR expires_at >= ?)
                     """
-                ),
-                (
-                    subject.entity_type,
-                    subject.entity_id,
-                    relation,
-                    obj.entity_type,
-                    obj.entity_id,
-                    tenant_id,
-                    datetime.now(UTC).isoformat(),
-                ),
+            params = (
+                subject.entity_type,
+                subject.entity_id,
+                relation,
+                obj.entity_type,
+                obj.entity_id,
+                tenant_id,
+                datetime.now(UTC).isoformat(),
             )
+            logger.info(f"[DIRECT-CHECK] SQL Query params: {params}")
+
+            cursor.execute(self._fix_sql_placeholders(query), params)
 
             row = cursor.fetchone()
+            logger.info(f"[DIRECT-CHECK] Query result row: {dict(row) if row else None}")
             if row:
                 # Tuple exists - check conditions if context provided
                 conditions_json = row["conditions"]

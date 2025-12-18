@@ -325,6 +325,72 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         except Exception:
             return None
 
+    def generate_presigned_url(
+        self,
+        path: str,
+        expires_in: int = 3600,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, str | int]:
+        """
+        Generate a presigned URL for direct download from S3.
+
+        This allows clients to download files directly from S3, bypassing the
+        Nexus server. The URL is time-limited and includes a signature.
+
+        Args:
+            path: Virtual file path (or backend_path from context)
+            expires_in: URL expiration time in seconds (default: 1 hour, max: 7 days)
+            context: Operation context with optional backend_path
+
+        Returns:
+            Dict with:
+            - url: Presigned download URL
+            - expires_in: Expiration time in seconds
+            - method: HTTP method ("GET")
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            BackendError: If URL generation fails
+        """
+        try:
+            # Get backend path
+            if context and context.backend_path:
+                backend_path = context.backend_path
+            else:
+                backend_path = path.lstrip("/")
+
+            blob_path = self._get_blob_path(backend_path)
+
+            # Verify file exists
+            if not self._blob_exists(blob_path):
+                raise NexusFileNotFoundError(path)
+
+            # Clamp expires_in to S3 max (7 days = 604800 seconds)
+            expires_in = min(expires_in, 604800)
+
+            # Generate presigned URL
+            url = self.client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": self.bucket_name, "Key": blob_path},
+                ExpiresIn=expires_in,
+                HttpMethod="GET",
+            )
+
+            return {
+                "url": url,
+                "expires_in": expires_in,
+                "method": "GET",
+            }
+
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to generate presigned URL for {path}: {e}",
+                backend="s3_connector",
+                path=path,
+            ) from e
+
     # === S3-Specific Blob Operations ===
 
     def _upload_blob(

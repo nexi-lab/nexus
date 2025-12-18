@@ -73,6 +73,19 @@ class CacheEntry:
     parse_metadata: dict | None = None
 
 
+@dataclass
+class CachedReadResult:
+    """Result of a cached read operation.
+
+    Contains both the content and metadata needed for HTTP caching (ETag, etc.).
+    """
+
+    content: bytes
+    content_hash: str  # Can be used as ETag
+    from_cache: bool  # True if served from cache, False if fetched from backend
+    cache_entry: CacheEntry | None = None  # Full cache entry if available
+
+
 class CacheConnectorMixin:
     """Mixin that adds cache support to connectors.
 
@@ -620,19 +633,31 @@ class CacheConnectorMixin:
             )
             session.add(cache_model)
 
-        # Update file_paths.size_bytes to keep it consistent with cache
-        # This ensures ls -la shows correct sizes even before cache lookup
+        # Update file_paths to keep it consistent with cache
+        # This ensures:
+        # - ls -la shows correct sizes even before cache lookup
+        # - get_etag() works for connectors (early 304 check)
         try:
             file_path_stmt = select(FilePathModel).where(FilePathModel.path_id == path_id)
             file_path_result = session.execute(file_path_stmt)
             file_path = file_path_result.scalar_one_or_none()
-            if file_path and file_path.size_bytes != original_size:
-                file_path.size_bytes = original_size
-                file_path.updated_at = now
-                logger.debug(f"[CACHE] Updated file_paths.size_bytes: {path} = {original_size}")
+            if file_path:
+                updated = False
+                if file_path.size_bytes != original_size:
+                    file_path.size_bytes = original_size
+                    updated = True
+                # Also update content_hash so get_etag() works for connectors
+                if file_path.content_hash != content_hash:
+                    file_path.content_hash = content_hash
+                    updated = True
+                if updated:
+                    file_path.updated_at = now
+                    logger.debug(
+                        f"[CACHE] Updated file_paths: {path} (size={original_size}, hash={content_hash[:8]}...)"
+                    )
         except Exception as e:
             # Don't fail cache write if file_paths update fails
-            logger.warning(f"[CACHE] Failed to update file_paths.size_bytes for {path}: {e}")
+            logger.warning(f"[CACHE] Failed to update file_paths for {path}: {e}")
 
         session.commit()
 
@@ -662,6 +687,163 @@ class CacheConnectorMixin:
             logger.info(f"[CACHE] WRITE to L1+L2: {path} (size={original_size})")
 
         return entry
+
+    # =========================================================================
+    # Automatic Caching API (for new connectors)
+    # =========================================================================
+
+    def read_content_with_cache(
+        self,
+        content_hash: str,
+        context: OperationContext | None = None,
+    ) -> CachedReadResult:
+        """Read content with automatic L1/L2 caching.
+
+        This method provides automatic caching for connector read operations:
+        1. Check L1 (memory) and L2 (PostgreSQL) cache
+        2. If cache hit and not stale, return cached content
+        3. If cache miss or stale, call _fetch_content() to get from backend
+        4. Write fetched content to cache
+        5. Return content with metadata (content_hash for ETag support)
+
+        New connectors should:
+        1. Inherit from CacheConnectorMixin
+        2. Implement _fetch_content() to fetch from their backend
+        3. Call read_content_with_cache() in their read_content() method
+
+        Example:
+            class NewConnector(Backend, CacheConnectorMixin):
+                def _fetch_content(self, content_hash, context):
+                    # Fetch from your backend (API, storage, etc.)
+                    return self._api_client.get(context.backend_path)
+
+                def read_content(self, content_hash, context):
+                    result = self.read_content_with_cache(content_hash, context)
+                    return result.content
+
+        Args:
+            content_hash: Content hash (may be ignored by some connectors)
+            context: Operation context with backend_path, tenant_id, etc.
+
+        Returns:
+            CachedReadResult with content, content_hash (ETag), and cache metadata
+
+        Raises:
+            ValueError: If context.backend_path is not set
+            BackendError: If fetch fails
+        """
+        if not context or not context.backend_path:
+            raise ValueError("context with backend_path is required")
+
+        path = self._get_cache_path(context) or context.backend_path
+        tenant_id = getattr(context, "tenant_id", None)
+
+        # Step 1: Check cache (L1 then L2)
+        if self._has_caching():
+            cached = self._read_from_cache(path, original=True)
+            if cached and not cached.stale and cached.content_binary:
+                logger.debug(f"[CACHE] HIT: {path}")
+                return CachedReadResult(
+                    content=cached.content_binary,
+                    content_hash=cached.content_hash,
+                    from_cache=True,
+                    cache_entry=cached,
+                )
+
+        # Step 2: Fetch from backend
+        logger.debug(f"[CACHE] MISS: {path} - fetching from backend")
+        content = self._fetch_content(content_hash, context)
+
+        # Step 3: Write to cache
+        result_hash = hash_content(content)
+        cache_entry = None
+
+        if self._has_caching():
+            try:
+                cache_entry = self._write_to_cache(
+                    path=path,
+                    content=content,
+                    backend_version=self._get_backend_version(context),
+                    tenant_id=tenant_id,
+                )
+                result_hash = cache_entry.content_hash
+            except Exception as e:
+                logger.warning(f"[CACHE] Failed to cache {path}: {e}")
+
+        return CachedReadResult(
+            content=content,
+            content_hash=result_hash,
+            from_cache=False,
+            cache_entry=cache_entry,
+        )
+
+    def _fetch_content(
+        self,
+        content_hash: str,
+        context: OperationContext | None = None,
+    ) -> bytes:
+        """Fetch content from the backend (to be implemented by connectors).
+
+        New connectors should override this method to implement their
+        backend-specific fetch logic. The caching is handled automatically
+        by read_content_with_cache().
+
+        Args:
+            content_hash: Content hash (may be ignored by some connectors)
+            context: Operation context with backend_path
+
+        Returns:
+            Content as bytes
+
+        Raises:
+            NotImplementedError: If not overridden by connector
+            BackendError: If fetch fails
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement _fetch_content() "
+            "to use read_content_with_cache()"
+        )
+
+    def _get_backend_version(
+        self,
+        context: OperationContext | None = None,
+    ) -> str | None:
+        """Get the backend version for a path (for cache invalidation).
+
+        Override this in connectors that support versioning (S3, GCS).
+        API connectors (HN, X) typically return None and use TTL-based expiration.
+
+        Args:
+            context: Operation context with backend_path
+
+        Returns:
+            Backend version string, or None if not supported
+        """
+        # Default: no versioning (use TTL-based expiration)
+        return None
+
+    def get_content_hash(
+        self,
+        path: str,
+    ) -> str | None:
+        """Get the content hash (ETag) for a path from cache without reading content.
+
+        This enables efficient ETag/If-None-Match checks without downloading
+        the full content. Useful for 304 Not Modified responses.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            Content hash (ETag) if cached, None otherwise
+        """
+        if not self._has_caching():
+            return None
+
+        cached = self._read_from_cache(path, original=False)
+        if cached and not cached.stale:
+            return cached.content_hash
+        return None
 
     def _batch_write_to_cache(
         self,
@@ -823,12 +1005,13 @@ class CacheConnectorMixin:
             except Exception as e:
                 logger.error(f"[CACHE] Failed to prepare cache entry for {path}: {e}")
 
-        # Update file_paths.size_bytes for all cached entries (bulk update for efficiency)
-        # This keeps file_paths consistent with cache
+        # Update file_paths for all cached entries (bulk update for efficiency)
+        # This keeps file_paths consistent with cache and enables get_etag() for connectors
         try:
             if cache_entries:
-                # Build map of path_id -> size for bulk update
+                # Build maps for bulk update
                 size_updates = {ce.path_id: ce.original_size for ce in cache_entries}
+                hash_updates = {ce.path_id: ce.content_hash for ce in cache_entries}
 
                 # Get all FilePathModel entries in bulk
                 file_path_stmt = select(FilePathModel).where(
@@ -837,20 +1020,29 @@ class CacheConnectorMixin:
                 file_path_result = session.execute(file_path_stmt)
                 file_paths = file_path_result.scalars().all()
 
-                # Update size_bytes for each
+                # Update size_bytes and content_hash for each
                 updated_count = 0
                 for file_path in file_paths:
+                    updated = False
                     new_size = size_updates.get(file_path.path_id)
+                    new_hash = hash_updates.get(file_path.path_id)
                     if new_size and file_path.size_bytes != new_size:
                         file_path.size_bytes = new_size
+                        updated = True
+                    if new_hash and file_path.content_hash != new_hash:
+                        file_path.content_hash = new_hash
+                        updated = True
+                    if updated:
                         file_path.updated_at = now
                         updated_count += 1
 
                 if updated_count > 0:
-                    logger.info(f"[CACHE] Updated {updated_count} file_paths.size_bytes entries")
+                    logger.info(
+                        f"[CACHE] Updated {updated_count} file_paths entries (size + content_hash)"
+                    )
         except Exception as e:
             # Don't fail batch write if file_paths update fails
-            logger.warning(f"[CACHE] Failed to update file_paths.size_bytes in batch: {e}")
+            logger.warning(f"[CACHE] Failed to update file_paths in batch: {e}")
 
         # Commit all changes in single transaction
         session.commit()

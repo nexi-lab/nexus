@@ -1377,21 +1377,19 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
         try:
             with self.SessionLocal() as session:
-                # Get file path ID
-                path_stmt = select(FilePathModel.path_id).where(
-                    FilePathModel.virtual_path == path, FilePathModel.deleted_at.is_(None)
+                # PERFORMANCE FIX: Single query with subquery instead of 2 separate queries
+                # This reduces database round-trips by 50% for metadata lookups
+                subquery = (
+                    select(FilePathModel.path_id)
+                    .where(
+                        FilePathModel.virtual_path == path,
+                        FilePathModel.deleted_at.is_(None),
+                    )
+                    .scalar_subquery()
                 )
-                path_id = session.scalar(path_stmt)
-
-                if path_id is None:
-                    # Cache the negative result
-                    if self._cache_enabled and self._cache:
-                        self._cache.set_kv(path, key, None)
-                    return None
-
-                # Get metadata
                 metadata_stmt = select(FileMetadataModel).where(
-                    FileMetadataModel.path_id == path_id, FileMetadataModel.key == key
+                    FileMetadataModel.path_id == subquery,
+                    FileMetadataModel.key == key,
                 )
                 metadata = session.scalar(metadata_stmt)
 
@@ -1463,6 +1461,78 @@ class SQLAlchemyMetadataStore(MetadataStore):
         except Exception as e:
             raise MetadataError(f"Failed to set file metadata: {e}", path=path) from e
 
+    def get_file_metadata_bulk(self, paths: builtins.list[str], key: str) -> dict[str, Any]:
+        """
+        Get a specific metadata value for multiple files in bulk.
+
+        Optimized for batch operations - uses single query instead of N queries.
+
+        Args:
+            paths: List of virtual paths
+            key: Metadata key to retrieve
+
+        Returns:
+            Dict mapping path -> metadata value (only for paths with the key set)
+        """
+        if not paths:
+            return {}
+
+        results: dict[str, Any] = {}
+
+        # Check cache first for all paths
+        uncached_paths = []
+        if self._cache_enabled and self._cache:
+            for path in paths:
+                cached = self._cache.get_kv(path, key)
+                if cached is not _CACHE_MISS:
+                    if cached is not None:
+                        results[path] = cached
+                else:
+                    uncached_paths.append(path)
+        else:
+            uncached_paths = list(paths)
+
+        if not uncached_paths:
+            return results
+
+        try:
+            with self.SessionLocal() as session:
+                # Single bulk query with join
+                stmt = (
+                    select(FilePathModel.virtual_path, FileMetadataModel.value)
+                    .join(
+                        FileMetadataModel,
+                        FilePathModel.path_id == FileMetadataModel.path_id,
+                    )
+                    .where(
+                        FilePathModel.virtual_path.in_(uncached_paths),
+                        FilePathModel.deleted_at.is_(None),
+                        FileMetadataModel.key == key,
+                    )
+                )
+                rows = session.execute(stmt).fetchall()
+
+                # Process results
+                found_paths = set()
+                for virtual_path, value_json in rows:
+                    if value_json:
+                        value = json.loads(value_json)
+                        results[virtual_path] = value
+                        found_paths.add(virtual_path)
+                        # Cache the result
+                        if self._cache_enabled and self._cache:
+                            self._cache.set_kv(virtual_path, key, value)
+
+                # Cache negative results for paths not found
+                if self._cache_enabled and self._cache:
+                    for path in uncached_paths:
+                        if path not in found_paths:
+                            self._cache.set_kv(path, key, None)
+
+                return results
+        except Exception as e:
+            raise MetadataError(f"Failed to get bulk file metadata: {e}") from e
+
     def get_searchable_text(self, path: str) -> str | None:
         """
         Get searchable text for a file, checking both cache sources.
@@ -1483,18 +1553,19 @@ class SQLAlchemyMetadataStore(MetadataStore):
         """
         try:
             with self.SessionLocal() as session:
-                # Get path_id first
-                path_stmt = select(FilePathModel.path_id).where(
-                    FilePathModel.virtual_path == path, FilePathModel.deleted_at.is_(None)
+                # PERFORMANCE FIX: Use subquery instead of 2 separate queries
+                path_subquery = (
+                    select(FilePathModel.path_id)
+                    .where(
+                        FilePathModel.virtual_path == path,
+                        FilePathModel.deleted_at.is_(None),
+                    )
+                    .scalar_subquery()
                 )
-                path_id = session.scalar(path_stmt)
-
-                if path_id is None:
-                    return None
 
                 # 1. Check content_cache first (connector files)
                 cache_stmt = select(ContentCacheModel.content_text).where(
-                    ContentCacheModel.path_id == path_id,
+                    ContentCacheModel.path_id == path_subquery,
                     ContentCacheModel.stale == False,  # noqa: E712
                 )
                 content_text = session.scalar(cache_stmt)
@@ -1504,7 +1575,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
                 # 2. Fall back to file_metadata (local files)
                 metadata_stmt = select(FileMetadataModel.value).where(
-                    FileMetadataModel.path_id == path_id,
+                    FileMetadataModel.path_id == path_subquery,
                     FileMetadataModel.key == "parsed_text",
                 )
                 metadata_value = session.scalar(metadata_stmt)

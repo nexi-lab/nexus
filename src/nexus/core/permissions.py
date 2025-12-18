@@ -416,6 +416,7 @@ class PermissionEnforcer:
         # P0-4: Pass tenant_id for multi-tenant isolation
         tenant_id = context.tenant_id or "default"
         subject = context.get_subject()
+
         logger.debug(
             f"[_check_rebac] Calling rebac_check: subject={subject}, permission={permission_name}, object=('{object_type}', '{object_id}'), tenant_id={tenant_id}"
         )

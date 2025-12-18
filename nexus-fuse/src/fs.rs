@@ -741,10 +741,19 @@ impl Filesystem for NexusFs {
         let old_path = Self::join_path(&parent_path, &name);
         let new_path = Self::join_path(&new_parent_path, &newname);
 
+        // For POSIX compliance, delete destination if it exists (unless RENAME_NOREPLACE flag set)
+        // flags: RENAME_NOREPLACE = 1, RENAME_EXCHANGE = 2
+        if _flags & 1 == 0 && self.client.exists(&new_path) {
+            let _ = self.client.delete(&new_path);
+        }
+
         match self.client.rename(&old_path, &new_path) {
             Ok(_) => {
                 // Update inode mappings
-                if let Some(inode) = self.path_to_inode.lock().unwrap().remove(&old_path) {
+                // Note: Extract to variable first to avoid deadlock from extended lifetime
+                // of MutexGuard in if-let conditions
+                let inode_opt = self.path_to_inode.lock().unwrap().remove(&old_path);
+                if let Some(inode) = inode_opt {
                     self.path_to_inode.lock().unwrap().insert(new_path.clone(), inode);
                     self.inode_to_path.lock().unwrap().insert(inode, new_path.clone());
                 }

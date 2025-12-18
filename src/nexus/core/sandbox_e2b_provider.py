@@ -371,18 +371,31 @@ class E2BSandboxProvider(SandboxProvider):
 
         # Dependency checks and installation
         # Skip these checks for templates with pre-installed dependencies (saves ~10-15s)
+
+        # Check for Rust FUSE binary first (fastest option)
+        rust_fuse_available = False
+        try:
+            check_result = await sandbox.commands.run("which nexus-fuse", timeout=5)
+            if check_result.exit_code == 0:
+                rust_fuse_available = True
+                logger.info("nexus-fuse (Rust) binary found - using fast native FUSE")
+        except CommandExitException:
+            pass
+
         if skip_dependency_checks:
             logger.info("Skipping dependency checks (pre-installed template)")
-        else:
-            # Check if nexus CLI is available
-            nexus_installed = False
+        elif not rust_fuse_available:
+            # No Rust binary, fall back to Python FUSE
+            # Check if Python nexus module is available (not just 'nexus' binary)
+            python_nexus_installed = False
             try:
-                check_result = await sandbox.commands.run("which nexus", timeout=5)
+                check_result = await sandbox.commands.run(
+                    "python3 -c 'from nexus.remote import RemoteNexusFS; print(\"ok\")'", timeout=10
+                )
                 if check_result.exit_code == 0:
-                    nexus_installed = True
-                    logger.info("nexus CLI already available, skipping installation")
+                    python_nexus_installed = True
+                    logger.info("Python nexus module already available")
             except CommandExitException:
-                # which returns non-zero when command not found
                 pass
 
             # Check and install libfuse (system library required for FUSE)
@@ -410,11 +423,11 @@ class E2BSandboxProvider(SandboxProvider):
                 except CommandExitException as e:
                     logger.warning(f"Failed to install libfuse via apt: {e.stderr}")
 
-            if not nexus_installed:
-                # nexus not found, try to install
+            if not python_nexus_installed:
+                # Python nexus not found, try to install
                 # Use longer timeout (180s) for pip install as it can take time
                 # Install with fuse extra for FUSE mount support
-                logger.info("nexus CLI not found, installing nexus-ai-fs[fuse]...")
+                logger.info("Python nexus module not found, installing nexus-ai-fs[fuse]...")
                 try:
                     install_result = await sandbox.commands.run(
                         "pip install -q 'nexus-ai-fs[fuse]'",
@@ -440,7 +453,7 @@ class E2BSandboxProvider(SandboxProvider):
                         "files_visible": 0,
                     }
             else:
-                # nexus is installed, check if fusepy is also installed
+                # Python nexus is installed, check if fusepy is also installed
                 fusepy_installed = False
                 try:
                     check_fuse = await sandbox.commands.run(
@@ -463,19 +476,32 @@ class E2BSandboxProvider(SandboxProvider):
                     except CommandExitException as e:
                         logger.warning(f"Failed to install fusepy: {e.stderr}")
 
-        # OPTIMIZATION: Use direct Python mount instead of CLI (saves ~10s startup time)
-        # The CLI has 10+ second startup due to heavy imports.
-        # Direct Python script imports only what's needed for FUSE mounting.
+        # Mount the filesystem
         logger.info(
             f"Mounting with nexus_url={nexus_url}, api_key={'***' + api_key[-10:] if api_key else 'None'}"
             + (f", agent_id={agent_id}" if agent_id else "")
         )
 
-        # Build Python mount script using direct imports
-        # NOTE: Import time is ~9s due to nexus/__init__.py importing heavy modules
-        # (skills, backends, etc.). This is still faster than CLI (~10s+ additional overhead)
-        # Further optimization requires lazy imports in nexus/__init__.py (future work)
-        mount_script = f'''
+        if rust_fuse_available:
+            # Use Rust FUSE binary (fastest option - ~600ms mount time)
+            logger.info("Using nexus-fuse (Rust) for fast native FUSE mount")
+            mount_cmd = (
+                f"nohup sudo nexus-fuse mount "
+                f"--url {nexus_url} "
+                f"--api-key {api_key} "
+                f"--allow-other "
+                f"{mount_path} > /tmp/nexus-mount.log 2>&1 &"
+            )
+            logger.debug(
+                f"Mount command: nexus-fuse mount --url ... --api-key *** --allow-other {mount_path}"
+            )
+            max_wait = 5  # Rust mount is fast (~600ms)
+        else:
+            # Fall back to Python FUSE mount
+            # Build Python mount script using direct imports
+            # NOTE: Import time is ~9s due to nexus/__init__.py importing heavy modules
+            logger.info("Using Python FUSE mount (slower fallback)")
+            mount_script = f'''
 import os, sys, logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger("nexus-mount")
@@ -496,14 +522,14 @@ except Exception as e:
     traceback.print_exc()
     sys.exit(1)
 '''
-        # Write script to file and run in background with nohup
-        script_path = "/tmp/nexus_mount_script.py"
-        await sandbox.commands.run(
-            f"cat > {script_path} << 'NEXUS_MOUNT_EOF'\n{mount_script}\nNEXUS_MOUNT_EOF"
-        )
-
-        mount_cmd = f"nohup sudo python3 {script_path} > /tmp/nexus-mount.log 2>&1 &"
-        logger.debug(f"Mount command: {mount_cmd}")
+            # Write script to file and run in background with nohup
+            script_path = "/tmp/nexus_mount_script.py"
+            await sandbox.commands.run(
+                f"cat > {script_path} << 'NEXUS_MOUNT_EOF'\n{mount_script}\nNEXUS_MOUNT_EOF"
+            )
+            mount_cmd = f"nohup sudo python3 {script_path} > /tmp/nexus-mount.log 2>&1 &"
+            logger.debug(f"Mount command: {mount_cmd}")
+            max_wait = 10  # Python mount is slower due to imports
 
         # Run mount in background
         mount_result = await sandbox.commands.run(mount_cmd)
@@ -517,10 +543,8 @@ except Exception as e:
                 "files_visible": 0,
             }
 
-        # OPTIMIZATION: Reduced polling (10s max, 0.2s interval instead of 15s/0.5s)
-        # Direct Python mount is faster, but Python imports still take ~3s
+        # Wait for mount to initialize
         logger.info("Waiting for FUSE mount to initialize...")
-        max_wait = 10  # Reduced from 15s - direct mount is faster but imports still take time
         poll_interval = 0.2  # Reduced from 0.5s for faster detection
         mount_verified = False
 

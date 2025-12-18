@@ -1623,6 +1623,7 @@ class NexusFS(
             "mode": 0o644,  # -rw-r--r--
         }
 
+    @rpc_expose(description="Get ETag (content hash) for HTTP caching")
     def get_etag(
         self,
         path: str,

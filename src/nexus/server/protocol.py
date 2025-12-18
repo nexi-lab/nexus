@@ -369,6 +369,13 @@ class ExistsParams:
 
 
 @dataclass
+class GetEtagParams:
+    """Parameters for get_etag() method."""
+
+    path: str
+
+
+@dataclass
 class ListParams:
     """Parameters for list() method."""
 
@@ -1627,6 +1634,7 @@ METHOD_PARAMS = {
     "delete_bulk": DeleteBulkParams,
     "rename_bulk": RenameBulkParams,
     "exists": ExistsParams,
+    "get_etag": GetEtagParams,
     "list": ListParams,
     "glob": GlobParams,
     "grep": GrepParams,

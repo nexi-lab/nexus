@@ -26,21 +26,21 @@ if [ -f "$CONFIG_FILE" ]; then
     echo -e "${GREEN}✓ Loaded configuration from ${CONFIG_FILE}${NC}"
 else
     echo -e "${RED}✗ Configuration file not found: ${CONFIG_FILE}${NC}"
-    echo "Using fallback default values..."
-    # Fallback defaults
-    NEXUS_DATA_DIR="./nexus-data-local"
-    POSTGRES_USER="nexus_test"
-    POSTGRES_PASSWORD="nexus_test_password"
-    POSTGRES_DB="tmp_nexus_test"
-    POSTGRES_PORT="5433"
+    echo "Using fallback default values (matching docker-compose.demo.yml)..."
+    # Fallback defaults - MUST match docker-compose.demo.yml for consistency
+    NEXUS_DATA_DIR="./nexus-data"
+    POSTGRES_USER="postgres"
+    POSTGRES_PASSWORD="nexus"
+    POSTGRES_DB="nexus"
+    POSTGRES_PORT="5432"
     POSTGRES_HOST="localhost"
-    POSTGRES_CONTAINER="nexus-test-postgres"
+    POSTGRES_CONTAINER="nexus-postgres"
     POSTGRES_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
     ADMIN_API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 fi
 
 # Set sane defaults (explicit paths, no legacy overrides)
-DEFAULT_DATA_DIR="${NEXUS_DATA_DIR:-${SCRIPT_DIR}/nexus-data-local}"
+DEFAULT_DATA_DIR="${NEXUS_DATA_DIR:-${SCRIPT_DIR}/nexus-data}"
 DEFAULT_POSTGRES_URL="${POSTGRES_URL:-postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}}"
 
 # Function to get data directory path

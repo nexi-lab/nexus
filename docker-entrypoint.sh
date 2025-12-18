@@ -109,117 +109,43 @@ echo -e "${GREEN}✓ Database initialized${NC}"
 # Create Admin API Key (First Run)
 # ============================================
 
-# Check if API key already exists (from previous run)
-if [ -f "$API_KEY_FILE" ]; then
+# Determine if we have a custom key from environment or need to generate one
+if [ -n "$NEXUS_API_KEY" ]; then
     echo ""
-    echo "🔑 Using existing admin API key"
-    ADMIN_API_KEY=$(cat "$API_KEY_FILE")
+    echo "🔑 Registering custom API key from environment..."
+    CUSTOM_KEY="$NEXUS_API_KEY"
 else
     echo ""
-    if [ -n "$NEXUS_API_KEY" ]; then
-        echo "🔑 Registering custom API key from environment..."
+    echo "🔑 Creating admin API key..."
+    CUSTOM_KEY=""
+fi
+
+# Check if API key file exists (from previous run)
+# If it exists, use it; otherwise we'll create/register below
+if [ -f "$API_KEY_FILE" ]; then
+    echo ""
+    echo "🔑 Found existing API key file"
+    ADMIN_API_KEY=$(cat "$API_KEY_FILE")
+    # Still need to ensure it's registered in database if using custom key
+    if [ -n "$NEXUS_API_KEY" ] && [ "$ADMIN_API_KEY" != "$NEXUS_API_KEY" ]; then
+        # Key file has different key than environment - use environment key
         CUSTOM_KEY="$NEXUS_API_KEY"
-    else
-        echo "🔑 Creating admin API key..."
-        CUSTOM_KEY=""
+        ADMIN_API_KEY=""
     fi
+fi
 
-    # Create/register admin API key using Python
-    API_KEY_OUTPUT=$(python3 << PYTHON_CREATE_KEY
-import os
-import sys
-import hashlib
-import hmac
-from datetime import UTC, datetime, timedelta
-
-# Add src to path
-sys.path.insert(0, '/app/src')
-
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from nexus.core.entity_registry import EntityRegistry
-from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-from nexus.storage.models import APIKeyModel
-
-database_url = os.getenv('NEXUS_DATABASE_URL')
-admin_user = '${ADMIN_USER}'
-custom_key = '${CUSTOM_KEY}'
-skip_permissions = os.getenv('NEXUS_SKIP_PERMISSIONS', 'false').lower() == 'true'
-
-try:
-    engine = create_engine(database_url)
-    SessionFactory = sessionmaker(bind=engine)
-
-    # Register user in entity registry (for agent permission inheritance)
-    # Skip if NEXUS_SKIP_PERMISSIONS is set to true
-    if not skip_permissions:
-        entity_registry = EntityRegistry(SessionFactory)
-        entity_registry.register_entity(
-            entity_type='user',
-            entity_id=admin_user,
-            parent_type='tenant',
-            parent_id='default',
-        )
-    else:
-        print("Skipping entity registry setup (NEXUS_SKIP_PERMISSIONS=true)")
-
-    with SessionFactory() as session:
-        expires_at = datetime.now(UTC) + timedelta(days=90)
-
-        if custom_key:
-            # Use custom API key from environment
-            # Hash the key for storage (same as DatabaseAPIKeyAuth does)
-            # Uses HMAC-SHA256 with salt (same as nexus.server.auth.database_key)
-            HMAC_SALT = "nexus-api-key-v1"
-            key_hash = hmac.new(HMAC_SALT.encode("utf-8"), custom_key.encode("utf-8"), hashlib.sha256).hexdigest()
-
-            # Check if key already exists
-            existing = session.query(APIKeyModel).filter_by(user_id=admin_user).first()
-            if existing:
-                print(f"API Key: {custom_key}")
-                print(f"Custom API key already registered for user: {admin_user}")
-            else:
-                # Insert custom key into database
-                api_key = APIKeyModel(
-                    user_id=admin_user,
-                    key_hash=key_hash,
-                    name='Admin key (from environment)',
-                    tenant_id='default',
-                    is_admin=1,  # PostgreSQL expects integer, not boolean
-                    created_at=datetime.now(UTC),
-                    expires_at=expires_at,
-                )
-                session.add(api_key)
-                session.commit()
-
-                print(f"API Key: {custom_key}")
-                print(f"Registered custom API key for user: {admin_user}")
-                print(f"Expires: {expires_at.isoformat()}")
-
-            raw_key = custom_key
-        else:
-            # Generate new API key
-            key_id, raw_key = DatabaseAPIKeyAuth.create_key(
-                session,
-                user_id=admin_user,
-                name='Admin key (Docker auto-generated)',
-                tenant_id='default',
-                is_admin=True,
-                expires_at=expires_at,
-            )
-            session.commit()
-
-            print(f"API Key: {raw_key}")
-            print(f"Created admin API key for user: {admin_user}")
-            print(f"Expires: {expires_at.isoformat()}")
-
-except Exception as e:
-    print(f"ERROR: {e}", file=sys.stderr)
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
-PYTHON_CREATE_KEY
-)
+# Create/register admin API key if we don't have one yet
+if [ -z "$ADMIN_API_KEY" ]; then
+    # Use the standalone script for both custom keys and generating new keys
+    if [ -n "$CUSTOM_KEY" ]; then
+        # Register custom API key from environment
+        echo "  Using setup_admin_api_key_standalone.py to register custom key..."
+        API_KEY_OUTPUT=$(python3 /app/scripts/setup_admin_api_key_standalone.py "$NEXUS_DATABASE_URL" "$CUSTOM_KEY" "default" "${ADMIN_USER}")
+    else
+        # Generate new API key
+        echo "  Using setup_admin_api_key_standalone.py to generate new key..."
+        API_KEY_OUTPUT=$(python3 /app/scripts/setup_admin_api_key_standalone.py "$NEXUS_DATABASE_URL" "default" "${ADMIN_USER}")
+    fi
 
     if [ $? -ne 0 ]; then
         echo -e "${RED}✗ Failed to create admin API key${NC}"
@@ -228,6 +154,7 @@ PYTHON_CREATE_KEY
     fi
 
     # Extract the API key from output
+    # For custom keys, the script prints "API Key: <key>", for generated keys it's the same format
     ADMIN_API_KEY=$(echo "$API_KEY_OUTPUT" | grep "API Key:" | awk '{print $3}')
 
     if [ -z "$ADMIN_API_KEY" ]; then
@@ -235,11 +162,21 @@ PYTHON_CREATE_KEY
         echo "$API_KEY_OUTPUT"
         exit 1
     fi
+    
+    # For custom keys, we already have it
+    if [ -n "$CUSTOM_KEY" ]; then
+        ADMIN_API_KEY="$CUSTOM_KEY"
+    fi
 
     # Save API key for future runs
     echo "$ADMIN_API_KEY" > "$API_KEY_FILE"
 
     echo -e "${GREEN}✓ Admin API key created${NC}"
+fi
+
+# If API key file existed but we just verified/registered it, ensure it's still saved
+if [ -f "$API_KEY_FILE" ] && [ -z "$ADMIN_API_KEY" ]; then
+    ADMIN_API_KEY=$(cat "$API_KEY_FILE")
 fi
 
 # ============================================

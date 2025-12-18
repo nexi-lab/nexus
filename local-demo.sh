@@ -85,7 +85,7 @@ clean_sqlite_artifacts() {
 parse_args() {
     POSTGRES_URL="$DEFAULT_POSTGRES_URL"
     DATA_DIR="$DEFAULT_DATA_DIR"
-    USE_SQLITE=true          # default to SQLite
+    SQLITE=true          # default to SQLite
     START_UI=true            # default to start UI
     START_LANGGRAPH=true     # default to start LangGraph
 
@@ -93,22 +93,26 @@ parse_args() {
         case $1 in
             --postgres-url)
                 POSTGRES_URL="$2"
-                USE_SQLITE=false  # switch to Postgres if URL provided
+                SQLITE=false  # switch to Postgres if URL provided
                 shift 2
                 ;;
             --data-dir)
                 DATA_DIR="$2"
                 shift 2
                 ;;
-            --use-sqlite)
-                USE_SQLITE=true
+            --sqlite)
+                SQLITE=true
+                shift
+                ;;
+            --nosqlite)
+                SQLITE=false
                 shift
                 ;;
             --ui)
                 START_UI=true
                 shift
                 ;;
-            --no-ui)
+            --no-ui|--noui)
                 START_UI=false
                 shift
                 ;;
@@ -116,7 +120,7 @@ parse_args() {
                 START_LANGGRAPH=true
                 shift
                 ;;
-            --no-langgraph)
+            --no-langgraph|--nolanggraph)
                 START_LANGGRAPH=false
                 shift
                 ;;
@@ -484,7 +488,7 @@ start_server() {
     fi
 
     # Handle database setup based on mode
-    if [ "$USE_SQLITE" = true ]; then
+    if [ "$SQLITE" = true ]; then
         echo -e "${GREEN}Using SQLite database (embedded mode)${NC}"
         # Set SQLite database URL
         DATA_PATH=$(get_data_path "$DATA_DIR")
@@ -570,7 +574,7 @@ start_server() {
     echo -e "${BLUE}Configuration:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  Config File:  ./configs/config.demo.yaml"
-    if [ "$USE_SQLITE" = true ]; then
+    if [ "$SQLITE" = true ]; then
         echo "  Database:     SQLite (${DATA_PATH}/nexus.db)"
     else
         echo "  Database:     $NEXUS_DB_PATH"
@@ -700,7 +704,7 @@ init_database() {
     echo -e "  ${GREEN}✓ Data directory reset${NC}"
 
     # Handle database setup based on mode
-    if [ "$USE_SQLITE" = true ]; then
+    if [ "$SQLITE" = true ]; then
         echo -e "${GREEN}Using SQLite database (embedded mode)${NC}"
         # Set SQLite database URL
         POSTGRES_URL="sqlite:///${DATA_PATH}/nexus.db"
@@ -717,7 +721,7 @@ init_database() {
     echo ""
     echo -e "${BLUE}Configuration:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    if [ "$USE_SQLITE" = true ]; then
+    if [ "$SQLITE" = true ]; then
         echo "  Database:     SQLite (${DATA_PATH}/nexus.db)"
     else
         echo "  Database:     PostgreSQL ($POSTGRES_URL)"
@@ -739,7 +743,7 @@ init_database() {
     echo ""
     echo "🧹 Clearing existing data..."
 
-    if [ "$USE_SQLITE" = true ]; then
+    if [ "$SQLITE" = true ]; then
         echo "  SQLite database will be recreated at: ${DATA_PATH}/nexus.db"
     else
         # Use configuration from config file
@@ -848,7 +852,7 @@ init_database() {
     echo ""
 
     # Ensure PostgreSQL is running (skip if using SQLite)
-    if [ "$USE_SQLITE" != true ]; then
+    if [ "$SQLITE" != true ]; then
         ensure_postgres_running
     fi
 
@@ -914,7 +918,7 @@ init_database() {
     echo -e "${BLUE}Configuration:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  Config File:  ./configs/config.demo.yaml"
-    if [ "$USE_SQLITE" = true ]; then
+    if [ "$SQLITE" = true ]; then
         echo "  Database:     SQLite (${DATA_PATH}/nexus.db)"
     else
         echo "  Database:     PostgreSQL ($POSTGRES_URL)"
@@ -996,9 +1000,9 @@ init_database() {
             # After provisioning completes, open frontend if requested
             if [ "$START_UI" = true ]; then
                 if command -v open >/dev/null 2>&1; then
-                    open "http://localhost:5137" >/dev/null 2>&1 || true
+                    open "http://localhost:5173" >/dev/null 2>&1 || true
                 elif command -v xdg-open >/dev/null 2>&1; then
-                    xdg-open "http://localhost:5137" >/dev/null 2>&1 || true
+                    xdg-open "http://localhost:5173" >/dev/null 2>&1 || true
                 fi
             fi
         fi
@@ -1029,15 +1033,16 @@ case "$1" in
         echo "  --stop     Stop local Nexus server"
         echo ""
         echo "Options for --start and --stop:"
-        echo "  --use-sqlite   Use SQLite instead of PostgreSQL (default, no Docker needed)"
+        echo "  --sqlite   Use SQLite instead of PostgreSQL (default, no Docker needed)"
+        echo "  --nosqlite     Use PostgreSQL instead of SQLite"
         echo "  --postgres-url URL    PostgreSQL connection URL"
         echo "                       (default: $DEFAULT_POSTGRES_URL)"
         echo "  --data-dir PATH       Data directory path"
         echo "                       (default: $DEFAULT_DATA_DIR)"
         echo "  --ui                  Start the frontend (pnpm run dev in nexus-frontend) (default)"
-        echo "  --no-ui              Don't start the frontend"
+        echo "  --no-ui, --noui      Don't start the frontend"
         echo "  --langgraph          Start langgraph dev server (default)"
-        echo "  --no-langgraph       Don't start langgraph"
+        echo "  --no-langgraph, --nolanggraph   Don't start langgraph"
         echo ""
         echo "Examples:"
         echo "  # Using SQLite (default):"
@@ -1048,14 +1053,20 @@ case "$1" in
         echo ""
         echo "  # Start with frontend and langgraph:"
         echo "  $0 --start --ui --langgraph"
-        echo "  $0 --start --use-sqlite --ui --langgraph"
+        echo "  $0 --start --sqlite --ui --langgraph"
+        echo ""
+        echo "  # Start without UI or langgraph:"
+        echo "  $0 --start --noui --nolanggraph"
+        echo ""
+        echo "  # Using PostgreSQL (without SQLite):"
+        echo "  $0 --start --nosqlite --postgres-url 'postgresql://user:pass@localhost:5432/db'"
         echo ""
         echo "  # Custom PostgreSQL URL:"
         echo "  $0 --start --postgres-url 'postgresql://user:pass@localhost:5432/db'"
         echo ""
         echo "  # Custom data directory:"
         echo "  $0 --start --data-dir '/custom/path'"
-        echo "  $0 --start --use-sqlite --data-dir '/custom/path'"
+        echo "  $0 --start --sqlite --data-dir '/custom/path'"
         echo ""
         echo "Optional: Enable connectors (GDrive, Gmail) in PostgreSQL mode:"
         echo "  sudo bash -c 'echo \"127.0.0.1    postgres\" >> /etc/hosts'"

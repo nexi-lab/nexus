@@ -496,14 +496,20 @@ def serve(
 
                     console.print()
                     console.print("Stop the server first using one of these commands:")
-                    console.print("   ./local-demo.sh --stop              # Stop local Nexus server")
-                    console.print("   ./docker-demo.sh --stop             # Stop Docker-based server")
+                    console.print(
+                        "   ./local-demo.sh --stop              # Stop local Nexus server"
+                    )
+                    console.print(
+                        "   ./docker-demo.sh --stop             # Stop Docker-based server"
+                    )
                     console.print()
                     console.print("Or manually kill the process(es):")
                     for pid in pids:
                         if pid.strip():
                             console.print(f"   kill {pid.strip()}          # Graceful shutdown")
-                            console.print(f"   kill -9 {pid.strip()}       # Force kill (if needed)")
+                            console.print(
+                                f"   kill -9 {pid.strip()}       # Force kill (if needed)"
+                            )
                     console.print()
                     sys.exit(1)
             else:

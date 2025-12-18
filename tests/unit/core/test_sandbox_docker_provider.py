@@ -507,7 +507,9 @@ class TestDockerSandboxProvider:
         assert cmd == ["bash", "-c", "ls -la"]
 
     @pytest.mark.asyncio
-    async def test_create_container_with_name_conflict(self, provider, mock_docker_client, mock_container):
+    async def test_create_container_with_name_conflict(
+        self, provider, mock_docker_client, mock_container
+    ):
         """Test creating container when name already exists removes old container."""
         from docker.errors import NotFound
 
@@ -543,7 +545,9 @@ class TestDockerSandboxProvider:
         mock_docker_client.containers.run.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_container_with_name_no_conflict(self, provider, mock_docker_client, mock_container):
+    async def test_create_container_with_name_no_conflict(
+        self, provider, mock_docker_client, mock_container
+    ):
         """Test creating container when name doesn't exist works normally."""
         from docker.errors import NotFound
 
@@ -568,7 +572,9 @@ class TestDockerSandboxProvider:
         mock_docker_client.containers.run.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_container_sanitizes_name(self, provider, mock_docker_client, mock_container):
+    async def test_create_container_sanitizes_name(
+        self, provider, mock_docker_client, mock_container
+    ):
         """Test creating container sanitizes invalid characters in name."""
         from docker.errors import NotFound
 

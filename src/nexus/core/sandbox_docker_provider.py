@@ -805,7 +805,9 @@ class DockerSandboxProvider(SandboxProvider):
         if container_name:
             try:
                 existing_container = self.docker_client.containers.get(container_name)
-                logger.info(f"Found existing container with name '{container_name}', stopping and removing...")
+                logger.info(
+                    f"Found existing container with name '{container_name}', stopping and removing..."
+                )
                 try:
                     existing_container.stop(timeout=5)
                 except Exception as stop_err:
@@ -816,7 +818,9 @@ class DockerSandboxProvider(SandboxProvider):
                 # Container doesn't exist, this is the normal case
                 pass
             except Exception as e:
-                logger.warning(f"Error checking/removing existing container '{container_name}': {e}")
+                logger.warning(
+                    f"Error checking/removing existing container '{container_name}': {e}"
+                )
                 # Continue anyway - the run() call will handle the conflict
 
         return self.docker_client.containers.run(

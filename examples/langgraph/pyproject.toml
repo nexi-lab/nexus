@@ -8,7 +8,7 @@ dependencies = [
     "langchain-core>=0.3.0",
     "langchain-anthropic>=0.2.0",
     "langchain-openai>=0.2.0",
-    "nexus-ai-fs>=0.6.3",
+    "nexus-ai-fs>=0.6.4",
     # "nexus-ai-fs @ file:///Users/jinjingzhou/nexi-lab/nexus",
     "langgraph-cli==0.3.6",
     "langgraph-api==0.2.130",

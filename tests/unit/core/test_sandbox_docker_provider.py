@@ -507,7 +507,9 @@ class TestDockerSandboxProvider:
         assert cmd == ["bash", "-c", "ls -la"]
 
     @pytest.mark.asyncio
-    async def test_create_container_with_name_conflict(self, provider, mock_docker_client, mock_container):
+    async def test_create_container_with_name_conflict(
+        self, provider, mock_docker_client, mock_container
+    ):
         """Test creating container when name already exists removes old container."""
         from docker.errors import NotFound
 
@@ -543,7 +545,9 @@ class TestDockerSandboxProvider:
         mock_docker_client.containers.run.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_container_with_name_no_conflict(self, provider, mock_docker_client, mock_container):
+    async def test_create_container_with_name_no_conflict(
+        self, provider, mock_docker_client, mock_container
+    ):
         """Test creating container when name doesn't exist works normally."""
         from docker.errors import NotFound
 
@@ -568,7 +572,9 @@ class TestDockerSandboxProvider:
         mock_docker_client.containers.run.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_container_sanitizes_name(self, provider, mock_docker_client, mock_container):
+    async def test_create_container_sanitizes_name(
+        self, provider, mock_docker_client, mock_container
+    ):
         """Test creating container sanitizes invalid characters in name."""
         from docker.errors import NotFound
 
@@ -582,7 +588,7 @@ class TestDockerSandboxProvider:
         mock_docker_client.images.get.return_value = MagicMock()
 
         # Create sandbox with name containing invalid chars
-        sandbox_id = await provider.create(
+        await provider.create(
             template_id="python:3.11-slim",
             timeout_minutes=10,
             metadata={"name": "user@example.com/project"},

@@ -78,6 +78,7 @@ dependencies = [
     # MCP Server (v0.7.0)
     "fastmcp>=0.2.0", # Model Context Protocol server
     "llama-parse>=0.6.88",
+    "pre-commit>=4.3.0",
 ]
 
 [project.optional-dependencies]

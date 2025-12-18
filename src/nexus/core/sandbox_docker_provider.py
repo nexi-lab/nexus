@@ -28,11 +28,43 @@ from nexus.core.sandbox_provider import (
 logger = logging.getLogger(__name__)
 
 # Lazy import docker to avoid import errors if not installed
+# Note: Handle namespace conflict with ./docker directory by verifying the module is the real docker package
 try:
     import docker.errors
     from docker.errors import NotFound
 
     import docker
+    
+    # Verify this is the real docker package, not a namespace conflict
+    # The real docker package has 'from_env' attribute
+    if not hasattr(docker, "from_env"):
+        # This is likely a namespace conflict with ./docker directory
+        # Try to import the real package by temporarily removing conflicting paths
+        import sys
+        import importlib
+        
+        # Save original path
+        original_path = sys.path[:]
+        # Remove paths that might contain ./docker directory
+        sys.path = [p for p in sys.path if not p.endswith("/src") and not p.endswith("/nexus/src")]
+        
+        try:
+            # Try to import the real docker package
+            docker_module = importlib.import_module("docker")
+            if hasattr(docker_module, "from_env"):
+                docker = docker_module
+                # Also re-import errors
+                docker.errors = importlib.import_module("docker.errors")
+                NotFound = docker.errors.NotFound
+                logger.info("Resolved docker package namespace conflict")
+            else:
+                raise ImportError("docker module found but missing 'from_env' attribute")
+        finally:
+            sys.path = original_path
+    
+    # Final verification
+    if not hasattr(docker, "from_env"):
+        raise ImportError("docker package not properly installed or namespace conflict unresolved")
 
     DOCKER_AVAILABLE = True
 except ImportError:

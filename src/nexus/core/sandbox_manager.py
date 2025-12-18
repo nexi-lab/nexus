@@ -80,11 +80,33 @@ class SandboxManager:
                 logger.info("Docker provider initialized successfully")
             except RuntimeError as e:
                 # RuntimeError from DockerSandboxProvider means Docker daemon not available
-                logger.info(f"Docker provider not available: {e}")
+                error_msg = str(e)
+                logger.warning(
+                    f"Docker provider not available: {error_msg}. "
+                    "Make sure Docker is installed and running. "
+                    "Install with: pip install 'nexus-ai-fs[sandbox]' or pip install docker>=7.0.0. "
+                    "For Docker Desktop: https://www.docker.com/products/docker-desktop"
+                )
             except Exception as e:
-                logger.warning(f"Failed to initialize Docker provider: {e}")
+                logger.warning(
+                    f"Failed to initialize Docker provider: {e}. "
+                    "Install with: pip install 'nexus-ai-fs[sandbox]' or pip install docker>=7.0.0"
+                )
+        else:
+            logger.info(
+                "Docker provider not available: docker package not installed. "
+                "Install with: pip install 'nexus-ai-fs[sandbox]' or pip install docker>=7.0.0"
+            )
 
         logger.info(f"Initialized sandbox manager with providers: {list(self.providers.keys())}")
+        
+        # Warn if no providers available
+        if not self.providers:
+            logger.warning(
+                "No sandbox providers available. "
+                "Install Docker provider: pip install 'nexus-ai-fs[sandbox]' or pip install docker>=7.0.0. "
+                "Or configure E2B provider with E2B_API_KEY environment variable."
+            )
 
     async def create_sandbox(
         self,
@@ -122,16 +144,45 @@ class SandboxManager:
                 provider = "e2b"
             else:
                 available = ", ".join(self.providers.keys()) if self.providers else "none"
-                raise ValueError(
-                    f"No sandbox providers available. Available providers: {available}"
-                )
+                error_msg = f"No sandbox providers available. Available providers: {available}"
+                if not self.providers:
+                    error_msg += (
+                        "\n\nInstall Docker provider: pip install 'nexus-ai-fs[sandbox]' or pip install docker>=7.0.0. "
+                        "Or configure E2B provider: set E2B_API_KEY environment variable."
+                    )
+                raise ValueError(error_msg)
 
         # Check provider availability
         if provider not in self.providers:
             available = ", ".join(self.providers.keys()) if self.providers else "none"
-            raise ValueError(
-                f"Provider '{provider}' not available. Available providers: {available}"
-            )
+            error_msg = f"Provider '{provider}' not available. Available providers: {available}"
+            
+            # Add helpful diagnostics
+            if provider == "docker":
+                if not DOCKER_PROVIDER_AVAILABLE:
+                    error_msg += (
+                        "\n\nDocker package not installed. "
+                        "Install with: pip install 'nexus-ai-fs[sandbox]' or pip install docker>=7.0.0"
+                    )
+                else:
+                    error_msg += (
+                        "\n\nDocker package is installed but provider initialization failed. "
+                        "Make sure Docker daemon is running. "
+                        "For Docker Desktop: https://www.docker.com/products/docker-desktop"
+                    )
+            elif provider == "e2b":
+                error_msg += (
+                    "\n\nE2B provider requires E2B_API_KEY environment variable to be set."
+                )
+            
+            if not self.providers:
+                error_msg += (
+                    "\n\nNo sandbox providers are available. "
+                    "Install Docker: pip install 'nexus-ai-fs[sandbox]' "
+                    "or configure E2B: set E2B_API_KEY environment variable."
+                )
+            
+            raise ValueError(error_msg)
 
         # Check name uniqueness for active sandboxes only
         # Allow reusing name if existing sandbox is stopped/paused
@@ -621,9 +672,34 @@ class SandboxManager:
         # Check provider availability
         if provider not in self.providers:
             available = ", ".join(self.providers.keys()) if self.providers else "none"
-            raise ValueError(
-                f"Provider '{provider}' not available. Available providers: {available}"
-            )
+            error_msg = f"Provider '{provider}' not available. Available providers: {available}"
+            
+            # Add helpful diagnostics
+            if provider == "docker":
+                if not DOCKER_PROVIDER_AVAILABLE:
+                    error_msg += (
+                        "\n\nDocker package not installed. "
+                        "Install with: pip install 'nexus-ai-fs[sandbox]' or pip install docker>=7.0.0"
+                    )
+                else:
+                    error_msg += (
+                        "\n\nDocker package is installed but provider initialization failed. "
+                        "Make sure Docker daemon is running. "
+                        "For Docker Desktop: https://www.docker.com/products/docker-desktop"
+                    )
+            elif provider == "e2b":
+                error_msg += (
+                    "\n\nE2B provider requires E2B_API_KEY environment variable to be set."
+                )
+            
+            if not self.providers:
+                error_msg += (
+                    "\n\nNo sandbox providers are available. "
+                    "Install Docker: pip install 'nexus-ai-fs[sandbox]' "
+                    "or configure E2B: set E2B_API_KEY environment variable."
+                )
+            
+            raise ValueError(error_msg)
 
         if not nexus_url or not nexus_api_key:
             raise ValueError("Both nexus_url and nexus_api_key required for mounting")
@@ -707,9 +783,34 @@ class SandboxManager:
         # Check provider availability
         if provider not in self.providers:
             available = ", ".join(self.providers.keys()) if self.providers else "none"
-            raise ValueError(
-                f"Provider '{provider}' not available. Available providers: {available}"
-            )
+            error_msg = f"Provider '{provider}' not available. Available providers: {available}"
+            
+            # Add helpful diagnostics
+            if provider == "docker":
+                if not DOCKER_PROVIDER_AVAILABLE:
+                    error_msg += (
+                        "\n\nDocker package not installed. "
+                        "Install with: pip install 'nexus-ai-fs[sandbox]' or pip install docker>=7.0.0"
+                    )
+                else:
+                    error_msg += (
+                        "\n\nDocker package is installed but provider initialization failed. "
+                        "Make sure Docker daemon is running. "
+                        "For Docker Desktop: https://www.docker.com/products/docker-desktop"
+                    )
+            elif provider == "e2b":
+                error_msg += (
+                    "\n\nE2B provider requires E2B_API_KEY environment variable to be set."
+                )
+            
+            if not self.providers:
+                error_msg += (
+                    "\n\nNo sandbox providers are available. "
+                    "Install Docker: pip install 'nexus-ai-fs[sandbox]' "
+                    "or configure E2B: set E2B_API_KEY environment variable."
+                )
+            
+            raise ValueError(error_msg)
 
         if not sandbox_api_key:
             raise ValueError(f"Sandbox API key required for provider '{provider}'")

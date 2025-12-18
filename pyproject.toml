@@ -165,6 +165,11 @@ semantic-search-remote = [
 #     "nexus-plugin-skill-seekers>=0.1.0",
 # ]
 
+sandbox = [
+    # Docker sandbox provider support
+    "docker>=7.0.0",  # Docker SDK for Python (required for DockerSandboxProvider)
+]
+
 all = [
     # All optional features (plugins must be installed manually)
     # Default embedding provider: OpenAI (lightweight, requires API key)
@@ -175,6 +180,7 @@ all = [
     "pgvector>=0.3.0",
     "openai>=1.0.0",
     "orjson>=3.9.0",
+    "docker>=7.0.0",  # Docker SDK for Python (required for DockerSandboxProvider)
 ]
 
 [project.urls]

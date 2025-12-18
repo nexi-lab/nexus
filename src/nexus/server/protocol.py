@@ -180,30 +180,56 @@ def rpc_decode_hook(obj: Any) -> Any:
 
 
 # Try to import orjson for faster JSON serialization (2-3x faster)
-# TEMPORARILY DISABLED: orjson doesn't handle bytes in RPC params (file writes)
-# TODO: Fix by using different serializers for requests vs responses
 try:
     import orjson
 
-    HAS_ORJSON = False  # Disabled for now
+    HAS_ORJSON = True
 except ImportError:
     HAS_ORJSON = False
 
 
 def _prepare_for_orjson(obj: Any) -> Any:
-    """Convert objects to orjson-compatible types.
+    """Convert objects to orjson-compatible types for encoding responses.
 
-    Note: Does NOT convert bytes - we want those to fail so we fall back to standard json.
-    This prevents accidentally base64-encoding file contents during write operations.
+    Handles all special types that RPCEncoder handles:
+    - bytes: base64-encoded with __type__ wrapper
+    - datetime/date: ISO format with __type__ wrapper
+    - timedelta: seconds with __type__ wrapper
+    - objects with __dict__: converted to dict
     """
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
+    if isinstance(obj, bytes):
+        return {"__type__": "bytes", "data": base64.b64encode(obj).decode("utf-8")}
+    elif isinstance(obj, (datetime, date)):
+        return {"__type__": "datetime", "data": obj.isoformat()}
     elif isinstance(obj, timedelta):
         return {"__type__": "timedelta", "seconds": obj.total_seconds()}
     elif isinstance(obj, dict):
         return {k: _prepare_for_orjson(v) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple)):
         return [_prepare_for_orjson(item) for item in obj]
+    elif hasattr(obj, "__dict__") and not isinstance(obj, type):
+        return {
+            k: _prepare_for_orjson(v)
+            for k, v in obj.__dict__.items()
+            if not k.startswith("_") and not callable(v)
+        }
+    else:
+        return obj
+
+
+def _apply_decode_hook(obj: Any) -> Any:
+    """Recursively apply rpc_decode_hook to convert special types after orjson parsing.
+
+    orjson doesn't support object_hook, so we apply it manually after parsing.
+    """
+    if isinstance(obj, dict):
+        # First check if this dict is a special type wrapper
+        if "__type__" in obj:
+            return rpc_decode_hook(obj)
+        # Otherwise recursively process all values
+        return {k: _apply_decode_hook(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_apply_decode_hook(item) for item in obj]
     else:
         return obj
 
@@ -218,22 +244,15 @@ def encode_rpc_message(data: dict[str, Any]) -> bytes:
 
     if HAS_ORJSON:
         # orjson is much faster and returns bytes directly
-        # But it doesn't support custom encoders, so we pre-process the data
-        try:
-            # Try direct serialization first (most common case)
-            result: bytes = orjson.dumps(data)
-            elapsed = (time.time() - start) * 1000
-            logger.debug(f"[RPC-PERF] orjson encode: {len(result)} bytes in {elapsed:.1f}ms")
-            return result
-        except TypeError:
-            # If that fails, convert custom types first
-            prepared_data = _prepare_for_orjson(data)
-            result_with_prep: bytes = orjson.dumps(prepared_data)
-            elapsed = (time.time() - start) * 1000
-            logger.debug(
-                f"[RPC-PERF] orjson encode (with prep): {len(result_with_prep)} bytes in {elapsed:.1f}ms"
-            )
-            return result_with_prep
+        # But it doesn't support custom encoders, so we ALWAYS pre-process the data
+        # to ensure special types (bytes, datetime, timedelta) are wrapped with __type__
+        # This is needed because orjson serializes datetime as plain strings,
+        # which breaks the decode_rpc_message round-trip.
+        prepared_data = _prepare_for_orjson(data)
+        result: bytes = orjson.dumps(prepared_data)
+        elapsed = (time.time() - start) * 1000
+        logger.debug(f"[RPC-PERF] orjson encode: {len(result)} bytes in {elapsed:.1f}ms")
+        return result
     else:
         # Fallback to standard json with custom encoder
         result_json: bytes = json.dumps(data, cls=RPCEncoder).encode("utf-8")
@@ -245,9 +264,15 @@ def encode_rpc_message(data: dict[str, Any]) -> bytes:
 
 
 def decode_rpc_message(data: bytes) -> dict[str, Any]:
-    """Decode RPC message from JSON bytes (uses orjson if available)."""
+    """Decode RPC message from JSON bytes (uses orjson if available).
+
+    When orjson is used, we apply the decode hook manually after parsing
+    to convert special types like {"__type__": "bytes", "data": "..."} back to bytes.
+    """
     if HAS_ORJSON:
-        return orjson.loads(data)  # type: ignore[no-any-return]
+        parsed = orjson.loads(data)
+        # Apply decode hook to convert special types (bytes, datetime, timedelta)
+        return _apply_decode_hook(parsed)  # type: ignore[no-any-return]
     else:
         return json.loads(data.decode("utf-8"), object_hook=rpc_decode_hook)  # type: ignore[no-any-return]
 
@@ -272,6 +297,8 @@ class ReadParams:
     path: str
     return_metadata: bool = False  # Return dict with content + metadata
     parsed: bool = False  # Return parsed text instead of raw bytes
+    return_url: bool = False  # Return presigned URL instead of content (S3/GCS)
+    expires_in: int = 3600  # URL expiration in seconds (default 1 hour)
 
 
 @dataclass

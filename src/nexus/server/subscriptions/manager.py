@@ -260,9 +260,9 @@ class SubscriptionManager:
             f"broadcast() called: event={event_type}, tenant={tenant_id}, path={data.get('file_path', 'N/A')}"
         )
 
-        # Get matching subscriptions
+        # Get matching subscriptions (async to avoid blocking event loop)
         try:
-            subscriptions = self._get_matching_subscriptions(event_type, data, tenant_id)
+            subscriptions = await self._get_matching_subscriptions(event_type, data, tenant_id)
         except Exception as e:
             logger.error(f"Error in _get_matching_subscriptions: {e}")
             return 0
@@ -289,13 +289,13 @@ class SubscriptionManager:
         )
         return len(subscriptions)
 
-    def _get_matching_subscriptions(
+    async def _get_matching_subscriptions(
         self,
         event_type: str,
         data: dict[str, Any],
         tenant_id: str,
     ) -> list[Subscription]:
-        """Get subscriptions matching the event.
+        """Get subscriptions matching the event (async, non-blocking).
 
         Args:
             event_type: Event type
@@ -305,6 +305,17 @@ class SubscriptionManager:
         Returns:
             List of matching subscriptions
         """
+        return await asyncio.to_thread(
+            self._get_matching_subscriptions_sync, event_type, data, tenant_id
+        )
+
+    def _get_matching_subscriptions_sync(
+        self,
+        event_type: str,
+        data: dict[str, Any],
+        tenant_id: str,
+    ) -> list[Subscription]:
+        """Sync implementation of _get_matching_subscriptions."""
         from nexus.storage.models import SubscriptionModel
 
         with self._session_factory() as session:
@@ -417,7 +428,7 @@ class SubscriptionManager:
         # Add HMAC signature if secret is configured
         # Note: We don't have access to the secret from the Subscription model
         # Need to fetch it separately for signing
-        signature = self._compute_signature(subscription.id, payload_bytes)
+        signature = await self._compute_signature(subscription.id, payload_bytes)
         if signature:
             headers["X-Nexus-Signature"] = signature
 
@@ -438,7 +449,7 @@ class SubscriptionManager:
 
                     if response.status_code >= 200 and response.status_code < 300:
                         # Success
-                        self._update_delivery_status(
+                        await self._update_delivery_status(
                             subscription.id, success=True, status_code=response.status_code
                         )
                         logger.debug(
@@ -467,11 +478,11 @@ class SubscriptionManager:
                 await asyncio.sleep(RETRY_DELAYS[attempt])
 
         # All retries failed
-        self._update_delivery_status(subscription.id, success=False, error=last_error)
+        await self._update_delivery_status(subscription.id, success=False, error=last_error)
         return False
 
-    def _compute_signature(self, subscription_id: str, payload: bytes) -> str | None:
-        """Compute HMAC signature for payload.
+    async def _compute_signature(self, subscription_id: str, payload: bytes) -> str | None:
+        """Compute HMAC signature for payload (async, non-blocking).
 
         Args:
             subscription_id: Subscription ID to get secret
@@ -480,6 +491,10 @@ class SubscriptionManager:
         Returns:
             Signature string or None if no secret
         """
+        return await asyncio.to_thread(self._compute_signature_sync, subscription_id, payload)
+
+    def _compute_signature_sync(self, subscription_id: str, payload: bytes) -> str | None:
+        """Sync implementation of _compute_signature."""
         from nexus.storage.models import SubscriptionModel
 
         with self._session_factory() as session:
@@ -498,14 +513,14 @@ class SubscriptionManager:
             ).hexdigest()
             return f"sha256={signature}"
 
-    def _update_delivery_status(
+    async def _update_delivery_status(
         self,
         subscription_id: str,
         success: bool,
-        status_code: int | None = None,  # noqa: ARG002 - reserved for future logging
-        error: str | None = None,  # noqa: ARG002 - reserved for future logging
+        status_code: int | None = None,
+        error: str | None = None,
     ) -> None:
-        """Update subscription delivery status.
+        """Update subscription delivery status (async, non-blocking).
 
         Args:
             subscription_id: Subscription ID
@@ -513,6 +528,18 @@ class SubscriptionManager:
             status_code: HTTP status code (reserved for future delivery logging)
             error: Error message if failed (reserved for future delivery logging)
         """
+        await asyncio.to_thread(
+            self._update_delivery_status_sync, subscription_id, success, status_code, error
+        )
+
+    def _update_delivery_status_sync(
+        self,
+        subscription_id: str,
+        success: bool,
+        status_code: int | None = None,  # noqa: ARG002 - reserved for future logging
+        error: str | None = None,  # noqa: ARG002 - reserved for future logging
+    ) -> None:
+        """Sync implementation of _update_delivery_status."""
         from nexus.storage.models import SubscriptionModel
 
         with self._session_factory() as session:

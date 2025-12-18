@@ -630,10 +630,18 @@ DEFAULT_FILE_NAMESPACE = NamespaceConfig(
         # Checking "viewer" on file1 and file2 uses same cache key
         # vs flattened schema where each of 9 relations needs separate cache entry
         # Result: ~3x fewer cache misses, better performance
+        # PERF FIX: Check direct relations (owner, editor) BEFORE expensive traversals (viewer)
+        # PERF FIX: Check direct relations first before expensive parent traversals
+        # editor/viewer have direct_* relations that are found quickly
+        # owner has parent_owner which triggers recursive parent traversal and can hit query limits
         "permissions": {
-            "read": ["viewer", "editor", "owner"],  # 3 unions (good caching)
-            "write": ["editor", "owner"],  # 2 unions
-            "execute": ["owner"],  # 1 union
+            "read": [
+                "editor",
+                "viewer",
+                "owner",
+            ],  # Check editor/viewer first, owner last (expensive)
+            "write": ["editor", "owner"],  # Check editor first (direct), owner last (expensive)
+            "execute": ["owner"],  # Execute = owner only
         },
     },
 )

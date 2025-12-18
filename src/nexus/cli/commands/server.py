@@ -464,29 +464,48 @@ def serve(
             sys.exit(1)
 
         # ============================================
-        # Port Cleanup
+        # Port Check (do not automatically kill)
         # ============================================
-        console.print(f"[yellow]Checking port {port}...[/yellow]")
-
         try:
-            # Try to find and kill any process using the port
+            # Check if port is in use (only LISTEN state, not stale connections)
             import shutil
 
             if shutil.which("lsof"):
                 result = subprocess.run(
-                    ["lsof", "-ti", f":{port}"],
+                    ["lsof", "-ti", f":{port}", "-sTCP:LISTEN"],
                     capture_output=True,
                     text=True,
                 )
                 if result.stdout.strip():
-                    pid = result.stdout.strip()
-                    console.print(f"[yellow]⚠️  Port {port} is in use by process {pid}[/yellow]")
-                    console.print("[yellow]   Killing process...[/yellow]")
-                    subprocess.run(["kill", "-9", pid], check=False)
-                    time.sleep(1)
-                    console.print(f"[green]✓[/green] Port {port} is now available")
-                else:
-                    console.print(f"[green]✓[/green] Port {port} is available")
+                    pids = result.stdout.strip().split("\n")
+                    console.print(f"[red]ERROR: Port {port} is already in use[/red]")
+                    console.print()
+
+                    # Show detailed process info
+                    console.print(f"Process(es) running on port {port}:")
+                    proc_result = subprocess.run(
+                        ["lsof", "-i", f":{port}", "-sTCP:LISTEN"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if proc_result.stdout:
+                        # Skip header line
+                        for line in proc_result.stdout.split("\n")[1:]:
+                            if line.strip():
+                                console.print(f"  {line}")
+
+                    console.print()
+                    console.print("Stop the server first using one of these commands:")
+                    console.print("   ./local-demo.sh --stop              # Stop local Nexus server")
+                    console.print("   ./docker-demo.sh --stop             # Stop Docker-based server")
+                    console.print()
+                    console.print("Or manually kill the process(es):")
+                    for pid in pids:
+                        if pid.strip():
+                            console.print(f"   kill {pid.strip()}          # Graceful shutdown")
+                            console.print(f"   kill -9 {pid.strip()}       # Force kill (if needed)")
+                    console.print()
+                    sys.exit(1)
             else:
                 # Fallback for systems without lsof
                 result = subprocess.run(
@@ -495,12 +514,11 @@ def serve(
                     text=True,
                 )
                 if f":{port}" in result.stdout and "LISTEN" in result.stdout:
-                    console.print(f"[yellow]⚠️  Port {port} appears to be in use[/yellow]")
-                    console.print(
-                        f"[yellow]   Please manually stop the process using port {port}[/yellow]"
-                    )
-                else:
-                    console.print(f"[green]✓[/green] Port {port} is available")
+                    console.print(f"[red]ERROR: Port {port} is already in use[/red]")
+                    console.print()
+                    console.print("Stop the server first or manually kill the process")
+                    console.print()
+                    sys.exit(1)
         except Exception as e:
             console.print(f"[yellow]⚠️  Could not check port status: {e}[/yellow]")
 

@@ -801,6 +801,24 @@ class DockerSandboxProvider(SandboxProvider):
             if sanitized:
                 container_name = sanitized
 
+        # If a container with this name already exists, stop and remove it first
+        if container_name:
+            try:
+                existing_container = self.docker_client.containers.get(container_name)
+                logger.info(f"Found existing container with name '{container_name}', stopping and removing...")
+                try:
+                    existing_container.stop(timeout=5)
+                except Exception as stop_err:
+                    logger.debug(f"Error stopping container (may already be stopped): {stop_err}")
+                existing_container.remove(force=True)
+                logger.info(f"Removed existing container '{container_name}'")
+            except NotFound:
+                # Container doesn't exist, this is the normal case
+                pass
+            except Exception as e:
+                logger.warning(f"Error checking/removing existing container '{container_name}': {e}")
+                # Continue anyway - the run() call will handle the conflict
+
         return self.docker_client.containers.run(
             image=image,
             # Use image default CMD (sleep infinity in sandbox image)

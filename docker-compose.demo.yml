@@ -39,6 +39,8 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init/01-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-pg-stat-statements.sql:ro
+    command: postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:

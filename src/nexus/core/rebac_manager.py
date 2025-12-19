@@ -104,20 +104,47 @@ class ReBACManager:
         self.SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
     def _get_connection(self) -> Any:
-        """Get raw DB-API connection from SQLAlchemy engine.
+        """Get a DBAPI connection from the pool.
 
-        Creates connections on-demand rather than holding them open.
-        Initialize namespaces on first actual use (not during init).
+        Uses engine.connect() which properly goes through the connection pool
+        and respects pool_pre_ping for automatic stale connection detection.
+
+        Note: Caller is responsible for closing the connection.
+        Prefer using _connection() context manager when possible.
+
+        Returns:
+            DBAPI connection object
         """
-        # Get a fresh connection each time - don't hold it
-        conn = self.engine.raw_connection()
-        return conn
+        # Use engine.connect() instead of raw_connection() to leverage pool_pre_ping
+        sa_conn = self.engine.connect()
+        # Store the SQLAlchemy connection on the DBAPI connection for proper cleanup
+        dbapi_conn = sa_conn.connection.dbapi_connection
+        dbapi_conn._sa_conn = sa_conn  # type: ignore[union-attr]
+        return dbapi_conn
+
+    def _close_connection(self, conn: Any) -> None:
+        """Close a connection obtained from _get_connection().
+
+        Args:
+            conn: DBAPI connection to close
+        """
+        import contextlib
+
+        # Close via SQLAlchemy connection if available (returns to pool properly)
+        if hasattr(conn, "_sa_conn"):
+            with contextlib.suppress(Exception):
+                conn._sa_conn.close()
+        else:
+            # Fallback to direct close
+            with contextlib.suppress(Exception):
+                conn.close()
 
     @contextmanager
     def _connection(self) -> Any:
         """Context manager for database connections.
 
-        Ensures connections are properly closed after use.
+        Uses engine.connect() which properly goes through the connection pool
+        and respects pool_pre_ping for automatic stale connection detection.
 
         Usage:
             with self._connection() as conn:
@@ -125,11 +152,18 @@ class ReBACManager:
                 cursor.execute(...)
                 conn.commit()
         """
-        conn = self._get_connection()
-        try:
-            yield conn
-        finally:
-            conn.close()
+        # Use engine.connect() instead of raw_connection() to leverage pool_pre_ping
+        # This automatically detects and replaces stale connections
+        with self.engine.connect() as sa_conn:
+            # Get the underlying DBAPI connection for cursor-based operations
+            # This maintains compatibility with existing cursor.execute() code
+            dbapi_conn = sa_conn.connection.dbapi_connection
+            try:
+                yield dbapi_conn
+                sa_conn.commit()
+            except Exception:
+                sa_conn.rollback()
+                raise
 
     def _create_cursor(self, conn: Any) -> Any:
         """Create a cursor with appropriate cursor factory for the database type.
@@ -175,18 +209,20 @@ class ReBACManager:
             logger = logging.getLogger(__name__)
             logger.info("Initializing default namespaces...")
 
-            conn = self.engine.raw_connection()
-            try:
-                self._initialize_default_namespaces_with_conn(conn)
-                self._namespaces_initialized = True
-                logger.info("Default namespaces initialized successfully")
-            except Exception as e:
-                logger.warning(f"Failed to initialize namespaces: {type(e).__name__}: {e}")
-                import traceback
+            # Use engine.connect() to leverage pool_pre_ping for stale connection detection
+            with self.engine.connect() as sa_conn:
+                try:
+                    dbapi_conn = sa_conn.connection.dbapi_connection
+                    self._initialize_default_namespaces_with_conn(dbapi_conn)
+                    sa_conn.commit()
+                    self._namespaces_initialized = True
+                    logger.info("Default namespaces initialized successfully")
+                except Exception as e:
+                    sa_conn.rollback()
+                    logger.warning(f"Failed to initialize namespaces: {type(e).__name__}: {e}")
+                    import traceback
 
-                logger.debug(traceback.format_exc())
-            finally:
-                conn.close()
+                    logger.debug(traceback.format_exc())
 
     def _fix_sql_placeholders(self, sql: str) -> str:
         """Convert SQLite ? placeholders to PostgreSQL %s if needed.
@@ -3062,7 +3098,7 @@ class ReBACManager:
             conn.commit()
         finally:
             if should_close:
-                conn.close()
+                self._close_connection(conn)
 
     def _invalidate_cache_for_tuple(
         self,
@@ -3335,7 +3371,7 @@ class ReBACManager:
             conn.commit()
         finally:
             if should_close:
-                conn.close()
+                self._close_connection(conn)
 
     def _invalidate_cache_for_namespace(self, object_type: str) -> None:
         """Invalidate all cache entries for objects of a given type in both L1 and L2.

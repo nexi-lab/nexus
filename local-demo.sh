@@ -397,7 +397,7 @@ ensure_postgres_running() {
     if ! check_docker_ready; then
         exit 1
     fi
-    
+
     # Use configuration from config file
     CONTAINER_NAME="${POSTGRES_CONTAINER}"
     DB_NAME="${POSTGRES_DB}"
@@ -420,7 +420,7 @@ ensure_postgres_running() {
             # Create data directory if it doesn't exist
             mkdir -p ${POSTGRES_DATA_DIR}
 
-            # Start PostgreSQL container
+            # Start PostgreSQL 18 container with performance optimizations
             docker run -d \
                 --name ${CONTAINER_NAME} \
                 -e POSTGRES_DB=${DB_NAME} \
@@ -428,7 +428,11 @@ ensure_postgres_running() {
                 -e POSTGRES_PASSWORD=${DB_PASSWORD} \
                 -p ${DB_PORT}:5432 \
                 -v ${POSTGRES_DATA_DIR}:/var/lib/postgresql/data \
-                postgres:15-alpine
+                postgres:18-alpine \
+                postgres \
+                -c io_method=worker \
+                -c effective_io_concurrency=16 \
+                -c maintenance_io_concurrency=16
 
             # Wait a moment for container to initialize
             sleep 2

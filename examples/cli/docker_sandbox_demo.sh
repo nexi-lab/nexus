@@ -92,7 +92,7 @@ else
         -e POSTGRES_USER=postgres \
         -e POSTGRES_DB=nexus \
         -p 5432:5432 \
-        postgres:16-alpine > /dev/null 2>&1
+        postgres:18-alpine > /dev/null 2>&1
 
     # Wait for PostgreSQL to be ready
     echo "Waiting for PostgreSQL to be ready..."

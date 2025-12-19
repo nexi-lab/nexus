@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 
 @dataclass
@@ -98,12 +99,15 @@ class MetadataStore(ABC):
         pass
 
     @abstractmethod
-    def delete(self, path: str) -> None:
+    def delete(self, path: str) -> dict[str, Any] | None:
         """
         Delete file metadata.
 
         Args:
             path: Virtual path
+
+        Returns:
+            Dictionary with deleted file info or None.
         """
         pass
 

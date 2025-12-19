@@ -376,6 +376,13 @@ class GetEtagParams:
 
 
 @dataclass
+class StatParams:
+    """Parameters for stat() method."""
+
+    path: str
+
+
+@dataclass
 class ListParams:
     """Parameters for list() method."""
 
@@ -1635,6 +1642,7 @@ METHOD_PARAMS = {
     "rename_bulk": RenameBulkParams,
     "exists": ExistsParams,
     "get_etag": GetEtagParams,
+    "stat": StatParams,
     "list": ListParams,
     "glob": GlobParams,
     "grep": GrepParams,

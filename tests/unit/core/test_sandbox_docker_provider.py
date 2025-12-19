@@ -588,7 +588,7 @@ class TestDockerSandboxProvider:
         mock_docker_client.images.get.return_value = MagicMock()
 
         # Create sandbox with name containing invalid chars
-        sandbox_id = await provider.create(
+        await provider.create(
             template_id="python:3.11-slim",
             timeout_minutes=10,
             metadata={"name": "user@example.com/project"},

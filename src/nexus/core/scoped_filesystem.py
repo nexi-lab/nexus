@@ -449,10 +449,18 @@ class ScopedFilesystem:
         nexus_url: str | None = None,
         nexus_api_key: str | None = None,
         context: dict | None = None,
+        as_script: bool = False,
     ) -> dict[Any, Any]:
         """Run code in a sandbox."""
         return self._fs.sandbox_run(
-            sandbox_id, language, code, timeout, nexus_url, nexus_api_key, context
+            sandbox_id=sandbox_id,
+            language=language,
+            code=code,
+            timeout=timeout,
+            nexus_url=nexus_url,
+            nexus_api_key=nexus_api_key,
+            context=context,
+            as_script=as_script,
         )
 
     def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:

@@ -1725,20 +1725,6 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
-            # Build query with OR conditions for each subject/object
-            # Query 1: Get all tuples where subject or object is in our set
-            placeholders_subjects = ", ".join(["(?, ?)"] * len(all_subjects))
-            placeholders_objects = ", ".join(["(?, ?)"] * len(all_objects))
-
-            # Flatten subject/object tuples for SQL parameters
-            subject_params = []
-            for subj_type, subj_id in all_subjects:
-                subject_params.extend([subj_type, subj_id])
-
-            object_params = []
-            for obj_type, obj_id in all_objects:
-                object_params.extend([obj_type, obj_id])
-
             # OPTIMIZATION: For file paths, also fetch parent hierarchy tuples in bulk
             # This ensures we have all parent tuples needed for parent_owner/parent_editor/parent_viewer checks
             # Without this, we'd miss tuples like (child, "parent", parent) that aren't directly in our object set
@@ -1767,56 +1753,66 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             all_subjects.update(file_path_tuples)
 
             # Rebuild BOTH subject and object params to include ancestor paths
-            subject_params = []
-            for subj_type, subj_id in all_subjects:
-                subject_params.extend([subj_type, subj_id])
+            # BATCH_SIZE limits IN clause size to prevent PostgreSQL OOM on large lists
+            BATCH_SIZE = 100
 
-            object_params = []
-            for obj_type, obj_id in all_objects:
-                object_params.extend([obj_type, obj_id])
+            all_subjects_list = list(all_subjects)
+            all_objects_list = list(all_objects)
 
-            placeholders_subjects = ", ".join(["(?, ?)"] * len(all_subjects))
-            placeholders_objects = ", ".join(["(?, ?)"] * len(all_objects))
-
-            # Build full query
-            # Note: We've already included all ancestor paths in all_objects above,
-            # so we don't need separate file_path_conditions anymore
-            where_clauses = [
-                f"(subject_type, subject_id) IN ({placeholders_subjects})",
-                f"(object_type, object_id) IN ({placeholders_objects})",
-            ]
-
-            # When tenant isolation is disabled, skip the tenant_id filter (Issue #580)
-            if self.enforce_tenant_isolation:
-                query = self._fix_sql_placeholders(
-                    f"""
-                    SELECT subject_type, subject_id, subject_relation, relation,
-                           object_type, object_id, conditions, expires_at
-                    FROM rebac_tuples
-                    WHERE tenant_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                      AND ({" OR ".join(where_clauses)})
-                    """
-                )
-                params = [tenant_id, datetime.now(UTC).isoformat()] + subject_params + object_params
-            else:
-                # No tenant_id filter when tenant isolation is disabled
-                query = self._fix_sql_placeholders(
-                    f"""
-                    SELECT subject_type, subject_id, subject_relation, relation,
-                           object_type, object_id, conditions, expires_at
-                    FROM rebac_tuples
-                    WHERE (expires_at IS NULL OR expires_at >= ?)
-                      AND ({" OR ".join(where_clauses)})
-                    """
-                )
-                params = [datetime.now(UTC).isoformat()] + subject_params + object_params
-            cursor.execute(query, params)
-
-            # Build in-memory graph of all tuples
+            # Build in-memory graph of all tuples (populated by batched queries)
             tuples_graph = []
-            for row in cursor.fetchall():
-                tuples_graph.append(
+            now_iso = datetime.now(UTC).isoformat()
+
+            def fetch_tuples_batched(
+                subjects_batch: list[tuple[str, str]],
+                objects_batch: list[tuple[str, str]],
+            ) -> list[dict]:
+                """Fetch tuples for a batch of subjects/objects."""
+                if not subjects_batch and not objects_batch:
+                    return []
+
+                subject_params = []
+                for subj_type, subj_id in subjects_batch:
+                    subject_params.extend([subj_type, subj_id])
+
+                object_params = []
+                for obj_type, obj_id in objects_batch:
+                    object_params.extend([obj_type, obj_id])
+
+                where_clauses = []
+                if subjects_batch:
+                    placeholders_subjects = ", ".join(["(?, ?)"] * len(subjects_batch))
+                    where_clauses.append(f"(subject_type, subject_id) IN ({placeholders_subjects})")
+                if objects_batch:
+                    placeholders_objects = ", ".join(["(?, ?)"] * len(objects_batch))
+                    where_clauses.append(f"(object_type, object_id) IN ({placeholders_objects})")
+
+                if self.enforce_tenant_isolation:
+                    query = self._fix_sql_placeholders(
+                        f"""
+                        SELECT subject_type, subject_id, subject_relation, relation,
+                               object_type, object_id, conditions, expires_at
+                        FROM rebac_tuples
+                        WHERE tenant_id = ?
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                          AND ({" OR ".join(where_clauses)})
+                        """
+                    )
+                    params = [tenant_id, now_iso] + subject_params + object_params
+                else:
+                    query = self._fix_sql_placeholders(
+                        f"""
+                        SELECT subject_type, subject_id, subject_relation, relation,
+                               object_type, object_id, conditions, expires_at
+                        FROM rebac_tuples
+                        WHERE (expires_at IS NULL OR expires_at >= ?)
+                          AND ({" OR ".join(where_clauses)})
+                        """
+                    )
+                    params = [now_iso] + subject_params + object_params
+
+                cursor.execute(query, params)
+                return [
                     {
                         "subject_type": row["subject_type"],
                         "subject_id": row["subject_id"],
@@ -1827,46 +1823,77 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         "conditions": row["conditions"],
                         "expires_at": row["expires_at"],
                     }
-                )
+                    for row in cursor.fetchall()
+                ]
+
+            # Batch subjects and objects separately to keep query size manageable
+            # Process in batches of BATCH_SIZE to avoid PostgreSQL OOM on large IN clauses
+            num_subject_batches = (len(all_subjects_list) + BATCH_SIZE - 1) // BATCH_SIZE
+            num_object_batches = (len(all_objects_list) + BATCH_SIZE - 1) // BATCH_SIZE
+
+            logger.debug(
+                f"[BULK-BATCH] Fetching tuples in batches: "
+                f"{len(all_subjects_list)} subjects ({num_subject_batches} batches), "
+                f"{len(all_objects_list)} objects ({num_object_batches} batches)"
+            )
+
+            # Fetch tuples for subject batches
+            for i in range(0, len(all_subjects_list), BATCH_SIZE):
+                batch = all_subjects_list[i : i + BATCH_SIZE]
+                tuples_graph.extend(fetch_tuples_batched(batch, []))
+
+            # Fetch tuples for object batches
+            for i in range(0, len(all_objects_list), BATCH_SIZE):
+                batch = all_objects_list[i : i + BATCH_SIZE]
+                tuples_graph.extend(fetch_tuples_batched([], batch))
 
             # CROSS-TENANT FIX: Also fetch cross-tenant shares for subjects in the check list
             # Cross-tenant shares are stored in the resource owner's tenant but need to be
             # visible when checking permissions from the recipient's tenant.
             # This query is indexed and returns only the small number of cross-tenant tuples.
+            # Also batched to avoid OOM on large IN clauses.
             if self.enforce_tenant_isolation:
                 cross_tenant_relations = tuple(CROSS_TENANT_ALLOWED_RELATIONS)
-                # Build placeholders for subject IN clause
-                cross_tenant_subject_placeholders = ", ".join(["(?, ?)"] * len(all_subjects))
-                cross_tenant_query = self._fix_sql_placeholders(
-                    f"""
-                    SELECT subject_type, subject_id, subject_relation, relation,
-                           object_type, object_id, conditions, expires_at
-                    FROM rebac_tuples
-                    WHERE relation IN ({", ".join("?" * len(cross_tenant_relations))})
-                      AND (subject_type, subject_id) IN ({cross_tenant_subject_placeholders})
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                )
-                cross_tenant_params = (
-                    list(cross_tenant_relations) + subject_params + [datetime.now(UTC).isoformat()]
-                )
-                cursor.execute(cross_tenant_query, cross_tenant_params)
-
                 cross_tenant_count = 0
-                for row in cursor.fetchall():
-                    tuples_graph.append(
-                        {
-                            "subject_type": row["subject_type"],
-                            "subject_id": row["subject_id"],
-                            "subject_relation": row["subject_relation"],
-                            "relation": row["relation"],
-                            "object_type": row["object_type"],
-                            "object_id": row["object_id"],
-                            "conditions": row["conditions"],
-                            "expires_at": row["expires_at"],
-                        }
+
+                # Batch cross-tenant queries to avoid OOM
+                for i in range(0, len(all_subjects_list), BATCH_SIZE):
+                    batch = all_subjects_list[i : i + BATCH_SIZE]
+                    if not batch:
+                        continue
+
+                    batch_params = []
+                    for subj_type, subj_id in batch:
+                        batch_params.extend([subj_type, subj_id])
+
+                    cross_tenant_subject_placeholders = ", ".join(["(?, ?)"] * len(batch))
+                    cross_tenant_query = self._fix_sql_placeholders(
+                        f"""
+                        SELECT subject_type, subject_id, subject_relation, relation,
+                               object_type, object_id, conditions, expires_at
+                        FROM rebac_tuples
+                        WHERE relation IN ({", ".join("?" * len(cross_tenant_relations))})
+                          AND (subject_type, subject_id) IN ({cross_tenant_subject_placeholders})
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        """
                     )
-                    cross_tenant_count += 1
+                    cross_tenant_params = list(cross_tenant_relations) + batch_params + [now_iso]
+                    cursor.execute(cross_tenant_query, cross_tenant_params)
+
+                    for row in cursor.fetchall():
+                        tuples_graph.append(
+                            {
+                                "subject_type": row["subject_type"],
+                                "subject_id": row["subject_id"],
+                                "subject_relation": row["subject_relation"],
+                                "relation": row["relation"],
+                                "object_type": row["object_type"],
+                                "object_id": row["object_id"],
+                                "conditions": row["conditions"],
+                                "expires_at": row["expires_at"],
+                            }
+                        )
+                        cross_tenant_count += 1
 
                 if cross_tenant_count > 0:
                     logger.debug(

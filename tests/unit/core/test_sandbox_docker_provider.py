@@ -506,6 +506,99 @@ class TestDockerSandboxProvider:
         cmd = provider._build_command("bash", "ls -la")
         assert cmd == ["bash", "-c", "ls -la"]
 
+    @pytest.mark.asyncio
+    async def test_create_container_with_name_conflict(
+        self, provider, mock_docker_client, mock_container
+    ):
+        """Test creating container when name already exists removes old container."""
+        from docker.errors import NotFound
+
+        # Mock existing container with same name
+        existing_container = MagicMock()
+        existing_container.stop = Mock()
+        existing_container.remove = Mock()
+
+        # First call returns existing container, second raises NotFound (after removal)
+        mock_docker_client.containers.get.side_effect = [existing_container, NotFound("not found")]
+
+        # Mock new container creation
+        new_container = MagicMock()
+        new_container.id = "newcontainer123"
+        mock_docker_client.containers.run.return_value = new_container
+
+        # Mock image exists
+        mock_docker_client.images.get.return_value = MagicMock()
+
+        # Create sandbox with specific name
+        sandbox_id = await provider.create(
+            template_id="python:3.11-slim",
+            timeout_minutes=10,
+            metadata={"name": "test-container"},
+        )
+
+        # Verify old container was stopped and removed
+        existing_container.stop.assert_called_once_with(timeout=5)
+        existing_container.remove.assert_called_once_with(force=True)
+
+        # Verify new container was created
+        assert sandbox_id == "newcontainer"  # First 12 chars
+        mock_docker_client.containers.run.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_container_with_name_no_conflict(
+        self, provider, mock_docker_client, mock_container
+    ):
+        """Test creating container when name doesn't exist works normally."""
+        from docker.errors import NotFound
+
+        # Mock no existing container (NotFound on first get)
+        mock_docker_client.containers.get.side_effect = NotFound("not found")
+
+        # Mock new container creation
+        mock_docker_client.containers.run.return_value = mock_container
+
+        # Mock image exists
+        mock_docker_client.images.get.return_value = MagicMock()
+
+        # Create sandbox with specific name
+        sandbox_id = await provider.create(
+            template_id="python:3.11-slim",
+            timeout_minutes=10,
+            metadata={"name": "new-container"},
+        )
+
+        # Verify container was created without trying to stop anything
+        assert sandbox_id == "abcdef123456"  # From mock_container
+        mock_docker_client.containers.run.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_container_sanitizes_name(
+        self, provider, mock_docker_client, mock_container
+    ):
+        """Test creating container sanitizes invalid characters in name."""
+        from docker.errors import NotFound
+
+        # Mock no existing container
+        mock_docker_client.containers.get.side_effect = NotFound("not found")
+
+        # Mock new container creation
+        mock_docker_client.containers.run.return_value = mock_container
+
+        # Mock image exists
+        mock_docker_client.images.get.return_value = MagicMock()
+
+        # Create sandbox with name containing invalid chars
+        await provider.create(
+            template_id="python:3.11-slim",
+            timeout_minutes=10,
+            metadata={"name": "user@example.com/project"},
+        )
+
+        # Verify sanitized name was used
+        call_kwargs = mock_docker_client.containers.run.call_args[1]
+        # Should replace @, ., and / with hyphens
+        assert call_kwargs["name"] == "user-example-com-project"
+
 
 class TestDockerTemplateResolution:
     """Test suite for Docker template resolution in sandbox provider."""

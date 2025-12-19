@@ -115,17 +115,22 @@ class E2BSandboxProvider(SandboxProvider):
             template = template_id or self.default_template
 
             # Create async sandbox using E2B's native async API
-            sandbox = await AsyncSandbox.create(
-                template=template,
-                api_key=self.api_key,
-                timeout=timeout_minutes * 60,  # E2B uses seconds
-                metadata=metadata or {},
-            )
+            # Only pass template if it's not None (E2B will use default if not provided)
+            create_kwargs = {
+                "api_key": self.api_key,
+                "timeout": timeout_minutes * 60,  # E2B uses seconds
+                "metadata": metadata or {},
+            }
+            if template:
+                create_kwargs["template"] = template
+
+            sandbox = await AsyncSandbox.create(**create_kwargs)
 
             # Don't cache - avoid event loop issues (sandbox will reconnect when needed)
             sandbox_id = str(sandbox.sandbox_id)
 
-            logger.info(f"Created E2B sandbox: {sandbox_id} (template={template})")
+            template_info = f"template={template}" if template else "default template"
+            logger.info(f"Created E2B sandbox: {sandbox_id} ({template_info})")
             return sandbox_id
 
         except Exception as e:

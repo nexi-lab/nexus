@@ -4323,7 +4323,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             params["agent_id"] = agent_id
         if context is not None:
             params["context"] = context
-        result = self._call_rpc("sandbox_connect", params)
+        # Mounting can take 10-30s (dependency checks, FUSE startup)
+        result = self._call_rpc("sandbox_connect", params, read_timeout=60)
         return result  # type: ignore[no-any-return]
 
     def sandbox_disconnect(

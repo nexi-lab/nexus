@@ -16,17 +16,139 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.server.auth.base import AuthResult
 from nexus.server.auth.local import LocalAuth
-from nexus.server.auth.user_helpers import (
-    check_email_available,
-    check_username_available,
-    get_user_by_email,
-    get_user_by_id,
-    get_user_by_username,
-    validate_user_uniqueness,
-)
 from nexus.storage.models import UserModel
 
 logger = logging.getLogger(__name__)
+
+
+# ==============================================================================
+# User Lookup Helper Functions
+# ==============================================================================
+
+
+def get_user_by_email(session: Session, email: str) -> UserModel | None:
+    """Get active user by email.
+
+    Args:
+        session: Database session
+        email: Email address
+
+    Returns:
+        UserModel or None if not found or inactive
+    """
+    return session.scalar(
+        select(UserModel).where(
+            UserModel.email == email,
+            UserModel.is_active == 1,
+            UserModel.deleted_at.is_(None),
+        )
+    )
+
+
+def get_user_by_username(session: Session, username: str) -> UserModel | None:
+    """Get active user by username.
+
+    Args:
+        session: Database session
+        username: Username
+
+    Returns:
+        UserModel or None if not found or inactive
+    """
+    return session.scalar(
+        select(UserModel).where(
+            UserModel.username == username,
+            UserModel.is_active == 1,
+            UserModel.deleted_at.is_(None),
+        )
+    )
+
+
+def get_user_by_id(session: Session, user_id: str) -> UserModel | None:
+    """Get active user by user ID.
+
+    Args:
+        session: Database session
+        user_id: User ID
+
+    Returns:
+        UserModel or None if not found or inactive
+    """
+    return session.scalar(
+        select(UserModel).where(
+            UserModel.user_id == user_id,
+            UserModel.is_active == 1,
+            UserModel.deleted_at.is_(None),
+        )
+    )
+
+
+def check_email_available(session: Session, email: str) -> bool:
+    """Check if email is available for registration.
+
+    Only checks active users (soft-deleted users' emails can be reused).
+
+    Args:
+        session: Database session
+        email: Email to check
+
+    Returns:
+        True if email is available (not used by any active user)
+    """
+    existing = session.scalar(
+        select(UserModel).where(
+            UserModel.email == email,
+            UserModel.is_active == 1,
+            UserModel.deleted_at.is_(None),
+        )
+    )
+    return existing is None
+
+
+def check_username_available(session: Session, username: str) -> bool:
+    """Check if username is available for registration.
+
+    Only checks active users (soft-deleted users' usernames can be reused).
+
+    Args:
+        session: Database session
+        username: Username to check
+
+    Returns:
+        True if username is available (not used by any active user)
+    """
+    existing = session.scalar(
+        select(UserModel).where(
+            UserModel.username == username,
+            UserModel.is_active == 1,
+            UserModel.deleted_at.is_(None),
+        )
+    )
+    return existing is None
+
+
+def validate_user_uniqueness(
+    session: Session,
+    email: str | None = None,
+    username: str | None = None,
+) -> None:
+    """Validate that email and username are unique among active users.
+
+    This is used for SQLite < 3.8.0 where partial indexes are not supported.
+
+    Args:
+        session: Database session
+        email: Email to check (optional)
+        username: Username to check (optional)
+
+    Raises:
+        ValueError: If email or username already exists
+    """
+    if email and not check_email_available(session, email):
+        raise ValueError(f"Email {email} already exists")
+
+    if username and not check_username_available(session, username):
+        raise ValueError(f"Username {username} already exists")
 
 
 class DatabaseLocalAuth(LocalAuth):

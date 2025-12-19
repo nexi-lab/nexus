@@ -1486,44 +1486,52 @@ class NexusFSReBACMixin:
         tenant_id: str | None = None,  # noqa: ARG002 - Reserved for future tenant filtering
         limit: int = 100,
         offset: int = 0,
-    ) -> list[dict[str, Any]]:
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
         """List shares created by the current tenant (resources shared with others).
+
+        Uses iterator caching for efficient pagination (Issue #735).
 
         Args:
             resource: Filter by specific resource (optional)
             tenant_id: Tenant ID to list shares for (defaults to current tenant)
             limit: Maximum number of results
             offset: Number of results to skip
+            cursor: Pagination cursor from previous request
 
         Returns:
-            List of share info dictionaries with keys:
+            Dictionary with keys:
+            - items: List of share info dictionaries
+            - next_cursor: Cursor for next page (None if no more)
+            - total_count: Total number of shares
+            - has_more: Boolean indicating if more pages exist
+
+            Each share info dict has keys:
             - share_id: Unique share identifier
             - resource_type: Type of shared resource
             - resource_id: ID of shared resource
             - recipient_id: User the resource is shared with
-            - permission_level: "viewer" or "editor"
+            - permission_level: "viewer", "editor", or "owner"
             - created_at: When the share was created
             - expires_at: When the share expires (if set)
 
         Examples:
             >>> # List all outgoing shares
-            >>> shares = nx.list_outgoing_shares()
-            >>> for share in shares:
+            >>> result = nx.list_outgoing_shares()
+            >>> for share in result["items"]:
             ...     print(f"{share['resource_id']} -> {share['recipient_id']}")
 
-            >>> # List shares for a specific file
-            >>> shares = nx.list_outgoing_shares(resource=("file", "/doc.txt"))
+            >>> # Paginated iteration with cursor
+            >>> result = nx.list_outgoing_shares(limit=50)
+            >>> while result["has_more"]:
+            ...     result = nx.list_outgoing_shares(limit=50, cursor=result["next_cursor"])
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
 
-        # Query for all shared-* relation tuples (N+1 FIX: single query with relation_in)
-        all_tuples = self.rebac_list_tuples(
-            relation_in=["shared-viewer", "shared-editor", "shared-owner"],
-            object=resource,
-        )
+        from nexus.core.rebac_iterator_cache import CursorExpiredError
 
         # Map relation back to permission level
         relation_to_level = {
@@ -1532,21 +1540,72 @@ class NexusFSReBACMixin:
             "shared-owner": "owner",
         }
 
-        # Transform to share info format
-        shares = []
-        for t in all_tuples[offset : offset + limit]:
-            share_info = {
-                "share_id": t.get("tuple_id"),
-                "resource_type": t.get("object_type"),
-                "resource_id": t.get("object_id"),
-                "recipient_id": t.get("subject_id"),
-                "permission_level": relation_to_level.get(t.get("relation") or "", "viewer"),
-                "created_at": t.get("created_at"),
-                "expires_at": t.get("expires_at"),
-            }
-            shares.append(share_info)
+        def _transform_tuples(tuples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            """Transform raw tuples to share info format."""
+            return [
+                {
+                    "share_id": t.get("tuple_id"),
+                    "resource_type": t.get("object_type"),
+                    "resource_id": t.get("object_id"),
+                    "recipient_id": t.get("subject_id"),
+                    "permission_level": relation_to_level.get(t.get("relation") or "", "viewer"),
+                    "created_at": t.get("created_at"),
+                    "expires_at": t.get("expires_at"),
+                }
+                for t in tuples
+            ]
 
-        return shares
+        def _compute_shares() -> list[dict[str, Any]]:
+            """Compute all shares (called on cache miss)."""
+            all_tuples = self.rebac_list_tuples(
+                relation_in=["shared-viewer", "shared-editor", "shared-owner"],
+                object=resource,
+            )
+            return _transform_tuples(all_tuples)
+
+        # Get current tenant ID for cache isolation
+        current_tenant = getattr(self, "_current_tenant_id", "default")
+
+        # Try to use cursor-based pagination
+        if cursor:
+            try:
+                items, next_cursor, total = self._rebac_manager._iterator_cache.get_page(
+                    cursor_id=cursor,
+                    offset=offset,
+                    limit=limit,
+                )
+                return {
+                    "items": items,
+                    "next_cursor": next_cursor,
+                    "total_count": total,
+                    "has_more": next_cursor is not None,
+                }
+            except CursorExpiredError:
+                # Fall through to recompute
+                pass
+
+        # Compute query hash for cache key
+        resource_str = f"{resource[0]}:{resource[1]}" if resource else "all"
+        query_hash = f"outgoing:{current_tenant}:{resource_str}"
+
+        # Get or create cached results
+        cursor_id, all_results, total = self._rebac_manager._iterator_cache.get_or_create(
+            query_hash=query_hash,
+            tenant_id=current_tenant,
+            compute_fn=_compute_shares,
+        )
+
+        # Get requested page
+        items = all_results[offset : offset + limit]
+        has_more = offset + limit < total
+        next_cursor = cursor_id if has_more else None
+
+        return {
+            "items": items,
+            "next_cursor": next_cursor,
+            "total_count": total,
+            "has_more": has_more,
+        }
 
     @rpc_expose(description="List shares I've received (incoming)")
     def list_incoming_shares(
@@ -1554,43 +1613,54 @@ class NexusFSReBACMixin:
         user_id: str,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[dict[str, Any]]:
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
         """List shares received by a user (resources shared with me).
 
         This includes cross-tenant shares from other organizations.
+        Uses iterator caching for efficient pagination (Issue #735).
 
         Args:
             user_id: User ID to list incoming shares for
             limit: Maximum number of results
             offset: Number of results to skip
+            cursor: Pagination cursor from previous request
 
         Returns:
-            List of share info dictionaries with keys:
+            Dictionary with keys:
+            - items: List of share info dictionaries
+            - next_cursor: Cursor for next page (None if no more)
+            - total_count: Total number of shares
+            - has_more: Boolean indicating if more pages exist
+
+            Each share info dict has keys:
             - share_id: Unique share identifier
             - resource_type: Type of shared resource
             - resource_id: ID of shared resource
             - owner_tenant_id: Tenant that owns the resource
-            - permission_level: "viewer" or "editor"
+            - permission_level: "viewer", "editor", or "owner"
             - created_at: When the share was created
             - expires_at: When the share expires (if set)
 
         Examples:
             >>> # List all resources shared with me
-            >>> shares = nx.list_incoming_shares(user_id="alice@mycompany.com")
-            >>> for share in shares:
+            >>> result = nx.list_incoming_shares(user_id="alice@mycompany.com")
+            >>> for share in result["items"]:
             ...     print(f"{share['resource_id']} from {share['owner_tenant_id']}")
+
+            >>> # Paginated iteration with cursor
+            >>> result = nx.list_incoming_shares(user_id="alice@mycompany.com", limit=50)
+            >>> while result["has_more"]:
+            ...     result = nx.list_incoming_shares(
+            ...         user_id="alice@mycompany.com", limit=50, cursor=result["next_cursor"]
+            ...     )
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
 
-        # Query for all shared-* relation tuples where this user is the subject
-        # This finds shares across all tenants (N+1 FIX: single query with relation_in)
-        all_tuples = self.rebac_list_tuples(
-            subject=("user", user_id),
-            relation_in=["shared-viewer", "shared-editor", "shared-owner"],
-        )
+        from nexus.core.rebac_iterator_cache import CursorExpiredError
 
         # Map relation back to permission level
         relation_to_level = {
@@ -1599,21 +1669,71 @@ class NexusFSReBACMixin:
             "shared-owner": "owner",
         }
 
-        # Transform to share info format
-        shares = []
-        for t in all_tuples[offset : offset + limit]:
-            share_info = {
-                "share_id": t.get("tuple_id"),
-                "resource_type": t.get("object_type"),
-                "resource_id": t.get("object_id"),
-                "owner_tenant_id": t.get("tenant_id"),
-                "permission_level": relation_to_level.get(t.get("relation") or "", "viewer"),
-                "created_at": t.get("created_at"),
-                "expires_at": t.get("expires_at"),
-            }
-            shares.append(share_info)
+        def _transform_tuples(tuples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            """Transform raw tuples to share info format."""
+            return [
+                {
+                    "share_id": t.get("tuple_id"),
+                    "resource_type": t.get("object_type"),
+                    "resource_id": t.get("object_id"),
+                    "owner_tenant_id": t.get("tenant_id"),
+                    "permission_level": relation_to_level.get(t.get("relation") or "", "viewer"),
+                    "created_at": t.get("created_at"),
+                    "expires_at": t.get("expires_at"),
+                }
+                for t in tuples
+            ]
 
-        return shares
+        def _compute_shares() -> list[dict[str, Any]]:
+            """Compute all shares (called on cache miss)."""
+            all_tuples = self.rebac_list_tuples(
+                subject=("user", user_id),
+                relation_in=["shared-viewer", "shared-editor", "shared-owner"],
+            )
+            return _transform_tuples(all_tuples)
+
+        # Get current tenant ID for cache isolation
+        current_tenant = getattr(self, "_current_tenant_id", "default")
+
+        # Try to use cursor-based pagination
+        if cursor:
+            try:
+                items, next_cursor, total = self._rebac_manager._iterator_cache.get_page(
+                    cursor_id=cursor,
+                    offset=offset,
+                    limit=limit,
+                )
+                return {
+                    "items": items,
+                    "next_cursor": next_cursor,
+                    "total_count": total,
+                    "has_more": next_cursor is not None,
+                }
+            except CursorExpiredError:
+                # Fall through to recompute
+                pass
+
+        # Compute query hash for cache key
+        query_hash = f"incoming:{current_tenant}:{user_id}"
+
+        # Get or create cached results
+        cursor_id, all_results, total = self._rebac_manager._iterator_cache.get_or_create(
+            query_hash=query_hash,
+            tenant_id=current_tenant,
+            compute_fn=_compute_shares,
+        )
+
+        # Get requested page
+        items = all_results[offset : offset + limit]
+        has_more = offset + limit < total
+        next_cursor = cursor_id if has_more else None
+
+        return {
+            "items": items,
+            "next_cursor": next_cursor,
+            "total_count": total,
+            "has_more": has_more,
+        }
 
     # =========================================================================
     # Dynamic Viewer - Column-level Permissions for Data Files

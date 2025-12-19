@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
     from nexus.core.leopard import LeopardIndex
+    from nexus.core.rebac_iterator_cache import IteratorCache
     from nexus.core.tiger_cache import TigerCache, TigerCacheUpdater
 
 
@@ -243,6 +244,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 tiger_cache=self._tiger_cache,
                 rebac_manager=self,
             )
+
+        # Iterator cache for paginated list operations (Issue #722)
+        from nexus.core.rebac_iterator_cache import IteratorCache
+
+        self._iterator_cache: IteratorCache = IteratorCache(
+            max_size=1000,
+            ttl_seconds=cache_ttl_seconds,
+        )
 
     def rebac_check(
         self,
@@ -2186,18 +2195,19 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 if is_postgresql:
                     # PostgreSQL: Use UNNEST for efficient bulk lookup (50x faster than temp tables)
                     # See: https://www.atdatabases.org/blog/2022/01/21/optimizing-postgres-using-unnest
+                    # Note: Use %s placeholders for psycopg2/psycopg3 compatibility (not $1 asyncpg style)
                     if self.enforce_tenant_isolation:
                         query = """
                             WITH entity_list AS (
-                                SELECT unnest($1::text[]) AS entity_type,
-                                       unnest($2::text[]) AS entity_id
+                                SELECT unnest(%s::text[]) AS entity_type,
+                                       unnest(%s::text[]) AS entity_id
                             )
                             SELECT DISTINCT
                                 t.subject_type, t.subject_id, t.subject_relation,
                                 t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
                             FROM rebac_tuples t
-                            WHERE t.tenant_id = $3
-                              AND (t.expires_at IS NULL OR t.expires_at >= $4)
+                            WHERE t.tenant_id = %s
+                              AND (t.expires_at IS NULL OR t.expires_at >= %s)
                               AND (
                                   EXISTS (SELECT 1 FROM entity_list e WHERE t.subject_type = e.entity_type AND t.subject_id = e.entity_id)
                                   OR EXISTS (SELECT 1 FROM entity_list e WHERE t.object_type = e.entity_type AND t.object_id = e.entity_id)
@@ -2207,14 +2217,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     else:
                         query = """
                             WITH entity_list AS (
-                                SELECT unnest($1::text[]) AS entity_type,
-                                       unnest($2::text[]) AS entity_id
+                                SELECT unnest(%s::text[]) AS entity_type,
+                                       unnest(%s::text[]) AS entity_id
                             )
                             SELECT DISTINCT
                                 t.subject_type, t.subject_id, t.subject_relation,
                                 t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
                             FROM rebac_tuples t
-                            WHERE (t.expires_at IS NULL OR t.expires_at >= $3)
+                            WHERE (t.expires_at IS NULL OR t.expires_at >= %s)
                               AND (
                                   EXISTS (SELECT 1 FROM entity_list e WHERE t.subject_type = e.entity_type AND t.subject_id = e.entity_id)
                                   OR EXISTS (SELECT 1 FROM entity_list e WHERE t.object_type = e.entity_type AND t.object_id = e.entity_id)
@@ -2313,17 +2323,18 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 subject_ids = [s[1] for s in all_subjects_list]
 
                 if is_postgresql:
+                    # Note: Use %s placeholders for psycopg2/psycopg3 compatibility (not $1 asyncpg style)
                     cross_tenant_query = """
                         WITH subject_list AS (
-                            SELECT unnest($1::text[]) AS subject_type,
-                                   unnest($2::text[]) AS subject_id
+                            SELECT unnest(%s::text[]) AS subject_type,
+                                   unnest(%s::text[]) AS subject_id
                         )
                         SELECT DISTINCT
                             t.subject_type, t.subject_id, t.subject_relation,
                             t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
                         FROM rebac_tuples t
-                        WHERE t.relation = ANY($3::text[])
-                          AND (t.expires_at IS NULL OR t.expires_at >= $4)
+                        WHERE t.relation = ANY(%s::text[])
+                          AND (t.expires_at IS NULL OR t.expires_at >= %s)
                           AND EXISTS (
                               SELECT 1 FROM subject_list s
                               WHERE t.subject_type = s.subject_type AND t.subject_id = s.subject_id
@@ -2462,9 +2473,17 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         from nexus.core.rebac_fast import check_permissions_bulk_with_fallback, is_rust_available
 
         rust_success = False
-        if is_rust_available() and len(cache_misses) >= 10:
+        rust_available = is_rust_available()
+        logger.warning(
+            f"[BULK-DEBUG] cache_misses={len(cache_misses)}, rust_available={rust_available}, tuples_graph={len(tuples_graph)}"
+        )
+
+        # Changed threshold from >= 10 to >= 1 to always use Rust when available
+        if rust_available and len(cache_misses) >= 1:
             try:
-                logger.debug(f"⚡ Attempting Rust acceleration for {len(cache_misses)} checks")
+                logger.warning(
+                    f"⚡ [BULK-DEBUG] Attempting Rust acceleration for {len(cache_misses)} checks"
+                )
 
                 # Get all namespace configs
                 object_types = {obj[0] for _, _, obj in cache_misses}
@@ -2517,15 +2536,21 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     )
 
                 rust_success = True
-                logger.debug(f"✅ Rust acceleration successful for {len(cache_misses)} checks")
+                logger.warning(
+                    f"✅ [BULK-DEBUG] Rust acceleration successful for {len(cache_misses)} checks"
+                )
 
             except Exception as e:
-                logger.warning(f"Rust acceleration failed: {e}, falling back to Python")
+                logger.warning(
+                    f"[BULK-DEBUG] Rust acceleration failed: {e}, falling back to Python"
+                )
                 rust_success = False
 
         # FALLBACK TO PYTHON if Rust not available or failed
         if not rust_success:
-            logger.debug(f"🐍 Using Python for {len(cache_misses)} checks")
+            logger.warning(
+                f"🐍 [BULK-DEBUG] Using SLOW Python path for {len(cache_misses)} checks (rust_available={rust_available})"
+            )
             for check in cache_misses:
                 subject, permission, obj = check
                 subject_entity = Entity(subject[0], subject[1])

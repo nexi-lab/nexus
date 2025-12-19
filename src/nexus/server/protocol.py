@@ -546,6 +546,7 @@ class ListOutgoingSharesParams:
     tenant_id: str | None = None
     limit: int = 100
     offset: int = 0
+    cursor: str | None = None
 
 
 @dataclass
@@ -555,6 +556,7 @@ class ListIncomingSharesParams:
     user_id: str
     limit: int = 100
     offset: int = 0
+    cursor: str | None = None
 
 
 # Public access params

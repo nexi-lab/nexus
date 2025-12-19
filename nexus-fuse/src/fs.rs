@@ -371,42 +371,44 @@ impl Filesystem for NexusFs {
             }
         };
 
-        // Check directory cache
-        let entries = {
+        // Check directory cache - use Option to distinguish cache miss from empty directory
+        let cached_entries: Option<Vec<FileEntry>> = {
             let mut cache = self.dir_cache.lock().unwrap();
             if let Some((entries, cached_at)) = cache.get(&ino) {
                 if cached_at.elapsed().unwrap_or(Duration::MAX) < ATTR_TTL {
-                    entries.clone()
+                    Some(entries.clone())  // Cache hit (may be empty dir)
                 } else {
                     cache.pop(&ino);
-                    Vec::new()
+                    None  // Cache expired
                 }
             } else {
-                Vec::new()
+                None  // Cache miss
             }
         };
 
-        let entries = if entries.is_empty() {
-            match self.client.list(&path) {
-                Ok(entries) => {
-                    // Cache the result
-                    let mut cache = self.dir_cache.lock().unwrap();
-                    cache.put(ino, (entries.clone(), SystemTime::now()));
-                    entries
-                }
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg.contains("not found") {
-                        reply.error(ENOENT);
-                    } else {
-                        error!("readdir error for {}: {}", path, e);
-                        reply.error(EIO);
+        let entries = match cached_entries {
+            Some(entries) => entries,  // Cache hit - use cached (even if empty)
+            None => {
+                // Cache miss - fetch from server
+                match self.client.list(&path) {
+                    Ok(entries) => {
+                        // Cache the result
+                        let mut cache = self.dir_cache.lock().unwrap();
+                        cache.put(ino, (entries.clone(), SystemTime::now()));
+                        entries
                     }
-                    return;
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg.contains("not found") {
+                            reply.error(ENOENT);
+                        } else {
+                            error!("readdir error for {}: {}", path, e);
+                            reply.error(EIO);
+                        }
+                        return;
+                    }
                 }
             }
-        } else {
-            entries
         };
 
         // Build entries with . and ..

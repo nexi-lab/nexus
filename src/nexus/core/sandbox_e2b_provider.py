@@ -371,7 +371,9 @@ class E2BSandboxProvider(SandboxProvider):
         """
         # Reconnect to sandbox before destroying (no caching to avoid event loop issues)
         try:
-            sandbox = await AsyncSandbox.connect(sandbox_id, api_key=self.api_key)
+            sandbox = await AsyncSandbox.connect(
+                sandbox_id, api_key=self.api_key, request_timeout=60
+            )
         except Exception as e:
             logger.error(f"Failed to connect to sandbox {sandbox_id} for destruction: {e}")
             raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found") from e

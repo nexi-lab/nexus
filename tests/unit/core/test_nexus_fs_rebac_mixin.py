@@ -15,6 +15,8 @@ Tests cover ReBAC operations:
 
 from __future__ import annotations
 
+# Check if pandas is available (required for dynamic viewer tests)
+import importlib.util
 import tempfile
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
@@ -23,6 +25,10 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+
+PANDAS_AVAILABLE = importlib.util.find_spec("pandas") is not None
+
+requires_pandas = pytest.mark.skipif(not PANDAS_AVAILABLE, reason="pandas package not installed")
 
 
 @pytest.fixture
@@ -758,6 +764,7 @@ class TestConsentAndPrivacy:
 class TestDynamicViewer:
     """Tests for dynamic viewer functionality."""
 
+    @requires_pandas
     def test_apply_dynamic_viewer_filter_basic(self, nx: NexusFS) -> None:
         """Test basic dynamic viewer filter application."""
         csv_data = "name,email,age,password\nalice,a@ex.com,30,secret\nbob,b@ex.com,25,pwd\n"
@@ -780,6 +787,7 @@ class TestDynamicViewer:
         assert "secret" not in result["filtered_data"]
         assert "name" in result["filtered_data"]
 
+    @requires_pandas
     def test_apply_dynamic_viewer_filter_with_aggregation(self, nx: NexusFS) -> None:
         """Test dynamic viewer filter with aggregations."""
         csv_data = "name,salary\nalice,50000\nbob,60000\n"

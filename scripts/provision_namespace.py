@@ -414,14 +414,25 @@ def provision_default_skills(
     nexus_dir = Path(__file__).parent.parent
     skills_dir = nexus_dir / "data" / "skills"
 
-    skill_files = [
-        "skill-creator.skill",
-        "pdf.skill",
-        "docx.skill",
-        "xlsx.skill",
-        "pptx.skill",
-        "internal-comms.skill",
-    ]
+    # Check for CI environment - skip heavy skills (docx, xlsx, pptx have 100s of files)
+    # These cause connection pool exhaustion during provisioning
+    skip_heavy_skills = os.getenv("NEXUS_SKIP_HEAVY_SKILLS", "").lower() in ("true", "1", "yes")
+
+    if skip_heavy_skills:
+        print("  ℹ NEXUS_SKIP_HEAVY_SKILLS=true, skipping heavy skills (docx, xlsx, pptx)")
+        skill_files = [
+            "skill-creator.skill",
+            "pdf.skill",
+        ]
+    else:
+        skill_files = [
+            "skill-creator.skill",
+            "pdf.skill",
+            "docx.skill",
+            "xlsx.skill",
+            "pptx.skill",
+            "internal-comms.skill",
+        ]
 
     skill_paths_map = {}  # Map skill name -> skill path
 
@@ -594,7 +605,7 @@ def ensure_admin_api_key(tenant_id: str = "default", env_file: str = ".env") -> 
             print("  ✓ Created new admin API key")
             print(f"  API Key: {raw_key}")
             print(f"  Add this to {env_file} as: NEXUS_API_KEY={raw_key}")
-            return raw_key
+            return str(raw_key)
 
         except Exception as e:
             print(f"  ✗ Failed to create API key: {e}")

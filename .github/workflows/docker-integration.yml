@@ -110,6 +110,13 @@ jobs:
           echo "NEXUS_SKIP_PERMISSIONS=false" >> .env.local
           echo "VITE_SKIP_AUTH=false" >> .env.local
 
+          # ============================================
+          # CI Optimizations
+          # ============================================
+          # Skip heavy skills (docx, xlsx, pptx) during provisioning
+          # These have 100s of files and cause connection pool exhaustion in CI
+          echo "NEXUS_SKIP_HEAVY_SKILLS=true" >> .env.local
+
       - name: Verify credentials setup
         run: |
           echo "✅ Verifying credentials files..."

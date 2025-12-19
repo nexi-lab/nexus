@@ -1,10 +1,19 @@
 """Unit tests for MarkItDownParser."""
 
+# Check if markitdown is available
+import importlib.util
+
 import pytest
 
 from nexus.core.exceptions import ParserError
 from nexus.parsers.markitdown_parser import MarkItDownParser
 from nexus.parsers.types import ParseResult
+
+MARKITDOWN_AVAILABLE = importlib.util.find_spec("markitdown") is not None
+
+requires_markitdown = pytest.mark.skipif(
+    not MARKITDOWN_AVAILABLE, reason="markitdown package not installed"
+)
 
 
 @pytest.fixture
@@ -35,6 +44,7 @@ def test_supported_formats(parser: MarkItDownParser) -> None:
     assert ".csv" in formats
 
 
+@requires_markitdown
 def test_can_parse_supported_formats(parser: MarkItDownParser) -> None:
     """Test that parser correctly identifies supported formats."""
     # Supported formats
@@ -56,6 +66,7 @@ def test_can_parse_unsupported_formats(parser: MarkItDownParser) -> None:
     assert not parser.can_parse("unknown.xyz")
 
 
+@requires_markitdown
 @pytest.mark.asyncio
 async def test_parse_text_file(parser: MarkItDownParser) -> None:
     """Test parsing a plain text file."""
@@ -72,6 +83,7 @@ async def test_parse_text_file(parser: MarkItDownParser) -> None:
     assert len(result.chunks) > 0
 
 
+@requires_markitdown
 @pytest.mark.asyncio
 async def test_parse_markdown_file(parser: MarkItDownParser) -> None:
     """Test parsing a markdown file."""
@@ -97,6 +109,7 @@ This is section 2.
     assert result.structure["has_headings"]
 
 
+@requires_markitdown
 @pytest.mark.asyncio
 async def test_parse_json_file(parser: MarkItDownParser) -> None:
     """Test parsing a JSON file."""
@@ -110,6 +123,7 @@ async def test_parse_json_file(parser: MarkItDownParser) -> None:
     assert result.metadata["format"] == ".json"
 
 
+@requires_markitdown
 @pytest.mark.asyncio
 async def test_parse_with_minimal_metadata(parser: MarkItDownParser) -> None:
     """Test parsing with minimal metadata."""
@@ -122,6 +136,7 @@ async def test_parse_with_minimal_metadata(parser: MarkItDownParser) -> None:
     assert result.metadata["parser"] == "MarkItDownParser"
 
 
+@requires_markitdown
 @pytest.mark.asyncio
 async def test_parse_result_chunks(parser: MarkItDownParser) -> None:
     """Test that parse result contains chunks."""
@@ -140,13 +155,14 @@ Content for heading 2.
         assert chunk.text
 
 
+@requires_markitdown
 @pytest.mark.asyncio
 async def test_parse_empty_file(parser: MarkItDownParser) -> None:
     """Test parsing an empty file."""
     content = b""
 
     # MarkItDown cannot parse empty files, so it should raise a ParserError
-    with pytest.raises(ParserError, match="Failed to parse file"):
+    with pytest.raises(ParserError, match="(Failed to parse file|MarkItDown not initialized)"):
         await parser.parse(content, {"path": "empty.txt"})
 
 

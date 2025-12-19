@@ -180,19 +180,17 @@ impl NexusFs {
             return Ok(attr);
         }
 
-        // Check parent listing to determine if file or directory
-        // This is the source of truth since directories can also be "read" with 0 bytes
-        if self.is_directory(path) {
-            let attr = self.make_attr(inode, "directory", 0, None, None);
-            let mut cache = self.attr_cache.lock().unwrap();
-            cache.put(inode, (attr, SystemTime::now()));
-            return Ok(attr);
-        }
-
-        // Not a directory - try to read as a file
-        match self.read_cached(path) {
-            Ok((data, _etag)) => {
-                let attr = self.make_attr(inode, "file", data.len() as u64, None, None);
+        // Use stat() for single API call instead of is_directory() + read_cached()
+        match self.client.stat(path) {
+            Ok(meta) => {
+                let entry_type = if meta.is_directory { "directory" } else { "file" };
+                let attr = self.make_attr(
+                    inode,
+                    entry_type,
+                    meta.size,
+                    None,
+                    meta.modified_at.as_ref(),
+                );
                 let mut cache = self.attr_cache.lock().unwrap();
                 cache.put(inode, (attr, SystemTime::now()));
                 Ok(attr)

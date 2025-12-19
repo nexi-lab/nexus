@@ -199,9 +199,11 @@ class E2BSandboxProvider(SandboxProvider):
 
             # Use e2b_code_interpreter's run_code for Jupyter-based execution
             # This maintains state between calls (variables persist!)
-            execution = await asyncio.wait_for(
-                sandbox.run_code(code),
+            # Pass timeout to E2B SDK (code execution) and request_timeout (HTTP)
+            execution = await sandbox.run_code(
+                code,
                 timeout=timeout,
+                request_timeout=timeout + 30,  # HTTP timeout with buffer
             )
 
             execution_time = time.time() - start_time

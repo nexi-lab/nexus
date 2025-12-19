@@ -423,6 +423,19 @@ impl Filesystem for NexusFs {
             } else {
                 FileType::RegularFile
             };
+
+            // Pre-populate attr_cache from list() response to avoid N stat() calls
+            // when kernel calls lookup()/getattr() for each entry
+            let entry_type = if entry.entry_type == "directory" { "directory" } else { "file" };
+            let attr = self.make_attr(
+                child_inode,
+                entry_type,
+                entry.size,
+                entry.created_at.as_ref(),
+                entry.updated_at.as_ref(),
+            );
+            self.attr_cache.lock().unwrap().put(child_inode, (attr, SystemTime::now()));
+
             all_entries.push((child_inode, kind, entry.name.clone()));
         }
 

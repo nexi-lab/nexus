@@ -40,15 +40,14 @@ pub struct FileEntry {
 /// File metadata from stat.
 #[derive(Debug, Deserialize, Clone)]
 pub struct FileMetadata {
-    pub path: String,
-    #[serde(rename = "type")]
-    pub entry_type: String,
     #[serde(default)]
     pub size: u64,
     #[serde(default)]
-    pub created_at: Option<String>,
+    pub etag: Option<String>,
     #[serde(default)]
-    pub updated_at: Option<String>,
+    pub modified_at: Option<String>,
+    #[serde(default)]
+    pub is_directory: bool,
 }
 
 /// JSON-RPC response wrapper.

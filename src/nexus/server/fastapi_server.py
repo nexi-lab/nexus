@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -101,6 +102,7 @@ class AppState:
     def __init__(self) -> None:
         self.nexus_fs: NexusFS | None = None
         self.auth_provider: Any = None
+        self.user_auth_provider: Any = None  # JWT token authentication
         self.api_key: str | None = None
         self.exposed_methods: dict[str, Any] = {}
         self.async_rebac_manager: Any = None
@@ -188,7 +190,28 @@ async def get_auth_result(
 
     token = authorization[7:]
 
-    # Try auth provider first
+    # Try JWT token authentication first (for web UI users)
+    if _app_state.user_auth_provider:
+        try:
+            result = await _app_state.user_auth_provider.authenticate(token)
+            if result and result.authenticated:
+                return {
+                    "authenticated": result.authenticated,
+                    "is_admin": result.is_admin,
+                    "subject_type": result.subject_type,
+                    "subject_id": result.subject_id,
+                    "tenant_id": result.tenant_id,
+                    "inherit_permissions": result.inherit_permissions
+                    if hasattr(result, "inherit_permissions")
+                    else True,
+                    "metadata": result.metadata if hasattr(result, "metadata") else {},
+                    "x_agent_id": x_agent_id,
+                }
+        except Exception:
+            # JWT validation failed, continue to API key auth
+            pass
+
+    # Try API key authentication (for programmatic access)
     if _app_state.auth_provider:
         result = await _app_state.auth_provider.authenticate(token)
         if result is None:
@@ -352,6 +375,62 @@ def create_app(
     _app_state.auth_provider = auth_provider
     _app_state.database_url = database_url
 
+    # Set up user authentication providers if database URL is provided
+    user_auth_provider = None
+    oauth_user_provider = None
+
+    if database_url:
+        try:
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+
+            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.server.auth.oauth_crypto import OAuthCrypto
+            from nexus.server.auth.oauth_user_auth import OAuthUserAuth
+
+            # Create session factory for user auth
+            engine = create_engine(database_url)
+            session_factory = sessionmaker(bind=engine)
+
+            # Get JWT secret from environment
+            jwt_secret = os.getenv("NEXUS_JWT_SECRET")
+            if not jwt_secret:
+                import secrets
+                jwt_secret = secrets.token_urlsafe(32)
+                logger.warning("NEXUS_JWT_SECRET not set, generated random secret (tokens will be invalid after restart)")
+
+            # Create DatabaseLocalAuth provider
+            user_auth_provider = DatabaseLocalAuth(
+                session_factory=session_factory,
+                jwt_secret=jwt_secret,
+                token_expiry=3600,
+            )
+            logger.info("User authentication (DatabaseLocalAuth) initialized")
+
+            # Create OAuth provider if Google credentials are set
+            google_client_id = os.getenv("GOOGLE_CLIENT_ID")
+            google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+            google_redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5173/oauth/callback")
+
+            if google_client_id and google_client_secret:
+                oauth_crypto = OAuthCrypto()
+                oauth_user_provider = OAuthUserAuth(
+                    session_factory=session_factory,
+                    google_client_id=google_client_id,
+                    google_client_secret=google_client_secret,
+                    google_redirect_uri=google_redirect_uri,
+                    jwt_secret=jwt_secret,
+                    oauth_crypto=oauth_crypto,
+                )
+                logger.info("OAuth user authentication (Google) initialized")
+            else:
+                logger.info("OAuth not configured (missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET)")
+
+        except Exception as e:
+            logger.warning(f"Failed to initialize user authentication: {e}")
+            user_auth_provider = None
+            oauth_user_provider = None
+
     # Discover exposed methods
     _app_state.exposed_methods = _discover_exposed_methods(nexus_fs)
 
@@ -390,6 +469,34 @@ def create_app(
 
     # Register routes
     _register_routes(app)
+
+    # Include auth routes if user auth providers are configured
+    if user_auth_provider or oauth_user_provider:
+        try:
+            from nexus.server.auth import auth_routes
+
+            # Set up auth providers for dependency injection
+            if user_auth_provider:
+                auth_routes.set_auth_provider(user_auth_provider)
+                _app_state.user_auth_provider = user_auth_provider  # Store for RPC endpoints
+            if oauth_user_provider:
+                auth_routes.set_oauth_provider(oauth_user_provider)
+
+            # Include the auth router
+            app.include_router(auth_routes.router)
+            logger.info("Authentication routes registered at /auth")
+
+            # Include the tenant management router
+            try:
+                from nexus.server.auth import tenant_routes
+
+                app.include_router(tenant_routes.router)
+                logger.info("Tenant management routes registered at /api/tenants")
+            except Exception as e:
+                logger.error(f"Failed to register tenant routes: {e}")
+
+        except Exception as e:
+            logger.error(f"Failed to register auth routes: {e}")
 
     return app
 

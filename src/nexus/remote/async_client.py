@@ -1858,7 +1858,8 @@ class AsyncRemoteNexusFS:
             params["agent_id"] = agent_id
         if context is not None:
             params["context"] = context
-        result = await self._call_rpc("sandbox_connect", params)
+        # Mounting can take 10-30s (dependency checks, FUSE startup)
+        result = await self._call_rpc("sandbox_connect", params, read_timeout=60)
         return result  # type: ignore[no-any-return]
 
     async def sandbox_disconnect(

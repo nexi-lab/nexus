@@ -82,12 +82,12 @@ dependencies = [
     "fastmcp>=0.2.0", # Model Context Protocol server
     # Document parsing (Python 3.13 only - not yet compatible with 3.14)
     "markitdown>=0.1.0; python_version < '3.14'",
+    # Fast JSON serialization (2-3x faster than stdlib json)
+    "orjson>=3.10.0",
 ]
 
 [project.optional-dependencies]
 performance = [
-    # Fast JSON serialization (2-3x faster than stdlib json)
-    "orjson>=3.9.0",
     # BLAKE3 hashing fallback when Rust extension unavailable (Issue #582)
     "blake3>=0.3.0",
 ]
@@ -183,7 +183,6 @@ all = [
     "sqlite-vec>=0.1.0",
     "pgvector>=0.3.0",
     "openai>=1.0.0",
-    "orjson>=3.11.0",
     "e2b-code-interpreter>=1.0.0",
 ]
 

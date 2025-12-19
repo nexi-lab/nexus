@@ -114,6 +114,15 @@ jobs:
         run: |
           echo "✅ Verifying credentials files..."
 
+          # Check if this is a PR from a fork (secrets not available)
+          IS_FORK_PR="false"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+              IS_FORK_PR="true"
+              echo "⚠️  This is a PR from a fork - GitHub secrets are not available for security reasons"
+            fi
+          fi
+
           # Check GCS credentials file exists
           if [ -f gcs-credentials.json ]; then
             echo "✅ gcs-credentials.json created ($(wc -c < gcs-credentials.json) bytes)"
@@ -128,13 +137,38 @@ jobs:
             echo "   - Checking required variables..."
 
             # Check ANTHROPIC_API_KEY has a value
-            if grep -q "^ANTHROPIC_API_KEY=" .env.local && [ -n "$(grep "^ANTHROPIC_API_KEY=" .env.local | cut -d'=' -f2-)" ]; then
-              KEY_VALUE=$(grep "^ANTHROPIC_API_KEY=" .env.local | cut -d'=' -f2-)
-              echo "   ✅ ANTHROPIC_API_KEY present (length: ${#KEY_VALUE} chars)"
+            if grep -q "^ANTHROPIC_API_KEY=" .env.local; then
+              KEY_VALUE=$(grep "^ANTHROPIC_API_KEY=" .env.local | cut -d'=' -f2- | tr -d '[:space:]')
+              if [ -n "$KEY_VALUE" ] && [ "$KEY_VALUE" != "" ]; then
+                echo "   ✅ ANTHROPIC_API_KEY present (length: ${#KEY_VALUE} chars)"
+              else
+                if [ "$IS_FORK_PR" = "true" ]; then
+                  echo "   ⚠️  ANTHROPIC_API_KEY is empty (expected for fork PRs)"
+                  echo "   ℹ️  Secrets from upstream repository are not available in fork PRs"
+                  echo "   ℹ️  This is normal and expected - the workflow will continue"
+                else
+                  echo "   ❌ ANTHROPIC_API_KEY is empty or whitespace only"
+                  echo "   DEBUG: Checking .env.local content..."
+                  echo "   Line found: $(grep "^ANTHROPIC_API_KEY=" .env.local | head -c 50)..."
+                  echo ""
+                  echo "   ERROR: ANTHROPIC_API_KEY must be set in GitHub secrets"
+                  echo "   To fix:"
+                  echo "   1. Go to: https://github.com/nexi-lab/nexus/settings/secrets/actions"
+                  echo "   2. Click 'New repository secret'"
+                  echo "   3. Name: ANTHROPIC_API_KEY (exact match, case-sensitive)"
+                  echo "   4. Value: your-api-key-here"
+                  echo "   5. Click 'Add secret'"
+                  exit 1
+                fi
+              fi
             else
-              echo "   ❌ ANTHROPIC_API_KEY missing or empty"
-              echo "   ERROR: ANTHROPIC_API_KEY must be set in GitHub secrets"
-              exit 1
+              if [ "$IS_FORK_PR" = "true" ]; then
+                echo "   ⚠️  ANTHROPIC_API_KEY line not found (expected for fork PRs)"
+              else
+                echo "   ❌ ANTHROPIC_API_KEY line not found in .env.local"
+                echo "   ERROR: ANTHROPIC_API_KEY must be set in GitHub secrets"
+                exit 1
+              fi
             fi
 
             grep -q "POSTGRES_DB" .env.local && echo "   ✅ POSTGRES_DB present" || echo "   ❌ POSTGRES_DB missing"

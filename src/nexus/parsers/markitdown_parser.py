@@ -69,21 +69,23 @@ class MarkItDownParser(Parser):
         self._enable_ocr = enable_ocr
         self._enable_transcription = enable_transcription
         self._markitdown: Any = None
-        self._initialize_markitdown()
+        self._available = self._initialize_markitdown()
 
-    def _initialize_markitdown(self) -> None:
-        """Lazily initialize the MarkItDown converter."""
+    def _initialize_markitdown(self) -> bool:
+        """Lazily initialize the MarkItDown converter.
+
+        Returns:
+            True if MarkItDown is available, False otherwise.
+        """
         try:
             from markitdown import MarkItDown
 
             self._markitdown = MarkItDown()
             logger.info("MarkItDown parser initialized successfully")
-        except ImportError as e:
-            logger.error("Failed to import MarkItDown. Install with: pip install markitdown")
-            raise ParserError(
-                "MarkItDown library not available. Install with: pip install markitdown",
-                parser=self.name,
-            ) from e
+            return True
+        except ImportError:
+            logger.debug("MarkItDown not installed. Install with: pip install markitdown")
+            return False
 
     def can_parse(self, file_path: str, mime_type: str | None = None) -> bool:
         """Check if this parser can handle the file.
@@ -93,8 +95,10 @@ class MarkItDownParser(Parser):
             mime_type: Optional MIME type (currently not used for MarkItDown)
 
         Returns:
-            True if the file extension is supported
+            True if MarkItDown is available and the file extension is supported
         """
+        if not self._available:
+            return False
         _ = mime_type  # Currently unused, but part of Parser interface
         ext = self._get_file_extension(file_path)
         return ext in self._SUPPORTED_FORMATS

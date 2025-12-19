@@ -103,6 +103,10 @@ class ReBACManager:
 
         self.SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
+        # Track DBAPI to SQLAlchemy connection mapping for proper cleanup
+        # (sqlite3.Connection in Python 3.13+ doesn't allow setting arbitrary attributes)
+        self._conn_map: dict[int, Any] = {}
+
     def _get_connection(self) -> Any:
         """Get a DBAPI connection from the pool.
 
@@ -117,9 +121,10 @@ class ReBACManager:
         """
         # Use engine.connect() instead of raw_connection() to leverage pool_pre_ping
         sa_conn = self.engine.connect()
-        # Store the SQLAlchemy connection on the DBAPI connection for proper cleanup
+        # Store the SQLAlchemy connection in a mapping dict for proper cleanup
+        # (sqlite3.Connection in Python 3.13+ doesn't allow setting arbitrary attributes)
         dbapi_conn = sa_conn.connection.dbapi_connection
-        dbapi_conn._sa_conn = sa_conn  # type: ignore[union-attr]
+        self._conn_map[id(dbapi_conn)] = sa_conn
         return dbapi_conn
 
     def _close_connection(self, conn: Any) -> None:
@@ -131,9 +136,12 @@ class ReBACManager:
         import contextlib
 
         # Close via SQLAlchemy connection if available (returns to pool properly)
-        if hasattr(conn, "_sa_conn"):
+        conn_id = id(conn)
+        if conn_id in self._conn_map:
             with contextlib.suppress(Exception):
-                conn._sa_conn.close()
+                self._conn_map[conn_id].close()
+            # Remove from mapping
+            self._conn_map.pop(conn_id, None)
         else:
             # Fallback to direct close
             with contextlib.suppress(Exception):

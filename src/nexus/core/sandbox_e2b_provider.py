@@ -469,7 +469,7 @@ class E2BSandboxProvider(SandboxProvider):
         logger.info(f"Mounting Nexus at {mount_path} in sandbox {sandbox_id}")
 
         # Create mount directory
-        mkdir_result = await sandbox.commands.run(f"sudo mkdir -p {mount_path}")
+        mkdir_result = await sandbox.commands.run(f"sudo mkdir -p {mount_path}", timeout=30)
         if mkdir_result.exit_code != 0:
             error_msg = f"Failed to create mount directory: {mkdir_result.stderr}"
             logger.error(error_msg)
@@ -745,7 +745,12 @@ except Exception as e:
         # DO NOT cache - cached sandbox objects have asyncio objects bound to specific event loops
         # Each request may run in a different event loop, so we must reconnect every time
         try:
-            sandbox = await AsyncSandbox.connect(sandbox_id, api_key=self.api_key)
+            # Pass request_timeout to avoid "context deadline exceeded" errors
+            sandbox = await AsyncSandbox.connect(
+                sandbox_id,
+                api_key=self.api_key,
+                request_timeout=60,  # 60s for reconnection
+            )
             return sandbox
         except Exception as e:
             logger.error(f"Failed to connect to sandbox {sandbox_id}: {e}")

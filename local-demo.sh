@@ -85,7 +85,7 @@ clean_sqlite_artifacts() {
 parse_args() {
     POSTGRES_URL="$DEFAULT_POSTGRES_URL"
     DATA_DIR="$DEFAULT_DATA_DIR"
-    USE_SQLITE=true          # default to SQLite
+    SQLITE=false         # default to PostgreSQL
     START_UI=true            # default to start UI
     START_LANGGRAPH=true     # default to start LangGraph
 
@@ -93,22 +93,26 @@ parse_args() {
         case $1 in
             --postgres-url)
                 POSTGRES_URL="$2"
-                USE_SQLITE=false  # switch to Postgres if URL provided
+                SQLITE=false  # switch to Postgres if URL provided
                 shift 2
                 ;;
             --data-dir)
                 DATA_DIR="$2"
                 shift 2
                 ;;
-            --use-sqlite)
-                USE_SQLITE=true
+            --sqlite)
+                SQLITE=true
+                shift
+                ;;
+            --nosqlite)
+                SQLITE=false
                 shift
                 ;;
             --ui)
                 START_UI=true
                 shift
                 ;;
-            --no-ui)
+            --no-ui|--noui)
                 START_UI=false
                 shift
                 ;;
@@ -116,7 +120,7 @@ parse_args() {
                 START_LANGGRAPH=true
                 shift
                 ;;
-            --no-langgraph)
+            --no-langgraph|--nolanggraph)
                 START_LANGGRAPH=false
                 shift
                 ;;
@@ -324,8 +328,76 @@ ensure_docker_sandbox_image() {
     fi
 }
 
+# Function to check if port 8080 is available
+check_port_8080_available() {
+    # Only check for LISTEN state, not stale connections
+    if lsof -ti :8080 -sTCP:LISTEN >/dev/null 2>&1; then
+        echo -e "${YELLOW}ERROR: Port 8080 is already in use${NC}"
+        echo ""
+        PIDS=$(lsof -ti :8080 -sTCP:LISTEN 2>/dev/null || true)
+        if [ -n "$PIDS" ]; then
+            echo "Process(es) running on port 8080:"
+            lsof -i :8080 -sTCP:LISTEN 2>/dev/null | grep -v "^COMMAND" | while read line; do
+                echo "  $line"
+            done
+            echo ""
+            echo "Stop the server first using one of these commands:"
+            echo "   ./local-demo.sh --stop              # Stop local Nexus server"
+            echo "   ./docker-demo.sh --stop             # Stop Docker-based server"
+            echo ""
+            echo "Or manually kill the process(es):"
+            for PID in $PIDS; do
+                echo "   kill $PID          # Graceful shutdown"
+                echo "   kill -9 $PID       # Force kill (if needed)"
+            done
+            echo ""
+        fi
+        return 1
+    fi
+    return 0
+}
+
+# Function to check Docker is accessible (simple version)
+check_docker_ready() {
+    # Quick check - if Docker works, return immediately
+    if docker info >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # Docker not ready - wait a bit for Docker Desktop to start
+    echo -e "${YELLOW}Docker daemon not ready, waiting...${NC}"
+
+    # Try to start Docker Desktop on macOS if not running
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        if ! pgrep -f "Docker.app" >/dev/null 2>&1; then
+            echo "Starting Docker Desktop..."
+            open --background -a Docker 2>/dev/null || true
+        fi
+    fi
+
+    # Wait up to 30 seconds for Docker to become ready
+    for i in {1..30}; do
+        if docker info >/dev/null 2>&1; then
+            echo -e "${GREEN}✓ Docker is ready${NC}"
+            return 0
+        fi
+        sleep 1
+    done
+
+    # Still not ready
+    echo -e "${RED}ERROR: Cannot connect to Docker daemon${NC}"
+    echo ""
+    echo "Please ensure Docker is running and try again."
+    return 1
+}
+
 # Function to ensure PostgreSQL is running
 ensure_postgres_running() {
+    # Check Docker is ready before proceeding
+    if ! check_docker_ready; then
+        exit 1
+    fi
+    
     # Use configuration from config file
     CONTAINER_NAME="${POSTGRES_CONTAINER}"
     DB_NAME="${POSTGRES_DB}"
@@ -474,6 +546,11 @@ start_server() {
     echo "╚═══════════════════════════════════════════╝"
     echo ""
 
+    # Check if port 8080 is available FIRST before any other setup work
+    if ! check_port_8080_available; then
+        exit 1
+    fi
+
     # If data directory is empty, auto-init (no prompt)
     DATA_PATH=$(get_data_path "$DATA_DIR")
     if [ -z "$(ls -A "$DATA_PATH" 2>/dev/null)" ]; then
@@ -484,7 +561,7 @@ start_server() {
     fi
 
     # Handle database setup based on mode
-    if [ "$USE_SQLITE" = true ]; then
+    if [ "$SQLITE" = true ]; then
         echo -e "${GREEN}Using SQLite database (embedded mode)${NC}"
         # Set SQLite database URL
         DATA_PATH=$(get_data_path "$DATA_DIR")
@@ -524,16 +601,6 @@ start_server() {
         fi
     fi
 
-    # Check if port 8080 is already in use
-    if lsof -ti :8080 >/dev/null 2>&1; then
-        echo -e "${YELLOW}WARNING: Port 8080 is already in use${NC}"
-        echo ""
-        echo "This is likely the Docker nexus-server. Stop it first:"
-        echo "   ./local-demo.sh --stop"
-        echo ""
-        exit 1
-    fi
-
     # Load environment variables from .env.local
     if [ -f .env.local ]; then
         set -a
@@ -570,7 +637,7 @@ start_server() {
     echo -e "${BLUE}Configuration:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  Config File:  ./configs/config.demo.yaml"
-    if [ "$USE_SQLITE" = true ]; then
+    if [ "$SQLITE" = true ]; then
         echo "  Database:     SQLite (${DATA_PATH}/nexus.db)"
     else
         echo "  Database:     $NEXUS_DB_PATH"
@@ -612,22 +679,91 @@ start_server() {
 
     # Setup cleanup on exit
     cleanup() {
+        local exit_code=$?
         echo ""
         echo "Shutting down services..."
+
+        # Stop Nexus server first (gracefully)
+        if [ -n "$NEXUS_PID" ] && kill -0 $NEXUS_PID 2>/dev/null; then
+            echo "Stopping Nexus server (PID: $NEXUS_PID)..."
+            kill $NEXUS_PID 2>/dev/null || true
+
+            # Wait for graceful shutdown (up to 10 seconds)
+            for i in {1..10}; do
+                if ! kill -0 $NEXUS_PID 2>/dev/null; then
+                    echo "✓ Nexus server stopped gracefully"
+                    break
+                fi
+                sleep 1
+            done
+
+            # Force kill if still running
+            if kill -0 $NEXUS_PID 2>/dev/null; then
+                echo "Force stopping Nexus server..."
+                kill -9 $NEXUS_PID 2>/dev/null || true
+                sleep 1
+            fi
+        fi
+
+        # Stop frontend
         if [ "$START_UI" = true ]; then
             stop_frontend
         fi
+
+        # Stop langgraph
         if [ "$START_LANGGRAPH" = true ]; then
             stop_langgraph
         fi
+
+        # Kill any remaining background jobs from this script
+        local bg_jobs=$(jobs -p)
+        if [ -n "$bg_jobs" ]; then
+            echo "$bg_jobs" | xargs kill 2>/dev/null || true
+        fi
+
+        echo -e "${GREEN}✓ All services stopped${NC}"
+
+        # Exit with 0 on graceful shutdown (Ctrl+C should not return error code)
+        exit 0
     }
     trap cleanup EXIT INT TERM
 
-    # Start the Nexus server
+    # Wait for server to be ready, then open browser (if frontend enabled)
+    if [ "$START_UI" = true ]; then
+        (
+            # Wait for server to be ready (check health endpoint)
+            echo "Waiting for server to be ready..."
+            for i in {1..30}; do
+                if curl -s http://localhost:8080/health >/dev/null 2>&1; then
+                    echo "Server is ready!"
+                    sleep 1  # Give it one more second
+
+                    # Open browser
+                    echo "Opening browser to http://localhost:5173"
+                    if [[ "$OSTYPE" == "darwin"* ]]; then
+                        open "http://localhost:5173" >/dev/null 2>&1 || true
+                    elif command -v xdg-open >/dev/null 2>&1; then
+                        xdg-open "http://localhost:5173" >/dev/null 2>&1 || true
+                    fi
+                    break
+                fi
+                sleep 1
+            done
+        ) &
+    fi
+
+    # Start the Nexus server in background and capture PID
     nexus serve \
         --config ./configs/config.demo.yaml \
         --auth-type database \
-        --async
+        --async &
+    NEXUS_PID=$!
+
+    echo "Nexus server started (PID: $NEXUS_PID)"
+    echo ""
+
+    # Wait for the Nexus server process
+    wait $NEXUS_PID
 }
 
 # Function to stop the server
@@ -642,33 +778,22 @@ stop_server() {
     # Stop langgraph
     stop_langgraph
 
-    # Get all PIDs using port 8080
-    PIDS=$(lsof -ti :8080 2>/dev/null || true)
+    # Check for processes on port 8080 (only LISTEN state, not stale connections)
+    PIDS=$(lsof -ti :8080 -sTCP:LISTEN 2>/dev/null || true)
 
     if [ -n "$PIDS" ]; then
-        echo "Found process(es) on port 8080"
-
-        # Kill each PID
-        for PID in $PIDS; do
-            echo "Stopping PID: $PID"
-
-            # Send SIGTERM for graceful shutdown
-            if kill -0 $PID 2>/dev/null; then
-                kill -TERM $PID 2>/dev/null || true
-            fi
+        echo "Found process(es) on port 8080:"
+        echo ""
+        # Show detailed information about processes
+        lsof -i :8080 -sTCP:LISTEN 2>/dev/null | grep -v "^COMMAND" | while read line; do
+            echo "  $line"
         done
-
-        sleep 2
-
-        # Force kill any remaining processes
+        echo ""
+        echo "To stop these processes, run:"
         for PID in $PIDS; do
-            if kill -0 $PID 2>/dev/null; then
-                echo "Force killing PID: $PID"
-                kill -9 $PID 2>/dev/null || true
-            fi
+            echo "  kill $PID          # Graceful shutdown"
+            echo "  kill -9 $PID       # Force kill (if needed)"
         done
-
-        echo -e "${GREEN}✓ Nexus server stopped${NC}"
         echo ""
     else
         echo "No server running on port 8080"
@@ -700,7 +825,7 @@ init_database() {
     echo -e "  ${GREEN}✓ Data directory reset${NC}"
 
     # Handle database setup based on mode
-    if [ "$USE_SQLITE" = true ]; then
+    if [ "$SQLITE" = true ]; then
         echo -e "${GREEN}Using SQLite database (embedded mode)${NC}"
         # Set SQLite database URL
         POSTGRES_URL="sqlite:///${DATA_PATH}/nexus.db"
@@ -717,7 +842,7 @@ init_database() {
     echo ""
     echo -e "${BLUE}Configuration:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    if [ "$USE_SQLITE" = true ]; then
+    if [ "$SQLITE" = true ]; then
         echo "  Database:     SQLite (${DATA_PATH}/nexus.db)"
     else
         echo "  Database:     PostgreSQL ($POSTGRES_URL)"
@@ -739,7 +864,7 @@ init_database() {
     echo ""
     echo "🧹 Clearing existing data..."
 
-    if [ "$USE_SQLITE" = true ]; then
+    if [ "$SQLITE" = true ]; then
         echo "  SQLite database will be recreated at: ${DATA_PATH}/nexus.db"
     else
         # Use configuration from config file
@@ -848,7 +973,7 @@ init_database() {
     echo ""
 
     # Ensure PostgreSQL is running (skip if using SQLite)
-    if [ "$USE_SQLITE" != true ]; then
+    if [ "$SQLITE" != true ]; then
         ensure_postgres_running
     fi
 
@@ -869,41 +994,9 @@ init_database() {
         set +a
     fi
 
-    # Check if port 8080 is already in use and stop it
-    if lsof -ti :8080 >/dev/null 2>&1; then
-        echo -e "${YELLOW}Port 8080 is already in use, stopping existing server...${NC}"
-        echo ""
-
-        # Get all PIDs using port 8080
-        PIDS=$(lsof -ti :8080 2>/dev/null || true)
-
-        if [ -n "$PIDS" ]; then
-            echo "Found process(es) on port 8080"
-
-            # Kill each PID
-            for PID in $PIDS; do
-                echo "Stopping PID: $PID"
-
-                # Send SIGTERM for graceful shutdown
-                if kill -0 $PID 2>/dev/null; then
-                    kill -TERM $PID 2>/dev/null || true
-                fi
-            done
-
-            sleep 2
-
-            # Force kill any remaining processes
-            for PID in $PIDS; do
-                if kill -0 $PID 2>/dev/null; then
-                    echo "Force killing PID: $PID"
-                    kill -9 $PID 2>/dev/null || true
-                fi
-            done
-
-            echo -e "${GREEN}✓ Existing server stopped${NC}"
-            echo ""
-            sleep 1
-        fi
+    # Check if port 8080 is available before starting server
+    if ! check_port_8080_available; then
+        exit 1
     fi
 
     # Ensure Python environment is ready (first-time install support)
@@ -914,7 +1007,7 @@ init_database() {
     echo -e "${BLUE}Configuration:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "  Config File:  ./configs/config.demo.yaml"
-    if [ "$USE_SQLITE" = true ]; then
+    if [ "$SQLITE" = true ]; then
         echo "  Database:     SQLite (${DATA_PATH}/nexus.db)"
     else
         echo "  Database:     PostgreSQL ($POSTGRES_URL)"
@@ -953,14 +1046,52 @@ init_database() {
 
     # Setup cleanup on exit
     cleanup() {
+        local exit_code=$?
         echo ""
         echo "Shutting down services..."
+
+        # Stop Nexus server first (gracefully)
+        if [ -n "$NEXUS_PID" ] && kill -0 $NEXUS_PID 2>/dev/null; then
+            echo "Stopping Nexus server (PID: $NEXUS_PID)..."
+            kill $NEXUS_PID 2>/dev/null || true
+
+            # Wait for graceful shutdown (up to 10 seconds)
+            for i in {1..10}; do
+                if ! kill -0 $NEXUS_PID 2>/dev/null; then
+                    echo "✓ Nexus server stopped gracefully"
+                    break
+                fi
+                sleep 1
+            done
+
+            # Force kill if still running
+            if kill -0 $NEXUS_PID 2>/dev/null; then
+                echo "Force stopping Nexus server..."
+                kill -9 $NEXUS_PID 2>/dev/null || true
+                sleep 1
+            fi
+        fi
+
+        # Stop frontend
         if [ "$START_UI" = true ]; then
             stop_frontend
         fi
+
+        # Stop langgraph
         if [ "$START_LANGGRAPH" = true ]; then
             stop_langgraph
         fi
+
+        # Kill any remaining background jobs from this script
+        local bg_jobs=$(jobs -p)
+        if [ -n "$bg_jobs" ]; then
+            echo "$bg_jobs" | xargs kill 2>/dev/null || true
+        fi
+
+        echo -e "${GREEN}✓ All services stopped${NC}"
+
+        # Exit with 0 on graceful shutdown (Ctrl+C should not return error code)
+        exit 0
     }
     trap cleanup EXIT INT TERM
 
@@ -996,19 +1127,26 @@ init_database() {
             # After provisioning completes, open frontend if requested
             if [ "$START_UI" = true ]; then
                 if command -v open >/dev/null 2>&1; then
-                    open "http://localhost:5137" >/dev/null 2>&1 || true
+                    open "http://localhost:5173" >/dev/null 2>&1 || true
                 elif command -v xdg-open >/dev/null 2>&1; then
-                    xdg-open "http://localhost:5137" >/dev/null 2>&1 || true
+                    xdg-open "http://localhost:5173" >/dev/null 2>&1 || true
                 fi
             fi
         fi
     ) &
 
-    # Start the Nexus server (this blocks)
+    # Start the Nexus server in background and capture PID
     nexus serve \
         --config ./configs/config.demo.yaml \
         --auth-type database \
-        --async
+        --async &
+    NEXUS_PID=$!
+
+    echo "Nexus server started (PID: $NEXUS_PID)"
+    echo ""
+
+    # Wait for the Nexus server process
+    wait $NEXUS_PID
 }
 
 # Main script logic
@@ -1029,33 +1167,44 @@ case "$1" in
         echo "  --stop     Stop local Nexus server"
         echo ""
         echo "Options for --start and --stop:"
-        echo "  --use-sqlite   Use SQLite instead of PostgreSQL (default, no Docker needed)"
+        echo "  --sqlite   Use SQLite instead of PostgreSQL (requires --sqlite flag)"
+        echo "  --nosqlite     Use PostgreSQL instead of SQLite (default)"
         echo "  --postgres-url URL    PostgreSQL connection URL"
         echo "                       (default: $DEFAULT_POSTGRES_URL)"
         echo "  --data-dir PATH       Data directory path"
         echo "                       (default: $DEFAULT_DATA_DIR)"
         echo "  --ui                  Start the frontend (pnpm run dev in nexus-frontend) (default)"
-        echo "  --no-ui              Don't start the frontend"
+        echo "  --no-ui, --noui      Don't start the frontend"
         echo "  --langgraph          Start langgraph dev server (default)"
-        echo "  --no-langgraph       Don't start langgraph"
+        echo "  --no-langgraph, --nolanggraph   Don't start langgraph"
         echo ""
         echo "Examples:"
-        echo "  # Using SQLite (default):"
+        echo "  # Using PostgreSQL (default):"
         echo "  $0 --start"
         echo ""
-        echo "  # Using PostgreSQL:"
+        echo "  # Using SQLite:"
+        echo "  $0 --start --sqlite"
+        echo ""
+        echo "  # Using custom PostgreSQL URL:"
         echo "  $0 --start --postgres-url 'postgresql://user:pass@localhost:5432/db'"
         echo ""
-        echo "  # Start with frontend and langgraph:"
+        echo "  # Start with frontend and langgraph (PostgreSQL default):"
         echo "  $0 --start --ui --langgraph"
-        echo "  $0 --start --use-sqlite --ui --langgraph"
         echo ""
-        echo "  # Custom PostgreSQL URL:"
+        echo "  # Start with SQLite:"
+        echo "  $0 --start --sqlite --ui --langgraph"
+        echo ""
+        echo "  # Start without UI or langgraph:"
+        echo "  $0 --start --noui --nolanggraph"
+        echo ""
+        echo "  # Using custom PostgreSQL URL:"
         echo "  $0 --start --postgres-url 'postgresql://user:pass@localhost:5432/db'"
         echo ""
-        echo "  # Custom data directory:"
+        echo "  # Custom data directory (PostgreSQL):"
         echo "  $0 --start --data-dir '/custom/path'"
-        echo "  $0 --start --use-sqlite --data-dir '/custom/path'"
+        echo ""
+        echo "  # Custom data directory (SQLite):"
+        echo "  $0 --start --sqlite --data-dir '/custom/path'"
         echo ""
         echo "Optional: Enable connectors (GDrive, Gmail) in PostgreSQL mode:"
         echo "  sudo bash -c 'echo \"127.0.0.1    postgres\" >> /etc/hosts'"

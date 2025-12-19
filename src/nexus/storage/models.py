@@ -25,6 +25,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     TextClause,
@@ -1193,6 +1194,56 @@ class ReBACNamespaceModel(Base):
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
+
+
+class ReBACGroupClosureModel(Base):
+    """Leopard-style transitive group closure for O(1) membership lookups.
+
+    Pre-computes transitive group memberships to eliminate recursive queries.
+    Based on Google Zanzibar's Leopard index (Section 2.4.2).
+
+    Examples:
+        If user:alice -> group:team-a -> group:engineering -> group:all-employees,
+        this table stores:
+        - (user, alice, group, team-a, depth=1)
+        - (user, alice, group, engineering, depth=2)
+        - (user, alice, group, all-employees, depth=3)
+
+    Performance:
+        - Read: O(1) - single query to get all transitive groups
+        - Write: O(depth) - update closure when membership changes
+        - Space: O(members x groups)
+
+    Related: Issue #692
+    """
+
+    __tablename__ = "rebac_group_closure"
+
+    # Composite primary key
+    member_type: Mapped[str] = mapped_column(String(50), primary_key=True)
+    member_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    group_type: Mapped[str] = mapped_column(String(50), primary_key=True)
+    group_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+
+    # Metadata
+    depth: Mapped[int] = mapped_column(Integer, nullable=False)  # Distance in hierarchy
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    # Indexes defined in migration (add_leopard_group_closure.py)
+
+    def __repr__(self) -> str:
+        return (
+            f"<ReBACGroupClosureModel("
+            f"{self.member_type}:{self.member_id} -> "
+            f"{self.group_type}:{self.group_id}, depth={self.depth})>"
+        )
 
 
 class ReBACChangelogModel(Base):
@@ -2586,3 +2637,173 @@ class SubscriptionModel(Base):
         """Get custom_metadata as a Python dict."""
         result: dict[str, Any] = json.loads(self.custom_metadata) if self.custom_metadata else {}
         return result
+
+
+# ============================================================================
+# Tiger Cache Tables (Issue #682)
+# ============================================================================
+
+
+class TigerResourceMapModel(Base):
+    """Maps resource UUIDs to int64 IDs for Roaring Bitmap compatibility.
+
+    Roaring Bitmaps require integer IDs, but our resources use UUIDs.
+    This table provides a stable mapping.
+
+    Related: Issue #682
+    """
+
+    __tablename__ = "tiger_resource_map"
+
+    # Auto-increment int64 ID for bitmap storage
+    # Integer for SQLite auto-increment compatibility (SQLite only auto-increments INTEGER PRIMARY KEY)
+    resource_int_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Resource identification
+    resource_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Timestamp
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    __table_args__ = (
+        # Unique constraint on (resource_type, resource_id, tenant_id)
+        UniqueConstraint("resource_type", "resource_id", "tenant_id", name="uq_tiger_resource"),
+        Index("idx_tiger_resource_lookup", "tenant_id", "resource_type", "resource_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TigerResourceMapModel({self.resource_int_id}: {self.resource_type}:{self.resource_id})>"
+
+
+class TigerCacheModel(Base):
+    """Stores pre-materialized permissions as Roaring Bitmaps.
+
+    Each row represents all resources a subject can access with a given permission.
+    The bitmap_data contains a serialized Roaring Bitmap of resource_int_ids.
+
+    Performance:
+        - O(1) lookup for "can user X access resource Y?"
+        - O(intersection) for filtering lists by permission
+
+    Related: Issue #682
+    """
+
+    __tablename__ = "tiger_cache"
+
+    # Primary key (Integer for SQLite auto-increment compatibility)
+    cache_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Subject (who has access)
+    subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Permission type (read, write, execute, etc.)
+    permission: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Resource type (file, directory, etc.)
+    resource_type: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Serialized Roaring Bitmap (binary)
+    bitmap_data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+
+    # Revision for staleness detection
+    revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        # Unique constraint
+        UniqueConstraint(
+            "subject_type",
+            "subject_id",
+            "permission",
+            "resource_type",
+            "tenant_id",
+            name="uq_tiger_cache",
+        ),
+        # Index for fast cache lookup
+        Index(
+            "idx_tiger_cache_lookup",
+            "tenant_id",
+            "subject_type",
+            "subject_id",
+            "permission",
+            "resource_type",
+        ),
+        # Index for revision-based invalidation
+        Index("idx_tiger_cache_revision", "revision"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<TigerCacheModel({self.subject_type}:{self.subject_id} "
+            f"{self.permission} {self.resource_type}, rev={self.revision})>"
+        )
+
+
+class TigerCacheQueueModel(Base):
+    """Queue for async background updates of Tiger Cache.
+
+    When permissions change, entries are added to this queue.
+    A background worker processes the queue to update affected caches.
+
+    Related: Issue #682
+    """
+
+    __tablename__ = "tiger_cache_queue"
+
+    # Primary key
+    # Integer for SQLite auto-increment compatibility
+    queue_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Subject to update
+    subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Permission to recompute
+    permission: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Resource type
+    resource_type: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Tenant
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Priority (lower = higher priority)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+
+    # Status: pending, processing, completed, failed
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Error info if failed
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (Index("idx_tiger_queue_pending", "status", "priority", "created_at"),)
+
+    def __repr__(self) -> str:
+        return (
+            f"<TigerCacheQueueModel(queue_id={self.queue_id}, "
+            f"{self.subject_type}:{self.subject_id}, status={self.status})>"
+        )

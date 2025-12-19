@@ -463,6 +463,7 @@ class RebacCreateParams:
     expires_at: str | None = None
     tenant_id: str | None = None
     column_config: dict[str, Any] | None = None
+    context: dict[str, Any] | None = None  # Operation context for permission checks
 
 
 @dataclass

@@ -7,6 +7,7 @@ Enables team-based permissions, hierarchical access, and dynamic inheritance.
 from __future__ import annotations
 
 import sys
+from typing import Any
 
 import click
 from rich.table import Table
@@ -14,9 +15,9 @@ from rich.table import Table
 from nexus.cli.utils import (
     BackendConfig,
     add_backend_options,
+    add_context_options,
     console,
     get_filesystem,
-    get_tenant_id,
     handle_error,
 )
 
@@ -44,12 +45,7 @@ def rebac() -> None:
 @click.argument("object_type", type=str)
 @click.argument("object_id", type=str)
 @click.option("--expires", type=str, default=None, help="Expiration time (ISO format)")
-@click.option(
-    "--tenant-id",
-    type=str,
-    default=None,
-    help="Tenant ID for multi-tenant isolation (can also use NEXUS_TENANT_ID env var)",
-)
+# Note: --tenant-id is provided by @add_context_options decorator
 @click.option(
     "--subject-relation",
     type=str,
@@ -68,6 +64,7 @@ def rebac() -> None:
     help='JSON column config for dynamic_viewer (e.g., \'{"mode":"whitelist","visible_columns":["name","email"]}\')',
 )
 @add_backend_options
+@add_context_options
 def rebac_create(
     subject_type: str,
     subject_id: str,
@@ -75,11 +72,11 @@ def rebac_create(
     object_type: str,
     object_id: str,
     expires: str | None,
-    tenant_id: str | None,
     subject_relation: str | None,
     wildcard: bool,
     column_config: str | None,
     backend_config: BackendConfig,
+    operation_context: dict[str, Any],
 ) -> None:
     """Create a relationship tuple.
 
@@ -126,8 +123,8 @@ def rebac_create(
                 nx.close()
                 sys.exit(1)
 
-        # Get tenant_id from parameter or environment
-        tenant = get_tenant_id(tenant_id)
+        # Get tenant_id from operation_context (set by @add_context_options)
+        tenant = operation_context.get("tenant")
 
         # Parse column_config JSON if provided
         column_config_dict = None
@@ -157,6 +154,8 @@ def rebac_create(
             subject_display = f"{subject_type}:{subject_id}"
 
         # Create tuple
+        # SECURITY: Pass operation_context for execute permission enforcement
+        # Only owners (execute permission) can create permissions on files
         tuple_id = nx.rebac_create(  # type: ignore[attr-defined]
             subject=subject_tuple,
             relation=relation,
@@ -164,6 +163,7 @@ def rebac_create(
             expires_at=expires_at,
             tenant_id=tenant,
             column_config=column_config_dict,
+            context=operation_context,
         )
 
         nx.close()

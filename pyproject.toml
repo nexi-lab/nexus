@@ -84,6 +84,8 @@ dependencies = [
     "markitdown>=0.1.0; python_version < '3.14'",
     # Fast JSON serialization (2-3x faster than stdlib json)
     "orjson>=3.10.0",
+    # Roaring Bitmaps for Tiger Cache (Issue #682)
+    "pyroaring>=1.0.0",
 ]
 
 [project.optional-dependencies]

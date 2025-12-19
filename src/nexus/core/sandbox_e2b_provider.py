@@ -636,14 +636,15 @@ except Exception as e:
             # Write script to file and run in background with nohup
             script_path = "/tmp/nexus_mount_script.py"
             await sandbox.commands.run(
-                f"cat > {script_path} << 'NEXUS_MOUNT_EOF'\n{mount_script}\nNEXUS_MOUNT_EOF"
+                f"cat > {script_path} << 'NEXUS_MOUNT_EOF'\n{mount_script}\nNEXUS_MOUNT_EOF",
+                timeout=30,
             )
             mount_cmd = f"nohup sudo python3 {script_path} > /tmp/nexus-mount.log 2>&1 &"
             logger.debug(f"Mount command: {mount_cmd}")
             max_wait = 10  # Python mount is slower due to imports
 
         # Run mount in background
-        mount_result = await sandbox.commands.run(mount_cmd)
+        mount_result = await sandbox.commands.run(mount_cmd, timeout=30)
         if mount_result.exit_code != 0:
             error_msg = f"Failed to start mount: {mount_result.stderr}"
             logger.error(error_msg)
@@ -679,13 +680,14 @@ except Exception as e:
             log_stdout = ""
             ps_stdout = ""
             try:
-                log_result = await sandbox.commands.run("cat /tmp/nexus-mount.log 2>&1")
+                log_result = await sandbox.commands.run("cat /tmp/nexus-mount.log 2>&1", timeout=10)
                 log_stdout = log_result.stdout
             except CommandExitException as e:
                 log_stdout = e.stdout or ""
             try:
                 ps_result = await sandbox.commands.run(
-                    "ps aux | grep -E 'nexus|fuse|python' | grep -v grep"
+                    "ps aux | grep -E 'nexus|fuse|python' | grep -v grep",
+                    timeout=10,
                 )
                 ps_stdout = ps_result.stdout
             except CommandExitException as e:

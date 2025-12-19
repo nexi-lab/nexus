@@ -322,6 +322,8 @@ class DatabaseLocalAuth(LocalAuth):
                 "name": user.display_name or user.username or user.email,
             }
 
+            # Email should always exist for login (verified during user lookup)
+            assert user.email is not None, "User email cannot be None during login"
             token = self.create_token(user.email, user_info)
             logger.info(f"Login successful: {identifier} (user_id={user.user_id})")
             return token
@@ -397,7 +399,9 @@ class DatabaseLocalAuth(LocalAuth):
                 user.avatar_url = avatar_url
 
             if metadata is not None:
-                user.user_metadata = metadata
+                import json
+
+                user.user_metadata = json.dumps(metadata)
 
             user.updated_at = datetime.utcnow()
             session.add(user)

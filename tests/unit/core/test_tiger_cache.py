@@ -11,13 +11,11 @@ Related: Issue #682
 """
 
 import pytest
+from pyroaring import BitMap as RoaringBitmap
 from sqlalchemy import create_engine, text
 
 from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 from nexus.core.tiger_cache import (
-    ROARING_AVAILABLE,
-    Bitmap,
-    PythonBitmap,
     TigerCache,
     TigerResourceMap,
 )
@@ -94,52 +92,6 @@ def manager_no_tiger(engine):
     )
     yield mgr
     mgr.close()
-
-
-class TestPythonBitmap:
-    """Tests for the fallback Python bitmap implementation."""
-
-    def test_basic_operations(self):
-        """Test basic bitmap operations."""
-        bitmap = PythonBitmap()
-        assert len(bitmap) == 0
-
-        bitmap.add(1)
-        bitmap.add(5)
-        bitmap.add(10)
-
-        assert len(bitmap) == 3
-        assert 1 in bitmap
-        assert 5 in bitmap
-        assert 10 in bitmap
-        assert 2 not in bitmap
-
-    def test_remove(self):
-        """Test removing elements."""
-        bitmap = PythonBitmap({1, 2, 3})
-        bitmap.remove(2)
-        assert 2 not in bitmap
-        assert 1 in bitmap
-        assert 3 in bitmap
-
-    def test_set_operations(self):
-        """Test intersection and union."""
-        a = PythonBitmap({1, 2, 3})
-        b = PythonBitmap({2, 3, 4})
-
-        intersection = a & b
-        assert set(intersection) == {2, 3}
-
-        union = a | b
-        assert set(union) == {1, 2, 3, 4}
-
-    def test_serialize_deserialize(self):
-        """Test serialization round-trip."""
-        original = PythonBitmap({1, 5, 100, 1000})
-        serialized = original.serialize()
-
-        restored = PythonBitmap.deserialize(serialized)
-        assert set(restored) == {1, 5, 100, 1000}
 
 
 class TestTigerResourceMap:
@@ -381,17 +333,12 @@ class TestTigerCacheIntegration:
         assert result is None  # Not in cache (bob)
 
 
-class TestBitmapCompatibility:
-    """Test compatibility between Roaring and Python bitmaps."""
-
-    @pytest.mark.skipif(not ROARING_AVAILABLE, reason="pyroaring not installed")
-    def test_roaring_available(self):
-        """Test that Roaring is detected when installed."""
-        assert ROARING_AVAILABLE is True
+class TestRoaringBitmap:
+    """Test RoaringBitmap operations."""
 
     def test_bitmap_interface_consistent(self):
-        """Test that Bitmap has consistent interface."""
-        bitmap = Bitmap()
+        """Test that RoaringBitmap has consistent interface."""
+        bitmap = RoaringBitmap()
         bitmap.add(1)
         bitmap.add(2)
 

@@ -202,6 +202,7 @@ class SandboxManager:
         language: str,
         code: str,
         timeout: int = 300,
+        as_script: bool = False,
     ) -> dict[str, Any]:
         """Run code in sandbox.
 
@@ -210,6 +211,8 @@ class SandboxManager:
             language: Programming language
             code: Code to execute
             timeout: Timeout in seconds
+            as_script: If True, run as standalone script (stateless).
+                      If False (default), use Jupyter kernel for Python (stateful).
 
         Returns:
             Dict with stdout, stderr, exit_code, execution_time
@@ -222,7 +225,7 @@ class SandboxManager:
 
         # Run code via provider
         provider = self.providers[metadata.provider]
-        result = await provider.run_code(sandbox_id, language, code, timeout)
+        result = await provider.run_code(sandbox_id, language, code, timeout, as_script=as_script)
 
         # Update last_active_at and expires_at
         now = datetime.now(UTC)

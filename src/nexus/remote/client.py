@@ -4043,6 +4043,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         nexus_url: str | None = None,
         nexus_api_key: str | None = None,
         context: dict | None = None,
+        as_script: bool = False,
     ) -> dict:
         """Run code in a sandbox.
 
@@ -4087,6 +4088,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             params["nexus_api_key"] = nexus_api_key
         if context is not None:
             params["context"] = context
+        if as_script:
+            params["as_script"] = as_script
         # Use execution timeout + 10 seconds buffer for HTTP read timeout
         # This ensures the HTTP request doesn't timeout before code execution completes
         read_timeout = timeout + 10

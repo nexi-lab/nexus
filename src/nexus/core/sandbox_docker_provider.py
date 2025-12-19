@@ -244,6 +244,7 @@ class DockerSandboxProvider(SandboxProvider):
         language: str,
         code: str,
         timeout: int = 300,
+        as_script: bool = False,
     ) -> CodeExecutionResult:
         """Run code in Docker sandbox.
 
@@ -252,6 +253,7 @@ class DockerSandboxProvider(SandboxProvider):
             language: Programming language
             code: Code to execute
             timeout: Execution timeout in seconds
+            as_script: If True, run as standalone script (stateless)
 
         Returns:
             Execution result
@@ -261,6 +263,9 @@ class DockerSandboxProvider(SandboxProvider):
             ExecutionTimeoutError: If execution times out
             UnsupportedLanguageError: If language not supported
         """
+        # Docker always runs as script (stateless), so as_script is ignored
+        _ = as_script
+
         # Validate language
         if language not in self.SUPPORTED_LANGUAGES:
             supported = ", ".join(self.SUPPORTED_LANGUAGES.keys())

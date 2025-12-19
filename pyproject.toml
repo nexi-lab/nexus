@@ -151,6 +151,11 @@ semantic-search-remote = [
     "openai>=1.0.0",
 ]
 
+e2b = [
+    # E2B cloud sandbox support (stateful Python execution via Jupyter kernel)
+    "e2b-code-interpreter>=1.0.0",
+]
+
 # First-party plugins (install manually for now - not yet published to PyPI)
 # anthropic = [
 #     "nexus-plugin-anthropic>=0.1.0",
@@ -169,12 +174,13 @@ all = [
     # All optional features (plugins must be installed manually)
     # Default embedding provider: OpenAI (lightweight, requires API key)
     # Excludes: sentence-transformers (too heavy ~2GB), voyageai (specialized use case)
-    "fusepy>=3.0.1",
+    # Note: fusepy removed - Rust nexus-fuse binary is bundled in the package
     "psycopg2-binary>=2.9.9",
     "sqlite-vec>=0.1.0",
     "pgvector>=0.3.0",
     "openai>=1.0.0",
     "orjson>=3.9.0",
+    "e2b-code-interpreter>=1.0.0",
 ]
 
 [project.urls]

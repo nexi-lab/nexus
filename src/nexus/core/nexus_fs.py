@@ -4156,6 +4156,7 @@ class NexusFS(
         nexus_url: str | None = None,
         nexus_api_key: str | None = None,
         context: dict | None = None,
+        as_script: bool = False,
     ) -> dict:
         """Run code in a sandbox.
 
@@ -4167,6 +4168,8 @@ class NexusFS(
             nexus_url: Nexus server URL (auto-injected as env var if provided)
             nexus_api_key: Nexus API key (auto-injected as env var if provided)
             context: Operation context (used to get api_key if nexus_api_key not provided)
+            as_script: If True, run as standalone script (stateless).
+                      If False (default), use Jupyter kernel for Python (stateful).
 
         Returns:
             Dict with stdout, stderr, exit_code, execution_time
@@ -4213,7 +4216,7 @@ class NexusFS(
                 code = env_prefix + code
 
         result: dict[Any, Any] = await self._sandbox_manager.run_code(
-            sandbox_id, language, code, timeout
+            sandbox_id, language, code, timeout, as_script=as_script
         )
         return result
 

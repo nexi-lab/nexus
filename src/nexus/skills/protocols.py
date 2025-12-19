@@ -782,6 +782,7 @@ class NexusFilesystem(Protocol):
         nexus_url: str | None = None,
         nexus_api_key: str | None = None,
         context: dict | None = None,
+        as_script: bool = False,
     ) -> dict[Any, Any]:
         """Run code in a sandbox.
 
@@ -793,6 +794,8 @@ class NexusFilesystem(Protocol):
             nexus_url: Nexus server URL for credential injection
             nexus_api_key: Nexus API key for credential injection
             context: Operation context
+            as_script: If True, run as standalone script (stateless).
+                      If False (default), use Jupyter kernel for Python (stateful).
 
         Returns:
             Execution result dict

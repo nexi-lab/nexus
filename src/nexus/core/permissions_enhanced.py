@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -124,7 +125,6 @@ class AuditStore:
             engine: SQLAlchemy database engine
         """
         self.engine = engine
-        self._conn: Any = None
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
@@ -221,17 +221,25 @@ class AuditStore:
             # If table creation fails, it might already exist or migrations handle it
             pass
 
-    def _get_connection(self) -> Any:
-        """Get database connection."""
-        if self._conn is None:
-            self._conn = self.engine.raw_connection()
-        return self._conn
+    @contextmanager
+    def _connection(self) -> Any:
+        """Context manager for database connections.
+
+        Uses engine.connect() which properly goes through the connection pool
+        and respects pool_pre_ping for automatic stale connection detection.
+        """
+        with self.engine.connect() as sa_conn:
+            dbapi_conn = sa_conn.connection.dbapi_connection
+            try:
+                yield dbapi_conn
+                sa_conn.commit()
+            except Exception:
+                sa_conn.rollback()
+                raise
 
     def close(self) -> None:
-        """Close database connection."""
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        """Close database connection (no-op, connections are managed per-operation)."""
+        pass
 
     def _fix_sql_placeholders(self, sql: str) -> str:
         """Convert SQLite ? placeholders to PostgreSQL %s if needed."""
@@ -282,35 +290,34 @@ class AuditStore:
         Args:
             entry: Audit log entry to record
         """
-        conn = self._get_connection()
-        cursor = self._create_cursor(conn)
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
 
-        cursor.execute(
-            self._fix_sql_placeholders(
-                """
-                INSERT INTO admin_bypass_audit (
-                    id, timestamp, request_id, user_id, tenant_id, path,
-                    permission, bypass_type, allowed, capabilities, denial_reason
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """
-            ),
-            (
-                str(uuid.uuid4()),
-                entry.timestamp,
-                entry.request_id,
-                entry.user,
-                entry.tenant_id,
-                entry.path,
-                entry.permission,
-                entry.bypass_type,
-                entry.allowed,  # Use boolean directly, not int()
-                json.dumps(entry.capabilities),
-                entry.denial_reason,
-            ),
-        )
-
-        conn.commit()
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    INSERT INTO admin_bypass_audit (
+                        id, timestamp, request_id, user_id, tenant_id, path,
+                        permission, bypass_type, allowed, capabilities, denial_reason
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+                ),
+                (
+                    str(uuid.uuid4()),
+                    entry.timestamp,
+                    entry.request_id,
+                    entry.user,
+                    entry.tenant_id,
+                    entry.path,
+                    entry.permission,
+                    entry.bypass_type,
+                    entry.allowed,  # Use boolean directly, not int()
+                    json.dumps(entry.capabilities),
+                    entry.denial_reason,
+                ),
+            )
+            # commit handled by context manager
 
     def query_bypasses(
         self,
@@ -332,63 +339,65 @@ class AuditStore:
         Returns:
             List of audit log entries as dictionaries
         """
-        conn = self._get_connection()
-        cursor = self._create_cursor(conn)
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
 
-        where_clauses = []
-        params = []
+            where_clauses = []
+            params: list[Any] = []
 
-        if user:
-            where_clauses.append("user_id = ?")
-            params.append(user)
+            if user:
+                where_clauses.append("user_id = ?")
+                params.append(user)
 
-        if tenant_id:
-            where_clauses.append("tenant_id = ?")
-            params.append(tenant_id)
+            if tenant_id:
+                where_clauses.append("tenant_id = ?")
+                params.append(tenant_id)
 
-        if start_time:
-            where_clauses.append("timestamp >= ?")
-            params.append(start_time.isoformat())
+            if start_time:
+                where_clauses.append("timestamp >= ?")
+                params.append(start_time.isoformat())
 
-        if end_time:
-            where_clauses.append("timestamp <= ?")
-            params.append(end_time.isoformat())
+            if end_time:
+                where_clauses.append("timestamp <= ?")
+                params.append(end_time.isoformat())
 
-        where_clause = " AND ".join(where_clauses) if where_clauses else "1=1"
+            where_clause = " AND ".join(where_clauses) if where_clauses else "1=1"
 
-        cursor.execute(
-            self._fix_sql_placeholders(
-                f"""
-                SELECT id, timestamp, request_id, user_id, tenant_id, path,
-                       permission, bypass_type, allowed, capabilities, denial_reason
-                FROM admin_bypass_audit
-                WHERE {where_clause}
-                ORDER BY timestamp DESC
-                LIMIT ?
-                """
-            ),
-            (*params, limit),
-        )
-
-        results = []
-        for row in cursor.fetchall():
-            results.append(
-                {
-                    "id": row["id"],
-                    "timestamp": row["timestamp"],
-                    "request_id": row["request_id"],
-                    "user_id": row["user_id"],
-                    "tenant_id": row["tenant_id"],
-                    "path": row["path"],
-                    "permission": row["permission"],
-                    "bypass_type": row["bypass_type"],
-                    "allowed": bool(row["allowed"]),
-                    "capabilities": json.loads(row["capabilities"]) if row["capabilities"] else [],
-                    "denial_reason": row["denial_reason"],
-                }
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    f"""
+                    SELECT id, timestamp, request_id, user_id, tenant_id, path,
+                           permission, bypass_type, allowed, capabilities, denial_reason
+                    FROM admin_bypass_audit
+                    WHERE {where_clause}
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    """
+                ),
+                (*params, limit),
             )
 
-        return results
+            results = []
+            for row in cursor.fetchall():
+                results.append(
+                    {
+                        "id": row["id"],
+                        "timestamp": row["timestamp"],
+                        "request_id": row["request_id"],
+                        "user_id": row["user_id"],
+                        "tenant_id": row["tenant_id"],
+                        "path": row["path"],
+                        "permission": row["permission"],
+                        "bypass_type": row["bypass_type"],
+                        "allowed": bool(row["allowed"]),
+                        "capabilities": json.loads(row["capabilities"])
+                        if row["capabilities"]
+                        else [],
+                        "denial_reason": row["denial_reason"],
+                    }
+                )
+
+            return results
 
 
 # ============================================================================

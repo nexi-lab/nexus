@@ -29,8 +29,8 @@ COPY alembic.ini ./
 ENV UV_HTTP_TIMEOUT=300
 RUN uv pip install --system .
 
-# Install sandbox providers
-RUN uv pip install --system docker e2b
+# Install sandbox providers (e2b-code-interpreter required for sandbox_run)
+RUN uv pip install --system docker e2b e2b-code-interpreter
 
 # Build and install Rust extension (nexus_fast)
 COPY rust/ ./rust/

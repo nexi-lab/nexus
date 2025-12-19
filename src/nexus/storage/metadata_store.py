@@ -226,6 +226,36 @@ class SQLAlchemyMetadataStore(MetadataStore):
             # Most optimizations are better set in postgresql.conf
             pass
 
+    @property
+    def supports_old_new_returning(self) -> bool:
+        """Check if database supports OLD/NEW in RETURNING clauses.
+
+        PostgreSQL 18+ supports OLD/NEW aliases in RETURNING clauses for
+        UPDATE, DELETE, and MERGE statements. This allows capturing both
+        before and after values in a single query.
+
+        Returns:
+            True if PostgreSQL 18+, False otherwise (SQLite, older PostgreSQL)
+        """
+        if self.db_type != "postgresql":
+            return False
+
+        # Check PostgreSQL version (cached after first check)
+        if not hasattr(self, "_pg_version"):
+            try:
+                with self.engine.connect() as conn:
+                    result = conn.execute(text("SELECT version()"))
+                    version_str = result.scalar()
+                    # Extract major version number (e.g., "PostgreSQL 18.1" -> 18)
+                    import re
+
+                    match = re.search(r"PostgreSQL (\d+)", version_str or "")
+                    self._pg_version = int(match.group(1)) if match else 0
+            except Exception:
+                self._pg_version = 0
+
+        return self._pg_version >= 18
+
     def _ensure_parent_exists(self) -> None:
         """Create parent directory for database if it doesn't exist (SQLite only)."""
         if self.db_path:
@@ -446,13 +476,38 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             # Atomically increment version at database level to prevent race conditions
                             # CRITICAL FIX: Use UPDATE ... RETURNING to get incremented value atomically
                             # This prevents race condition where concurrent transactions get same version
-                            result = session.execute(
-                                update(FilePathModel)
-                                .where(FilePathModel.path_id == existing.path_id)
-                                .values(current_version=FilePathModel.current_version + 1)
-                                .returning(FilePathModel.current_version)
-                            )
-                            new_version = result.scalar_one()
+                            #
+                            # PostgreSQL 18+: Use OLD/NEW RETURNING to capture both old and new values
+                            # in a single query, eliminating the need for separate prev_version lookup
+                            if self.supports_old_new_returning:
+                                # PostgreSQL 18+: Capture old and new values in single query
+                                result = session.execute(
+                                    text("""
+                                        UPDATE file_paths
+                                        SET current_version = current_version + 1,
+                                            updated_at = :updated_at
+                                        WHERE path_id = :path_id
+                                        RETURNING
+                                            old.current_version AS old_version,
+                                            new.current_version AS new_version,
+                                            old.content_hash AS old_content_hash
+                                    """),
+                                    {
+                                        "path_id": existing.path_id,
+                                        "updated_at": metadata.modified_at or datetime.now(UTC),
+                                    },
+                                )
+                                row = result.one()
+                                new_version = row.new_version
+                            else:
+                                # SQLite / older PostgreSQL: Standard RETURNING
+                                result = session.execute(
+                                    update(FilePathModel)
+                                    .where(FilePathModel.path_id == existing.path_id)
+                                    .values(current_version=FilePathModel.current_version + 1)
+                                    .returning(FilePathModel.current_version)
+                                )
+                                new_version = result.scalar_one()
 
                             # Update existing object with new version (avoiding race-prone refresh())
                             existing.current_version = new_version
@@ -566,28 +621,80 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 # Non-retryable error
                 raise MetadataError(f"Failed to store metadata: {e}", path=metadata.path) from e
 
-    def delete(self, path: str) -> None:
+    def delete(self, path: str) -> dict[str, Any] | None:
         """
         Delete file metadata (soft delete).
 
         Args:
             path: Virtual path
+
+        Returns:
+            Dictionary with deleted file info (PostgreSQL 18+) or None.
+            Contains: path_id, content_hash, size_bytes, current_version
+            Useful for audit logging and undo operations.
         """
+        deleted_info: dict[str, Any] | None = None
         try:
             with self.SessionLocal() as session:
-                stmt = select(FilePathModel).where(
-                    FilePathModel.virtual_path == path, FilePathModel.deleted_at.is_(None)
-                )
-                file_path = session.scalar(stmt)
+                deleted_at = datetime.now(UTC)
 
-                if file_path:
-                    # Soft delete
-                    file_path.deleted_at = datetime.now(UTC)
+                # PostgreSQL 18+: Use UPDATE...RETURNING OLD to capture deleted state
+                # in a single query for audit logging
+                if self.supports_old_new_returning:
+                    result = session.execute(
+                        text("""
+                            UPDATE file_paths
+                            SET deleted_at = :deleted_at
+                            WHERE virtual_path = :path AND deleted_at IS NULL
+                            RETURNING
+                                old.path_id AS path_id,
+                                old.content_hash AS content_hash,
+                                old.size_bytes AS size_bytes,
+                                old.current_version AS version,
+                                old.backend_id AS backend_id,
+                                old.physical_path AS physical_path
+                        """),
+                        {"path": path, "deleted_at": deleted_at},
+                    )
+                    row = result.first()
+                    if row:
+                        deleted_info = {
+                            "path_id": row.path_id,
+                            "content_hash": row.content_hash,
+                            "size_bytes": row.size_bytes,
+                            "version": row.version,
+                            "backend_id": row.backend_id,
+                            "physical_path": row.physical_path,
+                            "deleted_at": deleted_at,
+                        }
                     session.commit()
+                else:
+                    # SQLite / older PostgreSQL: SELECT then UPDATE
+                    stmt = select(FilePathModel).where(
+                        FilePathModel.virtual_path == path, FilePathModel.deleted_at.is_(None)
+                    )
+                    file_path = session.scalar(stmt)
+
+                    if file_path:
+                        # Capture info before soft delete for audit logging
+                        deleted_info = {
+                            "path_id": file_path.path_id,
+                            "content_hash": file_path.content_hash,
+                            "size_bytes": file_path.size_bytes,
+                            "version": file_path.current_version,
+                            "backend_id": file_path.backend_id,
+                            "physical_path": file_path.physical_path,
+                            "deleted_at": deleted_at,
+                        }
+                        # Soft delete
+                        file_path.deleted_at = deleted_at
+                        session.commit()
 
             # Invalidate cache for this path
             if self._cache_enabled and self._cache:
                 self._cache.invalidate_path(path)
+
+            return deleted_info
         except Exception as e:
             raise MetadataError(f"Failed to delete metadata: {e}", path=path) from e
 

@@ -56,12 +56,17 @@ class SyncResult:
 
 @dataclass
 class CacheEntry:
-    """A cached content entry."""
+    """A cached content entry with lazy loading.
+
+    The content_binary field uses lazy loading - raw bytes are stored
+    in _content_binary_b64 and only assigned when content_binary is accessed.
+    This avoids memory overhead when content isn't actually read.
+    """
 
     cache_id: str
     path_id: str
     content_text: str | None
-    content_binary: bytes | None
+    _content_binary: bytes | None  # Binary content (cached after first access)
     content_hash: str
     content_type: str
     original_size: int
@@ -71,6 +76,20 @@ class CacheEntry:
     stale: bool
     parsed_from: str | None = None
     parse_metadata: dict | None = None
+    _content_binary_b64: bytes | None = None  # Raw bytes for lazy loading
+
+    @property
+    def content_binary(self) -> bytes | None:
+        """Get binary content (lazy load on first access)."""
+        if self._content_binary is None and self._content_binary_b64:
+            self._content_binary = self._content_binary_b64
+        return self._content_binary
+
+    @content_binary.setter
+    def content_binary(self, value: bytes | None) -> None:
+        """Set binary content directly."""
+        self._content_binary = value
+        self._content_binary_b64 = None  # Clear raw since we have the value
 
 
 @dataclass
@@ -314,12 +333,6 @@ class CacheConnectorMixin:
             if not vpath:
                 continue
 
-            # Decode binary if stored
-            content_binary = None
-            if original and cache_model.content_binary:
-                with contextlib.suppress(Exception):
-                    content_binary = base64.b64decode(cache_model.content_binary)
-
             # Parse metadata if stored
             parse_metadata = None
             if cache_model.parse_metadata:
@@ -328,11 +341,14 @@ class CacheConnectorMixin:
 
                     parse_metadata = json.loads(cache_model.parse_metadata)
 
+            # Store raw b64 for lazy decode (only decode when content_binary accessed)
+            content_binary_b64 = cache_model.content_binary if original else None
+
             entry = CacheEntry(
                 cache_id=cache_model.cache_id,
                 path_id=cache_model.path_id,
                 content_text=cache_model.content_text,
-                content_binary=content_binary,
+                _content_binary=None,  # Will be lazily decoded
                 content_hash=cache_model.content_hash,
                 content_type=cache_model.content_type,
                 original_size=cache_model.original_size_bytes,
@@ -342,6 +358,7 @@ class CacheConnectorMixin:
                 stale=cache_model.stale,
                 parsed_from=cache_model.parsed_from,
                 parse_metadata=parse_metadata,
+                _content_binary_b64=content_binary_b64,
             )
             results[vpath] = entry
             l2_hits += 1
@@ -475,12 +492,6 @@ class CacheConnectorMixin:
 
         logger.info(f"[CACHE] L2 HIT (database): {path}")
 
-        # Decode binary if stored
-        content_binary = None
-        if original and cache_model.content_binary:
-            with contextlib.suppress(Exception):
-                content_binary = base64.b64decode(cache_model.content_binary)
-
         # Parse metadata if stored
         parse_metadata = None
         if cache_model.parse_metadata:
@@ -489,11 +500,14 @@ class CacheConnectorMixin:
 
                 parse_metadata = json.loads(cache_model.parse_metadata)
 
+        # Store raw b64 for lazy decode (only decode when content_binary accessed)
+        content_binary_b64 = cache_model.content_binary if original else None
+
         entry = CacheEntry(
             cache_id=cache_model.cache_id,
             path_id=cache_model.path_id,
             content_text=cache_model.content_text,
-            content_binary=content_binary,
+            _content_binary=None,  # Will be lazily decoded
             content_hash=cache_model.content_hash,
             content_type=cache_model.content_type,
             original_size=cache_model.original_size_bytes,
@@ -503,6 +517,7 @@ class CacheConnectorMixin:
             stale=cache_model.stale,
             parsed_from=cache_model.parsed_from,
             parse_metadata=parse_metadata,
+            _content_binary_b64=content_binary_b64,
         )
 
         # Check TTL if connector defines cache_ttl
@@ -665,7 +680,7 @@ class CacheConnectorMixin:
             cache_id=cache_id,
             path_id=path_id,
             content_text=content_text,
-            content_binary=content if content_binary_b64 else None,
+            _content_binary=content if content_binary_b64 else None,  # Already decoded
             content_hash=content_hash,
             content_type=content_type,
             original_size=original_size,
@@ -982,7 +997,7 @@ class CacheConnectorMixin:
                     cache_id=cache_id,
                     path_id=path_id,
                     content_text=content_text,
-                    content_binary=content if content_binary_b64 else None,
+                    _content_binary=content if content_binary_b64 else None,  # Already decoded
                     content_hash=content_hash,
                     content_type=content_type,
                     original_size=original_size,

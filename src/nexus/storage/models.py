@@ -5,9 +5,14 @@ For SQLite compatibility:
 - JSONB -> Text (JSON as string)
 - BIGINT -> BigInteger
 - TIMESTAMP -> DateTime
+
+PostgreSQL 18 Optimizations:
+- UUIDv7 for better B-tree index locality (timestamp-ordered)
+- Native uuidv7() function used via server_default when available
 """
 
 import json
+import os
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -22,10 +27,38 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    TextClause,
     UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+def _generate_uuid() -> str:
+    """Generate a UUID string.
+
+    Returns UUIDv4 for maximum compatibility.
+    PostgreSQL 18+ will use native uuidv7() via server_default for better index performance.
+    """
+    return str(uuid.uuid4())
+
+
+def _get_uuid_server_default() -> TextClause | None:
+    """Get PostgreSQL server_default for UUID generation.
+
+    Returns uuidv7()::text for PostgreSQL 18+ (timestamp-ordered UUIDs for better B-tree locality).
+    Returns None for SQLite (uses Python default).
+
+    PostgreSQL 18 Benefits:
+    - UUIDv7 is timestamp-ordered, improving B-tree index locality
+    - Reduces page splits on sequential inserts
+    - Better cache utilization for recent data
+    """
+    db_url = os.environ.get("NEXUS_DATABASE_URL", "")
+    if db_url.startswith(("postgres", "postgresql")):
+        # PostgreSQL 18+ has native uuidv7() function
+        return text("uuidv7()::text")
+    return None
 
 
 class Base(DeclarativeBase):
@@ -43,8 +76,13 @@ class FilePathModel(Base):
     __tablename__ = "file_paths"
 
     # Primary key
+    # PostgreSQL 18: Uses native uuidv7() for timestamp-ordered UUIDs (better B-tree locality)
+    # SQLite: Uses Python uuid4() fallback
     path_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # P0 SECURITY: Defense-in-depth tenant isolation
@@ -160,7 +198,10 @@ class FileMetadataModel(Base):
 
     # Primary key
     metadata_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Foreign key to file_paths
@@ -224,7 +265,10 @@ class ContentChunkModel(Base):
 
     # Primary key
     chunk_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Content identification
@@ -309,7 +353,10 @@ class WorkspaceSnapshotModel(Base):
 
     # Primary key
     snapshot_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Workspace identification (changed from tenant_id+agent_id to workspace_path)
@@ -361,7 +408,10 @@ class VersionHistoryModel(Base):
 
     # Primary key
     version_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Resource identification
@@ -466,7 +516,10 @@ class OperationLogModel(Base):
 
     # Primary key
     operation_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Operation identification
@@ -560,7 +613,10 @@ class WorkflowModel(Base):
 
     # Primary key
     workflow_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Multi-tenancy
@@ -641,7 +697,10 @@ class DocumentChunkModel(Base):
 
     # Primary key
     chunk_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Foreign key to file_paths
@@ -716,7 +775,10 @@ class WorkflowExecutionModel(Base):
 
     # Primary key
     execution_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Foreign key to workflows
@@ -853,7 +915,10 @@ class MemoryModel(Base):
 
     # Primary key
     memory_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Content (CAS reference)
@@ -1252,7 +1317,10 @@ class APIKeyModel(Base):
 
     # Primary key
     key_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Key security
@@ -1299,7 +1367,10 @@ class MountConfigModel(Base):
 
     # Primary key
     mount_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Mount configuration
@@ -1399,7 +1470,12 @@ class SyncJobModel(Base):
     __tablename__ = "sync_jobs"
 
     # Primary key
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
+    )
 
     # Mount being synced
     mount_point: Mapped[str] = mapped_column(Text, nullable=False, index=True)
@@ -1599,7 +1675,10 @@ class TrajectoryModel(Base):
 
     # Primary key
     trajectory_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Identity relationships
@@ -1724,7 +1803,10 @@ class PlaybookModel(Base):
 
     # Primary key
     playbook_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Identity relationships
@@ -1849,7 +1931,10 @@ class UserSessionModel(Base):
 
     # Primary key
     session_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Identity
@@ -1911,7 +1996,10 @@ class TrajectoryFeedbackModel(Base):
 
     # Primary key
     feedback_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Foreign key to trajectories
@@ -2103,7 +2191,10 @@ class OAuthCredentialModel(Base):
 
     # Primary key
     credential_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # OAuth provider (google, microsoft, dropbox, etc.)
@@ -2236,7 +2327,10 @@ class ContentCacheModel(Base):
 
     # Primary key
     cache_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # References
@@ -2305,6 +2399,11 @@ class ContentCacheModel(Base):
         Index("idx_content_cache_tenant", "tenant_id"),
         Index("idx_content_cache_stale", "stale", postgresql_where=text("stale = true")),
         Index("idx_content_cache_synced", "synced_at"),
+        Index(
+            "idx_content_cache_backend_version",
+            "backend_version",
+            postgresql_where=text("backend_version IS NOT NULL"),
+        ),
     )
 
     def __repr__(self) -> str:
@@ -2381,7 +2480,10 @@ class SubscriptionModel(Base):
 
     # Primary key
     subscription_id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
     )
 
     # Multi-tenancy

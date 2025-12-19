@@ -78,6 +78,10 @@ services:
 
       # Database configuration (PostgreSQL)
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+      # Increase pool size for provisioning with many files
+      NEXUS_DB_POOL_SIZE: 30
+      NEXUS_DB_MAX_OVERFLOW: 50
+      NEXUS_DB_POOL_TIMEOUT: 60
 
       # Authentication
       # Admin user for initialization (default: admin)

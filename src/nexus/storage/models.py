@@ -2415,9 +2415,7 @@ class UserModel(Base):
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
-    last_login_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True, index=True
-    )
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     # Relationships
     oauth_accounts: Mapped[list["UserOAuthAccountModel"]] = relationship(
@@ -2504,9 +2502,7 @@ class UserOAuthAccountModel(Base):
     )  # Encrypted ID token from OAuth provider (for authentication verification)
     # NOTE: Access/refresh tokens removed - ID tokens are sufficient for authentication
     # If userinfo calls are needed, use the ID token directly or implement separate flow
-    token_expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Profile data from OAuth provider
     provider_profile: Mapped[str | None] = mapped_column(
@@ -2520,9 +2516,7 @@ class UserOAuthAccountModel(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Relationships
-    user: Mapped["UserModel"] = relationship(
-        "UserModel", back_populates="oauth_accounts"
-    )
+    user: Mapped["UserModel"] = relationship("UserModel", back_populates="oauth_accounts")
 
     # Indexes
     __table_args__ = (
@@ -2566,9 +2560,7 @@ class TenantModel(Base):
         String(255), nullable=True, unique=True, index=True
     )  # Unique domain identifier (company URL, email domain, etc.)
 
-    description: Mapped[str | None] = mapped_column(
-        Text, nullable=True
-    )  # Optional description
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)  # Optional description
 
     # Settings (extensible JSON field)
     settings: Mapped[str | None] = mapped_column(
@@ -2646,9 +2638,7 @@ class ExternalUserServiceModel(Base):
     )  # Encrypted JSON config (client_id, client_secret, audience, etc.)
 
     # Status
-    is_active: Mapped[int] = mapped_column(
-        Integer, default=1, nullable=False
-    )
+    is_active: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

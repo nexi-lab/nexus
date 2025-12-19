@@ -66,16 +66,12 @@ def upgrade() -> None:
     op.create_index("idx_users_email", "users", ["email"])
     op.create_index("idx_users_username", "users", ["username"])
     op.create_index("idx_users_auth_method", "users", ["primary_auth_method"])
-    op.create_index(
-        "idx_users_external", "users", ["external_user_service", "external_user_id"]
-    )
+    op.create_index("idx_users_external", "users", ["external_user_service", "external_user_id"])
     op.create_index("idx_users_active", "users", ["is_active"])
     op.create_index("idx_users_deleted", "users", ["deleted_at"])
     op.create_index("idx_users_created", "users", ["created_at"])
     op.create_index("idx_users_last_login", "users", ["last_login_at"])
-    op.create_index(
-        "idx_users_email_active_deleted", "users", ["email", "is_active", "deleted_at"]
-    )
+    op.create_index("idx_users_email_active_deleted", "users", ["email", "is_active", "deleted_at"])
 
     # Create partial unique indexes for email and username (only for active users)
     # This allows email/username reuse after soft delete
@@ -160,9 +156,7 @@ def upgrade() -> None:
     # Create user_oauth_accounts table
     op.create_table(
         "user_oauth_accounts",
-        sa.Column(
-            "oauth_account_id", sa.String(36), primary_key=True, nullable=False
-        ),
+        sa.Column("oauth_account_id", sa.String(36), primary_key=True, nullable=False),
         sa.Column(
             "user_id",
             sa.String(255),
@@ -208,9 +202,7 @@ def upgrade() -> None:
     )
 
     # Create index for external_user_services
-    op.create_index(
-        "idx_external_service_name", "external_user_services", ["service_name"]
-    )
+    op.create_index("idx_external_service_name", "external_user_services", ["service_name"])
 
 
 def downgrade() -> None:

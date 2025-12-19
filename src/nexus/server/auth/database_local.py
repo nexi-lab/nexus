@@ -266,9 +266,7 @@ class DatabaseLocalAuth(LocalAuth):
             # Make instance detached so it can be accessed after session closes
             session.expunge(user)
 
-            logger.info(
-                f"Registered user: {email} (user_id={user_id}, username={username})"
-            )
+            logger.info(f"Registered user: {email} (user_id={user_id}, username={username})")
 
             # TODO: Send verification email
             # send_verification_email(user.email, user.user_id)
@@ -328,9 +326,7 @@ class DatabaseLocalAuth(LocalAuth):
             logger.info(f"Login successful: {identifier} (user_id={user.user_id})")
             return token
 
-    def change_password(
-        self, user_id: str, old_password: str, new_password: str
-    ) -> bool:
+    def change_password(self, user_id: str, old_password: str, new_password: str) -> bool:
         """Change user password.
 
         Args:
@@ -361,9 +357,7 @@ class DatabaseLocalAuth(LocalAuth):
             # Hash new password
             new_password_bytes = new_password.encode("utf-8")
             salt = bcrypt_lib.gensalt(rounds=12)
-            new_password_hash = bcrypt_lib.hashpw(new_password_bytes, salt).decode(
-                "utf-8"
-            )
+            new_password_hash = bcrypt_lib.hashpw(new_password_bytes, salt).decode("utf-8")
 
             # Update password
             user.password_hash = new_password_hash
@@ -438,12 +432,10 @@ class DatabaseLocalAuth(LocalAuth):
                 "primary_auth_method": user.primary_auth_method,
                 "is_global_admin": user.is_global_admin == 1,
                 "email_verified": user.email_verified == 1,
-                "api_key": user.api_key if hasattr(user, 'api_key') else None,
-                "tenant_id": user.tenant_id if hasattr(user, 'tenant_id') else None,
+                "api_key": user.api_key if hasattr(user, "api_key") else None,
+                "tenant_id": user.tenant_id if hasattr(user, "tenant_id") else None,
                 "created_at": user.created_at.isoformat() if user.created_at else None,
-                "last_login_at": (
-                    user.last_login_at.isoformat() if user.last_login_at else None
-                ),
+                "last_login_at": (user.last_login_at.isoformat() if user.last_login_at else None),
             }
 
     def get_user_info_for_jwt(self, user_id: str) -> dict[str, Any] | None:

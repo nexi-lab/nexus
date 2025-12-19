@@ -10,7 +10,6 @@ import os
 import sys
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
@@ -22,7 +21,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "sr
 from nexus.server.auth.database_local import DatabaseLocalAuth
 from nexus.server.auth.oauth_crypto import OAuthCrypto
 from nexus.storage.models import Base, UserModel, UserOAuthAccountModel
-
 
 # ==============================================================================
 # Test Fixtures

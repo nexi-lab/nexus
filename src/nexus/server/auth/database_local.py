@@ -5,16 +5,14 @@ Supports user registration, login, password management, and profile updates.
 """
 
 import logging
-import secrets
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 import bcrypt as bcrypt_lib
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.server.auth.base import AuthResult
 from nexus.server.auth.local import LocalAuth
 from nexus.storage.models import UserModel
 
@@ -211,7 +209,6 @@ class DatabaseLocalAuth(LocalAuth):
         password: str,
         username: str | None = None,
         display_name: str | None = None,
-        tenant_id: str | None = None,
         is_admin: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> UserModel:
@@ -222,9 +219,12 @@ class DatabaseLocalAuth(LocalAuth):
             password: Plain-text password (will be hashed with bcrypt)
             username: Optional username (must be unique among active users)
             display_name: Optional display name
-            tenant_id: Optional tenant ID (for metadata, actual membership via ReBAC)
             is_admin: Whether user is global admin (rare)
             metadata: Optional additional metadata (JSON)
+
+        Note:
+            Tenant membership is managed via ReBAC groups only.
+            Use add_user_to_tenant() after registration to assign tenant membership.
 
         Returns:
             Created UserModel
@@ -232,49 +232,48 @@ class DatabaseLocalAuth(LocalAuth):
         Raises:
             ValueError: If email or username already exists, or validation fails
         """
-        with self.session_factory() as session:
-            with session.begin():
-                # Validate uniqueness
-                validate_user_uniqueness(session, email=email, username=username)
+        with self.session_factory() as session, session.begin():
+            # Validate uniqueness
+            validate_user_uniqueness(session, email=email, username=username)
 
-                # Hash password with bcrypt (12 rounds)
-                password_bytes = password.encode("utf-8")
-                salt = bcrypt_lib.gensalt(rounds=12)
-                password_hash = bcrypt_lib.hashpw(password_bytes, salt).decode("utf-8")
+            # Hash password with bcrypt (12 rounds)
+            password_bytes = password.encode("utf-8")
+            salt = bcrypt_lib.gensalt(rounds=12)
+            password_hash = bcrypt_lib.hashpw(password_bytes, salt).decode("utf-8")
 
-                # Generate UUID for user_id
-                user_id = str(uuid.uuid4())
+            # Generate UUID for user_id
+            user_id = str(uuid.uuid4())
 
-                # Create user record
-                user = UserModel(
-                    user_id=user_id,
-                    email=email,
-                    username=username,
-                    display_name=display_name or username or email.split("@")[0],
-                    password_hash=password_hash,
-                    primary_auth_method="password",
-                    is_global_admin=1 if is_admin else 0,
-                    is_active=1,
-                    email_verified=0,  # TODO: Implement email verification
-                    user_metadata=metadata,
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow(),
-                )
+            # Create user record
+            user = UserModel(
+                user_id=user_id,
+                email=email,
+                username=username,
+                display_name=display_name or username or email.split("@")[0],
+                password_hash=password_hash,
+                primary_auth_method="password",
+                is_global_admin=1 if is_admin else 0,
+                is_active=1,
+                email_verified=0,  # TODO: Implement email verification
+                user_metadata=metadata,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
 
-                session.add(user)
-                session.flush()
+            session.add(user)
+            session.flush()
 
-                # Make instance detached so it can be accessed after session closes
-                session.expunge(user)
+            # Make instance detached so it can be accessed after session closes
+            session.expunge(user)
 
-                logger.info(
-                    f"Registered user: {email} (user_id={user_id}, username={username})"
-                )
+            logger.info(
+                f"Registered user: {email} (user_id={user_id}, username={username})"
+            )
 
-                # TODO: Send verification email
-                # send_verification_email(user.email, user.user_id)
+            # TODO: Send verification email
+            # send_verification_email(user.email, user.user_id)
 
-                return user
+            return user
 
     def login(self, identifier: str, password: str) -> str | None:
         """Authenticate user and create JWT token.
@@ -345,35 +344,34 @@ class DatabaseLocalAuth(LocalAuth):
         Raises:
             ValueError: If old password is incorrect or user not found
         """
-        with self.session_factory() as session:
-            with session.begin():
-                user = get_user_by_id(session, user_id)
-                if not user:
-                    raise ValueError(f"User not found: {user_id}")
+        with self.session_factory() as session, session.begin():
+            user = get_user_by_id(session, user_id)
+            if not user:
+                raise ValueError(f"User not found: {user_id}")
 
-                # Verify old password
-                if not user.password_hash:
-                    raise ValueError("No password set for this user")
+            # Verify old password
+            if not user.password_hash:
+                raise ValueError("No password set for this user")
 
-                password_bytes = old_password.encode("utf-8")
-                stored_hash = user.password_hash.encode("utf-8")
-                if not bcrypt_lib.checkpw(password_bytes, stored_hash):
-                    raise ValueError("Incorrect current password")
+            password_bytes = old_password.encode("utf-8")
+            stored_hash = user.password_hash.encode("utf-8")
+            if not bcrypt_lib.checkpw(password_bytes, stored_hash):
+                raise ValueError("Incorrect current password")
 
-                # Hash new password
-                new_password_bytes = new_password.encode("utf-8")
-                salt = bcrypt_lib.gensalt(rounds=12)
-                new_password_hash = bcrypt_lib.hashpw(new_password_bytes, salt).decode(
-                    "utf-8"
-                )
+            # Hash new password
+            new_password_bytes = new_password.encode("utf-8")
+            salt = bcrypt_lib.gensalt(rounds=12)
+            new_password_hash = bcrypt_lib.hashpw(new_password_bytes, salt).decode(
+                "utf-8"
+            )
 
-                # Update password
-                user.password_hash = new_password_hash
-                user.updated_at = datetime.utcnow()
-                session.add(user)
+            # Update password
+            user.password_hash = new_password_hash
+            user.updated_at = datetime.utcnow()
+            session.add(user)
 
-                logger.info(f"Password changed for user: {user_id}")
-                return True
+            logger.info(f"Password changed for user: {user_id}")
+            return True
 
     def update_profile(
         self,
@@ -393,30 +391,29 @@ class DatabaseLocalAuth(LocalAuth):
         Returns:
             Updated UserModel or None if not found
         """
-        with self.session_factory() as session:
-            with session.begin():
-                user = get_user_by_id(session, user_id)
-                if not user:
-                    return None
+        with self.session_factory() as session, session.begin():
+            user = get_user_by_id(session, user_id)
+            if not user:
+                return None
 
-                if display_name is not None:
-                    user.display_name = display_name
+            if display_name is not None:
+                user.display_name = display_name
 
-                if avatar_url is not None:
-                    user.avatar_url = avatar_url
+            if avatar_url is not None:
+                user.avatar_url = avatar_url
 
-                if metadata is not None:
-                    user.user_metadata = metadata
+            if metadata is not None:
+                user.user_metadata = metadata
 
-                user.updated_at = datetime.utcnow()
-                session.add(user)
-                session.flush()
+            user.updated_at = datetime.utcnow()
+            session.add(user)
+            session.flush()
 
-                # Make instance detached so it can be accessed after session closes
-                session.expunge(user)
+            # Make instance detached so it can be accessed after session closes
+            session.expunge(user)
 
-                logger.info(f"Profile updated for user: {user_id}")
-                return user
+            logger.info(f"Profile updated for user: {user_id}")
+            return user
 
     def get_user_info(self, user_id: str) -> dict[str, Any] | None:
         """Get user information by user_id.

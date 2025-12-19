@@ -5,11 +5,8 @@ Revises: add_subscriptions_table, u1234567890a
 Create Date: 2025-12-19 01:30:12.458852
 
 """
-from typing import Sequence, Union
-
-from alembic import op
-import sqlalchemy as sa
-
+from collections.abc import Sequence
+from typing import Union
 
 # revision identifiers, used by Alembic.
 revision: str = '42baa7b72b11'

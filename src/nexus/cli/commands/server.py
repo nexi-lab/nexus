@@ -719,7 +719,12 @@ def serve(
                 )
                 sys.exit(1)
 
-            engine = create_engine(db_url)
+            engine = create_engine(
+                db_url,
+                pool_pre_ping=True,  # Test connections before use (fixes stale connection errors)
+                pool_recycle=1800,  # Recycle connections every 30 min
+                pool_size=5,  # Auth doesn't need many connections
+            )
             session_factory = sessionmaker(bind=engine)
             auth_provider = create_auth_provider("database", session_factory=session_factory)
 
@@ -749,7 +754,12 @@ def serve(
 
                 jwt_secret = secrets.token_urlsafe(32)
 
-            engine = create_engine(db_url)
+            engine = create_engine(
+                db_url,
+                pool_pre_ping=True,  # Test connections before use (fixes stale connection errors)
+                pool_recycle=1800,  # Recycle connections every 30 min
+                pool_size=5,  # Auth doesn't need many connections
+            )
             session_factory = sessionmaker(bind=engine)
             auth_provider = create_auth_provider(
                 "local", session_factory=session_factory, jwt_secret=jwt_secret

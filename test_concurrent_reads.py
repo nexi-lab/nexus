@@ -63,7 +63,7 @@ async def test_concurrent_reads(db_path: str, num_concurrent: int = 100):
             1 for r in results if isinstance(r, Exception) or (isinstance(r, tuple) and r[2])
         )
 
-        print(f"\n4. Results:")
+        print("\n4. Results:")
         print(f"   ✅ Successful reads: {successes}/{num_concurrent}")
         print(f"   ❌ Failed reads: {errors}/{num_concurrent}")
         print(f"   ⏱️  Total time: {elapsed:.2f}s")
@@ -82,7 +82,7 @@ async def test_concurrent_reads(db_path: str, num_concurrent: int = 100):
             print(f"      Example: {pool_errors[0][2][:100]}")
 
         if segfault_errors:
-            print(f"\n   💥 SEGFAULT detected!")
+            print("\n   💥 SEGFAULT detected!")
             return False
 
         # Success if most reads succeeded

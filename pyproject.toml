@@ -80,6 +80,8 @@ dependencies = [
     "dotenv>=0.9.9",
     # MCP Server (v0.7.0)
     "fastmcp>=0.2.0", # Model Context Protocol server
+    # Document parsing (Python 3.13 only - not yet compatible with 3.14)
+    "markitdown>=0.1.0; python_version < '3.14'",
 ]
 
 [project.optional-dependencies]
@@ -181,7 +183,7 @@ all = [
     "sqlite-vec>=0.1.0",
     "pgvector>=0.3.0",
     "openai>=1.0.0",
-    "orjson>=3.9.0",
+    "orjson>=3.11.0",
     "e2b-code-interpreter>=1.0.0",
 ]
 

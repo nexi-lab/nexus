@@ -107,6 +107,9 @@ class ReBACManager:
         # (sqlite3.Connection in Python 3.13+ doesn't allow setting arbitrary attributes)
         self._conn_map: dict[int, Any] = {}
 
+        # PostgreSQL version cache for feature detection
+        self._pg_version: int | None = None
+
     def _get_connection(self) -> Any:
         """Get a DBAPI connection from the pool.
 
@@ -147,6 +150,38 @@ class ReBACManager:
             with contextlib.suppress(Exception):
                 conn.close()
 
+    @property
+    def supports_old_new_returning(self) -> bool:
+        """Check if database supports OLD/NEW in RETURNING clauses.
+
+        PostgreSQL 18+ supports OLD/NEW aliases in RETURNING clauses for
+        UPDATE, DELETE, and MERGE statements. This allows capturing both
+        before and after values in a single query, eliminating round-trips.
+
+        Returns:
+            True if PostgreSQL 18+, False otherwise (SQLite, older PostgreSQL)
+        """
+        if self.engine.dialect.name != "postgresql":
+            return False
+
+        # Check PostgreSQL version (cached after first check)
+        if self._pg_version is None:
+            try:
+                from sqlalchemy import text
+
+                with self.engine.connect() as conn:
+                    result = conn.execute(text("SELECT version()"))
+                    version_str = result.scalar()
+                    # Extract major version number (e.g., "PostgreSQL 18.1" -> 18)
+                    import re
+
+                    match = re.search(r"PostgreSQL (\d+)", version_str or "")
+                    self._pg_version = int(match.group(1)) if match else 0
+            except Exception:
+                self._pg_version = 0
+
+        return self._pg_version >= 18
+
     @contextmanager
     def _connection(self) -> Any:
         """Context manager for database connections.
@@ -160,9 +195,16 @@ class ReBACManager:
                 cursor.execute(...)
                 conn.commit()
         """
+        from sqlalchemy import text
+
         # Use engine.connect() instead of raw_connection() to leverage pool_pre_ping
         # This automatically detects and replaces stale connections
         with self.engine.connect() as sa_conn:
+            # Fix PostgreSQL prepared statement performance issue (#683)
+            # Force custom plans for timestamp-based queries to avoid generic plan degradation
+            if self.engine.dialect.name == "postgresql":
+                sa_conn.execute(text("SET plan_cache_mode = 'force_custom_plan'"))
+
             # Get the underlying DBAPI connection for cursor-based operations
             # This maintains compatibility with existing cursor.execute() code
             dbapi_conn = sa_conn.connection.dbapi_connection
@@ -788,22 +830,54 @@ class ReBACManager:
         """
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
+            now = datetime.now(UTC).isoformat()
 
-            # Get tuple details before deleting (for changelog and cache invalidation)
-            # P0-5: Filter expired tuples at read-time (prevent deleted/expired access leak)
-            # BUGFIX: Use >= instead of > for exact expiration boundary
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT subject_type, subject_id, subject_relation, relation, object_type, object_id, tenant_id
-                    FROM rebac_tuples
-                    WHERE tuple_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (tuple_id, datetime.now(UTC).isoformat()),
-            )
-            row = cursor.fetchone()
+            # PostgreSQL: Use DELETE...RETURNING to get deleted row in single query
+            # This eliminates the SELECT+DELETE round-trip for better performance
+            # Note: DELETE only has one row version, so no need for OLD prefix
+            if self.engine.dialect.name == "postgresql":
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        DELETE FROM rebac_tuples
+                        WHERE tuple_id = ?
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        RETURNING
+                            subject_type,
+                            subject_id,
+                            subject_relation,
+                            relation,
+                            object_type,
+                            object_id,
+                            tenant_id
+                        """
+                    ),
+                    (tuple_id, now),
+                )
+                row = cursor.fetchone()
+            else:
+                # SQLite / older PostgreSQL: SELECT then DELETE (2 queries)
+                # P0-5: Filter expired tuples at read-time (prevent deleted/expired access leak)
+                # BUGFIX: Use >= instead of > for exact expiration boundary
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        SELECT subject_type, subject_id, subject_relation, relation, object_type, object_id, tenant_id
+                        FROM rebac_tuples
+                        WHERE tuple_id = ?
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        """
+                    ),
+                    (tuple_id, now),
+                )
+                row = cursor.fetchone()
+
+                if row:
+                    # Delete tuple
+                    cursor.execute(
+                        self._fix_sql_placeholders("DELETE FROM rebac_tuples WHERE tuple_id = ?"),
+                        (tuple_id,),
+                    )
 
             if not row:
                 return False
@@ -814,12 +888,6 @@ class ReBACManager:
             relation = row["relation"]
             obj = Entity(row["object_type"], row["object_id"])
             tenant_id = row["tenant_id"]
-
-            # Delete tuple
-            cursor.execute(
-                self._fix_sql_placeholders("DELETE FROM rebac_tuples WHERE tuple_id = ?"),
-                (tuple_id,),
-            )
 
             # Log to changelog
             cursor.execute(
@@ -840,7 +908,7 @@ class ReBACManager:
                     relation,
                     obj.entity_type,
                     obj.entity_id,
-                    datetime.now(UTC).isoformat(),
+                    now,
                 ),
             )
 

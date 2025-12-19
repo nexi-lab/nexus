@@ -30,16 +30,22 @@ logger = logging.getLogger(__name__)
 # Built from e2b-template/e2b.Dockerfile
 NEXUS_FUSE_TEMPLATE = "nexus-fuse"
 
-# Lazy import e2b to avoid import errors if not installed
+# Lazy import e2b_code_interpreter to avoid import errors if not installed
+# We use e2b_code_interpreter instead of base e2b for stateful Python execution
+# via Jupyter kernel (variables persist between run_code calls)
 try:
-    from e2b import AsyncSandbox
+    # CommandExitException is still in the base e2b package
     from e2b.sandbox.commands.command_handle import CommandExitException
+    from e2b_code_interpreter import AsyncSandbox
 
     E2B_AVAILABLE = True
 except ImportError:
     E2B_AVAILABLE = False
     CommandExitException = Exception  # Fallback for type hints
-    logger.warning("e2b package not installed. E2BSandboxProvider will not work.")
+    logger.warning(
+        "e2b_code_interpreter package not installed. E2BSandboxProvider will not work. "
+        "Install with: pip install e2b-code-interpreter"
+    )
 
 
 class E2BSandboxProvider(SandboxProvider):
@@ -71,7 +77,10 @@ class E2BSandboxProvider(SandboxProvider):
             default_template: Default template ID for sandboxes
         """
         if not E2B_AVAILABLE:
-            raise RuntimeError("e2b package not installed. Install with: pip install e2b")
+            raise RuntimeError(
+                "e2b_code_interpreter package not installed. "
+                "Install with: pip install e2b-code-interpreter"
+            )
 
         self.api_key = api_key or os.getenv("E2B_API_KEY")
         if not self.api_key:
@@ -129,14 +138,24 @@ class E2BSandboxProvider(SandboxProvider):
         language: str,
         code: str,
         timeout: int = 300,
+        as_script: bool = False,
     ) -> CodeExecutionResult:
         """Run code in E2B sandbox.
+
+        For Python (as_script=False): Uses Jupyter kernel via e2b_code_interpreter
+        for STATEFUL execution - variables persist between calls.
+
+        For Python (as_script=True): Writes to file and runs via shell (stateless).
+
+        For bash/js: Uses shell commands (always stateless).
 
         Args:
             sandbox_id: E2B sandbox ID
             language: Programming language
             code: Code to execute
             timeout: Execution timeout in seconds
+            as_script: If True, write code to file and execute as standalone script
+                      (stateless). If False (default), use Jupyter kernel (stateful).
 
         Returns:
             Execution result
@@ -155,9 +174,100 @@ class E2BSandboxProvider(SandboxProvider):
 
         # Get sandbox
         sandbox = await self._get_sandbox(sandbox_id)
-
-        # Build command based on language
         runtime = self.SUPPORTED_LANGUAGES[language]
+
+        # For Python with as_script=False, use Jupyter kernel for stateful execution
+        if runtime == "python3" and not as_script:
+            return await self._run_python_code(sandbox, sandbox_id, code, timeout)
+
+        # For bash/js or as_script=True, use shell commands (stateless)
+        return await self._run_shell_code(sandbox, sandbox_id, language, runtime, code, timeout)
+
+    async def _run_python_code(
+        self,
+        sandbox: AsyncSandbox,
+        sandbox_id: str,
+        code: str,
+        timeout: int,
+    ) -> CodeExecutionResult:
+        """Run Python code using Jupyter kernel (stateful).
+
+        Variables and state persist between calls within the same sandbox.
+        """
+        try:
+            start_time = time.time()
+
+            # Use e2b_code_interpreter's run_code for Jupyter-based execution
+            # This maintains state between calls (variables persist!)
+            execution = await asyncio.wait_for(
+                sandbox.run_code(code),
+                timeout=timeout,
+            )
+
+            execution_time = time.time() - start_time
+
+            # Convert Execution result to CodeExecutionResult format
+            # execution.logs contains stdout/stderr lists
+            stdout_parts: list[str] = []
+            stderr_parts: list[str] = []
+
+            if execution.logs:
+                stdout_parts.extend(execution.logs.stdout or [])
+                stderr_parts.extend(execution.logs.stderr or [])
+
+            # Add results (text output, repr of return values)
+            if execution.results:
+                for result in execution.results:
+                    if hasattr(result, "text") and result.text:
+                        stdout_parts.append(result.text)
+
+            # Handle errors
+            exit_code = 0
+            if execution.error:
+                exit_code = 1
+                error_msg = f"{execution.error.name}: {execution.error.value}"
+                if execution.error.traceback:
+                    error_msg = execution.error.traceback
+                stderr_parts.append(error_msg)
+
+            stdout = "\n".join(stdout_parts)
+            stderr = "\n".join(stderr_parts)
+
+            logger.debug(
+                f"Executed Python code in sandbox {sandbox_id} (Jupyter kernel): "
+                f"exit_code={exit_code}, time={execution_time:.2f}s"
+            )
+
+            return CodeExecutionResult(
+                stdout=stdout,
+                stderr=stderr,
+                exit_code=exit_code,
+                execution_time=execution_time,
+            )
+
+        except TimeoutError as timeout_err:
+            logger.warning(f"Python execution timeout in sandbox {sandbox_id}")
+            raise ExecutionTimeoutError(
+                f"Code execution exceeded {timeout} second timeout"
+            ) from timeout_err
+        except Exception as e:
+            logger.error(f"Python execution failed in sandbox {sandbox_id}: {e}")
+            raise
+
+    async def _run_shell_code(
+        self,
+        sandbox: AsyncSandbox,
+        sandbox_id: str,
+        language: str,
+        runtime: str,
+        code: str,
+        timeout: int,
+    ) -> CodeExecutionResult:
+        """Run code using shell commands (stateless).
+
+        Used for bash/js, or Python when as_script=True.
+        """
+        # Build command based on language
         if runtime == "python3":
             cmd = f"python3 -c {_quote(code)}"
         elif runtime == "node":
@@ -167,11 +277,10 @@ class E2BSandboxProvider(SandboxProvider):
         else:
             raise UnsupportedLanguageError(f"Unknown runtime: {runtime}")
 
-        # Execute code using E2B's async API
         try:
             start_time = time.time()
 
-            # Run with timeout using E2B's native async command execution
+            # Run with timeout using E2B's shell command execution
             result = await asyncio.wait_for(
                 sandbox.commands.run(cmd),
                 timeout=timeout,

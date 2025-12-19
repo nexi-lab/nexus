@@ -70,6 +70,7 @@ class SandboxProvider(ABC):
         language: str,
         code: str,
         timeout: int = 300,
+        as_script: bool = False,
     ) -> CodeExecutionResult:
         """Run code in sandbox.
 
@@ -78,6 +79,7 @@ class SandboxProvider(ABC):
             language: Programming language ("python", "javascript", "bash")
             code: Code to execute
             timeout: Execution timeout in seconds
+            as_script: If True, run code as a script file instead of REPL
 
         Returns:
             Execution result with stdout/stderr/exit_code

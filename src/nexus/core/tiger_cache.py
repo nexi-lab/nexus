@@ -24,88 +24,14 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from pyroaring import BitMap as RoaringBitmap
+
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
-
-# Try to import pyroaring, fall back to pure Python set if not available
-try:
-    from pyroaring import BitMap as RoaringBitmap
-
-    ROARING_AVAILABLE = True
-except ImportError:
-    ROARING_AVAILABLE = False
-    logger.warning(
-        "[TIGER] pyroaring not installed. Tiger Cache will use Python sets (slower). "
-        "Install with: pip install pyroaring"
-    )
-
-
-class PythonBitmap:
-    """Fallback bitmap implementation using Python sets.
-
-    Used when pyroaring is not installed. Much slower but functionally equivalent.
-    """
-
-    def __init__(self, values: set[int] | list[int] | None = None):
-        self._data: set[int] = set(values) if values else set()
-
-    def add(self, value: int) -> None:
-        self._data.add(value)
-
-    def remove(self, value: int) -> None:
-        self._data.discard(value)
-
-    def __contains__(self, value: int) -> bool:
-        return value in self._data
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def __iter__(self) -> Any:
-        return iter(self._data)
-
-    def __and__(self, other: PythonBitmap) -> PythonBitmap:
-        return PythonBitmap(self._data & other._data)
-
-    def __or__(self, other: PythonBitmap) -> PythonBitmap:
-        return PythonBitmap(self._data | other._data)
-
-    def serialize(self) -> bytes:
-        """Serialize to bytes (simple format: count + sorted ints)."""
-        import struct
-
-        sorted_vals = sorted(self._data)
-        # Format: 4-byte count + 8-byte values
-        data = struct.pack("<I", len(sorted_vals))
-        for v in sorted_vals:
-            data += struct.pack("<q", v)
-        return data
-
-    @classmethod
-    def deserialize(cls, data: bytes) -> PythonBitmap:
-        """Deserialize from bytes."""
-        import struct
-
-        count = struct.unpack("<I", data[:4])[0]
-        values = set()
-        offset = 4
-        for _ in range(count):
-            values.add(struct.unpack("<q", data[offset : offset + 8])[0])
-            offset += 8
-        return cls(values)
-
-    def tolist(self) -> list[int]:
-        """Convert to list."""
-        return sorted(self._data)
-
-
-# Use appropriate bitmap implementation
-# Type alias for bitmap (either Roaring or Python fallback)
-Bitmap = RoaringBitmap if ROARING_AVAILABLE else PythonBitmap
 
 
 @dataclass
@@ -427,7 +353,6 @@ class TigerCache:
         self._is_postgresql = "postgresql" in str(engine.url)
 
         # In-memory cache for hot entries
-        # Bitmap is either RoaringBitmap or PythonBitmap depending on availability
         self._cache: dict[
             CacheKey, tuple[Any, int, float]
         ] = {}  # key -> (bitmap, revision, cached_at)
@@ -565,10 +490,7 @@ class TigerCache:
             result = connection.execute(query, params)
             row = result.fetchone()
             if row:
-                if ROARING_AVAILABLE:
-                    bitmap = RoaringBitmap.deserialize(row.bitmap_data)
-                else:
-                    bitmap = PythonBitmap.deserialize(row.bitmap_data)
+                bitmap = RoaringBitmap.deserialize(row.bitmap_data)
 
                 # Cache in memory
                 with self._lock:
@@ -611,10 +533,7 @@ class TigerCache:
         from sqlalchemy import text
 
         # Create bitmap
-        if ROARING_AVAILABLE:
-            bitmap = RoaringBitmap(resource_int_ids)
-        else:
-            bitmap = PythonBitmap(resource_int_ids)
+        bitmap = RoaringBitmap(resource_int_ids)
 
         bitmap_data = bitmap.serialize()
         key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)

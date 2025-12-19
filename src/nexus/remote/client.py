@@ -2046,6 +2046,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         expires_at: Any = None,
         tenant_id: str | None = None,  # Auto-filled from auth if None
         column_config: dict[str, Any] | None = None,  # Column-level permissions for dynamic_viewer
+        context: dict[str, Any] | None = None,  # Operation context for permission checks
     ) -> str:
         """Create a ReBAC relationship tuple.
 
@@ -2064,6 +2065,9 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                               "visible_columns": ["name", "email"]  # Show raw data (optional, auto-calculated if empty)
                           }
                           Note: A column can only appear in one category (hidden, aggregations, or visible)
+            context: Optional operation context for permission checks. Used to verify
+                    the caller has 'execute' permission on file objects before granting
+                    permissions to others.
 
         Returns:
             Tuple ID of created relationship
@@ -2101,6 +2105,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "expires_at": expires_at.isoformat() if expires_at else None,
                 "tenant_id": effective_tenant_id,
                 "column_config": column_config,
+                "context": context,
             },
         )
         return result  # type: ignore[no-any-return]

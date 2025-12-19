@@ -94,10 +94,9 @@ fn main() -> anyhow::Result<()> {
                 Ok(cache) => {
                     let stats = cache.stats();
                     info!(
-                        "Cache loaded: {} files ({} MB), {} directories",
+                        "Cache loaded: {} files ({} MB)",
                         stats.file_count,
-                        stats.total_size / 1024 / 1024,
-                        stats.dir_count
+                        stats.total_size / 1024 / 1024
                     );
                     Some(cache)
                 }

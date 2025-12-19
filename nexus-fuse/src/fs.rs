@@ -180,19 +180,17 @@ impl NexusFs {
             return Ok(attr);
         }
 
-        // Check parent listing to determine if file or directory
-        // This is the source of truth since directories can also be "read" with 0 bytes
-        if self.is_directory(path) {
-            let attr = self.make_attr(inode, "directory", 0, None, None);
-            let mut cache = self.attr_cache.lock().unwrap();
-            cache.put(inode, (attr, SystemTime::now()));
-            return Ok(attr);
-        }
-
-        // Not a directory - try to read as a file
-        match self.read_cached(path) {
-            Ok((data, _etag)) => {
-                let attr = self.make_attr(inode, "file", data.len() as u64, None, None);
+        // Use stat() for single API call instead of is_directory() + read_cached()
+        match self.client.stat(path) {
+            Ok(meta) => {
+                let entry_type = if meta.is_directory { "directory" } else { "file" };
+                let attr = self.make_attr(
+                    inode,
+                    entry_type,
+                    meta.size,
+                    None,
+                    meta.modified_at.as_ref(),
+                );
                 let mut cache = self.attr_cache.lock().unwrap();
                 cache.put(inode, (attr, SystemTime::now()));
                 Ok(attr)
@@ -373,42 +371,44 @@ impl Filesystem for NexusFs {
             }
         };
 
-        // Check directory cache
-        let entries = {
+        // Check directory cache - use Option to distinguish cache miss from empty directory
+        let cached_entries: Option<Vec<FileEntry>> = {
             let mut cache = self.dir_cache.lock().unwrap();
             if let Some((entries, cached_at)) = cache.get(&ino) {
                 if cached_at.elapsed().unwrap_or(Duration::MAX) < ATTR_TTL {
-                    entries.clone()
+                    Some(entries.clone())  // Cache hit (may be empty dir)
                 } else {
                     cache.pop(&ino);
-                    Vec::new()
+                    None  // Cache expired
                 }
             } else {
-                Vec::new()
+                None  // Cache miss
             }
         };
 
-        let entries = if entries.is_empty() {
-            match self.client.list(&path) {
-                Ok(entries) => {
-                    // Cache the result
-                    let mut cache = self.dir_cache.lock().unwrap();
-                    cache.put(ino, (entries.clone(), SystemTime::now()));
-                    entries
-                }
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg.contains("not found") {
-                        reply.error(ENOENT);
-                    } else {
-                        error!("readdir error for {}: {}", path, e);
-                        reply.error(EIO);
+        let entries = match cached_entries {
+            Some(entries) => entries,  // Cache hit - use cached (even if empty)
+            None => {
+                // Cache miss - fetch from server
+                match self.client.list(&path) {
+                    Ok(entries) => {
+                        // Cache the result
+                        let mut cache = self.dir_cache.lock().unwrap();
+                        cache.put(ino, (entries.clone(), SystemTime::now()));
+                        entries
                     }
-                    return;
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg.contains("not found") {
+                            reply.error(ENOENT);
+                        } else {
+                            error!("readdir error for {}: {}", path, e);
+                            reply.error(EIO);
+                        }
+                        return;
+                    }
                 }
             }
-        } else {
-            entries
         };
 
         // Build entries with . and ..
@@ -425,6 +425,19 @@ impl Filesystem for NexusFs {
             } else {
                 FileType::RegularFile
             };
+
+            // Pre-populate attr_cache from list() response to avoid N stat() calls
+            // when kernel calls lookup()/getattr() for each entry
+            let entry_type = if entry.entry_type == "directory" { "directory" } else { "file" };
+            let attr = self.make_attr(
+                child_inode,
+                entry_type,
+                entry.size,
+                entry.created_at.as_ref(),
+                entry.updated_at.as_ref(),
+            );
+            self.attr_cache.lock().unwrap().put(child_inode, (attr, SystemTime::now()));
+
             all_entries.push((child_inode, kind, entry.name.clone()));
         }
 

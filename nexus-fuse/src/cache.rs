@@ -87,12 +87,6 @@ impl FileCache {
                 cached_at INTEGER NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS dir_cache (
-                path TEXT PRIMARY KEY,
-                entries TEXT NOT NULL,  -- JSON array
-                cached_at INTEGER NOT NULL
-            );
-
             CREATE INDEX IF NOT EXISTS idx_file_cache_cached_at ON file_cache(cached_at);
             CREATE INDEX IF NOT EXISTS idx_file_cache_size ON file_cache(size);
             ",
@@ -239,52 +233,8 @@ impl FileCache {
 
         let _ = conn.execute("DELETE FROM file_cache WHERE path = ?", params![path]);
         let _ = conn.execute("DELETE FROM metadata_cache WHERE path = ?", params![path]);
-        let _ = conn.execute("DELETE FROM dir_cache WHERE path = ?", params![path]);
-
-        // Also invalidate parent directory cache
-        if let Some(parent) = std::path::Path::new(path).parent() {
-            let parent_str = parent.to_string_lossy();
-            let parent_path = if parent_str.is_empty() { "/" } else { &parent_str };
-            let _ = conn.execute("DELETE FROM dir_cache WHERE path = ?", params![parent_path]);
-        }
 
         debug!("Invalidated cache for {}", path);
-    }
-
-    /// Store directory listing in cache.
-    pub fn put_dir(&self, path: &str, entries_json: &str) {
-        let conn = self.conn.lock().unwrap();
-        let now = Self::now();
-
-        if let Err(e) = conn.execute(
-            "INSERT OR REPLACE INTO dir_cache (path, entries, cached_at) VALUES (?, ?, ?)",
-            params![path, entries_json, now],
-        ) {
-            error!("Failed to cache dir {}: {}", path, e);
-        }
-    }
-
-    /// Get cached directory listing.
-    pub fn get_dir(&self, path: &str, max_age_secs: u64) -> Option<String> {
-        let conn = self.conn.lock().unwrap();
-        let now = Self::now();
-
-        let result: Option<(String, u64)> = conn
-            .query_row(
-                "SELECT entries, cached_at FROM dir_cache WHERE path = ?",
-                params![path],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .ok()
-            .flatten();
-
-        match result {
-            Some((entries, cached_at)) if now.saturating_sub(cached_at) < max_age_secs => {
-                Some(entries)
-            }
-            _ => None,
-        }
     }
 
     /// Cleanup old and oversized cache entries.
@@ -323,13 +273,9 @@ impl FileCache {
             )?;
         }
 
-        // Cleanup metadata and dir caches
+        // Cleanup metadata cache
         conn.execute(
             "DELETE FROM metadata_cache WHERE cached_at < ?",
-            params![max_age],
-        )?;
-        conn.execute(
-            "DELETE FROM dir_cache WHERE cached_at < ?",
             params![max_age],
         )?;
 
@@ -350,14 +296,9 @@ impl FileCache {
             })
             .unwrap_or(0);
 
-        let dir_count: u64 = conn
-            .query_row("SELECT COUNT(*) FROM dir_cache", [], |row| row.get(0))
-            .unwrap_or(0);
-
         CacheStats {
             file_count,
             total_size,
-            dir_count,
         }
     }
 }
@@ -367,7 +308,6 @@ impl FileCache {
 pub struct CacheStats {
     pub file_count: u64,
     pub total_size: u64,
-    pub dir_count: u64,
 }
 
 #[cfg(test)]

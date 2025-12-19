@@ -79,9 +79,11 @@ services:
       # Database configuration (PostgreSQL)
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       # Increase pool size for provisioning with many files
-      NEXUS_DB_POOL_SIZE: 30
-      NEXUS_DB_MAX_OVERFLOW: 50
-      NEXUS_DB_POOL_TIMEOUT: 60
+      NEXUS_DB_POOL_SIZE: ${NEXUS_DB_POOL_SIZE:-20}
+      NEXUS_DB_MAX_OVERFLOW: ${NEXUS_DB_MAX_OVERFLOW:-30}
+      NEXUS_DB_POOL_TIMEOUT: ${NEXUS_DB_POOL_TIMEOUT:-30}
+      # Skip heavy skills in CI to avoid connection pool exhaustion
+      NEXUS_SKIP_HEAVY_SKILLS: ${NEXUS_SKIP_HEAVY_SKILLS:-false}
 
       # Authentication
       # Admin user for initialization (default: admin)

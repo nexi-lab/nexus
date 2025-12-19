@@ -6,7 +6,7 @@ ARG NEXUS_VERSION=latest
 ARG GIT_COMMIT=unknown
 ARG BUILD_DATE=unknown
 
-FROM python:3.13-slim as builder
+FROM python:3.14-slim as builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,7 +27,7 @@ RUN if [ "$NEXUS_VERSION" = "latest" ]; then \
     fi
 
 # Production image
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # Re-declare ARGs for this stage
 ARG NEXUS_VERSION=latest
@@ -51,7 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
 
 # Create non-root user for security

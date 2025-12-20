@@ -129,16 +129,6 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
                 if entity.entity_type == "user" and entity.entity_id == memory.user_id:
                     return True
 
-                # If requesting entity is an agent, check if agent's parent user matches
-                if entity.entity_type == "agent" and entity.parent_id:
-                    user_entities = self.entity_registry.lookup_entity_by_id(entity.parent_id)
-                    for user_entity in user_entities:
-                        if (
-                            user_entity.entity_type == "user"
-                            and user_entity.entity_id == memory.user_id
-                        ):
-                            return True
-
         # 4. Tenant-scoped sharing
         if memory.scope == "tenant" and memory.tenant_id and self.entity_registry:
             # Check if requesting agent belongs to same tenant

@@ -96,12 +96,13 @@ def add_user_to_tenant(
     if role == "admin":
         group_id = f"{group_id}-admins"
 
-    return rebac_manager.rebac_write(
+    tuple_id: str = rebac_manager.rebac_write(
         subject=("user", user_id),
         relation="member",
         object=("group", group_id),
         tenant_id=tenant_id,
     )
+    return tuple_id
 
 
 def remove_user_from_tenant(

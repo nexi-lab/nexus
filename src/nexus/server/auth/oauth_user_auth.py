@@ -182,7 +182,10 @@ class OAuthUserAuth:
                 "name": user.display_name or user.username or user.email,
             }
 
-            token = self.local_auth.create_token(user.email or provider_email, user_info_dict)
+            # Email must exist for token creation
+            email_for_token = user.email or provider_email
+            assert email_for_token is not None, "Email is required for token creation"
+            token = self.local_auth.create_token(email_for_token, user_info_dict)
 
             if is_new:
                 logger.info(
@@ -216,7 +219,8 @@ class OAuthUserAuth:
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
                 response.raise_for_status()
-                return response.json()
+                result: dict[str, Any] = response.json()
+                return result
         except Exception as e:
             logger.error(f"Failed to fetch Google userinfo: {e}")
             raise ValueError(f"Failed to fetch user info: {e}") from e
@@ -311,6 +315,8 @@ class OAuthUserAuth:
                     existing_oauth = session.scalar(stmt)
                     if existing_oauth:
                         user = session.get(UserModel, existing_oauth.user_id)
+                        if not user:
+                            raise ValueError("User not found for OAuth account") from None
                         session.expunge(user)
                         return user, False
                     raise  # Unexpected error
@@ -371,6 +377,8 @@ class OAuthUserAuth:
                 existing_oauth = session.scalar(stmt)
                 if existing_oauth:
                     user = session.get(UserModel, existing_oauth.user_id)
+                    if not user:
+                        raise ValueError("User not found for OAuth account") from None
                     session.expunge(user)
                     logger.info(f"Race condition resolved: Using existing user {user.user_id}")
                     return user, False

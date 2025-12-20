@@ -423,6 +423,54 @@ def _register_routes(app: FastAPI) -> None:
     async def health_check() -> HealthResponse:
         return HealthResponse(status="healthy", service="nexus-rpc")
 
+    # Asyncio debug endpoint (Python 3.14+)
+    @app.get("/debug/asyncio", tags=["debug"])
+    async def debug_asyncio() -> dict[str, Any]:
+        """Debug endpoint for asyncio task introspection.
+
+        Returns information about running async tasks, including:
+        - Total task count
+        - Current task info
+        - Call graph (Python 3.14+ only)
+
+        This is useful for debugging stuck or slow async operations.
+        """
+        result: dict[str, Any] = {
+            "python_version": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}",
+        }
+
+        # Get all running tasks
+        try:
+            all_tasks = asyncio.all_tasks()
+            current = asyncio.current_task()
+            result["task_count"] = len(all_tasks)
+            result["current_task"] = current.get_name() if current else None
+            result["tasks"] = [
+                {
+                    "name": task.get_name(),
+                    "done": task.done(),
+                    "cancelled": task.cancelled(),
+                }
+                for task in list(all_tasks)[:50]  # Limit to 50 tasks
+            ]
+        except Exception as e:
+            result["tasks_error"] = str(e)
+
+        # Python 3.14+ call graph introspection
+        try:
+            from asyncio import format_call_graph  # type: ignore[attr-defined]
+
+            # Format call graph for current task (no args needed)
+            result["call_graph_available"] = True
+            result["call_graph"] = format_call_graph()
+        except ImportError:
+            result["call_graph_available"] = False
+            result["call_graph_note"] = "Requires Python 3.14+"
+        except Exception as e:
+            result["call_graph_error"] = str(e)
+
+        return result
+
     # Auth whoami
     @app.get("/api/auth/whoami", response_model=WhoamiResponse)
     async def whoami(

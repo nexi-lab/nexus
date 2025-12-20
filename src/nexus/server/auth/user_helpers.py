@@ -88,11 +88,13 @@ def is_tenant_owner(
             # Alice can delete tenant, remove any user, etc.
     """
     owner_group_id = f"{tenant_group_id(tenant_id)}-owners"
-    return rebac_manager.rebac_check(
-        subject=("user", user_id),
-        permission="member",
-        object=("group", owner_group_id),
-        tenant_id=tenant_id,
+    return bool(
+        rebac_manager.rebac_check(
+            subject=("user", user_id),
+            permission="member",
+            object=("group", owner_group_id),
+            tenant_id=tenant_id,
+        )
     )
 
 
@@ -121,11 +123,13 @@ def is_tenant_admin(
 
     # Check admin group
     admin_group_id = f"{tenant_group_id(tenant_id)}-admins"
-    return rebac_manager.rebac_check(
-        subject=("user", user_id),
-        permission="member",
-        object=("group", admin_group_id),
-        tenant_id=tenant_id,
+    return bool(
+        rebac_manager.rebac_check(
+            subject=("user", user_id),
+            permission="member",
+            object=("group", admin_group_id),
+            tenant_id=tenant_id,
+        )
     )
 
 

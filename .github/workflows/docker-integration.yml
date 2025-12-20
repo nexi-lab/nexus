@@ -1628,8 +1628,9 @@ jobs:
           echo "🔐 Running PostgreSQL authentication integration tests..."
           echo ""
 
-          # Install Python dependencies if needed
+          # Install Python dependencies and nexus package
           python3 -m pip install pytest pytest-xdist sqlalchemy psycopg2-binary --quiet || true
+          python3 -m pip install -e ".[dev,test]" --quiet || true
 
           # Run the PostgreSQL integration tests
           pytest tests/integration/test_auth_postgres.py -v

@@ -936,19 +936,14 @@ class NexusFSMountsMixin:
         Returns:
             True if file should be included, False otherwise
         """
-        import fnmatch
+        from nexus.core import glob_fast
 
         # Check include patterns (if specified, file must match at least one)
-        if include_patterns and not any(
-            fnmatch.fnmatch(file_path, pattern) for pattern in include_patterns
-        ):
+        if include_patterns and not glob_fast.glob_match(file_path, list(include_patterns)):
             return False
 
         # Check exclude patterns (if file matches any, exclude it)
-        return not (
-            exclude_patterns
-            and any(fnmatch.fnmatch(file_path, pattern) for pattern in exclude_patterns)
-        )
+        return not (exclude_patterns and glob_fast.glob_match(file_path, list(exclude_patterns)))
 
     @rpc_expose(description="Sync metadata from connector backend")
     def sync_mount(

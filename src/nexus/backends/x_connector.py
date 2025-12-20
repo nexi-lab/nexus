@@ -35,7 +35,6 @@ Example:
 """
 
 import asyncio
-import fnmatch
 import hashlib
 import json
 import logging
@@ -48,6 +47,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
+from nexus.core import glob_fast
 from nexus.core.exceptions import BackendError
 
 if TYPE_CHECKING:
@@ -1079,8 +1079,8 @@ class XConnectorBackend(Backend):
                     if file.name != "recent.json":
                         available.append(f"/x/timeline/{file.name}")
 
-            # Filter by pattern
-            return [p for p in available if fnmatch.fnmatch(p, pattern)]
+            # Filter by pattern using Rust-accelerated glob matching
+            return glob_fast.glob_filter(available, include_patterns=[pattern])
 
         # Handle posts glob (requires API call)
         if pattern.startswith("/x/posts/") and "*.json" in pattern:
@@ -1098,9 +1098,10 @@ class XConnectorBackend(Backend):
             for file in cache_path.glob("x:*:search:*.json"):
                 # Extract query from filename
                 virtual_path = f"/x/search/{file.stem.split(':')[-1]}.json"
-                if fnmatch.fnmatch(virtual_path, pattern):
-                    matches.append(virtual_path)
-            return sorted(set(matches))
+                matches.append(virtual_path)
+            # Filter by pattern using Rust-accelerated glob matching
+            filtered = glob_fast.glob_filter(matches, include_patterns=[pattern])
+            return sorted(set(filtered))
 
         # Default: return empty
         return []

@@ -317,6 +317,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     vec_distance_cosine(c.embedding, :embedding) as distance,
                     (1 - vec_distance_cosine(c.embedding, :embedding)) as score
@@ -340,6 +342,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     vec_distance_cosine(c.embedding, :embedding) as distance,
                     (1 - vec_distance_cosine(c.embedding, :embedding)) as score
@@ -359,6 +363,8 @@ class VectorDatabase:
                 "chunk_text": row.chunk_text,
                 "start_offset": row.start_offset,
                 "end_offset": row.end_offset,
+                "line_start": row.line_start,
+                "line_end": row.line_end,
                 "score": float(row.score),
             }
             for row in results
@@ -387,6 +393,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     1 - (c.embedding <=> CAST(:embedding AS vector)) as score
                 FROM document_chunks c
@@ -409,6 +417,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     1 - (c.embedding <=> CAST(:embedding AS vector)) as score
                 FROM document_chunks c
@@ -427,6 +437,8 @@ class VectorDatabase:
                 "chunk_text": row.chunk_text,
                 "start_offset": row.start_offset,
                 "end_offset": row.end_offset,
+                "line_start": row.line_start,
+                "line_end": row.line_end,
                 "score": float(row.score),
             }
             for row in results
@@ -476,6 +488,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     fts.rank as score
                 FROM document_chunks_fts fts
@@ -498,6 +512,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     fts.rank as score
                 FROM document_chunks_fts fts
@@ -517,6 +533,8 @@ class VectorDatabase:
                 "chunk_text": row.chunk_text,
                 "start_offset": row.start_offset,
                 "end_offset": row.end_offset,
+                "line_start": row.line_start,
+                "line_end": row.line_end,
                 "score": abs(float(row.score)),  # FTS5 rank is negative
             }
             for row in results
@@ -545,6 +563,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     ts_rank(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query)) as score
                 FROM document_chunks c
@@ -566,6 +586,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     ts_rank(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query)) as score
                 FROM document_chunks c
@@ -584,6 +606,8 @@ class VectorDatabase:
                 "chunk_text": row.chunk_text,
                 "start_offset": row.start_offset,
                 "end_offset": row.end_offset,
+                "line_start": row.line_start,
+                "line_end": row.line_end,
                 "score": float(row.score),
             }
             for row in results

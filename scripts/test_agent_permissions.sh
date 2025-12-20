@@ -163,10 +163,13 @@ echo -e "${GREEN}✓ API key created for ${TEST_AGENT_NAME}${NC}"
 echo -e "${BLUE}  API Key: ${TEST_AGENT_API_KEY:0:30}...${NC}"
 echo ""
 
-# Step 3: Test initial access (should only see agent config)
-echo "🔒 Step 3: Testing initial access (should only see agent config)..."
+# Track test failures
+FAILED_TESTS=0
 
-# Test 1: List agent directory (should see only own config)
+# Step 3: Test initial access (should only see agent config)
+echo "🔒 Step 3: Testing initial access (zero permissions except own config)..."
+
+# Test 1: List agent directory (should see own config - auto-granted)
 echo -e "${BLUE}  Test 1: List /tenant:${TENANT_ID}/user:${USER_ID}/agent/${TEST_AGENT_NAME}${NC}"
 AGENT_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
   -H "Content-Type: application/json" \
@@ -181,13 +184,14 @@ AGENT_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
   }")
 
 if echo "$AGENT_DIR_RESULT" | grep -q "config.yaml"; then
-    echo -e "${GREEN}  ✓ Can access own config${NC}"
+    echo -e "${GREEN}  ✓ Can access own config (expected)${NC}"
 else
-    echo -e "${RED}  ✗ Cannot access own config${NC}"
+    echo -e "${RED}  ✗ Cannot access own config (FAILED)${NC}"
     echo "$AGENT_DIR_RESULT" | python3 -m json.tool
+    FAILED_TESTS=$((FAILED_TESTS + 1))
 fi
 
-# Test 2: Try to list skill directory (should fail)
+# Test 2: Try to list skill directory (should fail - no permission)
 echo -e "${BLUE}  Test 2: List /tenant:${TENANT_ID}/user:${USER_ID}/skill (should fail)${NC}"
 SKILL_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
   -H "Content-Type: application/json" \
@@ -204,10 +208,11 @@ SKILL_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
 if echo "$SKILL_DIR_RESULT" | grep -q "error"; then
     echo -e "${GREEN}  ✓ Correctly denied access to skill directory${NC}"
 else
-    echo -e "${YELLOW}  ⚠️  Unexpectedly allowed access to skill directory${NC}"
+    echo -e "${RED}  ✗ Unexpectedly allowed access to skill directory (FAILED)${NC}"
+    FAILED_TESTS=$((FAILED_TESTS + 1))
 fi
 
-# Test 3: Try to list resource directory (should fail)
+# Test 3: Try to list resource directory (should fail - no permission)
 echo -e "${BLUE}  Test 3: List /tenant:${TENANT_ID}/user:${USER_ID}/resource (should fail)${NC}"
 RESOURCE_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
   -H "Content-Type: application/json" \
@@ -224,10 +229,11 @@ RESOURCE_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
 if echo "$RESOURCE_DIR_RESULT" | grep -q "error"; then
     echo -e "${GREEN}  ✓ Correctly denied access to resource directory${NC}"
 else
-    echo -e "${YELLOW}  ⚠️  Unexpectedly allowed access to resource directory${NC}"
+    echo -e "${RED}  ✗ Unexpectedly allowed access to resource directory (FAILED)${NC}"
+    FAILED_TESTS=$((FAILED_TESTS + 1))
 fi
 
-# Test 4: Try to list workspace directory (should fail)
+# Test 4: Try to list workspace directory (should fail - no permission)
 echo -e "${BLUE}  Test 4: List /tenant:${TENANT_ID}/user:${USER_ID}/workspace (should fail)${NC}"
 WORKSPACE_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
   -H "Content-Type: application/json" \
@@ -244,7 +250,8 @@ WORKSPACE_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
 if echo "$WORKSPACE_DIR_RESULT" | grep -q "error"; then
     echo -e "${GREEN}  ✓ Correctly denied access to workspace directory${NC}"
 else
-    echo -e "${YELLOW}  ⚠️  Unexpectedly allowed access to workspace directory${NC}"
+    echo -e "${RED}  ✗ Unexpectedly allowed access to workspace directory (FAILED)${NC}"
+    FAILED_TESTS=$((FAILED_TESTS + 1))
 fi
 echo ""
 
@@ -335,8 +342,9 @@ PDF_SKILL_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
 if echo "$PDF_SKILL_RESULT" | grep -q "SKILL.md\|skill.py"; then
     echo -e "${GREEN}  ✓ Can now access pdf skill directory${NC}"
 else
-    echo -e "${RED}  ✗ Still cannot access pdf skill directory${NC}"
+    echo -e "${RED}  ✗ Still cannot access pdf skill directory (FAILED)${NC}"
     echo "$PDF_SKILL_RESULT" | python3 -m json.tool
+    FAILED_TESTS=$((FAILED_TESTS + 1))
 fi
 
 # Test 2: List resource directory (should now succeed)
@@ -357,8 +365,9 @@ if echo "$RESOURCE_DIR_RESULT2" | grep -q "result"; then
     RESOURCE_COUNT=$(echo "$RESOURCE_DIR_RESULT2" | python3 -c "import sys, json; data = json.load(sys.stdin); print(len(data.get('result', [])))" 2>/dev/null || echo "0")
     echo -e "${GREEN}  ✓ Can now access resource directory (${RESOURCE_COUNT} items)${NC}"
 else
-    echo -e "${RED}  ✗ Still cannot access resource directory${NC}"
+    echo -e "${RED}  ✗ Still cannot access resource directory (FAILED)${NC}"
     echo "$RESOURCE_DIR_RESULT2" | python3 -m json.tool
+    FAILED_TESTS=$((FAILED_TESTS + 1))
 fi
 
 # Test 3: List workspace directory (should now succeed)
@@ -379,8 +388,9 @@ if echo "$WORKSPACE_DIR_RESULT2" | grep -q "result"; then
     WORKSPACE_COUNT=$(echo "$WORKSPACE_DIR_RESULT2" | python3 -c "import sys, json; data = json.load(sys.stdin); print(len(data.get('result', [])))" 2>/dev/null || echo "0")
     echo -e "${GREEN}  ✓ Can now access workspace directory (${WORKSPACE_COUNT} items)${NC}"
 else
-    echo -e "${RED}  ✗ Still cannot access workspace directory${NC}"
+    echo -e "${RED}  ✗ Still cannot access workspace directory (FAILED)${NC}"
     echo "$WORKSPACE_DIR_RESULT2" | python3 -m json.tool
+    FAILED_TESTS=$((FAILED_TESTS + 1))
 fi
 
 # Test 4: Try to access docx skill (should still fail - no permission)
@@ -400,7 +410,8 @@ DOCX_SKILL_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
 if echo "$DOCX_SKILL_RESULT" | grep -q "error"; then
     echo -e "${GREEN}  ✓ Correctly denied access to docx skill (no permission)${NC}"
 else
-    echo -e "${YELLOW}  ⚠️  Unexpectedly allowed access to docx skill${NC}"
+    echo -e "${RED}  ✗ Unexpectedly allowed access to docx skill (FAILED)${NC}"
+    FAILED_TESTS=$((FAILED_TESTS + 1))
 fi
 echo ""
 
@@ -408,13 +419,25 @@ echo ""
 echo "╔═══════════════════════════════════════════════════╗"
 echo "║              Test Summary                         ║"
 echo "╚═══════════════════════════════════════════════════╝"
-echo -e "${GREEN}✓ Agent created with API key${NC}"
-echo -e "${GREEN}✓ Initial access restricted (only agent config)${NC}"
-echo -e "${GREEN}✓ Permissions granted successfully${NC}"
-echo -e "${GREEN}✓ Access verified after permission grants${NC}"
-echo -e "${GREEN}✓ Selective permissions working correctly${NC}"
-echo ""
-echo -e "${BLUE}Agent API Key (for manual testing):${NC}"
-echo "${TEST_AGENT_API_KEY}"
-echo ""
-echo -e "${GREEN}✓ Integration test completed successfully!${NC}"
+
+if [ $FAILED_TESTS -eq 0 ]; then
+    echo -e "${GREEN}✓ Agent created with API key${NC}"
+    echo -e "${GREEN}✓ Initial access restricted (only agent config)${NC}"
+    echo -e "${GREEN}✓ Permissions granted successfully${NC}"
+    echo -e "${GREEN}✓ Access verified after permission grants${NC}"
+    echo -e "${GREEN}✓ Selective permissions working correctly${NC}"
+    echo ""
+    echo -e "${BLUE}Agent API Key (for manual testing):${NC}"
+    echo "${TEST_AGENT_API_KEY}"
+    echo ""
+    echo -e "${GREEN}✓ All tests passed! Integration test completed successfully!${NC}"
+    exit 0
+else
+    echo -e "${RED}✗ ${FAILED_TESTS} test(s) failed${NC}"
+    echo ""
+    echo -e "${BLUE}Agent API Key (for manual testing):${NC}"
+    echo "${TEST_AGENT_API_KEY}"
+    echo ""
+    echo -e "${RED}✗ Integration test FAILED${NC}"
+    exit 1
+fi

@@ -718,6 +718,10 @@ class DocumentChunkModel(Base):
     start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
     end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Line numbers in original document (for source navigation)
+    line_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    line_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # Embedding metadata
     embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
@@ -2416,10 +2420,16 @@ class OAuthCredentialModel(Base):
 
 
 class ContentCacheModel(Base):
-    """Cache table for connector content.
+    """Cache table for connector content metadata.
 
-    Stores cached content from connectors (GCS, X, Gmail, Google Drive, etc.)
+    Stores metadata for cached content from connectors (GCS, X, Gmail, Google Drive, etc.)
     to enable fast grep, glob, and semantic search without real-time connector access.
+
+    Content Storage Architecture:
+        - Binary content is stored on disk via FileContentCache (fast mmap reads)
+        - PostgreSQL stores metadata only (path, hash, size, synced_at)
+        - The content_binary column is deprecated (kept for backward compatibility)
+        - Disk storage enables Zoekt trigram indexing for sub-50ms code search
 
     See docs/design/cache-layer.md for design details.
     """
@@ -2450,8 +2460,8 @@ class ContentCacheModel(Base):
         Text, nullable=True
     )  # Searchable text (parsed or raw)
     content_binary: Mapped[bytes | None] = mapped_column(
-        Text, nullable=True
-    )  # Original binary as base64 (optional)
+        LargeBinary, nullable=True
+    )  # DEPRECATED: Binary now stored on disk via FileContentCache (kept for migration)
     content_hash: Mapped[str] = mapped_column(
         String(64), nullable=False
     )  # SHA-256 of original content

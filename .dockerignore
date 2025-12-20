@@ -146,3 +146,4 @@ target/
 # Cargo.lock - needed for reproducible builds
 .ruff_cache/
 .mypy_cache/
+gcs-credentials.json

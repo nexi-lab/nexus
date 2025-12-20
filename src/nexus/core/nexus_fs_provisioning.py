@@ -19,7 +19,6 @@ from __future__ import annotations
 import secrets
 import string
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.permissions import OperationContext
@@ -27,7 +26,6 @@ from nexus.core.rpc_decorator import rpc_expose
 from nexus.storage.models import TenantModel, UserModel
 
 if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFS
     from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
 # Resource types that get provisioned

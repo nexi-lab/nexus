@@ -2974,7 +2974,6 @@ class NexusFS(
         created_at: str | None,
         metadata: dict | None = None,
         api_key: str | None = None,
-        inherit_permissions: bool | None = None,
     ) -> dict[str, Any]:
         """Create agent config.yaml data structure."""
         config_data: dict[str, Any] = {
@@ -2990,9 +2989,6 @@ class NexusFS(
 
         if api_key is not None:
             config_data["api_key"] = api_key
-
-        if inherit_permissions is not None:
-            config_data["inherit_permissions"] = inherit_permissions
 
         return config_data
 
@@ -3116,7 +3112,6 @@ class NexusFS(
         self,
         agent_id: str,
         user_id: str,
-        inherit_permissions: bool,
         context: dict | Any | None,
     ) -> str:
         """Create API key for agent and return the raw key."""
@@ -3138,7 +3133,6 @@ class NexusFS(
                 subject_id=agent_id,
                 tenant_id=tenant_id,
                 expires_at=expires_at,
-                inherit_permissions=inherit_permissions,
             )
             session.commit()
             return raw_key
@@ -3152,7 +3146,6 @@ class NexusFS(
         name: str,
         description: str | None = None,
         generate_api_key: bool = False,
-        inherit_permissions: bool = False,  # v0.5.1: Default False (zero permissions)
         metadata: dict | None = None,  # v0.5.1: Optional metadata (platform, endpoint_url, etc.)
         context: dict | None = None,
     ) -> dict:
@@ -3161,15 +3154,14 @@ class NexusFS(
         Agents are persistent identities owned by users. They do NOT have session_id
         or expiry - they live forever until explicitly deleted.
 
-        v0.5.1: Added inherit_permissions for controlling agent permission inheritance.
+        Agents operate with zero permissions by default (principle of least privilege).
+        Permissions must be explicitly granted via ReBAC (rebac_create).
 
         Args:
             agent_id: Unique agent identifier
             name: Human-readable name
             description: Optional description
             generate_api_key: If True, create API key for agent (not recommended)
-            inherit_permissions: Whether agent inherits owner's permissions (v0.5.1)
-                                Default False (zero permissions, principle of least privilege)
             metadata: Optional metadata dict (platform, endpoint_url, agent_id, etc.)
                      Stored in agent's config.yaml for agent configuration
             context: Operation context (user_id extracted from here)
@@ -3182,15 +3174,10 @@ class NexusFS(
             >>> agent = nx.register_agent("data_analyst", "Data Analyst")
             >>> # Agent uses owner's credentials + X-Agent-ID header
             >>>
-            >>> # With API key but no inheritance (zero permissions)
+            >>> # With API key (zero permissions by default)
             >>> agent = nx.register_agent("secure_agent", "Secure Agent",
-            ...                          generate_api_key=True, inherit_permissions=False)
+            ...                          generate_api_key=True)
             >>> # Agent starts with 0 permissions, needs explicit ReBAC grants
-            >>>
-            >>> # With API key and inheritance (full permissions)
-            >>> agent = nx.register_agent("trusted_agent", "Trusted Agent",
-            ...                          generate_api_key=True, inherit_permissions=True)
-            >>> # Agent inherits all owner's permissions
         """
         import logging
 
@@ -3249,13 +3236,28 @@ class NexusFS(
         )
         agent["config_path"] = config_path
 
+        # Grant agent viewer permission on its own config directory
+        # This allows the agent to read its own configuration
+        try:
+            self.rebac_create(
+                subject_type="agent",
+                subject_id=agent_id,
+                relation="viewer",
+                object_type="file",
+                object_id=agent_dir,
+                tenant_id=tenant_id,
+                context=context,
+            )
+            logger.info(f"Granted viewer permission to agent {agent_id} on {agent_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to grant viewer permission to agent: {e}")
+
         # Optionally generate API key
         if generate_api_key:
             try:
                 raw_key = self._create_agent_api_key(
                     agent_id=agent_id,
                     user_id=user_id,
-                    inherit_permissions=inherit_permissions,
                     context=context,
                 )
                 agent["api_key"] = raw_key
@@ -3271,7 +3273,6 @@ class NexusFS(
                         created_at=agent.get("created_at"),
                         metadata=metadata,
                         api_key=raw_key,
-                        inherit_permissions=inherit_permissions,
                     )
                     self._write_agent_config(config_path, updated_config_data, context)
                 except Exception as e:

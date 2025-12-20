@@ -134,20 +134,12 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 f"[key: {api_key.key_id}, tenant: {api_key.tenant_id}]"
             )
 
-            # v0.5.1: Get inherit_permissions flag (default True if not set)
-            inherit_perms = (
-                bool(api_key.inherit_permissions)
-                if hasattr(api_key, "inherit_permissions")
-                else True
-            )
-
             return AuthResult(
                 authenticated=True,
                 subject_type=subject_type,
                 subject_id=subject_id,
                 tenant_id=api_key.tenant_id,
                 is_admin=bool(api_key.is_admin),  # Convert from SQLite Integer to bool
-                inherit_permissions=inherit_perms,  # v0.5.1: Permission inheritance control
                 metadata={
                     "key_id": api_key.key_id,
                     "key_name": api_key.name,

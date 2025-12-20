@@ -37,6 +37,8 @@ class NexusFSProvisioningMixin:
 
     # Type hints for attributes that will be provided by NexusFS parent class
     if TYPE_CHECKING:
+        from datetime import timedelta
+
         metadata: SQLAlchemyMetadataStore
         _rebac_manager: Any
         _entity_registry: Any
@@ -58,16 +60,27 @@ class NexusFSProvisioningMixin:
         ) -> str: ...
 
         def register_workspace(
-            self, path: str, name: str | None = None, context: Any = None
+            self,
+            path: str,
+            name: str | None = None,
+            description: str | None = None,
+            created_by: str | None = None,
+            tags: list[str] | None = None,
+            metadata: dict[str, Any] | None = None,
+            session_id: str | None = None,
+            ttl: timedelta | None = None,
+            context: Any | None = None,
         ) -> dict[str, Any]: ...
 
         def register_agent(
             self,
             agent_id: str,
-            name: str | None = None,
-            agent_type: str = "ImpersonatedUser",
-            context: Any = None,
-        ) -> dict[str, Any]: ...
+            name: str,
+            description: str | None = None,
+            generate_api_key: bool = False,
+            metadata: dict | None = None,
+            context: dict | None = None,
+        ) -> dict: ...
 
         def import_skill(
             self, skill_path: str, target_path: str | None = None, context: Any = None

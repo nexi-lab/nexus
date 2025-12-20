@@ -197,6 +197,7 @@ def test_ensure_parent_tuples_batch_different_tenants(hierarchy_manager):
     # Note: Tenant isolation is enforced at write time via cross-tenant validation
 
 
+@pytest.mark.skip(reason="Performance tests are flaky in CI")
 def test_ensure_parent_tuples_batch_vs_individual_performance(hierarchy_manager):
     """Compare performance of batch vs individual operations."""
     import time

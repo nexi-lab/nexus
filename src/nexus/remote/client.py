@@ -2786,6 +2786,63 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         )
         return result  # type: ignore[no-any-return]
 
+    def share_with_group(
+        self,
+        resource: tuple[str, str],
+        group_id: str,
+        relation: str = "viewer",
+        tenant_id: str | None = None,
+        group_tenant_id: str | None = None,
+        expires_at: datetime | None = None,
+    ) -> str:
+        """Share a resource with a group (all members get access).
+
+        Uses userset-as-subject pattern: ("group", group_id, "member")
+        All members of the group will have the specified permission level.
+
+        This enables cross-tenant sharing - groups from different organizations
+        can be granted access to specific resources.
+
+        Args:
+            resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
+            group_id: Group to share with (e.g., "developers")
+            relation: Permission level - "viewer" (read) or "editor" (read/write)
+            tenant_id: Resource owner's tenant ID (defaults to current tenant)
+            group_tenant_id: Group's tenant ID (for cross-tenant shares)
+            expires_at: Optional expiration datetime for the share
+
+        Returns:
+            Share ID (tuple_id) that can be used to revoke the share
+
+        Examples:
+            >>> # Share with same-tenant group
+            >>> share_id = nx.share_with_group(
+            ...     resource=("file", "/project/doc.txt"),
+            ...     group_id="developers",
+            ...     relation="editor"
+            ... )
+
+            >>> # Share with cross-tenant group
+            >>> share_id = nx.share_with_group(
+            ...     resource=("file", "/project/doc.txt"),
+            ...     group_id="partner-team",
+            ...     group_tenant_id="partner-tenant",
+            ...     relation="viewer"
+            ... )
+        """
+        result = self._call_rpc(
+            "share_with_group",
+            {
+                "resource": resource,
+                "group_id": group_id,
+                "relation": relation,
+                "tenant_id": tenant_id,
+                "group_tenant_id": group_tenant_id,
+                "expires_at": expires_at.isoformat() if expires_at else None,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
     def revoke_share(self, resource: tuple[str, str], user_id: str) -> bool:
         """Revoke a share for a specific user on a resource.
 

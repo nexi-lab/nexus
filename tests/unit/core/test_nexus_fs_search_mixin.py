@@ -407,7 +407,7 @@ class TestSemanticSearchWithMocking:
     @pytest.mark.asyncio
     async def test_semantic_search_basic(self, nx: NexusFS) -> None:
         """Test basic semantic search."""
-        await nx.initialize_semantic_search()
+        await nx.initialize_semantic_search(async_mode=False)
 
         # Mock the search method
         mock_result = MagicMock()
@@ -429,7 +429,7 @@ class TestSemanticSearchWithMocking:
     @pytest.mark.asyncio
     async def test_semantic_search_with_filters(self, nx: NexusFS) -> None:
         """Test semantic search with filters."""
-        await nx.initialize_semantic_search()
+        await nx.initialize_semantic_search(async_mode=False)
         nx._semantic_search.search = AsyncMock(return_value=[])
 
         await nx.semantic_search(
@@ -452,7 +452,7 @@ class TestSemanticSearchWithMocking:
         """Test indexing a single file."""
         nx.write("/test.txt", b"Test content for indexing")
 
-        await nx.initialize_semantic_search()
+        await nx.initialize_semantic_search(async_mode=False)
         nx._semantic_search.index_document = AsyncMock(return_value=5)
 
         results = await nx.semantic_search_index("/test.txt")
@@ -466,7 +466,7 @@ class TestSemanticSearchWithMocking:
         nx.write("/docs/file1.txt", b"Content 1")
         nx.write("/docs/file2.txt", b"Content 2")
 
-        await nx.initialize_semantic_search()
+        await nx.initialize_semantic_search(async_mode=False)
         nx._semantic_search.index_directory = AsyncMock(
             return_value={"/docs/file1.txt": 3, "/docs/file2.txt": 2}
         )
@@ -479,7 +479,7 @@ class TestSemanticSearchWithMocking:
     @pytest.mark.asyncio
     async def test_semantic_search_stats(self, nx: NexusFS) -> None:
         """Test getting semantic search stats."""
-        await nx.initialize_semantic_search()
+        await nx.initialize_semantic_search(async_mode=False)
         nx._semantic_search.get_index_stats = AsyncMock(
             return_value={
                 "total_chunks": 100,

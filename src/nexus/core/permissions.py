@@ -612,9 +612,9 @@ class PermissionEnforcer:
         Returns:
             True if path matches any allowlist pattern
         """
-        import fnmatch
+        from nexus.core import glob_fast
 
-        return any(fnmatch.fnmatch(path, pattern) for pattern in allowlist)
+        return glob_fast.glob_match(path, list(allowlist))
 
     def filter_list(
         self,

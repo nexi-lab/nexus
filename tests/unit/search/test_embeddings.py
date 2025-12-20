@@ -146,7 +146,7 @@ class TestVoyageAIEmbeddingProvider:
 
         with patch.dict(sys.modules, {"voyageai": mock_voyageai}):
             provider = VoyageAIEmbeddingProvider()
-            assert provider.model == EmbeddingModel.VOYAGE_2
+            assert provider.model == EmbeddingModel.VOYAGE_3
             mock_voyageai.Client.assert_called_once_with(api_key="test-key")
 
     def test_init_with_explicit_key(self):
@@ -197,7 +197,9 @@ class TestVoyageAIEmbeddingProvider:
             assert embeddings[0] == [0.1, 0.2]
             assert embeddings[1] == [0.3, 0.4]
 
-            mock_client.embed.assert_called_once_with(texts, model=EmbeddingModel.VOYAGE_2)
+            mock_client.embed.assert_called_once_with(
+                texts, model=EmbeddingModel.VOYAGE_3, input_type="document"
+            )
 
     async def test_embed_text(self):
         """Test embedding a single text."""
@@ -214,7 +216,9 @@ class TestVoyageAIEmbeddingProvider:
             embedding = await provider.embed_text("hello")
 
             assert embedding == [0.1, 0.2, 0.3]
-            mock_client.embed.assert_called_once_with(["hello"], model=EmbeddingModel.VOYAGE_2)
+            mock_client.embed.assert_called_once_with(
+                ["hello"], model=EmbeddingModel.VOYAGE_3, input_type="document"
+            )
 
     def test_get_dimension_voyage_2(self):
         """Test getting dimension for Voyage 2 model."""

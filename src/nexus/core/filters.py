@@ -4,7 +4,7 @@ This module provides utilities for filtering out OS-generated metadata files
 that should not be stored or displayed in Nexus.
 """
 
-from fnmatch import fnmatch
+from nexus.core import glob_fast
 
 # Try to import Rust acceleration
 try:
@@ -53,8 +53,8 @@ def is_os_metadata_file(path: str) -> bool:
     # Extract just the filename from the path
     filename = path.split("/")[-1] if "/" in path else path
 
-    # Check if filename matches any OS metadata pattern
-    return any(fnmatch(filename, pattern) for pattern in OS_METADATA_PATTERNS)
+    # Check if filename matches any OS metadata pattern (uses Rust if available)
+    return glob_fast.glob_match(filename, OS_METADATA_PATTERNS)
 
 
 def filter_os_metadata(files: list[str]) -> list[str]:

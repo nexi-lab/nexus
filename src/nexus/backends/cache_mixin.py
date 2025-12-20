@@ -9,7 +9,6 @@ Part of: #506, #510 (cache layer epic)
 
 from __future__ import annotations
 
-import base64
 import contextlib
 import logging
 import uuid
@@ -22,6 +21,7 @@ from sqlalchemy import select
 from nexus.core.exceptions import ConflictError
 from nexus.core.hash_fast import hash_content
 from nexus.core.permissions import OperationContext
+from nexus.storage.file_cache import get_file_cache
 from nexus.storage.models import ContentCacheModel, FilePathModel
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ class CacheEntry:
     """A cached content entry with lazy loading.
 
     The content_binary field uses lazy loading - raw bytes are stored
-    in _content_binary_b64 and only assigned when content_binary is accessed.
+    in _content_binary_raw and only assigned when content_binary is accessed.
     This avoids memory overhead when content isn't actually read.
     """
 
@@ -76,20 +76,20 @@ class CacheEntry:
     stale: bool
     parsed_from: str | None = None
     parse_metadata: dict | None = None
-    _content_binary_b64: bytes | None = None  # Raw bytes for lazy loading
+    _content_binary_raw: bytes | None = None  # Raw bytes for lazy loading
 
     @property
     def content_binary(self) -> bytes | None:
         """Get binary content (lazy load on first access)."""
-        if self._content_binary is None and self._content_binary_b64:
-            self._content_binary = self._content_binary_b64
+        if self._content_binary is None and self._content_binary_raw:
+            self._content_binary = self._content_binary_raw
         return self._content_binary
 
     @content_binary.setter
     def content_binary(self, value: bytes | None) -> None:
         """Set binary content directly."""
         self._content_binary = value
-        self._content_binary_b64 = None  # Clear raw since we have the value
+        self._content_binary_raw = None  # Clear raw since we have the value
 
 
 @dataclass
@@ -327,6 +327,22 @@ class CacheConnectorMixin:
         path_id_to_path = {v: k for k, v in path_id_map.items()}
 
         # Process cache models
+        # Bulk read binary content from disk cache
+        file_cache = get_file_cache()
+        disk_contents: dict[str, bytes] = {}
+        if original:
+            # Group paths by tenant for bulk read
+            tenant_paths: dict[str, list[str]] = {}
+            for path_id, cache_model in cache_models.items():
+                vpath = path_id_to_path.get(path_id)
+                if vpath:
+                    cache_tenant = cache_model.tenant_id or "default"
+                    tenant_paths.setdefault(cache_tenant, []).append(vpath)
+
+            # Bulk read from disk for each tenant
+            for tenant_id, vpaths in tenant_paths.items():
+                disk_contents.update(file_cache.read_bulk(tenant_id, vpaths))
+
         l2_hits = 0
         for path_id, cache_model in cache_models.items():
             vpath = path_id_to_path.get(path_id)
@@ -341,14 +357,19 @@ class CacheConnectorMixin:
 
                     parse_metadata = json.loads(cache_model.parse_metadata)
 
-            # Store raw b64 for lazy decode (only decode when content_binary accessed)
-            content_binary_b64 = cache_model.content_binary if original else None
+            # Get binary content: disk (primary) or database (fallback for old data)
+            content_binary_raw = None
+            if original:
+                content_binary_raw = disk_contents.get(vpath)
+                if not content_binary_raw and cache_model.content_binary:
+                    # Fall back to database for backward compatibility
+                    content_binary_raw = cache_model.content_binary
 
             entry = CacheEntry(
                 cache_id=cache_model.cache_id,
                 path_id=cache_model.path_id,
                 content_text=cache_model.content_text,
-                _content_binary=None,  # Will be lazily decoded
+                _content_binary=None,  # Will be lazily loaded from _content_binary_raw
                 content_hash=cache_model.content_hash,
                 content_type=cache_model.content_type,
                 original_size=cache_model.original_size_bytes,
@@ -358,7 +379,7 @@ class CacheConnectorMixin:
                 stale=cache_model.stale,
                 parsed_from=cache_model.parsed_from,
                 parse_metadata=parse_metadata,
-                _content_binary_b64=content_binary_b64,
+                _content_binary_raw=content_binary_raw,
             )
             results[vpath] = entry
             l2_hits += 1
@@ -500,14 +521,25 @@ class CacheConnectorMixin:
 
                 parse_metadata = json.loads(cache_model.parse_metadata)
 
-        # Store raw b64 for lazy decode (only decode when content_binary accessed)
-        content_binary_b64 = cache_model.content_binary if original else None
+        # Read binary content from disk (primary) or database (fallback for old data)
+        content_binary_raw = None
+        if original:
+            # Try disk cache first (new storage)
+            file_cache = get_file_cache()
+            cache_tenant = cache_model.tenant_id or "default"
+            content_binary_raw = file_cache.read(cache_tenant, path)
+            if content_binary_raw:
+                logger.debug(f"[CACHE] L2 content from DISK: {path}")
+            elif cache_model.content_binary:
+                # Fall back to database for backward compatibility
+                content_binary_raw = cache_model.content_binary
+                logger.debug(f"[CACHE] L2 content from DB (legacy): {path}")
 
         entry = CacheEntry(
             cache_id=cache_model.cache_id,
             path_id=cache_model.path_id,
             content_text=cache_model.content_text,
-            _content_binary=None,  # Will be lazily decoded
+            _content_binary=None,  # Will be lazily loaded from _content_binary_raw
             content_hash=cache_model.content_hash,
             content_type=cache_model.content_type,
             original_size=cache_model.original_size_bytes,
@@ -517,7 +549,7 @@ class CacheConnectorMixin:
             stale=cache_model.stale,
             parsed_from=cache_model.parsed_from,
             parse_metadata=parse_metadata,
-            _content_binary_b64=content_binary_b64,
+            _content_binary_raw=content_binary_raw,
         )
 
         # Check TTL if connector defines cache_ttl
@@ -589,10 +621,16 @@ class CacheConnectorMixin:
 
         cached_size = len(content_text) if content_text else 0
 
-        # Encode binary for storage (base64)
-        content_binary_b64 = None
+        # Write binary content to disk via FileContentCache (not PostgreSQL)
+        # This enables: 1) faster mmap reads, 2) lower costs, 3) Zoekt compatibility
+        file_cache = get_file_cache()
+        cache_tenant = tenant_id or "default"
         if original_size <= self.MAX_CACHE_FILE_SIZE:
-            content_binary_b64 = base64.b64encode(content).decode("ascii")
+            try:
+                file_cache.write(cache_tenant, path, content, text_content=content_text)
+                logger.debug(f"[CACHE] Wrote {original_size} bytes to disk: {path}")
+            except Exception as e:
+                logger.warning(f"[CACHE] Failed to write to disk cache: {e}")
 
         # Serialize parse_metadata
         parse_metadata_json = None
@@ -609,9 +647,9 @@ class CacheConnectorMixin:
         existing = result.scalar_one_or_none()
 
         if existing:
-            # Update existing entry
+            # Update existing entry (content_binary=None, content now on disk)
             existing.content_text = content_text
-            existing.content_binary = content_binary_b64  # type: ignore[assignment]
+            existing.content_binary = None  # Binary stored on disk via FileContentCache
             existing.content_hash = content_hash
             existing.content_type = content_type
             existing.original_size_bytes = original_size
@@ -625,14 +663,14 @@ class CacheConnectorMixin:
             existing.updated_at = now
             cache_id = existing.cache_id
         else:
-            # Create new entry
+            # Create new entry (content_binary=None, content now on disk)
             cache_id = str(uuid.uuid4())
             cache_model = ContentCacheModel(
                 cache_id=cache_id,
                 path_id=path_id,
                 tenant_id=tenant_id,
                 content_text=content_text,
-                content_binary=content_binary_b64,
+                content_binary=None,  # Binary stored on disk via FileContentCache
                 content_hash=content_hash,
                 content_type=content_type,
                 original_size_bytes=original_size,
@@ -680,7 +718,7 @@ class CacheConnectorMixin:
             cache_id=cache_id,
             path_id=path_id,
             content_text=content_text,
-            _content_binary=content if content_binary_b64 else None,  # Already decoded
+            _content_binary=content if original_size <= self.MAX_CACHE_FILE_SIZE else None,
             content_hash=content_hash,
             content_type=content_type,
             original_size=original_size,
@@ -889,6 +927,7 @@ class CacheConnectorMixin:
         session = self._get_db_session()
         now = datetime.now(UTC)
         memory_cache = self._get_memory_cache()
+        file_cache = get_file_cache()  # Disk cache for binary content
 
         # Get all path_ids in bulk
         paths = [e["path"] for e in entries]
@@ -938,10 +977,13 @@ class CacheConnectorMixin:
 
                 cached_size = len(content_text) if content_text else 0
 
-                # Encode binary for storage
-                content_binary_b64 = None
+                # Write binary content to disk via FileContentCache
+                cache_tenant = tenant_id or "default"
                 if original_size <= self.MAX_CACHE_FILE_SIZE:
-                    content_binary_b64 = base64.b64encode(content).decode("ascii")
+                    try:
+                        file_cache.write(cache_tenant, path, content, text_content=content_text)
+                    except Exception as e:
+                        logger.warning(f"[CACHE] Failed to write to disk cache: {path}: {e}")
 
                 # Serialize parse_metadata
                 parse_metadata_json = None
@@ -950,12 +992,12 @@ class CacheConnectorMixin:
 
                     parse_metadata_json = json.dumps(parse_metadata)
 
-                # Update or create entry
+                # Update or create entry (content_binary=None, content now on disk)
                 existing = existing_by_path_id.get(path_id)
                 if existing:
                     # Update existing entry
                     existing.content_text = content_text
-                    existing.content_binary = content_binary_b64  # type: ignore[assignment]
+                    existing.content_binary = None  # Binary stored on disk via FileContentCache
                     existing.content_hash = content_hash
                     existing.content_type = content_type
                     existing.original_size_bytes = original_size
@@ -976,7 +1018,7 @@ class CacheConnectorMixin:
                         path_id=path_id,
                         tenant_id=tenant_id,
                         content_text=content_text,
-                        content_binary=content_binary_b64,
+                        content_binary=None,  # Binary stored on disk via FileContentCache
                         content_hash=content_hash,
                         content_type=content_type,
                         original_size_bytes=original_size,
@@ -997,7 +1039,7 @@ class CacheConnectorMixin:
                     cache_id=cache_id,
                     path_id=path_id,
                     content_text=content_text,
-                    _content_binary=content if content_binary_b64 else None,  # Already decoded
+                    _content_binary=content if original_size <= self.MAX_CACHE_FILE_SIZE else None,
                     content_hash=content_hash,
                     content_type=content_type,
                     original_size=original_size,
@@ -1071,7 +1113,7 @@ class CacheConnectorMixin:
         mount_prefix: str | None = None,
         delete: bool = False,
     ) -> int:
-        """Invalidate cache entries (both L1 memory and L2 database).
+        """Invalidate cache entries (L1 memory, L2 database, and disk).
 
         Args:
             path: Specific path to invalidate
@@ -1083,6 +1125,7 @@ class CacheConnectorMixin:
         """
         # Invalidate L1 memory cache
         memory_cache = self._get_memory_cache()
+        file_cache = get_file_cache()
         if path:
             # Remove specific path from memory cache
             memory_key = f"cache_entry:{path}"
@@ -1108,6 +1151,9 @@ class CacheConnectorMixin:
                 return 0
 
             if delete:
+                # Delete from disk cache
+                cache_tenant = entry.tenant_id or "default"
+                file_cache.delete(cache_tenant, path)
                 session.delete(entry)
             else:
                 entry.stale = True
@@ -1118,21 +1164,24 @@ class CacheConnectorMixin:
 
         elif mount_prefix:
             # Invalidate all entries under mount prefix
-            stmt = (
-                select(ContentCacheModel)
+            mount_stmt = (
+                select(ContentCacheModel, FilePathModel.virtual_path)
                 .join(FilePathModel, ContentCacheModel.path_id == FilePathModel.path_id)
                 .where(FilePathModel.virtual_path.startswith(mount_prefix))
             )
-            result = session.execute(stmt)
-            entries = result.scalars().all()
+            result = session.execute(mount_stmt)
+            rows = result.all()
 
             count = 0
-            for entry in entries:
+            for cache_entry, vpath in rows:
                 if delete:
-                    session.delete(entry)
+                    # Delete from disk cache
+                    cache_tenant = cache_entry.tenant_id or "default"
+                    file_cache.delete(cache_tenant, vpath)
+                    session.delete(cache_entry)
                 else:
-                    entry.stale = True
-                    entry.updated_at = datetime.now(UTC)
+                    cache_entry.stale = True
+                    cache_entry.updated_at = datetime.now(UTC)
                 count += 1
 
             session.commit()
@@ -1355,7 +1404,7 @@ class CacheConnectorMixin:
             files = ["data/file.txt", "reports/2024.pdf"]
             mapping = {"data/file.txt": "/mnt/gcs/data/file.txt", ...}
         """
-        import fnmatch
+        from nexus.core import glob_fast
 
         # List files from backend
         try:
@@ -1387,28 +1436,31 @@ class CacheConnectorMixin:
             result.errors.append(f"Failed to list files: {e}")
             return [], {}
 
-        # Build virtual paths and apply filters
+        # Build virtual paths mapping
         backend_to_virtual: dict[str, str] = {}
-
         for backend_path in files:
-            # Construct virtual path from mount_point + backend_path
             if mount_point:
                 virtual_path = f"{mount_point.rstrip('/')}/{backend_path.lstrip('/')}"
             else:
                 virtual_path = f"/{backend_path.lstrip('/')}"
-
-            # Check include/exclude patterns (match against virtual path)
-            if include_patterns and not any(
-                fnmatch.fnmatch(virtual_path, p) for p in include_patterns
-            ):
-                result.files_skipped += 1
-                continue
-
-            if exclude_patterns and any(fnmatch.fnmatch(virtual_path, p) for p in exclude_patterns):
-                result.files_skipped += 1
-                continue
-
             backend_to_virtual[backend_path] = virtual_path
+
+        # Apply include/exclude patterns using Rust-accelerated glob matching
+        if include_patterns or exclude_patterns:
+            all_virtual_paths = list(backend_to_virtual.values())
+            filtered_paths = set(
+                glob_fast.glob_filter(
+                    all_virtual_paths,
+                    include_patterns=list(include_patterns) if include_patterns else None,
+                    exclude_patterns=list(exclude_patterns) if exclude_patterns else None,
+                )
+            )
+            # Filter backend_to_virtual to only include matching paths
+            original_count = len(backend_to_virtual)
+            backend_to_virtual = {
+                bp: vp for bp, vp in backend_to_virtual.items() if vp in filtered_paths
+            }
+            result.files_skipped += original_count - len(backend_to_virtual)
 
         logger.info(
             f"[CACHE-SYNC] Step 1 complete: {len(backend_to_virtual)} files to process "

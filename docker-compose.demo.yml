@@ -154,6 +154,12 @@ services:
 
       # Configuration file path (defaults to config.demo.yaml if not specified)
       NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}
+
+      # Zoekt code search (optional, requires --profile zoekt)
+      # Enable Zoekt for sub-50ms code search on large codebases
+      ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
+      ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
+      ZOEKT_TIMEOUT: ${ZOEKT_TIMEOUT:-10.0}
     volumes:
       # Persistent data directory (local backend) - shared with local development
       - ./nexus-data:/app/data
@@ -325,10 +331,83 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ============================================
+  # Zoekt Code Search (Optional)
+  # Fast trigram-based code search for large codebases
+  #
+  # Indexes content from:
+  #   - LOCAL backend: /data/cas/ (CAS - no L2 cache needed)
+  #   - External connectors: /data/.cache/ (L2 disk cache)
+  #
+  # Usage:
+  #   docker compose --profile zoekt up         # Start Zoekt server
+  #   docker compose --profile zoekt-index up   # Build/rebuild index
+  # ============================================
+  zoekt:
+    image: sourcegraph/zoekt-webserver:latest
+    container_name: nexus-zoekt
+    restart: unless-stopped
+    profiles:
+      - zoekt  # Only starts with: docker compose --profile zoekt up
+    environment:
+      # Index configuration
+      ZOEKT_INDEX_DIR: /index
+      ZOEKT_DATA_DIR: /data
+    volumes:
+      # Content directories to index:
+      # - /data/cas/    = LOCAL backend CAS (content-addressable storage)
+      # - /data/.cache/ = External connector L2 cache (GCS, S3, Gmail, etc.)
+      # Note: Zoekt webserver needs write access for internal state
+      - ./nexus-data:/data
+      # Persistent trigram index storage
+      - zoekt-index:/index
+    ports:
+      - "${ZOEKT_PORT:-6070}:6070"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:6070/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Zoekt indexer - runs once to build/update index
+  # Uses zoekt-webserver image which includes zoekt-index binary
+  zoekt-indexer:
+    image: sourcegraph/zoekt-webserver:latest
+    container_name: nexus-zoekt-indexer
+    profiles:
+      - zoekt-index  # Only runs with: docker compose --profile zoekt-index up
+    volumes:
+      # Content directories (need write for temp files)
+      - ./nexus-data:/data
+      - zoekt-index:/index
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Building Zoekt index..."
+        echo "  - LOCAL backend: /data/cas/"
+        echo "  - L2 cache: /data/.cache/"
+        # Index all files in /data
+        zoekt-index -index /index /data
+        echo "Index build complete!"
+        # Show stats
+        ls -la /index/
+    networks:
+      - nexus-network
+
 # ============================================
 # Volumes
 # ============================================
 volumes:
+  zoekt-index:
+    driver: local
   postgres-data:
     driver: local
   # nexus-data: Using local directory ./nexus-data instead of Docker volume

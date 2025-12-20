@@ -1,11 +1,11 @@
 """Workflow trigger system."""
 
-import fnmatch
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 
+from nexus.core import glob_fast
 from nexus.workflows.types import TriggerType, WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class FileWriteTrigger(BaseTrigger):
     def matches(self, event_context: dict[str, Any]) -> bool:
         """Check if file path matches the pattern."""
         file_path = event_context.get("file_path", "")
-        return fnmatch.fnmatch(file_path, self.pattern)
+        return glob_fast.glob_match(file_path, [self.pattern])
 
 
 class FileDeleteTrigger(BaseTrigger):
@@ -58,7 +58,7 @@ class FileDeleteTrigger(BaseTrigger):
     def matches(self, event_context: dict[str, Any]) -> bool:
         """Check if file path matches the pattern."""
         file_path = event_context.get("file_path", "")
-        return fnmatch.fnmatch(file_path, self.pattern)
+        return glob_fast.glob_match(file_path, [self.pattern])
 
 
 class FileRenameTrigger(BaseTrigger):
@@ -72,7 +72,9 @@ class FileRenameTrigger(BaseTrigger):
         """Check if old or new file path matches the pattern."""
         old_path = event_context.get("old_path", "")
         new_path = event_context.get("new_path", "")
-        return fnmatch.fnmatch(old_path, self.pattern) or fnmatch.fnmatch(new_path, self.pattern)
+        return glob_fast.glob_match(old_path, [self.pattern]) or glob_fast.glob_match(
+            new_path, [self.pattern]
+        )
 
 
 class MetadataChangeTrigger(BaseTrigger):
@@ -89,7 +91,7 @@ class MetadataChangeTrigger(BaseTrigger):
         changed_key = event_context.get("metadata_key")
 
         # Check file path pattern
-        if not fnmatch.fnmatch(file_path, self.pattern):
+        if not glob_fast.glob_match(file_path, [self.pattern]):
             return False
 
         # Check specific metadata key if specified

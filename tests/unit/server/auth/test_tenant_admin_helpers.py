@@ -67,6 +67,7 @@ class TestTenantAdminHelpers:
 
     def test_is_tenant_admin_via_admin_group(self, mock_rebac_manager: Any) -> None:
         """Test is_tenant_admin returns True for admin (not owner)."""
+
         # Setup: User is admin but not owner
         def mock_check(**kwargs: Any) -> bool:
             if kwargs["object"][1] == "tenant-acme-owners":
@@ -92,6 +93,7 @@ class TestTenantAdminHelpers:
 
     def test_can_invite_to_tenant(self, mock_rebac_manager: Any) -> None:
         """Test can_invite_to_tenant delegates to is_tenant_admin."""
+
         # Setup: User is admin
         def mock_check(**kwargs: Any) -> bool:
             return kwargs["object"][1] == "tenant-acme-admins"
@@ -122,6 +124,7 @@ class TestAddUserToTenant:
 
     def test_add_admin_as_admin(self, mock_rebac_manager: Any) -> None:
         """Test admin can add another admin."""
+
         # Setup: Alice is admin
         def mock_check(**kwargs: Any) -> bool:
             return kwargs["object"][1] == "tenant-acme-admins"
@@ -161,6 +164,7 @@ class TestAddUserToTenant:
 
     def test_add_owner_as_non_owner_fails(self, mock_rebac_manager: Any) -> None:
         """Test non-owner cannot add owner."""
+
         # Setup: Alice is admin but not owner
         def mock_check(**kwargs: Any) -> bool:
             if kwargs["object"][1] == "tenant-acme-owners":
@@ -172,9 +176,7 @@ class TestAddUserToTenant:
         mock_rebac_manager.rebac_check.side_effect = mock_check
 
         with pytest.raises(PermissionError, match="Only tenant owners can add other owners"):
-            add_user_to_tenant(
-                mock_rebac_manager, "bob", "acme", "owner", caller_user_id="alice"
-            )
+            add_user_to_tenant(mock_rebac_manager, "bob", "acme", "owner", caller_user_id="alice")
 
     def test_add_member_as_non_admin_fails(self, mock_rebac_manager: Any) -> None:
         """Test non-admin cannot invite users."""
@@ -182,9 +184,7 @@ class TestAddUserToTenant:
         mock_rebac_manager.rebac_check.return_value = False
 
         with pytest.raises(PermissionError, match="Only tenant admins/owners can invite"):
-            add_user_to_tenant(
-                mock_rebac_manager, "bob", "acme", "member", caller_user_id="alice"
-            )
+            add_user_to_tenant(mock_rebac_manager, "bob", "acme", "member", caller_user_id="alice")
 
     def test_invalid_role_raises_value_error(self, mock_rebac_manager: Any) -> None:
         """Test invalid role raises ValueError."""
@@ -193,7 +193,11 @@ class TestAddUserToTenant:
 
         with pytest.raises(ValueError, match="Invalid role 'superuser'"):
             add_user_to_tenant(
-                mock_rebac_manager, "bob", "acme", "superuser", caller_user_id="alice"  # type: ignore
+                mock_rebac_manager,
+                "bob",
+                "acme",
+                "superuser",
+                caller_user_id="alice",  # type: ignore
             )
 
 

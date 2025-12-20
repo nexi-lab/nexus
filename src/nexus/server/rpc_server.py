@@ -155,6 +155,11 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 self._send_json_response(200, {"status": "healthy", "service": "nexus-rpc"})
                 return
 
+            # Asyncio debug endpoint (Python 3.14+)
+            if parsed.path == "/debug/asyncio":
+                self._send_json_response(200, self._get_asyncio_debug_info())
+                return
+
             # Whoami endpoint - returns authenticated user info
             if parsed.path == "/api/auth/whoami":
                 # Validate authentication
@@ -727,6 +732,64 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 "revoked_at": api_key.revoked_at.isoformat() if api_key.revoked_at else None,
                 "last_used_at": api_key.last_used_at.isoformat() if api_key.last_used_at else None,
             }
+
+    def _get_asyncio_debug_info(self) -> dict[str, Any]:
+        """Get asyncio task introspection information.
+
+        Returns information about running async tasks, including:
+        - Total task count
+        - Current task info
+        - Call graph (Python 3.14+ only)
+
+        Returns:
+            Dictionary with asyncio debug information
+        """
+        import asyncio
+        import sys
+
+        result: dict[str, Any] = {
+            "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
+        }
+
+        # Get all running tasks (if event loop is running)
+        try:
+            loop = asyncio.get_running_loop()
+            all_tasks = asyncio.all_tasks(loop)
+            current = asyncio.current_task(loop)
+            result["event_loop_running"] = True
+            result["task_count"] = len(all_tasks)
+            result["current_task"] = current.get_name() if current else None
+            result["tasks"] = [
+                {
+                    "name": task.get_name(),
+                    "done": task.done(),
+                    "cancelled": task.cancelled(),
+                }
+                for task in list(all_tasks)[:50]  # Limit to 50 tasks
+            ]
+        except RuntimeError:
+            # No running event loop (normal for sync RPC server)
+            result["event_loop_running"] = False
+            result["task_count"] = 0
+            result["note"] = "No asyncio event loop running (sync server)"
+
+        # Python 3.14+ call graph introspection
+        try:
+            from asyncio import format_call_graph  # type: ignore[attr-defined]
+
+            # Format call graph for current task (no args needed)
+            result["call_graph_available"] = True
+            result["call_graph"] = format_call_graph()
+        except ImportError:
+            result["call_graph_available"] = False
+            result["call_graph_note"] = "Requires Python 3.14+"
+        except RuntimeError:
+            result["call_graph_available"] = True
+            result["call_graph_note"] = "No event loop running"
+        except Exception as e:
+            result["call_graph_error"] = str(e)
+
+        return result
 
     def _get_backend_info(self) -> dict[str, Any]:
         """Get backend configuration information.
@@ -1443,34 +1506,19 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         return serialized
 
     def _send_rpc_response(self, response: RPCResponse) -> None:
-        """Send RPC response with optional gzip compression.
+        """Send RPC response with optional compression (zstd preferred, gzip fallback).
 
         Args:
             response: RPC response object
         """
-        import gzip
-        import logging
-
-        logger = logging.getLogger(__name__)
+        from nexus.server.compression import compress_response
 
         response_dict = response.to_dict()
         body = encode_rpc_message(response_dict)
-        original_size = len(body)
 
-        # Compress response if client supports it and body is large enough
+        # Compress response if client supports it (prefers zstd over gzip)
         accept_encoding = self.headers.get("Accept-Encoding", "")
-        if "gzip" in accept_encoding and len(body) > 1024:  # Only compress if > 1KB
-            body = gzip.compress(body, compresslevel=6)  # Level 6 is good balance of speed/size
-            content_encoding = "gzip"
-            logger.debug(
-                f"[RPC-PERF] gzip: {original_size} bytes → {len(body)} bytes ({len(body) / original_size * 100:.1f}%)"
-            )
-        else:
-            content_encoding = None
-            if len(body) > 1024:
-                logger.debug(
-                    f"[RPC-PERF] No gzip: Body size: {original_size} bytes, Accept-Encoding: {accept_encoding}"
-                )
+        body, content_encoding = compress_response(body, accept_encoding)
 
         self.send_response(200)
         self._set_cors_headers()
@@ -1496,23 +1544,19 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         self._send_rpc_response(response)
 
     def _send_json_response(self, status_code: int, data: dict[str, Any]) -> None:
-        """Send JSON response with optional gzip compression.
+        """Send JSON response with optional compression (zstd preferred, gzip fallback).
 
         Args:
             status_code: HTTP status code
             data: Response data
         """
-        import gzip
+        from nexus.server.compression import compress_response
 
         body = encode_rpc_message(data)
 
-        # Compress response if client supports it and body is large enough
+        # Compress response if client supports it (prefers zstd over gzip)
         accept_encoding = self.headers.get("Accept-Encoding", "")
-        if "gzip" in accept_encoding and len(body) > 1024:
-            body = gzip.compress(body, compresslevel=6)
-            content_encoding = "gzip"
-        else:
-            content_encoding = None
+        body, content_encoding = compress_response(body, accept_encoding)
 
         self.send_response(status_code)
         self._set_cors_headers()

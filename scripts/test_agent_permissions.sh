@@ -62,94 +62,51 @@ fi
 echo -e "${GREEN}✓ Server is running${NC}"
 echo ""
 
-# Step 2: Create a new agent with API key (using low-level APIs to test permission setup)
-echo "🤖 Step 2: Creating test agent '${TEST_AGENT_NAME}' using low-level APIs..."
+# Step 2: Create a new agent with API key
+echo "🤖 Step 2: Registering test agent '${TEST_AGENT_NAME}'..."
 
-# Define agent config path
-AGENT_CONFIG_PATH="/.agents/${TEST_AGENT_ID}/config.yaml"
-
-# Step 2a: Write agent config file using admin key
-echo "  → Writing agent config to ${AGENT_CONFIG_PATH}..."
-WRITE_RESPONSE=$(curl -s -X POST "${SERVER_URL}/api/nfs/write" \
+# Use register_agent API
+REGISTER_RESPONSE=$(curl -s -X POST "${SERVER_URL}/api/nfs/register_agent" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${ADMIN_API_KEY}" \
   -d "{
     \"jsonrpc\": \"2.0\",
-    \"method\": \"write\",
+    \"method\": \"register_agent\",
     \"params\": {
-      \"path\": \"${AGENT_CONFIG_PATH}\",
-      \"content\": \"name: ${TEST_AGENT_NAME}\ndescription: Test agent for permission validation\nmetadata:\n  platform: test\n  test: true\n  purpose: permission_testing\n\"
+      \"agent_id\": \"${TEST_AGENT_ID}\",
+      \"name\": \"${TEST_AGENT_NAME}\",
+      \"description\": \"Test agent for permission validation\",
+      \"generate_api_key\": true,
+      \"metadata\": {
+        \"platform\": \"test\",
+        \"test\": true,
+        \"purpose\": \"permission_testing\"
+      }
     },
     \"id\": 1
   }")
 
-# Check for errors
-ERROR_MSG=$(echo "$WRITE_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
-if [ -n "$ERROR_MSG" ]; then
-    echo -e "${RED}✗ Failed to write agent config${NC}"
-    echo "   Error: $ERROR_MSG"
-    exit 1
-fi
-echo -e "${GREEN}✓ Agent config written${NC}"
-
-# Step 2b: Register agent entity in the entity registry
-echo "  → Registering agent entity in entity registry..."
-REGISTER_RESPONSE=$(curl -s -X POST "${SERVER_URL}/api/nfs/register_entity" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer ${ADMIN_API_KEY}" \
-  -d "{
-    \"jsonrpc\": \"2.0\",
-    \"method\": \"register_entity\",
-    \"params\": {
-      \"entity_type\": \"agent\",
-      \"entity_id\": \"${TEST_AGENT_ID}\",
-      \"parent_id\": \"${ADMIN_USER_ID}\",
-      \"metadata\": {
-        \"name\": \"${TEST_AGENT_NAME}\",
-        \"config_path\": \"${AGENT_CONFIG_PATH}\"
-      }
-    },
-    \"id\": 2
-  }")
-
-ERROR_MSG=$(echo "$REGISTER_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
-if [ -n "$ERROR_MSG" ]; then
-    echo -e "${RED}✗ Failed to register agent entity${NC}"
-    echo "   Error: $ERROR_MSG"
-    exit 1
-fi
-echo -e "${GREEN}✓ Agent entity registered${NC}"
-
-# Step 2c: Create API key for the agent
-echo "  → Creating API key for agent..."
-KEY_RESPONSE=$(curl -s -X POST "${SERVER_URL}/api/nfs/admin_create_key" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer ${ADMIN_API_KEY}" \
-  -d "{
-    \"jsonrpc\": \"2.0\",
-    \"method\": \"admin_create_key\",
-    \"params\": {
-      \"user_id\": \"${ADMIN_USER_ID}\",
-      \"agent_id\": \"${TEST_AGENT_ID}\",
-      \"capabilities\": [\"read\", \"write\", \"admin\"]
-    },
-    \"id\": 3
-  }")
-
-ERROR_MSG=$(echo "$KEY_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
-if [ -n "$ERROR_MSG" ]; then
-    echo -e "${RED}✗ Failed to create agent API key${NC}"
-    echo "   Error: $ERROR_MSG"
+# Check if the request was successful
+ERROR_CODE=$(echo "$REGISTER_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
+if [ -n "$ERROR_CODE" ]; then
+    ERROR_MESSAGE=$(echo "$REGISTER_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
+    echo -e "${RED}✗ Failed to register agent${NC}"
+    echo "   Error code: $ERROR_CODE"
+    echo "   Error message: $ERROR_MESSAGE"
+    echo "   Response: $REGISTER_RESPONSE"
     exit 1
 fi
 
-TEST_AGENT_API_KEY=$(echo "$KEY_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['result']['api_key'])" 2>/dev/null || echo "")
+# Extract the API key from the response
+TEST_AGENT_API_KEY=$(echo "$REGISTER_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('result', {}).get('api_key', ''))" 2>/dev/null || echo "")
 
 if [ -z "$TEST_AGENT_API_KEY" ]; then
     echo -e "${RED}✗ Failed to extract API key from response${NC}"
-    echo "   Response: $KEY_RESPONSE"
+    echo "   Response: $REGISTER_RESPONSE"
     exit 1
 fi
+
+AGENT_CONFIG_PATH=$(echo "$REGISTER_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('result', {}).get('config_path', ''))" 2>/dev/null || echo "")
 
 echo -e "${GREEN}✓ Agent registered: ${TEST_AGENT_NAME}${NC}"
 echo -e "${GREEN}✓ Config created at: ${AGENT_CONFIG_PATH}${NC}"
@@ -261,11 +218,9 @@ curl -s -X POST "${SERVER_URL}/api/nfs/rebac_create" \
     \"jsonrpc\": \"2.0\",
     \"method\": \"rebac_create\",
     \"params\": {
-      \"subject_type\": \"agent\",
-      \"subject_id\": \"${TEST_AGENT_ID}\",
+      \"subject\": [\"agent\", \"${TEST_AGENT_ID}\"],
       \"relation\": \"viewer\",
-      \"object_type\": \"file\",
-      \"object_id\": \"/tenant:${TENANT_ID}/user:${USER_ID}/skill/pdf\",
+      \"object\": [\"file\", \"/tenant:${TENANT_ID}/user:${USER_ID}/skill/pdf\"],
       \"tenant_id\": \"${TENANT_ID}\"
     },
     \"id\": 7
@@ -282,11 +237,9 @@ curl -s -X POST "${SERVER_URL}/api/nfs/rebac_create" \
     \"jsonrpc\": \"2.0\",
     \"method\": \"rebac_create\",
     \"params\": {
-      \"subject_type\": \"agent\",
-      \"subject_id\": \"${TEST_AGENT_ID}\",
+      \"subject\": [\"agent\", \"${TEST_AGENT_ID}\"],
       \"relation\": \"viewer\",
-      \"object_type\": \"file\",
-      \"object_id\": \"/tenant:${TENANT_ID}/user:${USER_ID}/resource\",
+      \"object\": [\"file\", \"/tenant:${TENANT_ID}/user:${USER_ID}/resource\"],
       \"tenant_id\": \"${TENANT_ID}\"
     },
     \"id\": 8
@@ -303,11 +256,9 @@ curl -s -X POST "${SERVER_URL}/api/nfs/rebac_create" \
     \"jsonrpc\": \"2.0\",
     \"method\": \"rebac_create\",
     \"params\": {
-      \"subject_type\": \"agent\",
-      \"subject_id\": \"${TEST_AGENT_ID}\",
+      \"subject\": [\"agent\", \"${TEST_AGENT_ID}\"],
       \"relation\": \"viewer\",
-      \"object_type\": \"file\",
-      \"object_id\": \"/tenant:${TENANT_ID}/user:${USER_ID}/workspace\",
+      \"object\": [\"file\", \"/tenant:${TENANT_ID}/user:${USER_ID}/workspace\"],
       \"tenant_id\": \"${TENANT_ID}\"
     },
     \"id\": 9

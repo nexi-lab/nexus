@@ -2974,7 +2974,6 @@ class NexusFS(
         created_at: str | None,
         metadata: dict | None = None,
         api_key: str | None = None,
-        inherit_permissions: bool | None = None,
     ) -> dict[str, Any]:
         """Create agent config.yaml data structure."""
         config_data: dict[str, Any] = {
@@ -2990,9 +2989,6 @@ class NexusFS(
 
         if api_key is not None:
             config_data["api_key"] = api_key
-
-        if inherit_permissions is not None:
-            config_data["inherit_permissions"] = inherit_permissions
 
         return config_data
 

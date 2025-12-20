@@ -165,12 +165,30 @@ class NexusFSReBACMixin:
         # Use permission enforcer to check permission for file resources
         if hasattr(self, "_permission_enforcer"):
             has_permission = self._permission_enforcer.check(resource_path, perm_enum, op_context)
+
+            # If user is not owner, check if they are tenant admin
             if not has_permission:
+                # Extract tenant from resource path (format: /tenant:{tenant_id}/...)
+                tenant_id = None
+                if resource_path.startswith("/tenant:"):
+                    parts = resource_path[8:].split("/", 1)  # Remove "/tenant:" prefix
+                    if parts:
+                        tenant_id = parts[0]
+
+                # Check if user is tenant admin for this resource's tenant
+                if tenant_id and op_context.user:
+                    from nexus.server.auth.user_helpers import is_tenant_admin
+
+                    if is_tenant_admin(self._rebac_manager, op_context.user, tenant_id):
+                        # Tenant admin can share resources in their tenant
+                        return
+
+                # Neither owner nor tenant admin - deny
                 perm_name = required_permission.upper()
                 raise PermissionError(
                     f"Access denied: User '{op_context.user}' does not have {perm_name} "
                     f"permission to manage permissions on '{resource_path}'. "
-                    f"Only owners can share resources."
+                    f"Only owners or tenant admins can share resources."
                 )
 
     @rpc_expose(description="Create ReBAC relationship tuple")

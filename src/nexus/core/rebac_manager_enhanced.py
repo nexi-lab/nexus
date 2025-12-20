@@ -39,6 +39,10 @@ from nexus.core.rebac_manager_tenant_aware import TenantAwareReBACManager
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
+    from nexus.core.leopard import LeopardIndex
+    from nexus.core.rebac_iterator_cache import IteratorCache
+    from nexus.core.tiger_cache import TigerCache, TigerCacheUpdater
+
 
 # ============================================================================
 # P0-1: Consistency Levels and Version Tokens
@@ -59,7 +63,7 @@ class ConsistencyLevel(Enum):
     STRONG = "strong"  # Bypass cache, fresh read
 
 
-@dataclass
+@dataclass(slots=True)
 class CheckResult:
     """Result of a permission check with consistency metadata.
 
@@ -84,7 +88,7 @@ class CheckResult:
     limit_exceeded: GraphLimitExceeded | None = None  # BUGFIX (Issue #5): Which limit was hit
 
 
-@dataclass
+@dataclass(slots=True)
 class TraversalStats:
     """Statistics from graph traversal (P0-5).
 
@@ -171,9 +175,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
     - P0-1: Consistency levels and version tokens
     - P0-2: Tenant scoping (via TenantAwareReBACManager)
     - P0-5: Graph limits and DoS protection
+    - Leopard: Pre-computed transitive group closure for O(1) group lookups
 
     This is the GA-ready ReBAC implementation.
     """
+
+    # Relations that represent group membership
+    MEMBERSHIP_RELATIONS = frozenset({"member-of", "member", "belongs-to"})
 
     def __init__(
         self,
@@ -182,6 +190,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         max_depth: int = 50,
         enforce_tenant_isolation: bool = True,
         enable_graph_limits: bool = True,
+        enable_leopard: bool = True,
+        enable_tiger_cache: bool = True,
     ):
         """Initialize enhanced ReBAC manager.
 
@@ -191,9 +201,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             max_depth: Maximum graph traversal depth (default: 10 hops)
             enforce_tenant_isolation: Enable tenant isolation checks (default: True)
             enable_graph_limits: Enable graph limit enforcement (default: True)
+            enable_leopard: Enable Leopard transitive closure index (default: True)
+            enable_tiger_cache: Enable Tiger Cache for materialized permissions (default: True)
         """
         super().__init__(engine, cache_ttl_seconds, max_depth, enforce_tenant_isolation)
         self.enable_graph_limits = enable_graph_limits
+        self.enable_leopard = enable_leopard
+        self.enable_tiger_cache = enable_tiger_cache
         # REMOVED: self._version_counter (replaced with DB sequence in Issue #2 fix)
 
         # PERFORMANCE FIX: Cache tenant tuples to avoid O(T) fetch per permission check
@@ -201,6 +215,43 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         # This dramatically reduces DB queries: from O(T) per check to O(1) amortized
         self._tenant_graph_cache: dict[str, tuple[list[dict[str, Any]], dict[str, Any], float]] = {}
         self._tenant_graph_cache_ttl = cache_ttl_seconds  # Reuse existing TTL
+
+        # Leopard index for O(1) transitive group lookups (Issue #692)
+        self._leopard: LeopardIndex | None = None
+        if enable_leopard:
+            from nexus.core.leopard import LeopardIndex
+
+            self._leopard = LeopardIndex(
+                engine=engine,
+                cache_enabled=True,
+                cache_max_size=100_000,
+            )
+
+        # Tiger Cache for materialized permissions (Issue #682)
+        self._tiger_cache: TigerCache | None = None
+        self._tiger_updater: TigerCacheUpdater | None = None
+        if enable_tiger_cache:
+            from nexus.core.tiger_cache import TigerCache, TigerCacheUpdater, TigerResourceMap
+
+            resource_map = TigerResourceMap(engine)
+            self._tiger_cache = TigerCache(
+                engine=engine,
+                resource_map=resource_map,
+                rebac_manager=self,
+            )
+            self._tiger_updater = TigerCacheUpdater(
+                engine=engine,
+                tiger_cache=self._tiger_cache,
+                rebac_manager=self,
+            )
+
+        # Iterator cache for paginated list operations (Issue #722)
+        from nexus.core.rebac_iterator_cache import IteratorCache
+
+        self._iterator_cache: IteratorCache = IteratorCache(
+            max_size=1000,
+            ttl_seconds=cache_ttl_seconds,
+        )
 
     def rebac_check(
         self,
@@ -773,6 +824,32 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if object_tenant_id and object_tenant_id != effective_tenant:
             self.invalidate_tenant_graph_cache(object_tenant_id)
 
+        # Leopard: Update transitive closure for membership relations
+        if self._leopard and relation in self.MEMBERSHIP_RELATIONS:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            subject_type = subject[0]
+            subject_id = subject[1]
+            object_type = object[0]
+            object_id = object[1]
+
+            try:
+                entries = self._leopard.update_closure_on_membership_add(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    group_type=object_type,
+                    group_id=object_id,
+                    tenant_id=effective_tenant,
+                )
+                logger.debug(
+                    f"[LEOPARD] Updated closure for {subject_type}:{subject_id} -> "
+                    f"{object_type}:{object_id}: {entries} entries"
+                )
+            except Exception as e:
+                # Log but don't fail the write - closure can be rebuilt
+                logger.warning(f"[LEOPARD] Failed to update closure: {e}")
+
         return result
 
     def rebac_delete(self, tuple_id: str) -> bool:
@@ -787,25 +864,360 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             True if tuple was deleted, False if not found
         """
         # First, get the tuple info to know which tenant to invalidate
-        tenant_id = None
+        # and for Leopard closure update
+        tuple_info: dict[str, Any] | None = None
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
             cursor.execute(
-                self._fix_sql_placeholders("SELECT tenant_id FROM rebac_tuples WHERE tuple_id = ?"),
+                self._fix_sql_placeholders(
+                    "SELECT tenant_id, subject_type, subject_id, relation, "
+                    "object_type, object_id FROM rebac_tuples WHERE tuple_id = ?"
+                ),
                 (tuple_id,),
             )
             row = cursor.fetchone()
             if row:
-                tenant_id = row["tenant_id"]
+                tuple_info = {
+                    "tenant_id": row["tenant_id"],
+                    "subject_type": row["subject_type"],
+                    "subject_id": row["subject_id"],
+                    "relation": row["relation"],
+                    "object_type": row["object_type"],
+                    "object_id": row["object_id"],
+                }
 
         # Call parent implementation
         result = super().rebac_delete(tuple_id)
 
         # Invalidate cache for the affected tenant
-        if result and tenant_id:
-            self.invalidate_tenant_graph_cache(tenant_id)
+        if result and tuple_info:
+            tenant_id = tuple_info["tenant_id"]
+            if tenant_id:
+                self.invalidate_tenant_graph_cache(tenant_id)
+
+            # Leopard: Update transitive closure for membership relations
+            if self._leopard and tuple_info["relation"] in self.MEMBERSHIP_RELATIONS:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                effective_tenant = tenant_id or "default"
+
+                try:
+                    entries = self._leopard.update_closure_on_membership_remove(
+                        subject_type=tuple_info["subject_type"],
+                        subject_id=tuple_info["subject_id"],
+                        group_type=tuple_info["object_type"],
+                        group_id=tuple_info["object_id"],
+                        tenant_id=effective_tenant,
+                    )
+                    logger.debug(
+                        f"[LEOPARD] Removed closure for "
+                        f"{tuple_info['subject_type']}:{tuple_info['subject_id']} -> "
+                        f"{tuple_info['object_type']}:{tuple_info['object_id']}: {entries} entries"
+                    )
+                except Exception as e:
+                    # Log but don't fail the delete - closure can be rebuilt
+                    logger.warning(f"[LEOPARD] Failed to update closure on delete: {e}")
 
         return result
+
+    # ========================================================================
+    # Leopard Index Methods (Issue #692)
+    # ========================================================================
+
+    def get_transitive_groups(
+        self,
+        subject_type: str,
+        subject_id: str,
+        tenant_id: str,
+    ) -> set[tuple[str, str]]:
+        """Get all groups a subject transitively belongs to using Leopard index.
+
+        Uses pre-computed transitive closure for O(1) lookup instead of
+        recursive graph traversal.
+
+        Args:
+            subject_type: Type of subject (e.g., "user", "agent")
+            subject_id: ID of subject
+            tenant_id: Tenant ID
+
+        Returns:
+            Set of (group_type, group_id) tuples representing all groups
+            the subject belongs to, directly or transitively.
+        """
+        if not self._leopard:
+            # Fallback: compute on-the-fly (slower)
+            return self._compute_transitive_groups_fallback(subject_type, subject_id, tenant_id)
+
+        return self._leopard.get_transitive_groups(
+            member_type=subject_type,
+            member_id=subject_id,
+            tenant_id=tenant_id,
+        )
+
+    def _compute_transitive_groups_fallback(
+        self,
+        subject_type: str,
+        subject_id: str,
+        tenant_id: str,
+    ) -> set[tuple[str, str]]:
+        """Compute transitive groups without Leopard index (fallback).
+
+        Uses BFS traversal of membership relations.
+
+        Args:
+            subject_type: Type of subject
+            subject_id: ID of subject
+            tenant_id: Tenant ID
+
+        Returns:
+            Set of (group_type, group_id) tuples
+        """
+        from sqlalchemy import text
+
+        groups: set[tuple[str, str]] = set()
+        visited: set[tuple[str, str]] = set()
+        queue: list[tuple[str, str]] = [(subject_type, subject_id)]
+
+        # Determine SQL NOW function based on database type
+        is_postgresql = "postgresql" in str(self.engine.url)
+        now_sql = "NOW()" if is_postgresql else "datetime('now')"
+
+        with self.engine.connect() as conn:
+            while queue:
+                curr_type, curr_id = queue.pop(0)
+                if (curr_type, curr_id) in visited:
+                    continue
+                visited.add((curr_type, curr_id))
+
+                # Find direct memberships
+                query = text(f"""
+                    SELECT object_type, object_id
+                    FROM rebac_tuples
+                    WHERE subject_type = :subj_type
+                      AND subject_id = :subj_id
+                      AND relation IN ('member-of', 'member', 'belongs-to')
+                      AND tenant_id = :tenant_id
+                      AND (expires_at IS NULL OR expires_at > {now_sql})
+                """)
+                result = conn.execute(
+                    query,
+                    {"subj_type": curr_type, "subj_id": curr_id, "tenant_id": tenant_id},
+                )
+
+                for row in result:
+                    group = (row.object_type, row.object_id)
+                    if group not in groups:
+                        groups.add(group)
+                        queue.append(group)
+
+        return groups
+
+    def rebuild_leopard_closure(self, tenant_id: str) -> int:
+        """Rebuild the Leopard transitive closure for a tenant.
+
+        Useful for:
+        - Initial migration from existing data
+        - Recovering from inconsistency
+        - Periodic verification
+
+        Args:
+            tenant_id: Tenant ID
+
+        Returns:
+            Number of closure entries created
+        """
+        if not self._leopard:
+            raise RuntimeError("Leopard index is not enabled")
+
+        return self._leopard.rebuild_closure_for_tenant(tenant_id)
+
+    def invalidate_leopard_cache(self, tenant_id: str | None = None) -> None:
+        """Invalidate Leopard in-memory cache.
+
+        Args:
+            tenant_id: If provided, only invalidate for this tenant.
+                       If None, invalidate all.
+        """
+        if not self._leopard:
+            return
+
+        if tenant_id:
+            self._leopard.invalidate_cache_for_tenant(tenant_id)
+        else:
+            self._leopard.clear_cache()
+
+    # ========================================================================
+    # Tiger Cache Methods (Issue #682)
+    # ========================================================================
+
+    def tiger_check_access(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        tenant_id: str,
+    ) -> bool | None:
+        """Check permission using Tiger Cache (O(1) bitmap lookup).
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permission: Permission to check
+            object: (object_type, object_id) tuple
+            tenant_id: Tenant ID
+
+        Returns:
+            True if allowed, False if denied, None if not in cache (use rebac_check fallback)
+        """
+        if not self._tiger_cache:
+            return None
+
+        return self._tiger_cache.check_access(
+            subject_type=subject[0],
+            subject_id=subject[1],
+            permission=permission,
+            resource_type=object[0],
+            resource_id=object[1],
+            tenant_id=tenant_id,
+        )
+
+    def tiger_get_accessible_resources(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        resource_type: str,
+        tenant_id: str,
+    ) -> set[int]:
+        """Get all resources accessible by subject using Tiger Cache.
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permission: Permission type
+            resource_type: Type of resource (e.g., "file")
+            tenant_id: Tenant ID
+
+        Returns:
+            Set of integer resource IDs (use tiger_resource_map for UUID lookup)
+        """
+        if not self._tiger_cache:
+            return set()
+
+        return self._tiger_cache.get_accessible_resources(
+            subject_type=subject[0],
+            subject_id=subject[1],
+            permission=permission,
+            resource_type=resource_type,
+            tenant_id=tenant_id,
+        )
+
+    def tiger_queue_update(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        resource_type: str,
+        tenant_id: str,
+        priority: int = 100,
+    ) -> int | None:
+        """Queue a Tiger Cache update for background processing.
+
+        Call this when permissions change to schedule cache rebuild.
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permission: Permission to recompute
+            resource_type: Type of resource
+            tenant_id: Tenant ID
+            priority: Priority (lower = higher priority)
+
+        Returns:
+            Queue entry ID, or None if Tiger Cache is disabled
+        """
+        if not self._tiger_updater:
+            return None
+
+        return self._tiger_updater.queue_update(
+            subject_type=subject[0],
+            subject_id=subject[1],
+            permission=permission,
+            resource_type=resource_type,
+            tenant_id=tenant_id,
+            priority=priority,
+        )
+
+    def tiger_process_queue(self, batch_size: int = 100) -> int:
+        """Process pending Tiger Cache update queue.
+
+        Call this periodically from a background worker.
+
+        Args:
+            batch_size: Maximum entries to process
+
+        Returns:
+            Number of entries processed
+        """
+        if not self._tiger_updater:
+            return 0
+
+        return self._tiger_updater.process_queue(batch_size=batch_size)
+
+    def tiger_invalidate_cache(
+        self,
+        subject: tuple[str, str] | None = None,
+        permission: str | None = None,
+        resource_type: str | None = None,
+        tenant_id: str | None = None,
+    ) -> int:
+        """Invalidate Tiger Cache entries.
+
+        Args:
+            subject: (subject_type, subject_id) tuple (None = all subjects)
+            permission: Filter by permission (None = all)
+            resource_type: Filter by resource type (None = all)
+            tenant_id: Filter by tenant (None = all)
+
+        Returns:
+            Number of entries invalidated
+        """
+        if not self._tiger_cache:
+            return 0
+
+        subject_type = subject[0] if subject else None
+        subject_id = subject[1] if subject else None
+
+        return self._tiger_cache.invalidate(
+            subject_type=subject_type,
+            subject_id=subject_id,
+            permission=permission,
+            resource_type=resource_type,
+            tenant_id=tenant_id,
+        )
+
+    def tiger_register_resource(
+        self,
+        resource_type: str,
+        resource_id: str,
+        tenant_id: str,
+    ) -> int:
+        """Register a resource in the Tiger resource map.
+
+        Call this when creating new resources to get their integer ID.
+
+        Args:
+            resource_type: Type of resource (e.g., "file")
+            resource_id: String ID of resource (e.g., UUID or path)
+            tenant_id: Tenant ID
+
+        Returns:
+            Integer ID for use in bitmaps
+        """
+        if not self._tiger_cache:
+            return -1
+
+        return self._tiger_cache._resource_map.get_or_create_int_id(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            tenant_id=tenant_id,
+        )
 
     def _get_namespace_configs_for_rust(self) -> dict[str, Any]:
         """Get namespace configurations for Rust permission computation.
@@ -1753,63 +2165,119 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             all_subjects.update(file_path_tuples)
 
             # Rebuild BOTH subject and object params to include ancestor paths
-            # BATCH_SIZE limits IN clause size to prevent PostgreSQL OOM on large lists
-            BATCH_SIZE = 100
-
             all_subjects_list = list(all_subjects)
             all_objects_list = list(all_objects)
 
-            # Build in-memory graph of all tuples (populated by batched queries)
+            # Build in-memory graph of all tuples (populated by single UNNEST query)
             tuples_graph = []
             now_iso = datetime.now(UTC).isoformat()
 
-            def fetch_tuples_batched(
-                subjects_batch: list[tuple[str, str]],
-                objects_batch: list[tuple[str, str]],
+            def fetch_all_tuples_single_query(
+                entities: list[tuple[str, str]],
             ) -> list[dict]:
-                """Fetch tuples for a batch of subjects/objects."""
-                if not subjects_batch and not objects_batch:
+                """Fetch ALL tuples for entities in ONE query using UNNEST (PostgreSQL) or VALUES (SQLite).
+
+                PERF FIX: Replaces multiple batched queries with single query.
+                - Before: O(N) queries where N = num_entities / BATCH_SIZE
+                - After: O(1) query regardless of entity count
+
+                PostgreSQL uses UNNEST for efficient array-based lookup.
+                SQLite uses VALUES clause as fallback.
+                """
+                if not entities:
                     return []
 
-                subject_params = []
-                for subj_type, subj_id in subjects_batch:
-                    subject_params.extend([subj_type, subj_id])
+                entity_types = [e[0] for e in entities]
+                entity_ids = [e[1] for e in entities]
 
-                object_params = []
-                for obj_type, obj_id in objects_batch:
-                    object_params.extend([obj_type, obj_id])
+                is_postgresql = self.engine.dialect.name == "postgresql"
 
-                where_clauses = []
-                if subjects_batch:
-                    placeholders_subjects = ", ".join(["(?, ?)"] * len(subjects_batch))
-                    where_clauses.append(f"(subject_type, subject_id) IN ({placeholders_subjects})")
-                if objects_batch:
-                    placeholders_objects = ", ".join(["(?, ?)"] * len(objects_batch))
-                    where_clauses.append(f"(object_type, object_id) IN ({placeholders_objects})")
-
-                if self.enforce_tenant_isolation:
-                    query = self._fix_sql_placeholders(
-                        f"""
-                        SELECT subject_type, subject_id, subject_relation, relation,
-                               object_type, object_id, conditions, expires_at
-                        FROM rebac_tuples
-                        WHERE tenant_id = ?
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                          AND ({" OR ".join(where_clauses)})
+                if is_postgresql:
+                    # PostgreSQL: Use UNNEST for efficient bulk lookup (50x faster than temp tables)
+                    # See: https://www.atdatabases.org/blog/2022/01/21/optimizing-postgres-using-unnest
+                    # Note: Use %s placeholders for psycopg2/psycopg3 compatibility (not $1 asyncpg style)
+                    if self.enforce_tenant_isolation:
+                        query = """
+                            WITH entity_list AS (
+                                SELECT unnest(%s::text[]) AS entity_type,
+                                       unnest(%s::text[]) AS entity_id
+                            )
+                            SELECT DISTINCT
+                                t.subject_type, t.subject_id, t.subject_relation,
+                                t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
+                            FROM rebac_tuples t
+                            WHERE t.tenant_id = %s
+                              AND (t.expires_at IS NULL OR t.expires_at >= %s)
+                              AND (
+                                  EXISTS (SELECT 1 FROM entity_list e WHERE t.subject_type = e.entity_type AND t.subject_id = e.entity_id)
+                                  OR EXISTS (SELECT 1 FROM entity_list e WHERE t.object_type = e.entity_type AND t.object_id = e.entity_id)
+                              )
                         """
-                    )
-                    params = [tenant_id, now_iso] + subject_params + object_params
+                        params = [entity_types, entity_ids, tenant_id, now_iso]
+                    else:
+                        query = """
+                            WITH entity_list AS (
+                                SELECT unnest(%s::text[]) AS entity_type,
+                                       unnest(%s::text[]) AS entity_id
+                            )
+                            SELECT DISTINCT
+                                t.subject_type, t.subject_id, t.subject_relation,
+                                t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
+                            FROM rebac_tuples t
+                            WHERE (t.expires_at IS NULL OR t.expires_at >= %s)
+                              AND (
+                                  EXISTS (SELECT 1 FROM entity_list e WHERE t.subject_type = e.entity_type AND t.subject_id = e.entity_id)
+                                  OR EXISTS (SELECT 1 FROM entity_list e WHERE t.object_type = e.entity_type AND t.object_id = e.entity_id)
+                              )
+                        """
+                        params = [entity_types, entity_ids, now_iso]
                 else:
-                    query = self._fix_sql_placeholders(
-                        f"""
-                        SELECT subject_type, subject_id, subject_relation, relation,
-                               object_type, object_id, conditions, expires_at
-                        FROM rebac_tuples
-                        WHERE (expires_at IS NULL OR expires_at >= ?)
-                          AND ({" OR ".join(where_clauses)})
-                        """
-                    )
-                    params = [now_iso] + subject_params + object_params
+                    # SQLite: Use VALUES clause (no UNNEST support)
+                    # Build VALUES list: ('file', '/path1'), ('file', '/path2'), ...
+                    values_list = ", ".join(["(?, ?)" for _ in entities])
+                    value_params: list[str | None] = []
+                    for etype, eid in entities:
+                        value_params.extend([etype, eid])
+
+                    if self.enforce_tenant_isolation:
+                        query = self._fix_sql_placeholders(
+                            f"""
+                            WITH entity_list(entity_type, entity_id) AS (
+                                VALUES {values_list}
+                            )
+                            SELECT DISTINCT
+                                t.subject_type, t.subject_id, t.subject_relation,
+                                t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
+                            FROM rebac_tuples t
+                            WHERE t.tenant_id = ?
+                              AND (t.expires_at IS NULL OR t.expires_at >= ?)
+                              AND (
+                                  EXISTS (SELECT 1 FROM entity_list e WHERE t.subject_type = e.entity_type AND t.subject_id = e.entity_id)
+                                  OR EXISTS (SELECT 1 FROM entity_list e WHERE t.object_type = e.entity_type AND t.object_id = e.entity_id)
+                              )
+                            """
+                        )
+                        value_params.extend([tenant_id, now_iso])
+                        params = value_params  # type: ignore[assignment]
+                    else:
+                        query = self._fix_sql_placeholders(
+                            f"""
+                            WITH entity_list(entity_type, entity_id) AS (
+                                VALUES {values_list}
+                            )
+                            SELECT DISTINCT
+                                t.subject_type, t.subject_id, t.subject_relation,
+                                t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
+                            FROM rebac_tuples t
+                            WHERE (t.expires_at IS NULL OR t.expires_at >= ?)
+                              AND (
+                                  EXISTS (SELECT 1 FROM entity_list e WHERE t.subject_type = e.entity_type AND t.subject_id = e.entity_id)
+                                  OR EXISTS (SELECT 1 FROM entity_list e WHERE t.object_type = e.entity_type AND t.object_id = e.entity_id)
+                              )
+                            """
+                        )
+                        value_params.append(now_iso)
+                        params = value_params  # type: ignore[assignment]
 
                 cursor.execute(query, params)
                 return [
@@ -1826,78 +2294,107 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     for row in cursor.fetchall()
                 ]
 
-            # Batch subjects and objects separately to keep query size manageable
-            # Process in batches of BATCH_SIZE to avoid PostgreSQL OOM on large IN clauses
-            num_subject_batches = (len(all_subjects_list) + BATCH_SIZE - 1) // BATCH_SIZE
-            num_object_batches = (len(all_objects_list) + BATCH_SIZE - 1) // BATCH_SIZE
+            # PERF FIX: Single query instead of batched loops
+            # Combine all subjects and objects into one entity set
+            all_entities = list(all_subjects | all_objects)
 
             logger.debug(
-                f"[BULK-BATCH] Fetching tuples in batches: "
-                f"{len(all_subjects_list)} subjects ({num_subject_batches} batches), "
-                f"{len(all_objects_list)} objects ({num_object_batches} batches)"
+                f"[BULK-UNNEST] Fetching tuples for {len(all_entities)} entities in single query "
+                f"(was: {len(all_subjects_list)} subjects + {len(all_objects_list)} objects in batches)"
             )
 
-            # Fetch tuples for subject batches
-            for i in range(0, len(all_subjects_list), BATCH_SIZE):
-                batch = all_subjects_list[i : i + BATCH_SIZE]
-                tuples_graph.extend(fetch_tuples_batched(batch, []))
+            fetch_start = time_module.perf_counter()
+            tuples_graph = fetch_all_tuples_single_query(all_entities)
+            fetch_duration = (time_module.perf_counter() - fetch_start) * 1000
 
-            # Fetch tuples for object batches
-            for i in range(0, len(all_objects_list), BATCH_SIZE):
-                batch = all_objects_list[i : i + BATCH_SIZE]
-                tuples_graph.extend(fetch_tuples_batched([], batch))
+            logger.debug(
+                f"[BULK-UNNEST] Fetched {len(tuples_graph)} tuples in {fetch_duration:.1f}ms"
+            )
 
             # CROSS-TENANT FIX: Also fetch cross-tenant shares for subjects in the check list
             # Cross-tenant shares are stored in the resource owner's tenant but need to be
             # visible when checking permissions from the recipient's tenant.
-            # This query is indexed and returns only the small number of cross-tenant tuples.
-            # Also batched to avoid OOM on large IN clauses.
-            if self.enforce_tenant_isolation:
-                cross_tenant_relations = tuple(CROSS_TENANT_ALLOWED_RELATIONS)
-                cross_tenant_count = 0
+            # PERF FIX: Single UNNEST query instead of batched loops
+            if self.enforce_tenant_isolation and all_subjects_list:
+                cross_tenant_relations = list(CROSS_TENANT_ALLOWED_RELATIONS)
+                is_postgresql = self.engine.dialect.name == "postgresql"
 
-                # Batch cross-tenant queries to avoid OOM
-                for i in range(0, len(all_subjects_list), BATCH_SIZE):
-                    batch = all_subjects_list[i : i + BATCH_SIZE]
-                    if not batch:
-                        continue
+                subject_types = [s[0] for s in all_subjects_list]
+                subject_ids = [s[1] for s in all_subjects_list]
 
-                    batch_params = []
-                    for subj_type, subj_id in batch:
-                        batch_params.extend([subj_type, subj_id])
+                if is_postgresql:
+                    # Note: Use %s placeholders for psycopg2/psycopg3 compatibility (not $1 asyncpg style)
+                    cross_tenant_query = """
+                        WITH subject_list AS (
+                            SELECT unnest(%s::text[]) AS subject_type,
+                                   unnest(%s::text[]) AS subject_id
+                        )
+                        SELECT DISTINCT
+                            t.subject_type, t.subject_id, t.subject_relation,
+                            t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
+                        FROM rebac_tuples t
+                        WHERE t.relation = ANY(%s::text[])
+                          AND (t.expires_at IS NULL OR t.expires_at >= %s)
+                          AND EXISTS (
+                              SELECT 1 FROM subject_list s
+                              WHERE t.subject_type = s.subject_type AND t.subject_id = s.subject_id
+                          )
+                    """
+                    cross_tenant_params = [
+                        subject_types,
+                        subject_ids,
+                        cross_tenant_relations,
+                        now_iso,
+                    ]
+                else:
+                    # SQLite fallback
+                    values_list = ", ".join(["(?, ?)" for _ in all_subjects_list])
+                    ct_value_params: list[str | None] = []
+                    for stype, sid in all_subjects_list:
+                        ct_value_params.extend([stype, sid])
 
-                    cross_tenant_subject_placeholders = ", ".join(["(?, ?)"] * len(batch))
+                    relation_placeholders = ", ".join(["?" for _ in cross_tenant_relations])
                     cross_tenant_query = self._fix_sql_placeholders(
                         f"""
-                        SELECT subject_type, subject_id, subject_relation, relation,
-                               object_type, object_id, conditions, expires_at
-                        FROM rebac_tuples
-                        WHERE relation IN ({", ".join("?" * len(cross_tenant_relations))})
-                          AND (subject_type, subject_id) IN ({cross_tenant_subject_placeholders})
-                          AND (expires_at IS NULL OR expires_at >= ?)
+                        WITH subject_list(subject_type, subject_id) AS (
+                            VALUES {values_list}
+                        )
+                        SELECT DISTINCT
+                            t.subject_type, t.subject_id, t.subject_relation,
+                            t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
+                        FROM rebac_tuples t
+                        WHERE t.relation IN ({relation_placeholders})
+                          AND (t.expires_at IS NULL OR t.expires_at >= ?)
+                          AND EXISTS (
+                              SELECT 1 FROM subject_list s
+                              WHERE t.subject_type = s.subject_type AND t.subject_id = s.subject_id
+                          )
                         """
                     )
-                    cross_tenant_params = list(cross_tenant_relations) + batch_params + [now_iso]
-                    cursor.execute(cross_tenant_query, cross_tenant_params)
+                    ct_value_params.extend(cross_tenant_relations)
+                    ct_value_params.append(now_iso)
+                    cross_tenant_params = ct_value_params  # type: ignore[assignment]
 
-                    for row in cursor.fetchall():
-                        tuples_graph.append(
-                            {
-                                "subject_type": row["subject_type"],
-                                "subject_id": row["subject_id"],
-                                "subject_relation": row["subject_relation"],
-                                "relation": row["relation"],
-                                "object_type": row["object_type"],
-                                "object_id": row["object_id"],
-                                "conditions": row["conditions"],
-                                "expires_at": row["expires_at"],
-                            }
-                        )
-                        cross_tenant_count += 1
+                cursor.execute(cross_tenant_query, cross_tenant_params)
+                cross_tenant_count = 0
+                for row in cursor.fetchall():
+                    tuples_graph.append(
+                        {
+                            "subject_type": row["subject_type"],
+                            "subject_id": row["subject_id"],
+                            "subject_relation": row["subject_relation"],
+                            "relation": row["relation"],
+                            "object_type": row["object_type"],
+                            "object_id": row["object_id"],
+                            "conditions": row["conditions"],
+                            "expires_at": row["expires_at"],
+                        }
+                    )
+                    cross_tenant_count += 1
 
                 if cross_tenant_count > 0:
                     logger.debug(
-                        f"Fetched {cross_tenant_count} cross-tenant share tuples for subjects"
+                        f"[BULK-UNNEST] Fetched {cross_tenant_count} cross-tenant tuples in single query"
                     )
 
                 # PR #648: Compute parent relationships in memory (no DB query needed)
@@ -1976,9 +2473,17 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         from nexus.core.rebac_fast import check_permissions_bulk_with_fallback, is_rust_available
 
         rust_success = False
-        if is_rust_available() and len(cache_misses) >= 10:
+        rust_available = is_rust_available()
+        logger.warning(
+            f"[BULK-DEBUG] cache_misses={len(cache_misses)}, rust_available={rust_available}, tuples_graph={len(tuples_graph)}"
+        )
+
+        # Changed threshold from >= 10 to >= 1 to always use Rust when available
+        if rust_available and len(cache_misses) >= 1:
             try:
-                logger.debug(f"⚡ Attempting Rust acceleration for {len(cache_misses)} checks")
+                logger.warning(
+                    f"⚡ [BULK-DEBUG] Attempting Rust acceleration for {len(cache_misses)} checks"
+                )
 
                 # Get all namespace configs
                 object_types = {obj[0] for _, _, obj in cache_misses}
@@ -2031,15 +2536,21 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     )
 
                 rust_success = True
-                logger.debug(f"✅ Rust acceleration successful for {len(cache_misses)} checks")
+                logger.warning(
+                    f"✅ [BULK-DEBUG] Rust acceleration successful for {len(cache_misses)} checks"
+                )
 
             except Exception as e:
-                logger.warning(f"Rust acceleration failed: {e}, falling back to Python")
+                logger.warning(
+                    f"[BULK-DEBUG] Rust acceleration failed: {e}, falling back to Python"
+                )
                 rust_success = False
 
         # FALLBACK TO PYTHON if Rust not available or failed
         if not rust_success:
-            logger.debug(f"🐍 Using Python for {len(cache_misses)} checks")
+            logger.warning(
+                f"🐍 [BULK-DEBUG] Using SLOW Python path for {len(cache_misses)} checks (rust_available={rust_available})"
+            )
             for check in cache_misses:
                 subject, permission, obj = check
                 subject_entity = Entity(subject[0], subject[1])

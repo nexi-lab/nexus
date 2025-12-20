@@ -463,6 +463,7 @@ class RebacCreateParams:
     expires_at: str | None = None
     tenant_id: str | None = None
     column_config: dict[str, Any] | None = None
+    context: dict[str, Any] | None = None  # Operation context for permission checks
 
 
 @dataclass
@@ -545,6 +546,7 @@ class ListOutgoingSharesParams:
     tenant_id: str | None = None
     limit: int = 100
     offset: int = 0
+    cursor: str | None = None
 
 
 @dataclass
@@ -554,6 +556,7 @@ class ListIncomingSharesParams:
     user_id: str
     limit: int = 100
     offset: int = 0
+    cursor: str | None = None
 
 
 # Public access params

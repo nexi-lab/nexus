@@ -241,6 +241,64 @@ class HierarchyManager:
 
         conn.commit()
 
+    def _invalidate_cache_for_path_hierarchy_bulk(self, paths: list[str]) -> None:
+        """Invalidate cache for multiple paths in bulk (optimized).
+
+        This is much more efficient than calling _invalidate_cache_for_path_hierarchy()
+        for each path individually because it uses a single DELETE query with IN clause.
+
+        Args:
+            paths: List of file/directory paths to invalidate
+        """
+        if not paths:
+            return
+
+        # Get connection to cache database
+        conn = self.rebac_manager._get_connection()
+        cursor = self.rebac_manager._create_cursor(conn)
+
+        # Collect all paths to invalidate (ancestors + exact + descendants)
+        all_invalidate_paths = set()
+
+        for path in paths:
+            # Add ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
+            parts = path.strip("/").split("/")
+            for i in range(len(parts), 0, -1):
+                ancestor_path = "/" + "/".join(parts[:i])
+                all_invalidate_paths.add(ancestor_path)
+
+        # Convert to list for SQL query
+        paths_list = list(all_invalidate_paths)
+
+        # Bulk DELETE for exact path matches using IN clause
+        if paths_list:
+            placeholders = ", ".join("?" * len(paths_list))
+            cursor.execute(
+                self.rebac_manager._fix_sql_placeholders(
+                    f"""
+                    DELETE FROM rebac_check_cache
+                    WHERE object_type = 'file' AND object_id IN ({placeholders})
+                    """
+                ),
+                paths_list,
+            )
+
+        # Also invalidate descendants using LIKE (one query per original path)
+        # Note: Can't easily combine LIKE queries, but this is still much better
+        # than the previous approach which did multiple queries per path
+        for path in paths:
+            cursor.execute(
+                self.rebac_manager._fix_sql_placeholders(
+                    """
+                    DELETE FROM rebac_check_cache
+                    WHERE object_type = 'file' AND object_id LIKE ?
+                    """
+                ),
+                (path + "/%",),
+            )
+
+        conn.commit()
+
     def remove_parent_tuples(
         self,
         path: str,
@@ -336,6 +394,128 @@ class HierarchyManager:
             total_created += created
 
         return total_created
+
+    def ensure_parent_tuples_batch(
+        self,
+        paths: list[str],
+        tenant_id: str | None = None,
+        batch_size: int = 1000,
+    ) -> int:
+        """Ensure parent tuples exist for multiple paths (batch operation).
+
+        This is much more efficient than calling ensure_parent_tuples()
+        individually because it uses a single database transaction per batch.
+
+        Args:
+            paths: List of file/directory paths
+            tenant_id: Tenant ID for all paths
+            batch_size: Maximum tuples to process per batch (default: 1000)
+
+        Returns:
+            Total number of parent tuples created
+
+        Example:
+            >>> manager.ensure_parent_tuples_batch([
+            ...     "/workspace/file1.txt",
+            ...     "/workspace/subdir/file2.txt",
+            ... ], tenant_id="org_123")
+            4  # Created 4 parent tuples total
+        """
+        if not self.enable_inheritance:
+            return 0
+
+        if not paths:
+            return 0
+
+        # Step 1: Compute all parent tuples needed
+        all_tuples: list[tuple[str, str]] = []  # (child_path, parent_path)
+        for path in paths:
+            if not path or path == "/":
+                continue
+            parts = path.strip("/").split("/")
+            if len(parts) < 2:
+                continue
+
+            # Create parent chain from leaf to root
+            # Example: /a/b/c.txt creates:
+            # - /a/b/c.txt -> /a/b
+            # - /a/b -> /a
+            for i in range(len(parts), 1, -1):
+                child_path = "/" + "/".join(parts[:i])
+                parent_path = "/" + "/".join(parts[: i - 1])
+                all_tuples.append((child_path, parent_path))
+
+        if not all_tuples:
+            return 0
+
+        # Step 2: Deduplicate (same tuple might be needed by multiple files)
+        unique_tuples = list(set(all_tuples))
+
+        # Step 3: Batch process using rebac_write_batch with progress logging
+        total_created = 0
+        total_batches = (len(unique_tuples) + batch_size - 1) // batch_size
+
+        for batch_idx, i in enumerate(range(0, len(unique_tuples), batch_size), start=1):
+            batch = unique_tuples[i : i + batch_size]
+            batch_end = min(i + batch_size, len(unique_tuples))
+
+            # Log progress for large operations (only if multiple batches)
+            if total_batches > 1:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"[HIERARCHY] Processing batch {batch_idx}/{total_batches}: "
+                    f"tuples {i + 1}-{batch_end} of {len(unique_tuples)}"
+                )
+
+            created = self._create_parent_tuples_batch(batch, tenant_id)
+            total_created += created
+
+            # Log batch completion for large operations
+            if total_batches > 1:
+                logger.info(
+                    f"[HIERARCHY] Batch {batch_idx}/{total_batches} complete: "
+                    f"created {created} tuples (total: {total_created}/{len(unique_tuples)} processed)"
+                )
+
+        # Step 4: Batch cache invalidation (optimized bulk DELETE)
+        if total_created > 0:
+            # Invalidate cache for all affected paths in a single operation
+            self._invalidate_cache_for_path_hierarchy_bulk(list(set(paths)))
+
+        return total_created
+
+    def _create_parent_tuples_batch(
+        self,
+        tuples: list[tuple[str, str]],  # (child_path, parent_path)
+        tenant_id: str | None = None,
+    ) -> int:
+        """Create multiple parent tuples in a single transaction.
+
+        Args:
+            tuples: List of (child_path, parent_path) tuples to create
+            tenant_id: Tenant ID
+
+        Returns:
+            Number of tuples created (excluding duplicates)
+        """
+        if not tuples:
+            return 0
+
+        # Convert to format expected by rebac_write_batch
+        rebac_tuples = [
+            {
+                "subject": ("file", child_path),
+                "relation": "parent",
+                "object": ("file", parent_path),
+                "tenant_id": tenant_id,
+            }
+            for child_path, parent_path in tuples
+        ]
+
+        # Use ReBAC manager's bulk insert method
+        return self.rebac_manager.rebac_write_batch(rebac_tuples)
 
     def get_parent_path(self, path: str) -> str | None:
         """Get parent directory path.

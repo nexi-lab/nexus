@@ -28,14 +28,14 @@ class TestTenantAdminHelpers:
     def test_is_tenant_owner_true(self, mock_rebac_manager: Any) -> None:
         """Test is_tenant_owner returns True when user is owner."""
         # Setup: User is member of tenant-acme-owners
-        mock_rebac_manager.rebac_list_tuples.return_value = [{"tuple_id": "123"}]
+        mock_rebac_manager.rebac_check.return_value = True
 
         result = is_tenant_owner(mock_rebac_manager, "alice", "acme")
 
         assert result is True
-        mock_rebac_manager.rebac_list_tuples.assert_called_once_with(
+        mock_rebac_manager.rebac_check.assert_called_once_with(
             subject=("user", "alice"),
-            relation="member",
+            permission="member",
             object=("group", "tenant-acme-owners"),
             tenant_id="acme",
         )
@@ -43,7 +43,7 @@ class TestTenantAdminHelpers:
     def test_is_tenant_owner_false(self, mock_rebac_manager: Any) -> None:
         """Test is_tenant_owner returns False when user is not owner."""
         # Setup: User is not member of tenant-acme-owners
-        mock_rebac_manager.rebac_list_tuples.return_value = []
+        mock_rebac_manager.rebac_check.return_value = False
 
         result = is_tenant_owner(mock_rebac_manager, "alice", "acme")
 
@@ -52,15 +52,15 @@ class TestTenantAdminHelpers:
     def test_is_tenant_admin_via_owner(self, mock_rebac_manager: Any) -> None:
         """Test is_tenant_admin returns True for owner."""
         # Setup: User is owner (which implies admin)
-        mock_rebac_manager.rebac_list_tuples.return_value = [{"tuple_id": "123"}]
+        mock_rebac_manager.rebac_check.return_value = True
 
         result = is_tenant_admin(mock_rebac_manager, "alice", "acme")
 
         assert result is True
         # Should check owner group
-        mock_rebac_manager.rebac_list_tuples.assert_called_with(
+        mock_rebac_manager.rebac_check.assert_called_with(
             subject=("user", "alice"),
-            relation="member",
+            permission="member",
             object=("group", "tenant-acme-owners"),
             tenant_id="acme",
         )
@@ -68,14 +68,14 @@ class TestTenantAdminHelpers:
     def test_is_tenant_admin_via_admin_group(self, mock_rebac_manager: Any) -> None:
         """Test is_tenant_admin returns True for admin (not owner)."""
         # Setup: User is admin but not owner
-        def mock_list_tuples(**kwargs: Any) -> list[dict]:
+        def mock_check(**kwargs: Any) -> bool:
             if kwargs["object"][1] == "tenant-acme-owners":
-                return []  # Not owner
+                return False  # Not owner
             elif kwargs["object"][1] == "tenant-acme-admins":
-                return [{"tuple_id": "456"}]  # Is admin
-            return []
+                return True  # Is admin
+            return False
 
-        mock_rebac_manager.rebac_list_tuples.side_effect = mock_list_tuples
+        mock_rebac_manager.rebac_check.side_effect = mock_check
 
         result = is_tenant_admin(mock_rebac_manager, "alice", "acme")
 
@@ -84,7 +84,7 @@ class TestTenantAdminHelpers:
     def test_is_tenant_admin_false(self, mock_rebac_manager: Any) -> None:
         """Test is_tenant_admin returns False for regular member."""
         # Setup: User is neither owner nor admin
-        mock_rebac_manager.rebac_list_tuples.return_value = []
+        mock_rebac_manager.rebac_check.return_value = False
 
         result = is_tenant_admin(mock_rebac_manager, "alice", "acme")
 
@@ -93,12 +93,12 @@ class TestTenantAdminHelpers:
     def test_can_invite_to_tenant(self, mock_rebac_manager: Any) -> None:
         """Test can_invite_to_tenant delegates to is_tenant_admin."""
         # Setup: User is admin
-        def mock_list_tuples(**kwargs: Any) -> list[dict]:
+        def mock_check(**kwargs: Any) -> bool:
             if kwargs["object"][1] == "tenant-acme-admins":
-                return [{"tuple_id": "456"}]
-            return []
+                return True
+            return False
 
-        mock_rebac_manager.rebac_list_tuples.side_effect = mock_list_tuples
+        mock_rebac_manager.rebac_check.side_effect = mock_check
 
         result = can_invite_to_tenant(mock_rebac_manager, "alice", "acme")
 
@@ -125,12 +125,12 @@ class TestAddUserToTenant:
     def test_add_admin_as_admin(self, mock_rebac_manager: Any) -> None:
         """Test admin can add another admin."""
         # Setup: Alice is admin
-        def mock_list_tuples(**kwargs: Any) -> list[dict]:
+        def mock_check(**kwargs: Any) -> bool:
             if kwargs["object"][1] == "tenant-acme-admins":
-                return [{"tuple_id": "alice-admin"}]
-            return []
+                return True
+            return False
 
-        mock_rebac_manager.rebac_list_tuples.side_effect = mock_list_tuples
+        mock_rebac_manager.rebac_check.side_effect = mock_check
         mock_rebac_manager.rebac_write.return_value = "tuple-456"
 
         result = add_user_to_tenant(
@@ -148,7 +148,7 @@ class TestAddUserToTenant:
     def test_add_owner_as_owner(self, mock_rebac_manager: Any) -> None:
         """Test owner can add another owner."""
         # Setup: Alice is owner
-        mock_rebac_manager.rebac_list_tuples.return_value = [{"tuple_id": "alice-owner"}]
+        mock_rebac_manager.rebac_check.return_value = True
         mock_rebac_manager.rebac_write.return_value = "tuple-789"
 
         result = add_user_to_tenant(
@@ -166,14 +166,14 @@ class TestAddUserToTenant:
     def test_add_owner_as_non_owner_fails(self, mock_rebac_manager: Any) -> None:
         """Test non-owner cannot add owner."""
         # Setup: Alice is admin but not owner
-        def mock_list_tuples(**kwargs: Any) -> list[dict]:
+        def mock_check(**kwargs: Any) -> bool:
             if kwargs["object"][1] == "tenant-acme-owners":
-                return []  # Not owner
+                return False  # Not owner
             elif kwargs["object"][1] == "tenant-acme-admins":
-                return [{"tuple_id": "alice-admin"}]  # Is admin
-            return []
+                return True  # Is admin
+            return False
 
-        mock_rebac_manager.rebac_list_tuples.side_effect = mock_list_tuples
+        mock_rebac_manager.rebac_check.side_effect = mock_check
 
         with pytest.raises(PermissionError, match="Only tenant owners can add other owners"):
             add_user_to_tenant(
@@ -183,7 +183,7 @@ class TestAddUserToTenant:
     def test_add_member_as_non_admin_fails(self, mock_rebac_manager: Any) -> None:
         """Test non-admin cannot invite users."""
         # Setup: Alice is regular member (not admin/owner)
-        mock_rebac_manager.rebac_list_tuples.return_value = []
+        mock_rebac_manager.rebac_check.return_value = False
 
         with pytest.raises(PermissionError, match="Only tenant admins/owners can invite"):
             add_user_to_tenant(
@@ -193,7 +193,7 @@ class TestAddUserToTenant:
     def test_invalid_role_raises_value_error(self, mock_rebac_manager: Any) -> None:
         """Test invalid role raises ValueError."""
         # Setup: Alice is owner
-        mock_rebac_manager.rebac_list_tuples.return_value = [{"tuple_id": "alice-owner"}]
+        mock_rebac_manager.rebac_check.return_value = True
 
         with pytest.raises(ValueError, match="Invalid role 'superuser'"):
             add_user_to_tenant(

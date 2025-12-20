@@ -187,19 +187,6 @@ class TestCreateAgentConfigData:
 
         assert config["api_key"] == "sk-test-key"
 
-    def test_create_agent_config_data_with_inherit_permissions(self, nx: NexusFS) -> None:
-        """Test creating agent config data with inherit_permissions flag."""
-        config = nx._create_agent_config_data(
-            agent_id="admin,test_agent",
-            name="Test Agent",
-            user_id="admin",
-            description=None,
-            created_at=None,
-            inherit_permissions=True,
-        )
-
-        assert config["inherit_permissions"] is True
-
     def test_create_agent_config_data_with_all_options(self, nx: NexusFS) -> None:
         """Test creating agent config data with all options."""
         metadata = {"platform": "langgraph"}
@@ -211,7 +198,6 @@ class TestCreateAgentConfigData:
             created_at="2024-01-01T00:00:00Z",
             metadata=metadata,
             api_key="sk-test-key",
-            inherit_permissions=False,
         )
 
         assert config["agent_id"] == "admin,test_agent"
@@ -221,7 +207,6 @@ class TestCreateAgentConfigData:
         assert config["created_at"] == "2024-01-01T00:00:00Z"
         assert config["metadata"] == metadata
         assert config["api_key"] == "sk-test-key"
-        assert config["inherit_permissions"] is False
 
 
 class TestDetermineAgentKeyExpiration:

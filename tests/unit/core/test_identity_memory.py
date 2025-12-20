@@ -298,7 +298,7 @@ class TestPhase3MemoryPermissions:
         assert can_read is True
 
     def test_user_ownership_inheritance(self, memory_router, permission_enforcer, setup_entities):
-        """Test user ownership inheritance - agent2 can access agent1's user-scoped memory."""
+        """Test that agents DON'T inherit permissions (v0.5.1 - inherit_permissions removed)."""
         # agent1 creates user-scoped memory
         memory = memory_router.create_memory(
             content_hash="abc123",
@@ -307,11 +307,12 @@ class TestPhase3MemoryPermissions:
             scope="user",
         )
 
-        # agent2 (also owned by alice) should have access
+        # agent2 (also owned by alice) should NOT have access without explicit grant
+        # v0.5.1: inherit_permissions feature removed - agents have zero permissions by default
         ctx = OperationContext(user="agent2", groups=[])
         can_read = permission_enforcer.check_memory(memory, Permission.READ, ctx)
 
-        assert can_read is True
+        assert can_read is False  # v0.5.1: No automatic inheritance
 
     def test_agent_scoped_memory_isolation(
         self, memory_router, permission_enforcer, setup_entities
@@ -445,7 +446,7 @@ class TestIntegration:
         }
 
     def test_multi_agent_memory_sharing(self, full_setup):
-        """Test complete multi-agent memory sharing workflow."""
+        """Test that agents don't automatically share memory (v0.5.1 - inherit_permissions removed)."""
         router = full_setup["memory_router"]
         enforcer = full_setup["enforcer"]
 
@@ -459,11 +460,12 @@ class TestIntegration:
             memory_type="preference",
         )
 
-        # agent2 (same user) can access it
+        # agent2 (same user) CANNOT access it without explicit ReBAC grant
+        # v0.5.1: inherit_permissions feature removed
         ctx = OperationContext(user="agent2", groups=[])
         can_read = enforcer.check_memory(memory, Permission.READ, ctx)
 
-        assert can_read is True
+        assert can_read is False  # v0.5.1: No automatic sharing
 
         # Different order of same IDs should resolve to same memory
         path1 = "/workspace/alice/agent1/memory/"

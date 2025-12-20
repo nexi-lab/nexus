@@ -117,24 +117,14 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
         if context.user == memory.agent_id:
             return True
 
-        # 3. User ownership inheritance (v0.5.1: conditional on inherit_permissions flag)
-        # Check if the requesting agent is owned by the same user as the memory
+        # 3. User ownership check
+        # Check if the requesting user matches the memory's user
         # BUT only for user/tenant/global scoped memories (not agent-scoped)
         if memory.user_id and self.entity_registry and memory.scope in ["user", "tenant", "global"]:
             # Look up the requesting user/agent in the entity registry
             requesting_entities = self.entity_registry.lookup_entity_by_id(context.user)
 
             for entity in requesting_entities:
-                # If requesting user is an agent, check if it's owned by the memory's user
-                # v0.5.1: Only inherit if inherit_permissions flag is enabled
-                if (
-                    entity.entity_type == "agent"
-                    and entity.parent_id == memory.user_id
-                    and context.inherit_permissions
-                ):
-                    # Same user owns both the agent and the memory
-                    return True
-
                 # If requesting user matches memory user directly
                 if entity.entity_type == "user" and entity.entity_id == memory.user_id:
                     return True

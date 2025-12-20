@@ -198,7 +198,7 @@ class TestPhase5BackwardCompatibility:
         assert result["agent_id"] == "agent1"
 
     def test_memory_sharing_across_agents(self, session, backend, entity_registry):
-        """Test that memories can be shared across agents of same user."""
+        """Test that agents don't automatically share memory (v0.5.1 - inherit_permissions removed)."""
         # agent1 stores a user-scoped memory
         memory_api1 = Memory(
             session=session,
@@ -214,7 +214,8 @@ class TestPhase5BackwardCompatibility:
             scope="user",
         )
 
-        # agent2 (same user) should be able to access it
+        # agent2 (same user) should NOT be able to access it without explicit ReBAC grant
+        # v0.5.1: inherit_permissions feature removed - agents have zero permissions by default
         memory_api2 = Memory(
             session=session,
             backend=backend,
@@ -225,8 +226,7 @@ class TestPhase5BackwardCompatibility:
         )
 
         result = memory_api2.get(memory_id)
-        assert result is not None
-        assert result["content"] == "Shared preference"
+        assert result is None  # v0.5.1: No automatic sharing
 
     def test_agent_scoped_memory_isolation(self, session, backend, entity_registry):
         """Test that agent-scoped memories with restrictive permissions are isolated."""

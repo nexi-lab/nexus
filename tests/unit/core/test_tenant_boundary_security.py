@@ -51,7 +51,11 @@ class TestTenantBoundarySecurity:
             is_admin=True,
             is_system=False,
             tenant_id=None,  # No tenant restriction - can access all tenants
-            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL, AdminCapability.MANAGE_TENANTS},
+            admin_capabilities={
+                AdminCapability.READ_ALL,
+                AdminCapability.WRITE_ALL,
+                AdminCapability.MANAGE_TENANTS,
+            },
         )
 
         # Create tenant directory first
@@ -86,7 +90,11 @@ class TestTenantBoundarySecurity:
             is_admin=True,
             is_system=False,
             tenant_id=None,
-            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL, AdminCapability.MANAGE_TENANTS},
+            admin_capabilities={
+                AdminCapability.READ_ALL,
+                AdminCapability.WRITE_ALL,
+                AdminCapability.MANAGE_TENANTS,
+            },
         )
 
         # Create tenant directory first
@@ -121,7 +129,11 @@ class TestTenantBoundarySecurity:
             is_admin=True,
             is_system=False,
             tenant_id=None,
-            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL, AdminCapability.MANAGE_TENANTS},
+            admin_capabilities={
+                AdminCapability.READ_ALL,
+                AdminCapability.WRITE_ALL,
+                AdminCapability.MANAGE_TENANTS,
+            },
         )
 
         # Create tenant directory first
@@ -159,7 +171,11 @@ class TestTenantBoundarySecurity:
             is_admin=True,
             is_system=False,
             tenant_id=None,
-            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL, AdminCapability.MANAGE_TENANTS},
+            admin_capabilities={
+                AdminCapability.READ_ALL,
+                AdminCapability.WRITE_ALL,
+                AdminCapability.MANAGE_TENANTS,
+            },
         )
 
         # Create tenant directory first
@@ -193,7 +209,11 @@ class TestTenantBoundarySecurity:
             is_admin=True,
             is_system=False,
             tenant_id=None,
-            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL, AdminCapability.MANAGE_TENANTS},
+            admin_capabilities={
+                AdminCapability.READ_ALL,
+                AdminCapability.WRITE_ALL,
+                AdminCapability.MANAGE_TENANTS,
+            },
         )
 
         # Create tenant directory first

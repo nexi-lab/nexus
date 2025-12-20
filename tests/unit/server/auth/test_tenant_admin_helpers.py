@@ -94,9 +94,7 @@ class TestTenantAdminHelpers:
         """Test can_invite_to_tenant delegates to is_tenant_admin."""
         # Setup: User is admin
         def mock_check(**kwargs: Any) -> bool:
-            if kwargs["object"][1] == "tenant-acme-admins":
-                return True
-            return False
+            return kwargs["object"][1] == "tenant-acme-admins"
 
         mock_rebac_manager.rebac_check.side_effect = mock_check
 
@@ -126,9 +124,7 @@ class TestAddUserToTenant:
         """Test admin can add another admin."""
         # Setup: Alice is admin
         def mock_check(**kwargs: Any) -> bool:
-            if kwargs["object"][1] == "tenant-acme-admins":
-                return True
-            return False
+            return kwargs["object"][1] == "tenant-acme-admins"
 
         mock_rebac_manager.rebac_check.side_effect = mock_check
         mock_rebac_manager.rebac_write.return_value = "tuple-456"

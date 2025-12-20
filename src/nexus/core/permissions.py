@@ -318,19 +318,23 @@ class PermissionEnforcer:
                     path_tenant_id = parts[0]
 
             # Check if admin is attempting cross-tenant access
-            if path_tenant_id and context.tenant_id and path_tenant_id != context.tenant_id:
+            if (
+                path_tenant_id
+                and context.tenant_id
+                and path_tenant_id != context.tenant_id
+                and AdminCapability.MANAGE_TENANTS not in context.admin_capabilities
+            ):
                 # Cross-tenant access requires MANAGE_TENANTS capability (system admin only)
-                if AdminCapability.MANAGE_TENANTS not in context.admin_capabilities:
-                    # Not system admin - deny cross-tenant access
-                    self._log_bypass_denied(
-                        context,
-                        path,
-                        permission_str,
-                        "admin",
-                        f"cross_tenant_access_denied_path_tenant={path_tenant_id}_context_tenant={context.tenant_id}",
-                    )
-                    # Fall through to ReBAC check (will deny)
-                    return self._check_rebac(path, permission, context)
+                # Not system admin - deny cross-tenant access
+                self._log_bypass_denied(
+                    context,
+                    path,
+                    permission_str,
+                    "admin",
+                    f"cross_tenant_access_denied_path_tenant={path_tenant_id}_context_tenant={context.tenant_id}",
+                )
+                # Fall through to ReBAC check (will deny)
+                return self._check_rebac(path, permission, context)
 
             required_capability = AdminCapability.get_required_capability(path, permission_str)
             wildcard_capability = f"admin:{permission_str}:*"

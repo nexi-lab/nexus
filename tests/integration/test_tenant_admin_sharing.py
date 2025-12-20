@@ -6,8 +6,8 @@ Tests that tenant admins can share resources within their tenant.
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
@@ -61,7 +61,6 @@ class TestTenantAdminSharing:
 
         # Create a file owned by a regular user (bob)
         file_path = f"{tenant_path}/doc.txt"
-        bob_context = OperationContext(user="bob", groups=[], is_admin=False, is_system=False)
         nx.write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership

@@ -243,12 +243,12 @@ def remove_user_from_tenant(
     """
     if role is None:
         # Remove from all groups (owner, admin, member)
+        import contextlib
+
         for r in ["owner", "admin", "member"]:
-            try:
+            # Ignore errors if tuple doesn't exist
+            with contextlib.suppress(Exception):
                 remove_user_from_tenant(rebac_manager, user_id, tenant_id, r)
-            except Exception:
-                # Ignore errors if tuple doesn't exist
-                pass
         return
 
     group_id = tenant_group_id(tenant_id)

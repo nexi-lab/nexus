@@ -44,19 +44,30 @@ class NexusFSProvisioningMixin:
         _entity_registry: Any
         _enforce_permissions: bool
 
+        # Method stubs for type checking (implementations provided by other mixins)
         def mkdir(
             self, path: str, parents: bool = False, exist_ok: bool = False, context: Any = None
         ) -> None: ...
 
-        def write(self, path: str, content: bytes, context: Any = None) -> str: ...
+        def write(
+            self,
+            path: str,
+            content: bytes,
+            context: Any = None,
+            if_match: str | None = None,
+            if_none_match: bool = False,
+            force: bool = False,
+        ) -> dict[str, Any]: ...
 
         def rebac_create(
             self,
             subject: tuple[str, str],
             relation: str,
             object: tuple[str, str],
+            expires_at: Any = None,
             tenant_id: str | None = None,
             context: Any = None,
+            column_config: dict[str, Any] | None = None,
         ) -> str: ...
 
         def register_workspace(
@@ -79,7 +90,7 @@ class NexusFSProvisioningMixin:
             description: str | None = None,
             generate_api_key: bool = False,
             metadata: dict | None = None,
-            context: dict | None = None,
+            context: Any = None,
         ) -> dict: ...
 
         def import_skill(
@@ -239,7 +250,7 @@ class NexusFSProvisioningMixin:
             name=f"{user_id}'s Impersonated Agent",
             description="Agent that impersonates user with full permissions",
             metadata={"agent_type": "ImpersonatedUser", "tenant_id": tenant_id},
-            context=dict(context.__dict__) if hasattr(context, "__dict__") else context,
+            context=context,
         )
 
         # Create UntrustedAgent
@@ -249,7 +260,7 @@ class NexusFSProvisioningMixin:
             name=f"{user_id}'s Untrusted Agent",
             description="Agent with zero permissions by default",
             metadata={"agent_type": "UntrustedAgent", "tenant_id": tenant_id},
-            context=dict(context.__dict__) if hasattr(context, "__dict__") else context,
+            context=context,
         )
 
         return agents

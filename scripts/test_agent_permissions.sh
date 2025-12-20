@@ -62,24 +62,15 @@ fi
 echo -e "${GREEN}✓ Server is running${NC}"
 echo ""
 
-# Step 2: Create a new agent with API key
-echo "🤖 Step 2: Creating test agent '${TEST_AGENT_NAME}'..."
+# Step 2: Create a new agent with API key (using low-level APIs to test permission setup)
+echo "🤖 Step 2: Creating test agent '${TEST_AGENT_NAME}' using low-level APIs..."
 
-# Agent config path
-AGENT_CONFIG_PATH="/tenant:${TENANT_ID}/user:${USER_ID}/agent/${TEST_AGENT_NAME}/config.yaml"
+# Define agent config path
+AGENT_CONFIG_PATH="/.agents/${TEST_AGENT_ID}/config.yaml"
 
-# Create agent config
-AGENT_CONFIG="name: ${TEST_AGENT_NAME}
-platform: test
-description: Test agent for permission validation
-created_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-metadata:
-  test: true
-  purpose: permission_testing
-"
-
-# Write agent config using admin key
-curl -s -X POST "${SERVER_URL}/api/nfs/write" \
+# Step 2a: Write agent config file using admin key
+echo "  → Writing agent config to ${AGENT_CONFIG_PATH}..."
+WRITE_RESPONSE=$(curl -s -X POST "${SERVER_URL}/api/nfs/write" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${ADMIN_API_KEY}" \
   -d "{
@@ -87,20 +78,23 @@ curl -s -X POST "${SERVER_URL}/api/nfs/write" \
     \"method\": \"write\",
     \"params\": {
       \"path\": \"${AGENT_CONFIG_PATH}\",
-      \"data\": $(echo "$AGENT_CONFIG" | python3 -c "import sys, json; print(json.dumps(sys.stdin.read()))")
+      \"content\": \"name: ${TEST_AGENT_NAME}\ndescription: Test agent for permission validation\nmetadata:\n  platform: test\n  test: true\n  purpose: permission_testing\n\"
     },
     \"id\": 1
-  }" | python3 -m json.tool > /dev/null
+  }")
 
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✓ Agent config created at ${AGENT_CONFIG_PATH}${NC}"
-else
-    echo -e "${RED}✗ Failed to create agent config${NC}"
+# Check for errors
+ERROR_MSG=$(echo "$WRITE_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
+if [ -n "$ERROR_MSG" ]; then
+    echo -e "${RED}✗ Failed to write agent config${NC}"
+    echo "   Error: $ERROR_MSG"
     exit 1
 fi
+echo -e "${GREEN}✓ Agent config written${NC}"
 
-# Register agent entity in the entity registry
-curl -s -X POST "${SERVER_URL}/api/nfs/register_entity" \
+# Step 2b: Register agent entity in the entity registry
+echo "  → Registering agent entity in entity registry..."
+REGISTER_RESPONSE=$(curl -s -X POST "${SERVER_URL}/api/nfs/register_entity" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${ADMIN_API_KEY}" \
   -d "{
@@ -109,57 +103,57 @@ curl -s -X POST "${SERVER_URL}/api/nfs/register_entity" \
     \"params\": {
       \"entity_type\": \"agent\",
       \"entity_id\": \"${TEST_AGENT_ID}\",
-      \"parent_type\": \"user\",
-      \"parent_id\": \"${USER_ID}\",
-      \"tenant_id\": \"${TENANT_ID}\"
+      \"parent_id\": \"${ADMIN_USER_ID}\",
+      \"metadata\": {
+        \"name\": \"${TEST_AGENT_NAME}\",
+        \"config_path\": \"${AGENT_CONFIG_PATH}\"
+      }
     },
     \"id\": 2
-  }" | python3 -m json.tool > /dev/null
+  }")
 
-echo -e "${GREEN}✓ Agent registered in entity registry${NC}"
+ERROR_MSG=$(echo "$REGISTER_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
+if [ -n "$ERROR_MSG" ]; then
+    echo -e "${RED}✗ Failed to register agent entity${NC}"
+    echo "   Error: $ERROR_MSG"
+    exit 1
+fi
+echo -e "${GREEN}✓ Agent entity registered${NC}"
 
-# Create API key for the agent using the admin_create_key API endpoint
-echo -e "${BLUE}  Creating API key for agent...${NC}"
-
-# Use the admin_create_key API endpoint to create the agent key
-CREATE_KEY_RESPONSE=$(curl -s -X POST "${SERVER_URL}/api/nfs/admin_create_key" \
+# Step 2c: Create API key for the agent
+echo "  → Creating API key for agent..."
+KEY_RESPONSE=$(curl -s -X POST "${SERVER_URL}/api/nfs/admin_create_key" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${ADMIN_API_KEY}" \
   -d "{
     \"jsonrpc\": \"2.0\",
     \"method\": \"admin_create_key\",
     \"params\": {
-      \"user_id\": \"${USER_ID}\",
-      \"name\": \"${TEST_AGENT_NAME} Test Key\",
-      \"subject_type\": \"agent\",
-      \"subject_id\": \"${TEST_AGENT_ID}\",
-      \"tenant_id\": \"${TENANT_ID}\",
-      \"is_admin\": false
+      \"user_id\": \"${ADMIN_USER_ID}\",
+      \"agent_id\": \"${TEST_AGENT_ID}\",
+      \"capabilities\": [\"read\", \"write\", \"admin\"]
     },
     \"id\": 3
   }")
 
-# Check if the request was successful
-ERROR_CODE=$(echo "$CREATE_KEY_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
-if [ -n "$ERROR_CODE" ]; then
-    ERROR_MESSAGE=$(echo "$CREATE_KEY_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
-    echo -e "${RED}✗ Failed to create API key${NC}"
-    echo "   Error code: $ERROR_CODE"
-    echo "   Error message: $ERROR_MESSAGE"
-    echo "   Response: $CREATE_KEY_RESPONSE"
+ERROR_MSG=$(echo "$KEY_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('message', ''))" 2>/dev/null || echo "")
+if [ -n "$ERROR_MSG" ]; then
+    echo -e "${RED}✗ Failed to create agent API key${NC}"
+    echo "   Error: $ERROR_MSG"
     exit 1
 fi
 
-# Extract the API key from the response
-TEST_AGENT_API_KEY=$(echo "$CREATE_KEY_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('result', {}).get('api_key', ''))" 2>/dev/null || echo "")
+TEST_AGENT_API_KEY=$(echo "$KEY_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['result']['api_key'])" 2>/dev/null || echo "")
 
 if [ -z "$TEST_AGENT_API_KEY" ]; then
     echo -e "${RED}✗ Failed to extract API key from response${NC}"
-    echo "   Response: $CREATE_KEY_RESPONSE"
+    echo "   Response: $KEY_RESPONSE"
     exit 1
 fi
 
-echo -e "${GREEN}✓ API key created for ${TEST_AGENT_NAME}${NC}"
+echo -e "${GREEN}✓ Agent registered: ${TEST_AGENT_NAME}${NC}"
+echo -e "${GREEN}✓ Config created at: ${AGENT_CONFIG_PATH}${NC}"
+echo -e "${GREEN}✓ API key generated${NC}"
 echo -e "${BLUE}  API Key: ${TEST_AGENT_API_KEY:0:30}...${NC}"
 echo ""
 

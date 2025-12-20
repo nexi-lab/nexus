@@ -673,30 +673,8 @@ class ReBACManager:
             raise ValueError(f"subject must be 2-tuple or 3-tuple, got {len(subject)}-tuple")
         object_entity = Entity(object[0], object[1])
 
-        # P0-4: Cross-tenant validation at write-time
-        # Prevent cross-tenant relationship tuples (security critical!)
-        #
-        # SECURITY FIX: Check each tenant ID independently to prevent bypass via None
-        # Previous logic: "if A and B and C" allowed bypass when B or C was None
-        # New logic: Validate each provided tenant ID separately
-
-        # If tuple has a tenant_id, validate subject's tenant matches (if provided)
-        if (
-            tenant_id is not None
-            and subject_tenant_id is not None
-            and subject_tenant_id != tenant_id
-        ):
-            raise ValueError(
-                f"Cross-tenant relationship not allowed: subject tenant '{subject_tenant_id}' "
-                f"!= tuple tenant '{tenant_id}'"
-            )
-
-        # If tuple has a tenant_id, validate object's tenant matches (if provided)
-        if tenant_id is not None and object_tenant_id is not None and object_tenant_id != tenant_id:
-            raise ValueError(
-                f"Cross-tenant relationship not allowed: object tenant '{object_tenant_id}' "
-                f"!= tuple tenant '{tenant_id}'"
-            )
+        # P0-4: Cross-tenant validation at write-time (delegated to helper)
+        self._validate_cross_tenant(tenant_id, subject_tenant_id, object_tenant_id)
 
         with self._connection() as conn:
             # CYCLE DETECTION: Prevent cycles in parent relations
@@ -818,6 +796,342 @@ class ReBACManager:
                 )
 
         return tuple_id
+
+    def _validate_cross_tenant(
+        self,
+        tenant_id: str | None,
+        subject_tenant_id: str | None,
+        object_tenant_id: str | None,
+    ) -> None:
+        """Validate cross-tenant relationships (P0-4).
+
+        Prevents cross-tenant relationship tuples for security.
+
+        Args:
+            tenant_id: Tuple tenant ID
+            subject_tenant_id: Subject's tenant ID (optional)
+            object_tenant_id: Object's tenant ID (optional)
+
+        Raises:
+            ValueError: If cross-tenant relationship is detected
+        """
+        # If tuple has a tenant_id, validate subject's tenant matches (if provided)
+        if (
+            tenant_id is not None
+            and subject_tenant_id is not None
+            and subject_tenant_id != tenant_id
+        ):
+            raise ValueError(
+                f"Cross-tenant relationship not allowed: subject tenant '{subject_tenant_id}' "
+                f"!= tuple tenant '{tenant_id}'"
+            )
+
+        # If tuple has a tenant_id, validate object's tenant matches (if provided)
+        if tenant_id is not None and object_tenant_id is not None and object_tenant_id != tenant_id:
+            raise ValueError(
+                f"Cross-tenant relationship not allowed: object tenant '{object_tenant_id}' "
+                f"!= tuple tenant '{tenant_id}'"
+            )
+
+    def rebac_write_batch(
+        self,
+        tuples: list[dict[str, Any]],
+    ) -> int:
+        """Create multiple relationship tuples in a single transaction (batch operation).
+
+        This is much more efficient than calling rebac_write() multiple times
+        because it uses a single database transaction and bulk operations.
+
+        Args:
+            tuples: List of dicts with keys:
+                - subject: (type, id) or (type, id, relation) tuple
+                - relation: str
+                - object: (type, id) tuple
+                - tenant_id: str | None (optional, defaults to "default")
+                - expires_at: datetime | None (optional)
+                - conditions: dict | None (optional)
+                - subject_tenant_id: str | None (optional)
+                - object_tenant_id: str | None (optional)
+
+        Returns:
+            Number of tuples created (excluding duplicates)
+
+        Example:
+            >>> manager.rebac_write_batch([
+            ...     {
+            ...         "subject": ("file", "/a/b/c.txt"),
+            ...         "relation": "parent",
+            ...         "object": ("file", "/a/b"),
+            ...         "tenant_id": "org_123"
+            ...     },
+            ...     {
+            ...         "subject": ("file", "/a/b"),
+            ...         "relation": "parent",
+            ...         "object": ("file", "/a"),
+            ...         "tenant_id": "org_123"
+            ...     }
+            ... ])
+            2
+        """
+        if not tuples:
+            return 0
+
+        # Ensure default namespaces are initialized
+        self._ensure_namespaces_initialized()
+
+        created_count = 0
+        now = datetime.now(UTC).isoformat()
+
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            try:
+                # Step 1: Parse and validate all tuples
+                parsed_tuples: list[dict[str, Any]] = []
+                for t in tuples:
+                    subject = t["subject"]
+                    relation = t["relation"]
+                    obj = t["object"]
+                    tenant_id = t.get("tenant_id")
+                    expires_at = t.get("expires_at")
+                    conditions = t.get("conditions")
+                    subject_tenant_id = t.get("subject_tenant_id")
+                    object_tenant_id = t.get("object_tenant_id")
+
+                    # Parse subject (support userset-as-subject with 3-tuple)
+                    if len(subject) == 3:
+                        subject_type, subject_id, subject_relation = subject
+                        subject_entity = Entity(subject_type, subject_id)
+                    elif len(subject) == 2:
+                        subject_type, subject_id = subject
+                        subject_relation = None
+                        subject_entity = Entity(subject_type, subject_id)
+                    else:
+                        raise ValueError(f"subject must be 2-tuple or 3-tuple, got {len(subject)}-tuple")
+
+                    object_entity = Entity(obj[0], obj[1])
+
+                    # P0-4: Cross-tenant validation (delegated to helper)
+                    self._validate_cross_tenant(tenant_id, subject_tenant_id, object_tenant_id)
+
+                    # CYCLE DETECTION: For parent relations, check for cycles
+                    if relation == "parent" and self._would_create_cycle_with_conn(
+                        conn, subject_entity, object_entity, tenant_id
+                    ):
+                        logger.warning(
+                            f"Skipping tuple creation - cycle detected: "
+                            f"{subject_entity.entity_type}:{subject_entity.entity_id} -> "
+                            f"{object_entity.entity_type}:{object_entity.entity_id}"
+                        )
+                        continue
+
+                    parsed_tuples.append({
+                        "tuple_id": str(uuid.uuid4()),
+                        "subject_type": subject_type,
+                        "subject_id": subject_id,
+                        "subject_relation": subject_relation,
+                        "subject_entity": subject_entity,
+                        "relation": relation,
+                        "object_type": obj[0],
+                        "object_id": obj[1],
+                        "object_entity": object_entity,
+                        "tenant_id": tenant_id,
+                        "expires_at": expires_at,
+                        "conditions": conditions,
+                        "subject_tenant_id": subject_tenant_id,
+                        "object_tenant_id": object_tenant_id,
+                    })
+
+                if not parsed_tuples:
+                    return 0
+
+                # Step 2: Bulk check which tuples already exist
+                existing_tuples = self._bulk_check_tuples_exist(cursor, parsed_tuples)
+
+                # Step 3: Filter out existing tuples and create new ones
+                tuples_to_create = []
+                for pt in parsed_tuples:
+                    key = (
+                        (pt["subject_type"], pt["subject_id"], pt["subject_relation"]),
+                        pt["relation"],
+                        (pt["object_type"], pt["object_id"]),
+                        pt["tenant_id"],
+                    )
+                    if key not in existing_tuples:
+                        tuples_to_create.append(pt)
+
+                if not tuples_to_create:
+                    return 0
+
+                # Step 4: Bulk insert tuples
+                for pt in tuples_to_create:
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            INSERT INTO rebac_tuples (
+                                tuple_id, subject_type, subject_id, subject_relation, relation,
+                                object_type, object_id, created_at, expires_at, conditions,
+                                tenant_id, subject_tenant_id, object_tenant_id
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """
+                        ),
+                        (
+                            pt["tuple_id"],
+                            pt["subject_type"],
+                            pt["subject_id"],
+                            pt["subject_relation"],
+                            pt["relation"],
+                            pt["object_type"],
+                            pt["object_id"],
+                            now,
+                            pt["expires_at"].isoformat() if pt["expires_at"] else None,
+                            json.dumps(pt["conditions"]) if pt["conditions"] else None,
+                            pt["tenant_id"],
+                            pt["subject_tenant_id"],
+                            pt["object_tenant_id"],
+                        ),
+                    )
+
+                    # Log to changelog
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            INSERT INTO rebac_changelog (
+                                change_type, tuple_id, subject_type, subject_id,
+                                relation, object_type, object_id, created_at
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """
+                        ),
+                        (
+                            "INSERT",
+                            pt["tuple_id"],
+                            pt["subject_type"],
+                            pt["subject_id"],
+                            pt["relation"],
+                            pt["object_type"],
+                            pt["object_id"],
+                            now,
+                        ),
+                    )
+
+                    created_count += 1
+
+                    # Invalidate cache for this tuple
+                    self._invalidate_cache_for_tuple(
+                        pt["subject_entity"],
+                        pt["relation"],
+                        pt["object_entity"],
+                        pt["tenant_id"],
+                        pt["subject_relation"],
+                        pt["expires_at"],
+                    )
+
+                    # CROSS-TENANT FIX: Also invalidate subject tenant cache if different
+                    if pt["subject_tenant_id"] is not None and pt["subject_tenant_id"] != pt["tenant_id"]:
+                        self._invalidate_cache_for_tuple(
+                            pt["subject_entity"],
+                            pt["relation"],
+                            pt["object_entity"],
+                            pt["subject_tenant_id"],
+                            pt["subject_relation"],
+                            pt["expires_at"],
+                        )
+
+                # Commit transaction after all inserts succeed
+                conn.commit()
+
+            except Exception as e:
+                # Rollback transaction on any error to maintain consistency
+                conn.rollback()
+                logger.error(
+                    f"Failed to batch create {len(tuples)} tuples: {type(e).__name__}: {e}",
+                    exc_info=True
+                )
+                raise
+
+        return created_count
+
+    def _bulk_check_tuples_exist(
+        self,
+        cursor: Any,
+        parsed_tuples: list[dict[str, Any]],
+    ) -> set[tuple]:
+        """Check which tuples already exist (bulk query).
+
+        Args:
+            cursor: Database cursor
+            parsed_tuples: List of parsed tuple dicts
+
+        Returns:
+            Set of (subject, relation, object, tenant_id) tuples that exist
+            where subject is (type, id, relation) and object is (type, id)
+        """
+        if not parsed_tuples:
+            return set()
+
+        # Chunk queries to avoid "expression tree too large" error in SQLite
+        # SQLite has max depth of ~1000, so use chunks of 100 tuples (900 params each)
+        CHUNK_SIZE = 100
+        existing = set()
+
+        for chunk_start in range(0, len(parsed_tuples), CHUNK_SIZE):
+            chunk = parsed_tuples[chunk_start:chunk_start + CHUNK_SIZE]
+
+            # Build WHERE clause with OR conditions for each tuple
+            # This works for both SQLite and PostgreSQL
+            conditions = []
+            params: list[Any] = []
+
+            for pt in chunk:
+                conditions.append(
+                    "(subject_type = ? AND subject_id = ? AND "
+                    "(subject_relation = ? OR (subject_relation IS NULL AND ? IS NULL)) AND "
+                    "relation = ? AND object_type = ? AND object_id = ? AND "
+                    "(tenant_id = ? OR (tenant_id IS NULL AND ? IS NULL)))"
+                )
+                params.extend([
+                    pt["subject_type"],
+                    pt["subject_id"],
+                    pt["subject_relation"],
+                    pt["subject_relation"],
+                    pt["relation"],
+                    pt["object_type"],
+                    pt["object_id"],
+                    pt["tenant_id"],
+                    pt["tenant_id"],
+                ])
+
+            query = f"""
+                SELECT subject_type, subject_id, subject_relation, relation,
+                       object_type, object_id, tenant_id
+                FROM rebac_tuples
+                WHERE {' OR '.join(conditions)}
+            """
+
+            cursor.execute(self._fix_sql_placeholders(query), params)
+            results = cursor.fetchall()
+
+            for row in results:
+                # Note: sqlite3.Row doesn't have .get(), use try/except or dict conversion
+                try:
+                    subject_relation = row["subject_relation"]
+                except (KeyError, IndexError):
+                    subject_relation = None
+                try:
+                    tenant_id = row["tenant_id"]
+                except (KeyError, IndexError):
+                    tenant_id = None
+
+                existing.add((
+                    (row["subject_type"], row["subject_id"], subject_relation),
+                    row["relation"],
+                    (row["object_type"], row["object_id"]),
+                    tenant_id,
+                ))
+
+        return existing
 
     def rebac_delete(self, tuple_id: str) -> bool:
         """Delete a relationship tuple.

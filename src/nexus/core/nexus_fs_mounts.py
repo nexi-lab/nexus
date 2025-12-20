@@ -1279,6 +1279,38 @@ class NexusFSMountsMixin:
         # Track all files found in backend (for deletion detection)
         files_found_in_backend: set[str] = set()
 
+        # Collect paths that need parent tuples (for batch processing)
+        paths_needing_tuples: list[str] = []
+        # Memory-efficient chunking: flush batch every N paths to avoid memory issues
+        PATHS_CHUNK_SIZE = 10000
+        total_tuples_created = 0
+
+        def flush_parent_tuples_batch() -> None:
+            """Flush accumulated paths and create parent tuples in batch."""
+            nonlocal paths_needing_tuples, total_tuples_created
+            if paths_needing_tuples and ctx.has_hierarchy and self._hierarchy_manager:  # type: ignore[attr-defined]
+                try:
+                    tenant_id = get_tenant_id(ctx.context) if ctx.context else None
+                    logger.info(
+                        f"[SYNC_MOUNT] Flushing batch: creating parent tuples for "
+                        f"{len(paths_needing_tuples)} files (tenant_id={tenant_id})"
+                    )
+                    created = self._hierarchy_manager.ensure_parent_tuples_batch(  # type: ignore[attr-defined]
+                        paths_needing_tuples, tenant_id=tenant_id
+                    )
+                    total_tuples_created += created
+                    logger.info(
+                        f"[SYNC_MOUNT] Flushed batch: created {created} parent tuples "
+                        f"(total so far: {total_tuples_created})"
+                    )
+                    paths_needing_tuples.clear()
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to flush parent tuples batch: {type(e).__name__}: {e}",
+                        exc_info=True
+                    )
+                    paths_needing_tuples.clear()
+
         # Determine starting path for scan
         if ctx.path:
             # path can be relative to mount or absolute
@@ -1356,16 +1388,12 @@ class NexusFSMountsMixin:
                             self.metadata.put(meta)  # type: ignore[attr-defined]
                             stats["files_created"] = 1
 
-                            # Create parent relationships
+                            # Collect path for batch parent tuple creation (done at end)
                             if ctx.has_hierarchy and self._hierarchy_manager:  # type: ignore[attr-defined]
-                                try:
-                                    self._hierarchy_manager.ensure_parent_tuples(  # type: ignore[attr-defined]
-                                        start_virtual_path, tenant_id=None
-                                    )
-                                except Exception as parent_error:
-                                    logger.warning(
-                                        f"Failed to create parent tuples for {start_virtual_path}: {parent_error}"
-                                    )
+                                paths_needing_tuples.append(start_virtual_path)
+                                # Flush batch if chunk size reached (memory-efficient)
+                                if len(paths_needing_tuples) >= PATHS_CHUNK_SIZE:
+                                    flush_parent_tuples_batch()
                         except Exception as e:
                             error_msg = f"Failed to add {start_virtual_path}: {e}"
                             cast(list[str], stats["errors"]).append(error_msg)
@@ -1481,22 +1509,12 @@ class NexusFSMountsMixin:
                                 self.metadata.put(meta)  # type: ignore[attr-defined]
                                 stats["files_created"] = stats["files_created"] + 1  # type: ignore[operator]
 
-                                # Create parent relationships for permission inheritance
+                                # Collect path for batch parent tuple creation (done at end)
                                 if ctx.has_hierarchy and self._hierarchy_manager:  # type: ignore[attr-defined]
-                                    try:
-                                        logger.info(
-                                            f"[SYNC_MOUNT] Creating parent tuples for new file: {entry_virtual_path}"
-                                        )
-                                        created = self._hierarchy_manager.ensure_parent_tuples(  # type: ignore[attr-defined]
-                                            entry_virtual_path, tenant_id=None
-                                        )
-                                        logger.info(
-                                            f"[SYNC_MOUNT] Created {created} parent tuples for {entry_virtual_path}"
-                                        )
-                                    except Exception as parent_error:
-                                        logger.warning(
-                                            f"Failed to create parent tuples for {entry_virtual_path}: {parent_error}"
-                                        )
+                                    paths_needing_tuples.append(entry_virtual_path)
+                                    # Flush batch if chunk size reached (memory-efficient)
+                                    if len(paths_needing_tuples) >= PATHS_CHUNK_SIZE:
+                                        flush_parent_tuples_batch()
 
                             except Exception as e:
                                 error_msg = f"Failed to add {entry_virtual_path}: {e}"
@@ -1505,6 +1523,16 @@ class NexusFSMountsMixin:
             except Exception as e:
                 error_msg = f"Failed to scan {virtual_path}: {e}"
                 cast(list[str], stats["errors"]).append(error_msg)
+
+        # Flush any remaining paths that haven't been processed yet
+        if paths_needing_tuples:
+            flush_parent_tuples_batch()
+
+        # Log final parent tuple creation statistics
+        if total_tuples_created > 0:
+            logger.info(
+                f"[SYNC_MOUNT] Parent tuple creation complete: {total_tuples_created} tuples created total"
+            )
 
         return MetadataSyncResult(stats, files_found_in_backend)
 

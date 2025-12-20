@@ -3240,11 +3240,9 @@ class NexusFS(
         # This allows the agent to read its own configuration
         try:
             self.rebac_create(
-                subject_type="agent",
-                subject_id=agent_id,
+                subject=("agent", agent_id),
                 relation="viewer",
-                object_type="file",
-                object_id=agent_dir,
+                object=("file", agent_dir),
                 tenant_id=tenant_id,
                 context=context,
             )

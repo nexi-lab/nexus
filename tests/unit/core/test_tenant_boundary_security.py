@@ -15,6 +15,7 @@ import pytest
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.core.permissions_enhanced import AdminCapability
+from nexus.server.auth.user_helpers import add_user_to_tenant
 
 
 @pytest.fixture
@@ -32,6 +33,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
         db_path=temp_dir / "metadata.db",
         auto_parse=False,
         enforce_permissions=True,
+        allow_admin_bypass=True,  # Enable admin bypass for tenant boundary tests
     )
     yield nx
     nx.close()
@@ -42,14 +44,18 @@ class TestTenantBoundarySecurity:
 
     def test_tenant_admin_cannot_access_other_tenant_files(self, nx: NexusFS) -> None:
         """Test that tenant admin cannot access files from other tenants."""
-        # Setup: Create file in tenant1 as system admin
+        # Setup: Create file in tenant1 as system admin with MANAGE_TENANTS
         system_admin = OperationContext(
             user="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
-            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL},
+            tenant_id=None,  # No tenant restriction - can access all tenants
+            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL, AdminCapability.MANAGE_TENANTS},
         )
+
+        # Create tenant directory first
+        nx.mkdir("/tenant:acme", context=system_admin)
 
         test_file = "/tenant:acme/doc.txt"
         nx.write(test_file, b"secret acme data", context=system_admin)
@@ -68,26 +74,26 @@ class TestTenantBoundarySecurity:
         )
 
         # Should be denied - cross-tenant access without MANAGE_TENANTS
-        with pytest.raises(PermissionError, match="Permission denied"):
+        with pytest.raises(PermissionError, match="Access denied"):
             nx.read(test_file, context=tenant_admin_techcorp)
 
     def test_system_admin_can_access_any_tenant(self, nx: NexusFS) -> None:
         """Test that system admin with MANAGE_TENANTS can access any tenant."""
         # Setup: Create file in tenant1
-        system_admin_no_tenant = OperationContext(
+        system_admin_setup = OperationContext(
             user="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
-            admin_capabilities={
-                AdminCapability.READ_ALL,
-                AdminCapability.WRITE_ALL,
-                AdminCapability.MANAGE_TENANTS,  # System admin capability
-            },
+            tenant_id=None,
+            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL, AdminCapability.MANAGE_TENANTS},
         )
 
+        # Create tenant directory first
+        nx.mkdir("/tenant:acme", context=system_admin_setup)
+
         test_file = "/tenant:acme/doc.txt"
-        nx.write(test_file, b"secret acme data", context=system_admin_no_tenant)
+        nx.write(test_file, b"secret acme data", context=system_admin_setup)
 
         # System admin from tenant2 should be able to access tenant1 file
         system_admin_tenant2 = OperationContext(
@@ -114,11 +120,18 @@ class TestTenantBoundarySecurity:
             groups=[],
             is_admin=True,
             is_system=False,
-            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL},
+            tenant_id=None,
+            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL, AdminCapability.MANAGE_TENANTS},
         )
+
+        # Create tenant directory first
+        nx.mkdir("/tenant:acme", context=system_admin)
 
         test_file = "/tenant:acme/doc.txt"
         nx.write(test_file, b"acme data", context=system_admin)
+
+        # Add alice as tenant admin for acme
+        add_user_to_tenant(nx._rebac_manager, "alice", "acme", role="admin")
 
         # Tenant admin from same tenant should be able to access
         tenant_admin_acme = OperationContext(
@@ -145,8 +158,12 @@ class TestTenantBoundarySecurity:
             groups=[],
             is_admin=True,
             is_system=False,
-            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL},
+            tenant_id=None,
+            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL, AdminCapability.MANAGE_TENANTS},
         )
+
+        # Create tenant directory first
+        nx.mkdir("/tenant:acme", context=system_admin)
 
         test_file = "/tenant:acme/doc.txt"
         nx.write(test_file, b"original", context=system_admin)
@@ -164,7 +181,7 @@ class TestTenantBoundarySecurity:
         )
 
         # Should be denied - cross-tenant write without MANAGE_TENANTS
-        with pytest.raises(PermissionError, match="Permission denied"):
+        with pytest.raises(PermissionError, match="Access denied"):
             nx.write(test_file, b"hacked!", context=tenant_admin_techcorp)
 
     def test_system_admin_without_manage_tenants_denied(self, nx: NexusFS) -> None:
@@ -175,8 +192,12 @@ class TestTenantBoundarySecurity:
             groups=[],
             is_admin=True,
             is_system=False,
-            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL},
+            tenant_id=None,
+            admin_capabilities={AdminCapability.READ_ALL, AdminCapability.WRITE_ALL, AdminCapability.MANAGE_TENANTS},
         )
+
+        # Create tenant directory first
+        nx.mkdir("/tenant:acme", context=system_admin)
 
         test_file = "/tenant:acme/doc.txt"
         nx.write(test_file, b"secret", context=system_admin)
@@ -195,5 +216,5 @@ class TestTenantBoundarySecurity:
         )
 
         # Should be denied
-        with pytest.raises(PermissionError, match="Permission denied"):
+        with pytest.raises(PermissionError, match="Access denied"):
             nx.read(test_file, context=limited_admin)

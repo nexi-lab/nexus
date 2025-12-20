@@ -14,6 +14,7 @@ Run tests with:
 These tests use direct database access to test race conditions, avoiding nexus module imports.
 """
 
+import contextlib
 import hashlib
 import os
 import threading
@@ -89,10 +90,8 @@ def postgres_engine():
 
     # Tables should already exist from the running server
     # If not, create them
-    try:
+    with contextlib.suppress(Exception):
         Base.metadata.create_all(engine)
-    except Exception:
-        pass
 
     yield engine
 

@@ -89,7 +89,9 @@ class TestIssue817ShareWithUserSecurity:
             object=("file", test_file),
         )
 
-    def test_non_owner_cannot_share_file(self, nx: NexusFS, temp_dir: Path, admin_context: dict) -> None:
+    def test_non_owner_cannot_share_file(
+        self, nx: NexusFS, temp_dir: Path, admin_context: dict
+    ) -> None:
         """Test that non-owner (viewer) cannot share file."""
         # Create a file as admin
         test_file = "/test_file.txt"
@@ -141,7 +143,9 @@ class TestIssue817ShareWithUserSecurity:
         )
         assert share_id
 
-    def test_system_context_can_always_share(self, nx: NexusFS, temp_dir: Path, admin_context: dict) -> None:
+    def test_system_context_can_always_share(
+        self, nx: NexusFS, temp_dir: Path, admin_context: dict
+    ) -> None:
         """Test that system context can share any file."""
         # Create a file
         test_file = "/test_file.txt"
@@ -215,7 +219,9 @@ class TestIssue818ShareWithGroup:
             object=("file", test_file),
         )
 
-    def test_non_owner_cannot_share_with_group(self, nx: NexusFS, temp_dir: Path, admin_context: dict) -> None:
+    def test_non_owner_cannot_share_with_group(
+        self, nx: NexusFS, temp_dir: Path, admin_context: dict
+    ) -> None:
         """Test that non-owner cannot share with group."""
         # Create a file as admin
         test_file = "/test_file.txt"
@@ -252,7 +258,9 @@ class TestIssue818ShareWithGroup:
                 context=alice_context,
             )
 
-    def test_share_with_group_permission_levels(self, nx: NexusFS, temp_dir: Path, admin_context: dict) -> None:
+    def test_share_with_group_permission_levels(
+        self, nx: NexusFS, temp_dir: Path, admin_context: dict
+    ) -> None:
         """Test different permission levels when sharing with group."""
         # Create a file as admin
         test_file = "/test_file.txt"
@@ -387,7 +395,9 @@ class TestNonFileResourceSecurity:
 class TestHelperMethodIntegration:
     """Test the _check_share_permission helper method integration."""
 
-    def test_helper_used_in_rebac_create(self, nx: NexusFS, temp_dir: Path, admin_context: dict) -> None:
+    def test_helper_used_in_rebac_create(
+        self, nx: NexusFS, temp_dir: Path, admin_context: dict
+    ) -> None:
         """Test that helper is properly integrated in rebac_create."""
         # Create a file
         test_file = "/test_file.txt"
@@ -416,7 +426,9 @@ class TestHelperMethodIntegration:
                 context=alice_context,
             )
 
-    def test_no_context_allows_operation(self, nx: NexusFS, temp_dir: Path, admin_context: dict) -> None:
+    def test_no_context_allows_operation(
+        self, nx: NexusFS, temp_dir: Path, admin_context: dict
+    ) -> None:
         """Test that operations without context are allowed (backward compatibility)."""
         # Create a file
         test_file = "/test_file.txt"
@@ -466,7 +478,9 @@ class TestHelperMethodIntegration:
 class TestCrossTenantSharing:
     """Test cross-tenant sharing functionality."""
 
-    def test_share_with_user_cross_tenant(self, nx: NexusFS, temp_dir: Path, admin_context: dict) -> None:
+    def test_share_with_user_cross_tenant(
+        self, nx: NexusFS, temp_dir: Path, admin_context: dict
+    ) -> None:
         """Test sharing file with user in different tenant."""
         # Create a file as admin in tenant1
         test_file = "/test_file.txt"
@@ -499,7 +513,9 @@ class TestCrossTenantSharing:
         )
         assert share_id
 
-    def test_share_with_group_cross_tenant(self, nx: NexusFS, temp_dir: Path, admin_context: dict) -> None:
+    def test_share_with_group_cross_tenant(
+        self, nx: NexusFS, temp_dir: Path, admin_context: dict
+    ) -> None:
         """Test sharing file with group in different tenant."""
         # Create a file as admin in tenant1
         test_file = "/test_file.txt"

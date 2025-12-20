@@ -246,8 +246,12 @@ def test_oauth_race_condition_postgres(postgres_session):
 
     # Cleanup test data
     with postgres_session() as session:
-        session.execute(text("DELETE FROM api_keys WHERE user_id = :user_id"), {"user_id": test_user_id})
-        session.execute(text("DELETE FROM users WHERE user_id = :user_id"), {"user_id": test_user_id})
+        session.execute(
+            text("DELETE FROM api_keys WHERE user_id = :user_id"), {"user_id": test_user_id}
+        )
+        session.execute(
+            text("DELETE FROM users WHERE user_id = :user_id"), {"user_id": test_user_id}
+        )
         session.commit()
 
 
@@ -286,7 +290,9 @@ def test_user_registration_postgres(postgres_session):
 
     # Cleanup
     with postgres_session() as session:
-        session.execute(text("DELETE FROM users WHERE user_id = :user_id"), {"user_id": test_user_id})
+        session.execute(
+            text("DELETE FROM users WHERE user_id = :user_id"), {"user_id": test_user_id}
+        )
         session.commit()
 
 

@@ -1821,6 +1821,24 @@ jobs:
           echo "=== MCP Server Logs ==="
           docker logs nexus-mcp-server 2>&1 || true
 
+      - name: PostgreSQL Auth Integration Test
+        run: |
+          echo "🔐 Running PostgreSQL authentication integration tests..."
+          echo ""
+
+          # Install Python dependencies if needed
+          python3 -m pip install pytest --quiet || true
+
+          # Run the PostgreSQL integration tests
+          pytest tests/integration/test_auth_postgres.py -v
+
+          if [ $? -eq 0 ]; then
+            echo "✅ PostgreSQL auth integration tests completed successfully!"
+          else
+            echo "❌ PostgreSQL auth integration tests failed"
+            exit 1
+          fi
+
       - name: Cleanup
         if: always()
         run: |

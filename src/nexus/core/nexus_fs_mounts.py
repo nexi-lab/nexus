@@ -1307,7 +1307,7 @@ class NexusFSMountsMixin:
                 except Exception as e:
                     logger.warning(
                         f"Failed to flush parent tuples batch: {type(e).__name__}: {e}",
-                        exc_info=True
+                        exc_info=True,
                     )
                     paths_needing_tuples.clear()
 

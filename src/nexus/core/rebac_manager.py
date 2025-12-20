@@ -907,7 +907,9 @@ class ReBACManager:
                         subject_relation = None
                         subject_entity = Entity(subject_type, subject_id)
                     else:
-                        raise ValueError(f"subject must be 2-tuple or 3-tuple, got {len(subject)}-tuple")
+                        raise ValueError(
+                            f"subject must be 2-tuple or 3-tuple, got {len(subject)}-tuple"
+                        )
 
                     object_entity = Entity(obj[0], obj[1])
 
@@ -925,22 +927,24 @@ class ReBACManager:
                         )
                         continue
 
-                    parsed_tuples.append({
-                        "tuple_id": str(uuid.uuid4()),
-                        "subject_type": subject_type,
-                        "subject_id": subject_id,
-                        "subject_relation": subject_relation,
-                        "subject_entity": subject_entity,
-                        "relation": relation,
-                        "object_type": obj[0],
-                        "object_id": obj[1],
-                        "object_entity": object_entity,
-                        "tenant_id": tenant_id,
-                        "expires_at": expires_at,
-                        "conditions": conditions,
-                        "subject_tenant_id": subject_tenant_id,
-                        "object_tenant_id": object_tenant_id,
-                    })
+                    parsed_tuples.append(
+                        {
+                            "tuple_id": str(uuid.uuid4()),
+                            "subject_type": subject_type,
+                            "subject_id": subject_id,
+                            "subject_relation": subject_relation,
+                            "subject_entity": subject_entity,
+                            "relation": relation,
+                            "object_type": obj[0],
+                            "object_id": obj[1],
+                            "object_entity": object_entity,
+                            "tenant_id": tenant_id,
+                            "expires_at": expires_at,
+                            "conditions": conditions,
+                            "subject_tenant_id": subject_tenant_id,
+                            "object_tenant_id": object_tenant_id,
+                        }
+                    )
 
                 if not parsed_tuples:
                     return 0
@@ -1029,7 +1033,10 @@ class ReBACManager:
                     )
 
                     # CROSS-TENANT FIX: Also invalidate subject tenant cache if different
-                    if pt["subject_tenant_id"] is not None and pt["subject_tenant_id"] != pt["tenant_id"]:
+                    if (
+                        pt["subject_tenant_id"] is not None
+                        and pt["subject_tenant_id"] != pt["tenant_id"]
+                    ):
                         self._invalidate_cache_for_tuple(
                             pt["subject_entity"],
                             pt["relation"],
@@ -1047,7 +1054,7 @@ class ReBACManager:
                 conn.rollback()
                 logger.error(
                     f"Failed to batch create {len(tuples)} tuples: {type(e).__name__}: {e}",
-                    exc_info=True
+                    exc_info=True,
                 )
                 raise
 
@@ -1077,7 +1084,7 @@ class ReBACManager:
         existing = set()
 
         for chunk_start in range(0, len(parsed_tuples), CHUNK_SIZE):
-            chunk = parsed_tuples[chunk_start:chunk_start + CHUNK_SIZE]
+            chunk = parsed_tuples[chunk_start : chunk_start + CHUNK_SIZE]
 
             # Build WHERE clause with OR conditions for each tuple
             # This works for both SQLite and PostgreSQL
@@ -1091,23 +1098,25 @@ class ReBACManager:
                     "relation = ? AND object_type = ? AND object_id = ? AND "
                     "(tenant_id = ? OR (tenant_id IS NULL AND ? IS NULL)))"
                 )
-                params.extend([
-                    pt["subject_type"],
-                    pt["subject_id"],
-                    pt["subject_relation"],
-                    pt["subject_relation"],
-                    pt["relation"],
-                    pt["object_type"],
-                    pt["object_id"],
-                    pt["tenant_id"],
-                    pt["tenant_id"],
-                ])
+                params.extend(
+                    [
+                        pt["subject_type"],
+                        pt["subject_id"],
+                        pt["subject_relation"],
+                        pt["subject_relation"],
+                        pt["relation"],
+                        pt["object_type"],
+                        pt["object_id"],
+                        pt["tenant_id"],
+                        pt["tenant_id"],
+                    ]
+                )
 
             query = f"""
                 SELECT subject_type, subject_id, subject_relation, relation,
                        object_type, object_id, tenant_id
                 FROM rebac_tuples
-                WHERE {' OR '.join(conditions)}
+                WHERE {" OR ".join(conditions)}
             """
 
             cursor.execute(self._fix_sql_placeholders(query), params)
@@ -1124,12 +1133,14 @@ class ReBACManager:
                 except (KeyError, IndexError):
                     tenant_id = None
 
-                existing.add((
-                    (row["subject_type"], row["subject_id"], subject_relation),
-                    row["relation"],
-                    (row["object_type"], row["object_id"]),
-                    tenant_id,
-                ))
+                existing.add(
+                    (
+                        (row["subject_type"], row["subject_id"], subject_relation),
+                        row["relation"],
+                        (row["object_type"], row["object_id"]),
+                        tenant_id,
+                    )
+                )
 
         return existing
 

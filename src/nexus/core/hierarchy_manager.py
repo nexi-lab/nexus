@@ -456,16 +456,17 @@ class HierarchyManager:
         total_batches = (len(unique_tuples) + batch_size - 1) // batch_size
 
         for batch_idx, i in enumerate(range(0, len(unique_tuples), batch_size), start=1):
-            batch = unique_tuples[i:i + batch_size]
+            batch = unique_tuples[i : i + batch_size]
             batch_end = min(i + batch_size, len(unique_tuples))
 
             # Log progress for large operations (only if multiple batches)
             if total_batches > 1:
                 import logging
+
                 logger = logging.getLogger(__name__)
                 logger.info(
                     f"[HIERARCHY] Processing batch {batch_idx}/{total_batches}: "
-                    f"tuples {i+1}-{batch_end} of {len(unique_tuples)}"
+                    f"tuples {i + 1}-{batch_end} of {len(unique_tuples)}"
                 )
 
             created = self._create_parent_tuples_batch(batch, tenant_id)

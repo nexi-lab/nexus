@@ -463,9 +463,7 @@ class NexusFSProvisioningMixin:
         if account_type == "personal":
             # Check if personal tenant already exists
             with self.metadata.SessionLocal() as session:
-                existing_tenant = (
-                    session.query(TenantModel).filter_by(tenant_id=tenant_id).first()
-                )
+                existing_tenant = session.query(TenantModel).filter_by(tenant_id=tenant_id).first()
                 if not existing_tenant or not existing_tenant.is_active:
                     # Create personal tenant
                     self.provision_tenant(
@@ -529,9 +527,7 @@ class NexusFSProvisioningMixin:
 
         # Create default agents if requested
         if create_agents:
-            result["agents"] = self._provision_default_agents(
-                tenant_id, user_id, provision_context
-            )
+            result["agents"] = self._provision_default_agents(tenant_id, user_id, provision_context)
 
         # Import default skills if requested
         if import_skills:

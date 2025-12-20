@@ -360,14 +360,10 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         # User authenticated with X-Agent-ID header - use agent as subject
                         subject_type = "agent"
                         subject_id = agent_id
-                        # v0.5.1: Always inherit when using user's credentials
-                        inherit_permissions = True
                     else:
                         # Direct authentication (user or agent API key)
                         subject_type = result.subject_type
                         subject_id = result.subject_id
-                        # v0.5.1: Use flag from API key
-                        inherit_permissions = result.inherit_permissions
 
                     # Use OperationContext for ReBAC/permission support
                     from nexus.core.permissions import OperationContext
@@ -404,7 +400,6 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         subject_id=subject_id,  # Subject ID for permission checks
                         tenant_id=result.tenant_id,
                         is_admin=result.is_admin,
-                        inherit_permissions=inherit_permissions,  # v0.5.1: Permission inheritance control
                         groups=[],  # TODO: Extract groups from auth result if available
                         admin_capabilities=admin_capabilities,  # P0-4: Admin capabilities
                     )
@@ -423,7 +418,6 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     subject_id=parts[1],
                     groups=[],
                     admin_capabilities=set(),
-                    inherit_permissions=True,  # v0.5.1: Default True for backward compatibility
                 )
 
         # No authentication - return None to use default context

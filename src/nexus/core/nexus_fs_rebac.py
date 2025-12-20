@@ -83,6 +83,114 @@ class NexusFSReBACMixin:
 
         return None
 
+    def _check_share_permission(
+        self,
+        resource: tuple[str, str],
+        context: Any,
+        required_permission: str = "execute",
+    ) -> None:
+        """Check if caller has permission to share/manage a resource.
+
+        This helper centralizes the permission check logic used by rebac_create,
+        share_with_user, and share_with_group to prevent code duplication.
+
+        Args:
+            resource: Resource tuple (object_type, object_id)
+            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            required_permission: Permission level required (default: "execute" for ownership)
+
+        Raises:
+            PermissionError: If caller lacks required permission to manage the resource
+
+        Examples:
+            >>> self._check_share_permission(
+            ...     resource=("file", "/path/doc.txt"),
+            ...     context=operation_context
+            ... )
+        """
+        if not context:
+            return
+
+        from nexus.core.permissions import OperationContext, Permission
+
+        # Extract OperationContext from context parameter
+        op_context: OperationContext | None = None
+        if isinstance(context, OperationContext):
+            op_context = context
+        elif isinstance(context, dict):
+            # Create OperationContext from dict
+            op_context = OperationContext(
+                user=context.get("user", "unknown"),
+                groups=context.get("groups", []),
+                tenant_id=context.get("tenant_id"),
+                is_admin=context.get("is_admin", False),
+                is_system=context.get("is_system", False),
+            )
+
+        # Skip permission check for admin and system contexts
+        if not op_context or not self._enforce_permissions:
+            return
+        if op_context.is_admin or op_context.is_system:
+            return
+
+        # Check if caller has required permission on the resource
+        # Map string permission to Permission enum
+        permission_map = {
+            "execute": Permission.EXECUTE,
+            "write": Permission.WRITE,
+            "read": Permission.READ,
+        }
+        perm_enum = permission_map.get(required_permission, Permission.EXECUTE)
+
+        # For file resources, use the path directly
+        if resource[0] == "file":
+            resource_path = resource[1]
+        else:
+            # For non-file resources, we need to check ReBAC permissions
+            # This ensures groups, workspaces, and other resources are also protected
+            # Check if user has ownership (execute permission) via ReBAC
+            has_permission = self.rebac_check(
+                subject=self._get_subject_from_context(context) or ("user", op_context.user),
+                permission="owner",  # Only owners can manage permissions
+                object=resource,
+                context=context,
+            )
+            if not has_permission:
+                raise PermissionError(
+                    f"Access denied: User '{op_context.user}' does not have owner "
+                    f"permission to manage {resource[0]} '{resource[1]}'"
+                )
+            return
+
+        # Use permission enforcer to check permission for file resources
+        if hasattr(self, "_permission_enforcer"):
+            has_permission = self._permission_enforcer.check(resource_path, perm_enum, op_context)
+
+            # If user is not owner, check if they are tenant admin
+            if not has_permission:
+                # Extract tenant from resource path (format: /tenant:{tenant_id}/...)
+                tenant_id = None
+                if resource_path.startswith("/tenant:"):
+                    parts = resource_path[8:].split("/", 1)  # Remove "/tenant:" prefix
+                    if parts:
+                        tenant_id = parts[0]
+
+                # Check if user is tenant admin for this resource's tenant
+                if tenant_id and op_context.user:
+                    from nexus.server.auth.user_helpers import is_tenant_admin
+
+                    if is_tenant_admin(self._rebac_manager, op_context.user, tenant_id):
+                        # Tenant admin can share resources in their tenant
+                        return
+
+                # Neither owner nor tenant admin - deny
+                perm_name = required_permission.upper()
+                raise PermissionError(
+                    f"Access denied: User '{op_context.user}' does not have {perm_name} "
+                    f"permission to manage permissions on '{resource_path}'. "
+                    f"Only owners or tenant admins can share resources."
+                )
+
     @rpc_expose(description="Create ReBAC relationship tuple")
     def rebac_create(
         self,
@@ -184,43 +292,8 @@ class NexusFSReBACMixin:
 
         # SECURITY: Check execute permission before allowing permission management
         # Only owners (those with execute permission) can grant/manage permissions on resources
-        # Exception: Allow permission management on non-file objects (groups, etc.) for now
-        if object[0] == "file" and context:
-            from nexus.core.permissions import OperationContext, Permission
-
-            # Extract OperationContext from context parameter
-            op_context: OperationContext | None = None
-            if isinstance(context, OperationContext):
-                op_context = context
-            elif isinstance(context, dict):
-                # Create OperationContext from dict
-                op_context = OperationContext(
-                    user=context.get("user", "unknown"),
-                    groups=context.get("groups", []),
-                    tenant_id=context.get("tenant_id"),
-                    is_admin=context.get("is_admin", False),
-                    is_system=context.get("is_system", False),
-                )
-
-            # Check if caller has execute permission on the file object
-            if (
-                op_context
-                and self._enforce_permissions
-                and not op_context.is_admin
-                and not op_context.is_system
-            ):
-                file_path = object[1]  # Extract file path from object tuple
-
-                # Use permission enforcer to check execute permission
-                if hasattr(self, "_permission_enforcer"):
-                    has_execute = self._permission_enforcer.check(
-                        file_path, Permission.EXECUTE, op_context
-                    )
-                    if not has_execute:
-                        raise PermissionError(
-                            f"Access denied: User '{op_context.user}' does not have EXECUTE "
-                            f"permission to manage permissions on '{file_path}'"
-                        )
+        # Now applies to ALL resource types, not just files
+        self._check_share_permission(resource=object, context=context)
 
         # Validate column_config for dynamic_viewer relation
         conditions = None
@@ -1337,6 +1410,7 @@ class NexusFSReBACMixin:
         tenant_id: str | None = None,
         user_tenant_id: str | None = None,
         expires_at: datetime | None = None,
+        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
     ) -> str:
         """Share a resource with a specific user, regardless of tenant.
 
@@ -1350,13 +1424,15 @@ class NexusFSReBACMixin:
             tenant_id: Resource owner's tenant ID (defaults to current tenant)
             user_tenant_id: Recipient user's tenant ID (for cross-tenant shares)
             expires_at: Optional expiration datetime for the share
+            context: Operation context (automatically provided by RPC server)
 
         Returns:
             Share ID (tuple_id) that can be used to revoke the share
 
         Raises:
             RuntimeError: If ReBAC is not available
-            ValueError: If relation is not "viewer" or "editor"
+            ValueError: If relation is not "viewer", "editor", or "owner"
+            PermissionError: If caller does not have execute permission (owner) on the resource
 
         Examples:
             >>> # Share file with user in same tenant
@@ -1379,6 +1455,11 @@ class NexusFSReBACMixin:
             raise RuntimeError(
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
+
+        # SECURITY: Check execute permission before allowing permission management
+        # Only owners (those with execute permission) can grant/manage permissions on resources
+        # Now applies to ALL resource types, not just files
+        self._check_share_permission(resource=resource, context=context)
 
         # Map user-facing relation to internal tuple relation
         # These shared-* relations are included in the viewer/editor/owner unions
@@ -1411,6 +1492,105 @@ class NexusFSReBACMixin:
             object=resource,
             tenant_id=tenant_id,
             subject_tenant_id=user_tenant_id,
+            expires_at=expires_dt,
+        )
+
+    @rpc_expose(description="Share a resource with a group (all members get access)")
+    def share_with_group(
+        self,
+        resource: tuple[str, str],
+        group_id: str,
+        relation: str = "viewer",
+        tenant_id: str | None = None,
+        group_tenant_id: str | None = None,
+        expires_at: datetime | None = None,
+        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+    ) -> str:
+        """Share a resource with a group (all members get access).
+
+        Uses userset-as-subject pattern: ("group", group_id, "member")
+        All members of the group will have the specified permission level.
+
+        This enables cross-tenant sharing - groups from different organizations
+        can be granted access to specific resources.
+
+        Args:
+            resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
+            group_id: Group to share with (e.g., "developers")
+            relation: Permission level - "viewer" (read), "editor" (read/write), or "owner"
+            tenant_id: Resource owner's tenant ID (defaults to current tenant)
+            group_tenant_id: Recipient group's tenant ID (for cross-tenant shares)
+            expires_at: Optional expiration datetime for the share
+            context: Operation context (automatically provided by RPC server)
+
+        Returns:
+            Share ID (tuple_id) that can be used to revoke the share
+
+        Raises:
+            RuntimeError: If ReBAC is not available
+            ValueError: If relation is not "viewer", "editor", or "owner"
+            PermissionError: If caller does not have execute permission (owner) on the resource
+
+        Examples:
+            >>> # Share file with group in same tenant
+            >>> share_id = nx.share_with_group(
+            ...     resource=("file", "/project/doc.txt"),
+            ...     group_id="developers",
+            ...     relation="editor"
+            ... )
+
+            >>> # Share file with group in different tenant
+            >>> share_id = nx.share_with_group(
+            ...     resource=("file", "/project/doc.txt"),
+            ...     group_id="partner-team",
+            ...     group_tenant_id="partner-tenant",
+            ...     relation="viewer",
+            ...     expires_at=datetime(2024, 12, 31)
+            ... )
+        """
+        if not hasattr(self, "_rebac_manager"):
+            raise RuntimeError(
+                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+            )
+
+        # SECURITY: Check execute permission before allowing permission management
+        # Only owners (those with execute permission) can grant/manage permissions on resources
+        # Now applies to ALL resource types, not just files
+        self._check_share_permission(resource=resource, context=context)
+
+        # Map user-facing relation to internal tuple relation
+        # These shared-* relations are included in the viewer/editor/owner unions
+        # for proper permission inheritance
+        relation_map = {
+            "viewer": "shared-viewer",
+            "editor": "shared-editor",
+            "owner": "shared-owner",
+        }
+        if relation not in relation_map:
+            raise ValueError(f"relation must be 'viewer', 'editor', or 'owner', got '{relation}'")
+
+        tuple_relation = relation_map[relation]
+
+        # Parse expires_at if it's a string (from RPC)
+        expires_dt = None
+        if expires_at is not None:
+            if isinstance(expires_at, str):
+                from datetime import datetime as dt
+
+                expires_dt = dt.fromisoformat(expires_at.replace("Z", "+00:00"))
+            else:
+                expires_dt = expires_at
+
+        # Use userset-as-subject pattern: ("group", group_id, "member")
+        # This allows all members of the group to have the specified permission
+        # Use shared-* relations which are allowed to cross tenant boundaries
+        # Call underlying manager directly to support cross-tenant parameters
+        return self._rebac_manager.rebac_write(
+            subject=("group", group_id, "member"),  # Userset-as-subject pattern
+            relation=tuple_relation,
+            object=resource,
+            tenant_id=tenant_id,
+            subject_tenant_id=group_tenant_id,
             expires_at=expires_dt,
         )
 

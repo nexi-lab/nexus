@@ -852,6 +852,74 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         return result
 
+    def rebac_write_batch(
+        self,
+        tuples: list[dict[str, Any]],
+    ) -> int:
+        """Create multiple relationship tuples with cache invalidation (batch operation).
+
+        Overrides parent to invalidate the tenant graph cache after batch writes.
+
+        Args:
+            tuples: List of tuple dicts (same format as parent rebac_write_batch)
+
+        Returns:
+            Number of tuples created
+        """
+        # Call parent implementation
+        created_count = super().rebac_write_batch(tuples)
+
+        if created_count > 0:
+            # Invalidate cache for all affected tenants
+            affected_tenants: set[str] = set()
+            for t in tuples:
+                tenant_id = t.get("tenant_id") or "default"
+                affected_tenants.add(tenant_id)
+                # Also check cross-tenant shares
+                if t.get("subject_tenant_id") and t.get("subject_tenant_id") != tenant_id:
+                    affected_tenants.add(t["subject_tenant_id"])
+                if t.get("object_tenant_id") and t.get("object_tenant_id") != tenant_id:
+                    affected_tenants.add(t["object_tenant_id"])
+
+            # Invalidate cache for all affected tenants
+            for tenant_id in affected_tenants:
+                self.invalidate_tenant_graph_cache(tenant_id)
+
+            # Leopard: Update transitive closure for membership relations
+            if self._leopard:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                for t in tuples:
+                    relation = t.get("relation")
+                    if relation in self.MEMBERSHIP_RELATIONS:
+                        subject = t["subject"]
+                        obj = t["object"]
+                        tenant_id = t.get("tenant_id") or "default"
+
+                        subject_type = subject[0]
+                        subject_id = subject[1]
+                        object_type = obj[0]
+                        object_id = obj[1]
+
+                        try:
+                            entries = self._leopard.update_closure_on_membership_add(
+                                subject_type=subject_type,
+                                subject_id=subject_id,
+                                group_type=object_type,
+                                group_id=object_id,
+                                tenant_id=tenant_id,
+                            )
+                            logger.debug(
+                                f"[LEOPARD] Updated closure for {subject_type}:{subject_id} -> "
+                                f"{object_type}:{object_id}: {entries} entries"
+                            )
+                        except Exception as e:
+                            # Log but don't fail - closure can be rebuilt
+                            logger.warning(f"[LEOPARD] Failed to update closure: {e}")
+
+        return created_count
+
     def rebac_delete(self, tuple_id: str) -> bool:
         """Delete a relationship tuple with cache invalidation.
 

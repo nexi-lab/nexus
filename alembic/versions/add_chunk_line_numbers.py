@@ -5,7 +5,7 @@ These columns store the source line numbers for each chunk,
 enabling precise source location in search results.
 
 Revision ID: add_chunk_line_numbers
-Revises: b02814593b71
+Revises: b02814593b71, dfb85dcdc557
 Create Date: 2025-12-20
 
 """
@@ -19,7 +19,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "add_chunk_line_numbers"
-down_revision: Union[str, Sequence[str], None] = "b02814593b71"
+down_revision: Union[str, Sequence[str], None] = ("b02814593b71", "dfb85dcdc557")
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

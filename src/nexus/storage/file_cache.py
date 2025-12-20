@@ -23,12 +23,13 @@ Usage:
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import blake3
 
 if TYPE_CHECKING:
     pass
@@ -65,10 +66,11 @@ class FileContentCache:
     def _path_hash(self, virtual_path: str) -> str:
         """Generate a hash for the virtual path.
 
-        Uses SHA-256 truncated to 32 chars for reasonable uniqueness
-        while keeping filenames manageable.
+        Uses BLAKE3 truncated to 32 chars for reasonable uniqueness
+        while keeping filenames manageable. BLAKE3 is ~10x faster than SHA-256.
         """
-        return hashlib.sha256(virtual_path.encode()).hexdigest()[:32]
+        hash_hex: str = blake3.blake3(virtual_path.encode()).hexdigest()
+        return hash_hex[:32]
 
     def _get_cache_path(self, tenant_id: str, virtual_path: str) -> Path:
         """Get the file path for cached content.

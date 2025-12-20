@@ -1,7 +1,7 @@
 """merge_heads
 
 Revision ID: b02814593b71
-Revises: add_rebac_partial_indexes, content_cache_use_bytea
+Revises: add_rebac_partial_indexes, content_cache_use_bytea, add_backend_version_idx
 Create Date: 2025-12-20 03:10:58.231774
 
 """
@@ -14,6 +14,7 @@ revision: str = "b02814593b71"
 down_revision: Union[str, Sequence[str], None] = (
     "add_rebac_partial_indexes",
     "content_cache_use_bytea",
+    "add_backend_version_idx",
 )
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

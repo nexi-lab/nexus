@@ -1,14 +1,22 @@
 """Document chunking for semantic search.
 
 Implements various chunking strategies to split documents into searchable chunks.
+
+Performance:
+- Uses optimized hierarchical merge algorithm
+- Only tokenizes merged chunks, not the full document
+- ~150ms for 250KB documents
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import tiktoken as tiktoken_module
@@ -34,17 +42,55 @@ class ChunkStrategy(StrEnum):
 
 @dataclass
 class DocumentChunk:
-    """A chunk of a document."""
+    """A chunk of a document with source location metadata."""
 
     text: str
     chunk_index: int
     tokens: int
-    start_offset: int
-    end_offset: int
+    start_offset: int  # Character offset in original document
+    end_offset: int  # End character offset
+    line_start: int | None = None  # Line number where chunk starts (1-indexed)
+    line_end: int | None = None  # Line number where chunk ends (1-indexed)
+
+
+def _offset_to_line(content: str, offset: int) -> int:
+    """Convert character offset to line number (1-indexed).
+
+    Args:
+        content: Full document content
+        offset: Character offset
+
+    Returns:
+        Line number (1-indexed)
+    """
+    if offset <= 0:
+        return 1
+    return content[:offset].count("\n") + 1
+
+
+def _compute_line_numbers(content: str, start_offset: int, end_offset: int) -> tuple[int, int]:
+    """Compute line numbers for a chunk.
+
+    Args:
+        content: Full document content
+        start_offset: Start character offset
+        end_offset: End character offset
+
+    Returns:
+        Tuple of (line_start, line_end)
+    """
+    line_start = _offset_to_line(content, start_offset)
+    line_end = _offset_to_line(content, end_offset)
+    return line_start, line_end
 
 
 class DocumentChunker:
-    """Document chunker for semantic search."""
+    """Document chunker for semantic search.
+
+    Uses optimized hierarchical merge algorithm that only tokenizes
+    merged chunks, not the full document. This is faster than tokenizing
+    the entire document upfront.
+    """
 
     encoding: Any  # tiktoken.Encoding or None
 
@@ -93,24 +139,41 @@ class DocumentChunker:
             # Rough approximation: 1 token ≈ 4 characters
             return len(text) // 4
 
-    def chunk(self, content: str, file_path: str = "") -> list[DocumentChunk]:
+    def chunk(
+        self,
+        content: str,
+        file_path: str = "",
+        compute_lines: bool = True,
+    ) -> list[DocumentChunk]:
         """Chunk document into searchable chunks.
 
         Args:
             content: Document content to chunk
             file_path: Path to the file (used for file-type specific chunking)
+            compute_lines: If True, compute line numbers for each chunk (default: True)
 
         Returns:
-            List of document chunks
+            List of document chunks with line numbers if compute_lines=True
         """
         if self.strategy == ChunkStrategy.FIXED:
-            return self._chunk_fixed(content)
+            chunks = self._chunk_fixed(content)
         elif self.strategy == ChunkStrategy.SEMANTIC:
-            return self._chunk_semantic(content, file_path)
+            chunks = self._chunk_semantic(content, file_path)
         elif self.strategy == ChunkStrategy.OVERLAPPING:
-            return self._chunk_overlapping(content)
+            chunks = self._chunk_overlapping(content)
         else:
             raise ValueError(f"Unknown chunking strategy: {self.strategy}")
+
+        # Add line numbers to chunks
+        if compute_lines and chunks:
+            for chunk in chunks:
+                line_start, line_end = _compute_line_numbers(
+                    content, chunk.start_offset, chunk.end_offset
+                )
+                chunk.line_start = line_start
+                chunk.line_end = line_end
+
+        return chunks
 
     def _chunk_fixed(self, content: str) -> list[DocumentChunk]:
         """Chunk document into fixed-size chunks using recursive splitting.

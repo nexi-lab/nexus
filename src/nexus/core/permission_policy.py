@@ -24,10 +24,11 @@ Variable Substitution:
 
 from __future__ import annotations
 
-import fnmatch
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from nexus.core import glob_fast
 
 if TYPE_CHECKING:
     pass
@@ -64,8 +65,8 @@ class PermissionPolicy:
         Returns:
             True if policy matches the path
         """
-        # Use fnmatch for glob-style pattern matching
-        return fnmatch.fnmatch(path, self.namespace_pattern)
+        # Use Rust-accelerated glob matching (with Python fallback)
+        return glob_fast.glob_match(path, [self.namespace_pattern])
 
     def apply(
         self,

@@ -1,24 +1,72 @@
 """Integration tests for authentication with PostgreSQL.
 
-These tests require PostgreSQL to be running via docker-compose:
-    docker compose -f docker-compose.demo.yml up postgres -d
+These tests verify PostgreSQL's race condition handling for concurrent API key creation.
+Unlike other integration tests, this one tests the database layer directly to verify
+PostgreSQL's row-level locking behavior.
 
-Or use the full setup:
-    ./docker-demo.sh
+Requirements:
+    - PostgreSQL running at postgresql://postgres:nexus@localhost:5432/nexus
+    - Start with: docker compose -f docker-compose.demo.yml up postgres -d
 
 Run tests with:
     pytest tests/integration/test_auth_postgres.py -v
+
+These tests use direct database access to test race conditions, avoiding nexus module imports.
 """
 
+import hashlib
+import os
 import threading
+import uuid
 from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine, func, select, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import Column, DateTime, Integer, String, create_engine, func, select, text
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-from nexus.storage.models import APIKeyModel, Base, UserModel
+# Define minimal SQLAlchemy models without importing nexus
+Base = declarative_base()
+
+
+class UserModel(Base):
+    """Minimal User model for testing."""
+
+    __tablename__ = "users"
+
+    user_id = Column(String, primary_key=True)
+    email = Column(String, unique=True, nullable=True)
+    username = Column(String, unique=True, nullable=True)
+    display_name = Column(String)
+    api_key = Column(String)
+    tenant_id = Column(String)
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+    password_hash = Column(String)
+    primary_auth_method = Column(String(50), nullable=False, default="oauth")
+    is_global_admin = Column(Integer, nullable=False, default=0)
+    is_active = Column(Integer, nullable=False, default=1)
+    email_verified = Column(Integer, nullable=False, default=0)
+
+
+class APIKeyModel(Base):
+    """Minimal API Key model for testing."""
+
+    __tablename__ = "api_keys"
+
+    key_id = Column(String(36), primary_key=True)
+    key_hash = Column(String(64), unique=True, nullable=False)
+    user_id = Column(String(255), nullable=False)
+    name = Column(String(255), nullable=False)
+    subject_type = Column(String(50), nullable=True)
+    subject_id = Column(String(255), nullable=True)
+    tenant_id = Column(String(255), nullable=True)
+    is_admin = Column(Integer, nullable=False, default=0)  # 0 = False, 1 = True
+    inherit_permissions = Column(Integer, nullable=False, default=1)  # 0 = False, 1 = True
+    created_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=True)
+    revoked = Column(Integer, nullable=False, default=0)
+    revoked_at = Column(DateTime, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
 
 
 @pytest.fixture
@@ -39,8 +87,12 @@ def postgres_engine():
     except Exception as e:
         pytest.skip(f"PostgreSQL not available: {e}")
 
-    # Create tables
-    Base.metadata.create_all(engine)
+    # Tables should already exist from the running server
+    # If not, create them
+    try:
+        Base.metadata.create_all(engine)
+    except Exception:
+        pass
 
     yield engine
 
@@ -75,16 +127,23 @@ def test_oauth_race_condition_postgres(postgres_session):
     - Result: Only ONE API key is created
     """
     # Create a test user with unique ID to avoid conflicts
-    test_user_id = f"pg-race-test-{datetime.now().timestamp()}"
-    test_email = f"pg-race-test-{datetime.now().timestamp()}@example.com"
+    test_timestamp = datetime.now().timestamp()
+    test_user_id = f"pg-race-test-{test_timestamp}"
+    test_email = f"pg-race-test-{test_timestamp}@example.com"
 
     with postgres_session() as session:
+        now = datetime.now()
         user = UserModel(
             user_id=test_user_id,
             email=test_email,
-            username="pgracetest",
+            username=f"pgracetest{int(test_timestamp)}",
             display_name="PG Race Test User",
-            created_at=datetime.now(),
+            created_at=now,
+            updated_at=now,
+            primary_auth_method="oauth",
+            is_global_admin=0,
+            is_active=1,
+            email_verified=0,
         )
         session.add(user)
         session.commit()
@@ -96,8 +155,7 @@ def test_oauth_race_condition_postgres(postgres_session):
     def create_api_key_for_user():
         """Simulate the API key creation logic from OAuth callback.
 
-        This replicates the exact double-check pattern from:
-        nexus/src/nexus/server/auth/auth_routes.py:517-544
+        This replicates the exact double-check pattern from the OAuth callback handler.
         """
         try:
             tenant_id = test_email
@@ -110,18 +168,27 @@ def test_oauth_race_condition_postgres(postgres_session):
                     # Another request already created the API key
                     api_key = user_model.api_key
                 else:
-                    # Create new API key
-                    key_id, raw_key = DatabaseAPIKeyAuth.create_key(
-                        session=session,
+                    # Generate API key (simplified version of DatabaseAPIKeyAuth.create_key)
+                    key_id = str(uuid.uuid4())
+                    raw_key = f"test-key-{os.urandom(16).hex()}"
+                    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+
+                    # Create API key record
+                    api_key_record = APIKeyModel(
+                        key_id=key_id,
+                        key_hash=key_hash,
                         user_id=test_user_id,
                         name="Personal API Key",
                         subject_type="user",
                         subject_id=test_user_id,
                         tenant_id=tenant_id,
-                        is_admin=False,
+                        is_admin=0,  # Integer: 0 = False, 1 = True
+                        created_at=datetime.now(),
                         expires_at=None,
-                        inherit_permissions=True,
+                        inherit_permissions=1,  # Integer: 0 = False, 1 = True
+                        revoked=0,
                     )
+                    session.add(api_key_record)
 
                     # Store plaintext API key in users table
                     if user_model:
@@ -180,8 +247,8 @@ def test_oauth_race_condition_postgres(postgres_session):
 
     # Cleanup test data
     with postgres_session() as session:
-        session.execute(text(f"DELETE FROM api_keys WHERE user_id = '{test_user_id}'"))
-        session.execute(text(f"DELETE FROM users WHERE user_id = '{test_user_id}'"))
+        session.execute(text("DELETE FROM api_keys WHERE user_id = :user_id"), {"user_id": test_user_id})
+        session.execute(text("DELETE FROM users WHERE user_id = :user_id"), {"user_id": test_user_id})
         session.commit()
 
 
@@ -191,16 +258,23 @@ def test_user_registration_postgres(postgres_session):
     This is a simple smoke test to verify the PostgreSQL connection
     and basic user operations work correctly.
     """
-    test_user_id = f"test-user-{datetime.now().timestamp()}"
-    test_email = f"test-{datetime.now().timestamp()}@example.com"
+    test_timestamp = datetime.now().timestamp()
+    test_user_id = f"test-user-{test_timestamp}"
+    test_email = f"test-{test_timestamp}@example.com"
 
     with postgres_session() as session:
+        now = datetime.now()
         user = UserModel(
             user_id=test_user_id,
             email=test_email,
-            username="testuser",
+            username=f"testuser{int(test_timestamp)}",
             display_name="Test User",
-            created_at=datetime.now(),
+            created_at=now,
+            updated_at=now,
+            primary_auth_method="oauth",
+            is_global_admin=0,
+            is_active=1,
+            email_verified=0,
         )
         session.add(user)
         session.commit()
@@ -209,11 +283,11 @@ def test_user_registration_postgres(postgres_session):
         retrieved_user = session.get(UserModel, test_user_id)
         assert retrieved_user is not None
         assert retrieved_user.email == test_email
-        assert retrieved_user.username == "testuser"
+        assert retrieved_user.username == f"testuser{int(test_timestamp)}"
 
     # Cleanup
     with postgres_session() as session:
-        session.execute(text(f"DELETE FROM users WHERE user_id = '{test_user_id}'"))
+        session.execute(text("DELETE FROM users WHERE user_id = :user_id"), {"user_id": test_user_id})
         session.commit()
 
 

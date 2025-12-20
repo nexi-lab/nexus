@@ -4,7 +4,6 @@ Provides endpoints for creating, updating, and managing tenants.
 """
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -18,7 +17,6 @@ from nexus.server.auth.tenant_helpers import (
     suggest_tenant_id,
     validate_tenant_id,
 )
-from nexus.server.auth.user_helpers import add_user_to_tenant, get_user_tenants
 from nexus.storage.models import TenantModel
 
 logger = logging.getLogger(__name__)
@@ -61,9 +59,7 @@ class TenantListResponse(BaseModel):
     total: int
 
 
-@router.post(
-    "", response_model=TenantResponse, status_code=status.HTTP_201_CREATED
-)
+@router.post("", response_model=TenantResponse, status_code=status.HTTP_201_CREATED)
 async def create_tenant_endpoint(
     request: CreateTenantRequest,
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
@@ -129,7 +125,7 @@ async def create_tenant_endpoint(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(e),
-            )
+            ) from e
 
 
 @router.get("/{tenant_id}", response_model=TenantResponse)

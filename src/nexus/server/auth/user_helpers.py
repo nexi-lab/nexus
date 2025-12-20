@@ -18,7 +18,6 @@ from nexus.storage.models import (
     UserOAuthAccountModel,
 )
 
-
 # ==============================================================================
 # ReBAC Group Naming Helpers
 # ==============================================================================
@@ -171,9 +170,7 @@ def get_user_tenants(rebac_manager: Any, user_id: str) -> list[str]:
     return tenant_ids
 
 
-def user_belongs_to_tenant(
-    rebac_manager: Any, user_id: str, tenant_id: str
-) -> bool:
+def user_belongs_to_tenant(rebac_manager: Any, user_id: str, tenant_id: str) -> bool:
     """Check if user belongs to tenant.
 
     Args:
@@ -385,9 +382,7 @@ def validate_user_uniqueness(
 # ==============================================================================
 
 
-def get_user_default_tenant(
-    rebac_manager: Any, user_id: str, session: Session
-) -> str | None:
+def get_user_default_tenant(rebac_manager: Any, user_id: str, _session: Session) -> str | None:
     """Get user's default tenant.
 
     Priority:
@@ -455,8 +450,7 @@ def require_tenant_context(
         # TODO: Implement default tenant creation
         # For now, raise error
         raise ValueError(
-            f"User {user_id} has no tenant memberships. "
-            "Auto-create not yet implemented."
+            f"User {user_id} has no tenant memberships. Auto-create not yet implemented."
         )
     else:
         raise ValueError(f"User {user_id} has no tenant memberships")

@@ -27,7 +27,6 @@ from nexus.server.auth.user_helpers import (
 )
 from nexus.storage.models import Base, UserModel, UserOAuthAccountModel
 
-
 # ==============================================================================
 # Test Fixtures
 # ==============================================================================
@@ -369,32 +368,31 @@ def test_get_user_oauth_accounts(oauth_provider, test_db):
     # Create a test user with OAuth account
     user_id = str(uuid.uuid4())
 
-    with test_db() as session:
-        with session.begin():
-            # Create user
-            user = UserModel(
-                user_id=user_id,
-                email="oauth@example.com",
-                primary_auth_method="oauth",
-                is_active=1,
-                email_verified=1,
-                created_at=datetime.now(UTC),
-                updated_at=datetime.now(UTC),
-            )
-            session.add(user)
-            session.flush()
+    with test_db() as session, session.begin():
+        # Create user
+        user = UserModel(
+            user_id=user_id,
+            email="oauth@example.com",
+            primary_auth_method="oauth",
+            is_active=1,
+            email_verified=1,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        session.add(user)
+        session.flush()
 
-            # Create OAuth account
-            oauth_account = UserOAuthAccountModel(
-                oauth_account_id=str(uuid.uuid4()),
-                user_id=user_id,
-                provider="google",
-                provider_user_id="google-123456",
-                provider_email="oauth@example.com",
-                created_at=datetime.now(UTC),
-                last_used_at=datetime.now(UTC),
-            )
-            session.add(oauth_account)
+        # Create OAuth account
+        oauth_account = UserOAuthAccountModel(
+            oauth_account_id=str(uuid.uuid4()),
+            user_id=user_id,
+            provider="google",
+            provider_user_id="google-123456",
+            provider_email="oauth@example.com",
+            created_at=datetime.now(UTC),
+            last_used_at=datetime.now(UTC),
+        )
+        session.add(oauth_account)
 
     # Get OAuth accounts
     accounts = oauth_provider.get_user_oauth_accounts(user_id)
@@ -409,30 +407,29 @@ def test_unlink_oauth_account(oauth_provider, test_db):
     user_id = str(uuid.uuid4())
     oauth_account_id = str(uuid.uuid4())
 
-    with test_db() as session:
-        with session.begin():
-            # Create user
-            user = UserModel(
-                user_id=user_id,
-                email="unlink@example.com",
-                primary_auth_method="oauth",
-                is_active=1,
-                email_verified=1,
-                created_at=datetime.now(UTC),
-                updated_at=datetime.now(UTC),
-            )
-            session.add(user)
+    with test_db() as session, session.begin():
+        # Create user
+        user = UserModel(
+            user_id=user_id,
+            email="unlink@example.com",
+            primary_auth_method="oauth",
+            is_active=1,
+            email_verified=1,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        session.add(user)
 
-            # Create OAuth account
-            oauth_account = UserOAuthAccountModel(
-                oauth_account_id=oauth_account_id,
-                user_id=user_id,
-                provider="google",
-                provider_user_id="google-789",
-                provider_email="unlink@example.com",
-                created_at=datetime.now(UTC),
-            )
-            session.add(oauth_account)
+        # Create OAuth account
+        oauth_account = UserOAuthAccountModel(
+            oauth_account_id=oauth_account_id,
+            user_id=user_id,
+            provider="google",
+            provider_user_id="google-789",
+            provider_email="unlink@example.com",
+            created_at=datetime.now(UTC),
+        )
+        session.add(oauth_account)
 
     # Unlink account
     success = oauth_provider.unlink_oauth_account(user_id, oauth_account_id)
@@ -450,40 +447,39 @@ def test_unlink_wrong_user_oauth_account(oauth_provider, test_db):
     user_id_2 = str(uuid.uuid4())
     oauth_account_id = str(uuid.uuid4())
 
-    with test_db() as session:
-        with session.begin():
-            # Create user 1 with OAuth account
-            user1 = UserModel(
-                user_id=user_id_1,
-                email="user1@example.com",
-                primary_auth_method="oauth",
-                is_active=1,
-                created_at=datetime.now(UTC),
-                updated_at=datetime.now(UTC),
-            )
-            session.add(user1)
+    with test_db() as session, session.begin():
+        # Create user 1 with OAuth account
+        user1 = UserModel(
+            user_id=user_id_1,
+            email="user1@example.com",
+            primary_auth_method="oauth",
+            is_active=1,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        session.add(user1)
 
-            # Create user 2
-            user2 = UserModel(
-                user_id=user_id_2,
-                email="user2@example.com",
-                primary_auth_method="password",
-                is_active=1,
-                created_at=datetime.now(UTC),
-                updated_at=datetime.now(UTC),
-            )
-            session.add(user2)
+        # Create user 2
+        user2 = UserModel(
+            user_id=user_id_2,
+            email="user2@example.com",
+            primary_auth_method="password",
+            is_active=1,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        session.add(user2)
 
-            # Create OAuth account for user 1
-            oauth_account = UserOAuthAccountModel(
-                oauth_account_id=oauth_account_id,
-                user_id=user_id_1,
-                provider="google",
-                provider_user_id="google-xyz",
-                provider_email="user1@example.com",
-                created_at=datetime.now(UTC),
-            )
-            session.add(oauth_account)
+        # Create OAuth account for user 1
+        oauth_account = UserOAuthAccountModel(
+            oauth_account_id=oauth_account_id,
+            user_id=user_id_1,
+            provider="google",
+            provider_user_id="google-xyz",
+            provider_email="user1@example.com",
+            created_at=datetime.now(UTC),
+        )
+        session.add(oauth_account)
 
     # Try to unlink user1's account as user2
     with pytest.raises(ValueError, match="does not belong to user"):

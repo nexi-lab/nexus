@@ -4,10 +4,10 @@
 This script starts a FastAPI test server and tests the authentication endpoints.
 """
 
-import requests
 import time
+
+import requests
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from nexus import NexusFS
 from nexus.backends.local import LocalBackend
@@ -41,10 +41,12 @@ print("=" * 60)
 print()
 
 # Start test server in background
-import uvicorn
 import threading
 
+import uvicorn
+
 server_ready = threading.Event()
+
 
 def run_server():
     config = uvicorn.Config(app, host="127.0.0.1", port=8081, log_level="error")
@@ -55,6 +57,7 @@ def run_server():
 
     config.on_startup = [startup]
     server.run()
+
 
 server_thread = threading.Thread(target=run_server, daemon=True)
 server_thread.start()
@@ -76,15 +79,15 @@ response = requests.post(
         "email": "alice@example.com",
         "password": "securepassword123",
         "username": "alice",
-        "display_name": "Alice Smith"
-    }
+        "display_name": "Alice Smith",
+    },
 )
 print(f"Status: {response.status_code}")
 if response.status_code == 201:
     data = response.json()
     print(f"✅ User registered: {data['email']}")
     print(f"   Token: {data['token'][:50]}...")
-    alice_token = data['token']
+    alice_token = data["token"]
 else:
     print(f"❌ Failed: {response.text}")
     alice_token = None
@@ -95,16 +98,12 @@ print()
 print("Test 2: Login with username")
 print("-" * 60)
 response = requests.post(
-    f"{base_url}/auth/login",
-    json={
-        "identifier": "alice",
-        "password": "securepassword123"
-    }
+    f"{base_url}/auth/login", json={"identifier": "alice", "password": "securepassword123"}
 )
 print(f"Status: {response.status_code}")
 if response.status_code == 200:
     data = response.json()
-    print(f"✅ Login successful")
+    print("✅ Login successful")
     print(f"   User: {data['user']['email']}")
     print(f"   Auth method: {data['user']['primary_auth_method']}")
 else:
@@ -117,13 +116,12 @@ print("Test 3: Get user profile")
 print("-" * 60)
 if alice_token:
     response = requests.get(
-        f"{base_url}/auth/me",
-        headers={"Authorization": f"Bearer {alice_token}"}
+        f"{base_url}/auth/me", headers={"Authorization": f"Bearer {alice_token}"}
     )
     print(f"Status: {response.status_code}")
     if response.status_code == 200:
         data = response.json()
-        print(f"✅ Profile retrieved")
+        print("✅ Profile retrieved")
         print(f"   Email: {data['email']}")
         print(f"   Username: {data['username']}")
         print(f"   Display name: {data['display_name']}")
@@ -141,15 +139,12 @@ if alice_token:
     response = requests.patch(
         f"{base_url}/auth/me",
         headers={"Authorization": f"Bearer {alice_token}"},
-        json={
-            "display_name": "Alice Johnson",
-            "avatar_url": "https://example.com/avatar.jpg"
-        }
+        json={"display_name": "Alice Johnson", "avatar_url": "https://example.com/avatar.jpg"},
     )
     print(f"Status: {response.status_code}")
     if response.status_code == 200:
         data = response.json()
-        print(f"✅ Profile updated")
+        print("✅ Profile updated")
         print(f"   New display name: {data['display_name']}")
         print(f"   Avatar URL: {data['avatar_url']}")
     else:
@@ -166,27 +161,21 @@ if alice_token:
     response = requests.post(
         f"{base_url}/auth/change-password",
         headers={"Authorization": f"Bearer {alice_token}"},
-        json={
-            "old_password": "securepassword123",
-            "new_password": "newsecurepassword456"
-        }
+        json={"old_password": "securepassword123", "new_password": "newsecurepassword456"},
     )
     print(f"Status: {response.status_code}")
     if response.status_code == 200:
-        print(f"✅ Password changed successfully")
+        print("✅ Password changed successfully")
 
         # Try logging in with new password
         response = requests.post(
             f"{base_url}/auth/login",
-            json={
-                "identifier": "alice",
-                "password": "newsecurepassword456"
-            }
+            json={"identifier": "alice", "password": "newsecurepassword456"},
         )
         if response.status_code == 200:
-            print(f"✅ Login with new password successful")
+            print("✅ Login with new password successful")
         else:
-            print(f"❌ Login with new password failed")
+            print("❌ Login with new password failed")
     else:
         print(f"❌ Failed: {response.text}")
 else:
@@ -213,6 +202,7 @@ print()
 print("Cleaning up...")
 import os
 import shutil
+
 if os.path.exists("./test_auth.db"):
     os.remove("./test_auth.db")
 if os.path.exists("./test-auth-data"):

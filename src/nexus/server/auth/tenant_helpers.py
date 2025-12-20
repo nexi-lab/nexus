@@ -4,12 +4,10 @@ Utilities for creating, validating, and managing tenants.
 """
 
 import re
-from typing import Any
 
 from sqlalchemy.orm import Session
 
 from nexus.storage.models import TenantModel
-
 
 # Personal email providers (free email services)
 # Users with these domains get personal workspaces

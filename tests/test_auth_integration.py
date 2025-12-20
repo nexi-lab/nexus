@@ -5,6 +5,7 @@ Run with: python -m pytest tests/test_auth_integration.py -v
 """
 
 import os
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
@@ -17,7 +18,6 @@ os.environ["NEXUS_DATABASE_URL"] = "sqlite:///:memory:"
 from nexus import NexusFS
 from nexus.server.fastapi_server import create_app
 from nexus.storage.models import Base
-
 
 # ==============================================================================
 # Test Fixtures
@@ -372,16 +372,18 @@ def test_oauth_callback_race_condition():
     in the API key creation logic, using file-based SQLite for proper
     thread safety.
     """
-    import threading
-    import tempfile
     import os
+    import tempfile
+    import threading
     from datetime import datetime
-    from nexus.storage.models import UserModel, APIKeyModel
+
+    from sqlalchemy import func, select
+
     from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-    from sqlalchemy import select, func
+    from nexus.storage.models import APIKeyModel, UserModel
 
     # Create temporary file-based database (required for thread safety)
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.db') as f:
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".db") as f:
         db_file = f.name
 
     try:
@@ -465,15 +467,17 @@ def test_oauth_callback_race_condition():
         assert len(errors) == 0, f"Errors occurred during concurrent execution: {errors}"
 
         # Both threads should have gotten an API key
-        assert len(api_keys_created) == 2, f"Expected 2 API keys returned, got {len(api_keys_created)}"
+        assert len(api_keys_created) == 2, (
+            f"Expected 2 API keys returned, got {len(api_keys_created)}"
+        )
 
         # Query the database to verify how many API keys were actually created
         with SessionLocal() as session:
             # Count API keys created for this user
             api_key_count = session.scalar(
-                select(func.count()).select_from(APIKeyModel).where(
-                    APIKeyModel.user_id == test_user_id
-                )
+                select(func.count())
+                .select_from(APIKeyModel)
+                .where(APIKeyModel.user_id == test_user_id)
             )
 
             # Get the user to check api_key field
@@ -488,7 +492,9 @@ def test_oauth_callback_race_condition():
             # Assert user has an API key
             assert user.api_key is not None, "User should have an API key"
             assert user.tenant_id is not None, "User should have a tenant_id"
-            assert user.api_key == api_keys_created[0], "User's API key should match the created key"
+            assert user.api_key == api_keys_created[0], (
+                "User's API key should match the created key"
+            )
 
         # Clean up
         Base.metadata.drop_all(engine)
@@ -511,10 +517,11 @@ def test_oauth_callback_race_condition_postgres():
     """
     import threading
     from datetime import datetime
-    from nexus.storage.models import UserModel, APIKeyModel
+
+    from sqlalchemy import func, select
+
     from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-    from sqlalchemy import select, func
-    from sqlalchemy.exc import OperationalError
+    from nexus.storage.models import APIKeyModel, UserModel
 
     # PostgreSQL connection
     database_url = "postgresql://postgres:nexus@localhost:5433/nexus"
@@ -613,9 +620,7 @@ def test_oauth_callback_race_condition_postgres():
     with SessionLocal() as session:
         # Count API keys created for this user
         api_key_count = session.scalar(
-            select(func.count()).select_from(APIKeyModel).where(
-                APIKeyModel.user_id == test_user_id
-            )
+            select(func.count()).select_from(APIKeyModel).where(APIKeyModel.user_id == test_user_id)
         )
 
         # Get the user to check api_key field
@@ -628,16 +633,17 @@ def test_oauth_callback_race_condition_postgres():
         )
 
         # Both threads should have gotten the SAME API key
-        assert api_keys_created[0] == api_keys_created[1], \
+        assert api_keys_created[0] == api_keys_created[1], (
             f"Both threads should have received the same API key. Got: {api_keys_created}"
+        )
 
         # Assert user has an API key
         assert user.api_key is not None, "User should have an API key"
         assert user.tenant_id is not None, "User should have a tenant_id"
         assert user.api_key == api_keys_created[0], "User's API key should match the created key"
 
-        print(f"✅ PostgreSQL race condition test passed!")
-        print(f"   - Both threads executed concurrently")
+        print("✅ PostgreSQL race condition test passed!")
+        print("   - Both threads executed concurrently")
         print(f"   - Only 1 API key created: {api_key_count}")
         print(f"   - Both threads got same key: {api_keys_created[0] == api_keys_created[1]}")
 

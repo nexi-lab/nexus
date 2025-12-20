@@ -19,10 +19,9 @@ import json
 import logging
 import secrets
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
-from authlib.jose import jwt
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
@@ -124,7 +123,7 @@ class OAuthUserAuth:
         return auth_url, state
 
     async def handle_google_callback(
-        self, code: str, state: str | None = None
+        self, code: str, _state: str | None = None
     ) -> tuple[UserModel, str]:
         """Handle Google OAuth callback.
 
@@ -186,9 +185,13 @@ class OAuthUserAuth:
             token = self.local_auth.create_token(user.email or provider_email, user_info_dict)
 
             if is_new:
-                logger.info(f"Created new user from Google OAuth: {provider_email} (user_id={user.user_id})")
+                logger.info(
+                    f"Created new user from Google OAuth: {provider_email} (user_id={user.user_id})"
+                )
             else:
-                logger.info(f"Logged in existing user via Google OAuth: {provider_email} (user_id={user.user_id})")
+                logger.info(
+                    f"Logged in existing user via Google OAuth: {provider_email} (user_id={user.user_id})"
+                )
 
             return user, token
 
@@ -285,7 +288,7 @@ class OAuthUserAuth:
             if existing_user and existing_user.email_verified == 1:
                 # SECURITY: Both emails verified - safe to link OAuth account to existing user
                 try:
-                    oauth_account = await self._create_oauth_account(
+                    await self._create_oauth_account(
                         session=session,
                         user_id=existing_user.user_id,
                         provider=provider,
@@ -325,7 +328,9 @@ class OAuthUserAuth:
                 user_id=user_id,
                 email=provider_email,
                 username=None,  # OAuth users don't have username by default
-                display_name=name or provider_email.split("@")[0] if provider_email else "OAuth User",
+                display_name=name or provider_email.split("@")[0]
+                if provider_email
+                else "OAuth User",
                 avatar_url=picture,
                 password_hash=None,  # OAuth users don't have password
                 primary_auth_method="oauth",
@@ -342,7 +347,7 @@ class OAuthUserAuth:
 
             # Create OAuth account with race condition protection
             try:
-                oauth_account = await self._create_oauth_account(
+                await self._create_oauth_account(
                     session=session,
                     user_id=user_id,
                     provider=provider,
@@ -405,11 +410,15 @@ class OAuthUserAuth:
             encrypted_id_token = self.oauth_crypto.encrypt_token(oauth_credential.id_token)
 
         # Store provider profile data
-        provider_profile = json.dumps({
-            "name": oauth_credential.metadata.get("name") if oauth_credential.metadata else None,
-            "picture": picture,
-            "email": provider_email,
-        })
+        provider_profile = json.dumps(
+            {
+                "name": oauth_credential.metadata.get("name")
+                if oauth_credential.metadata
+                else None,
+                "picture": picture,
+                "email": provider_email,
+            }
+        )
 
         oauth_account = UserOAuthAccountModel(
             oauth_account_id=str(uuid.uuid4()),
@@ -441,9 +450,7 @@ class OAuthUserAuth:
             List of OAuth account info dicts
         """
         with self.session_factory() as session:
-            stmt = select(UserOAuthAccountModel).where(
-                UserOAuthAccountModel.user_id == user_id
-            )
+            stmt = select(UserOAuthAccountModel).where(UserOAuthAccountModel.user_id == user_id)
             accounts = session.scalars(stmt).all()
 
             return [
@@ -451,9 +458,7 @@ class OAuthUserAuth:
                     "oauth_account_id": account.oauth_account_id,
                     "provider": account.provider,
                     "provider_email": account.provider_email,
-                    "created_at": (
-                        account.created_at.isoformat() if account.created_at else None
-                    ),
+                    "created_at": (account.created_at.isoformat() if account.created_at else None),
                     "last_used_at": (
                         account.last_used_at.isoformat() if account.last_used_at else None
                     ),
@@ -474,20 +479,16 @@ class OAuthUserAuth:
         Raises:
             ValueError: If account not found or doesn't belong to user
         """
-        with self.session_factory() as session:
-            with session.begin():
-                account = session.get(UserOAuthAccountModel, oauth_account_id)
-                if not account:
-                    raise ValueError("OAuth account not found")
+        with self.session_factory() as session, session.begin():
+            account = session.get(UserOAuthAccountModel, oauth_account_id)
+            if not account:
+                raise ValueError("OAuth account not found")
 
-                if account.user_id != user_id:
-                    raise ValueError("OAuth account does not belong to user")
+            if account.user_id != user_id:
+                raise ValueError("OAuth account does not belong to user")
 
-                session.delete(account)
-                session.flush()
+            session.delete(account)
+            session.flush()
 
-                logger.info(
-                    f"Unlinked OAuth account: {account.provider} "
-                    f"from user {user_id}"
-                )
-                return True
+            logger.info(f"Unlinked OAuth account: {account.provider} from user {user_id}")
+            return True

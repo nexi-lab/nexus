@@ -7,10 +7,10 @@ This script:
 3. Verifies the authentication system works with PostgreSQL
 """
 
-import requests
 import time
+
+import requests
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
 
 from nexus.storage.models import Base
 
@@ -34,12 +34,14 @@ try:
 
     # Verify tables were created
     with engine.connect() as conn:
-        result = conn.execute(text("""
+        result = conn.execute(
+            text("""
             SELECT table_name
             FROM information_schema.tables
             WHERE table_schema = 'public'
             AND table_name IN ('users', 'user_oauth_accounts', 'external_user_services')
-        """))
+        """)
+        )
         tables = [row[0] for row in result]
 
     print(f"✅ Created {len(tables)} user auth tables:")
@@ -57,22 +59,22 @@ print()
 print("Step 2: Starting Nexus server with authentication...")
 print("-" * 70)
 
-import subprocess
 import os
+import subprocess
 
 # Set environment variables
 env = os.environ.copy()
-env['NEXUS_DATABASE_URL'] = database_url
-env['NEXUS_JWT_SECRET'] = 'test-jwt-secret-key'
-env['NEXUS_DATA_DIR'] = '/tmp/nexus-auth-test'
-env['NEXUS_PORT'] = '8082'
+env["NEXUS_DATABASE_URL"] = database_url
+env["NEXUS_JWT_SECRET"] = "test-jwt-secret-key"
+env["NEXUS_DATA_DIR"] = "/tmp/nexus-auth-test"
+env["NEXUS_PORT"] = "8082"
 
 # Start server in background
 server_process = subprocess.Popen(
-    ['nexus', 'serve', '--host', '127.0.0.1', '--port', '8082', '--async'],
+    ["nexus", "serve", "--host", "127.0.0.1", "--port", "8082", "--async"],
     env=env,
     stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE
+    stderr=subprocess.PIPE,
 )
 
 print("✅ Server starting...")
@@ -81,7 +83,7 @@ print("   Database: PostgreSQL (Docker)")
 print()
 
 # Wait for server to start
-print("Waiting for server to be ready...", end='', flush=True)
+print("Waiting for server to be ready...", end="", flush=True)
 for i in range(30):
     try:
         response = requests.get("http://127.0.0.1:8082/health", timeout=1)
@@ -90,7 +92,7 @@ for i in range(30):
             break
     except:
         pass
-    print(".", end='', flush=True)
+    print(".", end="", flush=True)
     time.sleep(1)
 else:
     print(" ❌")
@@ -116,9 +118,9 @@ try:
             "email": "alice@example.com",
             "password": "securepassword123",
             "username": "alice",
-            "display_name": "Alice Smith"
+            "display_name": "Alice Smith",
         },
-        timeout=5
+        timeout=5,
     )
     print(f"  Status: {response.status_code}")
     if response.status_code == 201:
@@ -126,7 +128,7 @@ try:
         print(f"  ✅ User registered: {data['email']}")
         print(f"  User ID: {data['user_id']}")
         print(f"  Token: {data['token'][:50]}...")
-        alice_token = data['token']
+        alice_token = data["token"]
     else:
         print(f"  ❌ Failed: {response.text}")
         alice_token = None
@@ -141,16 +143,13 @@ print("Test 2: Login with email")
 try:
     response = requests.post(
         f"{base_url}/auth/login",
-        json={
-            "identifier": "alice@example.com",
-            "password": "securepassword123"
-        },
-        timeout=5
+        json={"identifier": "alice@example.com", "password": "securepassword123"},
+        timeout=5,
     )
     print(f"  Status: {response.status_code}")
     if response.status_code == 200:
         data = response.json()
-        print(f"  ✅ Login successful")
+        print("  ✅ Login successful")
         print(f"  User: {data['user']['email']}")
         print(f"  Auth method: {data['user']['primary_auth_method']}")
     else:
@@ -165,15 +164,12 @@ print("Test 3: Login with username")
 try:
     response = requests.post(
         f"{base_url}/auth/login",
-        json={
-            "identifier": "alice",
-            "password": "securepassword123"
-        },
-        timeout=5
+        json={"identifier": "alice", "password": "securepassword123"},
+        timeout=5,
     )
     print(f"  Status: {response.status_code}")
     if response.status_code == 200:
-        print(f"  ✅ Login with username successful")
+        print("  ✅ Login with username successful")
     else:
         print(f"  ❌ Failed: {response.text}")
 except Exception as e:
@@ -186,14 +182,12 @@ print("Test 4: Get user profile (authenticated)")
 if alice_token:
     try:
         response = requests.get(
-            f"{base_url}/auth/me",
-            headers={"Authorization": f"Bearer {alice_token}"},
-            timeout=5
+            f"{base_url}/auth/me", headers={"Authorization": f"Bearer {alice_token}"}, timeout=5
         )
         print(f"  Status: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
-            print(f"  ✅ Profile retrieved")
+            print("  ✅ Profile retrieved")
             print(f"  Email: {data['email']}")
             print(f"  Username: {data['username']}")
             print(f"  Display name: {data['display_name']}")
@@ -214,16 +208,13 @@ if alice_token:
         response = requests.patch(
             f"{base_url}/auth/me",
             headers={"Authorization": f"Bearer {alice_token}"},
-            json={
-                "display_name": "Alice Johnson",
-                "avatar_url": "https://example.com/avatar.jpg"
-            },
-            timeout=5
+            json={"display_name": "Alice Johnson", "avatar_url": "https://example.com/avatar.jpg"},
+            timeout=5,
         )
         print(f"  Status: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
-            print(f"  ✅ Profile updated")
+            print("  ✅ Profile updated")
             print(f"  New display name: {data['display_name']}")
             print(f"  Avatar URL: {data['avatar_url']}")
         else:
@@ -242,29 +233,23 @@ if alice_token:
         response = requests.post(
             f"{base_url}/auth/change-password",
             headers={"Authorization": f"Bearer {alice_token}"},
-            json={
-                "old_password": "securepassword123",
-                "new_password": "newsecurepassword456"
-            },
-            timeout=5
+            json={"old_password": "securepassword123", "new_password": "newsecurepassword456"},
+            timeout=5,
         )
         print(f"  Status: {response.status_code}")
         if response.status_code == 200:
-            print(f"  ✅ Password changed")
+            print("  ✅ Password changed")
 
             # Verify new password works
             response = requests.post(
                 f"{base_url}/auth/login",
-                json={
-                    "identifier": "alice",
-                    "password": "newsecurepassword456"
-                },
-                timeout=5
+                json={"identifier": "alice", "password": "newsecurepassword456"},
+                timeout=5,
             )
             if response.status_code == 200:
-                print(f"  ✅ Login with new password successful")
+                print("  ✅ Login with new password successful")
             else:
-                print(f"  ❌ Login with new password failed")
+                print("  ❌ Login with new password failed")
         else:
             print(f"  ❌ Failed: {response.text}")
     except Exception as e:
@@ -279,18 +264,14 @@ print("Test 7: Register duplicate email (should fail)")
 try:
     response = requests.post(
         f"{base_url}/auth/register",
-        json={
-            "email": "alice@example.com",
-            "password": "differentpassword",
-            "username": "alice2"
-        },
-        timeout=5
+        json={"email": "alice@example.com", "password": "differentpassword", "username": "alice2"},
+        timeout=5,
     )
     print(f"  Status: {response.status_code}")
     if response.status_code == 400:
-        print(f"  ✅ Correctly rejected duplicate email")
+        print("  ✅ Correctly rejected duplicate email")
     else:
-        print(f"  ❌ Should have failed with 400")
+        print("  ❌ Should have failed with 400")
 except Exception as e:
     print(f"  ❌ Error: {e}")
 

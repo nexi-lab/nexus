@@ -155,9 +155,7 @@ def test_oauth_race_condition_postgres(postgres_session):
     with postgres_session() as session:
         # Count API keys created for this user
         api_key_count = session.scalar(
-            select(func.count()).select_from(APIKeyModel).where(
-                APIKeyModel.user_id == test_user_id
-            )
+            select(func.count()).select_from(APIKeyModel).where(APIKeyModel.user_id == test_user_id)
         )
 
         # Get the user to check api_key field

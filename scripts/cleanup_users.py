@@ -43,7 +43,7 @@ def cleanup_database():
         api_key_count = session.query(APIKeyModel).count()
         tenant_count = session.query(TenantModel).count()
 
-        print(f"\nBefore cleanup:")
+        print("\nBefore cleanup:")
         print(f"  Users: {user_count}")
         print(f"  OAuth accounts: {oauth_count}")
         print(f"  API keys: {api_key_count}")
@@ -54,9 +54,7 @@ def cleanup_database():
             return
 
         # Ask for confirmation
-        response = input(
-            f"\nAre you sure you want to delete ALL {user_count} users? (yes/no): "
-        )
+        response = input(f"\nAre you sure you want to delete ALL {user_count} users? (yes/no): ")
         if response.lower() != "yes":
             print("Cancelled.")
             return

@@ -2408,6 +2408,354 @@ class OAuthCredentialModel(Base):
                 raise ValidationError(f"scopes must be valid JSON: {e}") from None
 
 
+class UserModel(Base):
+    """Core user account model.
+
+    Stores user identity and profile information.
+    Supports multiple authentication methods and external user management.
+
+    Key features:
+    - Multiple auth methods (password, OAuth, external, API key)
+    - Multi-tenant support via ReBAC groups
+    - Soft delete support (is_active, deleted_at)
+    - Email/username uniqueness via partial indexes
+    """
+
+    __tablename__ = "users"
+
+    # Primary key
+    # STANDARDIZED: Use UUID for all new users (recommended for security and consistency)
+    # For backward compatibility: Existing APIKeyModel.user_id values remain as strings
+    # Migration: Existing user_ids can be gradually migrated to UUID-based UserModel entries
+    user_id: Mapped[str] = mapped_column(
+        String(255), primary_key=True
+    )  # Unique user identifier (UUID for new users, string for backward compatibility)
+
+    # Identity
+    # NOTE: Uniqueness enforced via partial unique indexes (see migration) to support soft delete
+    # Do NOT use unique=True here - it would prevent email/username reuse after soft delete
+    username: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )  # For username/password auth (unique for active users via partial index)
+    email: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )  # Email address (unique for active users via partial index)
+
+    # Profile
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Authentication
+    # Note: Users can have multiple auth methods (password + OAuth accounts)
+    # This field indicates the PRIMARY auth method used for account creation
+    password_hash: Mapped[str | None] = mapped_column(
+        String(512), nullable=True
+    )  # Bcrypt hash for username/password auth (512 chars for future-proofing with argon2/scrypt)
+    primary_auth_method: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="password", index=True
+    )  # 'password', 'oauth', 'external', 'api_key' - indicates how account was created
+
+    # External user management
+    external_user_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )  # ID in external user service
+    external_user_service: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, index=True
+    )  # External service identifier (e.g., 'auth0', 'okta', 'custom')
+    # NOTE: Endpoint configuration stored in ExternalUserServiceModel, not per-user
+
+    # Self-serve API key (convenience layer)
+    # For self-serve users: plaintext API key stored here for retrieval
+    # Hashed version also stored in api_keys table for secure authentication
+    api_key: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )  # Plaintext API key (for user convenience - NOT for authentication)
+    tenant_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )  # Self-serve tenant ID (typically user's email)
+
+    # Multi-tenant
+    # NOTE: Tenant membership is managed via ReBAC groups ONLY
+    # ReBAC Tuple: (user:user_id, member-of, group:tenant-{tenant_id})
+    # No primary_tenant_id field - all tenant relationships via ReBAC
+
+    # Admin status
+    # Note: Per-tenant admin status managed via ReBAC relations:
+    # - (user:user_id, admin-of, group:tenant-{tenant_id}) for tenant admin
+    # - (user:user_id, member-of, group:tenant-{tenant_id}) for tenant member
+    is_global_admin: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )  # Global admin across all tenants (rare, for super-admins only)
+
+    # Status
+    # SOFT DELETE: Users are marked inactive instead of hard deleted
+    # This preserves audit trail, API keys, and relationships
+    # Hard delete only via admin command after retention period (e.g., 90 days)
+    is_active: Mapped[int] = mapped_column(
+        Integer, default=1, nullable=False, index=True
+    )  # SQLite: bool as Integer (0 = soft deleted)
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )  # Timestamp when user was soft deleted (None = active)
+    email_verified: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )  # SQLite: bool as Integer
+
+    # Metadata (renamed to avoid SQLAlchemy reserved name)
+    user_metadata: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # JSON as string for additional user data
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+    # Relationships
+    oauth_accounts: Mapped[list["UserOAuthAccountModel"]] = relationship(
+        "UserOAuthAccountModel", back_populates="user", cascade="all, delete-orphan"
+    )
+    # Note: Tenant membership is managed via ReBAC groups, not a separate table
+    # ReBAC Tuple: (user:user_id, member-of, group:tenant-{tenant_id})
+    # This leverages existing ReBAC infrastructure (Google Zanzibar pattern)
+    #
+    # Note: APIKeyModel.user_id is NOT a foreign key (by design for backward compatibility)
+    # We can query API keys by user_id but won't enforce referential integrity
+    # api_keys: Relationship would be defined via backref if needed, but not as FK
+
+    # Indexes
+    __table_args__ = (
+        # Partial unique indexes to support soft delete (email/username can be reused after deletion)
+        # SQLite doesn't support partial indexes in table args, so these must be created via raw SQL in migration:
+        # CREATE UNIQUE INDEX idx_users_email_active ON users(email) WHERE is_active=1 AND deleted_at IS NULL;
+        # CREATE UNIQUE INDEX idx_users_username_active ON users(username) WHERE is_active=1 AND deleted_at IS NULL;
+        Index("idx_users_email", "email"),
+        Index("idx_users_username", "username"),
+        Index("idx_users_auth_method", "primary_auth_method"),
+        Index("idx_users_external", "external_user_service", "external_user_id"),
+        Index("idx_users_active", "is_active"),
+        Index("idx_users_deleted", "deleted_at"),
+        # Composite index for common lookup pattern: email + active status
+        Index("idx_users_email_active_deleted", "email", "is_active", "deleted_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserModel(user_id={self.user_id}, email={self.email}, username={self.username})>"
+
+    def is_deleted(self) -> bool:
+        """Check if user is soft deleted."""
+        return self.is_active == 0 or self.deleted_at is not None
+
+
+class UserOAuthAccountModel(Base):
+    """OAuth provider accounts linked to users for authentication.
+
+    **Purpose**: Links external OAuth providers (Google, GitHub, etc.) to user accounts
+    for server authentication (login). This is separate from OAuthCredentialModel
+    which stores tokens for backend integrations (Google Drive, Gmail, etc.).
+
+    **Key Distinction**:
+    - UserOAuthAccountModel: User logs in with Google → gets Nexus access
+    - OAuthCredentialModel: User connects Google Drive → accesses their files
+
+    Supports multiple OAuth accounts per user (e.g., Google + GitHub for login).
+    """
+
+    __tablename__ = "user_oauth_accounts"
+
+    # Primary key
+    oauth_account_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Foreign key to user
+    user_id: Mapped[str] = mapped_column(
+        String(255),
+        ForeignKey("users.user_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # OAuth provider
+    provider: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # 'google', 'github', 'microsoft', etc.
+    provider_user_id: Mapped[str] = mapped_column(
+        String(255), nullable=False
+    )  # User ID from OAuth provider (e.g., Google sub claim)
+    provider_email: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )  # Email from OAuth provider
+
+    # OAuth token storage (encrypted)
+    # SECURITY: Only store ID tokens (short-lived, for verification)
+    # ID tokens are sufficient for authentication - no need for access/refresh tokens
+    # For backend integrations (Google Drive, etc.), use OAuthCredentialModel instead
+    encrypted_id_token: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # Encrypted ID token from OAuth provider (for authentication verification)
+    # NOTE: Access/refresh tokens removed - ID tokens are sufficient for authentication
+    # If userinfo calls are needed, use the ID token directly or implement separate flow
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Profile data from OAuth provider
+    provider_profile: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # JSON as string (name, picture, etc.)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Relationships
+    user: Mapped["UserModel"] = relationship("UserModel", back_populates="oauth_accounts")
+
+    # Indexes
+    __table_args__ = (
+        # CRITICAL: Unique constraint prevents duplicate OAuth accounts (race condition protection)
+        UniqueConstraint("provider", "provider_user_id", name="uq_provider_user"),
+        Index("idx_user_oauth_user", "user_id"),
+        Index("idx_user_oauth_provider", "provider"),
+        Index("idx_user_oauth_provider_user", "provider", "provider_user_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserOAuthAccountModel(oauth_account_id={self.oauth_account_id}, provider={self.provider}, user_id={self.user_id})>"
+
+
+class TenantModel(Base):
+    """Tenant metadata model.
+
+    Stores organizational/tenant information for multi-tenancy.
+    Tenant membership is still managed via ReBAC groups (group:tenant-{tenant_id}),
+    but this table provides a place to store tenant metadata (name, settings, etc.).
+
+    Key features:
+    - Stores tenant display name and metadata
+    - Soft delete support (is_active, deleted_at)
+    - Timestamps for audit trail
+    """
+
+    __tablename__ = "tenants"
+
+    # Primary key
+    tenant_id: Mapped[str] = mapped_column(
+        String(255), primary_key=True
+    )  # Tenant identifier (matches tenant_id used throughout the system)
+
+    # Metadata
+    name: Mapped[str] = mapped_column(
+        String(255), nullable=False, index=True
+    )  # Display name for the tenant/organization
+
+    domain: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, unique=True, index=True
+    )  # Unique domain identifier (company URL, email domain, etc.)
+
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)  # Optional description
+
+    # Settings (extensible JSON field)
+    settings: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # JSON as string for additional tenant settings/config
+
+    # Status
+    is_active: Mapped[int] = mapped_column(
+        Integer, default=1, nullable=False, index=True
+    )  # SQLite: bool as Integer (0 = soft deleted)
+
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )  # Timestamp when tenant was soft deleted (None = active)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_tenants_name", "name"),
+        Index("idx_tenants_active", "is_active"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TenantModel(tenant_id={self.tenant_id}, name={self.name}, domain={self.domain}, is_active={self.is_active})>"
+
+
+class ExternalUserServiceModel(Base):
+    """Configuration for external user management services.
+
+    Allows Nexus to delegate user authentication/authorization to external services.
+    """
+
+    __tablename__ = "external_user_services"
+
+    # Primary key
+    service_id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    # Service identification
+    service_name: Mapped[str] = mapped_column(
+        String(100), nullable=False, unique=True, index=True
+    )  # 'auth0', 'okta', 'custom', etc.
+
+    # Service endpoints
+    # SECURITY: auth_endpoint MUST be validated against whitelist of allowed domains
+    # Validate in application layer before storing to prevent SSRF attacks
+    auth_endpoint: Mapped[str] = mapped_column(
+        Text, nullable=False
+    )  # Endpoint to validate tokens (e.g., JWKS URI, userinfo endpoint)
+    user_lookup_endpoint: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # Optional: endpoint to fetch user details
+
+    # Authentication method
+    auth_method: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # 'jwt', 'api_key', 'oauth', 'custom'
+
+    # Configuration (encrypted JSON)
+    # SECURITY: Config contains secrets (client_id, client_secret, etc.) - must be encrypted
+    encrypted_config: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # Encrypted JSON config (client_id, client_secret, audience, etc.)
+
+    # Status
+    is_active: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ExternalUserServiceModel(service_id={self.service_id}, service_name={self.service_name})>"
+
+
 # Add fields to TrajectoryModel for feedback support (these will be added via migration)
 # - feedback_count: INTEGER DEFAULT 0
 # - effective_score: FLOAT (latest/weighted score)

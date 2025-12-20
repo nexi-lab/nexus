@@ -63,7 +63,7 @@ class ConsistencyLevel(Enum):
     STRONG = "strong"  # Bypass cache, fresh read
 
 
-@dataclass
+@dataclass(slots=True)
 class CheckResult:
     """Result of a permission check with consistency metadata.
 
@@ -88,7 +88,7 @@ class CheckResult:
     limit_exceeded: GraphLimitExceeded | None = None  # BUGFIX (Issue #5): Which limit was hit
 
 
-@dataclass
+@dataclass(slots=True)
 class TraversalStats:
     """Statistics from graph traversal (P0-5).
 

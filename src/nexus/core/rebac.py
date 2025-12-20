@@ -91,7 +91,7 @@ class EntityType(StrEnum):
     SKILL = "skill"  # v0.5.0 Skills System
 
 
-@dataclass
+@dataclass(slots=True)
 class Entity:
     """Represents an entity in the ReBAC system.
 
@@ -123,7 +123,7 @@ class Entity:
         return f"{self.entity_type}:{self.entity_id}"
 
 
-@dataclass
+@dataclass(slots=True)
 class ReBACTuple:
     """Represents a relationship tuple in the ReBAC system.
 
@@ -432,7 +432,7 @@ class NamespaceConfig:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class CheckCacheEntry:
     """Cache entry for permission check results.
 
@@ -497,7 +497,7 @@ class CheckCacheEntry:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class ChangelogEntry:
     """Changelog entry for tracking ReBAC tuple changes.
 

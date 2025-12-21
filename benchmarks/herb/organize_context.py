@@ -35,7 +35,6 @@ Output structure:
 """
 
 import json
-import os
 import re
 import sys
 from collections import defaultdict
@@ -147,10 +146,7 @@ def transform_documents(documents: list, output_dir: Path):
         content = doc.get('content', '')
 
         # Extract just the date part if it's a datetime string
-        if 'T' in date:
-            date_short = date.split('T')[0]
-        else:
-            date_short = date
+        date_short = date.split('T')[0] if 'T' in date else date
 
         # Create index record
         index_record = {
@@ -201,10 +197,7 @@ def transform_meetings(transcripts: list, chats: list, output_dir: Path):
         content = transcript.get('transcript', '')
 
         # Extract just the date part
-        if 'T' in date:
-            date_short = date.split('T')[0]
-        else:
-            date_short = date
+        date_short = date.split('T')[0] if 'T' in date else date
 
         # Create index record
         index_record = {
@@ -338,7 +331,7 @@ def transform_metadata(metadata_dir: Path, output_dir: Path):
     # Transform customers_data.json
     customers_file = metadata_dir / 'customers_data.json'
     if customers_file.exists():
-        with open(customers_file, 'r', encoding='utf-8') as f:
+        with open(customers_file, encoding='utf-8') as f:
             customers = json.load(f)
 
         # Already a list, just write as JSONL
@@ -357,7 +350,7 @@ def transform_metadata(metadata_dir: Path, output_dir: Path):
     # Transform employee.json
     employees_file = metadata_dir / 'employee.json'
     if employees_file.exists():
-        with open(employees_file, 'r', encoding='utf-8') as f:
+        with open(employees_file, encoding='utf-8') as f:
             employees = json.load(f)
 
         # Convert dict to list of records
@@ -379,7 +372,7 @@ def transform_metadata(metadata_dir: Path, output_dir: Path):
     # Transform salesforce_team.json (org structure)
     team_file = metadata_dir / 'salesforce_team.json'
     if team_file.exists():
-        with open(team_file, 'r', encoding='utf-8') as f:
+        with open(team_file, encoding='utf-8') as f:
             teams = json.load(f)
 
         # Flatten the hierarchical structure
@@ -447,7 +440,7 @@ def transform_product(input_file: Path, output_dir: Path):
     """Transform a single product JSON file."""
     print(f"Processing {input_file.name}...")
 
-    with open(input_file, 'r', encoding='utf-8') as f:
+    with open(input_file, encoding='utf-8') as f:
         data = json.load(f)
 
     # Get product name from filename
@@ -524,7 +517,7 @@ def main():
 
         print(f"Processing metadata from {metadata_dir}...")
         stats = transform_metadata(metadata_dir, output_dir)
-        print(f"\n✓ Metadata transformation complete")
+        print("\n✓ Metadata transformation complete")
         print(f"Stats: {json.dumps(stats, indent=2)}")
 
     elif sys.argv[1] == '--all':

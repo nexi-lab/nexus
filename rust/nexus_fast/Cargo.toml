@@ -21,6 +21,8 @@ memmap2 = "0.9.9"  # Memory-mapped file I/O for zero-copy reads
 dashmap = "6.1"  # Lock-free concurrent hashmap for L1 metadata cache
 string-interner = "0.17"  # String interning for O(1) equality and reduced allocations
 lru = "0.16"  # LRU cache for namespace config caching (Issue #861)
+memchr = "2.7"  # SIMD-accelerated literal pattern search (Issue #863)
+simdutf8 = "0.1"  # SIMD-accelerated UTF-8 validation (Issue #864)
 
 [profile.release]
 lto = true

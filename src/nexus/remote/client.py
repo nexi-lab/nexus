@@ -1314,6 +1314,145 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         return result  # type: ignore[no-any-return]
 
+    # ============================================================
+    # Delta Sync Operations (Issue #869)
+    # ============================================================
+
+    def delta_read(
+        self,
+        path: str,
+        client_content: bytes | None = None,
+        client_hash: str | None = None,
+        max_delta_ratio: float = 0.8,
+        context: Any = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Read file with delta optimization for bandwidth reduction.
+
+        If client provides their cached content and hash, server returns
+        only the binary diff (delta) instead of the full file content.
+        This reduces bandwidth by 50-90% for files with small changes.
+
+        Args:
+            path: Virtual path to read
+            client_content: Client's cached file content (required for delta)
+            client_hash: Hash of client's cached content (required for delta)
+            max_delta_ratio: Max delta/original size ratio before full file (default: 0.8)
+            context: Unused in remote client (handled server-side)
+
+        Returns:
+            Dict with one of:
+            - {"unchanged": True, "server_hash": ...} if file unchanged
+            - {"delta": bytes, "server_hash": ..., "is_full": False} if delta returned
+            - {"content": bytes, "server_hash": ..., "is_full": True} if full file returned
+
+        Example:
+            >>> # First read - no cache
+            >>> result = nx.delta_read("/large-file.bin")
+            >>> content = result["content"]
+            >>> hash = result["server_hash"]
+            >>>
+            >>> # Subsequent reads - with cache
+            >>> result = nx.delta_read("/large-file.bin", client_content=content, client_hash=hash)
+            >>> if result.get("unchanged"):
+            ...     pass  # Use cached content
+            >>> elif result.get("is_full"):
+            ...     content = result["content"]  # Full file returned
+            >>> else:
+            ...     import bsdiff4
+            ...     content = bsdiff4.patch(content, result["delta"])  # Apply delta
+        """
+        import base64
+
+        params: dict[str, Any] = {
+            "path": path,
+            "max_delta_ratio": max_delta_ratio,
+        }
+
+        if client_hash is not None:
+            params["client_hash"] = client_hash
+
+        if client_content is not None:
+            params["client_content"] = client_content
+
+        result = self._call_rpc("delta_read", params)
+
+        # Decode binary fields
+        if isinstance(result, dict):
+            # Decode delta if present
+            if (
+                "delta" in result
+                and isinstance(result["delta"], dict)
+                and result["delta"].get("__type__") == "bytes"
+            ):
+                result["delta"] = base64.b64decode(result["delta"]["data"])
+
+            # Decode content if present
+            if (
+                "content" in result
+                and isinstance(result["content"], dict)
+                and result["content"].get("__type__") == "bytes"
+            ):
+                result["content"] = base64.b64decode(result["content"]["data"])
+
+        return result  # type: ignore[no-any-return]
+
+    def delta_write(
+        self,
+        path: str,
+        delta: bytes,
+        base_hash: str,
+        if_match: str | None = None,
+        context: Any = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Write file using delta patch for bandwidth reduction.
+
+        Instead of sending the full file, client sends only the binary diff
+        (delta) from the current server version. Server applies the patch.
+
+        Args:
+            path: Virtual path to write
+            delta: Binary delta patch (bsdiff4 format)
+            base_hash: Hash of the current server content (used for conflict detection)
+            if_match: Optional etag for optimistic concurrency control
+            context: Unused in remote client (handled server-side)
+
+        Returns:
+            Dict with:
+            - {"bytes_written": int, "new_hash": str, "patch_applied": True} on success
+            - {"error": "conflict", "reason": str, ...} on conflict
+
+        Example:
+            >>> import bsdiff4
+            >>> from nexus.core.hash_fast import hash_content
+            >>>
+            >>> # Read current content
+            >>> old_content = nx.read("/file.bin")
+            >>> old_hash = hash_content(old_content)
+            >>>
+            >>> # Modify locally
+            >>> new_content = modify(old_content)
+            >>>
+            >>> # Compute and send delta
+            >>> delta = bsdiff4.diff(old_content, new_content)
+            >>> result = nx.delta_write("/file.bin", delta=delta, base_hash=old_hash)
+        """
+        params: dict[str, Any] = {
+            "path": path,
+            "delta": delta,
+            "base_hash": base_hash,
+        }
+
+        if if_match is not None:
+            params["if_match"] = if_match
+
+        result = self._call_rpc("delta_write", params)
+
+        # Invalidate negative cache after successful write (issue #858)
+        if isinstance(result, dict) and result.get("patch_applied"):
+            self._negative_cache_invalidate(path)
+
+        return result  # type: ignore[no-any-return]
+
     def append(
         self,
         path: str,

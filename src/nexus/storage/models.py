@@ -116,6 +116,11 @@ class FilePathModel(Base):
     )  # For cache eviction decisions
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # Semantic search indexing tracking (Issue #865)
+    # Used for incremental embedding updates - only re-embed when content actually changed
+    indexed_content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_indexed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     # Locking for concurrent access
     locked_by: Mapped[str | None] = mapped_column(
         String(255), nullable=True

@@ -19,6 +19,7 @@ rayon = "1.11"   # Parallel iterators for bulk operations
 bloomfilter = "3.0"  # Fast Bloom filter for cache miss detection
 memmap2 = "0.9.9"  # Memory-mapped file I/O for zero-copy reads
 dashmap = "6.1"  # Lock-free concurrent hashmap for L1 metadata cache
+string-interner = "0.17"  # String interning for O(1) equality and reduced allocations
 
 [profile.release]
 lto = true

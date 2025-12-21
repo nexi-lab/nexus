@@ -7,6 +7,8 @@ import builtins
 import contextlib
 import json
 import threading
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -611,14 +613,21 @@ class NexusFS(
         """DEPRECATED: Access via context parameter instead. Returns default user_id for embedded mode."""
         return getattr(self._default_context, "user", None)
 
-    def _get_memory_api(self, context: dict | None = None) -> Memory:
+    @contextmanager
+    def _get_memory_api(self, context: dict | None = None) -> Generator[Memory, None, None]:
         """Get Memory API instance with context-specific configuration.
+
+        This is a context manager that automatically closes the session when done.
 
         Args:
             context: Optional context dict with tenant_id, user_id, agent_id
 
-        Returns:
+        Yields:
             Memory API instance
+
+        Example:
+            >>> with self._get_memory_api(context) as memory_api:
+            ...     memory_api.store(content)
         """
         from nexus.core.entity_registry import EntityRegistry
         from nexus.core.memory_api import Memory
@@ -633,14 +642,19 @@ class NexusFS(
         # Parse context properly
         ctx = self._parse_context(context)
 
-        return Memory(
+        memory = Memory(
             session=session,
             backend=self.backend,
             tenant_id=ctx.tenant_id or self._default_context.tenant_id,
             user_id=ctx.user or self._default_context.user,
             agent_id=ctx.agent_id or self._default_context.agent_id,
             entity_registry=self._entity_registry,
+            owns_session=True,  # Memory will close session when done
         )
+        try:
+            yield memory
+        finally:
+            memory.close()
 
     def _parse_context(self, context: OperationContext | dict | None = None) -> OperationContext:
         """Parse context dict or OperationContext into OperationContext.
@@ -3730,9 +3744,9 @@ class NexusFS(
             >>> result = nx.ace_start_trajectory("Deploy caching strategy")
             >>> traj_id = result['trajectory_id']
         """
-        memory_api = self._get_memory_api(context)
-        trajectory_id = memory_api.start_trajectory(task_description, task_type)
-        return {"trajectory_id": trajectory_id}
+        with self._get_memory_api(context) as memory_api:
+            trajectory_id = memory_api.start_trajectory(task_description, task_type)
+            return {"trajectory_id": trajectory_id}
 
     @rpc_expose(description="Log a step in a trajectory")
     def ace_log_trajectory_step(
@@ -3762,9 +3776,9 @@ class NexusFS(
             ...     "Configured cache with 5min TTL"
             ... )
         """
-        memory_api = self._get_memory_api(context)
-        memory_api.log_trajectory_step(trajectory_id, step_type, description, result)
-        return {"success": True}
+        with self._get_memory_api(context) as memory_api:
+            memory_api.log_trajectory_step(trajectory_id, step_type, description, result)
+            return {"success": True}
 
     @rpc_expose(description="Complete a trajectory")
     def ace_complete_trajectory(
@@ -3790,11 +3804,11 @@ class NexusFS(
         Example:
             >>> nx.ace_complete_trajectory(traj_id, "success", success_score=0.95)
         """
-        memory_api = self._get_memory_api(context)
-        completed_id = memory_api.complete_trajectory(
-            trajectory_id, status, success_score, error_message
-        )
-        return {"trajectory_id": completed_id}
+        with self._get_memory_api(context) as memory_api:
+            completed_id = memory_api.complete_trajectory(
+                trajectory_id, status, success_score, error_message
+            )
+            return {"trajectory_id": completed_id}
 
     @rpc_expose(description="Add feedback to a trajectory")
     def ace_add_feedback(
@@ -3829,11 +3843,11 @@ class NexusFS(
             ...     message="Error rate spiked"
             ... )
         """
-        memory_api = self._get_memory_api(context)
-        feedback_id = memory_api.add_feedback(
-            trajectory_id, feedback_type, score, source, message, metrics
-        )
-        return {"feedback_id": feedback_id}
+        with self._get_memory_api(context) as memory_api:
+            feedback_id = memory_api.add_feedback(
+                trajectory_id, feedback_type, score, source, message, metrics
+            )
+            return {"feedback_id": feedback_id}
 
     @rpc_expose(description="Get feedback for a trajectory")
     def ace_get_trajectory_feedback(
@@ -3848,8 +3862,8 @@ class NexusFS(
         Returns:
             List of feedback dicts
         """
-        memory_api = self._get_memory_api(context)
-        return memory_api.get_trajectory_feedback(trajectory_id)
+        with self._get_memory_api(context) as memory_api:
+            return memory_api.get_trajectory_feedback(trajectory_id)
 
     @rpc_expose(description="Get effective score for a trajectory")
     def ace_get_effective_score(
@@ -3868,9 +3882,9 @@ class NexusFS(
         Returns:
             Dict with effective_score
         """
-        memory_api = self._get_memory_api(context)
-        score = memory_api.get_effective_score(trajectory_id, strategy)
-        return {"effective_score": score}
+        with self._get_memory_api(context) as memory_api:
+            score = memory_api.get_effective_score(trajectory_id, strategy)
+            return {"effective_score": score}
 
     @rpc_expose(description="Mark trajectory for re-learning")
     def ace_mark_for_relearning(
@@ -3891,9 +3905,9 @@ class NexusFS(
         Returns:
             Success status
         """
-        memory_api = self._get_memory_api(context)
-        memory_api.mark_for_relearning(trajectory_id, reason, priority)
-        return {"success": True}
+        with self._get_memory_api(context) as memory_api:
+            memory_api.mark_for_relearning(trajectory_id, reason, priority)
+            return {"success": True}
 
     @rpc_expose(description="Query trajectories")
     def ace_query_trajectories(
@@ -4521,3 +4535,7 @@ class NexusFS(
         # Close TokenManager to release database connection
         if hasattr(self, "_token_manager") and self._token_manager is not None:
             self._token_manager.close()
+
+        # Close Memory API to release database session
+        if hasattr(self, "_memory_api") and self._memory_api is not None:
+            self._memory_api.close()

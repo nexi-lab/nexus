@@ -98,6 +98,7 @@ class EntityRegistry:
         parent_type: str | None = None,
         parent_id: str | None = None,
         entity_metadata: dict | None = None,
+        _session: Session | None = None,
     ) -> EntityRegistryModel:
         """Register an entity in the registry.
 
@@ -108,6 +109,8 @@ class EntityRegistry:
             parent_id: ID of parent entity (optional).
             entity_metadata: Additional metadata as dict (optional). Will be stored as JSON.
                             For agents: {'name': 'Display Name', 'description': 'Agent description'}
+            _session: Optional session to reuse (for batch operations). If provided,
+                     the caller is responsible for commit/rollback.
 
         Returns:
             EntityRegistryModel: The registered entity.
@@ -115,24 +118,29 @@ class EntityRegistry:
         Raises:
             ValueError: If entity_type is invalid or parent is inconsistent.
         """
+        import json
         import logging
 
         logger = logging.getLogger(__name__)
 
-        logger.warning(
+        logger.debug(
             f"[ENTITY-REG] register_entity called: {entity_type}:{entity_id}, parent={parent_type}:{parent_id}"
         )
 
-        # Check if entity already exists
+        # If session provided, use it directly (caller manages transaction)
+        if _session is not None:
+            return self._register_entity_with_session(
+                _session, entity_type, entity_id, parent_type, parent_id, entity_metadata
+            )
+
+        # Check if entity already exists (opens its own session)
         existing = self.get_entity(entity_type, entity_id)
         if existing:
-            logger.warning(f"[ENTITY-REG] Entity already exists: {entity_type}:{entity_id}")
+            logger.debug(f"[ENTITY-REG] Entity already exists: {entity_type}:{entity_id}")
             return existing
 
-        # Create new entity
+        # Create new entity with fresh session
         with self._get_session() as session:
-            import json
-
             # Serialize metadata to JSON string if provided
             metadata_json = json.dumps(entity_metadata) if entity_metadata else None
 
@@ -153,21 +161,84 @@ class EntityRegistry:
 
             # Refresh to ensure we have the committed state
             session.refresh(entity)
-            logger.warning(
+            logger.debug(
                 f"[ENTITY-REG] Entity registered successfully: {entity_type}:{entity_id}"
             )
             return entity
 
-    def get_entity(self, entity_type: str, entity_id: str) -> EntityRegistryModel | None:
+    def _register_entity_with_session(
+        self,
+        session: Session,
+        entity_type: str,
+        entity_id: str,
+        parent_type: str | None = None,
+        parent_id: str | None = None,
+        entity_metadata: dict | None = None,
+    ) -> EntityRegistryModel:
+        """Internal: Register entity using provided session (no commit).
+
+        Used for batch operations where caller manages the transaction.
+        """
+        import json
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Check if entity already exists within same session
+        existing = self._get_entity_with_session(session, entity_type, entity_id)
+        if existing:
+            logger.debug(f"[ENTITY-REG] Entity already exists: {entity_type}:{entity_id}")
+            return existing
+
+        # Serialize metadata to JSON string if provided
+        metadata_json = json.dumps(entity_metadata) if entity_metadata else None
+
+        entity = EntityRegistryModel(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            parent_type=parent_type,
+            parent_id=parent_id,
+            entity_metadata=metadata_json,
+            created_at=datetime.now(UTC),
+        )
+
+        # Validate before adding
+        entity.validate()
+
+        session.add(entity)
+        session.flush()  # Get ID without committing
+
+        logger.debug(
+            f"[ENTITY-REG] Entity registered (pending commit): {entity_type}:{entity_id}"
+        )
+        return entity
+
+    def _get_entity_with_session(
+        self, session: Session, entity_type: str, entity_id: str
+    ) -> EntityRegistryModel | None:
+        """Internal: Get entity using provided session."""
+        stmt = select(EntityRegistryModel).where(
+            EntityRegistryModel.entity_type == entity_type,
+            EntityRegistryModel.entity_id == entity_id,
+        )
+        return session.execute(stmt).scalar_one_or_none()
+
+    def get_entity(
+        self, entity_type: str, entity_id: str, _session: Session | None = None
+    ) -> EntityRegistryModel | None:
         """Get an entity from the registry.
 
         Args:
             entity_type: Type of entity.
             entity_id: Unique identifier.
+            _session: Optional session to reuse (for batch operations).
 
         Returns:
             EntityRegistryModel or None if not found.
         """
+        if _session is not None:
+            return self._get_entity_with_session(_session, entity_type, entity_id)
+
         with self._get_session() as session:
             stmt = select(EntityRegistryModel).where(
                 EntityRegistryModel.entity_type == entity_type,
@@ -212,7 +283,9 @@ class EntityRegistry:
                 session.expunge(result)
             return results
 
-    def get_parent(self, entity_type: str, entity_id: str) -> EntityRegistryModel | None:
+    def get_parent(
+        self, entity_type: str, entity_id: str, _session: Session | None = None
+    ) -> EntityRegistryModel | None:
         """Get the parent entity of a given entity.
 
         v0.5.0 ACE: Used for agent→user permission inheritance
@@ -220,6 +293,7 @@ class EntityRegistry:
         Args:
             entity_type: Type of entity (e.g., "agent")
             entity_id: ID of entity (e.g., "agent_data_analyst")
+            _session: Optional session to reuse (for batch operations).
 
         Returns:
             Parent EntityRegistryModel or None if no parent
@@ -234,44 +308,55 @@ class EntityRegistry:
 
         logger = logging.getLogger(__name__)
 
-        logger.warning(
+        logger.debug(
             f"[ENTITY-REG] get_parent called: entity_type={entity_type}, entity_id={entity_id}"
         )
 
-        entity = self.get_entity(entity_type, entity_id)
+        # Use session passthrough to avoid opening multiple sessions
+        entity = self.get_entity(entity_type, entity_id, _session=_session)
 
         if not entity:
-            logger.warning(f"[ENTITY-REG] Entity NOT found in database: {entity_type}:{entity_id}")
+            logger.debug(f"[ENTITY-REG] Entity NOT found in database: {entity_type}:{entity_id}")
             return None
 
-        logger.warning(
+        logger.debug(
             f"[ENTITY-REG] Entity found: {entity.entity_type}:{entity.entity_id}, parent={entity.parent_type}:{entity.parent_id}"
         )
 
         if not entity.parent_type or not entity.parent_id:
-            logger.warning("[ENTITY-REG] Entity has no parent")
+            logger.debug("[ENTITY-REG] Entity has no parent")
             return None
 
-        # Get the parent entity
-        parent = self.get_entity(entity.parent_type, entity.parent_id)
+        # Get the parent entity using same session
+        parent = self.get_entity(entity.parent_type, entity.parent_id, _session=_session)
         if parent:
-            logger.warning(f"[ENTITY-REG] Parent found: {parent.entity_type}:{parent.entity_id}")
+            logger.debug(f"[ENTITY-REG] Parent found: {parent.entity_type}:{parent.entity_id}")
         else:
-            logger.warning(
+            logger.debug(
                 f"[ENTITY-REG] Parent NOT found: {entity.parent_type}:{entity.parent_id}"
             )
         return parent
 
-    def get_children(self, parent_type: str, parent_id: str) -> list[EntityRegistryModel]:
+    def get_children(
+        self, parent_type: str, parent_id: str, _session: Session | None = None
+    ) -> list[EntityRegistryModel]:
         """Get all child entities of a parent.
 
         Args:
             parent_type: Type of parent entity.
             parent_id: ID of parent entity.
+            _session: Optional session to reuse (for batch operations).
 
         Returns:
             List of child entities.
         """
+        if _session is not None:
+            stmt = select(EntityRegistryModel).where(
+                EntityRegistryModel.parent_type == parent_type,
+                EntityRegistryModel.parent_id == parent_id,
+            )
+            return list(_session.execute(stmt).scalars().all())
+
         with self._get_session() as session:
             stmt = select(EntityRegistryModel).where(
                 EntityRegistryModel.parent_type == parent_type,
@@ -283,7 +368,9 @@ class EntityRegistry:
                 session.expunge(result)
             return results
 
-    def delete_entity(self, entity_type: str, entity_id: str, cascade: bool = True) -> bool:
+    def delete_entity(
+        self, entity_type: str, entity_id: str, cascade: bool = True, _session: Session | None = None
+    ) -> bool:
         """Delete an entity from the registry.
 
         Args:
@@ -292,6 +379,8 @@ class EntityRegistry:
             cascade: If True, recursively delete child entities (default: True).
                      When deleting a user, all their owned agents are also deleted.
                      When deleting a tenant, all users and agents are also deleted.
+            _session: Optional session to reuse (for batch operations). If provided,
+                     the caller is responsible for commit/rollback.
 
         Returns:
             True if deleted, False if not found.
@@ -305,6 +394,10 @@ class EntityRegistry:
             >>> registry.delete_entity("user", "alice", cascade=False)
             True
         """
+        # If session provided, use single-session implementation
+        if _session is not None:
+            return self._delete_entity_with_session(_session, entity_type, entity_id, cascade)
+
         # Check if entity exists
         entity = self.get_entity(entity_type, entity_id)
         if not entity:
@@ -332,11 +425,40 @@ class EntityRegistry:
 
         return True
 
-    def auto_register_from_config(self, config: dict[str, Any]) -> None:
+    def _delete_entity_with_session(
+        self, session: Session, entity_type: str, entity_id: str, cascade: bool = True
+    ) -> bool:
+        """Internal: Delete entity using provided session (no commit).
+
+        Used for batch operations where caller manages the transaction.
+        """
+        # Check if entity exists
+        entity = self._get_entity_with_session(session, entity_type, entity_id)
+        if not entity:
+            return False
+
+        # Cascade delete: recursively delete all child entities first
+        if cascade:
+            children = self.get_children(entity_type, entity_id, _session=session)
+            for child in children:
+                # Recursively delete child (with cascade) using same session
+                self._delete_entity_with_session(session, child.entity_type, child.entity_id, cascade=True)
+
+        # Delete the entity
+        session.delete(entity)
+        session.flush()  # Don't commit - let caller manage transaction
+
+        return True
+
+    def auto_register_from_config(
+        self, config: dict[str, Any], _session: Session | None = None
+    ) -> None:
         """Auto-register entities from Nexus config.
 
         Args:
             config: Nexus configuration dictionary containing tenant_id, user_id, agent_id.
+            _session: Optional session to reuse (for batch operations). If provided,
+                     all entities are registered in a single transaction.
         """
         tenant_id = config.get("tenant_id")
         user_id = config.get("user_id")
@@ -344,18 +466,26 @@ class EntityRegistry:
 
         # Register tenant (top-level)
         if tenant_id:
-            self.register_entity("tenant", tenant_id)
+            self.register_entity("tenant", tenant_id, _session=_session)
 
         # Register user (child of tenant)
         if user_id:
             self.register_entity(
-                "user", user_id, parent_type="tenant" if tenant_id else None, parent_id=tenant_id
+                "user",
+                user_id,
+                parent_type="tenant" if tenant_id else None,
+                parent_id=tenant_id,
+                _session=_session,
             )
 
         # Register agent (child of user)
         if agent_id:
             self.register_entity(
-                "agent", agent_id, parent_type="user" if user_id else None, parent_id=user_id
+                "agent",
+                agent_id,
+                parent_type="user" if user_id else None,
+                parent_id=user_id,
+                _session=_session,
             )
 
     def extract_ids_from_path_parts(self, parts: list[str]) -> dict[str, str]:

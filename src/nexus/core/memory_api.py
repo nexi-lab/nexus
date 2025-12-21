@@ -34,6 +34,7 @@ class Memory:
         agent_id: str | None = None,
         entity_registry: EntityRegistry | None = None,
         llm_provider: Any = None,
+        owns_session: bool = True,
     ):
         """Initialize Memory API.
 
@@ -45,6 +46,8 @@ class Memory:
             agent_id: Current agent ID.
             entity_registry: Entity registry instance.
             llm_provider: Optional LLM provider for reflection/learning.
+            owns_session: If True, this Memory instance owns the session and will
+                         close it on close(). Set to False if session is managed externally.
         """
         self.session = session
         self.backend = backend
@@ -52,6 +55,8 @@ class Memory:
         self.user_id = user_id
         self.agent_id = agent_id
         self.llm_provider = llm_provider
+        self._owns_session = owns_session
+        self._closed = False
 
         # Initialize components
         self.entity_registry = entity_registry or EntityRegistry(session)
@@ -78,6 +83,29 @@ class Memory:
             groups=[],
             is_admin=False,
         )
+
+    def close(self) -> None:
+        """Close the Memory API and release database session.
+
+        This should be called when the Memory instance is no longer needed
+        to prevent database connection pool exhaustion.
+        """
+        if self._closed:
+            return
+
+        if self._owns_session and self.session is not None:
+            with contextlib.suppress(Exception):
+                self.session.close()
+
+        self._closed = True
+
+    def __enter__(self) -> Memory:
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Context manager exit - closes the session."""
+        self.close()
 
     def store(
         self,

@@ -271,55 +271,34 @@ class NexusFSProvisioningMixin:
             tenant_id: Tenant ID
             user_id: User ID
             context: Operation context
-            _session: Optional database session to reuse (for entity registry operations)
+            _session: Optional database session to reuse (NOTE: Not yet used - future optimization)
 
         Returns:
             Dict mapping agent IDs to agent info
         """
         agents = {}
 
-        # Ensure EntityRegistry is initialized
-        if not self._entity_registry:
-            from nexus.core.entity_registry import EntityRegistry
-
-            self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
-
-        # Import the agent registration function
-        from nexus.core.agents import register_agent
-
-        # Create ImpersonatedUser agent (reuse session for entity registry)
+        # Create ImpersonatedUser agent
+        # NOTE: Using self.register_agent() which does full setup (directories, config, ReBAC)
+        # TODO: Add _session support to self.register_agent() for future optimization
         impersonated_id = f"{user_id}-impersonated"
-        impersonated_agent = register_agent(
-            user_id=self._extract_user_id(context) or "system",
+        agents["impersonated"] = self.register_agent(
             agent_id=impersonated_id,
             name=f"{user_id}'s Impersonated Agent",
-            tenant_id=tenant_id,
-            metadata={
-                "description": "Agent that impersonates user with full permissions",
-                "agent_type": "ImpersonatedUser",
-                "tenant_id": tenant_id,
-            },
-            entity_registry=self._entity_registry,
-            _session=_session,
+            description="Agent that impersonates user with full permissions",
+            metadata={"agent_type": "ImpersonatedUser", "tenant_id": tenant_id},
+            context=context,
         )
-        agents["impersonated"] = impersonated_agent
 
-        # Create UntrustedAgent (reuse session for entity registry)
+        # Create UntrustedAgent
         untrusted_id = f"{user_id}-untrusted"
-        untrusted_agent = register_agent(
-            user_id=self._extract_user_id(context) or "system",
+        agents["untrusted"] = self.register_agent(
             agent_id=untrusted_id,
             name=f"{user_id}'s Untrusted Agent",
-            tenant_id=tenant_id,
-            metadata={
-                "description": "Agent with zero permissions by default",
-                "agent_type": "UntrustedAgent",
-                "tenant_id": tenant_id,
-            },
-            entity_registry=self._entity_registry,
-            _session=_session,
+            description="Agent with zero permissions by default",
+            metadata={"agent_type": "UntrustedAgent", "tenant_id": tenant_id},
+            context=context,
         )
-        agents["untrusted"] = untrusted_agent
 
         return agents
 
@@ -603,28 +582,18 @@ class NexusFSProvisioningMixin:
             caller_user_id=None,  # Skip permission check (system provisioning)
         )
 
-        # Reuse a single session for all entity registry operations (agents, workspace)
-        # This significantly reduces database connection pressure:
-        # - Before: 2 sessions per agent (get_entity + register_entity) × 2 agents = 4 sessions
-        # - After: 1 shared session for both agents = ~1 session
-        with self.metadata.SessionLocal() as provision_session:
-            # Create default workspace if requested
-            if create_workspace:
-                workspace_id = "default"
-                result["workspace"] = self._provision_default_workspace(
-                    tenant_id, user_id, workspace_id, provision_context, _session=provision_session
-                )
+        # Create default workspace if requested
+        if create_workspace:
+            workspace_id = "default"
+            result["workspace"] = self._provision_default_workspace(
+                tenant_id, user_id, workspace_id, provision_context
+            )
 
-            # Create default agents if requested (biggest session consumers)
-            if create_agents:
-                result["agents"] = self._provision_default_agents(
-                    tenant_id, user_id, provision_context, _session=provision_session
-                )
+        # Create default agents if requested
+        if create_agents:
+            result["agents"] = self._provision_default_agents(tenant_id, user_id, provision_context)
 
-            # Commit all entity registry operations in one transaction
-            provision_session.commit()
-
-        # Import default skills if requested (file operations, can use separate sessions)
+        # Import default skills if requested
         if import_skills:
             result["skills"] = self._import_default_skills(
                 tenant_id, user_id, provision_context, skip_heavy=False

@@ -20,10 +20,13 @@ benchmarks/herb/
 │       ├── customers_data.json # Customer information
 │       ├── employee.json       # Employee directory
 │       └── salesforce_team.json# Org structure hierarchy
-└── dataset/                    # Transformed data (grep-friendly)
-    ├── _summary.json           # Overall statistics
-    ├── _metadata/              # Global reference data (JSONL)
-    └── {product}/              # Per-product data
+├── dataset/                    # Transformed context data (grep-friendly)
+│   ├── _summary.json           # Overall statistics
+│   ├── _metadata/              # Global reference data (JSONL)
+│   └── {product}/              # Per-product data
+└── qa/                         # Benchmark Q&A (evaluation)
+    ├── answerable.jsonl        # 815 questions with ground truth
+    └── unanswerable.jsonl      # 699 unanswerable questions
 ```
 
 ## Dataset Structure (Transformed)
@@ -59,6 +62,8 @@ dataset/
 - **Customers**: 120
 - **Employees**: 530
 - **Org Structure Members**: 530 (with reporting hierarchy)
+- **Answerable Questions**: 815 (with ground truth and citations)
+- **Unanswerable Questions**: 699
 
 ## Products
 
@@ -107,6 +112,19 @@ grep '"merged": true' dataset/ActionGenie/prs/*.jsonl
 
 # Search across all products
 grep -r "security" dataset/*/docs/_index.jsonl
+```
+
+### Q&A Benchmark Searches
+
+```bash
+# Find questions for a specific product
+grep '"product": "ActionGenie"' qa/answerable.jsonl
+
+# Find questions by type
+grep '"type": "person"' qa/answerable.jsonl
+
+# Count questions per product
+grep -o '"product": "[^"]*"' qa/answerable.jsonl | sort | uniq -c
 ```
 
 ## Transformation Script

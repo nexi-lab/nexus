@@ -1096,9 +1096,10 @@ def test_list_objects_via_group_membership(enhanced_rebac_manager):
         tenant_id="test_tenant",
     )
 
-    # Developers group has access to project files
+    # Developers group members have access to project files
+    # Use userset-as-subject pattern (3-tuple) to grant access to group members
     enhanced_rebac_manager.rebac_write(
-        subject=("group", "developers"),
+        subject=("group", "developers", "member"),
         relation="direct_viewer",
         object=("file", "/workspace/project/code.py"),
         tenant_id="test_tenant",

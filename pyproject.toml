@@ -43,7 +43,7 @@ dependencies = [
     "pydantic>=2.5.0",
     "pyyaml>=6.0.1",
     # HTTP client (for remote mode)
-    "httpx>=0.28.1",
+    "httpx[http2]>=0.28.1",
     "requests>=2.31.0",
     "tenacity>=8.2.0", # Retry logic with exponential backoff
     # Python 3.14 compatibility - pin transitive deps with wheels

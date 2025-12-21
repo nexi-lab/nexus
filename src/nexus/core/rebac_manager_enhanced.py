@@ -2601,7 +2601,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
                 rust_start = time.perf_counter()
                 rust_results_dict = check_permissions_bulk_with_fallback(
-                    cache_misses, tuples_graph, namespace_configs, force_python=False
+                    cache_misses,
+                    tuples_graph,
+                    namespace_configs,
+                    force_python=False,
+                    tuple_version=self._tuple_version,
                 )
                 rust_elapsed = time.perf_counter() - rust_start
                 per_check_us = (rust_elapsed / len(cache_misses)) * 1_000_000

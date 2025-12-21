@@ -8,6 +8,16 @@ from typing import Any
 
 import nexus_fast
 
+# Counter for unique tuple_version values (cache invalidation between tests)
+_test_version = 0
+
+
+def _next_version() -> int:
+    """Get a unique tuple_version for each test to avoid cache reuse."""
+    global _test_version
+    _test_version += 1
+    return _test_version
+
 
 def test_basic_permission() -> None:
     """Test basic direct permission check"""
@@ -30,7 +40,7 @@ def test_basic_permission() -> None:
 
     namespace_configs: dict[str, Any] = {}
 
-    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs)
+    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs, _next_version())
     print(f"  Result: {result}")
     assert result[("user", "alice", "read", "file", "doc1")]
     print("  ✓ Passed")
@@ -66,7 +76,7 @@ def test_permission_with_namespace() -> None:
         }
     }
 
-    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs)
+    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs, _next_version())
     print(f"  Result: {result}")
     assert result[("user", "alice", "editor", "file", "doc1")]
     print("  ✓ Passed")
@@ -111,7 +121,7 @@ def test_tuple_to_userset() -> None:
         "folder": {"relations": {"read": "direct"}, "permissions": {}},
     }
 
-    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs)
+    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs, _next_version())
     print(f"  Result: {result}")
     assert result[("user", "alice", "read", "file", "doc1")]
     print("  ✓ Passed")
@@ -141,7 +151,7 @@ def test_bulk_performance() -> None:
     namespace_configs: dict[str, Any] = {}
 
     start = time.time()
-    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs)
+    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs, _next_version())
     elapsed = time.time() - start
 
     print(f"  Processed {len(checks)} checks in {elapsed * 1000:.2f}ms")
@@ -172,7 +182,7 @@ def test_negative_case() -> None:
 
     namespace_configs: dict[str, Any] = {}
 
-    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs)
+    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs, _next_version())
     print(f"  Result: {result}")
     assert not result[("user", "alice", "read", "file", "doc1")]
     print("  ✓ Passed")

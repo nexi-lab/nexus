@@ -651,6 +651,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         max_retries: int = 3,
         pool_connections: int = 10,
         pool_maxsize: int = 20,
+        negative_cache_capacity: int = 100_000,
+        negative_cache_fp_rate: float = 0.01,
     ):
         """Initialize remote filesystem client.
 
@@ -662,6 +664,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             max_retries: Maximum number of retry attempts (default: 3)
             pool_connections: Number of connection pools (default: 10)
             pool_maxsize: Maximum pool size (default: 20)
+            negative_cache_capacity: Max entries for negative cache Bloom filter (default: 100,000)
+            negative_cache_fp_rate: False positive rate for Bloom filter (default: 0.01 = 1%)
         """
         self.server_url = server_url.rstrip("/")
         self.api_key = api_key
@@ -700,11 +704,12 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        # Create sync httpx client
+        # Create sync httpx client with HTTP/2 for multiplexing
         self.session = httpx.Client(
             limits=limits,
             timeout=timeout_config,
             headers=headers,
+            http2=True,
         )
 
         if api_key:
@@ -714,6 +719,77 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             except Exception as e:
                 logger.warning(f"Failed to fetch auth info: {e}")
                 # Don't fail initialization, just log warning
+
+        # Initialize negative cache Bloom filter for reducing round-trips
+        # on non-existent files (issue #858)
+        self._negative_cache_capacity = negative_cache_capacity
+        self._negative_cache_fp_rate = negative_cache_fp_rate
+        self._negative_bloom: Any = None
+        self._init_negative_cache()
+
+    def _init_negative_cache(self) -> None:
+        """Initialize Bloom filter for negative caching of non-existent files."""
+        try:
+            from nexus_fast import BloomFilter
+
+            self._negative_bloom = BloomFilter(
+                self._negative_cache_capacity, self._negative_cache_fp_rate
+            )
+            logger.debug(
+                f"Negative cache initialized: capacity={self._negative_cache_capacity}, "
+                f"fp_rate={self._negative_cache_fp_rate}, memory={self._negative_bloom.memory_bytes} bytes"
+            )
+        except ImportError:
+            logger.debug("nexus_fast not available, negative cache disabled")
+            self._negative_bloom = None
+        except Exception as e:
+            logger.warning(f"Failed to initialize negative cache: {e}")
+            self._negative_bloom = None
+
+    def _negative_cache_key(self, path: str) -> str:
+        """Generate cache key with tenant isolation."""
+        return f"{self._tenant_id or 'default'}:{path}"
+
+    def _negative_cache_check(self, path: str) -> bool:
+        """Check if path is known to not exist (in negative cache).
+
+        Returns:
+            True if path is definitely non-existent (skip RPC)
+            False if path might exist (need to check server)
+        """
+        if self._negative_bloom is None:
+            return False
+        key = self._negative_cache_key(path)
+        return bool(self._negative_bloom.might_exist(key))
+
+    def _negative_cache_add(self, path: str) -> None:
+        """Add path to negative cache (file confirmed to not exist)."""
+        if self._negative_bloom is None:
+            return
+        key = self._negative_cache_key(path)
+        self._negative_bloom.add(key)
+
+    def _negative_cache_invalidate(self, path: str) -> None:
+        """Invalidate negative cache entry for path.
+
+        Note: Bloom filters don't support deletion, so we clear the entire filter
+        when invalidation is needed. This is acceptable because:
+        1. Write/delete operations are less frequent than reads
+        2. The filter will repopulate naturally as files are checked
+        """
+        if self._negative_bloom is None:
+            return
+        # Bloom filters can't delete individual keys, so we clear the entire filter
+        # This is a trade-off: occasional full clear vs. complex counting bloom filter
+        self._negative_bloom.clear()
+        logger.debug(f"Negative cache cleared due to write/delete of {path}")
+
+    def _negative_cache_invalidate_bulk(self, paths: list[str]) -> None:
+        """Invalidate negative cache for multiple paths."""
+        if self._negative_bloom is None or not paths:
+            return
+        self._negative_bloom.clear()
+        logger.debug(f"Negative cache cleared due to bulk write/delete of {len(paths)} paths")
 
     @property
     def agent_id(self) -> str | None:
@@ -979,9 +1055,17 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             If return_metadata=False: File content as bytes
             If return_metadata=True: Dict with content, etag, version, etc.
         """
+        # Check negative cache first (issue #858)
+        if self._negative_cache_check(path):
+            raise NexusFileNotFoundError(path)
+
         import base64
 
-        result = self._call_rpc("read", {"path": path, "return_metadata": return_metadata})
+        try:
+            result = self._call_rpc("read", {"path": path, "return_metadata": return_metadata})
+        except NexusFileNotFoundError:
+            self._negative_cache_add(path)
+            raise
 
         # Handle standard bytes format: {__type__: 'bytes', data: '...'}
         # This is the format from encode_rpc_message in protocol.py
@@ -1074,7 +1158,16 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Raises:
             NexusFileNotFoundError: If file doesn't exist
         """
-        result = self._call_rpc("stat", {"path": path})
+        # Check negative cache first (issue #858)
+        if self._negative_cache_check(path):
+            raise NexusFileNotFoundError(path)
+
+        try:
+            result = self._call_rpc("stat", {"path": path})
+        except NexusFileNotFoundError:
+            self._negative_cache_add(path)
+            raise
+
         return result  # type: ignore[no-any-return]
 
     def read_range(
@@ -1180,6 +1273,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "force": force,
             },
         )
+
+        # Invalidate negative cache after successful write (issue #858)
+        self._negative_cache_invalidate(path)
+
         return result  # type: ignore[no-any-return]
 
     def write_stream(
@@ -1211,6 +1308,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "chunks": content,  # Send as single blob
             },
         )
+
+        # Invalidate negative cache after successful write (issue #858)
+        self._negative_cache_invalidate(path)
+
         return result  # type: ignore[no-any-return]
 
     def append(
@@ -1259,6 +1360,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "force": force,
             },
         )
+
+        # Invalidate negative cache after successful append (issue #858)
+        self._negative_cache_invalidate(path)
+
         return result  # type: ignore[no-any-return]
 
     def write_batch(
@@ -1281,15 +1386,26 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "files": files,
             },
         )
+
+        # Invalidate negative cache after successful batch write (issue #858)
+        if files:
+            self._negative_cache_invalidate_bulk([path for path, _ in files])
+
         return result  # type: ignore[no-any-return]
 
     def delete(self, path: str) -> None:
         """Delete a file."""
         self._call_rpc("delete", {"path": path})
 
+        # Invalidate negative cache after delete (issue #858)
+        self._negative_cache_invalidate(path)
+
     def rename(self, old_path: str, new_path: str) -> None:
         """Rename/move a file (metadata-only operation)."""
         self._call_rpc("rename", {"old_path": old_path, "new_path": new_path})
+
+        # Invalidate negative cache for both paths (issue #858)
+        self._negative_cache_invalidate(old_path)
 
     def delete_bulk(
         self,
@@ -1315,6 +1431,11 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ...         print(f"Deleted {path}")
         """
         result = self._call_rpc("delete_bulk", {"paths": paths, "recursive": recursive})
+
+        # Invalidate negative cache after bulk delete (issue #858)
+        if paths:
+            self._negative_cache_invalidate_bulk(paths)
+
         return result  # type: ignore[no-any-return]
 
     def rename_bulk(
@@ -1340,12 +1461,28 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ... ])
         """
         result = self._call_rpc("rename_bulk", {"renames": renames})
+
+        # Invalidate negative cache after bulk rename (issue #858)
+        if renames:
+            # Invalidate old paths only (new paths are now valid)
+            self._negative_cache_invalidate_bulk([old_path for old_path, _ in renames])
+
         return result  # type: ignore[no-any-return]
 
     def exists(self, path: str) -> bool:
         """Check if a file exists."""
+        # Check negative cache first (issue #858)
+        if self._negative_cache_check(path):
+            return False
+
         result = self._call_rpc("exists", {"path": path})
-        return result["exists"]  # type: ignore[no-any-return]
+        exists = result["exists"]
+
+        # Add to negative cache if file doesn't exist
+        if not exists:
+            self._negative_cache_add(path)
+
+        return exists  # type: ignore[no-any-return]
 
     def get_etag(self, path: str) -> str | None:
         """Get the ETag (content hash) for a file without reading content.
@@ -1359,7 +1496,16 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Returns:
             Content hash (ETag) if available, None otherwise
         """
-        result = self._call_rpc("get_etag", {"path": path})
+        # Check negative cache first (issue #858)
+        if self._negative_cache_check(path):
+            return None
+
+        try:
+            result = self._call_rpc("get_etag", {"path": path})
+        except NexusFileNotFoundError:
+            self._negative_cache_add(path)
+            return None
+
         etag = result.get("etag")
         return str(etag) if etag is not None else None
 

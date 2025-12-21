@@ -853,46 +853,22 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         cache_path = self._get_cache_path(context) or context.backend_path
 
         # Check cache first if enabled
-        cache_rejected_reason = None
+        # PERF FIX (Issue #847): Trust L1 cache TTL instead of making API call on every hit.
+        # Previously, get_version() was called on every cache hit (50-200ms API call),
+        # which negated the benefit of L1 caching (<1ms). Now we rely on TTL-based
+        # expiration (default 5 min) which is sufficient for most use cases.
+        # Users needing real-time consistency can use --no-cache.
         if self._has_caching():
             import contextlib
 
             with contextlib.suppress(Exception):
                 cached = self._read_from_cache(cache_path, original=True)
                 if cached and not cached.stale and cached.content_binary:
-                    # For GCS versioned storage, always check current backend version
-                    # Don't compare content_hash (which may be SHA256 from metadata)
-                    # to backend_version (which is GCS generation number) - they're different types
-                    if cached.backend_version:
-                        # Get current backend version to verify cache freshness
-                        current_version = self.get_version(context.backend_path, context)
-                        if current_version and cached.backend_version == current_version:
-                            logger.info(
-                                f"[GCS] Cache hit (version match) for {cache_path} "
-                                f"(version={current_version})"
-                            )
-                            return cached.content_binary
-                        elif current_version:
-                            # Version mismatch - cache entry exists but version is stale
-                            cache_rejected_reason = "version mismatch"
-                            logger.info(
-                                f"[GCS] Cache version mismatch for {cache_path} "
-                                f"(cached={cached.backend_version}, current={current_version})"
-                            )
-                        else:
-                            # Can't get current version, trust cache
-                            logger.info(f"[GCS] Cache hit (no current version) for {cache_path}")
-                            return cached.content_binary
-                    else:
-                        # No version in cache, trust the cache
-                        logger.info(f"[GCS] Cache hit (no cached version) for {cache_path}")
-                        return cached.content_binary
+                    logger.info(f"[GCS] Cache hit (TTL-based) for {cache_path}")
+                    return cached.content_binary
 
         # Read from GCS backend
-        if cache_rejected_reason:
-            logger.info(f"[GCS] Reading from backend due to {cache_rejected_reason}: {cache_path}")
-        else:
-            logger.info(f"[GCS] Cache miss, reading from backend: {cache_path}")
+        logger.info(f"[GCS] Cache miss, reading from backend: {cache_path}")
         blob_path = self._get_blob_path(context.backend_path)
 
         # Determine if we should use version ID

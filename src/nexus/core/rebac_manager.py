@@ -86,6 +86,7 @@ class ReBACManager:
         self.max_depth = max_depth
         self._last_cleanup_time: datetime | None = None
         self._namespaces_initialized = False  # Track if default namespaces were initialized
+        self._tuple_version: int = 0  # Track tuple changes for Rust graph cache invalidation
 
         # Initialize L1 in-memory cache
         self._l1_cache: ReBACPermissionCache | None = None
@@ -780,6 +781,7 @@ class ReBACManager:
             )
 
             conn.commit()
+            self._tuple_version += 1  # Invalidate Rust graph cache
 
             # Invalidate cache entries affected by this change
             # Pass expires_at to disable eager recomputation for expiring tuples
@@ -1053,6 +1055,8 @@ class ReBACManager:
 
                 # Commit transaction after all inserts succeed
                 conn.commit()
+                if created_count > 0:
+                    self._tuple_version += 1  # Invalidate Rust graph cache
 
             except Exception as e:
                 # Rollback transaction on any error to maintain consistency
@@ -1243,6 +1247,7 @@ class ReBACManager:
             )
 
             conn.commit()
+            self._tuple_version += 1  # Invalidate Rust graph cache
 
             # Invalidate cache entries affected by this change
             self._invalidate_cache_for_tuple(subject, relation, obj, tenant_id, subject_relation)
@@ -1588,6 +1593,8 @@ class ReBACManager:
                 updated_count += len(subject_rows)
 
             conn.commit()
+            if updated_count > 0:
+                self._tuple_version += 1  # Invalidate Rust graph cache
             logger.info(f"update_object_path complete: updated {updated_count} tuples total")
 
         return updated_count
@@ -1865,9 +1872,9 @@ class ReBACManager:
                     "permissions": ns.config.get("permissions", {}),
                 }
 
-        # Call Rust extension
+        # Call Rust extension with tuple version for graph caching
         rust_results_dict = check_permissions_bulk_with_fallback(
-            checks, tuples, namespace_configs, force_python=False
+            checks, tuples, namespace_configs, force_python=False, tuple_version=self._tuple_version
         )
 
         # Convert dict results back to list in original order
@@ -3933,6 +3940,8 @@ class ReBACManager:
                 )
 
             conn.commit()
+            if expired_tuples:
+                self._tuple_version += 1  # Invalidate Rust graph cache
             return len(expired_tuples)
 
     def get_cache_stats(self) -> dict[str, Any]:

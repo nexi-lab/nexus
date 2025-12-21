@@ -3,14 +3,22 @@
 Provides vector search capabilities using native database extensions:
 - SQLite: sqlite-vec extension
 - PostgreSQL: pgvector extension
+
+Zoekt integration:
+- keyword_search tries Zoekt first for fast candidate retrieval
+- Falls back to FTS if Zoekt unavailable
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import struct
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import event, text
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -317,6 +325,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     vec_distance_cosine(c.embedding, :embedding) as distance,
                     (1 - vec_distance_cosine(c.embedding, :embedding)) as score
@@ -340,6 +350,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     vec_distance_cosine(c.embedding, :embedding) as distance,
                     (1 - vec_distance_cosine(c.embedding, :embedding)) as score
@@ -359,6 +371,8 @@ class VectorDatabase:
                 "chunk_text": row.chunk_text,
                 "start_offset": row.start_offset,
                 "end_offset": row.end_offset,
+                "line_start": row.line_start,
+                "line_end": row.line_end,
                 "score": float(row.score),
             }
             for row in results
@@ -387,6 +401,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     1 - (c.embedding <=> CAST(:embedding AS vector)) as score
                 FROM document_chunks c
@@ -409,6 +425,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     1 - (c.embedding <=> CAST(:embedding AS vector)) as score
                 FROM document_chunks c
@@ -427,6 +445,8 @@ class VectorDatabase:
                 "chunk_text": row.chunk_text,
                 "start_offset": row.start_offset,
                 "end_offset": row.end_offset,
+                "line_start": row.line_start,
+                "line_end": row.line_end,
                 "score": float(row.score),
             }
             for row in results
@@ -435,7 +455,9 @@ class VectorDatabase:
     def keyword_search(
         self, session: Session, query: str, limit: int = 10, path_filter: str | None = None
     ) -> list[dict[str, Any]]:
-        """Search by keywords using FTS.
+        """Search by keywords using Zoekt (if available) or FTS.
+
+        Tries Zoekt first for fast trigram-based search, falls back to FTS.
 
         Args:
             session: Database session
@@ -446,12 +468,99 @@ class VectorDatabase:
         Returns:
             List of search results with scores
         """
+        # Try Zoekt first for accelerated search
+        zoekt_results = self._try_keyword_search_with_zoekt(query, limit, path_filter)
+        if zoekt_results is not None:
+            logger.debug(f"[KEYWORD] Zoekt returned {len(zoekt_results)} results")
+            return zoekt_results
+
+        # Fall back to FTS
+        logger.debug("[KEYWORD] Using FTS fallback")
         if self.db_type == "sqlite":
             return self._sqlite_keyword_search(session, query, limit, path_filter)
         elif self.db_type == "postgresql":
             return self._postgres_keyword_search(session, query, limit, path_filter)
         else:
             raise ValueError(f"Unsupported database type: {self.db_type}")
+
+    def _try_keyword_search_with_zoekt(
+        self, query: str, limit: int, path_filter: str | None
+    ) -> list[dict[str, Any]] | None:
+        """Try to use Zoekt for keyword search.
+
+        Args:
+            query: Search query
+            limit: Maximum results
+            path_filter: Optional path prefix
+
+        Returns:
+            List of results if Zoekt succeeded, None to fall back to FTS
+        """
+        try:
+            from nexus.search.zoekt_client import get_zoekt_client
+        except ImportError:
+            return None
+
+        client = get_zoekt_client()
+
+        # Check if Zoekt is available (sync wrapper)
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # In async context, can't use run_until_complete
+                return None
+            is_available = loop.run_until_complete(client.is_available())
+        except RuntimeError:
+            is_available = asyncio.run(client.is_available())
+
+        if not is_available:
+            return None
+
+        logger.debug("[KEYWORD] Using Zoekt for accelerated search")
+
+        try:
+            # Build Zoekt query
+            zoekt_query = query
+            if path_filter:
+                zoekt_query = f"file:{path_filter.lstrip('/')} {zoekt_query}"
+
+            # Run search
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    return None
+                matches = loop.run_until_complete(client.search(zoekt_query, num=limit * 2))
+            except RuntimeError:
+                matches = asyncio.run(client.search(zoekt_query, num=limit * 2))
+
+            if not matches:
+                # No results - let FTS try
+                return None
+
+            # Convert Zoekt results to keyword_search format
+            results = []
+            for match in matches[:limit]:
+                results.append(
+                    {
+                        "chunk_id": None,  # Not from chunks table
+                        "path_id": None,
+                        "chunk_index": 0,
+                        "chunk_text": match.content,
+                        "start_offset": 0,
+                        "end_offset": len(match.content),
+                        "line_start": match.line,
+                        "line_end": match.line,
+                        "virtual_path": match.file,
+                        "score": match.score or 1.0,
+                    }
+                )
+
+            logger.debug(f"[KEYWORD] Zoekt: {len(matches)} matches, returning {len(results)}")
+            return results
+
+        except Exception as e:
+            logger.warning(f"[KEYWORD] Zoekt search failed, falling back to FTS: {e}")
+            return None
 
     def _sqlite_keyword_search(
         self, session: Session, query: str, limit: int, path_filter: str | None
@@ -476,6 +585,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     fts.rank as score
                 FROM document_chunks_fts fts
@@ -498,6 +609,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     fts.rank as score
                 FROM document_chunks_fts fts
@@ -517,6 +630,8 @@ class VectorDatabase:
                 "chunk_text": row.chunk_text,
                 "start_offset": row.start_offset,
                 "end_offset": row.end_offset,
+                "line_start": row.line_start,
+                "line_end": row.line_end,
                 "score": abs(float(row.score)),  # FTS5 rank is negative
             }
             for row in results
@@ -545,6 +660,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     ts_rank(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query)) as score
                 FROM document_chunks c
@@ -566,6 +683,8 @@ class VectorDatabase:
                     c.chunk_text,
                     c.start_offset,
                     c.end_offset,
+                    c.line_start,
+                    c.line_end,
                     fp.virtual_path,
                     ts_rank(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query)) as score
                 FROM document_chunks c
@@ -584,6 +703,8 @@ class VectorDatabase:
                 "chunk_text": row.chunk_text,
                 "start_offset": row.start_offset,
                 "end_offset": row.end_offset,
+                "line_start": row.line_start,
+                "line_end": row.line_end,
                 "score": float(row.score),
             }
             for row in results

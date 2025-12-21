@@ -1,0 +1,699 @@
+{"product": "ActionGenie", "question": "What are the employee IDs of team members who shared demos of ActionGenie's competitor products?"}
+{"product": "ActionGenie", "question": "Find the demo URLs shared by team members for ActionGenie's competitor products?"}
+{"product": "ActionGenie", "question": "Find employee IDs of Product Managers who reviewed the Market Research Report for ActionGenie?"}
+{"product": "ActionGenie", "question": "Find employee IDs of Chief Product Officers who reviewed the Market Research Report for ActionGenie?"}
+{"product": "ActionGenie", "question": "Find employee IDs of QA Specialists who reviewed the Product Vision Document for ActionGenie?"}
+{"product": "ActionGenie", "question": "Find employee IDs of Product Managers who reviewed the Product Vision Document for ActionGenie?"}
+{"product": "ActionGenie", "question": "Find employee IDs of Chief Product Officers who reviewed the Technical Specifications Document for ActionGenie?"}
+{"product": "ActionGenie", "question": "Find employee IDs of UX Researchers who reviewed the System Design Document for ActionGenie?"}
+{"product": "ActionGenie", "question": "What features were temporarily delayed due to security concerns but eventually added to ActionGenie?"}
+{"product": "ActionGenie", "question": "Find names of companies that reported bugs that were later determined to not require any fixes in ActionGenie?"}
+{"product": "ActionGenie", "question": "Which bugs in ActionGenie were later found to not require any fixes?"}
+{"product": "ActionGenie", "question": "Find the name of companies that reported the most issues that didn’t need fixes in ActionGenie?"}
+{"product": "ActionGenie", "question": "Find the employee ID of the engineer assigned the most issues that didn’t need fixes in ActionGenie."}
+{"product": "ActionGenie", "question": "Find the employee IDs of engineers who authored maximum number of PRs in ActionGenie for bug fixes that are now reopened by customers."}
+{"product": "ActionGenie", "question": "Find the employee IDs of engineers who dismissed maximum bugs in ActionGenie that are now reopened by customers."}
+{"product": "ActionGenie", "question": "Find the name of company that has the maximum number of reopened bugs in ActionGenie."}
+{"product": "AnomalyForce", "question": "What are the changes suggested by QA Specialist to improve the Market Research Report for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Product Manager to improve the Market Research Report for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Chief Product Officer to improve the Market Research Report for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Technical Architect to improve the Market Research Report for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Vision Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by QA Specialist to improve the Product Vision Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Product Manager to improve the Product Vision Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Technical Architect to improve the Product Vision Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Requirements Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Product Manager to improve the Product Requirements Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Chief Product Officer to improve the Product Requirements Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Technical Architect to improve the Product Requirements Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Marketing Manager to improve the Technical Specifications Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by UX Researcher to improve the Technical Specifications Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Chief Product Officer to improve the Technical Specifications Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Technical Architect to improve the Technical Specifications Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Marketing Manager to improve the System Design Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by UX Researcher to improve the System Design Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Engineering Lead to improve the System Design Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "What are the changes suggested by Chief Product Officer to improve the System Design Document for AnomalyForce?"}
+{"product": "AnomalyForce", "question": "Find names of companies that reported bugs that were later determined to not require any fixes in AnomalyForce?"}
+{"product": "AnomalyForce", "question": "Which bugs in AnomalyForce were later found to not require any fixes?"}
+{"product": "AnomalyForce", "question": "Find the name of companies that reported the most issues that didn’t need fixes in AnomalyForce?"}
+{"product": "AnomalyForce", "question": "Find the employee ID of the engineer assigned the most issues that didn’t need fixes in AnomalyForce."}
+{"product": "AnomalyForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in AnomalyForce for bug fixes that are now reopened by customers."}
+{"product": "AnomalyForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in AnomalyForce that are now reopened by customers."}
+{"product": "AnomalyForce", "question": "Find the name of company that has the maximum number of reopened bugs in AnomalyForce."}
+{"product": "AutoTuneForce", "question": "What are the unique features of AutoTuneForce's competitor products?"}
+{"product": "AutoTuneForce", "question": "What are the weaknesses of AutoTuneForce's competitor products?"}
+{"product": "AutoTuneForce", "question": "Find employee IDs of team members who provided insights on the strengths and weaknesses of AutoTuneForce's competitor products?"}
+{"product": "AutoTuneForce", "question": "Find employee IDs of team members who shared demos of AutoTuneForce's competitor products?"}
+{"product": "AutoTuneForce", "question": "Find the demo URLs shared by team members for AutoTuneForce's competitor products?"}
+{"product": "AutoTuneForce", "question": "What new features about enhancing the parameter tuning engine with advanced AI algorithms are added to AutoTuneForce?"}
+{"product": "AutoTuneForce", "question": "What features were temporarily delayed due to security concerns but eventually added to AutoTuneForce?"}
+{"product": "CoachForce", "question": "What are the employee IDs of team members who shared demos of CoachForce's competitor products?"}
+{"product": "CoachForce", "question": "Find the demo URLs shared by team members for CoachForce's competitor products?"}
+{"product": "CoachForce", "question": "Find employee IDs of Chief Product Officers who reviewed the Market Research Report for CoachForce?"}
+{"product": "CoachForce", "question": "Find employee IDs of QA Specialists who reviewed the Market Research Report for CoachForce?"}
+{"product": "CoachForce", "question": "Find employee IDs of Product Managers who reviewed the Product Vision Document for CoachForce?"}
+{"product": "CoachForce", "question": "Find employee IDs of Technical Architects who reviewed the Product Vision Document for CoachForce?"}
+{"product": "CoachForce", "question": "Find employee IDs of Chief Product Officers who reviewed the Product Requirements Document for CoachForce?"}
+{"product": "CoachForce", "question": "Find employee IDs of Technical Architects who reviewed the Product Requirements Document for CoachForce?"}
+{"product": "CoachForce", "question": "Find employee IDs of Marketing Managers who reviewed the Product Requirements Document for CoachForce?"}
+{"product": "CoachForce", "question": "Find employee IDs of UX Researchers who reviewed the Technical Specifications Document for CoachForce?"}
+{"product": "CoachForce", "question": "Find employee IDs of Marketing Managers who reviewed the Technical Specifications Document for CoachForce?"}
+{"product": "CoachForce", "question": "Find employee IDs of Engineering Leads who reviewed the System Design Document for CoachForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Technical Architect to improve the Market Research Report for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Product Manager to improve the Market Research Report for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Chief Product Officer to improve the Market Research Report for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by QA Specialist to improve the Market Research Report for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Technical Architect to improve the Product Vision Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Product Manager to improve the Product Vision Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Vision Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by QA Specialist to improve the Product Vision Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Technical Architect to improve the Product Requirements Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Product Manager to improve the Product Requirements Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Requirements Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Chief Product Officer to improve the Product Requirements Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Technical Architect to improve the Technical Specifications Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by UX Researcher to improve the Technical Specifications Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Marketing Manager to improve the Technical Specifications Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Chief Product Officer to improve the Technical Specifications Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Engineering Lead to improve the System Design Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by UX Researcher to improve the System Design Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Marketing Manager to improve the System Design Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "What are the changes suggested by Chief Product Officer to improve the System Design Document for CollaborateForce?"}
+{"product": "CollaborateForce", "question": "Can you provide links to PRs related to the AI engine feedback loop in CollaborateForce that were reverted due to changes in product direction?"}
+{"product": "CollaborateForce", "question": "Can you provide links to PRs related to the AI engine feedback loop in CollaborateForce that were reverted because they introduced bugs in the product?"}
+{"product": "CollaborateForce", "question": "Can you provide links to PRs related to the API design with GraphQL in CollaborateForce that were reverted because they introduced bugs in the product?"}
+{"product": "CollaborateForce", "question": "Can you find links to PRs for WebRTC optimization in CollaborateForce that were reverted due to changes in product direction?"}
+{"product": "CollaborateForce", "question": "Can you find links to PRs for WebRTC optimization for collaboration tools in CollaborateForce that were reverted as they introduced bugs in the product?"}
+{"product": "CollaborateForce", "question": "Can you find links to the approved PRs for the WebRTC optimization feature in CollaborateForce that need to be closed?"}
+{"product": "CollaborateForce", "question": "Can you provide links to PRs related to the implementation of encryption protocols for communication features in CollaborateForce that were reverted due to changes in product direction?"}
+{"product": "CollaborateForce", "question": "Can you find links to PRs for implementing encryption protocols for communication features in CollaborateForce that were reverted as they introduced bugs in the product?"}
+{"product": "CollaborateForce", "question": "Could you provide the links to the PRs for implementing encryption protocols for communication features in CollaborateForce that need to be merged?"}
+{"product": "CollaborateForce", "question": "Can you find links to PRs for developing UI components for accessibility and customization in CollaborateForce that were reverted due to changes in product direction?"}
+{"product": "CollaborateForce", "question": "Can you find links to PRs for implementing UI components for accessibility and customization in CollaborateForce that were reverted as they introduced bugs in the product?"}
+{"product": "CollaborateForce", "question": "Could you provide the links to the approved PRs for the UI components for accessibility and customization in CollaborateForce that need to be closed?"}
+{"product": "CollaborateForce", "question": "Can you provide links to PRs for expanding API support in CollaborateForce that were reverted due to changes in product direction?"}
+{"product": "CollaborateForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in CollaborateForce for bug fixes that are now reopened by customers."}
+{"product": "CollaborateForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in CollaborateForce that are now reopened by customers."}
+{"product": "CollaborateForce", "question": "Find the name of company that has the maximum number of reopened bugs in CollaborateForce."}
+{"product": "CollaborateForce", "question": "Find bugs reported by BlueWave in CollaborateForce that did not require any fixes?"}
+{"product": "CollaborateForce", "question": "Find bugs reported by NextGenTech in CollaborateForce that did not require any fixes?"}
+{"product": "CollaborateForce", "question": "Find bugs reported by DataSolutions in CollaborateForce that did not require any fixes?"}
+{"product": "CollaborateForce", "question": "Find bugs reported by AITransformers in CollaborateForce that did not require any fixes?"}
+{"product": "CollaborateForce", "question": "Find bugs reported by InnovateAI in CollaborateForce that did not require any fixes?"}
+{"product": "CollaborateForce", "question": "Find bugs reported by CloudSync in CollaborateForce that did not require any fixes?"}
+{"product": "CollaborateForce", "question": "Find bugs reported by TechCorp in CollaborateForce that did not require any fixes?"}
+{"product": "CollaborateForce", "question": "Find bugs reported by FusionTech in CollaborateForce that did not require any fixes?"}
+{"product": "CollaborateForce", "question": "Find bugs reported by NextGenTech in CollaborateForce that did not require any fixes?"}
+{"product": "CollaborateForce", "question": "Find bugs reported by DataSolutions in CollaborateForce that did not require any fixes?"}
+{"product": "CollaborateForce", "question": "Find bugs reported by InnovateAI in CollaborateForce that did not require any fixes?"}
+{"product": "CollaborateForce", "question": "Find bugs reported by FusionTech in CollaborateForce that did not require any fixes?"}
+{"product": "CollaborationForce", "question": "What are the employee IDs of team members who shared demos of CollaborationForce's competitor products?"}
+{"product": "CollaborationForce", "question": "Find the demo URLs shared by team members for CollaborationForce's competitor products?"}
+{"product": "CollaborationForce", "question": "Find employee IDs of Chief Product Officers who reviewed the Market Research Report for CollaborationForce?"}
+{"product": "CollaborationForce", "question": "Find employee IDs of Technical Architects who reviewed the Market Research Report for CollaborationForce?"}
+{"product": "CollaborationForce", "question": "Find employee IDs of Product Managers who reviewed the Market Research Report for CollaborationForce?"}
+{"product": "CollaborationForce", "question": "Find employee IDs of QA Specialists who reviewed the Product Vision Document for CollaborationForce?"}
+{"product": "CollaborationForce", "question": "Find employee IDs of Marketing Managers who reviewed the Product Vision Document for CollaborationForce?"}
+{"product": "CollaborationForce", "question": "Find employee IDs of Technical Architects who reviewed the Product Requirements Document for CollaborationForce?"}
+{"product": "CollaborationForce", "question": "Find employee IDs of Marketing Managers who reviewed the Product Requirements Document for CollaborationForce?"}
+{"product": "CollaborationForce", "question": "Find employee IDs of Chief Product Officers who reviewed the Technical Specifications Document for CollaborationForce?"}
+{"product": "CollaborationForce", "question": "Find employee IDs of Technical Architects who reviewed the Technical Specifications Document for CollaborationForce?"}
+{"product": "CollaborationForce", "question": "Can you provide links to PRs related to the Advanced Security Protocols feature in CollaborationForce that were not approved?"}
+{"product": "CollaborationForce", "question": "Find names of companies that reported bugs that were later determined to not require any fixes in CollaborationForce?"}
+{"product": "CollaborationForce", "question": "Which bugs in CollaborationForce were later found to not require any fixes?"}
+{"product": "CollaborationForce", "question": "Find the name of companies that reported the most issues that didn’t need fixes in CollaborationForce?"}
+{"product": "CollaborationForce", "question": "Find the employee ID of the engineer assigned the most issues that didn’t need fixes in CollaborationForce."}
+{"product": "CollaborationForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in CollaborationForce for bug fixes that are now reopened by customers."}
+{"product": "CollaborationForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in CollaborationForce that are now reopened by customers."}
+{"product": "CollaborationForce", "question": "Find the name of company that has the maximum number of reopened bugs in CollaborationForce."}
+{"product": "ConnectForce", "question": "What are the employee IDs of team members who shared demos of ConnectForce's competitor products?"}
+{"product": "ConnectForce", "question": "Find the demo URLs shared by team members for ConnectForce's competitor products?"}
+{"product": "ConnectForce", "question": "Find employee IDs of Product Managers who reviewed the Market Research Report for ConnectForce?"}
+{"product": "ConnectForce", "question": "Find employee IDs of QA Specialists who reviewed the Market Research Report for ConnectForce?"}
+{"product": "ConnectForce", "question": "Find employee IDs of Chief Product Officers who reviewed the Market Research Report for ConnectForce?"}
+{"product": "ConnectForce", "question": "Find employee IDs of Technical Architects who reviewed the Product Vision Document for ConnectForce?"}
+{"product": "ConnectForce", "question": "Find employee IDs of Product Managers who reviewed the Product Vision Document for ConnectForce?"}
+{"product": "ConnectForce", "question": "Find employee IDs of Marketing Managers who reviewed the Product Vision Document for ConnectForce?"}
+{"product": "ConnectForce", "question": "Find employee IDs of Technical Architects who reviewed the Product Requirements Document for ConnectForce?"}
+{"product": "ConnectForce", "question": "Find employee IDs of Product Managers who reviewed the Product Requirements Document for ConnectForce?"}
+{"product": "ConnectForce", "question": "Find employee IDs of Marketing Managers who reviewed the Product Requirements Document for ConnectForce?"}
+{"product": "ConnectForce", "question": "Find employee IDs of Technical Architects who reviewed the Technical Specifications Document for ConnectForce?"}
+{"product": "ConnectForce", "question": "Find employee IDs of Marketing Managers who reviewed the Technical Specifications Document for ConnectForce?"}
+{"product": "ConnectForce", "question": "Find employee IDs of Chief Product Officers who reviewed the Technical Specifications Document for ConnectForce?"}
+{"product": "ConnectForce", "question": "Find employee IDs of UX Researchers who reviewed the System Design Document for ConnectForce?"}
+{"product": "ConnectForce", "question": "Can you find links to PRs for enhancing NLP capabilities for better user interactions in ConnectForce that were reverted due to changes in product direction?"}
+{"product": "ConnectForce", "question": "Can you provide links to PRs related to enhancing NLP capabilities for better user interactions in ConnectForce that were reverted because they introduced bugs in the product?"}
+{"product": "ConnectForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in ConnectForce for bug fixes that are now reopened by customers."}
+{"product": "ConnectForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in ConnectForce that are now reopened by customers."}
+{"product": "ConnectForce", "question": "Find the name of company that has the maximum number of reopened bugs in ConnectForce."}
+{"product": "ConnectForce", "question": "Find bugs reported by SmartData in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by InnovateAI in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by TechCorp in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by CloudSync in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by ComputeWorks in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by NextGenTech in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by FusionTech in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by BlueWave in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by SmartData in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by InnovateAI in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by DataSolutions in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by CloudSync in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by ComputeWorks in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by NextGenTech in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by FusionTech in ConnectForce that did not require any fixes?"}
+{"product": "ConnectForce", "question": "Find bugs reported by AITransformers in ConnectForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Product Manager to improve the Market Research Report for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Chief Product Officer to improve the Market Research Report for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Technical Architect to improve the Market Research Report for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by QA Specialist to improve the Market Research Report for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Product Manager to improve the Product Vision Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Technical Architect to improve the Product Vision Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Vision Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by QA Specialist to improve the Product Vision Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Product Manager to improve the Product Requirements Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Chief Product Officer to improve the Product Requirements Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Technical Architect to improve the Product Requirements Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Requirements Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by UX Researcher to improve the Technical Specifications Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Chief Product Officer to improve the Technical Specifications Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Technical Architect to improve the Technical Specifications Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Marketing Manager to improve the Technical Specifications Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by UX Researcher to improve the System Design Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Chief Product Officer to improve the System Design Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Engineering Lead to improve the System Design Document for ContentForce?"}
+{"product": "ContentForce", "question": "What are the changes suggested by Marketing Manager to improve the System Design Document for ContentForce?"}
+{"product": "ContentForce", "question": "What new features about refining the user interface are added to ContentForce?"}
+{"product": "ContentForce", "question": "What new features related to bolstering security protocols have been added to ContentForce?"}
+{"product": "ContentForce", "question": "What features were temporarily delayed due to change in product direction but eventually added to ContentForce?"}
+{"product": "ContentForce", "question": "What features were temporarily delayed due to security concerns but eventually added to ContentForce?"}
+{"product": "ContentForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in ContentForce for bug fixes that are now reopened by customers."}
+{"product": "ContentForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in ContentForce that are now reopened by customers."}
+{"product": "ContentForce", "question": "Find the name of company that has the maximum number of reopened bugs in ContentForce."}
+{"product": "ContentForce", "question": "Find bugs reported by ComputeWorks in ContentForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "Find bugs reported by SmartData in ContentForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "Find bugs reported by BlueWave in ContentForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "Find bugs reported by DataSolutions in ContentForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "Find bugs reported by CloudSync in ContentForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "Find bugs reported by InnovateAI in ContentForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "Find bugs reported by TechCorp in ContentForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "Find bugs reported by ComputeWorks in ContentForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "Find bugs reported by SmartData in ContentForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "Find bugs reported by BlueWave in ContentForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "Find bugs reported by NextGenTech in ContentForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "Find bugs reported by DataSolutions in ContentForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "Find bugs reported by InnovateAI in ContentForce that did not require any fixes?"}
+{"product": "ContentForce", "question": "Find bugs reported by TechCorp in ContentForce that did not require any fixes?"}
+{"product": "ContextForce", "question": "What are the unique features of ContextForce's competitor products?"}
+{"product": "ContextForce", "question": "What are the weaknesses of ContextForce's competitor products?"}
+{"product": "ContextForce", "question": "Find employee IDs of team members who provided insights on the strengths and weaknesses of ContextForce's competitor products?"}
+{"product": "ContextForce", "question": "Find employee IDs of team members who shared demos of ContextForce's competitor products?"}
+{"product": "ContextForce", "question": "Find the demo URLs shared by team members for ContextForce's competitor products?"}
+{"product": "EdgeForce", "question": "What are the unique features of EdgeForce's competitor products?"}
+{"product": "EdgeForce", "question": "What are the weaknesses of EdgeForce's competitor products?"}
+{"product": "EdgeForce", "question": "Find employee IDs of team members who provided insights on the strengths and weaknesses of EdgeForce's competitor products?"}
+{"product": "EdgeForce", "question": "Find employee IDs of team members who shared demos of EdgeForce's competitor products?"}
+{"product": "EdgeForce", "question": "Find the demo URLs shared by team members for EdgeForce's competitor products?"}
+{"product": "EdgeForce", "question": "What features were temporarily delayed due to security concerns but eventually added to EdgeForce?"}
+{"product": "EdgeForce", "question": "Find names of companies that reported bugs that were later determined to not require any fixes in EdgeForce?"}
+{"product": "EdgeForce", "question": "Which bugs in EdgeForce were later found to not require any fixes?"}
+{"product": "EdgeForce", "question": "Find the name of companies that reported the most issues that didn’t need fixes in EdgeForce?"}
+{"product": "EdgeForce", "question": "Find the employee ID of the engineer assigned the most issues that didn’t need fixes in EdgeForce."}
+{"product": "EdgeForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in EdgeForce for bug fixes that are now reopened by customers."}
+{"product": "EdgeForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in EdgeForce that are now reopened by customers."}
+{"product": "EdgeForce", "question": "Find the name of company that has the maximum number of reopened bugs in EdgeForce."}
+{"product": "ExplainabilityForce", "question": "What are the employee IDs of team members who shared demos of ExplainabilityForce's competitor products?"}
+{"product": "ExplainabilityForce", "question": "Find the demo URLs shared by team members for ExplainabilityForce's competitor products?"}
+{"product": "ExplainabilityForce", "question": "Find employee IDs of Product Managers who reviewed the Market Research Report for ExplainabilityForce?"}
+{"product": "ExplainabilityForce", "question": "Find employee IDs of Chief Product Officers who reviewed the Market Research Report for ExplainabilityForce?"}
+{"product": "ExplainabilityForce", "question": "Find employee IDs of Technical Architects who reviewed the Market Research Report for ExplainabilityForce?"}
+{"product": "ExplainabilityForce", "question": "Find employee IDs of QA Specialists who reviewed the Market Research Report for ExplainabilityForce?"}
+{"product": "ExplainabilityForce", "question": "Find employee IDs of Product Managers who reviewed the Product Vision Document for ExplainabilityForce?"}
+{"product": "ExplainabilityForce", "question": "Find employee IDs of Technical Architects who reviewed the Product Vision Document for ExplainabilityForce?"}
+{"product": "ExplainabilityForce", "question": "Find employee IDs of QA Specialists who reviewed the Product Vision Document for ExplainabilityForce?"}
+{"product": "ExplainabilityForce", "question": "Find employee IDs of Chief Product Officers who reviewed the Product Requirements Document for ExplainabilityForce?"}
+{"product": "ExplainabilityForce", "question": "Find employee IDs of Marketing Managers who reviewed the Product Requirements Document for ExplainabilityForce?"}
+{"product": "ExplainabilityForce", "question": "Find employee IDs of Chief Product Officers who reviewed the Technical Specifications Document for ExplainabilityForce?"}
+{"product": "ExplainabilityForce", "question": "Find employee IDs of Technical Architects who reviewed the Technical Specifications Document for ExplainabilityForce?"}
+{"product": "ExplainabilityForce", "question": "Find employee IDs of Marketing Managers who reviewed the System Design Document for ExplainabilityForce?"}
+{"product": "ExplainabilityForce", "question": "Can you provide links to the PRs related to the Salesforce integration - GraphQL API setup in ExplainabilityForce that were reverted because they introduced bugs in the product?"}
+{"product": "ExplainabilityForce", "question": "Could you provide links to the approved PRs for the Salesforce integration - GraphQL API setup in ExplainabilityForce that need to be closed?"}
+{"product": "ExplainabilityForce", "question": "Can you provide links to the PRs related to the Salesforce integration - Schema management in ExplainabilityForce that were reverted because they introduced bugs in the product?"}
+{"product": "ExplainabilityForce", "question": "Could you provide the links to the approved PRs for the Salesforce integration - Schema management feature in ExplainabilityForce that need to be closed?"}
+{"product": "ExplainabilityForce", "question": "Can you provide links to PRs related to the Security - Data encryption feature in ExplainabilityForce that were reverted because they introduced bugs in the product?"}
+{"product": "ExplainabilityForce", "question": "Can you provide links to the approved PRs for the Security - Data encryption feature in ExplainabilityForce that need to be closed?"}
+{"product": "ExplainabilityForce", "question": "Could you provide the links to the PRs for implementing data encryption in ExplainabilityForce that need to be merged?"}
+{"product": "ExplainabilityForce", "question": "Can you provide links to PRs related to the AWS and Azure integration for resource planning in ExplainabilityForce that were reverted due to changes in product direction?"}
+{"product": "FeedbackForce", "question": "What are the employee IDs of team members who shared demos of FeedbackForce's competitor products?"}
+{"product": "FeedbackForce", "question": "Find the demo URLs shared by team members for FeedbackForce's competitor products?"}
+{"product": "FeedbackForce", "question": "Find employee IDs of Technical Architects who reviewed the Market Research Report for FeedbackForce?"}
+{"product": "FeedbackForce", "question": "Find employee IDs of Product Managers who reviewed the Product Vision Document for FeedbackForce?"}
+{"product": "FeedbackForce", "question": "Find employee IDs of Technical Architects who reviewed the Product Vision Document for FeedbackForce?"}
+{"product": "FeedbackForce", "question": "Find employee IDs of Technical Architects who reviewed the Product Requirements Document for FeedbackForce?"}
+{"product": "FeedbackForce", "question": "Find employee IDs of Marketing Managers who reviewed the Technical Specifications Document for FeedbackForce?"}
+{"product": "FeedbackForce", "question": "Find employee IDs of Technical Architects who reviewed the Technical Specifications Document for FeedbackForce?"}
+{"product": "FeedbackForce", "question": "Find employee IDs of Chief Product Officers who reviewed the Technical Specifications Document for FeedbackForce?"}
+{"product": "FeedbackForce", "question": "Find employee IDs of UX Researchers who reviewed the Technical Specifications Document for FeedbackForce?"}
+{"product": "FeedbackForce", "question": "Find employee IDs of Engineering Leads who reviewed the System Design Document for FeedbackForce?"}
+{"product": "FeedbackForce", "question": "Find employee IDs of UX Researchers who reviewed the System Design Document for FeedbackForce?"}
+{"product": "FeedbackForce", "question": "What features were temporarily delayed due to change in product direction but eventually added to FeedbackForce?"}
+{"product": "FeedbackForce", "question": "What features were temporarily delayed due to security concerns but eventually added to FeedbackForce?"}
+{"product": "FeedbackForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in FeedbackForce for bug fixes that are now reopened by customers."}
+{"product": "FeedbackForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in FeedbackForce that are now reopened by customers."}
+{"product": "FeedbackForce", "question": "Find the name of company that has the maximum number of reopened bugs in FeedbackForce."}
+{"product": "FeedbackForce", "question": "Find bugs reported by BlueWave in FeedbackForce that did not require any fixes?"}
+{"product": "FeedbackForce", "question": "Find bugs reported by SmartData in FeedbackForce that did not require any fixes?"}
+{"product": "FeedbackForce", "question": "Find bugs reported by AITransformers in FeedbackForce that did not require any fixes?"}
+{"product": "FeedbackForce", "question": "Find bugs reported by ComputeWorks in FeedbackForce that did not require any fixes?"}
+{"product": "FeedbackForce", "question": "Find bugs reported by InnovateAI in FeedbackForce that did not require any fixes?"}
+{"product": "FeedbackForce", "question": "Find bugs reported by CloudSync in FeedbackForce that did not require any fixes?"}
+{"product": "FeedbackForce", "question": "Find bugs reported by NextGenTech in FeedbackForce that did not require any fixes?"}
+{"product": "FeedbackForce", "question": "Find bugs reported by TechCorp in FeedbackForce that did not require any fixes?"}
+{"product": "FeedbackForce", "question": "Find bugs reported by AITransformers in FeedbackForce that did not require any fixes?"}
+{"product": "FeedbackForce", "question": "Find bugs reported by InnovateAI in FeedbackForce that did not require any fixes?"}
+{"product": "FeedbackForce", "question": "Find bugs reported by FusionTech in FeedbackForce that did not require any fixes?"}
+{"product": "FeedbackForce", "question": "Find bugs reported by DataSolutions in FeedbackForce that did not require any fixes?"}
+{"product": "FeedbackForce", "question": "Find bugs reported by TechCorp in FeedbackForce that did not require any fixes?"}
+{"product": "FlowForce", "question": "What are the unique features of FlowForce's competitor products?"}
+{"product": "FlowForce", "question": "What are the weaknesses of FlowForce's competitor products?"}
+{"product": "FlowForce", "question": "Find employee IDs of team members who provided insights on the strengths and weaknesses of FlowForce's competitor products?"}
+{"product": "FlowForce", "question": "Find employee IDs of team members who shared demos of FlowForce's competitor products?"}
+{"product": "FlowForce", "question": "Find the demo URLs shared by team members for FlowForce's competitor products?"}
+{"product": "FlowForce", "question": "What new features related to optimizing the real-time processing modules have been added to FlowForce?"}
+{"product": "FlowForce", "question": "What features were temporarily delayed due to change in product direction but eventually added to FlowForce?"}
+{"product": "FlowForce", "question": "What features were temporarily delayed due to security concerns but eventually added to FlowForce?"}
+{"product": "FlowForce", "question": "Find names of companies that reported bugs that were later determined to not require any fixes in FlowForce?"}
+{"product": "FlowForce", "question": "Which bugs in FlowForce were later found to not require any fixes?"}
+{"product": "FlowForce", "question": "Find the name of companies that reported the most issues that didn’t need fixes in FlowForce?"}
+{"product": "FlowForce", "question": "Find the employee ID of the engineer assigned the most issues that didn’t need fixes in FlowForce."}
+{"product": "FlowForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in FlowForce for bug fixes that are now reopened by customers."}
+{"product": "FlowForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in FlowForce that are now reopened by customers."}
+{"product": "FlowForce", "question": "Find the name of company that has the maximum number of reopened bugs in FlowForce."}
+{"product": "ForecastForce", "question": "What are the unique features of ForecastForce's competitor products?"}
+{"product": "ForecastForce", "question": "What are the weaknesses of ForecastForce's competitor products?"}
+{"product": "ForecastForce", "question": "Find employee IDs of team members who provided insights on the strengths and weaknesses of ForecastForce's competitor products?"}
+{"product": "ForecastForce", "question": "Find employee IDs of team members who shared demos of ForecastForce's competitor products?"}
+{"product": "ForecastForce", "question": "Find the demo URLs shared by team members for ForecastForce's competitor products?"}
+{"product": "ForecastForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in ForecastForce for bug fixes that are now reopened by customers."}
+{"product": "ForecastForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in ForecastForce that are now reopened by customers."}
+{"product": "ForecastForce", "question": "Find the name of company that has the maximum number of reopened bugs in ForecastForce."}
+{"product": "ForecastForce", "question": "Find bugs reported by FusionTech in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by ComputeWorks in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by BlueWave in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by NextGenTech in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by InnovateAI in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by TechCorp in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by AITransformers in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by FusionTech in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by ComputeWorks in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by NextGenTech in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by CloudSync in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by InnovateAI in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by DataSolutions in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by TechCorp in ForecastForce that did not require any fixes?"}
+{"product": "ForecastForce", "question": "Find bugs reported by AITransformers in ForecastForce that did not require any fixes?"}
+{"product": "InsightForce", "question": "What are the employee IDs of team members who shared demos of InsightForce's competitor products?"}
+{"product": "InsightForce", "question": "Find the demo URLs shared by team members for InsightForce's competitor products?"}
+{"product": "InsightForce", "question": "Find employee IDs of QA Specialists who reviewed the Market Research Report for InsightForce?"}
+{"product": "InsightForce", "question": "Find employee IDs of Chief Product Officers who reviewed the Market Research Report for InsightForce?"}
+{"product": "InsightForce", "question": "Find employee IDs of Product Managers who reviewed the Market Research Report for InsightForce?"}
+{"product": "InsightForce", "question": "Find employee IDs of Marketing Managers who reviewed the Product Vision Document for InsightForce?"}
+{"product": "InsightForce", "question": "Find employee IDs of Technical Architects who reviewed the Product Requirements Document for InsightForce?"}
+{"product": "InsightForce", "question": "Find employee IDs of Chief Product Officers who reviewed the Product Requirements Document for InsightForce?"}
+{"product": "InsightForce", "question": "Find employee IDs of Marketing Managers who reviewed the Product Requirements Document for InsightForce?"}
+{"product": "InsightForce", "question": "Find employee IDs of Chief Product Officers who reviewed the System Design Document for InsightForce?"}
+{"product": "InsightForce", "question": "Find employee IDs of Marketing Managers who reviewed the System Design Document for InsightForce?"}
+{"product": "InsightForce", "question": "Find employee IDs of Engineering Leads who reviewed the System Design Document for InsightForce?"}
+{"product": "InsightForce", "question": "What features were temporarily delayed due to security concerns but eventually added to InsightForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by QA Specialist to improve the Market Research Report for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Chief Product Officer to improve the Market Research Report for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Product Manager to improve the Market Research Report for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Technical Architect to improve the Market Research Report for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Vision Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by QA Specialist to improve the Product Vision Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Product Manager to improve the Product Vision Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Technical Architect to improve the Product Vision Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Requirements Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Chief Product Officer to improve the Product Requirements Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Product Manager to improve the Product Requirements Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Technical Architect to improve the Product Requirements Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Marketing Manager to improve the Technical Specifications Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by UX Researcher to improve the Technical Specifications Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Chief Product Officer to improve the Technical Specifications Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Technical Architect to improve the Technical Specifications Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Marketing Manager to improve the System Design Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by UX Researcher to improve the System Design Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Chief Product Officer to improve the System Design Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What are the changes suggested by Engineering Lead to improve the System Design Document for KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What new features about blockchain integration for enhanced data security are added to KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "What features were temporarily delayed due to security concerns but eventually added to KnowledgeForce?"}
+{"product": "KnowledgeForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in KnowledgeForce for bug fixes that are now reopened by customers."}
+{"product": "KnowledgeForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in KnowledgeForce that are now reopened by customers."}
+{"product": "KnowledgeForce", "question": "Find the name of company that has the maximum number of reopened bugs in KnowledgeForce."}
+{"product": "KnowledgeForce", "question": "Find bugs reported by NextGenTech in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by DataSolutions in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by TechCorp in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by AITransformers in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by CloudSync in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by InnovateAI in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by FusionTech in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by ComputeWorks in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by BlueWave in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by NextGenTech in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by DataSolutions in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by CloudSync in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by InnovateAI in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by ComputeWorks in KnowledgeForce that did not require any fixes?"}
+{"product": "KnowledgeForce", "question": "Find bugs reported by BlueWave in KnowledgeForce that did not require any fixes?"}
+{"product": "LeadForce", "question": "What are the unique features of LeadForce's competitor products?"}
+{"product": "LeadForce", "question": "What are the weaknesses of LeadForce's competitor products?"}
+{"product": "LeadForce", "question": "Find employee IDs of team members who provided insights on the strengths and weaknesses of LeadForce's competitor products?"}
+{"product": "LeadForce", "question": "Find employee IDs of team members who shared demos of LeadForce's competitor products?"}
+{"product": "LeadForce", "question": "Find the demo URLs shared by team members for LeadForce's competitor products?"}
+{"product": "LeadForce", "question": "Can you provide links to the PRs for the AI-driven lead scoring feature in LeadForce that were reverted because they introduced bugs in the product?"}
+{"product": "LeadForce", "question": "Can you provide links to the approved PRs for the AI-driven lead scoring feature in LeadForce that need to be closed?"}
+{"product": "LeadForce", "question": "Can you provide links to PRs for implementing real-time engagement tracking in LeadForce that were reverted due to changes in product direction?"}
+{"product": "LeadForce", "question": "Can you provide the links to the PRs for the CRM platform integration in LeadForce that need to be merged?"}
+{"product": "LeadForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in LeadForce for bug fixes that are now reopened by customers."}
+{"product": "LeadForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in LeadForce that are now reopened by customers."}
+{"product": "LeadForce", "question": "Find the name of company that has the maximum number of reopened bugs in LeadForce."}
+{"product": "LeadForce", "question": "Find bugs reported by TechCorp in LeadForce that did not require any fixes?"}
+{"product": "LeadForce", "question": "Find bugs reported by FusionTech in LeadForce that did not require any fixes?"}
+{"product": "LeadForce", "question": "Find bugs reported by SmartData in LeadForce that did not require any fixes?"}
+{"product": "LeadForce", "question": "Find bugs reported by BlueWave in LeadForce that did not require any fixes?"}
+{"product": "LeadForce", "question": "Find bugs reported by DataSolutions in LeadForce that did not require any fixes?"}
+{"product": "LeadForce", "question": "Find bugs reported by ComputeWorks in LeadForce that did not require any fixes?"}
+{"product": "LeadForce", "question": "Find bugs reported by TechCorp in LeadForce that did not require any fixes?"}
+{"product": "LeadForce", "question": "Find bugs reported by FusionTech in LeadForce that did not require any fixes?"}
+{"product": "LeadForce", "question": "Find bugs reported by SmartData in LeadForce that did not require any fixes?"}
+{"product": "LeadForce", "question": "Find bugs reported by CloudSync in LeadForce that did not require any fixes?"}
+{"product": "LeadForce", "question": "Find bugs reported by BlueWave in LeadForce that did not require any fixes?"}
+{"product": "LeadForce", "question": "Find bugs reported by NextGenTech in LeadForce that did not require any fixes?"}
+{"product": "LeadForce", "question": "Find bugs reported by ComputeWorks in LeadForce that did not require any fixes?"}
+{"product": "MonitorForce", "question": "What are the employee IDs of team members who shared demos of MonitorForce's competitor products?"}
+{"product": "MonitorForce", "question": "Find the demo URLs shared by team members for MonitorForce's competitor products?"}
+{"product": "MonitorForce", "question": "Find employee IDs of Product Managers who reviewed the Market Research Report for MonitorForce?"}
+{"product": "MonitorForce", "question": "Find employee IDs of QA Specialists who reviewed the Market Research Report for MonitorForce?"}
+{"product": "MonitorForce", "question": "Find employee IDs of Marketing Managers who reviewed the Product Requirements Document for MonitorForce?"}
+{"product": "MonitorForce", "question": "Find employee IDs of Product Managers who reviewed the Product Requirements Document for MonitorForce?"}
+{"product": "MonitorForce", "question": "Find employee IDs of Chief Product Officers who reviewed the Technical Specifications Document for MonitorForce?"}
+{"product": "MonitorForce", "question": "Find employee IDs of UX Researchers who reviewed the Technical Specifications Document for MonitorForce?"}
+{"product": "MonitorForce", "question": "Find employee IDs of Engineering Leads who reviewed the System Design Document for MonitorForce?"}
+{"product": "MonitorForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in MonitorForce for bug fixes that are now reopened by customers."}
+{"product": "MonitorForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in MonitorForce that are now reopened by customers."}
+{"product": "MonitorForce", "question": "Find the name of company that has the maximum number of reopened bugs in MonitorForce."}
+{"product": "MonitorForce", "question": "Find bugs reported by FusionTech in MonitorForce that did not require any fixes?"}
+{"product": "MonitorForce", "question": "Find bugs reported by BlueWave in MonitorForce that did not require any fixes?"}
+{"product": "MonitorForce", "question": "Find bugs reported by NextGenTech in MonitorForce that did not require any fixes?"}
+{"product": "MonitorForce", "question": "Find bugs reported by SmartData in MonitorForce that did not require any fixes?"}
+{"product": "MonitorForce", "question": "Find bugs reported by TechCorp in MonitorForce that did not require any fixes?"}
+{"product": "MonitorForce", "question": "Find bugs reported by InnovateAI in MonitorForce that did not require any fixes?"}
+{"product": "MonitorForce", "question": "Find bugs reported by DataSolutions in MonitorForce that did not require any fixes?"}
+{"product": "MonitorForce", "question": "Find bugs reported by FusionTech in MonitorForce that did not require any fixes?"}
+{"product": "MonitorForce", "question": "Find bugs reported by BlueWave in MonitorForce that did not require any fixes?"}
+{"product": "MonitorForce", "question": "Find bugs reported by NextGenTech in MonitorForce that did not require any fixes?"}
+{"product": "MonitorForce", "question": "Find bugs reported by TechCorp in MonitorForce that did not require any fixes?"}
+{"product": "MonitorForce", "question": "Find bugs reported by CloudSync in MonitorForce that did not require any fixes?"}
+{"product": "MonitorForce", "question": "Find bugs reported by DataSolutions in MonitorForce that did not require any fixes?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Chief Product Officer to improve the Market Research Report for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by QA Specialist to improve the Market Research Report for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Product Manager to improve the Market Research Report for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Technical Architect to improve the Market Research Report for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by QA Specialist to improve the Product Vision Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Product Manager to improve the Product Vision Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Technical Architect to improve the Product Vision Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Vision Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Chief Product Officer to improve the Product Requirements Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Product Manager to improve the Product Requirements Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Technical Architect to improve the Product Requirements Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Requirements Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Chief Product Officer to improve the Technical Specifications Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by UX Researcher to improve the Technical Specifications Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Technical Architect to improve the Technical Specifications Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Marketing Manager to improve the Technical Specifications Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Chief Product Officer to improve the System Design Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Engineering Lead to improve the System Design Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by UX Researcher to improve the System Design Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "What are the changes suggested by Marketing Manager to improve the System Design Document for PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "Find names of companies that reported bugs that were later determined to not require any fixes in PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "Which bugs in PersonalizeForce were later found to not require any fixes?"}
+{"product": "PersonalizeForce", "question": "Find the name of companies that reported the most issues that didn’t need fixes in PersonalizeForce?"}
+{"product": "PersonalizeForce", "question": "Find the employee ID of the engineer assigned the most issues that didn’t need fixes in PersonalizeForce."}
+{"product": "PersonalizeForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in PersonalizeForce for bug fixes that are now reopened by customers."}
+{"product": "PersonalizeForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in PersonalizeForce that are now reopened by customers."}
+{"product": "PersonalizeForce", "question": "Find the name of company that has the maximum number of reopened bugs in PersonalizeForce."}
+{"product": "PitchForce", "question": "What are the unique features of PitchForce's competitor products?"}
+{"product": "PitchForce", "question": "What are the weaknesses of PitchForce's competitor products?"}
+{"product": "PitchForce", "question": "Find employee IDs of team members who provided insights on the strengths and weaknesses of PitchForce's competitor products?"}
+{"product": "PitchForce", "question": "Find employee IDs of team members who shared demos of PitchForce's competitor products?"}
+{"product": "PitchForce", "question": "Find the demo URLs shared by team members for PitchForce's competitor products?"}
+{"product": "PitchForce", "question": "Could you provide the links to the PRs for updating the data ingestion pipelines in PitchForce that need to be merged?"}
+{"product": "PitchForce", "question": "Can you provide links to PRs for enhancing NLP models in PitchForce that were reverted due to changes in product direction?"}
+{"product": "PitchForce", "question": "Could you provide the links to the approved PRs for enhancing NLP models in PitchForce that need to be closed?"}
+{"product": "PitchForce", "question": "Can you provide links to PRs related to expanding CRM integration capabilities in PitchForce that were reverted because they introduced bugs in the product?"}
+{"product": "PitchForce", "question": "Can you provide links to PRs for implementing security measures for APIs in PitchForce that were reverted because they introduced bugs in the product?"}
+{"product": "PitchForce", "question": "Can you find links to the approved PRs for implementing security measures for APIs in PitchForce that need to be closed?"}
+{"product": "PitchForce", "question": "Could you provide the links to the PRs for implementing security measures for APIs in PitchForce that need to be merged?"}
+{"product": "PitchForce", "question": "Can you find links to PRs for improving the user interface in PitchForce that were reverted because they introduced bugs in the product?"}
+{"product": "PitchForce", "question": "Find names of companies that reported bugs that were later determined to not require any fixes in PitchForce?"}
+{"product": "PitchForce", "question": "Which bugs in PitchForce were later found to not require any fixes?"}
+{"product": "PitchForce", "question": "Find the name of companies that reported the most issues that didn’t need fixes in PitchForce?"}
+{"product": "PitchForce", "question": "Find the employee ID of the engineer assigned the most issues that didn’t need fixes in PitchForce."}
+{"product": "PitchForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in PitchForce for bug fixes that are now reopened by customers."}
+{"product": "PitchForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in PitchForce that are now reopened by customers."}
+{"product": "PitchForce", "question": "Find the name of company that has the maximum number of reopened bugs in PitchForce."}
+{"product": "ProposalForce", "question": "What are the changes suggested by Chief Product Officer to improve the Market Research Report for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Technical Architect to improve the Market Research Report for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by QA Specialist to improve the Market Research Report for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Product Manager to improve the Market Research Report for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Vision Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Technical Architect to improve the Product Vision Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by QA Specialist to improve the Product Vision Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Product Manager to improve the Product Vision Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Requirements Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Chief Product Officer to improve the Product Requirements Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Technical Architect to improve the Product Requirements Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Product Manager to improve the Product Requirements Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Marketing Manager to improve the Technical Specifications Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Chief Product Officer to improve the Technical Specifications Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Technical Architect to improve the Technical Specifications Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by UX Researcher to improve the Technical Specifications Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Marketing Manager to improve the System Design Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Chief Product Officer to improve the System Design Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by Engineering Lead to improve the System Design Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What are the changes suggested by UX Researcher to improve the System Design Document for ProposalForce?"}
+{"product": "ProposalForce", "question": "What new features about real-time collaboration are added to ProposalForce?"}
+{"product": "ProposalForce", "question": "What new features about mobile app enhancements for iOS and Android are added to ProposalForce?"}
+{"product": "ProposalForce", "question": "What features were temporarily delayed due to security concerns but eventually added to ProposalForce?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Chief Product Officer to improve the Market Research Report for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by QA Specialist to improve the Market Research Report for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Product Manager to improve the Market Research Report for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Technical Architect to improve the Market Research Report for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Marketing Manager to improve the Product Vision Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by QA Specialist to improve the Product Vision Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Product Manager to improve the Product Vision Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Technical Architect to improve the Product Vision Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Marketing Manager to improve the Product Requirements Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Chief Product Officer to improve the Product Requirements Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Product Manager to improve the Product Requirements Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Technical Architect to improve the Product Requirements Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by UX Researcher to improve the Technical Specifications Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Marketing Manager to improve the Technical Specifications Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Chief Product Officer to improve the Technical Specifications Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Technical Architect to improve the Technical Specifications Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by UX Researcher to improve the System Design Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Marketing Manager to improve the System Design Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Chief Product Officer to improve the System Design Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "What are the changes suggested by Engineering Lead to improve the System Design Document for SearchFlow?"}
+{"product": "SearchFlow", "question": "Can you provide links to PRs for NLP enhancements in SearchFlow that were reverted due to changes in product direction?"}
+{"product": "SearchFlow", "question": "Can you provide links to PRs for implementing NLP enhancements in SearchFlow that were reverted because they introduced bugs in the product?"}
+{"product": "SearchFlow", "question": "Can you provide links to PRs for semantic search improvements in SearchFlow that were reverted due to changes in product direction?"}
+{"product": "SearchFlow", "question": "Could you provide the links to the PRs for the semantic search improvements in SearchFlow that need to be merged?"}
+{"product": "SearchFlow", "question": "Can you provide links to PRs related to the deployment pipeline optimization in SearchFlow that were reverted due to changes in product direction?"}
+{"product": "SearchFlow", "question": "Find names of companies that reported bugs that were later determined to not require any fixes in SearchFlow?"}
+{"product": "SearchFlow", "question": "Which bugs in SearchFlow were later found to not require any fixes?"}
+{"product": "SearchFlow", "question": "Find the name of companies that reported the most issues that didn’t need fixes in SearchFlow?"}
+{"product": "SearchFlow", "question": "Find the employee ID of the engineer assigned the most issues that didn’t need fixes in SearchFlow."}
+{"product": "SearchFlow", "question": "Find the employee IDs of engineers who authored maximum number of PRs in SearchFlow for bug fixes that are now reopened by customers."}
+{"product": "SearchFlow", "question": "Find the employee IDs of engineers who dismissed maximum bugs in SearchFlow that are now reopened by customers."}
+{"product": "SearchFlow", "question": "Find the name of company that has the maximum number of reopened bugs in SearchFlow."}
+{"product": "SearchForce", "question": "What are the unique features of SearchForce's competitor products?"}
+{"product": "SearchForce", "question": "What are the weaknesses of SearchForce's competitor products?"}
+{"product": "SearchForce", "question": "Find employee IDs of team members who provided insights on the strengths and weaknesses of SearchForce's competitor products?"}
+{"product": "SearchForce", "question": "Find employee IDs of team members who shared demos of SearchForce's competitor products?"}
+{"product": "SearchForce", "question": "Find the demo URLs shared by team members for SearchForce's competitor products?"}
+{"product": "SearchForce", "question": "Can you find links to PRs for enhancing natural language processing capabilities in SearchForce that were reverted due to changes in product direction?"}
+{"product": "SearchForce", "question": "Can you find links to PRs for enhancing natural language processing capabilities in SearchForce that were reverted as they introduced bugs in the product?"}
+{"product": "SearchForce", "question": "Can you provide links to PRs for the implementation of context awareness algorithms in SearchForce that were reverted due to changes in product direction?"}
+{"product": "SearchForce", "question": "Can you provide links to the PRs for the implementation of context awareness algorithms in SearchForce that were reverted because they introduced bugs in the product?"}
+{"product": "SearchForce", "question": "Can you provide links to PRs related to improving integration with third-party applications in SearchForce that were reverted due to changes in product direction?"}
+{"product": "SearchForce", "question": "Can you provide links to PRs related to improving integration with third-party applications in SearchForce that were reverted because they introduced bugs in the product?"}
+{"product": "SearchForce", "question": "Can you provide links to PRs for enhancing the user interface in SearchForce that were reverted due to changes in product direction?"}
+{"product": "SearchForce", "question": "Can you find links to PRs for enhancing the user interface in SearchForce that were reverted as they introduced bugs in the product?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Product Manager to improve the Market Research Report for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Technical Architect to improve the Market Research Report for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by QA Specialist to improve the Market Research Report for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Chief Product Officer to improve the Market Research Report for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Product Manager to improve the Product Vision Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Technical Architect to improve the Product Vision Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by QA Specialist to improve the Product Vision Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Vision Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Product Manager to improve the Product Requirements Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Technical Architect to improve the Product Requirements Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Requirements Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Chief Product Officer to improve the Product Requirements Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Technical Architect to improve the Technical Specifications Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by UX Researcher to improve the Technical Specifications Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Marketing Manager to improve the Technical Specifications Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Chief Product Officer to improve the Technical Specifications Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Engineering Lead to improve the System Design Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by UX Researcher to improve the System Design Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Marketing Manager to improve the System Design Document for SecurityForce?"}
+{"product": "SecurityForce", "question": "What are the changes suggested by Chief Product Officer to improve the System Design Document for SecurityForce?"}
+{"product": "SentimentForce", "question": "What are the unique features of SentimentForce's competitor products?"}
+{"product": "SentimentForce", "question": "What are the weaknesses of SentimentForce's competitor products?"}
+{"product": "SentimentForce", "question": "Find employee IDs of team members who provided insights on the strengths and weaknesses of SentimentForce's competitor products?"}
+{"product": "SentimentForce", "question": "Find employee IDs of team members who shared demos of SentimentForce's competitor products?"}
+{"product": "SentimentForce", "question": "Find the demo URLs shared by team members for SentimentForce's competitor products?"}
+{"product": "SentimentForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in SentimentForce for bug fixes that are now reopened by customers."}
+{"product": "SentimentForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in SentimentForce that are now reopened by customers."}
+{"product": "SentimentForce", "question": "Find the name of company that has the maximum number of reopened bugs in SentimentForce."}
+{"product": "SentimentForce", "question": "Find bugs reported by AITransformers in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by CloudSync in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by InnovateAI in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by TechCorp in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by ComputeWorks in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by NextGenTech in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by DataSolutions in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by BlueWave in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by FusionTech in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by CloudSync in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by InnovateAI in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by SmartData in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by TechCorp in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by ComputeWorks in SentimentForce that did not require any fixes?"}
+{"product": "SentimentForce", "question": "Find bugs reported by NextGenTech in SentimentForce that did not require any fixes?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by QA Specialist to improve the Market Research Report for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Product Manager to improve the Market Research Report for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Technical Architect to improve the Market Research Report for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Chief Product Officer to improve the Market Research Report for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by QA Specialist to improve the Product Vision Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Product Manager to improve the Product Vision Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Technical Architect to improve the Product Vision Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Vision Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Product Manager to improve the Product Requirements Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Technical Architect to improve the Product Requirements Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Chief Product Officer to improve the Product Requirements Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Requirements Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Technical Architect to improve the Technical Specifications Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Chief Product Officer to improve the Technical Specifications Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Marketing Manager to improve the Technical Specifications Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by UX Researcher to improve the Technical Specifications Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Engineering Lead to improve the System Design Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Chief Product Officer to improve the System Design Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by Marketing Manager to improve the System Design Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "What are the changes suggested by UX Researcher to improve the System Design Document for SummarizeForce?"}
+{"product": "SummarizeForce", "question": "Can you provide links to the PRs for the backend integration of real-time summary generation with Slack in SummarizeForce that were reverted due to changes in product direction?"}
+{"product": "SummarizeForce", "question": "Could you provide the links to the PRs for the real-time summary generation backend integration with Slack in SummarizeForce that need to be merged?"}
+{"product": "SummarizeForce", "question": "Can you provide links to the PRs related to the implementation of real-time summary generation frontend components in SummarizeForce that were reverted due to changes in product direction?"}
+{"product": "SummarizeForce", "question": "Can you provide links to PRs related to the implementation of real-time summary generation frontend components in SummarizeForce that were reverted because they introduced bugs in the product?"}
+{"product": "SummarizeForce", "question": "Could you provide the links to the PRs for the real-time summary generation frontend components in SummarizeForce that need to be merged?"}
+{"product": "SummarizeForce", "question": "Can you provide links to PRs related to the implementation of enhanced security protocols in SummarizeForce that were reverted due to changes in product direction?"}
+{"product": "SummarizeForce", "question": "Can you provide links to PRs related to the enhanced security protocols in SummarizeForce that were reverted because they introduced bugs in the product?"}
+{"product": "SummarizeForce", "question": "Could you provide the links to the PRs for implementing enhanced security protocols in SummarizeForce that need to be merged?"}
+{"product": "SummarizeForce", "question": "Can you provide links to PRs related to future platform compatibility in SummarizeForce that were reverted because they introduced bugs in the product?"}
+{"product": "SummarizeForce", "question": "Can you provide links to the PRs for implementing future platform compatibility in SummarizeForce that need to be merged?"}
+{"product": "SummarizeForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in SummarizeForce for bug fixes that are now reopened by customers."}
+{"product": "SummarizeForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in SummarizeForce that are now reopened by customers."}
+{"product": "SummarizeForce", "question": "Find the name of company that has the maximum number of reopened bugs in SummarizeForce."}
+{"product": "SummarizeForce", "question": "Find bugs reported by InnovateAI in SummarizeForce that did not require any fixes?"}
+{"product": "SummarizeForce", "question": "Find bugs reported by BlueWave in SummarizeForce that did not require any fixes?"}
+{"product": "SummarizeForce", "question": "Find bugs reported by ComputeWorks in SummarizeForce that did not require any fixes?"}
+{"product": "SummarizeForce", "question": "Find bugs reported by TechCorp in SummarizeForce that did not require any fixes?"}
+{"product": "SummarizeForce", "question": "Find bugs reported by FusionTech in SummarizeForce that did not require any fixes?"}
+{"product": "SummarizeForce", "question": "Find bugs reported by NextGenTech in SummarizeForce that did not require any fixes?"}
+{"product": "SummarizeForce", "question": "Find bugs reported by AITransformers in SummarizeForce that did not require any fixes?"}
+{"product": "SummarizeForce", "question": "Find bugs reported by InnovateAI in SummarizeForce that did not require any fixes?"}
+{"product": "SummarizeForce", "question": "Find bugs reported by DataSolutions in SummarizeForce that did not require any fixes?"}
+{"product": "SummarizeForce", "question": "Find bugs reported by ComputeWorks in SummarizeForce that did not require any fixes?"}
+{"product": "SummarizeForce", "question": "Find bugs reported by TechCorp in SummarizeForce that did not require any fixes?"}
+{"product": "SummarizeForce", "question": "Find bugs reported by NextGenTech in SummarizeForce that did not require any fixes?"}
+{"product": "SummarizeForce", "question": "Find bugs reported by AITransformers in SummarizeForce that did not require any fixes?"}
+{"product": "SupportForce", "question": "What are the employee IDs of team members who shared demos of SupportForce's competitor products?"}
+{"product": "SupportForce", "question": "Find the demo URLs shared by team members for SupportForce's competitor products?"}
+{"product": "SupportForce", "question": "Find employee IDs of Technical Architects who reviewed the Market Research Report for SupportForce?"}
+{"product": "SupportForce", "question": "Find employee IDs of Product Managers who reviewed the Product Vision Document for SupportForce?"}
+{"product": "SupportForce", "question": "Find employee IDs of Product Managers who reviewed the Product Requirements Document for SupportForce?"}
+{"product": "SupportForce", "question": "Find employee IDs of Marketing Managers who reviewed the Product Requirements Document for SupportForce?"}
+{"product": "SupportForce", "question": "Find employee IDs of Technical Architects who reviewed the Technical Specifications Document for SupportForce?"}
+{"product": "SupportForce", "question": "Find employee IDs of Marketing Managers who reviewed the Technical Specifications Document for SupportForce?"}
+{"product": "SupportForce", "question": "Find employee IDs of UX Researchers who reviewed the System Design Document for SupportForce?"}
+{"product": "SupportForce", "question": "What new features about user feedback mechanisms are added to SupportForce?"}
+{"product": "SupportForce", "question": "What features were temporarily delayed due to change in product direction but eventually added to SupportForce?"}
+{"product": "SupportForce", "question": "What features were temporarily delayed due to security concerns but eventually added to SupportForce?"}
+{"product": "SupportForce", "question": "Find names of companies that reported bugs that were later determined to not require any fixes in SupportForce?"}
+{"product": "SupportForce", "question": "Which bugs in SupportForce were later found to not require any fixes?"}
+{"product": "SupportForce", "question": "Find the name of companies that reported the most issues that didn’t need fixes in SupportForce?"}
+{"product": "SupportForce", "question": "Find the employee ID of the engineer assigned the most issues that didn’t need fixes in SupportForce."}
+{"product": "SupportForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in SupportForce for bug fixes that are now reopened by customers."}
+{"product": "SupportForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in SupportForce that are now reopened by customers."}
+{"product": "SupportForce", "question": "Find the name of company that has the maximum number of reopened bugs in SupportForce."}
+{"product": "TrendForce", "question": "What are the unique features of TrendForce's competitor products?"}
+{"product": "TrendForce", "question": "What are the weaknesses of TrendForce's competitor products?"}
+{"product": "TrendForce", "question": "Find employee IDs of team members who provided insights on the strengths and weaknesses of TrendForce's competitor products?"}
+{"product": "TrendForce", "question": "Find employee IDs of team members who shared demos of TrendForce's competitor products?"}
+{"product": "TrendForce", "question": "Find the demo URLs shared by team members for TrendForce's competitor products?"}
+{"product": "TrendForce", "question": "Can you find links to PRs for the integration with third-party systems in TrendForce that were not approved?"}
+{"product": "VizForce", "question": "What are the changes suggested by QA Specialist to improve the Market Research Report for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Chief Product Officer to improve the Market Research Report for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Product Manager to improve the Market Research Report for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Technical Architect to improve the Market Research Report for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by QA Specialist to improve the Product Vision Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Product Manager to improve the Product Vision Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Vision Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Technical Architect to improve the Product Vision Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Chief Product Officer to improve the Product Requirements Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Product Manager to improve the Product Requirements Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Marketing Manager to improve the Product Requirements Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Technical Architect to improve the Product Requirements Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Chief Product Officer to improve the Technical Specifications Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Marketing Manager to improve the Technical Specifications Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Technical Architect to improve the Technical Specifications Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by UX Researcher to improve the Technical Specifications Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Chief Product Officer to improve the System Design Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Marketing Manager to improve the System Design Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by Engineering Lead to improve the System Design Document for VizForce?"}
+{"product": "VizForce", "question": "What are the changes suggested by UX Researcher to improve the System Design Document for VizForce?"}
+{"product": "VizForce", "question": "Can you provide links to PRs related to the Database Schema in VizForce that were reverted because they introduced bugs in the product?"}
+{"product": "VizForce", "question": "Can you provide links to PRs for the User Interface Module in VizForce that were reverted due to changes in product direction?"}
+{"product": "VizForce", "question": "Could you provide the links to the approved PRs for the User Interface Module in VizForce that need to be closed?"}
+{"product": "VizForce", "question": "Could you provide the links to the PRs for the User Interface Module in VizForce that need to be merged?"}
+{"product": "VizForce", "question": "Can you provide links to PRs for the Security for Customization Engine feature in VizForce that were reverted due to changes in product direction?"}
+{"product": "VizForce", "question": "Can you provide links to PRs related to the Security for Customization Engine in VizForce that were reverted because they introduced bugs in the product?"}
+{"product": "VizForce", "question": "Can you provide links to PRs related to the Learning System feature in VizForce that were reverted because they introduced bugs in the product?"}
+{"product": "VizForce", "question": "Find names of companies that reported bugs that were later determined to not require any fixes in VizForce?"}
+{"product": "VizForce", "question": "Which bugs in VizForce were later found to not require any fixes?"}
+{"product": "VizForce", "question": "Find the name of companies that reported the most issues that didn’t need fixes in VizForce?"}
+{"product": "VizForce", "question": "Find the employee ID of the engineer assigned the most issues that didn’t need fixes in VizForce."}
+{"product": "VizForce", "question": "Find the employee IDs of engineers who authored maximum number of PRs in VizForce for bug fixes that are now reopened by customers."}
+{"product": "VizForce", "question": "Find the employee IDs of engineers who dismissed maximum bugs in VizForce that are now reopened by customers."}
+{"product": "VizForce", "question": "Find the name of company that has the maximum number of reopened bugs in VizForce."}
+{"product": "WorkFlowGenie", "question": "What are the employee IDs of team members who shared demos of WorkFlowGenie's competitor products?"}
+{"product": "WorkFlowGenie", "question": "Find the demo URLs shared by team members for WorkFlowGenie's competitor products?"}
+{"product": "WorkFlowGenie", "question": "Find employee IDs of Marketing Managers who reviewed the Product Vision Document for WorkFlowGenie?"}
+{"product": "WorkFlowGenie", "question": "Find employee IDs of QA Specialists who reviewed the Product Vision Document for WorkFlowGenie?"}
+{"product": "WorkFlowGenie", "question": "Find employee IDs of Technical Architects who reviewed the Product Requirements Document for WorkFlowGenie?"}
+{"product": "WorkFlowGenie", "question": "Find employee IDs of Marketing Managers who reviewed the Product Requirements Document for WorkFlowGenie?"}
+{"product": "WorkFlowGenie", "question": "Find employee IDs of Product Managers who reviewed the Product Requirements Document for WorkFlowGenie?"}
+{"product": "WorkFlowGenie", "question": "Find employee IDs of UX Researchers who reviewed the Technical Specifications Document for WorkFlowGenie?"}
+{"product": "WorkFlowGenie", "question": "Find employee IDs of Chief Product Officers who reviewed the Technical Specifications Document for WorkFlowGenie?"}
+{"product": "WorkFlowGenie", "question": "Find employee IDs of Chief Product Officers who reviewed the System Design Document for WorkFlowGenie?"}
+{"product": "WorkFlowGenie", "question": "Can you find links to PRs for integrating GraphQL for enhanced data querying in WorkFlowGenie that were reverted due to changes in product direction?"}
+{"product": "WorkFlowGenie", "question": "Can you find links to PRs for integrating GraphQL for enhanced data querying in WorkFlowGenie that were reverted as they introduced bugs in the product?"}
+{"product": "WorkFlowGenie", "question": "Could you provide the links to the approved PRs for integrating GraphQL for enhanced data querying in WorkFlowGenie that need to be closed?"}
+{"product": "WorkFlowGenie", "question": "Can you find links to PRs for enhancing AI capabilities with natural language processing in WorkFlowGenie that were reverted due to changes in product direction?"}
+{"product": "WorkFlowGenie", "question": "Could you provide the links to the approved PRs for enhancing AI capabilities with natural language processing in WorkFlowGenie that need to be closed?"}
+{"product": "WorkFlowGenie", "question": "Can you provide links to the PRs related to improving the user onboarding process in WorkFlowGenie that were reverted due to changes in product direction?"}
+{"product": "WorkFlowGenie", "question": "Could you provide the links to the PRs for improving the user onboarding process in WorkFlowGenie that need to be merged?"}
+{"product": "WorkFlowGenie", "question": "Can you find links to PRs for performance optimization through edge computing and data caching in WorkFlowGenie that were reverted as they introduced bugs in the product?"}
+{"product": "WorkFlowGenie", "question": "Could you provide the links to the PRs for performance optimization through edge computing and data caching in WorkFlowGenie that need to be merged?"}

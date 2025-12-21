@@ -3,7 +3,7 @@
 This module contains file search and listing operations:
 - list: List files in a directory
 - glob: Find files matching glob patterns
-- grep: Search file contents using regex
+- grep: Search file contents using regex (with optional Zoekt acceleration)
 - semantic_search: Search files using semantic similarity
 """
 
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import builtins
 import fnmatch
+import logging
 import re
 from typing import TYPE_CHECKING, Any, cast
 
@@ -19,8 +20,11 @@ from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
+    from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.semantic import SemanticSearch
     from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
@@ -40,6 +44,7 @@ class NexusFSSearchMixin:
         _default_context: OperationContext
         _permission_enforcer: PermissionEnforcer
         _semantic_search: SemanticSearch | None
+        _async_search: AsyncSemanticSearch | None
         _rebac_manager: EnhancedReBACManager
 
         def _validate_path(self, path: str) -> str: ...
@@ -511,10 +516,28 @@ class NexusFSSearchMixin:
         if path and path != "/":
             path = self._validate_path(path)
 
+        # Directory-level pruning optimization:
+        # Extract static prefix from pattern to limit directory traversal.
+        # For "src/components/**/*.tsx", only list files under "src/components/"
+        # instead of the entire tree. This can provide 10-100x speedup.
+        search_path = path
+        if path == "/" or path == "":
+            static_prefix = glob_fast.extract_static_prefix(pattern)
+            if static_prefix:
+                # Combine base path with static prefix
+                # Ensure proper path formatting
+                if static_prefix.startswith("/"):
+                    search_path = static_prefix.rstrip("/")
+                else:
+                    search_path = "/" + static_prefix.rstrip("/")
+                logger.debug(
+                    f"[GLOB] Directory pruning: pattern='{pattern}' -> search_path='{search_path}'"
+                )
+
         # SECURITY: Filter files by ReBAC permissions FIRST
         # This ensures users only see files they have access to
         accessible_files: list[str] = cast(
-            list[str], self.list(path, recursive=True, context=context)
+            list[str], self.list(search_path, recursive=True, context=context)
         )
 
         # Build full pattern
@@ -652,6 +675,21 @@ class NexusFSSearchMixin:
         logger = logging.getLogger(__name__)
         grep_start = time.time()
 
+        # Try Zoekt first if available (much faster for large codebases)
+        zoekt_results = self._try_grep_with_zoekt(
+            pattern=pattern,
+            path=path,
+            file_pattern=file_pattern,
+            ignore_case=ignore_case,
+            max_results=max_results,
+            context=context,
+        )
+        if zoekt_results is not None:
+            total_elapsed = time.time() - grep_start
+            logger.debug(f"[GREP] Zoekt: {total_elapsed:.3f}s, {len(zoekt_results)} results")
+            return zoekt_results
+
+        # Fallback to standard grep (Zoekt not available or not suitable)
         # Get files to search
         list_start = time.time()
         if file_pattern:
@@ -762,6 +800,125 @@ class NexusFSSearchMixin:
 
         return results
 
+    def _try_grep_with_zoekt(
+        self,
+        pattern: str,
+        path: str,
+        file_pattern: str | None,
+        ignore_case: bool,
+        max_results: int,
+        context: Any,
+    ) -> builtins.list[dict[str, Any]] | None:
+        """Try to use Zoekt for grep (returns None if not available).
+
+        Zoekt provides sub-50ms search on large codebases using trigram indexing.
+        This is an optional optimization - grep falls back to Rust regex if
+        Zoekt is not available.
+
+        Args:
+            pattern: Regex pattern to search for
+            path: Base path to search from
+            file_pattern: Optional glob pattern to filter files
+            ignore_case: If True, perform case-insensitive search
+            max_results: Maximum number of results
+            context: Operation context for permission filtering
+
+        Returns:
+            List of match dicts if Zoekt succeeded, None to fall back to standard grep
+        """
+        import asyncio
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        try:
+            # Import Zoekt client (may not be available)
+            from nexus.search.zoekt_client import get_zoekt_client
+        except ImportError:
+            return None
+
+        client = get_zoekt_client()
+
+        # Check if Zoekt is available (sync wrapper for async check)
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # We're in an async context, can't use run_until_complete
+                # Fall back to standard grep
+                return None
+            is_available = loop.run_until_complete(client.is_available())
+        except RuntimeError:
+            # No event loop, create one
+            is_available = asyncio.run(client.is_available())
+
+        if not is_available:
+            return None
+
+        logger.debug("[GREP] Using Zoekt for accelerated search")
+
+        try:
+            # Build Zoekt query
+            zoekt_query = pattern
+            if ignore_case:
+                zoekt_query = f"(?i){pattern}"
+            if path and path != "/":
+                # Limit search to path prefix
+                zoekt_query = f"file:{path.lstrip('/')}/ {zoekt_query}"
+
+            # Run Zoekt search
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    return None  # Can't run async in sync context
+                matches = loop.run_until_complete(client.search(zoekt_query, num=max_results * 3))
+            except RuntimeError:
+                matches = asyncio.run(client.search(zoekt_query, num=max_results * 3))
+
+            if not matches:
+                # Zoekt returned no results - let standard grep try
+                # (Zoekt may not have indexed all files)
+                return None
+
+            # Apply file_pattern filter if specified
+            if file_pattern:
+                matches = [m for m in matches if glob_fast.glob_match(m.file, [file_pattern])]
+
+            # Extract unique file paths for permission check
+            unique_files = list({m.file for m in matches})
+
+            # Filter by ReBAC permissions using existing filter_list
+            if hasattr(self, "_permission_enforcer") and context:
+                permitted_files = set(self._permission_enforcer.filter_list(unique_files, context))
+            else:
+                permitted_files = set(unique_files)
+
+            # Build results (only permitted files)
+            results = []
+            for match in matches:
+                if match.file in permitted_files:
+                    results.append(
+                        {
+                            "file": match.file,
+                            "line": match.line,
+                            "content": match.content,
+                            "match": match.match,
+                        }
+                    )
+                    if len(results) >= max_results:
+                        break
+
+            logger.debug(
+                f"[GREP] Zoekt: {len(matches)} raw matches, "
+                f"{len(permitted_files)}/{len(unique_files)} permitted, "
+                f"{len(results)} final results"
+            )
+
+            return results
+
+        except Exception as e:
+            logger.warning(f"[GREP] Zoekt search failed, falling back: {e}")
+            return None
+
     # Semantic Search Methods (v0.4.0)
 
     @rpc_expose(description="Search documents using natural language queries")
@@ -823,7 +980,30 @@ class NexusFSSearchMixin:
                 "Initialize with: await nx.initialize_semantic_search()"
             )
 
-        results = await self._semantic_search.search(
+        # Use async search for non-blocking DB operations (high throughput)
+        if hasattr(self, "_async_search") and self._async_search is not None:
+            results = await self._async_search.search(
+                query=query,
+                limit=limit,
+                path_filter=path if path != "/" else None,
+                search_mode=search_mode,
+            )
+            return [
+                {
+                    "path": result.path,
+                    "chunk_index": result.chunk_index,
+                    "chunk_text": result.chunk_text,
+                    "score": result.score,
+                    "start_offset": result.start_offset,
+                    "end_offset": result.end_offset,
+                    "line_start": result.line_start,
+                    "line_end": result.line_end,
+                }
+                for result in results
+            ]
+
+        # Fallback to sync search
+        sync_results = await self._semantic_search.search(
             query=query, path=path, limit=limit, filters=filters, search_mode=search_mode
         )
 
@@ -835,8 +1015,10 @@ class NexusFSSearchMixin:
                 "score": result.score,
                 "start_offset": result.start_offset,
                 "end_offset": result.end_offset,
+                "line_start": result.line_start,
+                "line_end": result.line_end,
             }
-            for result in results
+            for result in sync_results
         ]
 
     @rpc_expose(description="Index documents for semantic search")
@@ -875,6 +1057,11 @@ class NexusFSSearchMixin:
                 "Initialize with: await nx.initialize_semantic_search()"
             )
 
+        # Use async indexing for high throughput
+        if hasattr(self, "_async_search") and self._async_search is not None:
+            return await self._async_index_documents(path, recursive)
+
+        # Fallback to sync indexing
         # Check if path is a file or directory
         try:
             # Try to read as file
@@ -902,6 +1089,77 @@ class NexusFSSearchMixin:
                     except Exception:
                         results[file_path] = -1  # Indicate error
             return results
+
+    async def _async_index_documents(self, path: str, recursive: bool) -> dict[str, int]:
+        """Index documents using async backend for high throughput.
+
+        Args:
+            path: Path to index
+            recursive: Index recursively
+
+        Returns:
+            Dict mapping path to number of chunks
+        """
+        from sqlalchemy import select
+
+        from nexus.storage.models import FilePathModel
+
+        # Collect files to index
+        files_to_index: list[str] = []
+
+        try:
+            # Check if it's a file
+            self.read(path)
+            files_to_index = [path]
+        except Exception:
+            # It's a directory
+            file_list = self.list(path, recursive=recursive)
+            for item in file_list:
+                file_path = item if isinstance(item, str) else item.get("path", "")
+                if file_path and not file_path.endswith("/"):
+                    files_to_index.append(file_path)
+
+        if not files_to_index:
+            return {}
+
+        # Prepare documents for bulk indexing
+        documents: list[tuple[str, str, str]] = []
+
+        with self.metadata.SessionLocal() as session:
+            for file_path in files_to_index:
+                try:
+                    # Get content
+                    content = self.metadata.get_searchable_text(file_path)
+                    if content is None:
+                        content_raw = self.read(file_path)
+                        if isinstance(content_raw, bytes):
+                            content = content_raw.decode("utf-8", errors="ignore")
+                        else:
+                            content = str(content_raw)
+
+                    # Get path_id
+                    stmt = select(FilePathModel).where(
+                        FilePathModel.virtual_path == file_path,
+                        FilePathModel.deleted_at.is_(None),
+                    )
+                    result = session.execute(stmt)
+                    file_model = result.scalar_one_or_none()
+
+                    if file_model and content:
+                        documents.append((file_path, content, file_model.path_id))
+                except Exception as e:
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        f"Failed to prepare {file_path} for indexing: {e}"
+                    )
+
+        if not documents:
+            return {}
+
+        # Bulk index using async backend
+        assert self._async_search is not None
+        return await self._async_search.index_documents_bulk(documents)
 
     @rpc_expose(description="Get semantic search indexing statistics")
     async def semantic_search_stats(self) -> dict[str, Any]:
@@ -940,6 +1198,7 @@ class NexusFSSearchMixin:
         api_key: str | None = None,
         chunk_size: int = 1024,
         chunk_strategy: str = "semantic",
+        async_mode: bool = True,
     ) -> None:
         """
         Initialize semantic search engine.
@@ -948,11 +1207,13 @@ class NexusFSSearchMixin:
         Uses existing database (SQLite/PostgreSQL) with native vector extensions.
 
         Args:
-            embedding_provider: Provider name ("openai", "voyage") or None for keyword-only
+            embedding_provider: Provider name ("openai", "voyage", "voyage-lite", "fastembed")
+                               or None for keyword-only
             embedding_model: Model name (uses provider default if None)
             api_key: API key for the embedding provider (if using remote provider)
             chunk_size: Chunk size in tokens (default: 1024)
             chunk_strategy: Chunking strategy ("fixed", "semantic", "overlapping")
+            async_mode: Use async DB operations for high throughput (default: True)
 
         Examples:
             # Keyword-only search (no embeddings, no extra dependencies)
@@ -964,10 +1225,15 @@ class NexusFSSearchMixin:
                 api_key="your-api-key"
             )
 
-            # Semantic search with Voyage AI (specialized embeddings)
+            # Semantic search with Voyage AI (fast, cost-effective)
             await nx.initialize_semantic_search(
-                embedding_provider="voyage",
+                embedding_provider="voyage",  # or "voyage-lite" for fastest
                 api_key="your-api-key"
+            )
+
+            # Local embeddings (no API, free)
+            await nx.initialize_semantic_search(
+                embedding_provider="fastembed"
             )
 
             # Custom chunk size
@@ -977,7 +1243,6 @@ class NexusFSSearchMixin:
             )
         """
         from nexus.search.chunking import ChunkStrategy
-        from nexus.search.semantic import SemanticSearch
 
         # Create embedding provider (optional)
         emb_provider = None
@@ -996,16 +1261,43 @@ class NexusFSSearchMixin:
         }
         chunk_strat = strategy_map.get(chunk_strategy, ChunkStrategy.SEMANTIC)
 
-        # Create semantic search instance (uses existing database)
-        self._semantic_search = SemanticSearch(
-            nx=self,  # type: ignore[arg-type]
-            embedding_provider=emb_provider,
-            chunk_size=chunk_size,
-            chunk_strategy=chunk_strat,
-        )
+        # Get database URL from metadata store
+        database_url = str(self.metadata.engine.url)
 
-        # Initialize vector extensions and FTS tables
-        self._semantic_search.initialize()
+        if async_mode:
+            # Use async search for high-throughput (non-blocking DB operations)
+            from nexus.search.async_search import AsyncSemanticSearch
+
+            self._async_search = AsyncSemanticSearch(
+                database_url=database_url,
+                embedding_provider=emb_provider,
+                chunk_size=chunk_size,
+                chunk_strategy=chunk_strat,
+            )
+            await self._async_search.initialize()
+
+            # Also create sync search for backward compatibility
+            from nexus.search.semantic import SemanticSearch
+
+            self._semantic_search = SemanticSearch(
+                nx=self,  # type: ignore[arg-type]
+                embedding_provider=emb_provider,
+                chunk_size=chunk_size,
+                chunk_strategy=chunk_strat,
+            )
+            self._semantic_search.initialize()
+        else:
+            # Use sync search (original behavior)
+            from nexus.search.semantic import SemanticSearch
+
+            self._semantic_search = SemanticSearch(
+                nx=self,  # type: ignore[arg-type]
+                embedding_provider=emb_provider,
+                chunk_size=chunk_size,
+                chunk_strategy=chunk_strat,
+            )
+            self._semantic_search.initialize()
+            self._async_search = None
 
     def _list_memory_path(
         self, path: str, details: bool = False

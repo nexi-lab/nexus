@@ -57,6 +57,7 @@ dependencies = [
     # Database
     "sqlalchemy>=2.0.44",
     "alembic>=1.13.0",
+    "greenlet>=3.0.0", # Required for SQLAlchemy async (run_sync in async context)
     "psycopg2-binary>=2.9.10", # PostgreSQL driver (sync)
     "asyncpg>=0.31.0", # PostgreSQL driver (async)
     "aiosqlite>=0.20.0", # SQLite driver (async)
@@ -86,12 +87,14 @@ dependencies = [
     "orjson>=3.10.0",
     # Roaring Bitmaps for Tiger Cache (Issue #682)
     "pyroaring>=1.0.0",
+    "blake3>=1.0.0",
 ]
 
 [project.optional-dependencies]
 performance = [
     # BLAKE3 hashing fallback when Rust extension unavailable (Issue #582)
-    "blake3>=0.3.0",
+    # Local embeddings without API (fast ONNX inference)
+    "fastembed>=0.4.0",
 ]
 
 dev = [

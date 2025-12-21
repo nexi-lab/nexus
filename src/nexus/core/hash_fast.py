@@ -24,6 +24,8 @@ import hashlib
 import logging
 from typing import Any
 
+import blake3 as _python_blake3
+
 logger = logging.getLogger(__name__)
 
 # Try to import Rust-accelerated BLAKE3
@@ -40,22 +42,10 @@ except ImportError:
     _rust_hash_content = None
     _rust_hash_content_smart = None
 
-# Always try to import Python blake3 as fallback (Issue #582)
-# This ensures consistent hashes even if Rust becomes unavailable at runtime
-try:
-    import blake3 as _python_blake3
-
-    _PYTHON_BLAKE3_AVAILABLE = True
-    if not _RUST_AVAILABLE:
-        logger.debug("Using Python blake3 package (consistent with Rust)")
-except ImportError:
-    _python_blake3 = None
-    if not _RUST_AVAILABLE:
-        logger.warning(
-            "Neither Rust extension nor blake3 package available. "
-            "Using SHA-256 fallback - hashes will be INCOMPATIBLE with BLAKE3! "
-            "Install blake3: pip install blake3"
-        )
+# blake3 is now a required dependency (Issue #582, #833)
+_PYTHON_BLAKE3_AVAILABLE = True
+if not _RUST_AVAILABLE:
+    logger.debug("Using Python blake3 package (consistent with Rust)")
 
 
 def hash_content(content: bytes) -> str:
@@ -77,8 +67,9 @@ def hash_content(content: bytes) -> str:
         return _rust_hash_content(content)  # type: ignore[no-any-return]
 
     # Priority 2: Python blake3 (consistent with Rust)
-    if _PYTHON_BLAKE3_AVAILABLE and _python_blake3 is not None:
-        return _python_blake3.blake3(content).hexdigest()  # type: ignore[no-any-return]
+    if _PYTHON_BLAKE3_AVAILABLE:
+        result: str = _python_blake3.blake3(content).hexdigest()
+        return result
 
     # Priority 3: SHA-256 fallback (WARNING: incompatible hashes!)
     return hashlib.sha256(content).hexdigest()
@@ -116,31 +107,33 @@ def hash_content_smart(content: bytes) -> str:
     sample_size = 64 * 1024  # 64KB per sample
 
     # Priority 2: Python blake3 (consistent with Rust)
-    if _PYTHON_BLAKE3_AVAILABLE and _python_blake3 is not None:
+    if _PYTHON_BLAKE3_AVAILABLE:
         if len(content) < threshold:
-            return _python_blake3.blake3(content).hexdigest()  # type: ignore[no-any-return]
+            result: str = _python_blake3.blake3(content).hexdigest()
+            return result
 
         # Strategic sampling with blake3
-        hasher = _python_blake3.blake3()
-        hasher.update(content[:sample_size])  # First 64KB
+        blake3_hasher = _python_blake3.blake3()
+        blake3_hasher.update(content[:sample_size])  # First 64KB
         mid_start = len(content) // 2 - sample_size // 2
-        hasher.update(content[mid_start : mid_start + sample_size])  # Middle 64KB
-        hasher.update(content[-sample_size:])  # Last 64KB
-        hasher.update(len(content).to_bytes(8, byteorder="little"))  # File size
-        return hasher.hexdigest()  # type: ignore[no-any-return]
+        blake3_hasher.update(content[mid_start : mid_start + sample_size])  # Middle 64KB
+        blake3_hasher.update(content[-sample_size:])  # Last 64KB
+        blake3_hasher.update(len(content).to_bytes(8, byteorder="little"))  # File size
+        result = blake3_hasher.hexdigest()
+        return result
 
     # Priority 3: SHA-256 fallback (WARNING: incompatible hashes!)
     if len(content) < threshold:
         return hashlib.sha256(content).hexdigest()
 
     # Strategic sampling with SHA-256
-    hasher = hashlib.sha256()
-    hasher.update(content[:sample_size])  # First 64KB
+    sha_hasher = hashlib.sha256()
+    sha_hasher.update(content[:sample_size])  # First 64KB
     mid_start = len(content) // 2 - sample_size // 2
-    hasher.update(content[mid_start : mid_start + sample_size])  # Middle 64KB
-    hasher.update(content[-sample_size:])  # Last 64KB
-    hasher.update(len(content).to_bytes(8, byteorder="little"))  # File size
-    return str(hasher.hexdigest())
+    sha_hasher.update(content[mid_start : mid_start + sample_size])  # Middle 64KB
+    sha_hasher.update(content[-sample_size:])  # Last 64KB
+    sha_hasher.update(len(content).to_bytes(8, byteorder="little"))  # File size
+    return sha_hasher.hexdigest()
 
 
 def is_rust_available() -> bool:
@@ -179,7 +172,7 @@ def create_hasher() -> Any:
         ...     hasher.update(chunk)
         >>> content_hash = hasher.hexdigest()
     """
-    if _PYTHON_BLAKE3_AVAILABLE and _python_blake3 is not None:
+    if _PYTHON_BLAKE3_AVAILABLE:
         return _python_blake3.blake3()
     else:
         return hashlib.sha256()

@@ -27,14 +27,19 @@ if TYPE_CHECKING:
 
 @dataclass
 class SemanticSearchResult:
-    """A semantic search result."""
+    """A semantic search result with source location metadata."""
 
     path: str
     chunk_index: int
     chunk_text: str
     score: float
+    # Character offsets for highlighting
     start_offset: int | None = None
     end_offset: int | None = None
+    # Line numbers for source navigation (1-indexed)
+    line_start: int | None = None
+    line_end: int | None = None
+    # Individual search scores (for hybrid search debugging)
     keyword_score: float | None = None
     vector_score: float | None = None
 
@@ -161,6 +166,8 @@ class SemanticSearch:
                     chunk_tokens=chunk.tokens,
                     start_offset=chunk.start_offset,
                     end_offset=chunk.end_offset,
+                    line_start=chunk.line_start,
+                    line_end=chunk.line_end,
                     embedding_model=str(self.embedding_provider.__class__.__name__)
                     if self.embedding_provider
                     else None,
@@ -314,6 +321,8 @@ class SemanticSearch:
                     score=result["score"],
                     start_offset=result.get("start_offset"),
                     end_offset=result.get("end_offset"),
+                    line_start=result.get("line_start"),
+                    line_end=result.get("line_end"),
                     keyword_score=result.get("keyword_score"),
                     vector_score=result.get("vector_score"),
                 )

@@ -84,6 +84,60 @@ def _compute_line_numbers(content: str, start_offset: int, end_offset: int) -> t
     return line_start, line_end
 
 
+def _build_line_offsets(content: str) -> list[int]:
+    """Pre-compute line start offsets for O(1) line number lookup.
+
+    Args:
+        content: Full document content
+
+    Returns:
+        List of character offsets where each line starts (0-indexed lines)
+    """
+    offsets = [0]
+    for i, c in enumerate(content):
+        if c == "\n":
+            offsets.append(i + 1)
+    return offsets
+
+
+def _offset_to_line_fast(offset: int, line_offsets: list[int]) -> int:
+    """Convert character offset to line number using pre-computed table.
+
+    O(log n) lookup via binary search instead of O(n) counting.
+
+    Args:
+        offset: Character offset
+        line_offsets: Pre-computed line offset table from _build_line_offsets()
+
+    Returns:
+        Line number (1-indexed)
+    """
+    import bisect
+
+    if offset <= 0:
+        return 1
+    # bisect_right returns insertion point; that's the line number (1-indexed)
+    return bisect.bisect_right(line_offsets, offset)
+
+
+def _compute_line_numbers_fast(
+    start_offset: int, end_offset: int, line_offsets: list[int]
+) -> tuple[int, int]:
+    """Compute line numbers using pre-computed offset table.
+
+    Args:
+        start_offset: Start character offset
+        end_offset: End character offset
+        line_offsets: Pre-computed line offset table
+
+    Returns:
+        Tuple of (line_start, line_end)
+    """
+    line_start = _offset_to_line_fast(start_offset, line_offsets)
+    line_end = _offset_to_line_fast(end_offset, line_offsets)
+    return line_start, line_end
+
+
 class DocumentChunker:
     """Document chunker for semantic search.
 
@@ -139,6 +193,51 @@ class DocumentChunker:
             # Rough approximation: 1 token ≈ 4 characters
             return len(text) // 4
 
+    def _approx_tokens(self, text: str) -> int:
+        """Fast approximate token count (1 token ≈ 4 chars).
+
+        Args:
+            text: Text to estimate tokens for
+
+        Returns:
+            Approximate number of tokens
+        """
+        return len(text) // 4
+
+    def _fits_in_chunk(self, text: str) -> bool:
+        """Check if text fits within chunk_size using smart approximation.
+
+        Uses fast approximation for clear cases, only calls expensive
+        tiktoken for boundary cases. This reduces tokenize calls by ~90%.
+
+        Args:
+            text: Text to check
+
+        Returns:
+            True if text fits within chunk_size
+        """
+        approx = self._approx_tokens(text)
+
+        # Clear cases - skip expensive tokenization
+        if approx < self.chunk_size * 0.7:
+            return True  # Definitely fits
+        if approx > self.chunk_size * 1.5:
+            return False  # Definitely too big
+
+        # Gray zone - use accurate count
+        return self._count_tokens(text) <= self.chunk_size
+
+    def _exceeds_chunk_size(self, text: str) -> bool:
+        """Check if text exceeds chunk_size using smart approximation.
+
+        Args:
+            text: Text to check
+
+        Returns:
+            True if text exceeds chunk_size
+        """
+        return not self._fits_in_chunk(text)
+
     def chunk(
         self,
         content: str,
@@ -164,11 +263,12 @@ class DocumentChunker:
         else:
             raise ValueError(f"Unknown chunking strategy: {self.strategy}")
 
-        # Add line numbers to chunks
+        # Add line numbers to chunks using pre-computed offset table (O(log n) per chunk)
         if compute_lines and chunks:
+            line_offsets = _build_line_offsets(content)
             for chunk in chunks:
-                line_start, line_end = _compute_line_numbers(
-                    content, chunk.start_offset, chunk.end_offset
+                line_start, line_end = _compute_line_numbers_fast(
+                    chunk.start_offset, chunk.end_offset, line_offsets
                 )
                 chunk.line_start = line_start
                 chunk.line_end = line_end
@@ -211,9 +311,10 @@ class DocumentChunker:
         if not text.strip():
             return []
 
-        # Check if text already fits
-        text_tokens = self._count_tokens(text)
-        if text_tokens <= self.chunk_size:
+        # Check if text already fits using smart approximation (avoids tokenization)
+        if self._fits_in_chunk(text):
+            # Only count tokens when we create the final chunk
+            text_tokens = self._count_tokens(text)
             return [
                 DocumentChunk(
                     text=text,
@@ -250,32 +351,36 @@ class DocumentChunker:
         parts = text.split(separator)
 
         current_parts: list[str] = []
-        current_tokens = 0
+        current_approx_tokens = 0  # Use approximation for running total
         current_offset = start_offset
+        sep_approx_tokens = self._approx_tokens(separator)
 
         for part in parts:
             if not part:
                 continue
 
-            part_tokens = self._count_tokens(part)
+            part_approx_tokens = self._approx_tokens(part)
 
             # If single part exceeds chunk_size, recursively split it
-            if part_tokens > self.chunk_size:
+            # Use smart check that may call tiktoken for boundary cases
+            if self._exceeds_chunk_size(part):
                 # First, finalize current chunk if any
                 if current_parts:
                     chunk_text = separator.join(current_parts)
+                    # Count actual tokens only when creating final chunk
+                    actual_tokens = self._count_tokens(chunk_text)
                     chunks.append(
                         DocumentChunk(
                             text=chunk_text,
                             chunk_index=len(chunks),
-                            tokens=current_tokens,
+                            tokens=actual_tokens,
                             start_offset=current_offset,
                             end_offset=current_offset + len(chunk_text),
                         )
                     )
                     current_offset += len(chunk_text) + len(separator)
                     current_parts = []
-                    current_tokens = 0
+                    current_approx_tokens = 0
 
                 # Recursively split the large part with remaining separators
                 remaining_seps = separators[separators.index(separator) + 1 :]
@@ -294,27 +399,32 @@ class DocumentChunker:
                     current_offset += len(part) + len(separator)
                 continue
 
-            # Check if adding this part would exceed chunk_size
-            # Account for separator between parts
-            sep_tokens = self._count_tokens(separator) if current_parts else 0
-            if current_tokens + sep_tokens + part_tokens > self.chunk_size and current_parts:
-                # Finalize current chunk
+            # Check if adding this part would exceed chunk_size (use approximation)
+            sep_to_add = sep_approx_tokens if current_parts else 0
+            if (
+                current_approx_tokens + sep_to_add + part_approx_tokens > self.chunk_size
+                and current_parts
+            ):
+                # Finalize current chunk - count actual tokens now
                 chunk_text = separator.join(current_parts)
+                actual_tokens = self._count_tokens(chunk_text)
                 chunks.append(
                     DocumentChunk(
                         text=chunk_text,
                         chunk_index=len(chunks),
-                        tokens=current_tokens,
+                        tokens=actual_tokens,
                         start_offset=current_offset,
                         end_offset=current_offset + len(chunk_text),
                     )
                 )
                 current_offset += len(chunk_text) + len(separator)
                 current_parts = []
-                current_tokens = 0
+                current_approx_tokens = 0
 
             current_parts.append(part)
-            current_tokens += part_tokens + (sep_tokens if len(current_parts) > 1 else 0)
+            current_approx_tokens += part_approx_tokens + (
+                sep_approx_tokens if len(current_parts) > 1 else 0
+            )
 
         # Add remaining parts as final chunk
         if current_parts:

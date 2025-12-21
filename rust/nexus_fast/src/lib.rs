@@ -1588,6 +1588,7 @@ struct CacheMetadata {
     /// Whether content is text (true) or binary (false)
     is_text: bool,
     /// Tenant ID for multi-tenant isolation
+    #[allow(dead_code)]
     tenant_id: String,
 }
 
@@ -1892,7 +1893,7 @@ impl L1MetadataCache {
     ///
     /// Returns:
     ///     Dict with entries, hits, misses, hit_rate, max_entries, default_ttl
-    fn stats(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let hits = self.hits.load(Ordering::Relaxed);
         let misses = self.misses.load(Ordering::Relaxed);
         let total = hits + misses;

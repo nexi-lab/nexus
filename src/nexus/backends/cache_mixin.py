@@ -266,6 +266,9 @@ class CacheConnectorMixin:
         1. session_factory (SessionLocal) - creates new session each call
         2. db_session - existing session instance
         3. _db_session - existing session instance (alternate attribute)
+
+        WARNING: When using session_factory, the caller is responsible for closing
+        the session. Prefer using _db_session_scope() context manager instead.
         """
         # Prefer session factory pattern (creates session per operation)
         if hasattr(self, "session_factory") and self.session_factory is not None:
@@ -276,6 +279,37 @@ class CacheConnectorMixin:
         if hasattr(self, "_db_session") and self._db_session is not None:
             return self._db_session  # type: ignore[no-any-return]
         raise RuntimeError("No database session available for caching")
+
+    @contextlib.contextmanager
+    def _db_session_scope(self):
+        """Context manager for database sessions with proper cleanup.
+
+        This ensures sessions are properly closed after use, preventing
+        connection pool exhaustion. Use this instead of _get_db_session()
+        for all database operations.
+
+        Yields:
+            Session: A database session that will be automatically closed.
+
+        Example:
+            with self._db_session_scope() as session:
+                result = session.execute(stmt)
+                session.commit()
+            # Session is automatically closed here
+        """
+        # Check if using session_factory (creates new sessions)
+        uses_factory = (
+            hasattr(self, "session_factory") and self.session_factory is not None
+        )
+
+        session = self._get_db_session()
+        try:
+            yield session
+        finally:
+            # Only close if we created the session via factory
+            # Existing sessions (db_session, _db_session) are managed externally
+            if uses_factory:
+                session.close()
 
     def _get_path_id(self, path: str, session: Session) -> str | None:
         """Get path_id for a virtual path."""
@@ -394,101 +428,88 @@ class CacheConnectorMixin:
             return results
 
         # L2: Bulk database lookup for remaining paths
-        session = self._get_db_session()
+        with self._db_session_scope() as session:
+            # Get path_ids in bulk
+            path_id_map = self._get_path_ids_bulk(paths_needing_l2, session)
+            if not path_id_map:
+                logger.info(
+                    f"[CACHE-BULK] {len(results)} L1 hits, {len(paths_needing_l2)} not in file_paths"
+                )
+                return results
 
-        # Get path_ids in bulk
-        path_id_map = self._get_path_ids_bulk(paths_needing_l2, session)
-        if not path_id_map:
-            logger.info(
-                f"[CACHE-BULK] {len(results)} L1 hits, {len(paths_needing_l2)} not in file_paths"
-            )
-            return results
+            # Query cache entries in bulk
+            path_ids = list(path_id_map.values())
+            stmt = select(ContentCacheModel).where(ContentCacheModel.path_id.in_(path_ids))
+            db_result = session.execute(stmt)
+            cache_models = {cm.path_id: cm for cm in db_result.scalars().all()}
 
-        # Query cache entries in bulk
-        path_ids = list(path_id_map.values())
-        stmt = select(ContentCacheModel).where(ContentCacheModel.path_id.in_(path_ids))
-        db_result = session.execute(stmt)
-        cache_models = {cm.path_id: cm for cm in db_result.scalars().all()}
+            # Build reverse map: path_id -> virtual_path
+            path_id_to_path = {v: k for k, v in path_id_map.items()}
 
-        # Build reverse map: path_id -> virtual_path
-        path_id_to_path = {v: k for k, v in path_id_map.items()}
+            # Process cache models
+            # Bulk read binary content from disk cache
+            file_cache = get_file_cache()
+            disk_contents: dict[str, bytes] = {}
+            if original:
+                # Group paths by tenant for bulk read
+                tenant_paths: dict[str, list[str]] = {}
+                for path_id, cache_model in cache_models.items():
+                    vpath = path_id_to_path.get(path_id)
+                    if vpath:
+                        cache_tenant = cache_model.tenant_id or "default"
+                        tenant_paths.setdefault(cache_tenant, []).append(vpath)
 
-        # Process cache models
-        # Bulk read binary content from disk cache
-        file_cache = get_file_cache()
-        disk_contents: dict[str, bytes] = {}
-        if original:
-            # Group paths by tenant for bulk read
-            tenant_paths: dict[str, list[str]] = {}
+                # Bulk read from disk for each tenant
+                for tenant_id, vpaths in tenant_paths.items():
+                    disk_contents.update(file_cache.read_bulk(tenant_id, vpaths))
+
+            l2_hits = 0
             for path_id, cache_model in cache_models.items():
                 vpath = path_id_to_path.get(path_id)
-                if vpath:
-                    cache_tenant = cache_model.tenant_id or "default"
-                    tenant_paths.setdefault(cache_tenant, []).append(vpath)
+                if not vpath:
+                    continue
 
-            # Bulk read from disk for each tenant
-            for tenant_id, vpaths in tenant_paths.items():
-                disk_contents.update(file_cache.read_bulk(tenant_id, vpaths))
+                # Parse metadata if stored
+                parse_metadata = None
+                if cache_model.parse_metadata:
+                    with contextlib.suppress(Exception):
+                        import json
 
-        l2_hits = 0
-        for path_id, cache_model in cache_models.items():
-            vpath = path_id_to_path.get(path_id)
-            if not vpath:
-                continue
+                        parse_metadata = json.loads(cache_model.parse_metadata)
 
-            # Parse metadata if stored
-            parse_metadata = None
-            if cache_model.parse_metadata:
+                # Get binary content: disk (primary) or database (fallback for old data)
+                content_binary_raw = None
+                if original:
+                    content_binary_raw = disk_contents.get(vpath)
+                    if not content_binary_raw and cache_model.content_binary:
+                        # Fall back to database for backward compatibility
+                        content_binary_raw = cache_model.content_binary
+
+                entry = CacheEntry(
+                    cache_id=cache_model.cache_id,
+                    path_id=cache_model.path_id,
+                    content_text=cache_model.content_text,
+                    _content_binary=None,  # Will be lazily loaded from _content_binary_raw
+                    content_hash=cache_model.content_hash,
+                    content_type=cache_model.content_type,
+                    original_size=cache_model.original_size_bytes,
+                    cached_size=cache_model.cached_size_bytes,
+                    backend_version=cache_model.backend_version,
+                    synced_at=cache_model.synced_at,
+                    stale=cache_model.stale,
+                    parsed_from=cache_model.parsed_from,
+                    parse_metadata=parse_metadata,
+                    _content_binary_raw=content_binary_raw,
+                )
+                results[vpath] = entry
+                l2_hits += 1
+
+                # Populate L1 memory cache for future reads
                 with contextlib.suppress(Exception):
-                    import json
+                    import pickle
 
-                    parse_metadata = json.loads(cache_model.parse_metadata)
-
-            # Get binary content: disk (primary) or database (fallback for old data)
-            content_binary_raw = None
-            if original:
-                content_binary_raw = disk_contents.get(vpath)
-                if not content_binary_raw and cache_model.content_binary:
-                    # Fall back to database for backward compatibility
-                    content_binary_raw = cache_model.content_binary
-
-            entry = CacheEntry(
-                cache_id=cache_model.cache_id,
-                path_id=cache_model.path_id,
-                content_text=cache_model.content_text,
-                _content_binary=None,  # Will be lazily loaded from _content_binary_raw
-                content_hash=cache_model.content_hash,
-                content_type=cache_model.content_type,
-                original_size=cache_model.original_size_bytes,
-                cached_size=cache_model.cached_size_bytes,
-                backend_version=cache_model.backend_version,
-                synced_at=cache_model.synced_at,
-                stale=cache_model.stale,
-                parsed_from=cache_model.parsed_from,
-                parse_metadata=parse_metadata,
-                _content_binary_raw=content_binary_raw,
-            )
-            results[vpath] = entry
-            l2_hits += 1
-
-            # Populate L1 Rust metadata cache for future reads
-            # Stores only metadata (~100 bytes), not full content
-            if l1_cache is not None:
-                with contextlib.suppress(Exception):
-                    file_cache = get_file_cache()
-                    cache_tenant = cache_model.tenant_id or "default"
-                    disk_path = str(file_cache._get_cache_path(cache_tenant, vpath))
-                    is_text = cache_model.content_type in ("full", "parsed", "summary")
-                    l1_cache.put(
-                        key=vpath,
-                        path_id=cache_model.path_id,
-                        content_hash=cache_model.content_hash,
-                        disk_path=disk_path,
-                        original_size=cache_model.original_size_bytes,
-                        ttl_seconds=0,  # Use default TTL
-                        is_text=is_text,
-                        tenant_id=cache_tenant,
-                    )
+                    memory_key = f"cache_entry:{vpath}"
+                    memory_cache.put(memory_key, pickle.dumps(entry))
 
         logger.info(
             f"[CACHE-BULK] {len(results) - l2_hits} L1 hits, {l2_hits} L2 hits, "
@@ -620,93 +641,77 @@ class CacheConnectorMixin:
         logger.debug(f"[CACHE] L1 MISS: {path}")
 
         # L2: Check database cache
-        session = self._get_db_session()
-
-        path_id = self._get_path_id(path, session)
-        if not path_id:
-            return None
-
-        stmt = select(ContentCacheModel).where(ContentCacheModel.path_id == path_id)
-        result = session.execute(stmt)
-        cache_model = result.scalar_one_or_none()
-
-        if not cache_model:
-            logger.debug(f"[CACHE] L2 MISS (database): {path}")
-            return None
-
-        logger.info(f"[CACHE] L2 HIT (database): {path}")
-
-        # Parse metadata if stored
-        parse_metadata = None
-        if cache_model.parse_metadata:
-            with contextlib.suppress(Exception):
-                import json
-
-                parse_metadata = json.loads(cache_model.parse_metadata)
-
-        # Read binary content from disk (primary) or database (fallback for old data)
-        content_binary_raw = None
-        if original:
-            # Try disk cache first (new storage)
-            file_cache = get_file_cache()
-            cache_tenant = cache_model.tenant_id or "default"
-            content_binary_raw = file_cache.read(cache_tenant, path)
-            if content_binary_raw:
-                logger.debug(f"[CACHE] L2 content from DISK: {path}")
-            elif cache_model.content_binary:
-                # Fall back to database for backward compatibility
-                content_binary_raw = cache_model.content_binary
-                logger.debug(f"[CACHE] L2 content from DB (legacy): {path}")
-
-        entry = CacheEntry(
-            cache_id=cache_model.cache_id,
-            path_id=cache_model.path_id,
-            content_text=cache_model.content_text,
-            _content_binary=None,  # Will be lazily loaded from _content_binary_raw
-            content_hash=cache_model.content_hash,
-            content_type=cache_model.content_type,
-            original_size=cache_model.original_size_bytes,
-            cached_size=cache_model.cached_size_bytes,
-            backend_version=cache_model.backend_version,
-            synced_at=cache_model.synced_at,
-            stale=cache_model.stale,
-            parsed_from=cache_model.parsed_from,
-            parse_metadata=parse_metadata,
-            _content_binary_raw=content_binary_raw,
-        )
-
-        # Check TTL if connector defines cache_ttl
-        if hasattr(self, "cache_ttl") and self.cache_ttl:
-            age = (datetime.now(UTC) - entry.synced_at).total_seconds()
-            if age > self.cache_ttl:
-                logger.info(
-                    f"[CACHE] L2 TTL EXPIRED: {path} (age={age:.0f}s > ttl={self.cache_ttl}s)"
-                )
+        with self._db_session_scope() as session:
+            path_id = self._get_path_id(path, session)
+            if not path_id:
                 return None
 
-        # Populate L1 Rust metadata cache for future reads
-        # Stores only metadata (~100 bytes), not full content
-        if l1_cache is not None:
-            with contextlib.suppress(Exception):
+            stmt = select(ContentCacheModel).where(ContentCacheModel.path_id == path_id)
+            result = session.execute(stmt)
+            cache_model = result.scalar_one_or_none()
+
+            if not cache_model:
+                logger.debug(f"[CACHE] L2 MISS (database): {path}")
+                return None
+
+            logger.info(f"[CACHE] L2 HIT (database): {path}")
+
+            # Parse metadata if stored
+            parse_metadata = None
+            if cache_model.parse_metadata:
+                with contextlib.suppress(Exception):
+                    import json
+
+                    parse_metadata = json.loads(cache_model.parse_metadata)
+
+            # Read binary content from disk (primary) or database (fallback for old data)
+            content_binary_raw = None
+            if original:
+                # Try disk cache first (new storage)
                 file_cache = get_file_cache()
                 cache_tenant = cache_model.tenant_id or "default"
-                disk_path = str(file_cache._get_cache_path(cache_tenant, path))
-                is_text = cache_model.content_type in ("full", "parsed", "summary")
-                # Use connector-specific TTL if defined
-                ttl = getattr(self, "cache_ttl", 0) or 0
-                l1_cache.put(
-                    key=path,
-                    path_id=cache_model.path_id,
-                    content_hash=cache_model.content_hash,
-                    disk_path=disk_path,
-                    original_size=cache_model.original_size_bytes,
-                    ttl_seconds=ttl,
-                    is_text=is_text,
-                    tenant_id=cache_tenant,
-                )
+                content_binary_raw = file_cache.read(cache_tenant, path)
+                if content_binary_raw:
+                    logger.debug(f"[CACHE] L2 content from DISK: {path}")
+                elif cache_model.content_binary:
+                    # Fall back to database for backward compatibility
+                    content_binary_raw = cache_model.content_binary
+                    logger.debug(f"[CACHE] L2 content from DB (legacy): {path}")
+
+            entry = CacheEntry(
+                cache_id=cache_model.cache_id,
+                path_id=cache_model.path_id,
+                content_text=cache_model.content_text,
+                _content_binary=None,  # Will be lazily loaded from _content_binary_raw
+                content_hash=cache_model.content_hash,
+                content_type=cache_model.content_type,
+                original_size=cache_model.original_size_bytes,
+                cached_size=cache_model.cached_size_bytes,
+                backend_version=cache_model.backend_version,
+                synced_at=cache_model.synced_at,
+                stale=cache_model.stale,
+                parsed_from=cache_model.parsed_from,
+                parse_metadata=parse_metadata,
+                _content_binary_raw=content_binary_raw,
+            )
+
+            # Check TTL if connector defines cache_ttl
+            if hasattr(self, "cache_ttl") and self.cache_ttl:
+                age = (datetime.now(UTC) - entry.synced_at).total_seconds()
+                if age > self.cache_ttl:
+                    logger.info(
+                        f"[CACHE] L2 TTL EXPIRED: {path} (age={age:.0f}s > ttl={self.cache_ttl}s)"
+                    )
+                    return None
+
+            # Populate L1 memory cache for future reads
+            with contextlib.suppress(Exception):
+                import pickle
+
+                memory_cache.put(memory_key, pickle.dumps(entry))
                 logger.debug(f"[CACHE] L1 POPULATED from L2: {path}")
 
-        return entry
+            return entry
 
     def _write_to_cache(
         self,
@@ -734,12 +739,6 @@ class CacheConnectorMixin:
         Returns:
             CacheEntry for the cached content
         """
-        session = self._get_db_session()
-
-        path_id = self._get_path_id(path, session)
-        if not path_id:
-            raise ValueError(f"Path not found in file_paths: {path}")
-
         # Compute content hash (BLAKE3, Rust-accelerated)
         content_hash = hash_content(content)
 
@@ -779,78 +778,83 @@ class CacheConnectorMixin:
 
         now = datetime.now(UTC)
 
-        # Check if entry exists
-        stmt = select(ContentCacheModel).where(ContentCacheModel.path_id == path_id)
-        result = session.execute(stmt)
-        existing = result.scalar_one_or_none()
+        with self._db_session_scope() as session:
+            path_id = self._get_path_id(path, session)
+            if not path_id:
+                raise ValueError(f"Path not found in file_paths: {path}")
 
-        if existing:
-            # Update existing entry (content_binary=None, content now on disk)
-            existing.content_text = content_text
-            existing.content_binary = None  # Binary stored on disk via FileContentCache
-            existing.content_hash = content_hash
-            existing.content_type = content_type
-            existing.original_size_bytes = original_size
-            existing.cached_size_bytes = cached_size
-            existing.backend_version = backend_version
-            existing.parsed_from = parsed_from
-            existing.parser_version = None  # TODO: Add parser versioning
-            existing.parse_metadata = parse_metadata_json
-            existing.synced_at = now
-            existing.stale = False
-            existing.updated_at = now
-            cache_id = existing.cache_id
-        else:
-            # Create new entry (content_binary=None, content now on disk)
-            cache_id = str(uuid.uuid4())
-            cache_model = ContentCacheModel(
-                cache_id=cache_id,
-                path_id=path_id,
-                tenant_id=tenant_id,
-                content_text=content_text,
-                content_binary=None,  # Binary stored on disk via FileContentCache
-                content_hash=content_hash,
-                content_type=content_type,
-                original_size_bytes=original_size,
-                cached_size_bytes=cached_size,
-                backend_version=backend_version,
-                parsed_from=parsed_from,
-                parser_version=None,
-                parse_metadata=parse_metadata_json,
-                synced_at=now,
-                stale=False,
-                created_at=now,
-                updated_at=now,
-            )
-            session.add(cache_model)
+            # Check if entry exists
+            stmt = select(ContentCacheModel).where(ContentCacheModel.path_id == path_id)
+            result = session.execute(stmt)
+            existing = result.scalar_one_or_none()
 
-        # Update file_paths to keep it consistent with cache
-        # This ensures:
-        # - ls -la shows correct sizes even before cache lookup
-        # - get_etag() works for connectors (early 304 check)
-        try:
-            file_path_stmt = select(FilePathModel).where(FilePathModel.path_id == path_id)
-            file_path_result = session.execute(file_path_stmt)
-            file_path = file_path_result.scalar_one_or_none()
-            if file_path:
-                updated = False
-                if file_path.size_bytes != original_size:
-                    file_path.size_bytes = original_size
-                    updated = True
-                # Also update content_hash so get_etag() works for connectors
-                if file_path.content_hash != content_hash:
-                    file_path.content_hash = content_hash
-                    updated = True
-                if updated:
-                    file_path.updated_at = now
-                    logger.debug(
-                        f"[CACHE] Updated file_paths: {path} (size={original_size}, hash={content_hash[:8]}...)"
-                    )
-        except Exception as e:
-            # Don't fail cache write if file_paths update fails
-            logger.warning(f"[CACHE] Failed to update file_paths for {path}: {e}")
+            if existing:
+                # Update existing entry (content_binary=None, content now on disk)
+                existing.content_text = content_text
+                existing.content_binary = None  # Binary stored on disk via FileContentCache
+                existing.content_hash = content_hash
+                existing.content_type = content_type
+                existing.original_size_bytes = original_size
+                existing.cached_size_bytes = cached_size
+                existing.backend_version = backend_version
+                existing.parsed_from = parsed_from
+                existing.parser_version = None  # TODO: Add parser versioning
+                existing.parse_metadata = parse_metadata_json
+                existing.synced_at = now
+                existing.stale = False
+                existing.updated_at = now
+                cache_id = existing.cache_id
+            else:
+                # Create new entry (content_binary=None, content now on disk)
+                cache_id = str(uuid.uuid4())
+                cache_model = ContentCacheModel(
+                    cache_id=cache_id,
+                    path_id=path_id,
+                    tenant_id=tenant_id,
+                    content_text=content_text,
+                    content_binary=None,  # Binary stored on disk via FileContentCache
+                    content_hash=content_hash,
+                    content_type=content_type,
+                    original_size_bytes=original_size,
+                    cached_size_bytes=cached_size,
+                    backend_version=backend_version,
+                    parsed_from=parsed_from,
+                    parser_version=None,
+                    parse_metadata=parse_metadata_json,
+                    synced_at=now,
+                    stale=False,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(cache_model)
 
-        session.commit()
+            # Update file_paths to keep it consistent with cache
+            # This ensures:
+            # - ls -la shows correct sizes even before cache lookup
+            # - get_etag() works for connectors (early 304 check)
+            try:
+                file_path_stmt = select(FilePathModel).where(FilePathModel.path_id == path_id)
+                file_path_result = session.execute(file_path_stmt)
+                file_path = file_path_result.scalar_one_or_none()
+                if file_path:
+                    updated = False
+                    if file_path.size_bytes != original_size:
+                        file_path.size_bytes = original_size
+                        updated = True
+                    # Also update content_hash so get_etag() works for connectors
+                    if file_path.content_hash != content_hash:
+                        file_path.content_hash = content_hash
+                        updated = True
+                    if updated:
+                        file_path.updated_at = now
+                        logger.debug(
+                            f"[CACHE] Updated file_paths: {path} (size={original_size}, hash={content_hash[:8]}...)"
+                        )
+            except Exception as e:
+                # Don't fail cache write if file_paths update fails
+                logger.warning(f"[CACHE] Failed to update file_paths for {path}: {e}")
+
+            session.commit()
 
         entry = CacheEntry(
             cache_id=cache_id,
@@ -1075,154 +1079,154 @@ class CacheConnectorMixin:
         if not entries:
             return []
 
-        session = self._get_db_session()
         now = datetime.now(UTC)
-        l1_cache = self._get_l1_cache()  # Rust L1 metadata cache
+        memory_cache = self._get_memory_cache()
         file_cache = get_file_cache()  # Disk cache for binary content
-
-        # Get all path_ids in bulk
-        paths = [e["path"] for e in entries]
-        path_id_map = self._get_path_ids_bulk(paths, session)
-
-        # Get existing cache entries in bulk
-        existing_stmt = select(ContentCacheModel).where(
-            ContentCacheModel.path_id.in_(list(path_id_map.values()))
-        )
-        existing_result = session.execute(existing_stmt)
-        existing_by_path_id = {ce.path_id: ce for ce in existing_result.scalars().all()}
 
         cache_entries: list[CacheEntry] = []
 
-        for entry_data in entries:
-            try:
-                path = entry_data["path"]
-                content = entry_data["content"]
-                content_text = entry_data.get("content_text")
-                content_type = entry_data.get("content_type", "full")
-                backend_version = entry_data.get("backend_version")
-                parsed_from = entry_data.get("parsed_from")
-                parse_metadata = entry_data.get("parse_metadata")
-                tenant_id = entry_data.get("tenant_id")
+        with self._db_session_scope() as session:
+            # Get all path_ids in bulk
+            paths = [e["path"] for e in entries]
+            path_id_map = self._get_path_ids_bulk(paths, session)
 
-                path_id = path_id_map.get(path)
-                if not path_id:
-                    logger.warning(f"[CACHE] Path not found in file_paths, skipping: {path}")
-                    continue
+            # Get existing cache entries in bulk
+            existing_stmt = select(ContentCacheModel).where(
+                ContentCacheModel.path_id.in_(list(path_id_map.values()))
+            )
+            existing_result = session.execute(existing_stmt)
+            existing_by_path_id = {ce.path_id: ce for ce in existing_result.scalars().all()}
 
-                # Compute content hash
-                content_hash = hash_content(content)
+            for entry_data in entries:
+                try:
+                    path = entry_data["path"]
+                    content = entry_data["content"]
+                    content_text = entry_data.get("content_text")
+                    content_type = entry_data.get("content_type", "full")
+                    backend_version = entry_data.get("backend_version")
+                    parsed_from = entry_data.get("parsed_from")
+                    parse_metadata = entry_data.get("parse_metadata")
+                    tenant_id = entry_data.get("tenant_id")
 
-                # Determine text content
-                if content_text is None:
-                    try:
-                        content_text = content.decode("utf-8")
-                    except UnicodeDecodeError:
-                        content_text = None
-                        content_type = "reference"
+                    path_id = path_id_map.get(path)
+                    if not path_id:
+                        logger.warning(f"[CACHE] Path not found in file_paths, skipping: {path}")
+                        continue
 
-                # Handle large files
-                original_size = len(content)
-                if content_text and len(content_text) > self.MAX_FULL_TEXT_SIZE:
-                    content_text = content_text[: self.SUMMARY_SIZE]
-                    content_type = "summary"
+                    # Compute content hash
+                    content_hash = hash_content(content)
 
-                cached_size = len(content_text) if content_text else 0
+                    # Determine text content
+                    if content_text is None:
+                        try:
+                            content_text = content.decode("utf-8")
+                        except UnicodeDecodeError:
+                            content_text = None
+                            content_type = "reference"
 
-                # Write binary content to disk via FileContentCache
-                cache_tenant = tenant_id or "default"
-                if original_size <= self.MAX_CACHE_FILE_SIZE:
-                    try:
-                        file_cache.write(cache_tenant, path, content, text_content=content_text)
-                    except Exception as e:
-                        logger.warning(f"[CACHE] Failed to write to disk cache: {path}: {e}")
+                    # Handle large files
+                    original_size = len(content)
+                    if content_text and len(content_text) > self.MAX_FULL_TEXT_SIZE:
+                        content_text = content_text[: self.SUMMARY_SIZE]
+                        content_type = "summary"
 
-                # Serialize parse_metadata
-                parse_metadata_json = None
-                if parse_metadata:
-                    import json
+                    cached_size = len(content_text) if content_text else 0
 
-                    parse_metadata_json = json.dumps(parse_metadata)
+                    # Write binary content to disk via FileContentCache
+                    cache_tenant = tenant_id or "default"
+                    if original_size <= self.MAX_CACHE_FILE_SIZE:
+                        try:
+                            file_cache.write(cache_tenant, path, content, text_content=content_text)
+                        except Exception as e:
+                            logger.warning(f"[CACHE] Failed to write to disk cache: {path}: {e}")
 
-                # Update or create entry (content_binary=None, content now on disk)
-                existing = existing_by_path_id.get(path_id)
-                if existing:
-                    # Update existing entry
-                    existing.content_text = content_text
-                    existing.content_binary = None  # Binary stored on disk via FileContentCache
-                    existing.content_hash = content_hash
-                    existing.content_type = content_type
-                    existing.original_size_bytes = original_size
-                    existing.cached_size_bytes = cached_size
-                    existing.backend_version = backend_version
-                    existing.parsed_from = parsed_from
-                    existing.parser_version = None
-                    existing.parse_metadata = parse_metadata_json
-                    existing.synced_at = now
-                    existing.stale = False
-                    existing.updated_at = now
-                    cache_id = existing.cache_id
-                else:
-                    # Create new entry
-                    cache_id = str(uuid.uuid4())
-                    cache_model = ContentCacheModel(
+                    # Serialize parse_metadata
+                    parse_metadata_json = None
+                    if parse_metadata:
+                        import json
+
+                        parse_metadata_json = json.dumps(parse_metadata)
+
+                    # Update or create entry (content_binary=None, content now on disk)
+                    existing = existing_by_path_id.get(path_id)
+                    if existing:
+                        # Update existing entry
+                        existing.content_text = content_text
+                        existing.content_binary = None  # Binary stored on disk via FileContentCache
+                        existing.content_hash = content_hash
+                        existing.content_type = content_type
+                        existing.original_size_bytes = original_size
+                        existing.cached_size_bytes = cached_size
+                        existing.backend_version = backend_version
+                        existing.parsed_from = parsed_from
+                        existing.parser_version = None
+                        existing.parse_metadata = parse_metadata_json
+                        existing.synced_at = now
+                        existing.stale = False
+                        existing.updated_at = now
+                        cache_id = existing.cache_id
+                    else:
+                        # Create new entry
+                        cache_id = str(uuid.uuid4())
+                        cache_model = ContentCacheModel(
+                            cache_id=cache_id,
+                            path_id=path_id,
+                            tenant_id=tenant_id,
+                            content_text=content_text,
+                            content_binary=None,  # Binary stored on disk via FileContentCache
+                            content_hash=content_hash,
+                            content_type=content_type,
+                            original_size_bytes=original_size,
+                            cached_size_bytes=cached_size,
+                            backend_version=backend_version,
+                            parsed_from=parsed_from,
+                            parser_version=None,
+                            parse_metadata=parse_metadata_json,
+                            synced_at=now,
+                            stale=False,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                        session.add(cache_model)
+
+                    # Create CacheEntry for return value
+                    cache_entry = CacheEntry(
                         cache_id=cache_id,
                         path_id=path_id,
-                        tenant_id=tenant_id,
                         content_text=content_text,
-                        content_binary=None,  # Binary stored on disk via FileContentCache
+                        _content_binary=content if original_size <= self.MAX_CACHE_FILE_SIZE else None,
                         content_hash=content_hash,
                         content_type=content_type,
-                        original_size_bytes=original_size,
-                        cached_size_bytes=cached_size,
+                        original_size=original_size,
+                        cached_size=cached_size,
                         backend_version=backend_version,
-                        parsed_from=parsed_from,
-                        parser_version=None,
-                        parse_metadata=parse_metadata_json,
                         synced_at=now,
                         stale=False,
-                        created_at=now,
-                        updated_at=now,
+                        parsed_from=parsed_from,
+                        parse_metadata=parse_metadata,
                     )
-                    session.add(cache_model)
+                    cache_entries.append(cache_entry)
 
-                # Create CacheEntry for return value
-                cache_entry = CacheEntry(
-                    cache_id=cache_id,
-                    path_id=path_id,
-                    content_text=content_text,
-                    _content_binary=content if original_size <= self.MAX_CACHE_FILE_SIZE else None,
-                    content_hash=content_hash,
-                    content_type=content_type,
-                    original_size=original_size,
-                    cached_size=cached_size,
-                    backend_version=backend_version,
-                    synced_at=now,
-                    stale=False,
-                    parsed_from=parsed_from,
-                    parse_metadata=parse_metadata,
-                )
-                cache_entries.append(cache_entry)
+                    # Update L1 Rust metadata cache (stores only metadata, not content)
+                    if l1_cache is not None:
+                        with contextlib.suppress(Exception):
+                            disk_path = str(file_cache._get_cache_path(cache_tenant, path))
+                            is_text = content_type in ("full", "parsed", "summary")
+                            # Use connector-specific TTL if defined
+                            ttl = getattr(self, "cache_ttl", 0) or 0
+                            l1_cache.put(
+                                key=path,
+                                path_id=path_id,
+                                content_hash=content_hash,
+                                disk_path=disk_path,
+                                original_size=original_size,
+                                ttl_seconds=ttl,
+                                is_text=is_text,
+                                tenant_id=cache_tenant,
+                            )
 
-                # Update L1 Rust metadata cache (stores only metadata, not content)
-                if l1_cache is not None:
-                    with contextlib.suppress(Exception):
-                        disk_path = str(file_cache._get_cache_path(cache_tenant, path))
-                        is_text = content_type in ("full", "parsed", "summary")
-                        # Use connector-specific TTL if defined
-                        ttl = getattr(self, "cache_ttl", 0) or 0
-                        l1_cache.put(
-                            key=path,
-                            path_id=path_id,
-                            content_hash=content_hash,
-                            disk_path=disk_path,
-                            original_size=original_size,
-                            ttl_seconds=ttl,
-                            is_text=is_text,
-                            tenant_id=cache_tenant,
-                        )
-
-            except Exception as e:
-                logger.error(f"[CACHE] Failed to prepare cache entry for {path}: {e}")
+                except Exception as e:
+                    logger.error(f"[CACHE] Failed to prepare cache entry for {path}: {e}")
 
         # Update file_paths for all cached entries (bulk update for efficiency)
         # This keeps file_paths consistent with cache and enables get_etag() for connectors
@@ -1298,58 +1302,57 @@ class CacheConnectorMixin:
             memory_cache.clear()
 
         # Invalidate L2 database cache
-        session = self._get_db_session()
+        with self._db_session_scope() as session:
+            if path:
+                path_id = self._get_path_id(path, session)
+                if not path_id:
+                    return 0
 
-        if path:
-            path_id = self._get_path_id(path, session)
-            if not path_id:
-                return 0
+                stmt = select(ContentCacheModel).where(ContentCacheModel.path_id == path_id)
+                result = session.execute(stmt)
+                entry = result.scalar_one_or_none()
 
-            stmt = select(ContentCacheModel).where(ContentCacheModel.path_id == path_id)
-            result = session.execute(stmt)
-            entry = result.scalar_one_or_none()
+                if not entry:
+                    return 0
 
-            if not entry:
-                return 0
-
-            if delete:
-                # Delete from disk cache
-                cache_tenant = entry.tenant_id or "default"
-                file_cache.delete(cache_tenant, path)
-                session.delete(entry)
-            else:
-                entry.stale = True
-                entry.updated_at = datetime.now(UTC)
-
-            session.commit()
-            return 1
-
-        elif mount_prefix:
-            # Invalidate all entries under mount prefix
-            mount_stmt = (
-                select(ContentCacheModel, FilePathModel.virtual_path)
-                .join(FilePathModel, ContentCacheModel.path_id == FilePathModel.path_id)
-                .where(FilePathModel.virtual_path.startswith(mount_prefix))
-            )
-            result = session.execute(mount_stmt)
-            rows = result.all()
-
-            count = 0
-            for cache_entry, vpath in rows:
                 if delete:
                     # Delete from disk cache
-                    cache_tenant = cache_entry.tenant_id or "default"
-                    file_cache.delete(cache_tenant, vpath)
-                    session.delete(cache_entry)
+                    cache_tenant = entry.tenant_id or "default"
+                    file_cache.delete(cache_tenant, path)
+                    session.delete(entry)
                 else:
-                    cache_entry.stale = True
-                    cache_entry.updated_at = datetime.now(UTC)
-                count += 1
+                    entry.stale = True
+                    entry.updated_at = datetime.now(UTC)
 
-            session.commit()
-            return count
+                session.commit()
+                return 1
 
-        return 0
+            elif mount_prefix:
+                # Invalidate all entries under mount prefix
+                mount_stmt = (
+                    select(ContentCacheModel, FilePathModel.virtual_path)
+                    .join(FilePathModel, ContentCacheModel.path_id == FilePathModel.path_id)
+                    .where(FilePathModel.virtual_path.startswith(mount_prefix))
+                )
+                result = session.execute(mount_stmt)
+                rows = result.all()
+
+                count = 0
+                for cache_entry, vpath in rows:
+                    if delete:
+                        # Delete from disk cache
+                        cache_tenant = cache_entry.tenant_id or "default"
+                        file_cache.delete(cache_tenant, vpath)
+                        session.delete(cache_entry)
+                    else:
+                        cache_entry.stale = True
+                        cache_entry.updated_at = datetime.now(UTC)
+                    count += 1
+
+                session.commit()
+                return count
+
+            return 0
 
     def _check_version(
         self,

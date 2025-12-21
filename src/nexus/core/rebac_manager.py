@@ -65,6 +65,7 @@ class ReBACManager:
         l1_cache_ttl: int = 60,
         enable_metrics: bool = True,
         enable_adaptive_ttl: bool = False,
+        l1_cache_quantization_interval: int = 5,
     ):
         """Initialize ReBAC manager.
 
@@ -77,6 +78,8 @@ class ReBACManager:
             l1_cache_ttl: L1 cache TTL in seconds (default: 60s)
             enable_metrics: Track cache metrics (default: True)
             enable_adaptive_ttl: Adjust TTL based on write frequency (default: False)
+            l1_cache_quantization_interval: Time bucket size in seconds for distributed
+                cache sharing (default: 5s). Set to 0 to disable. See Issue #842.
         """
         self.engine = engine
         self.cache_ttl_seconds = cache_ttl_seconds
@@ -92,10 +95,12 @@ class ReBACManager:
                 ttl_seconds=l1_cache_ttl,
                 enable_metrics=enable_metrics,
                 enable_adaptive_ttl=enable_adaptive_ttl,
+                quantization_interval=l1_cache_quantization_interval,
             )
             logger.info(
                 f"L1 cache enabled: max_size={l1_cache_size}, ttl={l1_cache_ttl}s, "
-                f"metrics={enable_metrics}, adaptive_ttl={enable_adaptive_ttl}"
+                f"metrics={enable_metrics}, adaptive_ttl={enable_adaptive_ttl}, "
+                f"quantization={l1_cache_quantization_interval}s"
             )
 
         # Use SQLAlchemy sessionmaker for proper connection management

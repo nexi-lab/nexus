@@ -17,8 +17,12 @@ server:
 # Database configuration (uses PostgreSQL from docker-compose)
 database:
   url: postgresql://postgres:nexus@postgres:5432/nexus
-  pool_size: 10
-  max_overflow: 20
+  # TEMPORARY WORKAROUND: Increased pool size for provisioning API
+  # Each provision_user() call opens 25-30 sessions due to nested operations
+  # (rebac_create, entity_registry, etc.). This is an architectural issue.
+  # See nexus_fs_provisioning.py docstring for proper fix.
+  pool_size: 20  # Increased from 10 to handle provisioning operations
+  max_overflow: 30  # Increased from 20 to prevent pool exhaustion
   echo: false
 
 # Multi-backend storage configuration

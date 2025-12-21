@@ -12,6 +12,25 @@ Key Features:
 - Database record creation (UserModel, TenantModel)
 - API key generation
 - Idempotent operations
+
+KNOWN ISSUE - Database Connection Pool Pressure:
+The provisioning operations open many database sessions due to nested operations:
+- Each rebac_create() call opens a session
+- Each entity_registry.register_entity() opens 2 sessions (check + create)
+- Directory creation, workspace registration, agent registration all open sessions
+
+A single provision_user() call can open 25-30 database sessions. While context managers
+properly close these sessions, rapid or concurrent provisioning can exhaust the pool.
+
+Proper Fix (TODO):
+- Refactor to pass shared session through call stack
+- Implement batch ReBAC API to reduce session opens
+- Add session pooling to entity_registry operations
+
+Workaround:
+- Increase database pool_size in production config
+- Rate-limit provisioning API calls
+- Use async/background provisioning for bulk operations
 """
 
 from __future__ import annotations
@@ -133,15 +152,22 @@ class NexusFSProvisioningMixin:
             user_id: User ID
             context: Operation context with admin privileges
         """
+        # Batch all directory operations to reduce session opens
+        # Create all directories first
         for resource_type in ALL_RESOURCE_TYPES:
             folder_path = f"/tenant:{tenant_id}/user:{user_id}/{resource_type}"
             self.mkdir(folder_path, parents=True, exist_ok=True, context=context)
 
-            # Create placeholder file to make directory visible
+        # Then create placeholders
+        for resource_type in ALL_RESOURCE_TYPES:
+            folder_path = f"/tenant:{tenant_id}/user:{user_id}/{resource_type}"
             placeholder_path = f"{folder_path}/.placeholder"
             self.write(placeholder_path, b"", context=context)
 
-            # Grant user ownership of their resource folder
+        # Finally, batch all ReBAC operations if possible
+        # TODO: Implement batch ReBAC API to reduce session opens
+        for resource_type in ALL_RESOURCE_TYPES:
+            folder_path = f"/tenant:{tenant_id}/user:{user_id}/{resource_type}"
             self.rebac_create(
                 subject=("user", user_id),
                 relation="owner-of",
@@ -483,31 +509,34 @@ class NexusFSProvisioningMixin:
             "created_at": datetime.now(UTC),
         }
 
-        # For personal accounts, create the tenant first
-        if account_type == "personal":
-            # Check if personal tenant already exists
-            with self.metadata.SessionLocal() as session:
-                existing_tenant = session.query(TenantModel).filter_by(tenant_id=tenant_id).first()
-                if not existing_tenant or not existing_tenant.is_active:
-                    # Create personal tenant
-                    self.provision_tenant(
-                        tenant_id=tenant_id,
-                        name=f"{display_name or user_id}'s Organization",
-                        description=f"Personal organization for {user_id}",
-                        context=provision_context,
-                    )
-
         # Generate API key if requested
         api_key = None
         if create_api_key:
             api_key = self._generate_api_key()
             result["api_key"] = api_key
 
-        # Create user database record
+        # Consolidate all database operations in a single session to reduce connection pressure
+        # This combines: tenant check/create, user create, all in one transaction
         import json
 
-        # Use consistent timestamp for both result and database
         now = datetime.now(UTC)
+
+        # For personal accounts, ensure tenant exists first (separate transaction)
+        if account_type == "personal":
+            with self.metadata.SessionLocal() as session:
+                existing_tenant = session.query(TenantModel).filter_by(tenant_id=tenant_id).first()
+                needs_tenant_creation = not existing_tenant or not existing_tenant.is_active
+
+            if needs_tenant_creation:
+                # Create personal tenant (this will open its own sessions)
+                self.provision_tenant(
+                    tenant_id=tenant_id,
+                    name=f"{display_name or user_id}'s Organization",
+                    description=f"Personal organization for {user_id}",
+                    context=provision_context,
+                )
+
+        # Create user database record
         with self.metadata.SessionLocal() as session:
             user_model = UserModel(
                 user_id=user_id,

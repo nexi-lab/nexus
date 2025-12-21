@@ -624,6 +624,32 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 )
                 tuples.extend(cross_tenant_tuples)
 
+        # LEOPARD OPTIMIZATION (Issue #840): Add synthetic membership tuples from
+        # transitive closure. This allows O(1) group membership lookups instead of
+        # O(depth) recursive graph traversal during permission checks.
+        if self._leopard and subject is not None:
+            transitive_groups = self._leopard.get_transitive_groups(
+                member_type=subject.entity_type,
+                member_id=subject.entity_id,
+                tenant_id=tenant_id,
+            )
+            if transitive_groups:
+                logger.debug(
+                    f"[LEOPARD] Adding {len(transitive_groups)} synthetic membership tuples "
+                    f"for {subject.entity_type}:{subject.entity_id}"
+                )
+                for group_type, group_id in transitive_groups:
+                    tuples.append(
+                        {
+                            "subject_type": subject.entity_type,
+                            "subject_id": subject.entity_id,
+                            "subject_relation": None,
+                            "relation": "member",  # synthetic direct membership
+                            "object_type": group_type,
+                            "object_id": group_id,
+                        }
+                    )
+
         return tuples
 
     def _get_cached_tenant_tuples(self, tenant_id: str) -> list[dict[str, Any]] | None:

@@ -336,29 +336,33 @@ print_section "4. Granting Group Permissions (Issue #338 Fix)"
 print_subsection "Understanding the tuple direction"
 print_info "IMPORTANT: For group permissions to work with tupleToUserset,"
 print_info "tuples must be created as:"
-echo -e "  ${GREEN}✓ [file] --[direct_editor]--> [group]${NC}"
-echo -e "  ${RED}✗ [group] --[direct_editor]--> [file]${NC}"
+echo -e "  ${GREEN}✓ [group] --[direct_editor]--> [file]${NC}"
+echo -e "  ${RED}✗ [file] --[direct_editor]--> [group]${NC}"
+echo ""
+print_info "The group is the SUBJECT (who has the permission), file is the OBJECT."
 echo ""
 
 print_subsection "Granting editor permission to engineering-team on /workspace/shared/team_doc.md"
 
 # Grant group editor permission on shared file
-# CORRECT DIRECTION: [file] --[direct_editor]--> [group]
-nexus rebac create file /workspace/shared/team_doc.md direct_editor group engineering-team
+# CORRECT DIRECTION: [group] --[direct_editor]--> [file]
+# Subject: group (who has the permission)
+# Object: file (what the permission is on)
+nexus rebac create group engineering-team direct_editor file /workspace/shared/team_doc.md
 
 print_success "Granted editor permission"
 
 print_subsection "Granting viewer permission to engineering-team on /workspace/public/readme.md"
 
 # Grant group viewer permission on public file
-nexus rebac create file /workspace/public/readme.md direct_viewer group engineering-team
+nexus rebac create group engineering-team direct_viewer file /workspace/public/readme.md
 
 print_success "Granted viewer permission"
 
 print_subsection "Granting owner permission to engineering-team on /workspace/shared/private.md"
 
 # Grant group owner permission on private file
-nexus rebac create file /workspace/shared/private.md direct_owner group engineering-team
+nexus rebac create group engineering-team direct_owner file /workspace/shared/private.md
 
 print_success "Granted owner permission"
 

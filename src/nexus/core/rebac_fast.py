@@ -68,6 +68,7 @@ def check_permissions_bulk_rust(
     checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
     tuples: list[dict[str, Any]],
     namespace_configs: dict[str, Any],
+    tuple_version: int = 0,
 ) -> dict[tuple[str, str, str, str, str], bool]:
     """
     Check multiple permissions using Rust implementation.
@@ -120,7 +121,9 @@ def check_permissions_bulk_rust(
         module = _internal_module or _external_module
         if module is None:
             raise RuntimeError("No Rust module available")
-        result: Any = module.compute_permissions_bulk(checks, tuples, namespace_configs)
+        result: Any = module.compute_permissions_bulk(
+            checks, tuples, namespace_configs, tuple_version
+        )
         return result  # type: ignore[no-any-return]
     except Exception as e:
         logger.error(f"Rust permission check failed: {e}", exc_info=True)
@@ -132,6 +135,7 @@ def check_permissions_bulk_with_fallback(
     tuples: list[dict[str, Any]],
     namespace_configs: dict[str, Any],
     force_python: bool = False,
+    tuple_version: int = 0,
 ) -> dict[tuple[str, str, str, str, str], bool]:
     """
     Check multiple permissions with automatic fallback to Python.
@@ -144,6 +148,7 @@ def check_permissions_bulk_with_fallback(
         tuples: List of ReBAC relationship dictionaries
         namespace_configs: Dict mapping object_type -> namespace config
         force_python: Force use of Python implementation (for testing/debugging)
+        tuple_version: Version counter for Rust graph cache invalidation
 
     Returns:
         Dict mapping (subject_type, subject_id, permission, object_type, object_id) -> bool
@@ -163,7 +168,7 @@ def check_permissions_bulk_with_fallback(
             import time
 
             start = time.perf_counter()
-            result = check_permissions_bulk_rust(checks, tuples, namespace_configs)
+            result = check_permissions_bulk_rust(checks, tuples, namespace_configs, tuple_version)
             elapsed = time.perf_counter() - start
             logger.info(
                 f"[RUST-INNER] Pure Rust computation: {elapsed * 1000:.1f}ms for {len(checks)} checks"

@@ -89,6 +89,8 @@ class AsyncRemoteNexusFS:
         connect_timeout: float = 5.0,
         pool_connections: int = 10,
         pool_maxsize: int = 10,
+        negative_cache_capacity: int = 100_000,
+        negative_cache_fp_rate: float = 0.01,
     ):
         """Initialize async remote filesystem client.
 
@@ -99,6 +101,8 @@ class AsyncRemoteNexusFS:
             connect_timeout: Connection timeout in seconds (default: 5s)
             pool_connections: Number of connection pool connections (default: 10)
             pool_maxsize: Maximum connection pool size (default: 10)
+            negative_cache_capacity: Max entries for negative cache Bloom filter (default: 100,000)
+            negative_cache_fp_rate: False positive rate for Bloom filter (default: 0.01 = 1%)
         """
         self.server_url = server_url.rstrip("/")
         self.api_key = api_key
@@ -128,14 +132,78 @@ class AsyncRemoteNexusFS:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        # Create async httpx client
+        # Create async httpx client with HTTP/2 for multiplexing
         self._client = httpx.AsyncClient(
             limits=limits,
             timeout=timeout_config,
             headers=headers,
+            http2=True,
         )
 
         self._initialized = False
+
+        # Initialize negative cache Bloom filter for reducing round-trips
+        # on non-existent files (issue #858)
+        self._negative_cache_capacity = negative_cache_capacity
+        self._negative_cache_fp_rate = negative_cache_fp_rate
+        self._negative_bloom: Any = None
+        self._init_negative_cache()
+
+    def _init_negative_cache(self) -> None:
+        """Initialize Bloom filter for negative caching of non-existent files."""
+        try:
+            from nexus_fast import BloomFilter
+
+            self._negative_bloom = BloomFilter(
+                self._negative_cache_capacity, self._negative_cache_fp_rate
+            )
+            logger.debug(
+                f"Negative cache initialized: capacity={self._negative_cache_capacity}, "
+                f"fp_rate={self._negative_cache_fp_rate}, memory={self._negative_bloom.memory_bytes} bytes"
+            )
+        except ImportError:
+            logger.debug("nexus_fast not available, negative cache disabled")
+            self._negative_bloom = None
+        except Exception as e:
+            logger.warning(f"Failed to initialize negative cache: {e}")
+            self._negative_bloom = None
+
+    def _negative_cache_key(self, path: str) -> str:
+        """Generate cache key with tenant isolation."""
+        return f"{self._tenant_id or 'default'}:{path}"
+
+    def _negative_cache_check(self, path: str) -> bool:
+        """Check if path is known to not exist (in negative cache).
+
+        Returns:
+            True if path is definitely non-existent (skip RPC)
+            False if path might exist (need to check server)
+        """
+        if self._negative_bloom is None:
+            return False
+        key = self._negative_cache_key(path)
+        return bool(self._negative_bloom.might_exist(key))
+
+    def _negative_cache_add(self, path: str) -> None:
+        """Add path to negative cache (file confirmed to not exist)."""
+        if self._negative_bloom is None:
+            return
+        key = self._negative_cache_key(path)
+        self._negative_bloom.add(key)
+
+    def _negative_cache_invalidate(self, path: str) -> None:
+        """Invalidate negative cache entry for path."""
+        if self._negative_bloom is None:
+            return
+        self._negative_bloom.clear()
+        logger.debug(f"Negative cache cleared due to write/delete of {path}")
+
+    def _negative_cache_invalidate_bulk(self, paths: list[str]) -> None:
+        """Invalidate negative cache for multiple paths."""
+        if self._negative_bloom is None or not paths:
+            return
+        self._negative_bloom.clear()
+        logger.debug(f"Negative cache cleared due to bulk write/delete of {len(paths)} paths")
 
     async def __aenter__(self) -> AsyncRemoteNexusFS:
         """Async context manager entry."""
@@ -408,10 +476,18 @@ class AsyncRemoteNexusFS:
             File content as bytes, or dict with metadata if requested.
             If parsed=True, returns parsed markdown text as bytes.
         """
+        # Check negative cache first (issue #858)
+        if self._negative_cache_check(path):
+            raise NexusFileNotFoundError(path)
+
         import base64
 
         params = {"path": path, "return_metadata": return_metadata, "parsed": parsed}
-        result = await self._call_rpc("read", params)
+        try:
+            result = await self._call_rpc("read", params)
+        except NexusFileNotFoundError:
+            self._negative_cache_add(path)
+            raise
 
         # Handle standard bytes format: {__type__: 'bytes', data: '...'}
         # This is the format from encode_rpc_message in protocol.py
@@ -509,6 +585,10 @@ class AsyncRemoteNexusFS:
                 "force": force,
             },
         )
+
+        # Invalidate negative cache after successful write (issue #858)
+        self._negative_cache_invalidate(path)
+
         return result  # type: ignore[no-any-return]
 
     async def write_stream(
@@ -540,6 +620,10 @@ class AsyncRemoteNexusFS:
                 "chunks": content,  # Send as single blob
             },
         )
+
+        # Invalidate negative cache after successful write (issue #858)
+        self._negative_cache_invalidate(path)
+
         return result  # type: ignore[no-any-return]
 
     async def delete(
@@ -562,6 +646,10 @@ class AsyncRemoteNexusFS:
         if if_match is not None:
             params["if_match"] = if_match
         result = await self._call_rpc("delete", params)
+
+        # Invalidate negative cache after delete (issue #858)
+        self._negative_cache_invalidate(path)
+
         return result  # type: ignore[no-any-return]
 
     async def delete_bulk(
@@ -590,6 +678,11 @@ class AsyncRemoteNexusFS:
             ...         print(f"Deleted {path}")
         """
         result = await self._call_rpc("delete_bulk", {"paths": paths, "recursive": recursive})
+
+        # Invalidate negative cache after bulk delete (issue #858)
+        if paths:
+            self._negative_cache_invalidate_bulk(paths)
+
         return result  # type: ignore[no-any-return]
 
     async def exists(
@@ -606,8 +699,18 @@ class AsyncRemoteNexusFS:
         Returns:
             True if file exists
         """
+        # Check negative cache first (issue #858)
+        if self._negative_cache_check(path):
+            return False
+
         result = await self._call_rpc("exists", {"path": path})
-        return result["exists"]  # type: ignore[no-any-return]
+        exists = result["exists"]
+
+        # Add to negative cache if file doesn't exist
+        if not exists:
+            self._negative_cache_add(path)
+
+        return exists  # type: ignore[no-any-return]
 
     async def list(
         self,
@@ -739,6 +842,10 @@ class AsyncRemoteNexusFS:
             New file metadata dict
         """
         result = await self._call_rpc("rename", {"old_path": old_path, "new_path": new_path})
+
+        # Invalidate negative cache for old path (issue #858)
+        self._negative_cache_invalidate(old_path)
+
         return result  # type: ignore[no-any-return]
 
     async def rename_bulk(
@@ -766,6 +873,11 @@ class AsyncRemoteNexusFS:
             ... ])
         """
         result = await self._call_rpc("rename_bulk", {"renames": renames})
+
+        # Invalidate negative cache after bulk rename (issue #858)
+        if renames:
+            self._negative_cache_invalidate_bulk([old_path for old_path, _ in renames])
+
         return result  # type: ignore[no-any-return]
 
     async def append(
@@ -813,6 +925,10 @@ class AsyncRemoteNexusFS:
                 "force": force,
             },
         )
+
+        # Invalidate negative cache after successful append (issue #858)
+        self._negative_cache_invalidate(path)
+
         return result  # type: ignore[no-any-return]
 
     async def stat(
@@ -840,7 +956,16 @@ class AsyncRemoteNexusFS:
         Raises:
             NexusFileNotFoundError: If file doesn't exist
         """
-        result = await self._call_rpc("stat", {"path": path})
+        # Check negative cache first (issue #858)
+        if self._negative_cache_check(path):
+            raise NexusFileNotFoundError(path)
+
+        try:
+            result = await self._call_rpc("stat", {"path": path})
+        except NexusFileNotFoundError:
+            self._negative_cache_add(path)
+            raise
+
         return result  # type: ignore[no-any-return]
 
     async def read_range(
@@ -1986,6 +2111,48 @@ class AsyncRemoteNexusFS:
         if context is not None:
             params["context"] = context
         result = await self._call_rpc("oauth_test_credential", params)
+        return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # ReBAC Permission Checking
+    # ============================================================
+
+    async def rebac_check_batch(
+        self,
+        checks: builtins.list[tuple[tuple[str, str], str, tuple[str, str]]],
+    ) -> builtins.list[bool]:
+        """Batch permission checks for efficiency (async).
+
+        Performs multiple permission checks in a single call, using Rust-accelerated
+        bulk checking with shared memoization cache. More efficient than individual
+        checks when checking multiple permissions.
+
+        Args:
+            checks: List of (subject, permission, object) tuples to check
+                - subject: (type, id) tuple e.g. ("agent", "alice")
+                - permission: permission name e.g. "read", "write"
+                - object: (type, id) tuple e.g. ("file", "/workspace/doc.txt")
+
+        Returns:
+            List of boolean results in the same order as input
+
+        Examples:
+            >>> # Check multiple permissions at once
+            >>> results = await nx.rebac_check_batch([
+            ...     (("agent", "alice"), "read", ("file", "/workspace/doc1.txt")),
+            ...     (("agent", "alice"), "read", ("file", "/workspace/doc2.txt")),
+            ...     (("agent", "bob"), "write", ("file", "/workspace/doc3.txt")),
+            ... ])
+            >>> # Returns: [True, False, True]
+            >>>
+            >>> # Efficient bulk check for same user on many files
+            >>> checks = [
+            ...     (("agent", "alice"), "read", ("file", f"/workspace/file{i}.txt"))
+            ...     for i in range(100)
+            ... ]
+            >>> results = await nx.rebac_check_batch(checks)
+        """
+        result = await self._call_rpc("rebac_check_batch", {"checks": checks})
         return result  # type: ignore[no-any-return]
 
     # ============================================================

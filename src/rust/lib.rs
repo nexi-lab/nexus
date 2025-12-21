@@ -66,12 +66,16 @@ type MemoCache = AHashMap<(String, String, String, String, String), bool>;
 type CheckRequest = (String, String, String, String, String);
 
 /// Main function: compute permissions in bulk using Rust
+/// Note: tuple_version is accepted for API compatibility with nexus_fast,
+/// but this simpler implementation doesn't implement graph caching.
 #[pyfunction]
 fn compute_permissions_bulk<'py>(
     py: Python<'py>,
     checks: &Bound<PyList>,
     tuples: &Bound<PyList>,
     namespace_configs: &Bound<PyDict>,
+    #[allow(unused_variables)]
+    tuple_version: u64,
 ) -> PyResult<Bound<'py, PyDict>> {
     // Parse inputs from Python
     let check_requests: Vec<CheckRequest> = checks

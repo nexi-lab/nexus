@@ -15,6 +15,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
+use string_interner::{DefaultStringInterner, DefaultSymbol};
+
+/// Type alias for interned string symbol - 4 bytes, O(1) equality, Copy
+type Sym = DefaultSymbol;
 
 /// Threshold for parallelization: only use rayon for lists larger than this
 const GLOB_PARALLEL_THRESHOLD: usize = 500;
@@ -95,6 +99,375 @@ struct UsersetEntry {
     subject_id: String,
     subject_relation: String,
 }
+
+// ============================================================================
+// INTERNED TYPES - String interning for O(1) equality and reduced allocations
+// ============================================================================
+
+/// Interned entity with symbols for O(1) equality
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+struct InternedEntity {
+    entity_type: Sym,
+    entity_id: Sym,
+}
+
+/// Interned ReBAC tuple with symbols
+#[derive(Debug, Clone, Copy)]
+struct InternedTuple {
+    subject_type: Sym,
+    subject_id: Sym,
+    subject_relation: Option<Sym>,
+    relation: Sym,
+    object_type: Sym,
+    object_id: Sym,
+}
+
+/// Interned userset entry
+#[derive(Debug, Clone, Copy)]
+struct InternedUsersetEntry {
+    subject_type: Sym,
+    subject_id: Sym,
+    subject_relation: Sym,
+}
+
+/// Interned key types
+type InternedMemoKey = (Sym, Sym, Sym, Sym, Sym);
+type InternedMemoCache = AHashMap<InternedMemoKey, bool>;
+type InternedTupleKey = (Sym, Sym, Sym, Sym, Sym);
+type InternedAdjacencyKey = (Sym, Sym, Sym);
+type InternedUsersetKey = (Sym, Sym, Sym);
+
+/// Interned namespace config for fast lookups
+#[derive(Debug, Clone)]
+struct InternedNamespaceConfig {
+    relations: AHashMap<Sym, InternedRelationConfig>,
+    permissions: AHashMap<Sym, Vec<Sym>>,
+}
+
+#[derive(Debug, Clone)]
+enum InternedRelationConfig {
+    Direct,
+    Union {
+        union: Vec<Sym>,
+    },
+    TupleToUserset {
+        tupleset: Sym,
+        computed_userset: Sym,
+    },
+}
+
+impl InternedNamespaceConfig {
+    fn from_config(config: &NamespaceConfig, interner: &mut DefaultStringInterner) -> Self {
+        let relations = config
+            .relations
+            .iter()
+            .map(|(k, v)| {
+                let key = interner.get_or_intern(k);
+                let value = match v {
+                    RelationConfig::Direct(_) | RelationConfig::EmptyDict(_) => {
+                        InternedRelationConfig::Direct
+                    }
+                    RelationConfig::Union { union } => InternedRelationConfig::Union {
+                        union: union.iter().map(|s| interner.get_or_intern(s)).collect(),
+                    },
+                    RelationConfig::TupleToUserset { tuple_to_userset } => {
+                        InternedRelationConfig::TupleToUserset {
+                            tupleset: interner.get_or_intern(&tuple_to_userset.tupleset),
+                            computed_userset: interner
+                                .get_or_intern(&tuple_to_userset.computed_userset),
+                        }
+                    }
+                };
+                (key, value)
+            })
+            .collect();
+
+        let permissions = config
+            .permissions
+            .iter()
+            .map(|(k, v)| {
+                let key = interner.get_or_intern(k);
+                let values: Vec<Sym> = v.iter().map(|s| interner.get_or_intern(s)).collect();
+                (key, values)
+            })
+            .collect();
+
+        InternedNamespaceConfig {
+            relations,
+            permissions,
+        }
+    }
+}
+
+/// Graph with interned symbols for fast lookups
+#[derive(Debug, Clone)]
+struct InternedGraph {
+    tuple_index: AHashMap<InternedTupleKey, bool>,
+    #[allow(dead_code)] // Reserved for future list_objects implementation
+    adjacency_list: AHashMap<InternedAdjacencyKey, Vec<InternedEntity>>,
+    reverse_adjacency_list: AHashMap<InternedAdjacencyKey, Vec<InternedEntity>>,
+    userset_index: AHashMap<InternedUsersetKey, Vec<InternedUsersetEntry>>,
+}
+
+impl InternedGraph {
+    fn from_tuples(tuples: &[InternedTuple]) -> Self {
+        let mut tuple_index = AHashMap::new();
+        let mut adjacency_list: AHashMap<InternedAdjacencyKey, Vec<InternedEntity>> =
+            AHashMap::new();
+        let mut reverse_adjacency_list: AHashMap<InternedAdjacencyKey, Vec<InternedEntity>> =
+            AHashMap::new();
+        let mut userset_index: AHashMap<InternedUsersetKey, Vec<InternedUsersetEntry>> =
+            AHashMap::new();
+
+        for tuple in tuples {
+            if let Some(subject_relation) = tuple.subject_relation {
+                let userset_key = (tuple.object_type, tuple.object_id, tuple.relation);
+                userset_index
+                    .entry(userset_key)
+                    .or_default()
+                    .push(InternedUsersetEntry {
+                        subject_type: tuple.subject_type,
+                        subject_id: tuple.subject_id,
+                        subject_relation,
+                    });
+            } else {
+                let tuple_key = (
+                    tuple.object_type,
+                    tuple.object_id,
+                    tuple.relation,
+                    tuple.subject_type,
+                    tuple.subject_id,
+                );
+                tuple_index.insert(tuple_key, true);
+            }
+
+            let adj_key = (tuple.subject_type, tuple.subject_id, tuple.relation);
+            adjacency_list
+                .entry(adj_key)
+                .or_default()
+                .push(InternedEntity {
+                    entity_type: tuple.object_type,
+                    entity_id: tuple.object_id,
+                });
+
+            let rev_adj_key = (tuple.object_type, tuple.object_id, tuple.relation);
+            reverse_adjacency_list
+                .entry(rev_adj_key)
+                .or_default()
+                .push(InternedEntity {
+                    entity_type: tuple.subject_type,
+                    entity_id: tuple.subject_id,
+                });
+        }
+
+        InternedGraph {
+            tuple_index,
+            adjacency_list,
+            reverse_adjacency_list,
+            userset_index,
+        }
+    }
+
+    fn check_direct_relation(
+        &self,
+        subject: InternedEntity,
+        relation: Sym,
+        object: InternedEntity,
+    ) -> bool {
+        let tuple_key = (
+            object.entity_type,
+            object.entity_id,
+            relation,
+            subject.entity_type,
+            subject.entity_id,
+        );
+        self.tuple_index.contains_key(&tuple_key)
+    }
+
+    fn find_related_objects(&self, object: InternedEntity, relation: Sym) -> Vec<InternedEntity> {
+        let rev_adj_key = (object.entity_type, object.entity_id, relation);
+        self.reverse_adjacency_list
+            .get(&rev_adj_key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn get_usersets(&self, object: InternedEntity, relation: Sym) -> &[InternedUsersetEntry] {
+        let userset_key = (object.entity_type, object.entity_id, relation);
+        self.userset_index
+            .get(&userset_key)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+}
+
+/// Check relation with interned types - no allocations!
+#[allow(clippy::too_many_arguments)]
+fn check_relation_with_usersets_interned(
+    subject: InternedEntity,
+    relation: Sym,
+    object: InternedEntity,
+    graph: &InternedGraph,
+    namespaces: &AHashMap<Sym, InternedNamespaceConfig>,
+    memo_cache: &mut InternedMemoCache,
+    visited: &mut AHashSet<InternedMemoKey>,
+    depth: u32,
+) -> bool {
+    if graph.check_direct_relation(subject, relation, object) {
+        return true;
+    }
+
+    for userset in graph.get_usersets(object, relation) {
+        let userset_entity = InternedEntity {
+            entity_type: userset.subject_type,
+            entity_id: userset.subject_id,
+        };
+
+        if compute_permission_interned(
+            subject,
+            userset.subject_relation,
+            userset_entity,
+            graph,
+            namespaces,
+            memo_cache,
+            visited,
+            depth + 1,
+        ) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Compute permission with interned types - O(1) key operations, no allocations!
+#[allow(clippy::too_many_arguments)]
+fn compute_permission_interned(
+    subject: InternedEntity,
+    permission: Sym,
+    object: InternedEntity,
+    graph: &InternedGraph,
+    namespaces: &AHashMap<Sym, InternedNamespaceConfig>,
+    memo_cache: &mut InternedMemoCache,
+    visited: &mut AHashSet<InternedMemoKey>,
+    depth: u32,
+) -> bool {
+    const MAX_DEPTH: u32 = 50;
+
+    if depth > MAX_DEPTH {
+        return false;
+    }
+
+    // Check memo cache - O(1) with interned symbols!
+    let memo_key = (
+        subject.entity_type,
+        subject.entity_id,
+        permission,
+        object.entity_type,
+        object.entity_id,
+    );
+
+    if let Some(&result) = memo_cache.get(&memo_key) {
+        return result;
+    }
+
+    // Cycle detection - O(1) with interned symbols!
+    if visited.contains(&memo_key) {
+        return false;
+    }
+    visited.insert(memo_key);
+
+    // Get namespace config - O(1) with interned symbols!
+    let namespace = match namespaces.get(&object.entity_type) {
+        Some(ns) => ns,
+        None => {
+            let result = check_relation_with_usersets_interned(
+                subject, permission, object, graph, namespaces, memo_cache, visited, depth,
+            );
+            memo_cache.insert(memo_key, result);
+            return result;
+        }
+    };
+
+    let result = if let Some(usersets) = namespace.permissions.get(&permission) {
+        let mut allowed = false;
+        for &userset in usersets {
+            if compute_permission_interned(
+                subject,
+                userset,
+                object,
+                graph,
+                namespaces,
+                memo_cache,
+                visited,
+                depth + 1,
+            ) {
+                allowed = true;
+                break;
+            }
+        }
+        allowed
+    } else if let Some(relation_config) = namespace.relations.get(&permission) {
+        match relation_config {
+            InternedRelationConfig::Direct => check_relation_with_usersets_interned(
+                subject, permission, object, graph, namespaces, memo_cache, visited, depth,
+            ),
+            InternedRelationConfig::Union { union } => {
+                let mut allowed = false;
+                for &rel in union {
+                    if compute_permission_interned(
+                        subject,
+                        rel,
+                        object,
+                        graph,
+                        namespaces,
+                        memo_cache,
+                        visited,
+                        depth + 1,
+                    ) {
+                        allowed = true;
+                        break;
+                    }
+                }
+                allowed
+            }
+            InternedRelationConfig::TupleToUserset {
+                tupleset,
+                computed_userset,
+            } => {
+                let related_objects = graph.find_related_objects(object, *tupleset);
+                let mut allowed = false;
+                for related_obj in related_objects {
+                    if compute_permission_interned(
+                        subject,
+                        *computed_userset,
+                        related_obj,
+                        graph,
+                        namespaces,
+                        memo_cache,
+                        visited,
+                        depth + 1,
+                    ) {
+                        allowed = true;
+                        break;
+                    }
+                }
+                allowed
+            }
+        }
+    } else {
+        check_relation_with_usersets_interned(
+            subject, permission, object, graph, namespaces, memo_cache, visited, depth,
+        )
+    };
+
+    memo_cache.insert(memo_key, result);
+    result
+}
+
+// ============================================================================
+// END INTERNED TYPES
+// ============================================================================
 
 /// Graph indexing structure for fast lookups
 #[derive(Debug, Clone)]
@@ -240,6 +613,7 @@ impl ReBACGraph {
 }
 
 /// Main function: compute permissions in bulk using Rust
+/// Uses string interning for O(1) string operations and minimal allocations
 #[pyfunction]
 fn compute_permissions_bulk<'py>(
     py: Python<'py>,
@@ -247,135 +621,138 @@ fn compute_permissions_bulk<'py>(
     tuples: &Bound<PyList>,
     namespace_configs: &Bound<PyDict>,
 ) -> PyResult<Bound<'py, PyDict>> {
-    // Parse inputs from Python
-    let check_requests: Vec<CheckRequest> = checks
+    // Create string interner for O(1) string equality and hashing
+    let mut interner = DefaultStringInterner::new();
+
+    // Parse and intern check requests from Python
+    // Keep original strings for result keys, create interned versions for computation
+    let check_requests: Vec<(CheckRequest, InternedEntity, Sym, InternedEntity)> = checks
         .iter()
         .map(|item| {
             let tuple: Bound<'_, PyTuple> = item.extract()?;
             let subject_item = tuple.get_item(0)?;
             let subject: Bound<'_, PyTuple> = subject_item.extract()?;
-            let permission = tuple.get_item(1)?.extract::<String>()?;
+            let permission: String = tuple.get_item(1)?.extract()?;
             let object_item = tuple.get_item(2)?;
             let object: Bound<'_, PyTuple> = object_item.extract()?;
 
+            let subject_type: String = subject.get_item(0)?.extract()?;
+            let subject_id: String = subject.get_item(1)?.extract()?;
+            let object_type: String = object.get_item(0)?.extract()?;
+            let object_id: String = object.get_item(1)?.extract()?;
+
+            // Create interned entities - O(1) operations from now on!
+            let subject_entity = InternedEntity {
+                entity_type: interner.get_or_intern(&subject_type),
+                entity_id: interner.get_or_intern(&subject_id),
+            };
+            let permission_sym = interner.get_or_intern(&permission);
+            let object_entity = InternedEntity {
+                entity_type: interner.get_or_intern(&object_type),
+                entity_id: interner.get_or_intern(&object_id),
+            };
+
+            // Keep original request for result key
+            let original_request = (subject_type, subject_id, permission, object_type, object_id);
+
             Ok((
-                subject.get_item(0)?.extract::<String>()?, // subject_type
-                subject.get_item(1)?.extract::<String>()?, // subject_id
-                permission,
-                object.get_item(0)?.extract::<String>()?, // object_type
-                object.get_item(1)?.extract::<String>()?, // object_id
+                original_request,
+                subject_entity,
+                permission_sym,
+                object_entity,
             ))
         })
         .collect::<PyResult<Vec<_>>>()?;
 
-    let rebac_tuples: Vec<ReBACTuple> = tuples
+    // Parse and intern rebac tuples
+    let interned_tuples: Vec<InternedTuple> = tuples
         .iter()
         .map(|item| {
             let dict: Bound<'_, PyDict> = item.extract()?;
-            Ok(ReBACTuple {
-                subject_type: dict.get_item("subject_type")?.unwrap().extract()?,
-                subject_id: dict.get_item("subject_id")?.unwrap().extract()?,
-                subject_relation: dict
-                    .get_item("subject_relation")?
-                    .and_then(|v| v.extract().ok()),
-                relation: dict.get_item("relation")?.unwrap().extract()?,
-                object_type: dict.get_item("object_type")?.unwrap().extract()?,
-                object_id: dict.get_item("object_id")?.unwrap().extract()?,
+            let subject_type: String = dict.get_item("subject_type")?.unwrap().extract()?;
+            let subject_id: String = dict.get_item("subject_id")?.unwrap().extract()?;
+            let subject_relation: Option<String> = dict
+                .get_item("subject_relation")?
+                .and_then(|v| v.extract().ok());
+            let relation: String = dict.get_item("relation")?.unwrap().extract()?;
+            let object_type: String = dict.get_item("object_type")?.unwrap().extract()?;
+            let object_id: String = dict.get_item("object_id")?.unwrap().extract()?;
+
+            Ok(InternedTuple {
+                subject_type: interner.get_or_intern(&subject_type),
+                subject_id: interner.get_or_intern(&subject_id),
+                subject_relation: subject_relation.map(|s| interner.get_or_intern(&s)),
+                relation: interner.get_or_intern(&relation),
+                object_type: interner.get_or_intern(&object_type),
+                object_id: interner.get_or_intern(&object_id),
             })
         })
         .collect::<PyResult<Vec<_>>>()?;
 
-    // Parse namespace configs
-    let mut namespaces = AHashMap::new();
+    // Parse namespace configs and convert to interned versions
+    let mut interned_namespaces: AHashMap<Sym, InternedNamespaceConfig> = AHashMap::new();
     for (key, value) in namespace_configs.iter() {
         let obj_type: String = key.extract()?;
         let config_dict: Bound<'_, PyDict> = value.extract()?;
-        // Convert Python dict to JSON via Python's json module
         let json_module = py.import("json")?;
         let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
         let config_json: String = config_json_py.extract()?;
         let config: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
             pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
         })?;
-        namespaces.insert(obj_type, config);
+
+        let interned_config = InternedNamespaceConfig::from_config(&config, &mut interner);
+        interned_namespaces.insert(interner.get_or_intern(&obj_type), interned_config);
     }
 
-    // Release GIL for computation
-    // Use parallel iteration for large check lists, sequential for small lists
+    // Release GIL for computation - all string operations are now O(1) symbol operations!
     let results = py.detach(|| {
-        // Build graph indexes once for all checks - massive speedup!
-        let graph = ReBACGraph::from_tuples(&rebac_tuples);
+        // Build interned graph indexes once for all checks
+        let graph = InternedGraph::from_tuples(&interned_tuples);
 
         if check_requests.len() < PERMISSION_PARALLEL_THRESHOLD {
             // Sequential for small batches (shared memoization cache)
             let mut results = AHashMap::new();
-            let mut memo_cache: MemoCache = AHashMap::new();
+            let mut memo_cache: InternedMemoCache = AHashMap::new();
 
-            for check in check_requests {
-                let (subject_type, subject_id, permission, object_type, object_id) = &check;
-
-                let subject = Entity {
-                    entity_type: subject_type.clone(),
-                    entity_id: subject_id.clone(),
-                };
-
-                let object = Entity {
-                    entity_type: object_type.clone(),
-                    entity_id: object_id.clone(),
-                };
-
-                let allowed = compute_permission(
-                    &subject,
+            for (original_request, subject, permission, object) in check_requests {
+                let allowed = compute_permission_interned(
+                    subject,
                     permission,
-                    &object,
+                    object,
                     &graph,
-                    &namespaces,
+                    &interned_namespaces,
                     &mut memo_cache,
                     &mut AHashSet::new(),
                     0,
                 );
 
-                results.insert(check.clone(), allowed);
+                results.insert(original_request, allowed);
             }
 
             results
         } else {
             // Parallel for large batches (per-thread memoization caches)
-            // Collect into Vec first, then convert to AHashMap
             let results_vec: Vec<_> = check_requests
                 .into_par_iter()
-                .map(|check| {
-                    let (subject_type, subject_id, permission, object_type, object_id) = &check;
+                .map(|(original_request, subject, permission, object)| {
+                    let mut local_memo_cache: InternedMemoCache = AHashMap::new();
 
-                    let subject = Entity {
-                        entity_type: subject_type.clone(),
-                        entity_id: subject_id.clone(),
-                    };
-
-                    let object = Entity {
-                        entity_type: object_type.clone(),
-                        entity_id: object_id.clone(),
-                    };
-
-                    // Each thread gets its own memo cache
-                    let mut local_memo_cache: MemoCache = AHashMap::new();
-
-                    let allowed = compute_permission(
-                        &subject,
+                    let allowed = compute_permission_interned(
+                        subject,
                         permission,
-                        &object,
+                        object,
                         &graph,
-                        &namespaces,
+                        &interned_namespaces,
                         &mut local_memo_cache,
                         &mut AHashSet::new(),
                         0,
                     );
 
-                    (check, allowed)
+                    (original_request, allowed)
                 })
                 .collect();
 
-            // Convert Vec to AHashMap
             results_vec.into_iter().collect()
         }
     });

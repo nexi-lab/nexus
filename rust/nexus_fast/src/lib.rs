@@ -1382,7 +1382,7 @@ fn read_file(py: Python<'_>, path: &str) -> PyResult<Option<Py<PyBytes>>> {
 /// Returns:
 ///     Dict mapping path -> bytes for files that exist (missing files omitted)
 #[pyfunction]
-fn read_files_bulk<'py>(py: Python<'py>, paths: Vec<String>) -> PyResult<Bound<'py, PyDict>> {
+fn read_files_bulk(py: Python<'_>, paths: Vec<String>) -> PyResult<Bound<'_, PyDict>> {
     const PARALLEL_THRESHOLD: usize = 10;
 
     // Read files (parallel for large batches, sequential for small)
@@ -1563,7 +1563,7 @@ impl BloomFilter {
         // Bloom filter uses ~1.44 * n * ln(1/p) / ln(2) bits
         // Simplified: ~10 bits per item at 1% FP rate = 1.25 bytes per item
         let bits_per_item = (-1.44 * (self.fp_rate).ln() / (2.0_f64).ln()) as usize;
-        (self.capacity * bits_per_item + 7) / 8
+        (self.capacity * bits_per_item).div_ceil(8)
     }
 }
 
@@ -1678,6 +1678,7 @@ impl L1MetadataCache {
     ///     is_text: Whether content is text (true) or binary (false)
     ///     tenant_id: Tenant ID for multi-tenant isolation
     #[pyo3(signature = (key, path_id, content_hash, disk_path, original_size, ttl_seconds=0, is_text=true, tenant_id="default"))]
+    #[allow(clippy::too_many_arguments)]
     fn put(
         &self,
         key: &str,
@@ -1705,12 +1706,10 @@ impl L1MetadataCache {
             }
         }
 
-        let ttl = if ttl_seconds == 0 {
-            self.default_ttl
-        } else if ttl_seconds < 0 {
-            0 // No expiration
-        } else {
-            ttl_seconds as u32
+        let ttl = match ttl_seconds.cmp(&0) {
+            std::cmp::Ordering::Equal => self.default_ttl,
+            std::cmp::Ordering::Less => 0, // No expiration
+            std::cmp::Ordering::Greater => ttl_seconds as u32,
         };
 
         let now = SystemTime::now()
@@ -1789,9 +1788,9 @@ impl L1MetadataCache {
     ///
     /// Returns:
     ///     Tuple of (content_bytes, content_hash, is_text) or None
-    fn get_content<'py>(
+    fn get_content(
         &self,
-        py: Python<'py>,
+        py: Python<'_>,
         key: &str,
     ) -> PyResult<Option<(Py<PyBytes>, String, bool)>> {
         let metadata = match self.cache.get(key) {

@@ -98,6 +98,7 @@ class EntityRegistry:
         parent_type: str | None = None,
         parent_id: str | None = None,
         entity_metadata: dict | None = None,
+        _session: Session | None = None,
     ) -> EntityRegistryModel:
         """Register an entity in the registry.
 
@@ -108,6 +109,8 @@ class EntityRegistry:
             parent_id: ID of parent entity (optional).
             entity_metadata: Additional metadata as dict (optional). Will be stored as JSON.
                             For agents: {'name': 'Display Name', 'description': 'Agent description'}
+            _session: Optional database session to reuse (for reducing connection pool pressure).
+                     If None, a new session will be created.
 
         Returns:
             EntityRegistryModel: The registered entity.
@@ -115,6 +118,7 @@ class EntityRegistry:
         Raises:
             ValueError: If entity_type is invalid or parent is inconsistent.
         """
+        import json
         import logging
 
         logger = logging.getLogger(__name__)
@@ -123,60 +127,80 @@ class EntityRegistry:
             f"[ENTITY-REG] register_entity called: {entity_type}:{entity_id}, parent={parent_type}:{parent_id}"
         )
 
-        # Check if entity already exists
-        existing = self.get_entity(entity_type, entity_id)
+        # Check if entity already exists (reuse session if provided)
+        existing = self.get_entity(entity_type, entity_id, _session=_session)
         if existing:
             logger.warning(f"[ENTITY-REG] Entity already exists: {entity_type}:{entity_id}")
             return existing
 
-        # Create new entity
-        with self._get_session() as session:
-            import json
+        # Serialize metadata to JSON string if provided
+        metadata_json = json.dumps(entity_metadata) if entity_metadata else None
 
-            # Serialize metadata to JSON string if provided
-            metadata_json = json.dumps(entity_metadata) if entity_metadata else None
+        entity = EntityRegistryModel(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            parent_type=parent_type,
+            parent_id=parent_id,
+            entity_metadata=metadata_json,
+            created_at=datetime.now(UTC),
+        )
 
-            entity = EntityRegistryModel(
-                entity_type=entity_type,
-                entity_id=entity_id,
-                parent_type=parent_type,
-                parent_id=parent_id,
-                entity_metadata=metadata_json,
-                created_at=datetime.now(UTC),
-            )
+        # Validate before adding
+        entity.validate()
 
-            # Validate before adding
-            entity.validate()
-
-            session.add(entity)
-            session.commit()
-
-            # Refresh to ensure we have the committed state
-            session.refresh(entity)
+        # Use provided session or create new one
+        if _session is not None:
+            # External session: Just add entity, don't commit (caller will commit)
+            _session.add(entity)
+            _session.flush()  # Get ID without committing
             logger.warning(
-                f"[ENTITY-REG] Entity registered successfully: {entity_type}:{entity_id}"
+                f"[ENTITY-REG] Entity registered (external session): {entity_type}:{entity_id}"
             )
             return entity
+        else:
+            # No session provided: Create new session, add entity, and commit
+            with self._get_session() as session:
+                session.add(entity)
+                session.commit()
+                # Refresh to ensure we have the committed state
+                session.refresh(entity)
+                logger.warning(
+                    f"[ENTITY-REG] Entity registered successfully: {entity_type}:{entity_id}"
+                )
+                return entity
 
-    def get_entity(self, entity_type: str, entity_id: str) -> EntityRegistryModel | None:
+    def get_entity(
+        self, entity_type: str, entity_id: str, _session: Session | None = None
+    ) -> EntityRegistryModel | None:
         """Get an entity from the registry.
 
         Args:
             entity_type: Type of entity.
             entity_id: Unique identifier.
+            _session: Optional database session to reuse (for reducing connection pool pressure).
+                     If None, a new session will be created.
 
         Returns:
             EntityRegistryModel or None if not found.
         """
-        with self._get_session() as session:
-            stmt = select(EntityRegistryModel).where(
-                EntityRegistryModel.entity_type == entity_type,
-                EntityRegistryModel.entity_id == entity_id,
-            )
-            result: EntityRegistryModel | None = session.execute(stmt).scalar_one_or_none()
+        stmt = select(EntityRegistryModel).where(
+            EntityRegistryModel.entity_type == entity_type,
+            EntityRegistryModel.entity_id == entity_id,
+        )
+
+        if _session is not None:
+            # Use provided session
+            result: EntityRegistryModel | None = _session.execute(stmt).scalar_one_or_none()
             if result:
-                session.expunge(result)  # Detach from session so it can be used outside
+                _session.expunge(result)  # Detach from session so it can be used outside
             return result
+        else:
+            # Create new session
+            with self._get_session() as session:
+                result = session.execute(stmt).scalar_one_or_none()
+                if result:
+                    session.expunge(result)  # Detach from session so it can be used outside
+                return result
 
     def lookup_entity_by_id(self, entity_id: str) -> list[EntityRegistryModel]:
         """Look up entities by ID (may return multiple if ID is not unique across types).

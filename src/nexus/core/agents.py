@@ -30,6 +30,7 @@ def register_agent(
     tenant_id: str | None = None,
     metadata: dict | None = None,
     entity_registry: EntityRegistry | None = None,
+    _session: Session | None = None,
 ) -> dict:
     """Register an agent (auth-agnostic).
 
@@ -46,6 +47,7 @@ def register_agent(
         tenant_id: Organization ID
         metadata: Additional metadata
         entity_registry: Registry for relationships
+        _session: Optional database session to reuse (for reducing connection pool pressure)
 
     Returns:
         Agent info dict
@@ -83,6 +85,7 @@ def register_agent(
             parent_type="user",
             parent_id=user_id,
             entity_metadata=entity_metadata_dict if entity_metadata_dict else None,
+            _session=_session,
         )
 
     return {

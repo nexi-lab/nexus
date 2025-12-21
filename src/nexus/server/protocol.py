@@ -1634,6 +1634,41 @@ class MCPSyncParams:
     name: str
 
 
+# ========== Provisioning API (Issue #820) ==========
+
+
+@dataclass
+class ProvisionUserParams:
+    """Parameters for provision_user method."""
+
+    user_id: str
+    email: str | None = None
+    username: str | None = None
+    display_name: str | None = None
+    password_hash: str | None = None
+    account_type: str = "personal"
+    tenant_id: str | None = None
+    role: str = "owner"
+    create_api_key: bool = True
+    create_workspace: bool = True
+    create_agents: bool = True
+    import_skills: bool = False
+    is_global_admin: bool = False
+    user_metadata: dict[str, Any] | None = None
+
+
+@dataclass
+class ProvisionTenantParams:
+    """Parameters for provision_tenant method."""
+
+    tenant_id: str
+    name: str
+    domain: str | None = None
+    description: str | None = None
+    settings: dict[str, Any] | None = None
+    create_directories: bool = True
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -1790,6 +1825,9 @@ METHOD_PARAMS = {
     "ace_create_playbook": AceCreatePlaybookParams,
     "ace_get_playbook": AceGetPlaybookParams,
     "ace_query_playbooks": AceQueryPlaybooksParams,
+    # Provisioning API (Issue #820)
+    "provision_user": ProvisionUserParams,
+    "provision_tenant": ProvisionTenantParams,
 }
 
 

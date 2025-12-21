@@ -203,6 +203,7 @@ impl InternedNamespaceConfig {
 #[derive(Debug, Clone)]
 struct InternedGraph {
     tuple_index: AHashMap<InternedTupleKey, bool>,
+    #[allow(dead_code)] // Reserved for future list_objects implementation
     adjacency_list: AHashMap<InternedAdjacencyKey, Vec<InternedEntity>>,
     reverse_adjacency_list: AHashMap<InternedAdjacencyKey, Vec<InternedEntity>>,
     userset_index: AHashMap<InternedUsersetKey, Vec<InternedUsersetEntry>>,

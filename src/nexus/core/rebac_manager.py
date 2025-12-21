@@ -1660,7 +1660,64 @@ class ReBACManager:
                 logger.debug(f"✅ CACHE HIT: result={cached}")
                 return cached
 
-        # Compute permission via graph traversal with context
+            # Cache miss - use stampede prevention (Issue #878)
+            # Only one request computes while others wait
+            if self._l1_cache:
+                should_compute, cache_key = self._l1_cache.try_acquire_compute(
+                    subject_entity.entity_type,
+                    subject_entity.entity_id,
+                    permission,
+                    object_entity.entity_type,
+                    object_entity.entity_id,
+                    tenant_id,
+                )
+
+                if not should_compute:
+                    # Another request is computing - wait for it
+                    logger.debug("⏳ STAMPEDE: Waiting for another request to compute")
+                    wait_result = self._l1_cache.wait_for_compute(cache_key)
+                    if wait_result is not None:
+                        logger.debug(f"✅ STAMPEDE: Got result from leader: {wait_result}")
+                        return wait_result
+                    # Timeout or error - fall through to compute ourselves
+                    logger.debug("⚠️ STAMPEDE: Wait timeout, computing ourselves")
+
+                # We're the leader - compute and release
+                try:
+                    logger.debug("🔎 Computing permission (no cache hit, computing from graph)")
+                    result = self._compute_permission(
+                        subject_entity,
+                        permission,
+                        object_entity,
+                        visited=set(),
+                        depth=0,
+                        context=context,
+                        tenant_id=tenant_id,
+                    )
+                    logger.debug(f"{'✅' if result else '❌'} REBAC RESULT: {result}")
+
+                    # Cache result and release lock
+                    self._l1_cache.release_compute(
+                        cache_key,
+                        result,
+                        subject_entity.entity_type,
+                        subject_entity.entity_id,
+                        permission,
+                        object_entity.entity_type,
+                        object_entity.entity_id,
+                        tenant_id,
+                    )
+                    # Also cache in L2
+                    self._cache_check_result(
+                        subject_entity, permission, object_entity, result, tenant_id
+                    )
+                    return result
+                except Exception:
+                    # On error, cancel the compute lock so others don't wait forever
+                    self._l1_cache.cancel_compute(cache_key)
+                    raise
+
+        # Context-based check or no L1 cache - compute directly (no stampede prevention)
         logger.debug("🔎 Computing permission (no cache hit, computing from graph)")
         result = self._compute_permission(
             subject_entity,

@@ -87,7 +87,7 @@ class SemanticSearch:
         """Initialize the search engine (create vector extensions and FTS tables)."""
         self.vector_db.initialize()
 
-    async def index_document(self, path: str) -> int:
+    async def index_document(self, path: str, force: bool = False) -> int:
         """Index a document for semantic search.
 
         Uses cached/parsed text when available:
@@ -95,27 +95,22 @@ class SemanticSearch:
         - For local files: Uses file_metadata.parsed_text
         - Falls back to raw file content if no cached text available
 
+        Implements incremental embedding updates (Issue #865):
+        - Skips re-indexing if content_hash matches indexed_content_hash
+        - Only re-embeds when file content actually changed
+        - Use force=True to bypass the check and re-index anyway
+
         Args:
             path: Path to the document
+            force: If True, re-index even if content hasn't changed
 
         Returns:
-            Number of chunks indexed
+            Number of chunks indexed (0 if skipped due to no changes)
 
         Raises:
             NexusFileNotFoundError: If file doesn't exist
         """
-        # Try to get searchable text from cache first (content_cache or file_metadata)
-        content = self.nx.metadata.get_searchable_text(path)
-
-        # Fall back to reading raw content if no cached text
-        if content is None:
-            content_raw = self.nx.read(path)
-            if isinstance(content_raw, bytes):
-                content = content_raw.decode("utf-8", errors="ignore")
-            else:
-                content = str(content_raw)  # Handle dict or other types
-
-        # Get path_id from database
+        # Get path_id and check if re-indexing is needed (Issue #865)
         with self.nx.metadata.SessionLocal() as session:
             stmt = select(FilePathModel).where(
                 FilePathModel.virtual_path == path,
@@ -128,8 +123,36 @@ class SemanticSearch:
                 raise ValueError(f"File not found in database: {path}")
 
             path_id = file_model.path_id
+            current_content_hash = file_model.content_hash
 
-            # Delete existing chunks for this file
+            # Skip re-indexing if content hasn't changed (Issue #865)
+            # This avoids expensive embedding API calls for unchanged files
+            if (
+                not force
+                and current_content_hash is not None
+                and file_model.indexed_content_hash == current_content_hash
+            ):
+                # Content unchanged - no need to re-embed
+                # Return existing chunk count
+                chunk_count_stmt = select(DocumentChunkModel).where(
+                    DocumentChunkModel.path_id == path_id
+                )
+                existing_count = len(session.execute(chunk_count_stmt).scalars().all())
+                return existing_count
+
+        # Try to get searchable text from cache first (content_cache or file_metadata)
+        content = self.nx.metadata.get_searchable_text(path)
+
+        # Fall back to reading raw content if no cached text
+        if content is None:
+            content_raw = self.nx.read(path)
+            if isinstance(content_raw, bytes):
+                content = content_raw.decode("utf-8", errors="ignore")
+            else:
+                content = str(content_raw)  # Handle dict or other types
+
+        # Delete existing chunks for this file
+        with self.nx.metadata.SessionLocal() as session:
             chunk_stmt = select(DocumentChunkModel).where(DocumentChunkModel.path_id == path_id)
             chunk_result = session.execute(chunk_stmt)
             existing_chunks = chunk_result.scalars().all()
@@ -143,6 +166,13 @@ class SemanticSearch:
         chunks = self.chunker.chunk(content, path)
 
         if not chunks:
+            # Update tracking even for empty files (Issue #865)
+            with self.nx.metadata.SessionLocal() as session:
+                file_model = session.get(FilePathModel, path_id)
+                if file_model:
+                    file_model.indexed_content_hash = current_content_hash
+                    file_model.last_indexed_at = datetime.now(UTC)
+                    session.commit()
             return 0
 
         # Generate embeddings (if provider available)
@@ -181,6 +211,13 @@ class SemanticSearch:
             if embeddings and self.vector_db.vec_available:
                 for chunk_id, embedding in zip(chunk_ids, embeddings, strict=False):
                     self.vector_db.store_embedding(session, chunk_id, embedding)
+                session.commit()
+
+            # Update indexing tracking fields (Issue #865)
+            file_model = session.get(FilePathModel, path_id)
+            if file_model:
+                file_model.indexed_content_hash = current_content_hash
+                file_model.last_indexed_at = datetime.now(UTC)
                 session.commit()
 
         return len(chunks)

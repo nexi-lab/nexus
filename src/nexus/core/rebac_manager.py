@@ -99,9 +99,7 @@ class ReBACManager:
                 quantization_interval=l1_cache_quantization_interval,
             )
             logger.info(
-                f"L1 cache enabled: max_size={l1_cache_size}, ttl={l1_cache_ttl}s, "
-                f"metrics={enable_metrics}, adaptive_ttl={enable_adaptive_ttl}, "
-                f"quantization={l1_cache_quantization_interval}s"
+                f"L1 cache enabled: max_size={l1_cache_size}, ttl={l1_cache_ttl}s, metrics={enable_metrics}, adaptive_ttl={enable_adaptive_ttl}, quantization={l1_cache_quantization_interval}s"
             )
 
         # Use SQLAlchemy sessionmaker for proper connection management

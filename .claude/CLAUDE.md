@@ -86,14 +86,6 @@ gcloud compute ssh nexus-server-spot --zone=us-west1-a --command="cd ~/nexus-fro
 
 **Workflow**: Propose (2-3 options) → Approve → Implement → Show diff → Get commit approval
 
-### Session Startup Protocol
-
-**Every session:**
-1. Pull latest changes (CRITICAL first step)
-2. Find session handoff: Check top 10 recently updated issues (show number, time, title, labels). Read latest comments for "🔄 Session Handoff" marker. Prioritize `in-progress` labeled issues.
-3. Check git status
-4. Wait for PM to assign task
-
 ### Critical Rules
 
 - **Issues must complete in single session** (<6h work)
@@ -116,6 +108,3 @@ Before closing any issue:
 Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 **Always reference issue number.**
 
-### Mobile Collaboration
-
-Check `[MOBILE]` issues (label: `mobile-task`). Work in issue thread: post findings as comments, update label to `mobile-done-pc-todo` when done.

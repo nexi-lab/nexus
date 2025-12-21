@@ -20,6 +20,7 @@ bloomfilter = "3.0"  # Fast Bloom filter for cache miss detection
 memmap2 = "0.9.9"  # Memory-mapped file I/O for zero-copy reads
 dashmap = "6.1"  # Lock-free concurrent hashmap for L1 metadata cache
 string-interner = "0.17"  # String interning for O(1) equality and reduced allocations
+lru = "0.16"  # LRU cache for namespace config caching (Issue #861)
 
 [profile.release]
 lto = true

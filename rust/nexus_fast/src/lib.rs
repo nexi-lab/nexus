@@ -3,6 +3,7 @@
 use ahash::{AHashMap, AHashSet};
 use bloomfilter::Bloom;
 use dashmap::DashMap;
+use lru::LruCache;
 use memmap2::Mmap;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
@@ -10,8 +11,11 @@ use rayon::prelude::*;
 use regex::bytes::RegexBuilder;
 use serde::Deserialize;
 use std::cell::RefCell;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap as StdHashMap;
 use std::fs::File;
+use std::hash::{Hash, Hasher};
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
@@ -27,6 +31,18 @@ type Sym = DefaultSymbol;
 thread_local! {
     static GRAPH_CACHE: RefCell<Option<(u64, DefaultStringInterner, InternedGraph)>> =
         const { RefCell::new(None) };
+}
+
+// Thread-local LRU cache for parsed namespace configurations (Issue #861).
+// Stores raw NamespaceConfig (post-JSON parsing, pre-interning) to avoid
+// repeated Python json.dumps() + serde_json parsing overhead.
+// Key: (object_type, config_hash) - hash ensures cache invalidation on config changes.
+// Capacity: 256 entries (typical deployments have <50 object types).
+const NAMESPACE_CACHE_CAPACITY: usize = 256;
+
+thread_local! {
+    static NAMESPACE_CONFIG_CACHE: RefCell<LruCache<u64, (String, NamespaceConfig)>> =
+        RefCell::new(LruCache::new(NonZeroUsize::new(NAMESPACE_CACHE_CAPACITY).unwrap()));
 }
 
 /// Threshold for parallelization: only use rayon for lists larger than this
@@ -832,15 +848,38 @@ fn compute_permissions_bulk<'py>(
     };
 
     // Parse namespace configs and convert to interned versions
+    // Uses LRU cache to avoid repeated JSON parsing (Issue #861)
     let mut interned_namespaces: AHashMap<Sym, InternedNamespaceConfig> = AHashMap::new();
     for (key, value) in namespace_configs.iter() {
         let obj_type: String = key.extract()?;
         let config_dict: Bound<'_, PyDict> = value.extract()?;
+
+        // Convert PyDict to JSON string (needed for both cache key and parsing)
         let json_module = py.import("json")?;
         let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
         let config_json: String = config_json_py.extract()?;
-        let config: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
+
+        // Compute hash of (obj_type, config_json) for cache key
+        let mut hasher = DefaultHasher::new();
+        obj_type.hash(&mut hasher);
+        config_json.hash(&mut hasher);
+        let cache_key = hasher.finish();
+
+        // Try to get from cache, otherwise parse and cache
+        let config: NamespaceConfig = NAMESPACE_CONFIG_CACHE.with(|cache| {
+            let mut cache_ref = cache.borrow_mut();
+            if let Some((cached_type, cached_config)) = cache_ref.get(&cache_key) {
+                if cached_type == &obj_type {
+                    // Cache hit - return cloned config
+                    return Ok::<NamespaceConfig, pyo3::PyErr>(cached_config.clone());
+                }
+            }
+            // Cache miss - parse JSON and store in cache
+            let parsed: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
+            })?;
+            cache_ref.put(cache_key, (obj_type.clone(), parsed.clone()));
+            Ok(parsed)
         })?;
 
         let interned_config = InternedNamespaceConfig::from_config(&config, &mut interner);
@@ -1129,7 +1168,7 @@ fn compute_permission_single(
         })
         .collect::<PyResult<Vec<_>>>()?;
 
-    // Parse namespace configs
+    // Parse namespace configs (with LRU caching - Issue #861)
     let mut namespaces = AHashMap::new();
     for (key, value) in namespace_configs.iter() {
         let obj_type: String = key.extract()?;
@@ -1137,8 +1176,26 @@ fn compute_permission_single(
         let json_module = py.import("json")?;
         let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
         let config_json: String = config_json_py.extract()?;
-        let config: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
+
+        // Compute hash for cache key
+        let mut hasher = DefaultHasher::new();
+        obj_type.hash(&mut hasher);
+        config_json.hash(&mut hasher);
+        let cache_key = hasher.finish();
+
+        // Try cache, otherwise parse and cache
+        let config: NamespaceConfig = NAMESPACE_CONFIG_CACHE.with(|cache| {
+            let mut cache_ref = cache.borrow_mut();
+            if let Some((cached_type, cached_config)) = cache_ref.get(&cache_key) {
+                if cached_type == &obj_type {
+                    return Ok::<NamespaceConfig, pyo3::PyErr>(cached_config.clone());
+                }
+            }
+            let parsed: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
+            })?;
+            cache_ref.put(cache_key, (obj_type.clone(), parsed.clone()));
+            Ok(parsed)
         })?;
         namespaces.insert(obj_type, config);
     }
@@ -1425,7 +1482,7 @@ fn expand_subjects<'py>(
         })
         .collect::<PyResult<Vec<_>>>()?;
 
-    // Parse namespace configs
+    // Parse namespace configs (with LRU caching - Issue #861)
     let mut namespaces = AHashMap::new();
     for (key, value) in namespace_configs.iter() {
         let obj_type: String = key.extract()?;
@@ -1433,8 +1490,26 @@ fn expand_subjects<'py>(
         let json_module = py.import("json")?;
         let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
         let config_json: String = config_json_py.extract()?;
-        let config: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
+
+        // Compute hash for cache key
+        let mut hasher = DefaultHasher::new();
+        obj_type.hash(&mut hasher);
+        config_json.hash(&mut hasher);
+        let cache_key = hasher.finish();
+
+        // Try cache, otherwise parse and cache
+        let config: NamespaceConfig = NAMESPACE_CONFIG_CACHE.with(|cache| {
+            let mut cache_ref = cache.borrow_mut();
+            if let Some((cached_type, cached_config)) = cache_ref.get(&cache_key) {
+                if cached_type == &obj_type {
+                    return Ok::<NamespaceConfig, pyo3::PyErr>(cached_config.clone());
+                }
+            }
+            let parsed: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
+            })?;
+            cache_ref.put(cache_key, (obj_type.clone(), parsed.clone()));
+            Ok(parsed)
         })?;
         namespaces.insert(obj_type, config);
     }
@@ -1654,7 +1729,7 @@ fn list_objects_for_subject<'py>(
         })
         .collect::<PyResult<Vec<_>>>()?;
 
-    // Parse namespace configs
+    // Parse namespace configs (with LRU caching - Issue #861)
     let mut namespaces = AHashMap::new();
     for (key, value) in namespace_configs.iter() {
         let obj_type: String = key.extract()?;
@@ -1662,8 +1737,26 @@ fn list_objects_for_subject<'py>(
         let json_module = py.import("json")?;
         let config_json_py = json_module.call_method1("dumps", (config_dict,))?;
         let config_json: String = config_json_py.extract()?;
-        let config: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
+
+        // Compute hash for cache key
+        let mut hasher = DefaultHasher::new();
+        obj_type.hash(&mut hasher);
+        config_json.hash(&mut hasher);
+        let cache_key = hasher.finish();
+
+        // Try cache, otherwise parse and cache
+        let config: NamespaceConfig = NAMESPACE_CONFIG_CACHE.with(|cache| {
+            let mut cache_ref = cache.borrow_mut();
+            if let Some((cached_type, cached_config)) = cache_ref.get(&cache_key) {
+                if cached_type == &obj_type {
+                    return Ok::<NamespaceConfig, pyo3::PyErr>(cached_config.clone());
+                }
+            }
+            let parsed: NamespaceConfig = serde_json::from_str(&config_json).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("JSON parse error: {}", e))
+            })?;
+            cache_ref.put(cache_key, (obj_type.clone(), parsed.clone()));
+            Ok(parsed)
         })?;
         namespaces.insert(obj_type, config);
     }

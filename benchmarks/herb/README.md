@@ -1,16 +1,35 @@
 # HERB Benchmark Data for Nexus
 
 This directory contains the HERB (Heterogeneous Enterprise Retrieval Benchmark) data
-transformed for use with Nexus hub's file system, optimized for grep/glob search by AI agents.
+for use with Nexus hub's file system, optimized for grep/glob search by AI agents.
 
 ## Source
 
 Data sourced from: https://github.com/SalesforceAIResearch/HERB/tree/main/data/
 
-## Structure
+## Directory Structure
 
 ```
-herb_contexts/
+benchmarks/herb/
+├── README.md                   # This file
+├── organize_context.py         # Transformation script
+├── original/                   # Original HERB data (raw JSON)
+│   ├── products/               # 30 product JSON files
+│   │   └── {Product}.json      # Raw product data with all fields
+│   └── metadata/               # Reference data
+│       ├── customers_data.json # Customer information
+│       ├── employee.json       # Employee directory
+│       └── salesforce_team.json# Org structure hierarchy
+└── dataset/                    # Transformed data (grep-friendly)
+    ├── _summary.json           # Overall statistics
+    ├── _metadata/              # Global reference data (JSONL)
+    └── {product}/              # Per-product data
+```
+
+## Dataset Structure (Transformed)
+
+```
+dataset/
 ├── _summary.json               # Overall statistics for all products
 ├── _metadata/                  # Global reference data
 │   ├── customers.jsonl         # Customer info (CUST-ID → name, role, company)
@@ -56,58 +75,66 @@ SummarizeForce, SupportForce, TrendForce, VizForce, WorkFlowGenie
 
 ```bash
 # Look up employee by ID
-grep "eid_13fdff84" _metadata/employees.jsonl
+grep "eid_13fdff84" dataset/_metadata/employees.jsonl
 
 # Find customers by company
-grep "BlueWave" _metadata/customers.jsonl
+grep "BlueWave" dataset/_metadata/customers.jsonl
 
 # Find all VPs
-grep '"role_type": "vp"' _metadata/org_structure.jsonl
+grep '"role_type": "vp"' dataset/_metadata/org_structure.jsonl
 
 # Find who reports to a specific lead
-grep "eid_e96d2f38" _metadata/org_structure.jsonl
+grep "eid_e96d2f38" dataset/_metadata/org_structure.jsonl
 ```
 
 ### Product Data Searches
 
 ```bash
 # Find employee across all product data
-grep "eid_13fdff84" ActionGenie/**/*.jsonl
+grep "eid_13fdff84" dataset/ActionGenie/**/*.jsonl
 
 # Search Slack messages
-grep -i "market research" ActionGenie/slack/*.jsonl
+grep -i "market research" dataset/ActionGenie/slack/*.jsonl
 
 # Find documents by type
-grep "Product Requirements" ActionGenie/docs/_index.jsonl
+grep "Product Requirements" dataset/ActionGenie/docs/_index.jsonl
 
 # List all channels for a product
-ls ActionGenie/slack/*.jsonl
+ls dataset/ActionGenie/slack/*.jsonl
 
 # Find merged PRs
-grep '"merged": true' ActionGenie/prs/*.jsonl
+grep '"merged": true' dataset/ActionGenie/prs/*.jsonl
 
 # Search across all products
-grep -r "security" */docs/_index.jsonl
+grep -r "security" dataset/*/docs/_index.jsonl
 ```
 
 ## Transformation Script
 
-Use `organize_context.py` to regenerate the data or transform new products:
+Use `organize_context.py` to regenerate the transformed dataset from original data:
 
 ```bash
 # Transform a single product
-python3 organize_context.py Product.json output/
+python3 organize_context.py original/products/ActionGenie.json dataset/
 
 # Transform all products in a directory
-python3 organize_context.py --all input_dir/ output/
+python3 organize_context.py --all original/products/ dataset/
 
 # Transform metadata files
-python3 organize_context.py --metadata metadata_dir/ output/
+python3 organize_context.py --metadata original/metadata/ dataset/
 ```
 
 ## Data Format
 
+- **Original**: Raw JSON files as provided by HERB benchmark
 - **JSONL**: One complete JSON record per line (grep-friendly)
 - **Markdown**: Human-readable content with headers
 - **Index files**: Quick metadata lookup without parsing full content
 - **Flattened structure**: Simple grep patterns work without JSON parsing
+
+## Usage with Nexus
+
+The `dataset/` folder is designed for AI agents to search using standard tools:
+- `grep` for content search across JSONL files
+- `glob` for file pattern matching
+- Direct file reads for markdown documents

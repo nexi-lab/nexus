@@ -7,6 +7,12 @@ Architecture:
 - L1 Cache (in-memory): This module - <1ms lookup, 10k entries
 - L2 Cache (database): rebac_check_cache table - 5-10ms lookup
 - L3 Compute: Graph traversal - 50-500ms
+
+Quantization (Issue #842):
+- Cache keys include a time bucket for distributed cache sharing
+- Multiple instances can independently generate the same key within a window
+- Based on SpiceDB/Google Zanzibar quantization approach
+- See: https://authzed.com/blog/how-caching-works-in-spicedb
 """
 
 import logging
@@ -46,6 +52,7 @@ class ReBACPermissionCache:
         ttl_seconds: int = 60,
         enable_metrics: bool = True,
         enable_adaptive_ttl: bool = False,
+        quantization_interval: int = 5,
     ):
         """
         Initialize ReBAC permission cache.
@@ -55,15 +62,18 @@ class ReBACPermissionCache:
             ttl_seconds: Time-to-live for cache entries (default: 60s)
             enable_metrics: Track hit rates and latency (default: True)
             enable_adaptive_ttl: Adjust TTL based on write frequency (default: False)
+            quantization_interval: Time bucket size in seconds for cache key quantization
+                (default: 5s). Enables distributed cache sharing. Set to 0 to disable.
         """
         self._max_size = max_size
         self._ttl_seconds = ttl_seconds
         self._enable_metrics = enable_metrics
         self._enable_adaptive_ttl = enable_adaptive_ttl
+        self._quantization_interval = quantization_interval
         self._lock = threading.RLock()
 
         # Main cache: key -> (result, timestamp)
-        # Key format: "subject_type:subject_id:permission:object_type:object_id:tenant_id"
+        # Key format: "subject_type:subject_id:permission:object_type:object_id:tenant_id:t{bucket}"
         self._cache: TTLCache[str, bool] = TTLCache(maxsize=max_size, ttl=ttl_seconds)
 
         # Metrics tracking
@@ -78,6 +88,12 @@ class ReBACPermissionCache:
         # Maps object path -> (write_count, last_reset_time)
         self._write_frequency: dict[str, tuple[int, float]] = {}
         self._write_frequency_window = 300.0  # 5-minute window
+
+    def _get_time_bucket(self) -> int:
+        """Get current time bucket for cache key quantization."""
+        if self._quantization_interval <= 0:
+            return 0
+        return int(time.time() // self._quantization_interval)
 
     def _make_key(
         self,
@@ -99,10 +115,29 @@ class ReBACPermissionCache:
             tenant_id: Optional tenant ID for multi-tenant isolation
 
         Returns:
-            Cache key string
+            Cache key string with time bucket for distributed cache sharing
         """
         tenant_part = tenant_id if tenant_id else "default"
-        return f"{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}:{tenant_part}"
+        time_bucket = self._get_time_bucket()
+        return f"{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}:{tenant_part}:t{time_bucket}"
+
+    def _parse_key(self, key: str) -> tuple[str, str, str, str, str, str] | None:
+        """Parse a cache key into components (excluding time bucket).
+
+        Returns:
+            Tuple of (subject_type, subject_id, permission, object_type, object_id, tenant_id)
+            or None if key format is invalid.
+        """
+        parts = key.split(":")
+        if len(parts) < 7:
+            return None
+        subject_type = parts[0]
+        subject_id = parts[1]
+        permission = parts[2]
+        object_type = parts[3]
+        tenant_id = parts[-2]
+        object_id = ":".join(parts[4:-2])
+        return (subject_type, subject_id, permission, object_type, object_id, tenant_id)
 
     def get(
         self,
@@ -199,14 +234,18 @@ class ReBACPermissionCache:
             Number of entries invalidated
         """
         tenant_part = tenant_id if tenant_id else "default"
-        prefix = f"{subject_type}:{subject_id}:"
 
         with self._lock:
-            keys_to_delete = [
-                key
-                for key in list(self._cache.keys())
-                if key.startswith(prefix) and key.endswith(f":{tenant_part}")
-            ]
+            keys_to_delete = []
+            for key in list(self._cache.keys()):
+                parsed = self._parse_key(key)
+                if (
+                    parsed
+                    and parsed[0] == subject_type
+                    and parsed[1] == subject_id
+                    and parsed[5] == tenant_part
+                ):
+                    keys_to_delete.append(key)
 
             for key in keys_to_delete:
                 del self._cache[key]
@@ -236,14 +275,18 @@ class ReBACPermissionCache:
             Number of entries invalidated
         """
         tenant_part = tenant_id if tenant_id else "default"
-        # Need to search for entries with this object
-        # Key format: "subject_type:subject_id:permission:object_type:object_id:tenant_id"
-        object_suffix = f"{object_type}:{object_id}:{tenant_part}"
 
         with self._lock:
-            keys_to_delete = [
-                key for key in list(self._cache.keys()) if key.endswith(object_suffix)
-            ]
+            keys_to_delete = []
+            for key in list(self._cache.keys()):
+                parsed = self._parse_key(key)
+                if (
+                    parsed
+                    and parsed[3] == object_type
+                    and parsed[4] == object_id
+                    and parsed[5] == tenant_part
+                ):
+                    keys_to_delete.append(key)
 
             for key in keys_to_delete:
                 del self._cache[key]
@@ -280,16 +323,20 @@ class ReBACPermissionCache:
             Number of entries invalidated
         """
         tenant_part = tenant_id if tenant_id else "default"
-        # Match: "subject_type:subject_id:*:object_type:object_id:tenant_id"
-        prefix = f"{subject_type}:{subject_id}:"
-        suffix = f":{object_type}:{object_id}:{tenant_part}"
 
         with self._lock:
-            keys_to_delete = [
-                key
-                for key in list(self._cache.keys())
-                if key.startswith(prefix) and key.endswith(suffix)
-            ]
+            keys_to_delete = []
+            for key in list(self._cache.keys()):
+                parsed = self._parse_key(key)
+                if (
+                    parsed
+                    and parsed[0] == subject_type
+                    and parsed[1] == subject_id
+                    and parsed[3] == object_type
+                    and parsed[4] == object_id
+                    and parsed[5] == tenant_part
+                ):
+                    keys_to_delete.append(key)
 
             for key in keys_to_delete:
                 del self._cache[key]
@@ -320,25 +367,18 @@ class ReBACPermissionCache:
             Number of entries invalidated
         """
         tenant_part = tenant_id if tenant_id else "default"
-        # Need to check if object_id in key starts with prefix
-        # Key format: "subject_type:subject_id:permission:object_type:object_id:tenant_id"
 
         with self._lock:
             keys_to_delete = []
             for key in list(self._cache.keys()):
-                parts = key.split(":")
-                if len(parts) >= 6:
-                    key_object_type = parts[3]
-                    # Join remaining parts except last (tenant_id)
-                    key_object_id = ":".join(parts[4:-1])
-                    key_tenant = parts[-1]
-
-                    if (
-                        key_object_type == object_type
-                        and key_object_id.startswith(object_id_prefix)
-                        and key_tenant == tenant_part
-                    ):
-                        keys_to_delete.append(key)
+                parsed = self._parse_key(key)
+                if (
+                    parsed
+                    and parsed[3] == object_type
+                    and parsed[4].startswith(object_id_prefix)
+                    and parsed[5] == tenant_part
+                ):
+                    keys_to_delete.append(key)
 
             for key in keys_to_delete:
                 del self._cache[key]
@@ -437,6 +477,7 @@ class ReBACPermissionCache:
                 "max_size": self._max_size,
                 "current_size": len(self._cache),
                 "ttl_seconds": self._ttl_seconds,
+                "quantization_interval": self._quantization_interval,
                 "hits": self._hits,
                 "misses": self._misses,
                 "sets": self._sets,

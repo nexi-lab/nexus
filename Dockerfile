@@ -14,6 +14,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
+# Install Go toolchain for building Zoekt (detect architecture)
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then GO_ARCH="arm64"; else GO_ARCH="amd64"; fi && \
+    curl -fsSL "https://go.dev/dl/go1.23.4.linux-${GO_ARCH}.tar.gz" | tar -C /usr/local -xzf -
+ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
+
+# Build Zoekt binaries (CGO_ENABLED=0 for static builds)
+RUN CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest && \
+    CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
+
 # Install uv and maturin for faster dependency installation
 RUN pip install --no-cache-dir uv maturin
 
@@ -53,11 +63,18 @@ COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 
+# Copy Zoekt binaries from builder
+COPY --from=builder /root/go/bin/zoekt-index /usr/local/bin/zoekt-index
+COPY --from=builder /root/go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
+
 # Verify Rust extension is available (optional debug step)
 RUN python3 -c "import nexus_fast; print('✓ Rust acceleration available')" || echo "⚠ Rust not available"
 
 # Verify Docker sandbox provider is available
 RUN python3 -c "import docker; print('✓ Docker Python package available')" || echo "⚠ Docker package not available"
+
+# Verify Zoekt binaries are available
+RUN zoekt-index -h > /dev/null 2>&1 && echo "✓ Zoekt binaries available" || echo "⚠ Zoekt not available"
 
 # Copy application files
 WORKDIR /app
@@ -92,10 +109,15 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NEXUS_HOST=0.0.0.0 \
     NEXUS_PORT=8080 \
-    NEXUS_DATA_DIR=/app/data
+    NEXUS_DATA_DIR=/app/data \
+    # Zoekt configuration (sidecar mode)
+    ZOEKT_ENABLED=false \
+    ZOEKT_URL=http://localhost:6070 \
+    ZOEKT_INDEX_DIR=/app/data/.zoekt-index \
+    ZOEKT_DATA_DIR=/app/data
 
-# Expose port
-EXPOSE 8080
+# Expose ports (8080 = Nexus API, 6070 = Zoekt search)
+EXPOSE 8080 6070
 
 # Health check - updated to correct endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \

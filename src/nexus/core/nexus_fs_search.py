@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import builtins
 import fnmatch
+import logging
 import re
 from typing import TYPE_CHECKING, Any, cast
 
@@ -18,6 +19,8 @@ from nexus.core import glob_fast, grep_fast
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -513,10 +516,28 @@ class NexusFSSearchMixin:
         if path and path != "/":
             path = self._validate_path(path)
 
+        # Directory-level pruning optimization:
+        # Extract static prefix from pattern to limit directory traversal.
+        # For "src/components/**/*.tsx", only list files under "src/components/"
+        # instead of the entire tree. This can provide 10-100x speedup.
+        search_path = path
+        if path == "/" or path == "":
+            static_prefix = glob_fast.extract_static_prefix(pattern)
+            if static_prefix:
+                # Combine base path with static prefix
+                # Ensure proper path formatting
+                if static_prefix.startswith("/"):
+                    search_path = static_prefix.rstrip("/")
+                else:
+                    search_path = "/" + static_prefix.rstrip("/")
+                logger.debug(
+                    f"[GLOB] Directory pruning: pattern='{pattern}' -> search_path='{search_path}'"
+                )
+
         # SECURITY: Filter files by ReBAC permissions FIRST
         # This ensures users only see files they have access to
         accessible_files: list[str] = cast(
-            list[str], self.list(path, recursive=True, context=context)
+            list[str], self.list(search_path, recursive=True, context=context)
         )
 
         # Build full pattern

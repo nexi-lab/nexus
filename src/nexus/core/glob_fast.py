@@ -10,10 +10,12 @@ Functions:
     glob_match_bulk: Match paths against multiple patterns (returns None if Rust unavailable)
     glob_match: Check if a single path matches any pattern (always returns a value)
     glob_filter: Filter paths by include/exclude patterns (always returns a value)
+    extract_static_prefix: Extract static directory prefix from glob pattern
     is_available: Check if Rust acceleration is available
 """
 
 import fnmatch
+import re
 from collections.abc import Callable
 
 # Try to import Rust extension
@@ -162,3 +164,86 @@ def glob_filter(
             ]
 
     return result
+
+
+# Glob special characters that indicate a non-static part of the pattern
+_GLOB_SPECIAL_CHARS = re.compile(r"[*?\[\]{}]")
+
+
+def extract_static_prefix(pattern: str) -> str:
+    """
+    Extract the static directory prefix from a glob pattern.
+
+    This identifies the longest path prefix that contains no glob wildcards,
+    enabling directory-level pruning during glob operations. For example,
+    when searching for "src/components/**/*.tsx", we can limit the search
+    to just the "src/components/" directory instead of the entire tree.
+
+    Args:
+        pattern: Glob pattern (e.g., "src/**/*.py", "lib/utils/*.ts")
+
+    Returns:
+        Static directory prefix with trailing slash, or empty string if no
+        static prefix exists (e.g., pattern starts with wildcard)
+
+    Examples:
+        >>> extract_static_prefix("src/components/**/*.tsx")
+        "src/components/"
+
+        >>> extract_static_prefix("src/**/*.py")
+        "src/"
+
+        >>> extract_static_prefix("lib/utils/helpers.py")
+        "lib/utils/"
+
+        >>> extract_static_prefix("**/*.py")
+        ""
+
+        >>> extract_static_prefix("*.py")
+        ""
+
+        >>> extract_static_prefix("src/[ab]/*.py")
+        "src/"
+
+        >>> extract_static_prefix("/workspace/project/src/**/*.py")
+        "/workspace/project/src/"
+    """
+    if not pattern:
+        return ""
+
+    # Split pattern into path segments
+    segments = pattern.split("/")
+
+    # Find the longest prefix of segments with no glob characters
+    static_segments: list[str] = []
+
+    for segment in segments:
+        # Stop at the first segment containing glob special characters
+        if _GLOB_SPECIAL_CHARS.search(segment):
+            break
+        static_segments.append(segment)
+
+    if not static_segments:
+        return ""
+
+    # If all segments are static (no wildcards in pattern at all),
+    # return the parent directory, not the full path.
+    # This is because the last segment might be a file, not a directory.
+    # e.g., "lib/utils/helpers.py" -> "lib/utils/"
+    if len(static_segments) == len(segments):
+        if len(static_segments) > 1:
+            static_segments = static_segments[:-1]
+        else:
+            # Single segment with no wildcards (e.g., "file.py")
+            # No directory to prune to
+            return ""
+
+    # Build the prefix path
+    # Handle leading / for absolute paths
+    prefix = "/".join(static_segments)
+
+    # Add trailing slash to indicate directory (if we have any prefix)
+    if prefix and not prefix.endswith("/"):
+        prefix += "/"
+
+    return prefix

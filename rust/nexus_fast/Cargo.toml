@@ -16,6 +16,9 @@ regex = "1.10"  # Fast regex matching
 encoding_rs = "0.8.35"  # Encoding detection for text files
 globset = "0.4.18"  # Fast glob pattern matching
 rayon = "1.11"   # Parallel iterators for bulk operations
+bloomfilter = "3.0"  # Fast Bloom filter for cache miss detection
+memmap2 = "0.9.9"  # Memory-mapped file I/O for zero-copy reads
+dashmap = "6.1"  # Lock-free concurrent hashmap for L1 metadata cache
 
 [profile.release]
 lto = true

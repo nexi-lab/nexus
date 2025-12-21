@@ -3,6 +3,7 @@
 import contextlib
 import errno
 import json
+import logging
 import os
 import platform
 import shutil
@@ -15,11 +16,20 @@ from nexus.backends.backend import Backend
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.search.zoekt_client import notify_zoekt_write
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
+    from nexus_fast import BloomFilter
+
     from nexus.core.permissions import OperationContext
     from nexus.core.permissions_enhanced import EnhancedOperationContext
+
+logger = logging.getLogger(__name__)
+
+# Default Bloom filter settings for CAS
+DEFAULT_CAS_BLOOM_CAPACITY = 100_000
+DEFAULT_CAS_BLOOM_FP_RATE = 0.01  # 1% false positive rate
 
 
 @register_connector(
@@ -62,11 +72,15 @@ class LocalBackend(Backend):
         ),
     }
 
+    _cas_bloom: "BloomFilter | None"
+
     def __init__(
         self,
         root_path: str | Path,
         content_cache: ContentCache | None = None,
         batch_read_workers: int = 8,
+        bloom_capacity: int = DEFAULT_CAS_BLOOM_CAPACITY,
+        bloom_fp_rate: float = DEFAULT_CAS_BLOOM_FP_RATE,
     ):
         """
         Initialize local backend.
@@ -76,13 +90,19 @@ class LocalBackend(Backend):
             content_cache: Optional content cache for faster reads (default: None)
             batch_read_workers: Max parallel workers for batch reads (default: 8).
                                Use lower values (1-2) for HDDs, higher (8-16) for SSDs/NVMe.
+            bloom_capacity: Expected number of CAS entries (default: 100,000)
+            bloom_fp_rate: Target false positive rate (default: 0.01 = 1%)
         """
         self.root_path = Path(root_path).resolve()
         self.cas_root = self.root_path / "cas"  # CAS content storage
         self.dir_root = self.root_path / "dirs"  # Directory structure
         self.content_cache = content_cache  # Optional content cache for fast reads
         self.batch_read_workers = batch_read_workers  # Max parallel workers for batch reads
+        self._cas_bloom = None
+        self._bloom_capacity = bloom_capacity
+        self._bloom_fp_rate = bloom_fp_rate
         self._ensure_roots()
+        self._init_cas_bloom_filter()
 
     @property
     def name(self) -> str:
@@ -98,6 +118,64 @@ class LocalBackend(Backend):
             raise BackendError(
                 f"Failed to create root directories: {e}", backend="local", path=str(self.root_path)
             ) from e
+
+    def _init_cas_bloom_filter(self) -> None:
+        """Initialize Bloom filter for fast CAS content existence checks."""
+        try:
+            from nexus_fast import BloomFilter
+
+            self._cas_bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
+            self._populate_cas_bloom_from_disk()
+            logger.debug(
+                f"CAS Bloom filter initialized: capacity={self._bloom_capacity}, "
+                f"fp_rate={self._bloom_fp_rate}, memory={self._cas_bloom.memory_bytes} bytes"
+            )
+        except ImportError:
+            logger.warning("nexus_fast not available, CAS Bloom filter disabled")
+            self._cas_bloom = None
+        except Exception as e:
+            logger.warning(f"Failed to initialize CAS Bloom filter: {e}")
+            self._cas_bloom = None
+
+    def _populate_cas_bloom_from_disk(self) -> None:
+        """Populate Bloom filter from existing CAS entries on disk.
+
+        Scans the CAS directory and adds all content hashes to the Bloom filter.
+        This is called on startup to ensure the filter reflects disk state.
+        """
+        if self._cas_bloom is None or not self.cas_root.exists():
+            return
+
+        keys: list[str] = []
+        try:
+            # Scan all content files in CAS directory (excluding .meta and .lock files)
+            for content_file in self.cas_root.rglob("*"):
+                if content_file.is_file() and content_file.suffix not in (".meta", ".lock"):
+                    # The filename is the content hash
+                    content_hash = content_file.name
+                    keys.append(content_hash)
+
+            if keys:
+                self._cas_bloom.add_bulk(keys)
+                logger.info(f"CAS Bloom filter populated with {len(keys)} entries from disk")
+        except Exception as e:
+            logger.warning(f"Failed to populate CAS Bloom filter from disk: {e}")
+
+    def _cas_bloom_check(self, content_hash: str) -> bool:
+        """Check Bloom filter for possible CAS content existence.
+
+        Returns:
+            True if content might exist (need to check disk)
+            False if content definitely does not exist (skip disk I/O)
+        """
+        if self._cas_bloom is None:
+            return True  # No Bloom filter, always check disk
+        return bool(self._cas_bloom.might_exist(content_hash))
+
+    def _cas_bloom_add(self, content_hash: str) -> None:
+        """Add content hash to Bloom filter after writing to disk."""
+        if self._cas_bloom is not None:
+            self._cas_bloom.add(content_hash)
 
     # === Content Operations (CAS) ===
 
@@ -292,6 +370,8 @@ class LocalBackend(Backend):
                     # Add to cache since we have the content in memory
                     if self.content_cache is not None:
                         self.content_cache.put(content_hash, content)
+                    # Ensure Bloom filter is updated (may already exist)
+                    self._cas_bloom_add(content_hash)
                     return content_hash
 
                 # Content doesn't exist - write atomically
@@ -320,6 +400,12 @@ class LocalBackend(Backend):
                     if self.content_cache is not None:
                         self.content_cache.put(content_hash, content)
 
+                    # Add to Bloom filter for fast future lookups
+                    self._cas_bloom_add(content_hash)
+
+                    # Notify Zoekt to reindex (new content written)
+                    notify_zoekt_write(str(content_path))
+
                     return content_hash
 
                 finally:
@@ -336,6 +422,8 @@ class LocalBackend(Backend):
     def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
         """Read content by its hash with retry for Windows file locking.
 
+        Uses Bloom filter for fast miss detection after checking in-memory cache.
+
         Args:
             content_hash: SHA-256 hash as hex string
             _context: Operation context (ignored for local backend)
@@ -345,6 +433,12 @@ class LocalBackend(Backend):
             cached_content = self.content_cache.get(content_hash)
             if cached_content is not None:
                 return cached_content
+
+        # Note: We intentionally do NOT use Bloom filter for early rejection here
+        # because another process/instance sharing the same root may have written
+        # content that isn't in our Bloom filter. The Bloom filter is only used
+        # for content_exists() optimization.
+        # TODO: Consider shared Bloom filter for multi-process scenarios.
 
         # Cache miss - read from disk
         content_path = self._hash_to_path(content_hash)
@@ -369,8 +463,24 @@ class LocalBackend(Backend):
                 )
 
             try:
-                # Read directly without locking (content files are immutable after creation)
-                content = content_path.read_bytes()
+                # Read using mmap for better performance (immutable content files)
+                try:
+                    from nexus_fast import read_file
+
+                    content: bytes | None = read_file(str(content_path))
+                    if content is None:
+                        if attempt < max_retries - 1:
+                            import time
+
+                            time.sleep(retry_delay)
+                            continue
+                        raise NexusFileNotFoundError(
+                            path=content_hash,
+                            message=f"CAS content not found: {content_hash}",
+                        )
+                except ImportError:
+                    # Fallback to standard read
+                    content = content_path.read_bytes()
 
                 # Verify hash
                 actual_hash = self._compute_hash(content)
@@ -569,6 +679,9 @@ class LocalBackend(Backend):
                         tmp_path.unlink()
                     tmp_path = None
 
+                    # Ensure Bloom filter is updated
+                    self._cas_bloom_add(content_hash)
+
                     return content_hash
 
                 # Content doesn't exist - move temp file to final location
@@ -579,6 +692,9 @@ class LocalBackend(Backend):
                 # Create metadata with ref_count=1
                 metadata = {"ref_count": 1, "size": total_size}
                 self._write_metadata(content_hash, metadata)
+
+                # Add to Bloom filter for fast future lookups
+                self._cas_bloom_add(content_hash)
 
                 return content_hash
 
@@ -676,10 +792,17 @@ class LocalBackend(Backend):
     def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
         """Check if content exists.
 
+        Uses Bloom filter for fast miss detection - avoids disk I/O
+        for content that definitely doesn't exist.
+
         Args:
             content_hash: SHA-256 hash as hex string
             _context: Operation context (ignored for local backend)
         """
+        # Fast path: Bloom filter says content definitely doesn't exist
+        if not self._cas_bloom_check(content_hash):
+            return False
+
         content_path = self._hash_to_path(content_hash)
         return content_path.exists()
 

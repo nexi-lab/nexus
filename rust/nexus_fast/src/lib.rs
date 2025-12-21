@@ -4,12 +4,14 @@ use ahash::{AHashMap, AHashSet};
 use bloomfilter::Bloom;
 use dashmap::DashMap;
 use lru::LruCache;
+use memchr::memmem;
 use memmap2::Mmap;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use rayon::prelude::*;
 use regex::bytes::RegexBuilder;
 use serde::Deserialize;
+use simdutf8::basic::from_utf8 as simd_from_utf8;
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap as StdHashMap;
@@ -1239,7 +1241,34 @@ struct GrepMatch {
     match_text: String,
 }
 
-/// Fast content search using Rust regex
+/// Check if a pattern is a literal string (no regex metacharacters).
+/// Literal patterns can use SIMD-accelerated memchr search (Issue #863).
+fn is_literal_pattern(pattern: &str) -> bool {
+    !pattern.chars().any(|c| {
+        matches!(
+            c,
+            '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '^' | '$' | '\\'
+        )
+    })
+}
+
+/// Search mode for grep_bulk - either SIMD-accelerated literal or regex
+enum SearchMode<'a> {
+    /// SIMD-accelerated literal search using memchr (4-10x faster)
+    Literal {
+        finder: memmem::Finder<'a>,
+        pattern: &'a str,
+    },
+    /// Case-insensitive literal search (converts line to lowercase)
+    LiteralIgnoreCase {
+        finder: memmem::Finder<'a>,
+        pattern_lower: String,
+    },
+    /// Full regex search for complex patterns
+    Regex(regex::bytes::Regex),
+}
+
+/// Fast content search using Rust regex or SIMD-accelerated memchr for literals
 #[pyfunction]
 #[pyo3(signature = (pattern, file_contents, ignore_case=false, max_results=1000))]
 fn grep_bulk<'py>(
@@ -1249,13 +1278,34 @@ fn grep_bulk<'py>(
     ignore_case: bool,
     max_results: usize,
 ) -> PyResult<Bound<'py, PyList>> {
-    // Compile regex pattern
-    let regex = RegexBuilder::new(pattern)
-        .case_insensitive(ignore_case)
-        .build()
-        .map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e))
-        })?;
+    // Determine search mode: use SIMD-accelerated memchr for literal patterns (Issue #863)
+    let is_literal = is_literal_pattern(pattern);
+
+    // For case-insensitive literal search, we need to own the lowercase pattern
+    let pattern_lower: String;
+    let search_mode = if is_literal {
+        if ignore_case {
+            pattern_lower = pattern.to_lowercase();
+            SearchMode::LiteralIgnoreCase {
+                finder: memmem::Finder::new(pattern_lower.as_bytes()),
+                pattern_lower: pattern_lower.clone(),
+            }
+        } else {
+            SearchMode::Literal {
+                finder: memmem::Finder::new(pattern.as_bytes()),
+                pattern,
+            }
+        }
+    } else {
+        // Fall back to regex for complex patterns
+        let regex = RegexBuilder::new(pattern)
+            .case_insensitive(ignore_case)
+            .build()
+            .map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e))
+            })?;
+        SearchMode::Regex(regex)
+    };
 
     // Extract all file contents from Python objects first
     let mut files_data: Vec<(String, Vec<u8>)> = Vec::new();
@@ -1283,8 +1333,9 @@ fn grep_bulk<'py>(
                 break;
             }
 
-            // Try to decode as UTF-8 (skip binary files)
-            let content_str = match std::str::from_utf8(&content_bytes) {
+            // Try to decode as UTF-8 using SIMD-accelerated validation (Issue #864)
+            // simdutf8 is ~8x faster than std::str::from_utf8
+            let content_str = match simd_from_utf8(&content_bytes) {
                 Ok(s) => s,
                 Err(_) => continue,
             };
@@ -1296,10 +1347,45 @@ fn grep_bulk<'py>(
                 }
 
                 let line_bytes = line.as_bytes();
-                if let Some(mat) = regex.find(line_bytes) {
-                    let match_text = std::str::from_utf8(&line_bytes[mat.start()..mat.end()])
-                        .unwrap_or("")
-                        .to_string();
+
+                // Use appropriate search mode
+                let match_result: Option<(usize, usize)> = match &search_mode {
+                    SearchMode::Literal { finder, pattern } => {
+                        // SIMD-accelerated literal search
+                        finder
+                            .find(line_bytes)
+                            .map(|start| (start, start + pattern.len()))
+                    }
+                    SearchMode::LiteralIgnoreCase {
+                        finder,
+                        pattern_lower,
+                    } => {
+                        // Case-insensitive: convert line to lowercase and search
+                        let line_lower = line.to_lowercase();
+                        finder
+                            .find(line_lower.as_bytes())
+                            .map(|start| (start, start + pattern_lower.len()))
+                    }
+                    SearchMode::Regex(regex) => {
+                        // Full regex search
+                        regex.find(line_bytes).map(|m| (m.start(), m.end()))
+                    }
+                };
+
+                if let Some((start, end)) = match_result {
+                    // For case-insensitive literal, extract match from original line
+                    let match_text = if matches!(&search_mode, SearchMode::LiteralIgnoreCase { .. })
+                    {
+                        // Get character boundaries for the match
+                        line.chars()
+                            .skip(line[..start].chars().count())
+                            .take(end - start)
+                            .collect::<String>()
+                    } else {
+                        simd_from_utf8(&line_bytes[start..end])
+                            .unwrap_or("")
+                            .to_string()
+                    };
 
                     results.push(GrepMatch {
                         file: file_path.clone(),

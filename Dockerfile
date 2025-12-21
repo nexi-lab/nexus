@@ -111,7 +111,7 @@ ENV PYTHONUNBUFFERED=1 \
     NEXUS_PORT=8080 \
     NEXUS_DATA_DIR=/app/data \
     # Zoekt configuration (sidecar mode)
-    ZOEKT_ENABLED=false \
+    ZOEKT_ENABLED=true \
     ZOEKT_URL=http://localhost:6070 \
     ZOEKT_INDEX_DIR=/app/data/.zoekt-index \
     ZOEKT_DATA_DIR=/app/data

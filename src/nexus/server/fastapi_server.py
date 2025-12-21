@@ -953,8 +953,12 @@ def _get_cache_headers(method: str, result: Any) -> dict[str, str]:
         headers["Cache-Control"] = "private, max-age=60"
 
     # Write/delete operations - no cache
-    elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir"):
+    elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir", "delta_write"):
         headers["Cache-Control"] = "no-store"
+
+    # Delta read - cache like regular read
+    elif method == "delta_read":
+        headers["Cache-Control"] = "private, max-age=60"
 
     # Default for other methods - no cache
     else:
@@ -1009,6 +1013,8 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         "glob",
         "grep",
         "is_directory",
+        "delta_read",  # Issue #869: Delta sync
+        "delta_write",  # Issue #869: Delta sync
     }
 
     # Try auto-dispatch first for exposed methods
@@ -1046,6 +1052,11 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await asyncio.to_thread(_handle_search, params, context)
     elif method == "is_directory":
         return await asyncio.to_thread(_handle_is_directory, params, context)
+    # Delta sync methods (Issue #869)
+    elif method == "delta_read":
+        return await asyncio.to_thread(_handle_delta_read, params, context)
+    elif method == "delta_write":
+        return await asyncio.to_thread(_handle_delta_write, params, context)
     # Admin API methods (v0.5.1)
     elif method == "admin_create_key":
         return await asyncio.to_thread(_handle_admin_create_key, params, context)
@@ -1467,6 +1478,196 @@ def _handle_is_directory(params: Any, context: Any) -> dict[str, Any]:
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
     return {"is_directory": nexus_fs.is_directory(params.path, context=context)}
+
+
+# ============================================================================
+# Delta Sync Handlers (Issue #869)
+# ============================================================================
+
+
+def _handle_delta_read(params: Any, context: Any) -> dict[str, Any]:
+    """Handle delta_read method for rsync-style incremental updates.
+
+    If client provides a content hash matching their cached version,
+    returns only the delta (binary diff) instead of full file content.
+    This reduces bandwidth by 50-90% for files with small changes.
+
+    Args:
+        params.path: File path to read
+        params.client_hash: Client's current content hash (optional)
+        params.max_delta_ratio: Max delta/original size ratio before falling back (default: 0.8)
+
+    Returns:
+        - If client_hash matches server: {"unchanged": True, "server_hash": ...}
+        - If delta is smaller than threshold: {"delta": bytes, "server_hash": ..., "is_full": False}
+        - If delta is larger or no client_hash: {"content": bytes, "server_hash": ..., "is_full": True}
+    """
+    import bsdiff4
+
+    from nexus.core.hash_fast import hash_content
+
+    nexus_fs = _app_state.nexus_fs
+    assert nexus_fs is not None
+
+    # Read current file content
+    content = nexus_fs.read(params.path, context=context)
+    if isinstance(content, dict):
+        content = content.get("content", b"")
+    if isinstance(content, str):
+        content = content.encode("utf-8")
+    assert isinstance(content, bytes)
+
+    # Compute server's content hash
+    server_hash = hash_content(content)
+
+    # Get client's hash if provided
+    client_hash = getattr(params, "client_hash", None)
+    max_delta_ratio = getattr(params, "max_delta_ratio", 0.8)
+
+    # If no client hash or client hash matches, handle appropriately
+    if client_hash is None:
+        # No client cache - return full content
+        return {
+            "content": content,
+            "server_hash": server_hash,
+            "is_full": True,
+            "size": len(content),
+        }
+
+    if client_hash == server_hash:
+        # Content unchanged - client can use cached version
+        return {
+            "unchanged": True,
+            "server_hash": server_hash,
+        }
+
+    # Client has different version - need to compute delta
+    # Get client's cached content from their provided hash
+    # Note: Client must send their cached content for delta computation
+    client_content = getattr(params, "client_content", None)
+
+    if client_content is None:
+        # Client didn't send their content - can't compute delta, return full
+        return {
+            "content": content,
+            "server_hash": server_hash,
+            "is_full": True,
+            "size": len(content),
+            "reason": "client_content_required",
+        }
+
+    if isinstance(client_content, str):
+        client_content = client_content.encode("utf-8")
+
+    # Verify client's content matches their claimed hash
+    if hash_content(client_content) != client_hash:
+        # Hash mismatch - return full content
+        return {
+            "content": content,
+            "server_hash": server_hash,
+            "is_full": True,
+            "size": len(content),
+            "reason": "client_hash_mismatch",
+        }
+
+    # Compute binary delta using bsdiff4
+    delta = bsdiff4.diff(client_content, content)
+
+    # Check if delta is worth sending (smaller than threshold)
+    delta_ratio = len(delta) / len(content) if len(content) > 0 else 1.0
+
+    if delta_ratio > max_delta_ratio:
+        # Delta too large - send full content instead
+        return {
+            "content": content,
+            "server_hash": server_hash,
+            "is_full": True,
+            "size": len(content),
+            "reason": "delta_too_large",
+            "delta_ratio": delta_ratio,
+        }
+
+    # Delta is efficient - return it
+    return {
+        "delta": delta,
+        "server_hash": server_hash,
+        "is_full": False,
+        "delta_size": len(delta),
+        "original_size": len(content),
+        "compression_ratio": 1.0 - delta_ratio,
+    }
+
+
+def _handle_delta_write(params: Any, context: Any) -> dict[str, Any]:
+    """Handle delta_write method for rsync-style incremental updates.
+
+    Client sends a binary delta patch instead of full file content.
+    Server applies the patch to the current file version.
+
+    Args:
+        params.path: File path to write
+        params.delta: Binary delta patch (bsdiff4 format)
+        params.base_hash: Expected hash of current server content
+        params.if_match: Optional ETag for optimistic concurrency
+
+    Returns:
+        {"bytes_written": int, "new_hash": str} on success
+        {"error": str, "reason": str} on conflict
+    """
+    import bsdiff4
+
+    from nexus.core.hash_fast import hash_content
+
+    nexus_fs = _app_state.nexus_fs
+    assert nexus_fs is not None
+
+    # Get the delta and base hash
+    delta = params.delta
+    if isinstance(delta, str):
+        delta = delta.encode("latin-1")  # Binary data might be encoded
+
+    base_hash = getattr(params, "base_hash", None)
+    if base_hash is None:
+        raise ValueError("base_hash is required for delta_write")
+
+    # Read current file content
+    try:
+        current_content = nexus_fs.read(params.path, context=context)
+        if isinstance(current_content, dict):
+            current_content = current_content.get("content", b"")
+        if isinstance(current_content, str):
+            current_content = current_content.encode("utf-8")
+        assert isinstance(current_content, bytes)
+    except Exception as e:
+        # File doesn't exist - can't apply delta
+        raise ValueError("Cannot apply delta to non-existent file. Use write() instead.") from e
+
+    # Verify current content matches expected base
+    current_hash = hash_content(current_content)
+    if current_hash != base_hash:
+        return {
+            "error": "conflict",
+            "reason": "base_hash_mismatch",
+            "expected_hash": base_hash,
+            "actual_hash": current_hash,
+        }
+
+    # Apply the delta patch
+    new_content = bsdiff4.patch(current_content, delta)
+
+    # Write the patched content
+    kwargs: dict[str, Any] = {"context": context}
+    if hasattr(params, "if_match") and params.if_match:
+        kwargs["if_match"] = params.if_match
+
+    bytes_written = nexus_fs.write(params.path, new_content, **kwargs)
+    new_hash = hash_content(new_content)
+
+    return {
+        "bytes_written": bytes_written,
+        "new_hash": new_hash,
+        "patch_applied": True,
+    }
 
 
 # ============================================================================

@@ -88,6 +88,8 @@ dependencies = [
     # Roaring Bitmaps for Tiger Cache (Issue #682)
     "pyroaring>=1.0.0",
     "blake3>=1.0.0",
+    # Binary delta sync for rsync-style incremental updates (Issue #869)
+    "bsdiff4>=1.2.0",
 ]
 
 [project.optional-dependencies]

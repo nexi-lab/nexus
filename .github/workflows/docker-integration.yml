@@ -1641,6 +1641,19 @@ jobs:
             exit 1
           fi
 
+      - name: Provisioning API Integration Test
+        run: |
+          # Run the provisioning API integration test script
+          chmod +x tests/integration/test_provisioning_api.sh
+          NEXUS_API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" \
+          NEXUS_URL="http://localhost:8080" \
+          ./tests/integration/test_provisioning_api.sh
+
+          if [ $? -ne 0 ]; then
+            echo "❌ Provisioning API integration tests failed"
+            exit 1
+          fi
+
       - name: Test docker-demo.sh --restart
         run: |
           echo "🔄 Testing docker-demo.sh --restart..."

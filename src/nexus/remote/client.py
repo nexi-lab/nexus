@@ -3734,6 +3734,116 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("delete_agent", {"agent_id": agent_id})
         return result  # type: ignore[no-any-return]
 
+    # ===== Provisioning API (Issue #820) =====
+
+    def provision_user(
+        self,
+        user_id: str,
+        email: str | None = None,
+        username: str | None = None,
+        display_name: str | None = None,
+        password_hash: str | None = None,
+        account_type: str = "personal",
+        tenant_id: str | None = None,
+        role: str = "member",
+        create_api_key: bool = False,
+        create_workspace: bool = True,
+        create_agents: bool = True,
+        import_skills: bool = True,
+        is_global_admin: bool = False,
+        user_metadata: dict[str, Any] | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Provision a new user with complete resource setup.
+
+        Args:
+            user_id: Unique user identifier
+            email: User email address
+            username: Optional username
+            display_name: Human-readable display name
+            password_hash: Optional password hash
+            account_type: "personal" or "business"
+            tenant_id: Tenant ID (required for business, auto-generated for personal)
+            role: Role in tenant (member/admin/owner)
+            create_api_key: Generate API key for user
+            create_workspace: Create default workspace
+            create_agents: Create default agents (ImpersonatedUser, UntrustedAgent)
+            import_skills: Import default skills
+            is_global_admin: Grant global admin privileges
+            user_metadata: Additional user metadata
+            context: Optional operation context
+
+        Returns:
+            User provisioning result with user_id, tenant_id, role, etc.
+
+        Raises:
+            RemoteFilesystemError: If provisioning fails
+        """
+        params: dict[str, Any] = {
+            "user_id": user_id,
+            "email": email,
+            "username": username,
+            "display_name": display_name,
+            "password_hash": password_hash,
+            "account_type": account_type,
+            "tenant_id": tenant_id,
+            "role": role,
+            "create_api_key": create_api_key,
+            "create_workspace": create_workspace,
+            "create_agents": create_agents,
+            "import_skills": import_skills,
+            "is_global_admin": is_global_admin,
+            "user_metadata": user_metadata,
+        }
+
+        if context is not None:
+            params["context"] = context
+
+        result = self._call_rpc("provision_user", params)
+        return result  # type: ignore[no-any-return]
+
+    def provision_tenant(
+        self,
+        tenant_id: str,
+        name: str,
+        domain: str | None = None,
+        description: str | None = None,
+        settings: dict[str, Any] | None = None,
+        create_directories: bool = True,
+        context: dict | None = None,
+    ) -> dict:
+        """Provision a new tenant/organization.
+
+        Args:
+            tenant_id: Unique tenant identifier
+            name: Organization name
+            domain: Optional domain
+            description: Optional description
+            settings: Tenant-specific settings
+            create_directories: Create tenant directories
+            context: Optional operation context
+
+        Returns:
+            Tenant provisioning result with tenant_id, name, groups, etc.
+
+        Raises:
+            RemoteFilesystemError: If provisioning fails
+        """
+        params: dict[str, Any] = {
+            "tenant_id": tenant_id,
+            "name": name,
+            "domain": domain,
+            "description": description,
+            "settings": settings,
+            "create_directories": create_directories,
+        }
+
+        if context is not None:
+            params["context"] = context
+
+        result = self._call_rpc("provision_tenant", params)
+        return result  # type: ignore[no-any-return]
+
     # ============================================================
     # Lifecycle Management
     # ============================================================

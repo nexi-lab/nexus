@@ -17,11 +17,11 @@ server:
 # Database configuration (uses PostgreSQL from docker-compose)
 database:
   url: postgresql://postgres:nexus@postgres:5432/nexus
-  # Moderately increased pool size for provisioning API
-  # Session-aware entity registry reduces agent provisioning from 4 sessions to 1 session
-  # Still need buffer for concurrent operations and remaining non-optimized paths
-  pool_size: 15  # Increased from 10 (session-aware optimization reduces pressure)
-  max_overflow: 25  # Increased from 20 (allows burst capacity)
+  # TEMPORARY: Increased pool size for provisioning API
+  # Each provision_user() call opens 25-30 sessions due to nested operations
+  # See docs/issues/provisioning-session-pooling.md for proper fix
+  pool_size: 20  # Increased from 10 to handle provisioning operations
+  max_overflow: 30  # Increased from 20 to prevent pool exhaustion
   echo: false
 
 # Multi-backend storage configuration

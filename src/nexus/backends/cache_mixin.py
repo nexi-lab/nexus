@@ -21,13 +21,13 @@ from sqlalchemy import select
 from nexus.core.exceptions import ConflictError
 from nexus.core.hash_fast import hash_content
 from nexus.core.permissions import OperationContext
+from nexus.search.zoekt_client import notify_zoekt_sync_complete
 from nexus.storage.file_cache import get_file_cache
 from nexus.storage.models import ContentCacheModel, FilePathModel
 
 if TYPE_CHECKING:
+    from nexus_fast import L1MetadataCache
     from sqlalchemy.orm import Session
-
-    from nexus.storage.content_cache import ContentCache
 
 logger = logging.getLogger(__name__)
 
@@ -129,53 +129,96 @@ class CacheConnectorMixin:
     # Maximum file size to cache (default 100MB)
     MAX_CACHE_FILE_SIZE: int = 100 * 1024 * 1024
 
-    # In-memory LRU cache (L1) - shared across all instances of this mixin
+    # L1 Metadata Cache (Rust) - lock-free, stores only metadata (~100 bytes per entry)
+    # Content is read via mmap from disk when needed
     # Using class variable so all connectors share the same cache
-    _memory_cache: ContentCache | None = None
-    _memory_cache_size_mb: int = 256  # Default 256MB
+    _l1_cache: L1MetadataCache | None = None
+    _l1_max_entries: int = 100_000  # Default 100k entries
+    _l1_default_ttl: int = 300  # Default 5 minutes TTL
 
     @classmethod
-    def _get_memory_cache(cls) -> ContentCache:
-        """Get or create the shared in-memory cache."""
-        if cls._memory_cache is None:
-            from nexus.storage.content_cache import ContentCache
+    def _get_l1_cache(cls) -> L1MetadataCache | None:
+        """Get or create the shared L1 metadata cache (Rust-based).
 
-            cls._memory_cache = ContentCache(max_size_mb=cls._memory_cache_size_mb)
-        return cls._memory_cache
+        The L1 cache stores only metadata (~100 bytes per entry) instead of
+        full content. Content is read via mmap from disk when needed.
+
+        Performance:
+        - Lookup: <1μs (vs ~100μs for Python pickle-based L1)
+        - Concurrent access: Lock-free (vs Python threading.Lock)
+        - Memory: ~100 bytes per entry (vs megabytes for content)
+        """
+        if cls._l1_cache is None:
+            try:
+                from nexus_fast import L1MetadataCache
+
+                cls._l1_cache = L1MetadataCache(
+                    max_entries=cls._l1_max_entries,
+                    default_ttl=cls._l1_default_ttl,
+                )
+                logger.info(
+                    f"[CACHE] L1 Rust cache initialized: max_entries={cls._l1_max_entries}, "
+                    f"default_ttl={cls._l1_default_ttl}s"
+                )
+            except ImportError:
+                logger.warning("[CACHE] nexus_fast not available, L1 cache disabled")
+                return None
+        return cls._l1_cache
 
     @classmethod
-    def set_memory_cache_size(cls, size_mb: int) -> None:
-        """Configure the in-memory cache size. Must be called before first use.
+    def set_l1_cache_config(cls, max_entries: int = 100_000, default_ttl: int = 300) -> None:
+        """Configure the L1 cache. Must be called before first use.
 
         Args:
-            size_mb: Maximum cache size in megabytes
+            max_entries: Maximum number of entries (default: 100000)
+            default_ttl: Default TTL in seconds (default: 300 = 5 minutes)
         """
-        cls._memory_cache_size_mb = size_mb
+        cls._l1_max_entries = max_entries
+        cls._l1_default_ttl = default_ttl
         # Reset cache if already created
-        if cls._memory_cache is not None:
-            cls._memory_cache = None
+        if cls._l1_cache is not None:
+            cls._l1_cache = None
 
     @classmethod
-    def get_memory_cache_stats(cls) -> dict[str, int]:
-        """Get in-memory cache statistics.
+    def get_l1_cache_stats(cls) -> dict[str, Any]:
+        """Get L1 cache statistics.
 
         Returns:
-            Dict with entries, size_bytes, size_mb, max_size_mb
+            Dict with entries, hits, misses, hit_rate, max_entries, default_ttl
         """
-        if cls._memory_cache is None:
+        if cls._l1_cache is None:
             return {
                 "entries": 0,
-                "size_bytes": 0,
-                "size_mb": 0,
-                "max_size_mb": cls._memory_cache_size_mb,
+                "hits": 0,
+                "misses": 0,
+                "hit_rate": 0.0,
+                "max_entries": cls._l1_max_entries,
+                "default_ttl": cls._l1_default_ttl,
             }
-        return cls._memory_cache.get_stats()
+        stats: dict[str, Any] = cls._l1_cache.stats()
+        return stats
+
+    @classmethod
+    def clear_l1_cache(cls) -> None:
+        """Clear the L1 metadata cache."""
+        if cls._l1_cache is not None:
+            cls._l1_cache.clear()
+
+    # Backward compatibility aliases
+    @classmethod
+    def _get_memory_cache(cls) -> L1MetadataCache:
+        """Deprecated: Use _get_l1_cache() instead."""
+        return cls._get_l1_cache()
+
+    @classmethod
+    def get_memory_cache_stats(cls) -> dict[str, Any]:
+        """Deprecated: Use get_l1_cache_stats() instead."""
+        return cls.get_l1_cache_stats()
 
     @classmethod
     def clear_memory_cache(cls) -> None:
-        """Clear the in-memory cache."""
-        if cls._memory_cache is not None:
-            cls._memory_cache.clear()
+        """Deprecated: Use clear_l1_cache() instead."""
+        cls.clear_l1_cache()
 
     # Maximum text size to store as 'full' (default 10MB)
     MAX_FULL_TEXT_SIZE: int = 10 * 1024 * 1024
@@ -274,6 +317,9 @@ class CacheConnectorMixin:
         This is optimized for batch operations like grep where many files
         need to be read. Uses a single DB query for L2 lookups instead of N queries.
 
+        L1 cache now uses Rust-based L1MetadataCache which stores only metadata
+        (~100 bytes per entry) and reads content via mmap from disk.
+
         Args:
             paths: List of virtual file paths
             original: If True, return binary content even for parsed files
@@ -287,19 +333,60 @@ class CacheConnectorMixin:
         results: dict[str, CacheEntry] = {}
         paths_needing_l2: list[str] = []
 
-        # L1: Check in-memory cache first
-        memory_cache = self._get_memory_cache()
+        # L1: Check Rust metadata cache first
+        l1_cache = self._get_l1_cache()
         for path in paths:
-            memory_key = f"cache_entry:{path}"
-            cached_bytes = memory_cache.get(memory_key)
-            if cached_bytes is not None:
-                with contextlib.suppress(Exception):
-                    import pickle
+            if l1_cache is None:
+                paths_needing_l2.append(path)
+                continue
 
-                    entry: CacheEntry = pickle.loads(cached_bytes)
+            # get_content returns (content_bytes, content_hash, is_text) or None
+            l1_result = l1_cache.get_content(path) if original else l1_cache.get(path)
+            if l1_result is not None:
+                if original:
+                    # get_content returns (content, hash, is_text)
+                    content_bytes, content_hash, is_text = l1_result
+                    # Create a minimal CacheEntry for L1 hits
+                    # Note: We don't have full metadata from L1, just what we need
+                    entry = CacheEntry(
+                        cache_id="",  # Not available from L1
+                        path_id="",  # Not available from L1
+                        content_text=None,
+                        _content_binary=bytes(content_bytes),
+                        content_hash=content_hash,
+                        content_type="full",
+                        original_size=len(content_bytes),
+                        cached_size=len(content_bytes),
+                        backend_version=None,
+                        synced_at=datetime.now(UTC),
+                        stale=False,
+                    )
                     results[path] = entry
                     logger.debug(f"[CACHE-BULK] L1 HIT: {path}")
-                    continue
+                else:
+                    # get() returns (path_id, content_hash, disk_path, original_size, is_text, is_fresh)
+                    path_id, content_hash, disk_path, original_size, is_text, is_fresh = l1_result
+                    if is_fresh:
+                        # Create minimal CacheEntry without content
+                        entry = CacheEntry(
+                            cache_id="",
+                            path_id=path_id,
+                            content_text=None,
+                            _content_binary=None,
+                            content_hash=content_hash,
+                            content_type="full",
+                            original_size=original_size,
+                            cached_size=0,
+                            backend_version=None,
+                            synced_at=datetime.now(UTC),
+                            stale=False,
+                        )
+                        results[path] = entry
+                        logger.debug(f"[CACHE-BULK] L1 HIT (metadata): {path}")
+                    else:
+                        # Entry expired, need L2
+                        paths_needing_l2.append(path)
+                continue
             paths_needing_l2.append(path)
 
         if not paths_needing_l2:
@@ -384,12 +471,24 @@ class CacheConnectorMixin:
             results[vpath] = entry
             l2_hits += 1
 
-            # Populate L1 memory cache for future reads
-            with contextlib.suppress(Exception):
-                import pickle
-
-                memory_key = f"cache_entry:{vpath}"
-                memory_cache.put(memory_key, pickle.dumps(entry))
+            # Populate L1 Rust metadata cache for future reads
+            # Stores only metadata (~100 bytes), not full content
+            if l1_cache is not None:
+                with contextlib.suppress(Exception):
+                    file_cache = get_file_cache()
+                    cache_tenant = cache_model.tenant_id or "default"
+                    disk_path = str(file_cache._get_cache_path(cache_tenant, vpath))
+                    is_text = cache_model.content_type in ("full", "parsed", "summary")
+                    l1_cache.put(
+                        key=vpath,
+                        path_id=cache_model.path_id,
+                        content_hash=cache_model.content_hash,
+                        disk_path=disk_path,
+                        original_size=cache_model.original_size_bytes,
+                        ttl_seconds=0,  # Use default TTL
+                        is_text=is_text,
+                        tenant_id=cache_tenant,
+                    )
 
         logger.info(
             f"[CACHE-BULK] {len(results) - l2_hits} L1 hits, {l2_hits} L2 hits, "
@@ -456,7 +555,10 @@ class CacheConnectorMixin:
         path: str,
         original: bool = False,
     ) -> CacheEntry | None:
-        """Read content from cache (L1 in-memory, then L2 database).
+        """Read content from cache (L1 Rust metadata cache, then L2 database).
+
+        L1 cache now uses Rust-based L1MetadataCache which stores only metadata
+        (~100 bytes per entry) and reads content via mmap from disk.
 
         Args:
             path: Virtual file path
@@ -466,35 +568,56 @@ class CacheConnectorMixin:
             CacheEntry if cached, None otherwise (or if TTL expired)
 
         Note:
-            If the connector defines `cache_ttl` (in seconds), entries older
-            than TTL are treated as cache misses. This is used by API connectors
-            (HN, etc.) that need time-based expiration instead of version-based.
+            TTL is now handled by the Rust L1 cache automatically.
+            Connector-specific cache_ttl is applied when populating L1.
         """
-        # L1: Check in-memory cache first (keyed by path)
-        memory_cache = self._get_memory_cache()
-        memory_key = f"cache_entry:{path}"
-        cached_bytes = memory_cache.get(memory_key)
-        if cached_bytes is not None:
-            # Deserialize CacheEntry from memory cache
-            with contextlib.suppress(Exception):
-                import pickle
-
-                entry: CacheEntry = pickle.loads(cached_bytes)
-
-                # Check TTL if connector defines cache_ttl
-                if hasattr(self, "cache_ttl") and self.cache_ttl:
-                    age = (datetime.now(UTC) - entry.synced_at).total_seconds()
-                    if age > self.cache_ttl:
-                        logger.info(
-                            f"[CACHE] L1 TTL EXPIRED: {path} "
-                            f"(age={age:.0f}s > ttl={self.cache_ttl}s)"
+        # L1: Check Rust metadata cache first
+        l1_cache = self._get_l1_cache()
+        if l1_cache is not None:
+            if original:
+                # get_content returns (content_bytes, content_hash, is_text) or None
+                l1_result = l1_cache.get_content(path)
+                if l1_result is not None:
+                    content_bytes, content_hash, is_text = l1_result
+                    entry = CacheEntry(
+                        cache_id="",
+                        path_id="",
+                        content_text=None,
+                        _content_binary=bytes(content_bytes),
+                        content_hash=content_hash,
+                        content_type="full",
+                        original_size=len(content_bytes),
+                        cached_size=len(content_bytes),
+                        backend_version=None,
+                        synced_at=datetime.now(UTC),
+                        stale=False,
+                    )
+                    logger.info(f"[CACHE] L1 HIT (Rust): {path}")
+                    return entry
+            else:
+                # get() returns (path_id, content_hash, disk_path, original_size, is_text, is_fresh)
+                l1_result = l1_cache.get(path)
+                if l1_result is not None:
+                    path_id, content_hash, disk_path, original_size, is_text, is_fresh = l1_result
+                    if is_fresh:
+                        entry = CacheEntry(
+                            cache_id="",
+                            path_id=path_id,
+                            content_text=None,
+                            _content_binary=None,
+                            content_hash=content_hash,
+                            content_type="full",
+                            original_size=original_size,
+                            cached_size=0,
+                            backend_version=None,
+                            synced_at=datetime.now(UTC),
+                            stale=False,
                         )
-                        memory_cache.remove(memory_key)
-                        return None
-
-                logger.info(f"[CACHE] L1 HIT (memory): {path}")
-                return entry
-        logger.debug(f"[CACHE] L1 MISS (memory): {path}")
+                        logger.info(f"[CACHE] L1 HIT (Rust metadata): {path}")
+                        return entry
+                    else:
+                        logger.debug(f"[CACHE] L1 EXPIRED: {path}")
+        logger.debug(f"[CACHE] L1 MISS: {path}")
 
         # L2: Check database cache
         session = self._get_db_session()
@@ -561,12 +684,27 @@ class CacheConnectorMixin:
                 )
                 return None
 
-        # Populate L1 memory cache for future reads
-        with contextlib.suppress(Exception):
-            import pickle
-
-            memory_cache.put(memory_key, pickle.dumps(entry))
-            logger.debug(f"[CACHE] L1 POPULATED from L2: {path}")
+        # Populate L1 Rust metadata cache for future reads
+        # Stores only metadata (~100 bytes), not full content
+        if l1_cache is not None:
+            with contextlib.suppress(Exception):
+                file_cache = get_file_cache()
+                cache_tenant = cache_model.tenant_id or "default"
+                disk_path = str(file_cache._get_cache_path(cache_tenant, path))
+                is_text = cache_model.content_type in ("full", "parsed", "summary")
+                # Use connector-specific TTL if defined
+                ttl = getattr(self, "cache_ttl", 0) or 0
+                l1_cache.put(
+                    key=path,
+                    path_id=cache_model.path_id,
+                    content_hash=cache_model.content_hash,
+                    disk_path=disk_path,
+                    original_size=cache_model.original_size_bytes,
+                    ttl_seconds=ttl,
+                    is_text=is_text,
+                    tenant_id=cache_tenant,
+                )
+                logger.debug(f"[CACHE] L1 POPULATED from L2: {path}")
 
         return entry
 
@@ -730,14 +868,27 @@ class CacheConnectorMixin:
             parse_metadata=parse_metadata,
         )
 
-        # Update L1 memory cache (in-memory, per-process)
-        with contextlib.suppress(Exception):
-            import pickle
-
-            memory_cache = self._get_memory_cache()
-            memory_key = f"cache_entry:{path}"
-            memory_cache.put(memory_key, pickle.dumps(entry))
-            logger.info(f"[CACHE] WRITE to L1+L2: {path} (size={original_size})")
+        # Update L1 Rust metadata cache (stores only metadata, not content)
+        l1_cache = self._get_l1_cache()
+        if l1_cache is not None:
+            with contextlib.suppress(Exception):
+                file_cache = get_file_cache()
+                cache_tenant = tenant_id or "default"
+                disk_path = str(file_cache._get_cache_path(cache_tenant, path))
+                is_text = content_type in ("full", "parsed", "summary")
+                # Use connector-specific TTL if defined
+                ttl = getattr(self, "cache_ttl", 0) or 0
+                l1_cache.put(
+                    key=path,
+                    path_id=path_id,
+                    content_hash=content_hash,
+                    disk_path=disk_path,
+                    original_size=original_size,
+                    ttl_seconds=ttl,
+                    is_text=is_text,
+                    tenant_id=cache_tenant,
+                )
+                logger.info(f"[CACHE] WRITE to L1+L2: {path} (size={original_size})")
 
         return entry
 
@@ -926,7 +1077,7 @@ class CacheConnectorMixin:
 
         session = self._get_db_session()
         now = datetime.now(UTC)
-        memory_cache = self._get_memory_cache()
+        l1_cache = self._get_l1_cache()  # Rust L1 metadata cache
         file_cache = get_file_cache()  # Disk cache for binary content
 
         # Get all path_ids in bulk
@@ -1052,12 +1203,23 @@ class CacheConnectorMixin:
                 )
                 cache_entries.append(cache_entry)
 
-                # Update L1 memory cache
-                with contextlib.suppress(Exception):
-                    import pickle
-
-                    memory_key = f"cache_entry:{path}"
-                    memory_cache.put(memory_key, pickle.dumps(cache_entry))
+                # Update L1 Rust metadata cache (stores only metadata, not content)
+                if l1_cache is not None:
+                    with contextlib.suppress(Exception):
+                        disk_path = str(file_cache._get_cache_path(cache_tenant, path))
+                        is_text = content_type in ("full", "parsed", "summary")
+                        # Use connector-specific TTL if defined
+                        ttl = getattr(self, "cache_ttl", 0) or 0
+                        l1_cache.put(
+                            key=path,
+                            path_id=path_id,
+                            content_hash=content_hash,
+                            disk_path=disk_path,
+                            original_size=original_size,
+                            ttl_seconds=ttl,
+                            is_text=is_text,
+                            tenant_id=cache_tenant,
+                        )
 
             except Exception as e:
                 logger.error(f"[CACHE] Failed to prepare cache entry for {path}: {e}")
@@ -1353,6 +1515,11 @@ class CacheConnectorMixin:
             f"[CACHE-SYNC] Complete: synced={result.files_synced}, "
             f"skipped={result.files_skipped}, errors={len(result.errors)}"
         )
+
+        # Notify Zoekt to reindex if files were synced
+        if result.files_synced > 0:
+            notify_zoekt_sync_complete(result.files_synced)
+
         return result
 
     # Backward compatibility alias

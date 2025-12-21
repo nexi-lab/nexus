@@ -371,7 +371,15 @@ class AsyncSemanticSearch:
         limit: int,
         path_filter: str | None,
     ) -> list[AsyncSearchResult]:
-        """Async keyword search using FTS."""
+        """Async keyword search using Zoekt (if available) or FTS."""
+        # Try Zoekt first for accelerated search
+        zoekt_results = await self._try_keyword_search_with_zoekt(query, limit, path_filter)
+        if zoekt_results is not None:
+            logger.debug(f"[KEYWORD-ASYNC] Zoekt returned {len(zoekt_results)} results")
+            return zoekt_results
+
+        # Fall back to FTS
+        logger.debug("[KEYWORD-ASYNC] Using FTS fallback")
         if self.db_type == "postgresql":
             sql = text("""
                 SELECT
@@ -427,6 +435,69 @@ class AsyncSemanticSearch:
             )
             for row in result
         ]
+
+    async def _try_keyword_search_with_zoekt(
+        self,
+        query: str,
+        limit: int,
+        path_filter: str | None,
+    ) -> list[AsyncSearchResult] | None:
+        """Try to use Zoekt for async keyword search.
+
+        Args:
+            query: Search query
+            limit: Maximum results
+            path_filter: Optional path prefix
+
+        Returns:
+            List of results if Zoekt succeeded, None to fall back to FTS
+        """
+        try:
+            from nexus.search.zoekt_client import get_zoekt_client
+        except ImportError:
+            return None
+
+        client = get_zoekt_client()
+
+        if not await client.is_available():
+            return None
+
+        logger.debug("[KEYWORD-ASYNC] Using Zoekt for accelerated search")
+
+        try:
+            # Build Zoekt query
+            zoekt_query = query
+            if path_filter:
+                zoekt_query = f"file:{path_filter.lstrip('/')} {zoekt_query}"
+
+            matches = await client.search(zoekt_query, num=limit * 2)
+
+            if not matches:
+                return None
+
+            # Convert Zoekt results to AsyncSearchResult format
+            results = []
+            for match in matches[:limit]:
+                results.append(
+                    AsyncSearchResult(
+                        path=match.file,
+                        chunk_index=0,
+                        chunk_text=match.content,
+                        score=match.score or 1.0,
+                        start_offset=0,
+                        end_offset=len(match.content),
+                        line_start=match.line,
+                        line_end=match.line,
+                        keyword_score=match.score or 1.0,
+                    )
+                )
+
+            logger.debug(f"[KEYWORD-ASYNC] Zoekt: {len(matches)} matches, returning {len(results)}")
+            return results
+
+        except Exception as e:
+            logger.warning(f"[KEYWORD-ASYNC] Zoekt search failed: {e}")
+            return None
 
     async def _vector_search(
         self,

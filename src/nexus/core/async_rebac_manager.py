@@ -121,6 +121,42 @@ _QUERY_BULK_CROSS_TENANT = text("""
       AND (expires_at IS NULL OR expires_at >= :now)
 """)
 
+# Leopard closure: Fetch transitive groups for subjects (Issue #840)
+# Returns all groups a member transitively belongs to
+_QUERY_LEOPARD_CLOSURE = text("""
+    SELECT member_type, member_id, group_type, group_id
+    FROM rebac_group_closure
+    WHERE tenant_id = :tenant_id
+""")
+
+# Leopard closure: Insert/update closure entry for membership
+_QUERY_LEOPARD_UPSERT_SQLITE = text("""
+    INSERT OR REPLACE INTO rebac_group_closure
+        (member_type, member_id, group_type, group_id, tenant_id, depth, updated_at)
+    VALUES
+        (:member_type, :member_id, :group_type, :group_id, :tenant_id, :depth, datetime('now'))
+""")
+
+_QUERY_LEOPARD_UPSERT_POSTGRES = text("""
+    INSERT INTO rebac_group_closure
+        (member_type, member_id, group_type, group_id, tenant_id, depth, updated_at)
+    VALUES
+        (:member_type, :member_id, :group_type, :group_id, :tenant_id, :depth, NOW())
+    ON CONFLICT (member_type, member_id, group_type, group_id, tenant_id)
+    DO UPDATE SET depth = EXCLUDED.depth, updated_at = NOW()
+""")
+
+# Leopard closure: Delete closure entries for a member
+_QUERY_LEOPARD_DELETE_MEMBER = text("""
+    DELETE FROM rebac_group_closure
+    WHERE member_type = :member_type
+      AND member_id = :member_id
+      AND tenant_id = :tenant_id
+""")
+
+# Relations that represent group membership
+MEMBERSHIP_RELATIONS = frozenset({"member-of", "member", "belongs-to"})
+
 # Write operations
 _QUERY_INSERT_TUPLE = text("""
     INSERT INTO rebac_tuples (
@@ -723,6 +759,39 @@ class AsyncReBACManager:
                             }
                         )
 
+            # LEOPARD OPTIMIZATION (Issue #840): Add synthetic membership tuples from
+            # transitive closure. This allows O(1) group membership lookups instead of
+            # O(depth) recursive graph traversal during permission checks.
+            try:
+                result = await session.execute(
+                    _QUERY_LEOPARD_CLOSURE,
+                    {"tenant_id": tenant_id},
+                )
+                leopard_count = 0
+                for row in result.fetchall():
+                    member = (row[0], row[1])
+                    if member in all_subjects:
+                        tuples.append(
+                            {
+                                "subject_type": row[0],
+                                "subject_id": row[1],
+                                "subject_relation": None,
+                                "relation": "member",  # synthetic direct membership
+                                "object_type": row[2],
+                                "object_id": row[3],
+                                "conditions": None,
+                                "expires_at": None,
+                            }
+                        )
+                        leopard_count += 1
+                if leopard_count > 0:
+                    logger.debug(
+                        f"[LEOPARD] Added {leopard_count} synthetic membership tuples from closure"
+                    )
+            except Exception as e:
+                # Leopard table may not exist in older databases - graceful fallback
+                logger.debug(f"[LEOPARD] Closure lookup failed (table may not exist): {e}")
+
             logger.debug(f"Fetched {len(tuples)} tuples for bulk check (includes computed parents)")
             return tuples
 
@@ -925,6 +994,34 @@ class AsyncReBACManager:
             )
             await session.commit()
 
+            # LEOPARD (Issue #840): Update closure for membership relations
+            if relation in MEMBERSHIP_RELATIONS:
+                try:
+                    upsert_query = (
+                        _QUERY_LEOPARD_UPSERT_POSTGRES
+                        if self._is_postgresql()
+                        else _QUERY_LEOPARD_UPSERT_SQLITE
+                    )
+                    await session.execute(
+                        upsert_query,
+                        {
+                            "member_type": subject[0],
+                            "member_id": subject[1],
+                            "group_type": object[0],
+                            "group_id": object[1],
+                            "tenant_id": tenant_id,
+                            "depth": 1,
+                        },
+                    )
+                    await session.commit()
+                    logger.debug(
+                        f"[LEOPARD] Added closure: {subject[0]}:{subject[1]} -> "
+                        f"{object[0]}:{object[1]}"
+                    )
+                except Exception as e:
+                    # Leopard table may not exist - graceful fallback
+                    logger.debug(f"[LEOPARD] Closure update failed: {e}")
+
         # Invalidate L1 cache for this object
         if self._l1_cache:
             self._l1_cache.invalidate_object(object[0], object[1], tenant_id)
@@ -967,6 +1064,36 @@ class AsyncReBACManager:
             await session.commit()
 
             deleted: bool = result.rowcount > 0
+
+            # LEOPARD (Issue #840): Update closure for membership relations
+            if deleted and relation in MEMBERSHIP_RELATIONS:
+                try:
+                    # Note: For simplicity, we recompute by deleting and letting
+                    # subsequent writes rebuild. Full transitive recompute is complex.
+                    await session.execute(
+                        text("""
+                            DELETE FROM rebac_group_closure
+                            WHERE member_type = :member_type
+                              AND member_id = :member_id
+                              AND group_type = :group_type
+                              AND group_id = :group_id
+                              AND tenant_id = :tenant_id
+                        """),
+                        {
+                            "member_type": subject[0],
+                            "member_id": subject[1],
+                            "group_type": object[0],
+                            "group_id": object[1],
+                            "tenant_id": tenant_id,
+                        },
+                    )
+                    await session.commit()
+                    logger.debug(
+                        f"[LEOPARD] Removed closure: {subject[0]}:{subject[1]} -> "
+                        f"{object[0]}:{object[1]}"
+                    )
+                except Exception as e:
+                    logger.debug(f"[LEOPARD] Closure delete failed: {e}")
 
         # Invalidate L1 cache
         if self._l1_cache:

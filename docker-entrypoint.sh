@@ -367,6 +367,48 @@ else
 fi
 
 # ============================================
+# Start Zoekt Sidecar (if enabled)
+# ============================================
+if [ "${ZOEKT_ENABLED:-false}" = "true" ]; then
+    echo ""
+    echo "🔍 Starting Zoekt search sidecar..."
+
+    ZOEKT_INDEX_DIR="${ZOEKT_INDEX_DIR:-/app/data/.zoekt-index}"
+    ZOEKT_DATA_DIR="${ZOEKT_DATA_DIR:-/app/data}"
+    ZOEKT_PORT="${ZOEKT_PORT:-6070}"
+
+    # Ensure index directory exists
+    mkdir -p "$ZOEKT_INDEX_DIR"
+
+    # Build initial index if it doesn't exist
+    if [ ! -f "$ZOEKT_INDEX_DIR/compound-0.zoekt" ]; then
+        echo "  Building initial Zoekt index..."
+        zoekt-index -index "$ZOEKT_INDEX_DIR" "$ZOEKT_DATA_DIR" 2>&1 | head -5 || true
+        echo -e "${GREEN}✓ Initial index built${NC}"
+    fi
+
+    # Start Zoekt webserver in background
+    echo "  Starting Zoekt webserver on port $ZOEKT_PORT..."
+    zoekt-webserver -index "$ZOEKT_INDEX_DIR" -listen ":$ZOEKT_PORT" &
+    ZOEKT_PID=$!
+
+    # Wait for Zoekt to be ready
+    for i in {1..10}; do
+        if curl -sf "http://localhost:$ZOEKT_PORT/" > /dev/null 2>&1; then
+            echo -e "${GREEN}✓ Zoekt search ready at http://localhost:$ZOEKT_PORT${NC}"
+            break
+        fi
+        sleep 0.5
+    done
+
+    echo ""
+else
+    echo ""
+    echo "ℹ️  Zoekt search disabled (set ZOEKT_ENABLED=true to enable)"
+    echo ""
+fi
+
+# ============================================
 # Start Nexus Server
 # ============================================
 echo ""

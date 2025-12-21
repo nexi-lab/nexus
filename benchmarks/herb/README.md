@@ -20,7 +20,8 @@ benchmarks/herb/
 │       ├── customers_data.json # Customer information
 │       ├── employee.json       # Employee directory
 │       └── salesforce_team.json# Org structure hierarchy
-├── dataset/                    # Transformed context data (grep-friendly)
+├── enterprise-context/         # Transformed context data (skill package)
+│   ├── SKILL.md                # Skill definition for agents
 │   ├── _summary.json           # Overall statistics
 │   ├── _metadata/              # Global reference data (JSONL)
 │   └── {product}/              # Per-product data
@@ -29,10 +30,10 @@ benchmarks/herb/
     └── unanswerable.jsonl      # 699 unanswerable questions
 ```
 
-## Dataset Structure (Transformed)
+## Enterprise Context Structure
 
 ```
-dataset/
+enterprise-context/
 ├── _summary.json               # Overall statistics for all products
 ├── _metadata/                  # Global reference data
 │   ├── customers.jsonl         # Customer info (CUST-ID → name, role, company)
@@ -80,38 +81,38 @@ SummarizeForce, SupportForce, TrendForce, VizForce, WorkFlowGenie
 
 ```bash
 # Look up employee by ID
-grep "eid_13fdff84" dataset/_metadata/employees.jsonl
+grep "eid_13fdff84" enterprise-context/_metadata/employees.jsonl
 
 # Find customers by company
-grep "BlueWave" dataset/_metadata/customers.jsonl
+grep "BlueWave" enterprise-context/_metadata/customers.jsonl
 
 # Find all VPs
-grep '"role_type": "vp"' dataset/_metadata/org_structure.jsonl
+grep '"role_type": "vp"' enterprise-context/_metadata/org_structure.jsonl
 
 # Find who reports to a specific lead
-grep "eid_e96d2f38" dataset/_metadata/org_structure.jsonl
+grep "eid_e96d2f38" enterprise-context/_metadata/org_structure.jsonl
 ```
 
 ### Product Data Searches
 
 ```bash
 # Find employee across all product data
-grep "eid_13fdff84" dataset/ActionGenie/**/*.jsonl
+grep "eid_13fdff84" enterprise-context/ActionGenie/**/*.jsonl
 
 # Search Slack messages
-grep -i "market research" dataset/ActionGenie/slack/*.jsonl
+grep -i "market research" enterprise-context/ActionGenie/slack/*.jsonl
 
 # Find documents by type
-grep "Product Requirements" dataset/ActionGenie/docs/_index.jsonl
+grep "Product Requirements" enterprise-context/ActionGenie/docs/_index.jsonl
 
 # List all channels for a product
-ls dataset/ActionGenie/slack/*.jsonl
+ls enterprise-context/ActionGenie/slack/*.jsonl
 
 # Find merged PRs
-grep '"merged": true' dataset/ActionGenie/prs/*.jsonl
+grep '"merged": true' enterprise-context/ActionGenie/prs/*.jsonl
 
 # Search across all products
-grep -r "security" dataset/*/docs/_index.jsonl
+grep -r "security" enterprise-context/*/docs/_index.jsonl
 ```
 
 ### Q&A Benchmark Searches
@@ -133,13 +134,13 @@ Use `organize_context.py` to regenerate the transformed dataset from original da
 
 ```bash
 # Transform a single product
-python3 organize_context.py original/products/ActionGenie.json dataset/
+python3 organize_context.py original/products/ActionGenie.json enterprise-context/
 
 # Transform all products in a directory
-python3 organize_context.py --all original/products/ dataset/
+python3 organize_context.py --all original/products/ enterprise-context/
 
 # Transform metadata files
-python3 organize_context.py --metadata original/metadata/ dataset/
+python3 organize_context.py --metadata original/metadata/ enterprise-context/
 ```
 
 ## Data Format
@@ -152,7 +153,8 @@ python3 organize_context.py --metadata original/metadata/ dataset/
 
 ## Usage with Nexus
 
-The `dataset/` folder is designed for AI agents to search using standard tools:
-- `grep` for content search across JSONL files
-- `glob` for file pattern matching
-- Direct file reads for markdown documents
+The `enterprise-context/` folder is a skill package designed for AI agents. It includes:
+- `SKILL.md` with search strategies and data format documentation
+- JSONL files for grep-friendly content search
+- Markdown documents for direct file reads
+- `_index.jsonl` files for quick metadata lookup

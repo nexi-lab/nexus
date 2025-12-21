@@ -1,21 +1,18 @@
 ---
-name: herb-enterprise-search
+name: herb-enterprise-context
 description: Search enterprise context data (Slack, docs, meetings, PRs) from the HERB benchmark to answer questions about products, employees, customers, and organizational activities. Use when answering questions that require searching through enterprise communication and documentation.
 allowed-tools: Read, Grep, Glob
 ---
 
-# HERB Enterprise Search Guide
+# HERB Enterprise Context
 
 Search through enterprise context data to answer questions about products, teams, customers, and organizational activities.
-
-## Data Location
-
-All data is located at: `benchmarks/herb/dataset/`
 
 ## Data Structure
 
 ```
-dataset/
+enterprise-context/
+├── SKILL.md                    # This file
 ├── _metadata/                  # Global reference data
 │   ├── customers.jsonl         # 120 customers (CUST-ID → name, role, company)
 │   ├── employees.jsonl         # 530 employees (eid_xxx → name, role, location, org)
@@ -58,72 +55,72 @@ When you find an employee ID (eid_xxx) or customer ID (CUST-xxx), look them up:
 
 ```bash
 # Look up employee by ID
-grep "eid_13fdff84" dataset/_metadata/employees.jsonl
+grep "eid_13fdff84" _metadata/employees.jsonl
 
 # Look up customer by ID
-grep "CUST-0096" dataset/_metadata/customers.jsonl
+grep "CUST-0096" _metadata/customers.jsonl
 
 # Find employee's manager/reports
-grep "eid_13fdff84" dataset/_metadata/org_structure.jsonl
+grep "eid_13fdff84" _metadata/org_structure.jsonl
 ```
 
 ### 2. Find Documents by Type or Author
 
 ```bash
 # Find all Product Requirements Documents
-grep "Product Requirements" dataset/{product}/docs/_index.jsonl
+grep "Product Requirements" {product}/docs/_index.jsonl
 
 # Find documents by author
-grep "eid_13fdff84" dataset/{product}/docs/_index.jsonl
+grep "eid_13fdff84" {product}/docs/_index.jsonl
 
 # Read the full document
-cat dataset/{product}/docs/{doc_id}.md
+cat {product}/docs/{doc_id}.md
 ```
 
 ### 3. Search Slack Conversations
 
 ```bash
 # Search for topic across all channels
-grep -i "market research" dataset/{product}/slack/*.jsonl
+grep -i "market research" {product}/slack/*.jsonl
 
 # Find messages by user
-grep "eid_13fdff84" dataset/{product}/slack/*.jsonl
+grep "eid_13fdff84" {product}/slack/*.jsonl
 
 # Search planning channels specifically
-grep -i "keyword" dataset/{product}/slack/planning-*.jsonl
+grep -i "keyword" {product}/slack/planning-*.jsonl
 ```
 
 ### 4. Find Meeting Participants
 
 ```bash
 # Find meetings with specific participant
-grep "eid_13fdff84" dataset/{product}/meetings/_index.jsonl
+grep "eid_13fdff84" {product}/meetings/_index.jsonl
 
 # Search meeting transcripts
-grep -i "keyword" dataset/{product}/meetings/*.md
+grep -i "keyword" {product}/meetings/*.md
 ```
 
 ### 5. Search Pull Requests
 
 ```bash
 # Find merged PRs
-grep '"merged": true' dataset/{product}/prs/*.jsonl
+grep '"merged": true' {product}/prs/*.jsonl
 
 # Find PRs by author
-grep "eid_xxx" dataset/{product}/prs/_index.jsonl
+grep "eid_xxx" {product}/prs/_index.jsonl
 
 # Search by repository
-cat dataset/{product}/prs/{repo}.jsonl
+cat {product}/prs/{repo}.jsonl
 ```
 
 ### 6. Cross-Product Search
 
 ```bash
 # Search across all products
-grep -r "security" dataset/*/docs/_index.jsonl
+grep -r "security" */docs/_index.jsonl
 
 # Find employee across all data
-grep -r "eid_13fdff84" dataset/**/*.jsonl
+grep -r "eid_13fdff84" **/*.jsonl
 ```
 
 ---

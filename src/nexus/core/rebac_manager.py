@@ -783,8 +783,15 @@ class ReBACManager:
 
             # Invalidate cache entries affected by this change
             # Pass expires_at to disable eager recomputation for expiring tuples
+            # FIX: Pass conn to avoid opening new connection (pool exhaustion)
             self._invalidate_cache_for_tuple(
-                subject_entity, relation, object_entity, tenant_id, subject_relation, expires_at
+                subject_entity,
+                relation,
+                object_entity,
+                tenant_id,
+                subject_relation,
+                expires_at,
+                conn=conn,
             )
 
             # CROSS-TENANT FIX: If subject is from a different tenant, also invalidate
@@ -798,6 +805,7 @@ class ReBACManager:
                     subject_tenant_id,
                     subject_relation,
                     expires_at,
+                    conn=conn,  # FIX: Reuse connection
                 )
 
         return tuple_id
@@ -1028,6 +1036,7 @@ class ReBACManager:
                     created_count += 1
 
                     # Invalidate cache for this tuple
+                    # FIX: Pass conn to avoid opening new connection (pool exhaustion)
                     self._invalidate_cache_for_tuple(
                         pt["subject_entity"],
                         pt["relation"],
@@ -1035,6 +1044,7 @@ class ReBACManager:
                         pt["tenant_id"],
                         pt["subject_relation"],
                         pt["expires_at"],
+                        conn=conn,
                     )
 
                     # CROSS-TENANT FIX: Also invalidate subject tenant cache if different
@@ -1049,6 +1059,7 @@ class ReBACManager:
                             pt["subject_tenant_id"],
                             pt["subject_relation"],
                             pt["expires_at"],
+                            conn=conn,  # FIX: Reuse connection
                         )
 
                 # Commit transaction after all inserts succeed
@@ -1248,7 +1259,10 @@ class ReBACManager:
             self._tuple_version += 1  # Invalidate Rust graph cache
 
             # Invalidate cache entries affected by this change
-            self._invalidate_cache_for_tuple(subject, relation, obj, tenant_id, subject_relation)
+            # FIX: Pass conn to avoid opening new connection (pool exhaustion)
+            self._invalidate_cache_for_tuple(
+                subject, relation, obj, tenant_id, subject_relation, conn=conn
+            )
 
         return True
 
@@ -3983,6 +3997,7 @@ class ReBACManager:
 
                 # Invalidate cache for this tuple
                 # Pass a dummy expires_at to prevent eager recomputation during cleanup
+                # FIX: Pass conn to avoid opening new connection (pool exhaustion)
                 subject = Entity(subject_type, subject_id)
                 obj = Entity(object_type, object_id)
                 self._invalidate_cache_for_tuple(
@@ -3992,6 +4007,7 @@ class ReBACManager:
                     tenant_id,
                     subject_relation,
                     expires_at=datetime.now(UTC),
+                    conn=conn,
                 )
 
             conn.commit()

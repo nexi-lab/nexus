@@ -432,6 +432,119 @@ class NexusFS(
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to load saved mounts during initialization: {e}")
 
+        # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache
+        # This enables O(1) permission checks for FUSE path resolution
+        self._init_performance_optimizations()
+
+    def _init_performance_optimizations(self) -> None:
+        """Initialize performance optimizations for permission checks.
+
+        This method:
+        1. Grants TRAVERSE permission on implicit directories (enables O(1) stat)
+        2. Warms the Tiger Cache for faster subsequent permission checks
+        3. Starts background worker for Tiger Cache queue processing
+
+        Called automatically during __init__. Can be called manually to refresh.
+        """
+        import logging
+        import os
+
+        logger = logging.getLogger(__name__)
+
+        # Check if optimizations are enabled (default: True)
+        # Set NEXUS_DISABLE_PERF_OPTIMIZATIONS=true to disable
+        if os.getenv("NEXUS_DISABLE_PERF_OPTIMIZATIONS", "false").lower() in ("true", "1", "yes"):
+            logger.debug("Performance optimizations disabled via environment variable")
+            return
+
+        try:
+            # 1. TRAVERSE on implicit directories is now AUTOMATIC
+            # The permission check auto-allows TRAVERSE for any implicit directory
+            # when the user is authenticated. No manual grants needed!
+            # See: permissions.py _check_rebac() TRAVERSE handling
+
+            # 2. Warm Tiger Cache (optional, can be slow for large systems)
+            # Only warm if explicitly enabled via environment variable
+            if os.getenv("NEXUS_WARM_TIGER_CACHE", "false").lower() in (
+                "true",
+                "1",
+                "yes",
+            ) and hasattr(self, "warm_tiger_cache"):
+                entries = self.warm_tiger_cache(tenant_id=self._default_context.tenant_id)
+                if entries > 0:
+                    logger.info(f"Warmed Tiger Cache with {entries} entries")
+
+            # 3. Start Tiger Cache background worker
+            # This processes permission change queue to keep Tiger Cache up-to-date
+            self._start_tiger_cache_worker()
+
+        except Exception as e:
+            # Don't fail initialization if optimizations fail
+            logger.warning(f"Failed to initialize performance optimizations: {e}")
+
+    def _start_tiger_cache_worker(self) -> None:
+        """Start background thread for Tiger Cache queue processing.
+
+        The worker processes permission changes queued by rebac_create/rebac_delete
+        to keep Tiger Cache up-to-date for O(1) permission lookups.
+        """
+        import logging
+        import os
+        import threading
+
+        logger = logging.getLogger(__name__)
+
+        # Check if Tiger Cache worker is enabled (default: True)
+        if os.getenv("NEXUS_DISABLE_TIGER_WORKER", "false").lower() in ("true", "1", "yes"):
+            logger.debug("Tiger Cache worker disabled via environment variable")
+            return
+
+        # Don't start if already running
+        worker_thread = getattr(self, "_tiger_worker_thread", None)
+        if worker_thread is not None and worker_thread.is_alive():
+            return
+
+        # Worker interval in seconds (default: 1 second)
+        interval = float(os.getenv("NEXUS_TIGER_WORKER_INTERVAL", "1.0"))
+
+        # Shutdown flag
+        self._tiger_worker_stop = threading.Event()
+
+        def worker_loop() -> None:
+            """Background worker loop for Tiger Cache queue processing."""
+            while not self._tiger_worker_stop.is_set():
+                try:
+                    if hasattr(self, "process_tiger_cache_queue"):
+                        processed = self.process_tiger_cache_queue(batch_size=100)
+                        if processed > 0:
+                            logger.debug(f"Tiger Cache worker processed {processed} updates")
+                except Exception as e:
+                    logger.warning(f"Tiger Cache worker error: {e}")
+
+                # Sleep until next iteration or stop signal
+                self._tiger_worker_stop.wait(timeout=interval)
+
+            logger.debug("Tiger Cache worker stopped")
+
+        # Start worker thread
+        self._tiger_worker_thread = threading.Thread(
+            target=worker_loop,
+            name="tiger-cache-worker",
+            daemon=True,  # Daemon thread - exits when main program exits
+        )
+        self._tiger_worker_thread.start()
+        logger.debug(f"Tiger Cache worker started (interval={interval}s)")
+
+    def stop_tiger_cache_worker(self) -> None:
+        """Stop the Tiger Cache background worker.
+
+        Call this during graceful shutdown to stop the worker thread.
+        """
+        if hasattr(self, "_tiger_worker_stop"):
+            self._tiger_worker_stop.set()
+        if hasattr(self, "_tiger_worker_thread") and self._tiger_worker_thread is not None:
+            self._tiger_worker_thread.join(timeout=5.0)
+
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
         """
         Dynamically load and register custom parsers from configuration.
@@ -1213,10 +1326,11 @@ class NexusFS(
         if they have access to any child/descendant (even if deeply nested).
 
         Workflow:
-        1. Check direct access on the path first (fast path)
-        2. If no direct access, query all descendants from metadata
-        3. Check ReBAC permissions on each descendant until one is accessible
-        4. Early exit on first accessible descendant (performance optimization)
+        1. Check Tiger Cache first (O(1) if available)
+        2. Check direct access on the path (fast path)
+        3. If no direct access, query all descendants from metadata
+        4. Check ReBAC permissions on each descendant until one is accessible
+        5. Early exit on first accessible descendant (performance optimization)
 
         Args:
             path: Path to check (e.g., "/workspace")
@@ -1227,6 +1341,7 @@ class NexusFS(
             True if user has access to path OR any descendant, False otherwise
 
         Performance Notes:
+            - Uses Tiger Cache for O(1) lookups when available
             - Uses prefix query on metadata for efficiency
             - Early exit after finding first accessible descendant
             - Skips descendant check if no ReBAC manager available
@@ -1239,6 +1354,10 @@ class NexusFS(
             >>> _has_descendant_access("/other", READ, joe_ctx)
             False  # No access to /other or any descendants
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         # Admin/system bypass
         if context.is_admin or context.is_system:
             return True
@@ -1266,10 +1385,28 @@ class NexusFS(
             Permission.READ: "read",
             Permission.WRITE: "write",
             Permission.EXECUTE: "execute",
+            Permission.TRAVERSE: "traverse",
         }
         rebac_permission = permission_map.get(permission, "read")
+        tenant_id = context.tenant_id or "default"
 
-        # 1. Check direct access first (fast path)
+        # OPTIMIZATION 1: Try Tiger Cache first (O(1) lookup)
+        # Tiger Cache stores pre-materialized permissions as Roaring Bitmaps
+        if hasattr(self._rebac_manager, "tiger_check_access"):
+            # Check if user has access to the path directly via Tiger Cache
+            tiger_result = self._rebac_manager.tiger_check_access(
+                subject=subject_tuple,
+                permission=rebac_permission,
+                object=("file", path),
+                tenant_id=tenant_id,
+            )
+            if tiger_result is True:
+                logger.debug(f"_has_descendant_access: Tiger Cache HIT (path={path})")
+                return True
+            # If tiger_result is None, cache miss - continue with normal check
+            # If tiger_result is False, explicitly denied - but still check descendants
+
+        # OPTIMIZATION 2: Check direct access (fast path)
         direct_access = self.rebac_check(
             subject=subject_tuple,
             permission=rebac_permission,
@@ -1279,7 +1416,7 @@ class NexusFS(
         if direct_access:
             return True
 
-        # 2. Check if user has access to ANY descendant
+        # 3. Check if user has access to ANY descendant
         # Get all files/directories under this path (recursive)
         prefix = path if path.endswith("/") else path + "/"
         if path == "/":
@@ -1291,16 +1428,32 @@ class NexusFS(
             # If metadata query fails, return False
             return False
 
-        # 3. OPTIMIZATION (issue #380): Use bulk permission checking for descendants
+        # OPTIMIZATION 3: Use Tiger Cache for batch descendant check
+        if hasattr(self._rebac_manager, "tiger_get_accessible_resources"):
+            try:
+                # Get all accessible resources for this subject
+                accessible_ids = self._rebac_manager.tiger_get_accessible_resources(
+                    subject=subject_tuple,
+                    permission=rebac_permission,
+                    resource_type="file",
+                    tenant_id=tenant_id,
+                )
+                if accessible_ids:
+                    # Check if any descendant is in the accessible set
+                    # Note: This requires Tiger resource map integration
+                    logger.debug(
+                        f"_has_descendant_access: Tiger Cache has {len(accessible_ids)} accessible resources"
+                    )
+            except Exception as e:
+                logger.debug(f"_has_descendant_access: Tiger Cache lookup failed: {e}")
+
+        # 4. OPTIMIZATION (issue #380): Use bulk permission checking for descendants
         # Instead of checking each descendant individually (N queries), use rebac_check_bulk()
         if (
             hasattr(self, "_rebac_manager")
             and self._rebac_manager is not None
             and hasattr(self._rebac_manager, "rebac_check_bulk")
         ):
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.debug(
                 f"_has_descendant_access: Using bulk check for {len(all_descendants)} descendants of {path}"
             )
@@ -1316,7 +1469,7 @@ class NexusFS(
                     checks, tenant_id=context.tenant_id or "default"
                 )
 
-                # Check if any descendant is accessible
+                # OPTIMIZATION 5: Early exit on first accessible descendant
                 for check in checks:
                     if results.get(check, False):
                         logger.debug(
@@ -1488,6 +1641,10 @@ class NexusFS(
             enforce_permissions=True. Returns True if user has access to the directory
             or any child/descendant (enables hierarchical navigation).
             Returns False if path doesn't exist or user lacks permission to path and all descendants.
+
+        Performance:
+            For implicit directories, uses TRAVERSE permission check (O(1)) instead of
+            descendant access check (O(n)). This optimizes FUSE path resolution.
         """
         try:
             path = self._validate_path(path)
@@ -1495,12 +1652,22 @@ class NexusFS(
             # Use provided context or default
             ctx = context if context is not None else self._default_context
 
-            # Check read permission (with hierarchical descendant access)
-            # Use hierarchical access check: return True if user has access to path OR any descendant
-            if self._enforce_permissions and not self._has_descendant_access(
-                path, Permission.READ, ctx
-            ):
-                return False
+            # Check if it's an implicit directory first (for optimization)
+            is_implicit_dir = self.metadata.is_implicit_directory(path)
+
+            # Check permission (with TRAVERSE optimization for implicit directories)
+            if self._enforce_permissions:
+                if is_implicit_dir:
+                    # OPTIMIZATION: Try TRAVERSE permission first (O(1))
+                    # Fall back to descendant access check if TRAVERSE denied
+                    if not self._permission_enforcer.check(
+                        path, Permission.TRAVERSE, ctx
+                    ) and not self._has_descendant_access(path, Permission.READ, ctx):
+                        return False
+                else:
+                    # For explicit directories/files, use hierarchical access check
+                    if not self._has_descendant_access(path, Permission.READ, ctx):
+                        return False
 
             # Route with access control (read permission needed to check)
             route = self.router.route(
@@ -1513,8 +1680,8 @@ class NexusFS(
             # Check if it's an explicit directory in the backend
             if route.backend.is_directory(route.backend_path):
                 return True
-            # Check if it's an implicit directory (has files beneath it)
-            return self.metadata.is_implicit_directory(path)
+            # Return cached implicit directory status
+            return is_implicit_dir
         except (InvalidPathError, Exception):
             return False
 
@@ -4497,6 +4664,9 @@ class NexusFS(
 
     def close(self) -> None:
         """Close the filesystem and release resources."""
+        # Stop Tiger Cache background worker first
+        self.stop_tiger_cache_worker()
+
         # Wait for all parser threads to complete before closing metadata store
         # This prevents database corruption from threads writing during shutdown
         with self._parser_threads_lock:

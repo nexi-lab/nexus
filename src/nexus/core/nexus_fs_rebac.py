@@ -433,7 +433,7 @@ class NexusFSReBACMixin:
             raise ValueError("column_config can only be provided when relation is 'dynamic_viewer'")
 
         # Create relationship
-        return self._rebac_manager.rebac_write(
+        result = self._rebac_manager.rebac_write(
             subject=subject,
             relation=relation,
             object=object,
@@ -441,6 +441,30 @@ class NexusFSReBACMixin:
             tenant_id=effective_tenant_id,
             conditions=conditions,
         )
+
+        # OPTIMIZATION: Queue Tiger Cache update for affected subject
+        # This ensures O(1) permission lookups after cache is rebuilt
+        if hasattr(self._rebac_manager, "tiger_queue_update"):
+            # Map relation to permission
+            relation_to_permission = {
+                "direct_owner": "read",
+                "direct_editor": "read",
+                "direct_viewer": "read",
+                "owner-of": "read",
+                "editor-of": "read",
+                "viewer-of": "read",
+                "traverser-of": "traverse",
+                "dynamic_viewer": "read",
+            }
+            permission = relation_to_permission.get(relation, "read")
+            self._rebac_manager.tiger_queue_update(
+                subject=subject[:2] if len(subject) == 3 else subject,
+                permission=permission,
+                resource_type=object[0],
+                tenant_id=effective_tenant_id or "default",
+            )
+
+        return result
 
     @rpc_expose(description="Check ReBAC permission")
     def rebac_check(
@@ -743,8 +767,34 @@ class NexusFSReBACMixin:
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
 
+        # OPTIMIZATION: Get tuple info before deletion for Tiger Cache invalidation
+        tuple_info = None
+        if hasattr(self._rebac_manager, "tiger_invalidate_cache"):
+            # Try to get tuple info for cache invalidation
+            try:
+                tuples = self.rebac_list_tuples()
+                for t in tuples:
+                    if t.get("tuple_id") == tuple_id:
+                        tuple_info = t
+                        break
+            except Exception:
+                pass
+
         # Delete tuple
-        return self._rebac_manager.rebac_delete(tuple_id=tuple_id)
+        result = self._rebac_manager.rebac_delete(tuple_id=tuple_id)
+
+        # OPTIMIZATION: Invalidate Tiger Cache for affected subject
+        if result and tuple_info and hasattr(self._rebac_manager, "tiger_invalidate_cache"):
+            subject_type = tuple_info.get("subject_type")
+            subject_id = tuple_info.get("subject_id")
+            if subject_type and subject_id:
+                self._rebac_manager.tiger_invalidate_cache(
+                    subject=(subject_type, subject_id),
+                    resource_type=tuple_info.get("object_type"),
+                    tenant_id=tuple_info.get("tenant_id"),
+                )
+
+        return result
 
     @rpc_expose(description="List ReBAC relationship tuples")
     def rebac_list_tuples(
@@ -2250,3 +2300,193 @@ class NexusFSReBACMixin:
             "columns_shown": result["columns_shown"],
             "aggregated_columns": result["aggregated_columns"],
         }
+
+    def grant_traverse_on_implicit_dirs(
+        self,
+        tenant_id: str | None = None,
+        subject: tuple[str, str] | None = None,
+    ) -> list[str]:
+        """Grant TRAVERSE permission on root-level implicit directories.
+
+        This is an optimization for FUSE path resolution. By granting TRAVERSE
+        on directories like /tenants, /sessions, /skills, we enable O(1) stat()
+        checks instead of expensive O(n) descendant access checks.
+
+        Args:
+            tenant_id: Tenant ID for the permissions (default: "default")
+            subject: Subject to grant TRAVERSE to (default: ("group", "authenticated"))
+                     Use ("group", "authenticated") for all authenticated users.
+
+        Returns:
+            List of tuple IDs for created permissions
+
+        Note:
+            This should be called during system initialization to set up
+            base traverse permissions. TRAVERSE permission allows stat/access
+            by name but NOT listing directory contents.
+
+        Examples:
+            >>> # Grant traverse to all authenticated users on root directories
+            >>> nx.grant_traverse_on_implicit_dirs()
+            ['uuid-1', 'uuid-2', 'uuid-3']
+
+            >>> # Grant traverse to a specific user
+            >>> nx.grant_traverse_on_implicit_dirs(
+            ...     subject=("user", "alice"),
+            ...     tenant_id="org_acme"
+            ... )
+        """
+        if not hasattr(self, "_rebac_manager"):
+            raise RuntimeError(
+                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+            )
+
+        # Default subject is authenticated users group
+        if subject is None:
+            subject = ("group", "authenticated")
+
+        effective_tenant_id = tenant_id or "default"
+
+        # Root-level implicit directories that need TRAVERSE permission
+        implicit_dirs = [
+            "/",
+            "/tenants",
+            "/sessions",
+            "/skills",
+            "/workspace",
+            "/shared",
+            "/system",
+            "/archives",
+            "/external",
+        ]
+
+        tuple_ids = []
+        for dir_path in implicit_dirs:
+            try:
+                # Check if permission already exists
+                existing = self.rebac_list_tuples(
+                    subject=subject,
+                    relation="traverser-of",
+                    object=("file", dir_path),
+                )
+                if existing:
+                    continue
+
+                # Create TRAVERSE permission
+                tuple_id = self._rebac_manager.rebac_write(
+                    subject=subject,
+                    relation="traverser-of",
+                    object=("file", dir_path),
+                    tenant_id=effective_tenant_id,
+                )
+                tuple_ids.append(tuple_id)
+            except Exception as e:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to grant TRAVERSE on {dir_path}: {e}")
+
+        return tuple_ids
+
+    def process_tiger_cache_queue(self, batch_size: int = 100) -> int:
+        """Process pending Tiger Cache update queue.
+
+        Call this periodically from a background worker to rebuild Tiger Cache
+        entries that were queued by rebac_create/rebac_delete operations.
+
+        Args:
+            batch_size: Maximum entries to process per call (default: 100)
+
+        Returns:
+            Number of entries processed
+
+        Note:
+            This should be called periodically (e.g., every 1-5 seconds) from
+            a background worker to ensure Tiger Cache stays up-to-date.
+
+        Examples:
+            >>> # In a background worker
+            >>> import asyncio
+            >>> async def tiger_worker(nx):
+            ...     while True:
+            ...         processed = nx.process_tiger_cache_queue()
+            ...         if processed > 0:
+            ...             print(f"Processed {processed} Tiger Cache updates")
+            ...         await asyncio.sleep(1)
+        """
+        if not hasattr(self, "_rebac_manager"):
+            return 0
+
+        if hasattr(self._rebac_manager, "tiger_process_queue"):
+            return self._rebac_manager.tiger_process_queue(batch_size=batch_size)
+
+        return 0
+
+    def warm_tiger_cache(
+        self,
+        subjects: list[tuple[str, str]] | None = None,
+        tenant_id: str | None = None,
+    ) -> int:
+        """Warm the Tiger Cache by pre-computing permissions for subjects.
+
+        Call this on startup or after major permission changes to pre-populate
+        the Tiger Cache for faster subsequent permission checks.
+
+        Args:
+            subjects: List of subjects to warm cache for (default: all subjects with tuples)
+            tenant_id: Tenant ID to scope warming (default: "default")
+
+        Returns:
+            Number of cache entries created
+
+        Note:
+            This can be slow for large systems. Consider calling during
+            off-peak hours or limiting to specific subjects.
+
+        Examples:
+            >>> # Warm cache for all subjects
+            >>> nx.warm_tiger_cache()
+            42
+
+            >>> # Warm cache for specific users
+            >>> nx.warm_tiger_cache(subjects=[("user", "alice"), ("user", "bob")])
+            8
+        """
+        if not hasattr(self, "_rebac_manager"):
+            return 0
+
+        effective_tenant_id = tenant_id or "default"
+        entries_created = 0
+
+        # If no subjects provided, get all unique subjects from tuples
+        if subjects is None:
+            try:
+                tuples = self.rebac_list_tuples()
+                subjects_set: set[tuple[str, str]] = set()
+                for t in tuples:
+                    subject_type = t.get("subject_type")
+                    subject_id = t.get("subject_id")
+                    if subject_type and subject_id:
+                        subjects_set.add((subject_type, subject_id))
+                subjects = list(subjects_set)
+            except Exception:
+                subjects = []
+
+        # Queue updates for each subject
+        for subject in subjects:
+            if hasattr(self._rebac_manager, "tiger_queue_update"):
+                # Queue updates for common permissions
+                for permission in ["read", "write", "traverse"]:
+                    self._rebac_manager.tiger_queue_update(
+                        subject=subject,
+                        permission=permission,
+                        resource_type="file",
+                        tenant_id=effective_tenant_id,
+                    )
+                    entries_created += 1
+
+        # Process the queue immediately
+        if hasattr(self._rebac_manager, "tiger_process_queue"):
+            self._rebac_manager.tiger_process_queue(batch_size=1000)
+
+        return entries_created

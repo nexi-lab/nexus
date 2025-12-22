@@ -239,6 +239,83 @@ class TigerResourceMap:
 
         return info
 
+    def bulk_get_int_ids(
+        self,
+        resources: list[tuple[str, str, str]],  # List of (resource_type, resource_id, tenant_id)
+        conn: Connection,
+    ) -> dict[tuple[str, str, str], int | None]:
+        """Bulk get integer IDs for multiple resources in a single query.
+
+        Args:
+            resources: List of (resource_type, resource_id, tenant_id) tuples
+            conn: Database connection
+
+        Returns:
+            Dict mapping resource tuples to their int IDs (None if not found)
+        """
+        from sqlalchemy import text
+
+        if not resources:
+            return {}
+
+        results: dict[tuple[str, str, str], int | None] = {}
+        to_fetch: list[tuple[str, str, str]] = []
+
+        # Check memory cache first
+        with self._lock:
+            for resource in resources:
+                if resource in self._uuid_to_int:
+                    results[resource] = self._uuid_to_int[resource]
+                else:
+                    to_fetch.append(resource)
+                    results[resource] = None
+
+        if not to_fetch:
+            return results
+
+        # Bulk fetch from database
+        if self._is_postgresql:
+            # PostgreSQL: Use UNNEST for efficient bulk lookup
+            query = text("""
+                SELECT resource_type, resource_id, tenant_id, resource_int_id
+                FROM tiger_resource_map
+                WHERE (resource_type, resource_id, tenant_id) IN (
+                    SELECT UNNEST(:types), UNNEST(:ids), UNNEST(:tenants)
+                )
+            """)
+            types = [r[0] for r in to_fetch]
+            ids = [r[1] for r in to_fetch]
+            tenants = [r[2] for r in to_fetch]
+            result = conn.execute(query, {"types": types, "ids": ids, "tenants": tenants})
+        else:
+            # SQLite: Use VALUES clause
+            if len(to_fetch) > 500:
+                # Batch for large sets
+                for i in range(0, len(to_fetch), 500):
+                    batch = to_fetch[i : i + 500]
+                    batch_results = self.bulk_get_int_ids(batch, conn)
+                    results.update(batch_results)
+                return results
+
+            values = ", ".join(f"('{r[0]}', '{r[1]}', '{r[2]}')" for r in to_fetch)
+            query = text(f"""
+                SELECT resource_type, resource_id, tenant_id, resource_int_id
+                FROM tiger_resource_map
+                WHERE (resource_type, resource_id, tenant_id) IN (VALUES {values})
+            """)
+            result = conn.execute(query)
+
+        # Process results and update cache
+        with self._lock:
+            for row in result:
+                key = (row.resource_type, row.resource_id, row.tenant_id)
+                int_id = int(row.resource_int_id)
+                results[key] = int_id
+                self._uuid_to_int[key] = int_id
+                self._int_to_uuid[int_id] = key
+
+        return results
+
     def get_int_ids_batch(
         self,
         resources: list[tuple[str, str, str]],
@@ -519,6 +596,165 @@ class TigerCache:
         else:
             with self._engine.connect() as new_conn:
                 return execute(new_conn)
+
+    def _bulk_load_from_db(self, keys: list[CacheKey], conn: Connection) -> dict[CacheKey, Any]:
+        """Bulk load bitmaps from database in a single query.
+
+        Args:
+            keys: List of cache keys to load
+            conn: Database connection
+
+        Returns:
+            Dict mapping cache keys to their bitmaps (missing keys not included)
+        """
+        from sqlalchemy import text
+
+        if not keys:
+            return {}
+
+        results: dict[CacheKey, Any] = {}
+        to_fetch: list[CacheKey] = []
+
+        # Check memory cache first
+        current_time = time.time()
+        with self._lock:
+            for key in keys:
+                if key in self._cache:
+                    bitmap, revision, cached_at = self._cache[key]
+                    if current_time - cached_at < self._cache_ttl:
+                        results[key] = bitmap
+                    else:
+                        to_fetch.append(key)
+                else:
+                    to_fetch.append(key)
+
+        if not to_fetch:
+            return results
+
+        # Bulk fetch from database
+        is_postgresql = "postgresql" in str(self._engine.url)
+
+        if is_postgresql:
+            query = text("""
+                SELECT subject_type, subject_id, permission, resource_type, tenant_id,
+                       bitmap_data, revision
+                FROM tiger_cache
+                WHERE (subject_type, subject_id, permission, resource_type, tenant_id) IN (
+                    SELECT UNNEST(:subj_types), UNNEST(:subj_ids), UNNEST(:perms),
+                           UNNEST(:res_types), UNNEST(:tenants)
+                )
+            """)
+            params = {
+                "subj_types": [k.subject_type for k in to_fetch],
+                "subj_ids": [k.subject_id for k in to_fetch],
+                "perms": [k.permission for k in to_fetch],
+                "res_types": [k.resource_type for k in to_fetch],
+                "tenants": [k.tenant_id for k in to_fetch],
+            }
+            db_result = conn.execute(query, params)
+        else:
+            # SQLite: Use VALUES clause
+            if len(to_fetch) > 100:
+                # Batch for large sets
+                for i in range(0, len(to_fetch), 100):
+                    batch = to_fetch[i : i + 100]
+                    batch_results = self._bulk_load_from_db(batch, conn)
+                    results.update(batch_results)
+                return results
+
+            values = ", ".join(
+                f"('{k.subject_type}', '{k.subject_id}', '{k.permission}', '{k.resource_type}', '{k.tenant_id}')"
+                for k in to_fetch
+            )
+            query = text(f"""
+                SELECT subject_type, subject_id, permission, resource_type, tenant_id,
+                       bitmap_data, revision
+                FROM tiger_cache
+                WHERE (subject_type, subject_id, permission, resource_type, tenant_id)
+                    IN (VALUES {values})
+            """)
+            db_result = conn.execute(query)
+
+        # Process results and update cache
+        with self._lock:
+            for row in db_result:
+                key = CacheKey(
+                    row.subject_type,
+                    row.subject_id,
+                    row.permission,
+                    row.resource_type,
+                    row.tenant_id,
+                )
+                bitmap = RoaringBitmap.deserialize(row.bitmap_data)
+                results[key] = bitmap
+
+                # Update memory cache
+                self._evict_if_needed()
+                self._cache[key] = (bitmap, int(row.revision), time.time())
+
+        return results
+
+    def check_access_bulk(
+        self,
+        checks: list[tuple[str, str, str, str, str, str]],
+        # Each tuple: (subject_type, subject_id, permission, resource_type, resource_id, tenant_id)
+    ) -> dict[tuple[str, str, str, str, str, str], bool | None]:
+        """Bulk check permissions using Tiger Cache with only 2 DB queries.
+
+        This is the optimal bulk check method that:
+        1. Collects all unique resources and cache keys
+        2. Bulk loads all resource int IDs in one query
+        3. Bulk loads all bitmaps in one query
+        4. Checks each item against in-memory bitmaps
+
+        Args:
+            checks: List of (subject_type, subject_id, permission, resource_type, resource_id, tenant_id)
+
+        Returns:
+            Dict mapping each check tuple to True (allowed), False (denied), or None (not in cache)
+        """
+        if not checks:
+            return {}
+
+        results: dict[tuple[str, str, str, str, str, str], bool | None] = {}
+
+        # Step 1: Collect unique resources and cache keys
+        unique_resources: set[tuple[str, str, str]] = set()  # (res_type, res_id, tenant)
+        unique_keys: set[CacheKey] = set()
+
+        for subj_type, subj_id, perm, res_type, res_id, tenant in checks:
+            unique_resources.add((res_type, res_id, tenant))
+            unique_keys.add(CacheKey(subj_type, subj_id, perm, res_type, tenant))
+
+        with self._engine.connect() as conn:
+            # Step 2: Bulk load resource int IDs (1 query)
+            resource_ids = self._resource_map.bulk_get_int_ids(list(unique_resources), conn)
+
+            # Step 3: Bulk load bitmaps (1 query)
+            bitmaps = self._bulk_load_from_db(list(unique_keys), conn)
+
+        # Step 4: Check each item against in-memory data
+        for check in checks:
+            subj_type, subj_id, perm, res_type, res_id, tenant = check
+            key = CacheKey(subj_type, subj_id, perm, res_type, tenant)
+            resource_key = (res_type, res_id, tenant)
+
+            # Get bitmap for this subject/permission/resource_type
+            bitmap = bitmaps.get(key)
+            if bitmap is None:
+                results[check] = None  # Cache miss
+                continue
+
+            # Get int ID for this resource
+            int_id = resource_ids.get(resource_key)
+            if int_id is None:
+                results[check] = None  # Resource not mapped
+                continue
+
+            # Check if resource is in bitmap
+            results[check] = int_id in bitmap
+
+        return results
 
     def update_cache(
         self,

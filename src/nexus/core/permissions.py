@@ -451,7 +451,24 @@ class PermissionEnforcer:
             f"[_check_rebac] Calling rebac_check: subject={subject}, permission={permission_name}, object=('{object_type}', '{object_id}'), tenant_id={tenant_id}"
         )
 
-        # 1. Direct permission check
+        # OPTIMIZATION: Check implicit directory BEFORE expensive rebac_check
+        # This enables O(1) FUSE path resolution for /skills, /tenants, etc.
+        # No Tiger Cache, L1 cache, or graph traversal needed - just a metadata lookup
+        if (
+            permission_name == "traverse"
+            and object_type == "file"
+            and self.metadata_store
+            and subject
+            and subject[1]  # Has a subject ID = authenticated
+        ):
+            is_implicit = self.metadata_store.is_implicit_directory(object_id)
+            if is_implicit:
+                logger.debug(
+                    f"[_check_rebac] ALLOW TRAVERSE (implicit directory: {object_id}) - O(1)"
+                )
+                return True
+
+        # 1. Direct permission check (uses Tiger Cache, L1 cache, then graph traversal)
         result = self.rebac_manager.rebac_check(
             subject=subject,  # P0-2: Use typed subject
             permission=permission_name,
@@ -462,22 +479,6 @@ class PermissionEnforcer:
 
         if result:
             return True
-
-        # 2. TRAVERSE permission: Auto-allow for implicit directories
-        # Implicit directories (like /tenants, /sessions) should be traversable by all authenticated users
-        # This enables O(1) FUSE path resolution without needing explicit TRAVERSE grants
-        if (
-            permission_name == "traverse"
-            and not result
-            and object_type == "file"
-            and self.metadata_store
-        ):
-            is_implicit = self.metadata_store.is_implicit_directory(object_id)
-            # Allow TRAVERSE on implicit directories for authenticated users
-            # (subject exists means user is authenticated)
-            if is_implicit and subject and subject[1]:  # Has a subject ID = authenticated
-                logger.debug(f"[_check_rebac] ALLOW TRAVERSE (implicit directory: {object_id})")
-                return True
 
         # 2b. TRAVERSE implied by READ/WRITE - if user has READ or WRITE, they can TRAVERSE
         if permission_name == "traverse" and not result:

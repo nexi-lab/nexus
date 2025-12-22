@@ -2167,11 +2167,18 @@ class NexusFSCoreMixin:
         """
         path = self._validate_path(path)
 
-        # Check read permission
-        self._check_permission(path, Permission.READ, context)
+        # Check if it's an implicit directory first (for permission check optimization)
+        is_implicit_dir = self.metadata.is_implicit_directory(path)
 
-        # Check if it's a directory
-        if self.metadata.is_implicit_directory(path):
+        # Check permission: TRAVERSE for implicit directories, READ for files
+        # This enables `stat /skills` to work for authenticated users (TRAVERSE is auto-allowed)
+        if is_implicit_dir:
+            self._check_permission(path, Permission.TRAVERSE, context)
+        else:
+            self._check_permission(path, Permission.READ, context)
+
+        # Return directory info for implicit directories
+        if is_implicit_dir:
             return {
                 "size": 0,
                 "etag": None,

@@ -164,16 +164,17 @@ class NexusFSSearchMixin:
                             # No subject_id means we can't verify permissions
                             has_permission = False
                         else:
-                            # Use rebac_check with correct signature: (subject_tuple, permission, object_tuple, context, tenant_id)
+                            # Use TRAVERSE permission for directory listing (Unix-like behavior)
+                            # TRAVERSE allows navigation, and results will be filtered by filter_list()
                             has_permission = self._rebac_manager.rebac_check(
                                 subject=(context.subject_type, context.subject_id),
-                                permission="read",
+                                permission="traverse",
                                 object=("file", mount_path),
                                 tenant_id=context.tenant_id,
                             )
                         if not has_permission:
                             raise PermissionDeniedError(
-                                f"Access denied: User '{context.user}' does not have READ permission for '{path}'"
+                                f"Access denied: User '{context.user}' does not have TRAVERSE permission for '{path}'"
                             )
 
                     # Use the backend's list_dir method directly

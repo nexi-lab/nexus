@@ -466,16 +466,21 @@ class PermissionEnforcer:
         # 2. TRAVERSE permission: Auto-allow for implicit directories
         # Implicit directories (like /tenants, /sessions) should be traversable by all authenticated users
         # This enables O(1) FUSE path resolution without needing explicit TRAVERSE grants
-        if permission_name == "traverse" and not result:
-            # Check if this is an implicit directory (directory without explicit file entry)
-            if object_type == "file" and self.metadata_store:
-                is_implicit = self.metadata_store.is_implicit_directory(object_id)
-                # Allow TRAVERSE on implicit directories for authenticated users
-                # (subject exists means user is authenticated)
-                if is_implicit and subject and subject[1]:  # Has a subject ID = authenticated
-                    logger.debug(f"[_check_rebac] ALLOW TRAVERSE (implicit directory: {object_id})")
-                    return True
+        if (
+            permission_name == "traverse"
+            and not result
+            and object_type == "file"
+            and self.metadata_store
+        ):
+            is_implicit = self.metadata_store.is_implicit_directory(object_id)
+            # Allow TRAVERSE on implicit directories for authenticated users
+            # (subject exists means user is authenticated)
+            if is_implicit and subject and subject[1]:  # Has a subject ID = authenticated
+                logger.debug(f"[_check_rebac] ALLOW TRAVERSE (implicit directory: {object_id})")
+                return True
 
+        # 2b. TRAVERSE implied by READ/WRITE - if user has READ or WRITE, they can TRAVERSE
+        if permission_name == "traverse" and not result:
             # Check if user has READ (which implies TRAVERSE)
             read_result = self.rebac_manager.rebac_check(
                 subject=subject,

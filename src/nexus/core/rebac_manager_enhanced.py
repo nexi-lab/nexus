@@ -2228,19 +2228,27 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         # PHASE 0.5: Try Tiger Cache for remaining checks (O(1) bitmap lookup)
         # Tiger Cache stores pre-materialized permissions as Roaring Bitmaps
+        # OPTIMIZATION: Use bulk Tiger Cache lookup (2 queries total instead of O(N))
         if self._tiger_cache and consistency == ConsistencyLevel.EVENTUAL:
             tiger_start = time_module.perf_counter()
             tiger_hits = 0
             tiger_remaining = []
 
+            # Convert checks to Tiger Cache bulk format
+            tiger_checks = [
+                (subject[0], subject[1], permission, obj[0], obj[1], tenant_id)
+                for subject, permission, obj in cache_misses
+            ]
+
+            # Bulk check - only 2 DB queries regardless of N items
+            tiger_results = self._tiger_cache.check_access_bulk(tiger_checks)
+
+            # Process results
             for check in cache_misses:
                 subject, permission, obj = check
-                tiger_result = self.tiger_check_access(
-                    subject=subject,
-                    permission=permission,
-                    object=obj,
-                    tenant_id=tenant_id,
-                )
+                tiger_key = (subject[0], subject[1], permission, obj[0], obj[1], tenant_id)
+                tiger_result = tiger_results.get(tiger_key)
+
                 if tiger_result is True:
                     results[check] = True
                     tiger_hits += 1
@@ -2258,7 +2266,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             tiger_elapsed = (time_module.perf_counter() - tiger_start) * 1000
             logger.debug(
-                f"[BULK-PERF] Tiger Cache: {tiger_hits} hits, {len(tiger_remaining)} remaining in {tiger_elapsed:.1f}ms"
+                f"[BULK-PERF] Tiger Cache BULK: {tiger_hits} hits, {len(tiger_remaining)} remaining in {tiger_elapsed:.1f}ms (2 queries)"
             )
 
             cache_misses = tiger_remaining

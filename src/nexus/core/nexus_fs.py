@@ -4664,6 +4664,9 @@ class NexusFS(
 
     def close(self) -> None:
         """Close the filesystem and release resources."""
+        # Stop Tiger Cache background worker first
+        self.stop_tiger_cache_worker()
+
         # Wait for all parser threads to complete before closing metadata store
         # This prevents database corruption from threads writing during shutdown
         with self._parser_threads_lock:

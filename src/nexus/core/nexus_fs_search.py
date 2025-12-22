@@ -226,25 +226,50 @@ class NexusFSSearchMixin:
                     # List directory contents (with recursion if requested)
                     all_paths = list_recursive(path, route.backend_path)
 
-                    # Format results
-                    if details:
-                        from datetime import datetime
+                    # FIX: Apply permission filtering (same as normal metadata path)
+                    # Without this, users see ALL files regardless of permissions
+                    if self._enforce_permissions and context:
+                        from nexus.core.permissions import OperationContext
 
-                        # Get actual sizes from file_paths table
+                        filter_ctx = (
+                            context
+                            if isinstance(context, OperationContext)
+                            else self._default_context
+                        )
+                        all_paths = self._permission_enforcer.filter_list(all_paths, filter_ctx)
+
+                    # Format results
+                    # FIX: Use correct field names for FUSE client compatibility:
+                    # - "name" (not "path") - entry name without full path
+                    # - "type" - "directory" or "file" (was missing)
+                    # - "updated_at" (not "modified_at") - matches FUSE FileEntry struct
+                    if details:
                         results_with_details = []
                         for entry_path in all_paths:
-                            # Try to get size from metadata (file_paths table)
+                            # Try to get metadata from file_paths table
                             file_meta = self.metadata.get(entry_path)
-                            file_size = (
-                                file_meta.size if file_meta and hasattr(file_meta, "size") else 0
-                            )
+                            is_dir = entry_path.endswith("/")
+                            # Extract just the name from the full path
+                            name = entry_path.rstrip("/").split("/")[-1]
 
                             results_with_details.append(
                                 {
-                                    "path": entry_path,
-                                    "size": file_size,
-                                    "modified_at": datetime.now().isoformat(),
-                                    "etag": "",
+                                    "name": name,  # FIX: was "path" - FUSE expects "name"
+                                    "path": entry_path,  # Keep full path for backwards compat
+                                    "type": "directory" if is_dir else "file",  # FIX: was missing
+                                    "size": file_meta.size
+                                    if file_meta and hasattr(file_meta, "size")
+                                    else 0,
+                                    "created_at": file_meta.created_at.isoformat()
+                                    if file_meta
+                                    and hasattr(file_meta, "created_at")
+                                    and file_meta.created_at
+                                    else None,
+                                    "updated_at": file_meta.updated_at.isoformat()
+                                    if file_meta
+                                    and hasattr(file_meta, "updated_at")
+                                    and file_meta.updated_at
+                                    else None,  # FIX: was "modified_at"
                                 }
                             )
                         return results_with_details

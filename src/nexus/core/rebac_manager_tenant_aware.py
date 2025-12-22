@@ -303,8 +303,15 @@ class TenantAwareReBACManager(ReBACManager):
             conn.commit()
 
             # Invalidate cache entries affected by this change
+            # FIX: Pass conn to avoid opening new connection (pool exhaustion)
             self._invalidate_cache_for_tuple(
-                subject_entity, relation, object_entity, tenant_id, subject_relation, expires_at
+                subject_entity,
+                relation,
+                object_entity,
+                tenant_id,
+                subject_relation,
+                expires_at,
+                conn=conn,
             )
 
             # CROSS-TENANT FIX: If subject is from a different tenant, also invalidate
@@ -318,6 +325,7 @@ class TenantAwareReBACManager(ReBACManager):
                     subject_tenant_id,
                     subject_relation,
                     expires_at,
+                    conn=conn,  # FIX: Reuse connection
                 )
 
         return tuple_id

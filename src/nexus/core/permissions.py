@@ -37,13 +37,20 @@ class Permission(IntFlag):
     - READ → "read" permission
     - WRITE → "write" permission
     - EXECUTE → "execute" permission
+    - TRAVERSE → "traverse" permission (can stat/access by name, but not list contents)
+
+    TRAVERSE is similar to Unix execute permission on directories - it allows
+    accessing a path by name without the ability to list its contents.
+    This enables O(1) permission checks for path traversal in FUSE operations.
     """
 
     NONE = 0
     EXECUTE = 1  # x
     WRITE = 2  # w
     READ = 4  # r
-    ALL = 7  # rwx
+    TRAVERSE = 8  # t - can traverse/stat but not list (like Unix x on directories)
+    ALL = 7  # rwx (does not include TRAVERSE by default)
+    ALL_WITH_TRAVERSE = 15  # rwxt
 
 
 @dataclass
@@ -456,10 +463,45 @@ class PermissionEnforcer:
         if result:
             return True
 
-        # 2. NEW: Check parent directories for inherited permissions (filesystem hierarchy)
-        # For READ/WRITE, if user has permission on parent directory, grant access to child
+        # 2. TRAVERSE permission: Auto-allow for implicit directories
+        # Implicit directories (like /tenants, /sessions) should be traversable by all authenticated users
+        # This enables O(1) FUSE path resolution without needing explicit TRAVERSE grants
+        if permission_name == "traverse" and not result:
+            # Check if this is an implicit directory (directory without explicit file entry)
+            if object_type == "file" and self.metadata_store:
+                is_implicit = self.metadata_store.is_implicit_directory(object_id)
+                # Allow TRAVERSE on implicit directories for authenticated users
+                # (subject exists means user is authenticated)
+                if is_implicit and subject and subject[1]:  # Has a subject ID = authenticated
+                    logger.debug(f"[_check_rebac] ALLOW TRAVERSE (implicit directory: {object_id})")
+                    return True
+
+            # Check if user has READ (which implies TRAVERSE)
+            read_result = self.rebac_manager.rebac_check(
+                subject=subject,
+                permission="read",
+                object=(object_type, object_id),
+                tenant_id=tenant_id,
+            )
+            if read_result:
+                logger.debug("[_check_rebac] ALLOW TRAVERSE (has READ permission)")
+                return True
+
+            # Check if user has WRITE (which implies TRAVERSE)
+            write_result = self.rebac_manager.rebac_check(
+                subject=subject,
+                permission="write",
+                object=(object_type, object_id),
+                tenant_id=tenant_id,
+            )
+            if write_result:
+                logger.debug("[_check_rebac] ALLOW TRAVERSE (has WRITE permission)")
+                return True
+
+        # 3. Check parent directories for inherited permissions (filesystem hierarchy)
+        # For READ/WRITE/TRAVERSE, if user has permission on parent directory, grant access to child
         # This enables permission inheritance: grant /workspace → inherits to /workspace/file.txt
-        if permission_name in ("read", "write") and object_id:
+        if permission_name in ("read", "write", "traverse") and object_id:
             import os
 
             parent_path = object_id
@@ -595,6 +637,8 @@ class PermissionEnforcer:
             return "write"
         elif permission & Permission.EXECUTE:
             return "execute"
+        elif permission & Permission.TRAVERSE:
+            return "traverse"
         elif permission & Permission.NONE:
             return "none"
         else:

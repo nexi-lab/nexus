@@ -123,8 +123,8 @@ class TigerResourceMap:
             # Insert new
             if self._is_postgresql:
                 insert_query = text("""
-                    INSERT INTO tiger_resource_map (resource_type, resource_id, tenant_id)
-                    VALUES (:resource_type, :resource_id, :tenant_id)
+                    INSERT INTO tiger_resource_map (resource_type, resource_id, tenant_id, created_at)
+                    VALUES (:resource_type, :resource_id, :tenant_id, NOW())
                     ON CONFLICT (resource_type, resource_id, tenant_id) DO NOTHING
                     RETURNING resource_int_id
                 """)
@@ -447,14 +447,27 @@ class TigerCache:
             if key in self._cache:
                 bitmap, revision, cached_at = self._cache[key]
                 if time.time() - cached_at < self._cache_ttl:
-                    return int_id in bitmap
+                    result = int_id in bitmap
+                    logger.debug(
+                        f"Tiger Cache MEMORY HIT: {subject_type}:{subject_id} -> {permission} -> {resource_type}:{resource_id} = {result}"
+                    )
+                    return result
+                else:
+                    logger.debug(f"Tiger Cache MEMORY EXPIRED: {key}")
 
         # Load from database
         bitmap = self._load_from_db(key, conn)
         if bitmap is not None:
-            return int_id in bitmap
+            result = int_id in bitmap
+            logger.debug(
+                f"Tiger Cache DB HIT: {subject_type}:{subject_id} -> {permission} -> {resource_type}:{resource_id} = {result}"
+            )
+            return result
 
         # Not in cache
+        logger.debug(
+            f"Tiger Cache MISS: {subject_type}:{subject_id} -> {permission} -> {resource_type}:{resource_id}"
+        )
         return None
 
     def _load_from_db(self, key: CacheKey, conn: Connection | None = None) -> Any:
@@ -532,6 +545,11 @@ class TigerCache:
         """
         from sqlalchemy import text
 
+        logger.info(
+            f"Tiger Cache UPDATE: {subject_type}:{subject_id} -> {permission} -> {resource_type} "
+            f"(tenant={tenant_id}, {len(resource_int_ids)} resources, rev={revision})"
+        )
+
         # Create bitmap
         bitmap = RoaringBitmap(resource_int_ids)
 
@@ -543,9 +561,9 @@ class TigerCache:
         if self._is_postgresql:
             query = text("""
                 INSERT INTO tiger_cache
-                    (subject_type, subject_id, permission, resource_type, tenant_id, bitmap_data, revision, updated_at)
+                    (subject_type, subject_id, permission, resource_type, tenant_id, bitmap_data, revision, created_at, updated_at)
                 VALUES
-                    (:subject_type, :subject_id, :permission, :resource_type, :tenant_id, :bitmap_data, :revision, NOW())
+                    (:subject_type, :subject_id, :permission, :resource_type, :tenant_id, :bitmap_data, :revision, NOW(), NOW())
                 ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
                 DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data, revision = EXCLUDED.revision, updated_at = NOW()
             """)
@@ -625,6 +643,11 @@ class TigerCache:
         """
         from sqlalchemy import text
 
+        logger.info(
+            f"Tiger Cache INVALIDATE: subject={subject_type}:{subject_id}, "
+            f"permission={permission}, resource_type={resource_type}, tenant={tenant_id}"
+        )
+
         # Build WHERE clause
         conditions = []
         params: dict[str, Any] = {}
@@ -690,6 +713,10 @@ class TigerCache:
             # Evict 10% oldest entries
             entries = sorted(self._cache.items(), key=lambda x: x[1][2])
             num_to_evict = max(1, len(entries) // 10)
+            logger.info(
+                f"Tiger Cache EVICT: cache full ({len(self._cache)}/{self._cache_max_size}), "
+                f"evicting {num_to_evict} oldest entries"
+            )
             for key, _ in entries[:num_to_evict]:
                 del self._cache[key]
 

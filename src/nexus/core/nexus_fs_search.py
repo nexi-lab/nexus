@@ -419,23 +419,53 @@ class NexusFSSearchMixin:
                 backend_dirs = self._get_backend_directory_entries(path)
                 ctx = context or self._default_context
 
-                # OPTIMIZATION (issue #380): Use bulk check for all backend directories at once
-                # Instead of N separate _has_descendant_access() calls (N bulk queries),
-                # use _has_descendant_access_bulk() for ONE bulk query
-                if hasattr(self, "_has_descendant_access_bulk") and len(backend_dirs) > 1:
-                    # Bulk check all backend directories at once
-                    access_results = self._has_descendant_access_bulk(
-                        list(backend_dirs), Permission.READ, ctx
-                    )
-                    for dir_path, has_access in access_results.items():
-                        if has_access:
+                # OPTIMIZATION 1: Parent-Grants-Child shortcut
+                # First check if user has DIRECT access to each directory (O(1) per dir)
+                # This avoids expensive descendant checks for directories where user has direct access
+                dirs_needing_descendant_check: list[str] = []
+                subject = ctx.get_subject() if hasattr(ctx, "get_subject") else ("user", ctx.user)
+
+                for dir_path in backend_dirs:
+                    # Try TRAVERSE permission first (O(1) check for implicit dirs)
+                    if self._permission_enforcer.check(dir_path, Permission.TRAVERSE, ctx):
+                        directories.add(dir_path)
+                        continue
+
+                    # Try direct READ permission (O(1) check)
+                    if hasattr(self, "rebac_check"):
+                        direct_access = self.rebac_check(
+                            subject=subject,
+                            permission="read",
+                            object=("file", dir_path),
+                            tenant_id=ctx.tenant_id,
+                        )
+                        if direct_access:
                             directories.add(dir_path)
-                else:
-                    # Fallback to individual checks (for single directory or if method not available)
-                    for dir_path in backend_dirs:
-                        # Check if user has access to this directory or any of its descendants
-                        if self._has_descendant_access(dir_path, Permission.READ, ctx):  # type: ignore[attr-defined]
-                            directories.add(dir_path)
+                            continue
+
+                    # No direct access - need to check descendants
+                    dirs_needing_descendant_check.append(dir_path)
+
+                # OPTIMIZATION 2 (issue #380): Use bulk check for remaining directories
+                # Only check descendants for directories without direct access
+                if dirs_needing_descendant_check:
+                    if (
+                        hasattr(self, "_has_descendant_access_bulk")
+                        and len(dirs_needing_descendant_check) > 1
+                    ):
+                        # Bulk check all remaining directories at once
+                        access_results = self._has_descendant_access_bulk(
+                            dirs_needing_descendant_check, Permission.READ, ctx
+                        )
+                        for dir_path, has_access in access_results.items():
+                            if has_access:
+                                directories.add(dir_path)
+                    else:
+                        # Fallback to individual checks (for single directory or if method not available)
+                        for dir_path in dirs_needing_descendant_check:
+                            # Check if user has access to this directory or any of its descendants
+                            if self._has_descendant_access(dir_path, Permission.READ, ctx):  # type: ignore[attr-defined]
+                                directories.add(dir_path)
 
         if details:
             # Filter out directory metadata markers to avoid duplicates

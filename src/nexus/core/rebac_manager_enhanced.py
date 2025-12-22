@@ -285,6 +285,24 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             f"EnhancedReBACManager.rebac_check called: enforce_tenant_isolation={self.enforce_tenant_isolation}, MAX_DEPTH={GraphLimits.MAX_DEPTH}"
         )
 
+        # OPTIMIZATION: Try Tiger Cache first (O(1) lookup)
+        # Tiger Cache stores pre-materialized permissions as Roaring Bitmaps
+        if self._tiger_cache and tenant_id:
+            tiger_result = self.tiger_check_access(
+                subject=subject,
+                permission=permission,
+                object=object,
+                tenant_id=tenant_id,
+            )
+            if tiger_result is True:
+                logger.debug("  -> Tiger Cache HIT: ALLOW")
+                return True
+            elif tiger_result is False:
+                # Explicit denial in cache - but still check graph for potential grants
+                # (Tiger Cache may be stale, so we don't return False here)
+                logger.debug("  -> Tiger Cache: explicit deny, checking graph")
+            # If tiger_result is None, cache miss - continue with normal check
+
         # If tenant isolation is disabled, use base ReBACManager implementation
         if not self.enforce_tenant_isolation:
             from nexus.core.rebac_manager import ReBACManager
@@ -2207,6 +2225,49 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if not cache_misses:
             logger.debug("All checks satisfied from cache")
             return results
+
+        # PHASE 0.5: Try Tiger Cache for remaining checks (O(1) bitmap lookup)
+        # Tiger Cache stores pre-materialized permissions as Roaring Bitmaps
+        if self._tiger_cache and consistency == ConsistencyLevel.EVENTUAL:
+            tiger_start = time_module.perf_counter()
+            tiger_hits = 0
+            tiger_remaining = []
+
+            for check in cache_misses:
+                subject, permission, obj = check
+                tiger_result = self.tiger_check_access(
+                    subject=subject,
+                    permission=permission,
+                    object=obj,
+                    tenant_id=tenant_id,
+                )
+                if tiger_result is True:
+                    results[check] = True
+                    tiger_hits += 1
+                    # Also populate L1 cache
+                    if self._l1_cache is not None:
+                        self._l1_cache.set(
+                            subject[0], subject[1], permission, obj[0], obj[1], True, tenant_id
+                        )
+                elif tiger_result is None:
+                    # Cache miss - need to compute
+                    tiger_remaining.append(check)
+                else:
+                    # Explicit False - still check graph (Tiger Cache may be stale)
+                    tiger_remaining.append(check)
+
+            tiger_elapsed = (time_module.perf_counter() - tiger_start) * 1000
+            logger.debug(
+                f"[BULK-PERF] Tiger Cache: {tiger_hits} hits, {len(tiger_remaining)} remaining in {tiger_elapsed:.1f}ms"
+            )
+
+            cache_misses = tiger_remaining
+            if not cache_misses:
+                total_elapsed = (time_module.perf_counter() - bulk_start) * 1000
+                logger.debug(
+                    f"[BULK-PERF] ✅ All checks satisfied from L1 + Tiger cache in {total_elapsed:.1f}ms"
+                )
+                return results
 
         logger.debug(f"Cache misses: {len(cache_misses)}, fetching tuples in bulk")
 

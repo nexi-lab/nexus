@@ -2234,23 +2234,44 @@ class NexusFSCoreMixin:
             descendant, even if they don't have direct access to the directory itself.
             This enables hierarchical navigation (e.g., /workspace visible if user has
             access to /workspace/joe/file.txt).
+
+        Performance:
+            For implicit directories (directories without explicit files, like /tenants),
+            uses TRAVERSE permission check (O(1)) instead of descendant access check (O(n)).
+            This is a major optimization for FUSE path resolution operations.
         """
         try:
             path = self._validate_path(path)
 
-            # Check read permission if enforcement enabled (with hierarchical descendant access)
+            # Check if it's an implicit directory first (before permission check for optimization)
+            is_implicit_dir = self.metadata.is_implicit_directory(path)
+
+            # Check permission if enforcement enabled
             if self._enforce_permissions:  # type: ignore[attr-defined]
                 ctx = context if context is not None else self._default_context
-                # Use hierarchical access check: return True if user has access to path OR any descendant
-                if not self._has_descendant_access(path, Permission.READ, ctx):  # type: ignore[attr-defined]
-                    # No permission to path or any descendant = treat as non-existent for security
-                    return False
+
+                # OPTIMIZATION: For implicit directories, use TRAVERSE permission (O(1))
+                # instead of expensive descendant access check (O(n))
+                # TRAVERSE is granted on root-level implicit directories like /tenants, /sessions, /skills
+                if is_implicit_dir:
+                    # Try TRAVERSE permission first (O(1) check)
+                    if self._permission_enforcer.check(path, Permission.TRAVERSE, ctx):
+                        return True
+                    # Fall back to descendant access check for non-root implicit dirs
+                    # (e.g., /tenants/tenant_1 where user may have access to children)
+                    if not self._has_descendant_access(path, Permission.READ, ctx):  # type: ignore[attr-defined]
+                        return False
+                else:
+                    # For real files, use hierarchical access check
+                    if not self._has_descendant_access(path, Permission.READ, ctx):  # type: ignore[attr-defined]
+                        # No permission to path or any descendant = treat as non-existent for security
+                        return False
 
             # Check if file exists explicitly
             if self.metadata.exists(path):
                 return True
-            # Check if it's an implicit directory (has files beneath it)
-            return self.metadata.is_implicit_directory(path)
+            # Return implicit directory status (already computed above)
+            return is_implicit_dir
         except Exception:  # InvalidPathError
             return False
 

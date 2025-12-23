@@ -60,11 +60,13 @@ class TestSearchToolsFunction:
     def index(self) -> ToolIndex:
         """Create a test index."""
         idx = ToolIndex()
-        idx.add_tools([
-            ToolInfo("calc:add", "Add two numbers", "calc"),
-            ToolInfo("calc:sub", "Subtract numbers", "calc"),
-            ToolInfo("fs:read", "Read a file", "fs"),
-        ])
+        idx.add_tools(
+            [
+                ToolInfo("calc:add", "Add two numbers", "calc"),
+                ToolInfo("calc:sub", "Subtract numbers", "calc"),
+                ToolInfo("fs:read", "Read a file", "fs"),
+            ]
+        )
         return idx
 
     def test_search_returns_dict(self, index: ToolIndex) -> None:
@@ -108,12 +110,14 @@ class TestListServersFunction:
     def test_list_with_tools(self) -> None:
         """Test list_servers with populated index."""
         index = ToolIndex()
-        index.add_tools([
-            ToolInfo("calc:add", "desc", "calc"),
-            ToolInfo("calc:sub", "desc", "calc"),
-            ToolInfo("fs:read", "desc", "fs"),
-            ToolInfo("http:get", "desc", "http"),
-        ])
+        index.add_tools(
+            [
+                ToolInfo("calc:add", "desc", "calc"),
+                ToolInfo("calc:sub", "desc", "calc"),
+                ToolInfo("fs:read", "desc", "fs"),
+                ToolInfo("http:get", "desc", "http"),
+            ]
+        )
 
         result = list_servers(index)
 
@@ -131,12 +135,14 @@ class TestGetToolDetailsFunction:
     def index(self) -> ToolIndex:
         """Create a test index."""
         idx = ToolIndex()
-        idx.add_tool(ToolInfo(
-            name="test:tool",
-            description="A test tool",
-            server="test",
-            input_schema={"param": "string"},
-        ))
+        idx.add_tool(
+            ToolInfo(
+                name="test:tool",
+                description="A test tool",
+                server="test",
+                input_schema={"param": "string"},
+            )
+        )
         return idx
 
     def test_get_existing_tool(self, index: ToolIndex) -> None:
@@ -164,11 +170,13 @@ class TestLoadToolsFunction:
     def index(self) -> ToolIndex:
         """Create a test index."""
         idx = ToolIndex()
-        idx.add_tools([
-            ToolInfo("calc:add", "Add", "calc"),
-            ToolInfo("calc:sub", "Sub", "calc"),
-            ToolInfo("fs:read", "Read", "fs"),
-        ])
+        idx.add_tools(
+            [
+                ToolInfo("calc:add", "Add", "calc"),
+                ToolInfo("calc:sub", "Sub", "calc"),
+                ToolInfo("fs:read", "Read", "fs"),
+            ]
+        )
         return idx
 
     def test_load_single_tool(self, index: ToolIndex) -> None:

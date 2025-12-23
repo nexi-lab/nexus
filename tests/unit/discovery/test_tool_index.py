@@ -122,11 +122,13 @@ class TestToolIndexBasic:
     def test_list_tools_by_server(self) -> None:
         """Test listing tools filtered by server."""
         index = ToolIndex()
-        index.add_tools([
-            ToolInfo(name="calc:add", description="Add", server="calc"),
-            ToolInfo(name="calc:sub", description="Sub", server="calc"),
-            ToolInfo(name="fs:read", description="Read", server="fs"),
-        ])
+        index.add_tools(
+            [
+                ToolInfo(name="calc:add", description="Add", server="calc"),
+                ToolInfo(name="calc:sub", description="Sub", server="calc"),
+                ToolInfo(name="fs:read", description="Read", server="fs"),
+            ]
+        )
 
         calc_tools = index.list_tools(server="calc")
         assert len(calc_tools) == 2
@@ -143,18 +145,20 @@ class TestToolIndexSearch:
     def populated_index(self) -> ToolIndex:
         """Create an index with test tools."""
         index = ToolIndex()
-        index.add_tools([
-            ToolInfo("calculator:add", "Add two numbers together", "calculator"),
-            ToolInfo("calculator:subtract", "Subtract one number from another", "calculator"),
-            ToolInfo("calculator:multiply", "Multiply two numbers", "calculator"),
-            ToolInfo("filesystem:read", "Read contents of a file from disk", "filesystem"),
-            ToolInfo("filesystem:write", "Write content to a file on disk", "filesystem"),
-            ToolInfo("filesystem:delete", "Delete a file from the filesystem", "filesystem"),
-            ToolInfo("http:get", "Make an HTTP GET request", "http"),
-            ToolInfo("http:post", "Make an HTTP POST request with data", "http"),
-            ToolInfo("database:query", "Execute a database SQL query", "database"),
-            ToolInfo("database:insert", "Insert data into database table", "database"),
-        ])
+        index.add_tools(
+            [
+                ToolInfo("calculator:add", "Add two numbers together", "calculator"),
+                ToolInfo("calculator:subtract", "Subtract one number from another", "calculator"),
+                ToolInfo("calculator:multiply", "Multiply two numbers", "calculator"),
+                ToolInfo("filesystem:read", "Read contents of a file from disk", "filesystem"),
+                ToolInfo("filesystem:write", "Write content to a file on disk", "filesystem"),
+                ToolInfo("filesystem:delete", "Delete a file from the filesystem", "filesystem"),
+                ToolInfo("http:get", "Make an HTTP GET request", "http"),
+                ToolInfo("http:post", "Make an HTTP POST request with data", "http"),
+                ToolInfo("database:query", "Execute a database SQL query", "database"),
+                ToolInfo("database:insert", "Insert data into database table", "database"),
+            ]
+        )
         return index
 
     def test_search_empty_query(self, populated_index: ToolIndex) -> None:
@@ -216,10 +220,12 @@ class TestToolIndexBM25:
     def test_bm25_term_frequency(self) -> None:
         """Test that repeated terms increase score."""
         index = ToolIndex()
-        index.add_tools([
-            ToolInfo("tool1", "file file file", "srv"),  # 3x "file"
-            ToolInfo("tool2", "file", "srv"),  # 1x "file"
-        ])
+        index.add_tools(
+            [
+                ToolInfo("tool1", "file file file", "srv"),  # 3x "file"
+                ToolInfo("tool2", "file", "srv"),  # 1x "file"
+            ]
+        )
 
         results = index.search("file")
         # tool1 should score higher due to term frequency
@@ -242,11 +248,13 @@ class TestToolIndexBM25:
         """Test inverse document frequency scoring."""
         index = ToolIndex()
         # Common term appears in all docs
-        index.add_tools([
-            ToolInfo("tool1", "common rare", "srv"),
-            ToolInfo("tool2", "common", "srv"),
-            ToolInfo("tool3", "common", "srv"),
-        ])
+        index.add_tools(
+            [
+                ToolInfo("tool1", "common rare", "srv"),
+                ToolInfo("tool2", "common", "srv"),
+                ToolInfo("tool3", "common", "srv"),
+            ]
+        )
 
         # "rare" is more discriminative
         results = index.search("rare")

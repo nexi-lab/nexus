@@ -191,7 +191,8 @@ async def upload_test_data(session: ClientSession) -> tuple[int, int]:
     for path in EVAL_WORKSPACE_LOCAL.rglob("*"):
         if path.is_file():
             relative = path.relative_to(EVAL_WORKSPACE_LOCAL)
-            remote_path = f"{EVAL_WORKSPACE_REMOTE}/{relative}"
+            # Use as_posix() to ensure forward slashes on all platforms
+            remote_path = f"{EVAL_WORKSPACE_REMOTE}/{relative.as_posix()}"
             files_to_upload.append((path, remote_path))
 
     print(f"Uploading {len(files_to_upload)} test data files to Nexus...")

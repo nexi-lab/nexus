@@ -1079,6 +1079,168 @@ def create_mcp_server(
             return f"Error reading resource: {str(e)}"
 
     # =========================================================================
+    # DISCOVERY TOOLS
+    # =========================================================================
+
+    # Lazy import and create tool index for discovery
+    from nexus.discovery.tool_index import ToolIndex, ToolInfo
+
+    tool_index = ToolIndex()
+
+    # Index the Nexus MCP tools themselves (bootstrap)
+    # This allows agents to discover what tools are available
+    _nexus_tools = [
+        ToolInfo("nexus_read_file", "Read the contents of a file", "nexus"),
+        ToolInfo("nexus_write_file", "Write content to a file", "nexus"),
+        ToolInfo("nexus_list_files", "List files in a directory", "nexus"),
+        ToolInfo("nexus_delete_file", "Delete a file", "nexus"),
+        ToolInfo("nexus_mkdir", "Create a directory", "nexus"),
+        ToolInfo("nexus_rmdir", "Remove an empty directory", "nexus"),
+        ToolInfo("nexus_rename_file", "Rename or move a file", "nexus"),
+        ToolInfo("nexus_file_info", "Get file metadata", "nexus"),
+        ToolInfo("nexus_glob", "Find files matching a glob pattern", "nexus"),
+        ToolInfo("nexus_grep", "Search file contents with regex", "nexus"),
+        ToolInfo("nexus_semantic_search", "Search files by semantic similarity", "nexus"),
+        ToolInfo("nexus_store_memory", "Store information in memory", "nexus"),
+        ToolInfo("nexus_query_memory", "Query stored memories", "nexus"),
+        ToolInfo("nexus_list_workflows", "List available workflows", "nexus"),
+        ToolInfo("nexus_execute_workflow", "Execute a workflow", "nexus"),
+    ]
+    tool_index.add_tools(_nexus_tools)
+
+    # Track actively loaded tools (for dynamic loading)
+    _active_tools: dict[str, dict] = {}
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
+    def nexus_discovery_search_tools(query: str, top_k: int = 5) -> str:
+        """Search for MCP tools by query.
+
+        Returns relevant tools ranked by BM25 score. Use this to find
+        tools that can help accomplish a task.
+
+        Args:
+            query: Search query describing the desired tool functionality
+            top_k: Maximum number of results (default: 5)
+
+        Returns:
+            JSON with matching tools and scores
+        """
+        matches = tool_index.search(query, top_k=top_k)
+        result = {
+            "tools": [m.to_dict() for m in matches],
+            "count": len(matches),
+            "query": query,
+        }
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
+    def nexus_discovery_list_servers() -> str:
+        """List all available MCP servers.
+
+        Returns information about available tool providers.
+
+        Returns:
+            JSON with server list and tool counts
+        """
+        servers = tool_index.list_servers()
+        server_tool_counts = {
+            server: len(tool_index.list_tools(server=server)) for server in servers
+        }
+        result = {
+            "servers": servers,
+            "server_tool_counts": server_tool_counts,
+            "total_servers": len(servers),
+            "total_tools": tool_index.tool_count,
+        }
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
+    def nexus_discovery_get_tool_details(tool_name: str) -> str:
+        """Get detailed information about a specific tool.
+
+        Returns the full input schema and description. Use this after
+        search_tools to get complete parameter information.
+
+        Args:
+            tool_name: Full tool name (e.g., 'nexus_read_file')
+
+        Returns:
+            JSON with tool details or error
+        """
+        tool = tool_index.get_tool(tool_name)
+        if tool is None:
+            result = {"error": f"Tool '{tool_name}' not found", "found": False}
+        else:
+            result = {"found": True, **tool.to_dict()}
+        return json.dumps(result, indent=2)
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        }
+    )
+    def nexus_discovery_load_tools(tool_names: list[str]) -> str:
+        """Load specified tools into the active context.
+
+        After loading, these tools become available for direct use.
+        Use this after finding relevant tools with search_tools.
+
+        Args:
+            tool_names: List of tool names to load
+
+        Returns:
+            JSON with loaded tools and status
+        """
+        loaded = []
+        not_found = []
+        already_loaded = []
+
+        for name in tool_names:
+            if name in _active_tools:
+                already_loaded.append(name)
+                continue
+
+            tool = tool_index.get_tool(name)
+            if tool is None:
+                not_found.append(name)
+                continue
+
+            _active_tools[name] = tool.to_dict()
+            loaded.append(name)
+
+        result = {
+            "loaded": loaded,
+            "already_loaded": already_loaded,
+            "not_found": not_found,
+            "active_tool_count": len(_active_tools),
+        }
+        return json.dumps(result, indent=2)
+
+    # =========================================================================
     # PROMPTS
     # =========================================================================
 

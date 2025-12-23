@@ -31,8 +31,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
     volumes:
-      # PostgreSQL 18 default PGDATA: /var/lib/postgresql/data
-      - postgres-data:/var/lib/postgresql/data
+      # PostgreSQL 18+ requires mount at /var/lib/postgresql (not /data subdirectory)
+      # See: https://github.com/docker-library/postgres/pull/1259
+      - postgres-data:/var/lib/postgresql
     # PostgreSQL 18 optimizations:
     # - io_method=worker: Async I/O for 2-3x I/O performance
     # - effective_io_concurrency=16: Concurrent I/O requests (tuned for SSD)

@@ -451,22 +451,10 @@ class PermissionEnforcer:
             f"[_check_rebac] Calling rebac_check: subject={subject}, permission={permission_name}, object=('{object_type}', '{object_id}'), tenant_id={tenant_id}"
         )
 
-        # OPTIMIZATION: Check implicit directory BEFORE expensive rebac_check
-        # This enables O(1) FUSE path resolution for /skills, /tenants, etc.
-        # No Tiger Cache, L1 cache, or graph traversal needed - just a metadata lookup
-        if (
-            permission_name == "traverse"
-            and object_type == "file"
-            and self.metadata_store
-            and subject
-            and subject[1]  # Has a subject ID = authenticated
-        ):
-            is_implicit = self.metadata_store.is_implicit_directory(object_id)
-            if is_implicit:
-                logger.debug(
-                    f"[_check_rebac] ALLOW TRAVERSE (implicit directory: {object_id}) - O(1)"
-                )
-                return True
+        # NOTE: Removed implicit directory TRAVERSE optimization (was incorrectly granting
+        # access to ALL authenticated users for ANY implicit directory, violating Unix semantics)
+        # Correct behavior: user should only see a directory if they have access to at least
+        # one file inside it. This is handled by _has_descendant_access in the listing code.
 
         # 1. Direct permission check (uses Tiger Cache, L1 cache, then graph traversal)
         result = self.rebac_manager.rebac_check(

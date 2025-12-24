@@ -430,6 +430,13 @@ _CONFIG_MAPPINGS: dict[str, dict[str, str]] = {
 }
 
 
+def _ensure_optional_backends_registered() -> None:
+    """Ensure optional backends are registered (lazy loading)."""
+    from nexus.backends import _register_optional_backends
+
+    _register_optional_backends()
+
+
 def create_connector(name: str, **config: Any) -> Backend:
     """Factory function to create a connector instance by name.
 
@@ -453,6 +460,8 @@ def create_connector(name: str, **config: Any) -> Backend:
         ...     project_id="my-project"
         ... )
     """
+    # Ensure optional backends are registered on first use
+    _ensure_optional_backends_registered()
     connector_cls = ConnectorRegistry.get(name)
     return connector_cls(**config)
 
@@ -479,6 +488,8 @@ def create_connector_from_config(name: str, backend_config: dict[str, Any]) -> B
         ...     {"bucket": "my-bucket", "project_id": "my-project"}
         ... )
     """
+    # Ensure optional backends are registered on first use
+    _ensure_optional_backends_registered()
     connector_cls = ConnectorRegistry.get(name)
 
     # Get config mapping for this connector type

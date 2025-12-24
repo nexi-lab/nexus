@@ -205,41 +205,44 @@ class HierarchyManager:
         """
         # Get connection to cache database
         conn = self.rebac_manager._get_connection()
-        cursor = self.rebac_manager._create_cursor(conn)
+        try:
+            cursor = self.rebac_manager._create_cursor(conn)
 
-        # Build list of all paths to invalidate (ancestors + exact + descendants via LIKE)
-        # Ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
-        parts = path.strip("/").split("/")
-        ancestor_paths = []
-        for i in range(len(parts), 0, -1):
-            ancestor_paths.append("/" + "/".join(parts[:i]))
+            # Build list of all paths to invalidate (ancestors + exact + descendants via LIKE)
+            # Ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
+            parts = path.strip("/").split("/")
+            ancestor_paths = []
+            for i in range(len(parts), 0, -1):
+                ancestor_paths.append("/" + "/".join(parts[:i]))
 
-        # Invalidate cache for all ancestor paths (exact matches)
-        for ancestor_path in ancestor_paths:
+            # Invalidate cache for all ancestor paths (exact matches)
+            for ancestor_path in ancestor_paths:
+                cursor.execute(
+                    self.rebac_manager._fix_sql_placeholders(
+                        """
+                        DELETE FROM rebac_check_cache
+                        WHERE object_type = 'file' AND object_id = ?
+                        """
+                    ),
+                    (ancestor_path,),
+                )
+
+            # CRITICAL FIX: Also invalidate cache for all DESCENDANT paths
+            # When parent tuples are created for /a/b, all cached checks for /a/b/c, /a/b/c/d, etc.
+            # must be invalidated because they can now inherit permissions from /a/b
             cursor.execute(
                 self.rebac_manager._fix_sql_placeholders(
                     """
                     DELETE FROM rebac_check_cache
-                    WHERE object_type = 'file' AND object_id = ?
+                    WHERE object_type = 'file' AND object_id LIKE ?
                     """
                 ),
-                (ancestor_path,),
+                (path + "/%",),
             )
 
-        # CRITICAL FIX: Also invalidate cache for all DESCENDANT paths
-        # When parent tuples are created for /a/b, all cached checks for /a/b/c, /a/b/c/d, etc.
-        # must be invalidated because they can now inherit permissions from /a/b
-        cursor.execute(
-            self.rebac_manager._fix_sql_placeholders(
-                """
-                DELETE FROM rebac_check_cache
-                WHERE object_type = 'file' AND object_id LIKE ?
-                """
-            ),
-            (path + "/%",),
-        )
-
-        conn.commit()
+            conn.commit()
+        finally:
+            self.rebac_manager._close_connection(conn)
 
     def _invalidate_cache_for_path_hierarchy_bulk(self, paths: list[str]) -> None:
         """Invalidate cache for multiple paths in bulk (optimized).
@@ -255,49 +258,52 @@ class HierarchyManager:
 
         # Get connection to cache database
         conn = self.rebac_manager._get_connection()
-        cursor = self.rebac_manager._create_cursor(conn)
+        try:
+            cursor = self.rebac_manager._create_cursor(conn)
 
-        # Collect all paths to invalidate (ancestors + exact + descendants)
-        all_invalidate_paths = set()
+            # Collect all paths to invalidate (ancestors + exact + descendants)
+            all_invalidate_paths = set()
 
-        for path in paths:
-            # Add ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
-            parts = path.strip("/").split("/")
-            for i in range(len(parts), 0, -1):
-                ancestor_path = "/" + "/".join(parts[:i])
-                all_invalidate_paths.add(ancestor_path)
+            for path in paths:
+                # Add ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
+                parts = path.strip("/").split("/")
+                for i in range(len(parts), 0, -1):
+                    ancestor_path = "/" + "/".join(parts[:i])
+                    all_invalidate_paths.add(ancestor_path)
 
-        # Convert to list for SQL query
-        paths_list = list(all_invalidate_paths)
+            # Convert to list for SQL query
+            paths_list = list(all_invalidate_paths)
 
-        # Bulk DELETE for exact path matches using IN clause
-        if paths_list:
-            placeholders = ", ".join("?" * len(paths_list))
-            cursor.execute(
-                self.rebac_manager._fix_sql_placeholders(
-                    f"""
-                    DELETE FROM rebac_check_cache
-                    WHERE object_type = 'file' AND object_id IN ({placeholders})
-                    """
-                ),
-                paths_list,
-            )
+            # Bulk DELETE for exact path matches using IN clause
+            if paths_list:
+                placeholders = ", ".join("?" * len(paths_list))
+                cursor.execute(
+                    self.rebac_manager._fix_sql_placeholders(
+                        f"""
+                        DELETE FROM rebac_check_cache
+                        WHERE object_type = 'file' AND object_id IN ({placeholders})
+                        """
+                    ),
+                    paths_list,
+                )
 
-        # Also invalidate descendants using LIKE (one query per original path)
-        # Note: Can't easily combine LIKE queries, but this is still much better
-        # than the previous approach which did multiple queries per path
-        for path in paths:
-            cursor.execute(
-                self.rebac_manager._fix_sql_placeholders(
-                    """
-                    DELETE FROM rebac_check_cache
-                    WHERE object_type = 'file' AND object_id LIKE ?
-                    """
-                ),
-                (path + "/%",),
-            )
+            # Also invalidate descendants using LIKE (one query per original path)
+            # Note: Can't easily combine LIKE queries, but this is still much better
+            # than the previous approach which did multiple queries per path
+            for path in paths:
+                cursor.execute(
+                    self.rebac_manager._fix_sql_placeholders(
+                        """
+                        DELETE FROM rebac_check_cache
+                        WHERE object_type = 'file' AND object_id LIKE ?
+                        """
+                    ),
+                    (path + "/%",),
+                )
 
-        conn.commit()
+            conn.commit()
+        finally:
+            self.rebac_manager._close_connection(conn)
 
     def remove_parent_tuples(
         self,
@@ -325,41 +331,44 @@ class HierarchyManager:
         # This requires querying the database directly
 
         conn = self.rebac_manager._get_connection()
-        cursor = self.rebac_manager._create_cursor(conn)
+        try:
+            cursor = self.rebac_manager._create_cursor(conn)
 
-        if tenant_id:
-            # Tenant-aware query
-            cursor.execute(
-                self.rebac_manager._fix_sql_placeholders(
-                    """
-                    SELECT tuple_id
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND relation = ?
-                      AND tenant_id = ?
-                    """
-                ),
-                ("file", path, "parent", tenant_id),
-            )
-        else:
-            # Non-tenant query
-            cursor.execute(
-                self.rebac_manager._fix_sql_placeholders(
-                    """
-                    SELECT tuple_id
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND relation = ?
-                    """
-                ),
-                ("file", path, "parent"),
-            )
+            if tenant_id:
+                # Tenant-aware query
+                cursor.execute(
+                    self.rebac_manager._fix_sql_placeholders(
+                        """
+                        SELECT tuple_id
+                        FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND relation = ?
+                          AND tenant_id = ?
+                        """
+                    ),
+                    ("file", path, "parent", tenant_id),
+                )
+            else:
+                # Non-tenant query
+                cursor.execute(
+                    self.rebac_manager._fix_sql_placeholders(
+                        """
+                        SELECT tuple_id
+                        FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND relation = ?
+                        """
+                    ),
+                    ("file", path, "parent"),
+                )
 
-        tuple_ids = []
-        for row in cursor.fetchall():
-            tuple_ids.append(row["tuple_id"])
+            tuple_ids = []
+            for row in cursor.fetchall():
+                tuple_ids.append(row["tuple_id"])
+        finally:
+            self.rebac_manager._close_connection(conn)
 
-        # Delete each tuple
+        # Delete each tuple (outside connection context to avoid nested connections)
         for tuple_id in tuple_ids:
             self.rebac_manager.rebac_delete(tuple_id)
             removed_count += 1

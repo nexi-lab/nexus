@@ -16,37 +16,68 @@ from nexus.backends.registry import (
     register_connector,
 )
 
-# Optional backends (require extra dependencies)
-# Import triggers @register_connector decorator, registering each backend
-try:
-    from nexus.backends.gcs import GCSBackend
-except ImportError:
-    GCSBackend = None  # type: ignore
+# Optional backends - LAZY IMPORTS for faster CLI startup
+# These are imported on-demand when actually used, not at module load time
+# This saves ~500ms+ of startup time by avoiding google.cloud imports
+GCSBackend = None
+GoogleDriveConnectorBackend = None
+GCSConnectorBackend = None
+S3ConnectorBackend = None
+XConnectorBackend = None
+HNConnectorBackend = None
 
-try:
-    from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
-except ImportError:
-    GoogleDriveConnectorBackend = None  # type: ignore
 
-try:
-    from nexus.backends.gcs_connector import GCSConnectorBackend
-except ImportError:
-    GCSConnectorBackend = None  # type: ignore
+def _register_optional_backends() -> None:
+    """Register optional backends on first use (lazy loading)."""
+    global GCSBackend, GoogleDriveConnectorBackend, GCSConnectorBackend
+    global S3ConnectorBackend, XConnectorBackend, HNConnectorBackend
 
-try:
-    from nexus.backends.s3_connector import S3ConnectorBackend
-except ImportError:
-    S3ConnectorBackend = None  # type: ignore
+    # Only register once
+    if GCSBackend is not None:
+        return
 
-try:
-    from nexus.backends.x_connector import XConnectorBackend
-except ImportError:
-    XConnectorBackend = None  # type: ignore
+    try:
+        from nexus.backends.gcs import GCSBackend as _GCSBackend
 
-try:
-    from nexus.backends.hn_connector import HNConnectorBackend
-except ImportError:
-    HNConnectorBackend = None  # type: ignore
+        GCSBackend = _GCSBackend
+    except ImportError:
+        pass
+
+    try:
+        from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend as _GDrive
+
+        GoogleDriveConnectorBackend = _GDrive
+    except ImportError:
+        pass
+
+    try:
+        from nexus.backends.gcs_connector import GCSConnectorBackend as _GCSConn
+
+        GCSConnectorBackend = _GCSConn
+    except ImportError:
+        pass
+
+    try:
+        from nexus.backends.s3_connector import S3ConnectorBackend as _S3Conn
+
+        S3ConnectorBackend = _S3Conn
+    except ImportError:
+        pass
+
+    try:
+        from nexus.backends.x_connector import XConnectorBackend as _XConn
+
+        XConnectorBackend = _XConn
+    except ImportError:
+        pass
+
+    try:
+        from nexus.backends.hn_connector import HNConnectorBackend as _HNConn
+
+        HNConnectorBackend = _HNConn
+    except ImportError:
+        pass
+
 
 __all__ = [
     # Base classes

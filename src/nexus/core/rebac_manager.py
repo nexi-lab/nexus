@@ -61,11 +61,11 @@ class ReBACManager:
         cache_ttl_seconds: int = 300,
         max_depth: int = 50,
         enable_l1_cache: bool = True,
-        l1_cache_size: int = 10000,
+        l1_cache_size: int = 50000,  # Increased from 10000 to handle bulk list operations
         l1_cache_ttl: int = 60,
         enable_metrics: bool = True,
         enable_adaptive_ttl: bool = False,
-        l1_cache_quantization_interval: int = 5,
+        l1_cache_quantization_interval: int = 0,  # Disabled - was breaking cache (keys changed every 5s)
     ):
         """Initialize ReBAC manager.
 

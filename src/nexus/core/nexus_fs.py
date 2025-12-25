@@ -82,7 +82,7 @@ class NexusFS(
         custom_namespaces: list[NamespaceConfig] | None = None,
         enable_metadata_cache: bool = True,
         cache_path_size: int = 512,
-        cache_list_size: int = 128,
+        cache_list_size: int = 1024,  # Increased from 128 for better descendant caching
         cache_kv_size: int = 256,
         cache_exists_size: int = 1024,
         cache_ttl_seconds: int | None = 300,
@@ -113,7 +113,7 @@ class NexusFS(
             custom_namespaces: Additional custom namespace configurations (optional)
             enable_metadata_cache: Enable in-memory metadata caching (default: True)
             cache_path_size: Max entries for path metadata cache (default: 512)
-            cache_list_size: Max entries for directory listing cache (default: 128)
+            cache_list_size: Max entries for directory listing cache (default: 1024)
             cache_kv_size: Max entries for file metadata KV cache (default: 256)
             cache_exists_size: Max entries for existence check cache (default: 1024)
             cache_ttl_seconds: Cache TTL in seconds, None = no expiry (default: 300)
@@ -1558,29 +1558,84 @@ class NexusFS(
         rebac_permission = permission_map.get(permission, "read")
 
         # PHASE 1: Collect all descendants for all paths
+        # OPTIMIZATION: Find common ancestor and query ONCE instead of N queries
         all_checks = []
         path_to_descendants: dict[str, list[str]] = {}
 
-        for path in paths:
-            # Check direct access to the directory itself
-            all_checks.append((subject_tuple, rebac_permission, ("file", path)))
+        # Find common ancestor of all paths to minimize DB queries
+        if len(paths) > 1:
+            # Find the longest common prefix among all paths
+            common_prefix = paths[0]
+            for path in paths[1:]:
+                # Find common prefix between current common_prefix and this path
+                min_len = min(len(common_prefix), len(path))
+                i = 0
+                while i < min_len and common_prefix[i] == path[i]:
+                    i += 1
+                common_prefix = common_prefix[:i]
 
-            # Get all descendants
-            prefix = path if path.endswith("/") else path + "/"
-            if path == "/":
-                prefix = ""
+            # Trim to last / to get valid directory path
+            if "/" in common_prefix:
+                common_prefix = common_prefix[: common_prefix.rfind("/") + 1]
+            else:
+                common_prefix = "/"
 
+            # Query common ancestor ONCE and cache all descendants
+            logger.debug(
+                f"_has_descendant_access_bulk: Using common ancestor optimization - "
+                f"querying '{common_prefix}' once for {len(paths)} directories"
+            )
             try:
-                descendants = self.metadata.list(prefix)
-                descendant_paths = [meta.path for meta in descendants]
+                all_descendants = self.metadata.list(common_prefix if common_prefix else "/")
+                all_paths_set = {meta.path for meta in all_descendants}
+                logger.debug(
+                    f"_has_descendant_access_bulk: Got {len(all_paths_set)} paths from common ancestor"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"_has_descendant_access_bulk: Failed to list common ancestor {common_prefix}: {e}"
+                )
+                all_paths_set = set()
+
+            # Filter locally for each directory
+            for path in paths:
+                # Check direct access to the directory itself
+                all_checks.append((subject_tuple, rebac_permission, ("file", path)))
+
+                # Filter descendants from cached list
+                prefix = path if path.endswith("/") else path + "/"
+                if path == "/":
+                    descendant_paths = list(all_paths_set)
+                else:
+                    descendant_paths = [p for p in all_paths_set if p.startswith(prefix)]
+
                 path_to_descendants[path] = descendant_paths
 
                 # Add checks for all descendants
                 for desc_path in descendant_paths:
                     all_checks.append((subject_tuple, rebac_permission, ("file", desc_path)))
-            except Exception as e:
-                logger.warning(f"_has_descendant_access_bulk: Failed to list {path}: {e}")
-                path_to_descendants[path] = []
+        else:
+            # Single path - just query directly
+            for path in paths:
+                # Check direct access to the directory itself
+                all_checks.append((subject_tuple, rebac_permission, ("file", path)))
+
+                # Get all descendants
+                prefix = path if path.endswith("/") else path + "/"
+                if path == "/":
+                    prefix = ""
+
+                try:
+                    descendants = self.metadata.list(prefix)
+                    descendant_paths = [meta.path for meta in descendants]
+                    path_to_descendants[path] = descendant_paths
+
+                    # Add checks for all descendants
+                    for desc_path in descendant_paths:
+                        all_checks.append((subject_tuple, rebac_permission, ("file", desc_path)))
+                except Exception as e:
+                    logger.warning(f"_has_descendant_access_bulk: Failed to list {path}: {e}")
+                    path_to_descendants[path] = []
 
         logger.debug(
             f"_has_descendant_access_bulk: Checking {len(all_checks)} paths for {len(paths)} directories"

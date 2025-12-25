@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import logging
 import os
 import uuid
 from collections.abc import Sequence
@@ -40,6 +41,8 @@ from nexus.storage.models import (
 from nexus.storage.query_builder import WorkQueryBuilder
 from nexus.storage.version_manager import VersionManager
 
+logger = logging.getLogger(__name__)
+
 
 class SQLAlchemyMetadataStore(MetadataStore):
     """
@@ -64,7 +67,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
         run_migrations: bool = False,
         enable_cache: bool = True,
         cache_path_size: int = 512,
-        cache_list_size: int = 128,
+        cache_list_size: int = 1024,  # Increased from 128 for better descendant caching
         cache_kv_size: int = 256,
         cache_exists_size: int = 1024,
         cache_ttl_seconds: int | None = 300,
@@ -80,7 +83,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
             run_migrations: If True, run Alembic migrations on startup (default: False)
             enable_cache: If True, enable in-memory caching (default: True)
             cache_path_size: Max entries for path metadata cache (default: 512)
-            cache_list_size: Max entries for directory listing cache (default: 128)
+            cache_list_size: Max entries for directory listing cache (default: 1024)
             cache_kv_size: Max entries for file metadata KV cache (default: 256)
             cache_exists_size: Max entries for existence check cache (default: 1024)
             cache_ttl_seconds: Cache TTL in seconds, None = no expiry (default: 300)
@@ -878,7 +881,11 @@ class SQLAlchemyMetadataStore(MetadataStore):
         if self._cache_enabled and self._cache:
             cached = self._cache.get_list(cache_key)
             if cached is not None:
+                logger.debug(
+                    f"[METADATA-CACHE] HIT for list({prefix}, recursive={recursive}), {len(cached)} items"
+                )
                 return cached
+            logger.debug(f"[METADATA-CACHE] MISS for list({prefix}, recursive={recursive})")
 
         try:
             with self.SessionLocal() as session:
@@ -956,6 +963,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 # Cache the results (use cache_key that includes recursive flag)
                 if self._cache_enabled and self._cache:
                     self._cache.set_list(cache_key, results)
+                    logger.debug(
+                        f"[METADATA-CACHE] SET for list({prefix}, recursive={recursive}), {len(results)} items"
+                    )
 
                 return results
         except Exception as e:

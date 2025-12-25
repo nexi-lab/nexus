@@ -31,7 +31,9 @@ class TestMetadataCache:
         stats = store.get_cache_stats()
         assert stats is not None
         assert stats["path_cache_maxsize"] == 512
-        assert stats["list_cache_maxsize"] == 128
+        assert (
+            stats["list_cache_maxsize"] == 1024
+        )  # Increased from 128 for better descendant caching
 
         store.close()
 

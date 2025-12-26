@@ -885,6 +885,31 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     f"[METADATA-CACHE] HIT for list({prefix}, recursive={recursive}), {len(cached)} items"
                 )
                 return cached
+
+            # OPTIMIZATION: Check if a PARENT prefix is cached and filter locally
+            # This avoids DB queries for /skills/system/ when /skills/ is already cached
+            if recursive and prefix and prefix != "/":
+                parent_prefix = prefix.rstrip("/")
+                # Try progressively shorter parent prefixes
+                while "/" in parent_prefix:
+                    parent_prefix = parent_prefix.rsplit("/", 1)[0] + "/"
+                    if parent_prefix == "/":
+                        parent_prefix = "/"
+                    parent_cache_key = f"{parent_prefix}:r"
+                    parent_cached = self._cache.get_list(parent_cache_key)
+                    if parent_cached is not None:
+                        # Filter parent cache for our prefix
+                        filtered = [item for item in parent_cached if item.path.startswith(prefix)]
+                        logger.debug(
+                            f"[METADATA-CACHE] PARENT-HIT for list({prefix}), "
+                            f"filtered {len(filtered)} from {len(parent_cached)} items in {parent_prefix}"
+                        )
+                        # Cache the filtered result for future use
+                        self._cache.set_list(cache_key, filtered)
+                        return filtered
+                    if parent_prefix == "/":
+                        break
+
             logger.debug(f"[METADATA-CACHE] MISS for list({prefix}, recursive={recursive})")
 
         try:

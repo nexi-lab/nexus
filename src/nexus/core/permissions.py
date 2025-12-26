@@ -238,7 +238,7 @@ class PermissionEnforcer:
         # TRAVERSE descendant access cache (TTL-based)
         # Key: (subject_str, directory_path, tenant_id), Value: (result, timestamp)
         self._traverse_cache: dict[tuple[str, str, str], tuple[bool, float]] = {}
-        self._traverse_cache_ttl: float = 60.0  # 60 second TTL
+        self._traverse_cache_ttl: float = 300.0  # 5 minute TTL (matches L1 cache)
 
         # Warn if ACL store is provided (deprecated)
         if acl_store is not None:

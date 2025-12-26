@@ -194,7 +194,7 @@ class NexusFSReBACMixin:
     # Cache for TRAVERSE descendant access checks (TTL-based)
     # Key: (subject, directory_path, tenant_id), Value: (result, timestamp)
     _traverse_cache: dict[tuple[str, str, str], tuple[bool, float]] = {}
-    _traverse_cache_ttl: float = 60.0  # 60 second TTL
+    _traverse_cache_ttl: float = 300.0  # 5 minute TTL (matches L1 cache)
 
     def _has_descendant_access_for_traverse(
         self,

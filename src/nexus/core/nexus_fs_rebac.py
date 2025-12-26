@@ -191,6 +191,11 @@ class NexusFSReBACMixin:
                     f"Only owners or tenant admins can share resources."
                 )
 
+    # Cache for TRAVERSE descendant access checks (TTL-based)
+    # Key: (subject, directory_path, tenant_id), Value: (result, timestamp)
+    _traverse_cache: dict[tuple[str, str, str], tuple[bool, float]] = {}
+    _traverse_cache_ttl: float = 60.0  # 60 second TTL
+
     def _has_descendant_access_for_traverse(
         self,
         subject: tuple[str, str],
@@ -203,6 +208,7 @@ class NexusFSReBACMixin:
         you should be able to traverse /skills and /skills/system to reach it.
 
         Performance: Uses bulk permission check (O(1) for up to 100 files).
+        Results are cached for 60 seconds to avoid repeated checks on getattr calls.
 
         Args:
             subject: (subject_type, subject_id) tuple
@@ -213,8 +219,20 @@ class NexusFSReBACMixin:
             True if user has READ access to any descendant file
         """
         import logging
+        import time
 
         logger = logging.getLogger(__name__)
+
+        # Check cache first
+        cache_key = (f"{subject[0]}:{subject[1]}", directory_path, tenant_id or "default")
+        now = time.time()
+        if cache_key in self._traverse_cache:
+            cached_result, cached_time = self._traverse_cache[cache_key]
+            if now - cached_time < self._traverse_cache_ttl:
+                logger.debug(
+                    f"[_has_descendant_access_for_traverse] CACHE HIT for {directory_path}: {cached_result}"
+                )
+                return cached_result
 
         # Get metadata store
         if not hasattr(self, "metadata") or self.metadata is None:
@@ -232,6 +250,7 @@ class NexusFSReBACMixin:
                 logger.debug(
                     f"[_has_descendant_access_for_traverse] No descendants found under {directory_path}"
                 )
+                self._traverse_cache[cache_key] = (False, now)
                 return False
 
             # Limit to first 100 descendants for performance
@@ -251,11 +270,13 @@ class NexusFSReBACMixin:
                     logger.debug(
                         f"[_has_descendant_access_for_traverse] User has READ on descendant: {check[2][1]}"
                     )
+                    self._traverse_cache[cache_key] = (True, now)
                     return True
 
             logger.debug(
                 f"[_has_descendant_access_for_traverse] No accessible descendants under {directory_path}"
             )
+            self._traverse_cache[cache_key] = (False, now)
             return False
 
         except Exception as e:

@@ -17,7 +17,6 @@ Use rebac_create() to grant permissions instead of chmod/chown.
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from dataclasses import dataclass, field
 from enum import IntFlag
@@ -234,11 +233,6 @@ class PermissionEnforcer:
         self.allow_system_bypass = allow_system_bypass
         self.audit_store = audit_store
         self.admin_bypass_paths = admin_bypass_paths or []
-
-        # TRAVERSE descendant access cache (TTL-based)
-        # Key: (subject_str, directory_path, tenant_id), Value: (result, timestamp)
-        self._traverse_cache: dict[tuple[str, str, str], tuple[bool, float]] = {}
-        self._traverse_cache_ttl: float = 300.0  # 5 minute TTL (matches L1 cache)
 
         # Warn if ACL store is provided (deprecated)
         if acl_store is not None:
@@ -539,113 +533,8 @@ class PermissionEnforcer:
                 f"[_check_rebac] No parent directory permissions found (checked: {checked_parents})"
             )
 
-        # 4. For TRAVERSE on directories: check if user has access to ANY descendant file
-        # This enables Unix-like behavior: if you can read /skills/system/foo.txt,
-        # you can traverse /skills and /skills/system to reach it
-        if permission_name == "traverse" and object_id and object_type == "file":
-            logger.debug(f"[_check_rebac] Checking descendant access for TRAVERSE on {object_id}")
-            # Check if user has read access to any file under this directory
-            has_descendant = self._has_descendant_access_for_traverse(
-                subject=subject,
-                directory_path=object_id,
-                tenant_id=tenant_id,
-            )
-            if has_descendant:
-                logger.debug(
-                    f"[_check_rebac] ALLOW TRAVERSE (has access to descendant under {object_id})"
-                )
-                return True
-
         # No permission found
         return False
-
-    def _has_descendant_access_for_traverse(
-        self,
-        subject: tuple[str, str],
-        directory_path: str,
-        tenant_id: str | None = None,
-    ) -> bool:
-        """Check if user has access to any file under the given directory.
-
-        This enables Unix-like TRAVERSE behavior: if you can read /skills/system/foo.txt,
-        you should be able to traverse /skills and /skills/system to reach it.
-
-        Performance: Uses bulk permission check (O(1) for up to 100 files).
-        Limits check to first 100 descendants to avoid slowdown on large directories.
-        Results are cached for 60 seconds to avoid repeated expensive checks.
-
-        Args:
-            subject: (subject_type, subject_id) tuple
-            directory_path: Directory path to check descendants for
-            tenant_id: Tenant ID for permission check
-
-        Returns:
-            True if user has READ or WRITE access to any descendant file
-        """
-        # Check cache first (60 second TTL)
-        cache_key = (f"{subject[0]}:{subject[1]}", directory_path, tenant_id or "default")
-        now = time.time()
-        if cache_key in self._traverse_cache:
-            cached_result, cached_time = self._traverse_cache[cache_key]
-            if now - cached_time < self._traverse_cache_ttl:
-                logger.debug(
-                    f"[_has_descendant_access_for_traverse] CACHE HIT for {directory_path}: {cached_result}"
-                )
-                return cached_result
-
-        # Get all files under this directory from metadata store
-        if not hasattr(self, "metadata_store") or self.metadata_store is None:
-            logger.debug("[_has_descendant_access_for_traverse] No metadata store available")
-            return False
-
-        prefix = directory_path if directory_path.endswith("/") else directory_path + "/"
-        if directory_path == "/":
-            prefix = "/"
-
-        try:
-            # List descendants (limited to avoid performance issues)
-            descendants = self.metadata_store.list(prefix)
-            if not descendants:
-                logger.debug(
-                    f"[_has_descendant_access_for_traverse] No descendants found under {directory_path}"
-                )
-                self._traverse_cache[cache_key] = (False, now)
-                return False
-
-            # Limit to first 100 descendants for performance
-            # (if user has access to ANY file, it's likely in the first 100)
-            MAX_DESCENDANTS_CHECK = 100
-            descendants_to_check = descendants[:MAX_DESCENDANTS_CHECK]
-
-            # Build bulk check list
-            checks = [(subject, "read", ("file", desc.path)) for desc in descendants_to_check]
-
-            # Use bulk check for O(1) performance instead of N individual checks
-            if self.rebac_manager is None:
-                logger.debug("[_has_descendant_access_for_traverse] No rebac_manager available")
-                return False
-
-            effective_tenant = tenant_id or "default"
-            results = self.rebac_manager.rebac_check_bulk(checks, tenant_id=effective_tenant)
-
-            # Check if any descendant is accessible
-            for check, allowed in results.items():
-                if allowed:
-                    logger.debug(
-                        f"[_has_descendant_access_for_traverse] User has READ on descendant: {check[2][1]}"
-                    )
-                    self._traverse_cache[cache_key] = (True, now)
-                    return True
-
-            logger.debug(
-                f"[_has_descendant_access_for_traverse] No accessible descendants under {directory_path}"
-            )
-            self._traverse_cache[cache_key] = (False, now)
-            return False
-
-        except Exception as e:
-            logger.warning(f"[_has_descendant_access_for_traverse] Error checking descendants: {e}")
-            return False
 
     def _is_allowed_system_operation(self, path: str, permission: str) -> bool:
         """Check if system bypass is allowed for this operation (P0-4).

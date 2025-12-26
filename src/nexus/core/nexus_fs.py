@@ -1423,9 +1423,7 @@ class NexusFS(
             prefix = ""
 
         try:
-            # PERFORMANCE: Limit to 100 descendants for faster checks
-            # If user has access to ANY file, it's likely in the first 100
-            all_descendants = self.metadata.list(prefix)[:100]
+            all_descendants = self.metadata.list(prefix)
         except Exception:
             # If metadata query fails, return False
             return False

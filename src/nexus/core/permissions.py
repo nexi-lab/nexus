@@ -17,6 +17,7 @@ Use rebac_create() to grant permissions instead of chmod/chown.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from enum import IntFlag
@@ -233,6 +234,11 @@ class PermissionEnforcer:
         self.allow_system_bypass = allow_system_bypass
         self.audit_store = audit_store
         self.admin_bypass_paths = admin_bypass_paths or []
+
+        # TRAVERSE descendant access cache (TTL-based)
+        # Key: (subject_str, directory_path, tenant_id), Value: (result, timestamp)
+        self._traverse_cache: dict[tuple[str, str, str], tuple[bool, float]] = {}
+        self._traverse_cache_ttl: float = 60.0  # 60 second TTL
 
         # Warn if ACL store is provided (deprecated)
         if acl_store is not None:
@@ -566,6 +572,7 @@ class PermissionEnforcer:
 
         Performance: Uses bulk permission check (O(1) for up to 100 files).
         Limits check to first 100 descendants to avoid slowdown on large directories.
+        Results are cached for 60 seconds to avoid repeated expensive checks.
 
         Args:
             subject: (subject_type, subject_id) tuple
@@ -575,6 +582,17 @@ class PermissionEnforcer:
         Returns:
             True if user has READ or WRITE access to any descendant file
         """
+        # Check cache first (60 second TTL)
+        cache_key = (f"{subject[0]}:{subject[1]}", directory_path, tenant_id or "default")
+        now = time.time()
+        if cache_key in self._traverse_cache:
+            cached_result, cached_time = self._traverse_cache[cache_key]
+            if now - cached_time < self._traverse_cache_ttl:
+                logger.debug(
+                    f"[_has_descendant_access_for_traverse] CACHE HIT for {directory_path}: {cached_result}"
+                )
+                return cached_result
+
         # Get all files under this directory from metadata store
         if not hasattr(self, "metadata_store") or self.metadata_store is None:
             logger.debug("[_has_descendant_access_for_traverse] No metadata store available")
@@ -591,6 +609,7 @@ class PermissionEnforcer:
                 logger.debug(
                     f"[_has_descendant_access_for_traverse] No descendants found under {directory_path}"
                 )
+                self._traverse_cache[cache_key] = (False, now)
                 return False
 
             # Limit to first 100 descendants for performance
@@ -615,11 +634,13 @@ class PermissionEnforcer:
                     logger.debug(
                         f"[_has_descendant_access_for_traverse] User has READ on descendant: {check[2][1]}"
                     )
+                    self._traverse_cache[cache_key] = (True, now)
                     return True
 
             logger.debug(
                 f"[_has_descendant_access_for_traverse] No accessible descendants under {directory_path}"
             )
+            self._traverse_cache[cache_key] = (False, now)
             return False
 
         except Exception as e:

@@ -166,11 +166,10 @@ class NexusFSSearchMixin:
                         else:
                             # Use TRAVERSE permission for directory listing (Unix-like behavior)
                             # TRAVERSE allows navigation, and results will be filtered by filter_list()
-                            has_permission = self._rebac_manager.rebac_check(
-                                subject=(context.subject_type, context.subject_id),
-                                permission="traverse",
-                                object=("file", mount_path),
-                                tenant_id=context.tenant_id,
+                            # NOTE: Use _permission_enforcer.check() to get proper descendant-based TRAVERSE
+                            # (if user has READ on any file under this dir, they can TRAVERSE it)
+                            has_permission = self._permission_enforcer.check(
+                                mount_path, Permission.TRAVERSE, context
                             )
                         if not has_permission:
                             raise PermissionDeniedError(

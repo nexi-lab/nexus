@@ -191,6 +191,77 @@ class NexusFSReBACMixin:
                     f"Only owners or tenant admins can share resources."
                 )
 
+    def _has_descendant_access_for_traverse(
+        self,
+        subject: tuple[str, str],
+        directory_path: str,
+        tenant_id: str | None = None,
+    ) -> bool:
+        """Check if user has access to any file under the given directory.
+
+        This enables Unix-like TRAVERSE behavior: if you can read /skills/system/foo.txt,
+        you should be able to traverse /skills and /skills/system to reach it.
+
+        Performance: Uses bulk permission check (O(1) for up to 100 files).
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            directory_path: Directory path to check descendants for
+            tenant_id: Tenant ID for permission check
+
+        Returns:
+            True if user has READ access to any descendant file
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Get metadata store
+        if not hasattr(self, "metadata") or self.metadata is None:
+            logger.debug("[_has_descendant_access_for_traverse] No metadata store available")
+            return False
+
+        prefix = directory_path if directory_path.endswith("/") else directory_path + "/"
+        if directory_path == "/":
+            prefix = "/"
+
+        try:
+            # List descendants (limited for performance)
+            descendants = self.metadata.list(prefix)
+            if not descendants:
+                logger.debug(
+                    f"[_has_descendant_access_for_traverse] No descendants found under {directory_path}"
+                )
+                return False
+
+            # Limit to first 100 descendants for performance
+            MAX_DESCENDANTS_CHECK = 100
+            descendants_to_check = descendants[:MAX_DESCENDANTS_CHECK]
+
+            # Build bulk check list
+            checks = [(subject, "read", ("file", desc.path)) for desc in descendants_to_check]
+
+            # Use bulk check for O(1) performance
+            effective_tenant = tenant_id or "default"
+            results = self._rebac_manager.rebac_check_bulk(checks, tenant_id=effective_tenant)
+
+            # Check if any descendant is accessible
+            for check, allowed in results.items():
+                if allowed:
+                    logger.debug(
+                        f"[_has_descendant_access_for_traverse] User has READ on descendant: {check[2][1]}"
+                    )
+                    return True
+
+            logger.debug(
+                f"[_has_descendant_access_for_traverse] No accessible descendants under {directory_path}"
+            )
+            return False
+
+        except Exception as e:
+            logger.warning(f"[_has_descendant_access_for_traverse] Error checking descendants: {e}")
+            return False
+
     @rpc_expose(description="Create ReBAC relationship tuple")
     def rebac_create(
         self,
@@ -550,13 +621,24 @@ class NexusFSReBACMixin:
         # This allows proper tenant isolation testing
 
         # Check permission with optional context
-        return self._rebac_manager.rebac_check(
+        result = self._rebac_manager.rebac_check(
             subject=subject,
             permission=permission,
             object=object,
             context=context,
             tenant_id=effective_tenant_id,
         )
+
+        # For TRAVERSE permission on directories: also check if user has access to any descendant
+        # This enables Unix-like behavior: if you can read /skills/foo.txt, you can traverse /skills
+        if not result and permission == "traverse" and object[0] == "file":
+            result = self._has_descendant_access_for_traverse(
+                subject=subject,
+                directory_path=object[1],
+                tenant_id=effective_tenant_id,
+            )
+
+        return result
 
     @rpc_expose(description="Expand ReBAC permissions to find all subjects")
     def rebac_expand(

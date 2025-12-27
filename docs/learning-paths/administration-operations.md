@@ -77,7 +77,7 @@ Start Nexus server with database authentication:
 source .nexus-admin-env
 
 # Verify
-echo $NEXUS_URL      # http://localhost:8080
+echo $NEXUS_URL      # http://localhost:2026
 echo $NEXUS_API_KEY  # nxk_abc123...
 ```
 
@@ -93,7 +93,7 @@ docker run -d --name nexus-postgres \
   postgres:15
 
 # Initialize database and start server
-nexus serve --host 0.0.0.0 --port 8080 \
+nexus serve --host 0.0.0.0 --port 2026 \
   --database-url "postgresql://postgres:nexus@localhost/nexus" \
   --auth-type database \
   --init
@@ -102,7 +102,7 @@ nexus serve --host 0.0.0.0 --port 8080 \
 # ✓ Database schema initialized
 # ✓ Admin user created: admin
 # ✓ API key: nxk_abc123...
-# ✓ Server listening on http://0.0.0.0:8080
+# ✓ Server listening on http://0.0.0.0:2026
 ```
 
 **Important:** Save the admin API key! You'll need it for all administrative operations.
@@ -111,7 +111,7 @@ nexus serve --host 0.0.0.0 --port 8080 \
 
 ```bash
 # Check health endpoint
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 
 # Expected response:
 # {"status":"ok","version":"0.5.2"}
@@ -185,7 +185,7 @@ import asyncio
 async def main():
     # Connect as admin
     nx = nexus.connect(config={
-        "url": "http://localhost:8080",
+        "url": "http://localhost:2026",
         "api_key": "your-admin-api-key"
     })
 
@@ -264,7 +264,7 @@ async def rotate_user_key(admin_nx, username):
 
 async def main():
     admin_nx = nexus.connect(config={
-        "url": "http://localhost:8080",
+        "url": "http://localhost:2026",
         "api_key": "admin-key"
     })
 
@@ -355,7 +355,7 @@ Monitor your Nexus server:
 
 ```bash
 # Basic health check
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 
 # Response:
 # {
@@ -404,7 +404,7 @@ async def check_health(nx):
 
 async def main():
     nx = nexus.connect(config={
-        "url": "http://localhost:8080",
+        "url": "http://localhost:2026",
         "api_key": "your-api-key"
     })
 
@@ -527,7 +527,7 @@ export NEXUS_DATABASE_URL="postgresql://postgres:nexus@localhost/nexus"
 
 # Server
 export NEXUS_HOST="0.0.0.0"
-export NEXUS_PORT="8080"
+export NEXUS_PORT="2026"
 
 # Storage
 export NEXUS_DATA_DIR="/var/lib/nexus"
@@ -551,7 +551,7 @@ nexus serve
 # nexus-config.yaml
 server:
   host: 0.0.0.0
-  port: 8080
+  port: 2026
   data_dir: /var/lib/nexus
 
 database:
@@ -613,7 +613,7 @@ chmod 700 /var/lib/nexus
 chown -R nexus:nexus /var/lib/nexus
 
 # ✅ Enable firewall
-sudo ufw allow 8080/tcp
+sudo ufw allow 2026/tcp
 sudo ufw enable
 ```
 
@@ -632,7 +632,7 @@ Group=nexus
 WorkingDirectory=/opt/nexus
 Environment="NEXUS_DATABASE_URL=postgresql://postgres:password@localhost/nexus"
 Environment="NEXUS_DATA_DIR=/var/lib/nexus"
-ExecStart=/opt/nexus/venv/bin/nexus serve --host 0.0.0.0 --port 8080
+ExecStart=/opt/nexus/venv/bin/nexus serve --host 0.0.0.0 --port 2026
 Restart=always
 RestartSec=10
 
@@ -663,13 +663,13 @@ sudo journalctl -u nexus -f
 **Solution:**
 ```bash
 # Check if server is running
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 
 # Check server logs
 sudo journalctl -u nexus -n 50
 
 # Verify port is open
-sudo netstat -tlnp | grep 8080
+sudo netstat -tlnp | grep 2026
 
 # Check firewall
 sudo ufw status
@@ -763,7 +763,7 @@ import time
 
 def health_check():
     try:
-        response = requests.get("http://localhost:8080/health", timeout=5)
+        response = requests.get("http://localhost:2026/health", timeout=5)
         return response.status_code == 200
     except:
         return False

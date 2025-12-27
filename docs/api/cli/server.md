@@ -14,7 +14,7 @@ Start the Nexus RPC server for remote access.
 nexus serve
 
 # Specify host and port
-nexus serve --host 0.0.0.0 --port 8080
+nexus serve --host 0.0.0.0 --port 2026
 
 # With specific data directory
 nexus serve --data-dir /var/lib/nexus
@@ -168,7 +168,7 @@ export NEXUS_DATA_DIR=/var/lib/nexus
 
 nexus serve \
   --host 0.0.0.0 \
-  --port 8080 \
+  --port 2026 \
   --api-key $(cat /etc/nexus/api-key.txt) \
   --database-url $NEXUS_DATABASE_URL \
   --data-dir $NEXUS_DATA_DIR

@@ -61,7 +61,7 @@ def check_server(endpoint_url: str, access_key: str, secret_key: str) -> bool:
 
 if __name__ == "__main__":
     # Default values - override with command line args
-    endpoint = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8080"
+    endpoint = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:2026"
     access_key = sys.argv[2] if len(sys.argv) > 2 else "testkey"
     secret_key = sys.argv[3] if len(sys.argv) > 3 else "testsecret"
 
@@ -69,8 +69,8 @@ if __name__ == "__main__":
 Usage: python check_server.py [ENDPOINT] [ACCESS_KEY] [SECRET_KEY]
 
 Examples:
-  python check_server.py http://localhost:8080 testkey testsecret
-  python check_server.py http://your-server.com:8080 mykey mysecret
+  python check_server.py http://localhost:2026 testkey testsecret
+  python check_server.py http://your-server.com:2026 mykey mysecret
 
 """)
 

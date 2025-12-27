@@ -157,7 +157,7 @@ export NEXUS_API_KEY=your-api-key
 nexus write /file.txt "remote data"  # All commands work remotely
 
 # Server mode
-nexus serve --host 0.0.0.0 --port 8080
+nexus serve --host 0.0.0.0 --port 2026
 ```
 
 ## ✅ SDK/RPC/CLI Parity (v0.6.0+)

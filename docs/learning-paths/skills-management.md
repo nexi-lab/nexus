@@ -65,7 +65,7 @@ Start Nexus server with database authentication:
 
 ```bash
 # Initialize server with admin user (first time only)
-nexus serve --host 0.0.0.0 --port 8080 \
+nexus serve --host 0.0.0.0 --port 2026 \
   --database-url "postgresql://postgres:nexus@localhost/nexus" \
   --auth-type database --init
 
@@ -75,7 +75,7 @@ nexus serve --host 0.0.0.0 --port 8080 \
 # Save this API key!
 
 # For subsequent starts:
-nexus serve --host 0.0.0.0 --port 8080 \
+nexus serve --host 0.0.0.0 --port 2026 \
   --database-url "postgresql://postgres:nexus@localhost/nexus" \
   --auth-type database
 ```
@@ -89,13 +89,13 @@ nexus serve --host 0.0.0.0 --port 8080 \
 source .nexus-admin-env
 
 # Verify
-echo $NEXUS_URL      # http://localhost:8080
+echo $NEXUS_URL      # http://localhost:2026
 echo $NEXUS_API_KEY  # nxk_abc123...
 ```
 
 **Verify server:**
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 # {"status":"ok","version":"0.5.2"}
 ```
 
@@ -111,7 +111,7 @@ import nexus
 
 # Connect to server
 nx = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "your-api-key"
 })
 
@@ -193,7 +193,7 @@ from nexus.skills.registry import SkillRegistry
 async def main():
     # Connect to Nexus
     nx = nexus.connect(config={
-        "url": "http://localhost:8080",
+        "url": "http://localhost:2026",
         "api_key": "your-api-key"
     })
 
@@ -256,7 +256,7 @@ from nexus.skills.registry import SkillRegistry
 
 async def main():
     nx = nexus.connect(config={
-        "url": "http://localhost:8080",
+        "url": "http://localhost:2026",
         "api_key": "your-api-key"
     })
 
@@ -316,7 +316,7 @@ from nexus_skill_seekers.plugin import SkillSeekersPlugin
 
 async def main():
     # Connect to Nexus server
-    nx = RemoteNexusFS("http://localhost:8080", api_key=os.getenv("NEXUS_API_KEY"))
+    nx = RemoteNexusFS("http://localhost:2026", api_key=os.getenv("NEXUS_API_KEY"))
 
     # Initialize Skill Seekers plugin
     plugin = SkillSeekersPlugin(nx)
@@ -384,7 +384,7 @@ from nexus.skills.registry import SkillRegistry
 
 async def main():
     nx = nexus.connect(config={
-        "url": "http://localhost:8080",
+        "url": "http://localhost:2026",
         "api_key": "your-api-key"
     })
 
@@ -421,7 +421,7 @@ import nexus
 
 async def main():
     nx = nexus.connect(config={
-        "url": "http://localhost:8080",
+        "url": "http://localhost:2026",
         "api_key": "your-api-key"
     })
 
@@ -505,7 +505,7 @@ from nexus_skill_seekers.plugin import SkillSeekersPlugin
 
 async def main():
     # Connect to server
-    nx = RemoteNexusFS("http://localhost:8080", api_key=os.getenv("NEXUS_API_KEY"))
+    nx = RemoteNexusFS("http://localhost:2026", api_key=os.getenv("NEXUS_API_KEY"))
     plugin = SkillSeekersPlugin(nx)
 
     # Team's tech stack documentation

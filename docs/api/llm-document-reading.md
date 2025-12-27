@@ -259,7 +259,7 @@ nexus llm read /report.txt "Summarize" --no-search
 nexus llm read /docs/**/*.md "API endpoints" --search-mode keyword
 
 # Use with remote server
-nexus llm read /doc.pdf "Question" --remote-url http://localhost:8080
+nexus llm read /doc.pdf "Question" --remote-url http://localhost:2026
 ```
 
 ## Supported Models
@@ -552,7 +552,7 @@ Use with remote Nexus server.
 import os
 
 # Set remote server credentials
-os.environ["NEXUS_URL"] = "http://localhost:8080"
+os.environ["NEXUS_URL"] = "http://localhost:2026"
 os.environ["NEXUS_API_KEY"] = "your-api-key"
 
 # Connect to remote server

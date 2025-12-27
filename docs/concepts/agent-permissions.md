@@ -45,7 +45,7 @@ export NEXUS_API_KEY="sk_alice_..."
 # Agent identifies itself via X-Agent-ID header
 curl -H "Authorization: Bearer $NEXUS_API_KEY" \
      -H "X-Agent-ID: alice_research" \
-     http://localhost:8080/api/nfs/list
+     http://localhost:2026/api/nfs/list
 ```
 
 **Why this is better:**
@@ -63,7 +63,7 @@ Agent has **its own API key** (independent authentication):
 export NEXUS_API_KEY="sk_agent_alice_research_..."
 
 curl -H "Authorization: Bearer $NEXUS_API_KEY" \
-     http://localhost:8080/api/nfs/list
+     http://localhost:2026/api/nfs/list
 ```
 
 **When to use:**

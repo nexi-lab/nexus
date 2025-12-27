@@ -292,7 +292,7 @@ nx = connect(config={"data_dir": "./data"})
     ```python
     # Test connection
     try:
-        nx = connect(remote_url="http://localhost:8080")
+        nx = connect(remote_url="http://localhost:2026")
         health = nx.health()
         print(f"Server healthy: {health}")
     except Exception as e:

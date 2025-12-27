@@ -17,7 +17,7 @@ echo "NEXUS_API_KEY=$(openssl rand -hex 32)" >> .env
 docker-compose up -d
 
 # 4. Test
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 ```
 
 **Docs:** [Docker Deployment Guide](docs/deployment/DOCKER_DEPLOYMENT.md)
@@ -84,7 +84,7 @@ source .venv/bin/activate
 ./start-server.sh --api-key mysecret
 
 # Or manually
-python -m nexus.cli serve --host localhost --port 8080
+python -m nexus.cli serve --host localhost --port 2026
 ```
 
 **Docs:** [README - Remote Nexus Server](README.md#remote-nexus-server)
@@ -108,13 +108,13 @@ python -m nexus.cli serve --host localhost --port 8080
 
 ```bash
 # Health check
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 
 # Status check
-curl http://localhost:8080/api/nfs/status
+curl http://localhost:2026/api/nfs/status
 
 # List files (with API key)
-curl -X POST http://localhost:8080/api/nfs/list \
+curl -X POST http://localhost:2026/api/nfs/list \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR-API-KEY" \
   -d '{"jsonrpc": "2.0", "method": "list", "params": {"path": "/"}, "id": 1}'
@@ -142,7 +142,7 @@ gcloud compute ssh nexus-server --zone=us-west1-a \
 
 # Local
 ./start-server.sh               # Start
-lsof -ti:8080 | xargs kill -9  # Stop
+lsof -ti:2026 | xargs kill -9  # Stop
 ```
 
 ---

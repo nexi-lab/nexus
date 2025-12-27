@@ -246,7 +246,7 @@ class NexusFSMCPMixin:
             >>> # Mount remote MCP server
             >>> result = nx.mcp_mount(
             ...     name="remote",
-            ...     url="http://localhost:8080/sse"
+            ...     url="http://localhost:2026/sse"
             ... )
         """
         from nexus.core.exceptions import ValidationError

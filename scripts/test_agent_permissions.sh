@@ -22,7 +22,7 @@ NC='\033[0m' # No Color
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-SERVER_URL="http://localhost:8080"
+SERVER_URL="http://localhost:2026"
 TENANT_ID="default"
 USER_ID="admin"
 TEST_AGENT_NAME="TestAgent"

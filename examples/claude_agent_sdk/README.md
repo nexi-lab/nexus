@@ -211,7 +211,7 @@ export ANTHROPIC_API_KEY="your-key"
 
 # Optional: For remote Nexus server
 export NEXUS_API_KEY="your-nexus-key"
-export NEXUS_SERVER_URL="http://your-server:8080"
+export NEXUS_SERVER_URL="http://your-server:2026"
 ```
 
 ## Key Differences from LangGraph

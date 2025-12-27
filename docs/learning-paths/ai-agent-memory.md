@@ -823,7 +823,7 @@ When querying, high-importance memories can be weighted more heavily.
 ```bash
 # Verify server is running (not embedded mode)
 echo $NEXUS_URL
-# Should show: http://localhost:8080
+# Should show: http://localhost:2026
 
 # Verify API key is set
 echo $NEXUS_API_KEY

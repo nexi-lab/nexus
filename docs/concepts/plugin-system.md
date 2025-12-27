@@ -575,7 +575,7 @@ class SkillSeekersPlugin(NexusPlugin):
 nexus mcp serve --transport stdio
 
 # Remote mode with auth
-NEXUS_URL=http://localhost:8080 \
+NEXUS_URL=http://localhost:2026 \
 NEXUS_API_KEY=your-key \
 nexus mcp serve --transport stdio
 
@@ -620,7 +620,7 @@ nexus mcp serve --transport http --port 8081
       "command": "nexus",
       "args": ["mcp", "serve", "--transport", "stdio"],
       "env": {
-        "NEXUS_URL": "http://localhost:8080",
+        "NEXUS_URL": "http://localhost:2026",
         "NEXUS_API_KEY": "your-api-key"
       }
     }

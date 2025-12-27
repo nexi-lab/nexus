@@ -43,7 +43,7 @@ Nexus provides a flexible authentication and authorization system that supports:
   ```python
   from nexus.remote import RemoteNexusFS
   nx = RemoteNexusFS(
-      server_url="http://localhost:8080",
+      server_url="http://localhost:2026",
       api_key="sk-alice-xxx"  # Authentication required
   )
   nx.write("/workspace/file.txt", b"Hello!")
@@ -193,7 +193,7 @@ from nexus.remote import RemoteNexusFS
 
 # Connect with API key
 nx = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key="sk-alice-xxx"
 )
 
@@ -208,17 +208,17 @@ content = nx.read("/workspace/file.txt")
 # Start server with static auth
 nexus serve \
     --host 127.0.0.1 \
-    --port 8080 \
+    --port 2026 \
     --auth-type static \
     --auth-config /path/to/auth-config.yaml
 
 # Use CLI with remote server
 nexus write /workspace/file.txt "Hello from CLI!" \
-    --remote-url http://127.0.0.1:8080 \
+    --remote-url http://127.0.0.1:2026 \
     --remote-api-key sk-alice-xxx
 
 nexus cat /workspace/file.txt \
-    --remote-url http://127.0.0.1:8080 \
+    --remote-url http://127.0.0.1:2026 \
     --remote-api-key sk-alice-xxx
 ```
 
@@ -226,7 +226,7 @@ nexus cat /workspace/file.txt \
 
 ```bash
 # All API calls include Authorization header
-curl -X POST http://localhost:8080/api/nfs/write \
+curl -X POST http://localhost:2026/api/nfs/write \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer sk-alice-xxx" \
     -d '{
@@ -291,7 +291,7 @@ auth_provider = create_auth_provider("database", session_factory=SessionFactory)
 server = NexusRPCServer(
     nexus_fs=nx,
     host="0.0.0.0",
-    port=8080,
+    port=2026,
     auth_provider=auth_provider
 )
 server.serve_forever()
@@ -300,7 +300,7 @@ server.serve_forever()
 from nexus.remote import RemoteNexusFS
 
 client = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key=raw_key  # Use the generated key
 )
 client.write("/workspace/file.txt", b"Hello!")
@@ -313,7 +313,7 @@ client.write("/workspace/file.txt", b"Hello!")
 export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
 nexus serve \
     --host 0.0.0.0 \
-    --port 8080 \
+    --port 2026 \
     --auth-type database
 
 # Create API key via Python
@@ -340,7 +340,7 @@ with SessionFactory() as session:
 
 # Use the key
 nexus ls /workspace \
-    --remote-url http://localhost:8080 \
+    --remote-url http://localhost:2026 \
     --remote-api-key sk-alice-xxx
 ```
 
@@ -425,7 +425,7 @@ print(f"JWT Token: {token}")
 from nexus.remote import RemoteNexusFS
 
 client = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key=token  # JWT token acts as API key
 )
 client.write("/workspace/file.txt", b"Hello!")
@@ -486,7 +486,7 @@ auth = OIDCAuth(
 from nexus.remote import RemoteNexusFS
 
 client = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key=id_token  # OIDC ID token from OAuth flow
 )
 client.write("/workspace/file.txt", b"Hello!")
@@ -520,7 +520,7 @@ auth = MultiOIDCAuth(providers={
 server = NexusRPCServer(
     nexus_fs=nx,
     host="0.0.0.0",
-    port=8080,
+    port=2026,
     auth_provider=auth
 )
 ```
@@ -787,7 +787,7 @@ See the following files for complete working examples:
 # Server settings
 server:
   host: 0.0.0.0
-  port: 8080
+  port: 2026
 
 # Database
 database:
@@ -841,7 +841,7 @@ export NEXUS_DATA_DIR="./nexus-data"
 
 # Server
 export NEXUS_HOST="0.0.0.0"
-export NEXUS_PORT="8080"
+export NEXUS_PORT="2026"
 ```
 
 ---
@@ -1091,7 +1091,7 @@ The following features from the original design document are **not yet implement
 **For CLI authentication:**
 ```bash
 # Set environment variable to avoid repeating --remote-api-key
-export NEXUS_REMOTE_URL="http://localhost:8080"
+export NEXUS_REMOTE_URL="http://localhost:2026"
 export NEXUS_REMOTE_API_KEY="sk-alice-xxx"
 
 # Then use CLI normally
@@ -1128,7 +1128,7 @@ const idToken = await googleAuth.signIn();
 
 // Send ID token to Nexus
 const nexus = new NexusClient({
-    serverUrl: "http://localhost:8080",
+    serverUrl: "http://localhost:2026",
     apiKey: idToken  // OIDC ID token
 });
 ```
@@ -1177,7 +1177,7 @@ Old (v0.4.x):
 from nexus.remote import RemoteNexusFS
 
 nx = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key="sk-alice-xxx"
 )
 ```
@@ -1188,7 +1188,7 @@ New (v0.5.0+):
 from nexus.remote import RemoteNexusFS
 
 nx = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key="sk-alice-xxx"  # Works with all auth types
 )
 ```

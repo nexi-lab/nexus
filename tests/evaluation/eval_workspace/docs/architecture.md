@@ -21,7 +21,7 @@ This document describes the high-level architecture of the Nexus application pla
 
 | Service | Port | Description |
 |---------|------|-------------|
-| API Gateway | 8080 | Entry point, routing, rate limiting |
+| API Gateway | 2026 | Entry point, routing, rate limiting |
 | Auth Service | 8081 | Authentication and authorization |
 | User Service | 8082 | User management and profiles |
 | Project Service | 8083 | Project CRUD operations |

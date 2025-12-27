@@ -375,7 +375,7 @@ write_file("/workspace/config.json", "{}")
                                           ▼
                               ┌─────────────────────┐
                               │  Remote Nexus Server │
-                              │  (http://server:8080)│
+                              │  (http://server:2026)│
                               └─────────────────────┘
 ```
 
@@ -482,7 +482,7 @@ nx_docs = connect_to_nexus(tenant_id="shared-docs", agent_id="doc-generator")
 By default, connects to `http://136.117.224.98`. Override with:
 
 ```bash
-export NEXUS_SERVER_URL="http://your-server:8080"
+export NEXUS_SERVER_URL="http://your-server:2026"
 ```
 
 ### Multi-Tenancy Support
@@ -521,8 +521,8 @@ To test locally, start a Nexus server:
 # Terminal 1: Start server
 python examples/py_demo/remote_server_demo.py server
 
-# Terminal 2: Run demo (connects to localhost:8080)
-export NEXUS_SERVER_URL="http://localhost:8080"
+# Terminal 2: Run demo (connects to localhost:2026)
+export NEXUS_SERVER_URL="http://localhost:2026"
 python langgraph_react_demo.py
 ```
 
@@ -600,9 +600,9 @@ export OPENAI_API_KEY="sk-..."
 
 ### "Error connecting to Nexus"
 
-1. Check server is running: `curl http://136.117.224.98:8080/health`
+1. Check server is running: `curl http://136.117.224.98:2026/health`
 2. Try local server: `python examples/py_demo/remote_server_demo.py server`
-3. Set custom URL: `export NEXUS_SERVER_URL="http://localhost:8080"`
+3. Set custom URL: `export NEXUS_SERVER_URL="http://localhost:2026"`
 
 ### "Module not found"
 

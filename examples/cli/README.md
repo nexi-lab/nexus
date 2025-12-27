@@ -133,7 +133,7 @@ source .nexus-admin-env
 
 ```bash
 # Check server health
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 
 # Or use nexus CLI
 source .nexus-admin-env

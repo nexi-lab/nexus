@@ -66,7 +66,7 @@ Every memory has an **identity triple** that determines ownership and access:
 from nexus.remote import RemoteNexusFS
 
 # Connect to server
-nx = RemoteNexusFS(server_url="http://localhost:8080")
+nx = RemoteNexusFS(server_url="http://localhost:2026")
 
 # Set identity context
 nx.tenant_id = "acme"      # Organization
@@ -102,7 +102,7 @@ Scopes control sharing across organizational levels:
 from nexus.remote import RemoteNexusFS
 
 # Connect and set identity
-nx = RemoteNexusFS(server_url="http://localhost:8080")
+nx = RemoteNexusFS(server_url="http://localhost:2026")
 nx.tenant_id = "acme"
 nx.user_id = "alice"
 nx.agent_id = "agent1"
@@ -147,7 +147,7 @@ Creates new memory each time - useful for logs, events, facts.
 ```python
 from nexus.remote import RemoteNexusFS
 
-nx = RemoteNexusFS(server_url="http://localhost:8080")
+nx = RemoteNexusFS(server_url="http://localhost:2026")
 nx.agent_id = "geography-agent"
 
 # Creates 3 separate memories
@@ -162,7 +162,7 @@ Updates if exists, creates if new - perfect for settings, preferences.
 ```python
 from nexus.remote import RemoteNexusFS
 
-nx = RemoteNexusFS(server_url="http://localhost:8080")
+nx = RemoteNexusFS(server_url="http://localhost:2026")
 nx.user_id = "alice"
 nx.agent_id = "settings-agent"
 
@@ -235,7 +235,7 @@ graph LR
 ```python
 from nexus.remote import RemoteNexusFS
 
-nx = RemoteNexusFS(server_url="http://localhost:8080")
+nx = RemoteNexusFS(server_url="http://localhost:2026")
 nx.user_id = "alice"
 nx.agent_id = "my-agent"
 
@@ -349,7 +349,7 @@ graph TB
 
 ```bash
 # 1. Start Nexus server first
-nexus serve --host 0.0.0.0 --port 8080
+nexus serve --host 0.0.0.0 --port 2026
 ```
 
 ```python
@@ -357,7 +357,7 @@ from nexus.remote import RemoteNexusFS
 
 # Connect to server
 nx = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key="your-api-key"  # Optional
 )
 
@@ -374,7 +374,7 @@ memory_id = nx.memory.store("User prefers Python", scope="user")
 
 ```bash
 # Set environment
-export NEXUS_SERVER_URL=http://localhost:8080
+export NEXUS_SERVER_URL=http://localhost:2026
 export NEXUS_API_KEY=your-api-key
 export NEXUS_TENANT_ID=acme
 export NEXUS_AGENT_ID=agent1
@@ -453,7 +453,7 @@ memory_id = nx.memory.store(
 ```python
 from nexus.remote import RemoteNexusFS
 
-nx = RemoteNexusFS(server_url="http://localhost:8080")
+nx = RemoteNexusFS(server_url="http://localhost:2026")
 nx.user_id = "alice"
 nx.agent_id = "my-agent"
 
@@ -759,7 +759,7 @@ result = nx.memory.delete_batch(unwanted_ids)
 from nexus.remote import RemoteNexusFS
 
 # Connect to server
-nx = RemoteNexusFS(server_url="http://localhost:8080")
+nx = RemoteNexusFS(server_url="http://localhost:2026")
 nx.user_id = "alice"
 nx.agent_id = "chatbot1"
 
@@ -794,7 +794,7 @@ print(prefs['content'])  # {"language": "Python", ...}
 from nexus.remote import RemoteNexusFS
 
 # Connect as research agent - stores organizational knowledge
-nx = RemoteNexusFS(server_url="http://localhost:8080")
+nx = RemoteNexusFS(server_url="http://localhost:2026")
 nx.tenant_id = "acme"
 nx.user_id = "alice"
 nx.agent_id = "research_agent"
@@ -809,7 +809,7 @@ nx.memory.store(
 )
 
 # Connect as code assistant (different user, same tenant)
-nx2 = RemoteNexusFS(server_url="http://localhost:8080")
+nx2 = RemoteNexusFS(server_url="http://localhost:2026")
 nx2.tenant_id = "acme"
 nx2.user_id = "bob"
 nx2.agent_id = "code_assistant"
@@ -831,7 +831,7 @@ for fact in facts:
 ```python
 from nexus.remote import RemoteNexusFS
 
-nx = RemoteNexusFS(server_url="http://localhost:8080")
+nx = RemoteNexusFS(server_url="http://localhost:2026")
 nx.agent_id = "learning-agent"
 
 # Store agent-private learning (only this agent can access)
@@ -943,7 +943,7 @@ capitals = nx.memory.list(namespace_prefix="knowledge/geography/capitals/")
 from nexus.remote import RemoteNexusFS
 
 # Setup
-nx = RemoteNexusFS(server_url="http://localhost:8080")
+nx = RemoteNexusFS(server_url="http://localhost:2026")
 nx.user_id = "alice"
 nx.agent_id = "content_agent"
 

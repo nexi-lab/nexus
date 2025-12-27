@@ -7,7 +7,7 @@ working with a local or remote filesystem.
 
 Example:
     # Connect to remote Nexus server
-    nx = RemoteNexusFS("http://localhost:8080", api_key="your-api-key")
+    nx = RemoteNexusFS("http://localhost:2026", api_key="your-api-key")
 
     # Use exactly like local filesystem
     nx.write("/workspace/file.txt", b"Hello, World!")
@@ -657,7 +657,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         """Initialize remote filesystem client.
 
         Args:
-            server_url: Base URL of Nexus RPC server (e.g., "http://localhost:8080")
+            server_url: Base URL of Nexus RPC server (e.g., "http://localhost:2026")
             api_key: Optional API key for authentication
             timeout: Request timeout in seconds (default: 90, increased from 30 to handle cold start - issue #391)
             connect_timeout: Connection timeout in seconds (default: 5)
@@ -4321,7 +4321,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             RemoteMemory API instance for RPC-based memory operations.
 
         Example:
-            >>> nx = RemoteNexusFS("http://localhost:8080", api_key="...")
+            >>> nx = RemoteNexusFS("http://localhost:2026", api_key="...")
             >>> traj_id = nx.memory.start_trajectory("Process data", task_type="data_processing")
             >>> nx.memory.log_step(traj_id, "action", "Loaded 1000 records")
             >>> nx.memory.complete_trajectory(traj_id, "success", success_score=0.95)

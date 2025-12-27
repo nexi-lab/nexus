@@ -79,7 +79,7 @@ ADMIN API KEY
 
   To use this key:
     export NEXUS_API_KEY='nxk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
-    export NEXUS_URL='http://localhost:8080'
+    export NEXUS_URL='http://localhost:2026'
 ```
 
 **Save this API key** - you'll need it to authenticate with the Nexus API.
@@ -87,7 +87,7 @@ ADMIN API KEY
 ### 4. Access Services
 
 - **Frontend**: http://localhost:5173
-- **Nexus API**: http://localhost:8080
+- **Nexus API**: http://localhost:2026
 - **LangGraph**: http://localhost:2024
 - **PostgreSQL**: localhost:5432
 
@@ -173,7 +173,7 @@ docker exec -it nexus-postgres psql -U postgres -d nexus
 ### Nexus Server
 
 - **Image**: Built from [Dockerfile](./Dockerfile)
-- **Port**: 8080
+- **Port**: 2026
 - **Backend**: Local file system (configurable to GCS)
 - **Database**: PostgreSQL
 - **Data**: Persisted in Docker volume `nexus-data`
@@ -202,7 +202,7 @@ docker exec -it nexus-server sh
 - **Dependencies**: Nexus server (auto-configured)
 
 **Environment variables:**
-- `NEXUS_SERVER_URL` - Nexus API URL (http://nexus:8080)
+- `NEXUS_SERVER_URL` - Nexus API URL (http://nexus:2026)
 - `ANTHROPIC_API_KEY` - Anthropic API key (required)
 - `OPENAI_API_KEY` - OpenAI API key (required)
 - `TAVILY_API_KEY` - Tavily search API key (optional)
@@ -234,7 +234,7 @@ docker logs -f nexus-frontend
 All services run on a custom bridge network `nexus-network`, allowing them to communicate using service names:
 
 - `postgres:5432` - PostgreSQL
-- `nexus:8080` - Nexus server
+- `nexus:2026` - Nexus server
 - `langgraph:2024` - LangGraph server
 - `frontend:80` - Frontend (internal)
 
@@ -268,7 +268,7 @@ All services include health checks:
 
 ```bash
 # Check Nexus
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 
 # Check Frontend
 curl http://localhost:5173/health
@@ -317,7 +317,7 @@ docker compose -f docker-compose.demo.yml ps
 docker compose -f docker-compose.demo.yml logs nexus
 
 # Check health
-docker compose -f docker-compose.demo.yml exec nexus curl http://localhost:8080/health
+docker compose -f docker-compose.demo.yml exec nexus curl http://localhost:2026/health
 ```
 
 ### Database connection issues
@@ -340,7 +340,7 @@ If ports are already in use, edit `.env` to change port mappings:
 ```bash
 # .env
 POSTGRES_PORT=5433  # Instead of 5432
-NEXUS_PORT=8081     # Instead of 8080
+NEXUS_PORT=8081     # Instead of 2026
 LANGGRAPH_PORT=2025 # Instead of 2024
 FRONTEND_PORT=5174  # Instead of 5173
 ```
@@ -631,7 +631,7 @@ If you prefer PowerShell over Git Bash:
 ```powershell
 # Set environment variables (PowerShell syntax)
 $env:NEXUS_API_KEY='your-key-here'
-$env:NEXUS_URL='http://localhost:8080'
+$env:NEXUS_URL='http://localhost:2026'
 
 # Use docker compose directly (bash scripts won't work)
 docker compose -f docker-compose.demo.yml up -d --build
@@ -665,7 +665,7 @@ git config core.autocrlf
 # Should show "false" or "input"
 
 # 5. Test Docker networking
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 # Should return: {"status": "healthy", "service": "nexus-rpc"}
 ```
 

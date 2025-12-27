@@ -14,7 +14,7 @@ set -e  # Exit on error
 export NEXUS_DATABASE_URL="${NEXUS_DATABASE_URL:-postgresql://$(whoami)@localhost/nexus}"
 export NEXUS_DATA_DIR="${NEXUS_DATA_DIR:-./nexus-data}"
 ADMIN_USER="${NEXUS_ADMIN_USER:-admin}"
-PORT="${NEXUS_PORT:-8080}"
+PORT="${NEXUS_PORT:-2026}"
 HOST="${NEXUS_HOST:-0.0.0.0}"
 
 # ============================================

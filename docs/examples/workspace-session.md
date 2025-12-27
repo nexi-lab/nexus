@@ -17,7 +17,7 @@ Build multi-tenant applications with workspace isolation and session tracking in
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Create workspace
     nx.workspace.create(
@@ -58,7 +58,7 @@ Build multi-tenant applications with workspace isolation and session tracking in
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Create workspace with metadata
     nx.workspace.create(
@@ -77,7 +77,7 @@ Build multi-tenant applications with workspace isolation and session tracking in
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Get all workspaces
     workspaces = nx.workspace.list()
@@ -95,7 +95,7 @@ Build multi-tenant applications with workspace isolation and session tracking in
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Delete workspace and all contents
     nx.workspace.delete("/workspace/old-project")
@@ -108,7 +108,7 @@ Build multi-tenant applications with workspace isolation and session tracking in
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Create tenant workspaces
     tenants = [
@@ -144,7 +144,7 @@ Build multi-tenant applications with workspace isolation and session tracking in
 
     # Tenant user connects with their API key
     tenant_nx = nexus.connect(
-        remote_url="http://localhost:8080",
+        remote_url="http://localhost:2026",
         api_key="tenant-specific-key"
     )
 
@@ -166,7 +166,7 @@ Build multi-tenant applications with workspace isolation and session tracking in
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Admin can access all tenants
     all_tenants = ["/tenants/acme-123", "/tenants/beta-456", "/tenants/gamma-789"]
@@ -304,7 +304,7 @@ Build multi-tenant applications with workspace isolation and session tracking in
     import nexus
     from datetime import datetime
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     class TenantManager:
         def __init__(self, nx):

@@ -74,7 +74,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 
 # List and delete memories created by demo users
 for user in ['alice', 'agent_alice']:
@@ -119,7 +119,7 @@ sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
 try:
-    nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+    nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 
     # Delete all memories (admin can see all)
     all_memories = nx.memory.list(state='all', limit=1000)
@@ -162,7 +162,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 
 # Create delegation: agent can act as alice
 # This allows the agent to read/write alice's memories
@@ -196,7 +196,7 @@ sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
 # Use Alice's API key with agent_id to act as the agent
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 nx.agent_id = "agent_alice"  # Set agent identity
 
 # Store memories (they will be inactive by default)
@@ -240,7 +240,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 
 # List inactive memories
 inactive = nx.memory.list(state='inactive')
@@ -268,7 +268,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 
 # List active memories
 active = nx.memory.list(state='active')
@@ -304,7 +304,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 
 # Get inactive memories
 inactive = nx.memory.list(state='inactive')
@@ -330,7 +330,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 
 active = nx.memory.list(state='active')
 inactive = nx.memory.list(state='inactive')
@@ -362,7 +362,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 
 # Get remaining inactive memories
 inactive = nx.memory.list(state='inactive')
@@ -390,7 +390,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 
 active = nx.memory.list(state='active')
 inactive = nx.memory.list(state='inactive')
@@ -422,7 +422,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 
 # Get active memories
 active = nx.memory.list(state='active')
@@ -447,7 +447,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 
 active = nx.memory.list(state='active')
 inactive = nx.memory.list(state='inactive')
@@ -477,7 +477,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 
 # Query without specifying state (defaults to active)
 default_results = nx.memory.query(scope='user')
@@ -520,7 +520,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 inactive = nx.memory.list(state='inactive')
 if inactive:
     print(inactive[0]['memory_id'])

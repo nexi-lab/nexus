@@ -143,7 +143,7 @@ echo "   Database: $NEXUS_DATABASE_URL"
 echo "   Data dir: $NEXUS_DATA_DIR"
 echo ""
 
-nexus serve --host 0.0.0.0 --port 8080
+nexus serve --host 0.0.0.0 --port 2026
 ```
 
 **Run it:**
@@ -216,10 +216,10 @@ echo "✓ Bootstrap complete!"
 
 ```bash
 # Start server (permissions enabled by default)
-nexus serve --host 0.0.0.0 --port 8080
+nexus serve --host 0.0.0.0 --port 2026
 ```
 
-Server is now running at `http://0.0.0.0:8080`!
+Server is now running at `http://0.0.0.0:2026`!
 
 ### Step 3: Verify Permissions (Before Starting Server)
 
@@ -247,13 +247,13 @@ nexus rebac check user bob write file /workspace
 # As alice (has ownership)
 export USER=alice
 nexus write /workspace/test.txt "Hello from Alice" \
-  --remote-url http://localhost:8080
+  --remote-url http://localhost:2026
 
 nexus read /workspace/test.txt \
-  --remote-url http://localhost:8080
+  --remote-url http://localhost:2026
 
 nexus ls /workspace \
-  --remote-url http://localhost:8080
+  --remote-url http://localhost:2026
 
 echo "✓ Alice can access /workspace"
 ```
@@ -503,7 +503,7 @@ echo "=== Nexus Server Setup ==="
 # 1. Configuration
 export NEXUS_DATABASE_URL="${NEXUS_DATABASE_URL:-postgresql://$(whoami)@localhost/nexus}"
 export NEXUS_DATA_DIR="${NEXUS_DATA_DIR:-/var/lib/nexus}"
-export NEXUS_PORT="${NEXUS_PORT:-8080}"
+export NEXUS_PORT="${NEXUS_PORT:-2026}"
 export NEXUS_HOST="${NEXUS_HOST:-0.0.0.0}"
 
 echo "Database: $NEXUS_DATABASE_URL"
@@ -591,10 +591,10 @@ chmod +x setup_nexus_server.sh
 
 ```bash
 # Foreground
-nexus serve --host 0.0.0.0 --port 8080
+nexus serve --host 0.0.0.0 --port 2026
 
 # Background
-nohup nexus serve --host 0.0.0.0 --port 8080 > /tmp/nexus.log 2>&1 &
+nohup nexus serve --host 0.0.0.0 --port 2026 > /tmp/nexus.log 2>&1 &
 
 # Save PID for later
 echo $! > /tmp/nexus.pid
@@ -803,7 +803,7 @@ nexus rebac namespace-delete --object-type document
 |-------------|-------------|---------|---------------|
 | `nexus rebac ...` | Local database | `nexus rebac check user alice write file /workspace` | ❌ No |
 | `nexus write/read/ls ...` (without --remote-url) | Local filesystem | `nexus write /workspace/test.txt "hello"` | ❌ No |
-| `nexus write/read/ls ... --remote-url` | Remote server | `nexus write /workspace/test.txt "hello" --remote-url http://localhost:8080` | ✅ Yes |
+| `nexus write/read/ls ... --remote-url` | Remote server | `nexus write /workspace/test.txt "hello" --remote-url http://localhost:2026` | ✅ Yes |
 
 **Key Points:**
 - `nexus rebac` commands **always** use the local database (PostgreSQL/SQLite)
@@ -816,7 +816,7 @@ nexus rebac namespace-delete --object-type document
 
 ```bash
 # Set remote URL
-export NEXUS_REMOTE_URL="http://localhost:8080"
+export NEXUS_REMOTE_URL="http://localhost:2026"
 
 # Write a file
 nexus write /workspace/test.txt "Hello World" --remote-url $NEXUS_REMOTE_URL
@@ -841,7 +841,7 @@ nexus metadata /workspace/test.txt --remote-url $NEXUS_REMOTE_URL
 mkdir -p /mnt/nexus
 
 # Mount remote server
-nexus mount /mnt/nexus --remote-url http://localhost:8080
+nexus mount /mnt/nexus --remote-url http://localhost:2026
 
 # Now use regular filesystem commands
 echo "Hello" > /mnt/nexus/workspace/test.txt
@@ -858,7 +858,7 @@ nexus unmount /mnt/nexus
 #!/bin/bash
 # Example: Batch file upload with permissions
 
-REMOTE_URL="http://localhost:8080"
+REMOTE_URL="http://localhost:2026"
 USER="alice"
 WORKSPACE="/workspace/uploads"
 
@@ -908,7 +908,7 @@ Environment="NEXUS_DATA_DIR=/var/lib/nexus"
 Environment="NEXUS_ENFORCE_PERMISSIONS=true"
 
 # Start command
-ExecStart=/usr/local/bin/nexus serve --host 0.0.0.0 --port 8080
+ExecStart=/usr/local/bin/nexus serve --host 0.0.0.0 --port 2026
 
 # Restart on failure
 Restart=always
@@ -976,7 +976,7 @@ export NEXUS_DATA_DIR="/var/lib/nexus"
 
 # Server Settings
 export NEXUS_HOST="0.0.0.0"
-export NEXUS_PORT="8080"
+export NEXUS_PORT="2026"
 
 # Security
 export NEXUS_ENFORCE_PERMISSIONS="true"   # Enable permission checks
@@ -987,7 +987,7 @@ export USER="alice"                       # Subject for operations
 export NEXUS_TENANT_ID="default"          # Tenant isolation
 
 # Remote Access
-export NEXUS_REMOTE_URL="http://localhost:8080"
+export NEXUS_REMOTE_URL="http://localhost:2026"
 ```
 
 ---
@@ -998,7 +998,7 @@ export NEXUS_REMOTE_URL="http://localhost:8080"
 
 ```bash
 # Is server running?
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 
 # Should return: {"status": "healthy"}
 ```
@@ -1130,7 +1130,7 @@ export NEXUS_DATABASE_URL="postgresql://nexus:password@localhost/nexus"
 
 ```bash
 # Check if port is in use
-lsof -i :8080
+lsof -i :2026
 
 # Kill existing process
 pkill -f "nexus serve"
@@ -1146,7 +1146,7 @@ nexus serve --port 8081
 ls -la $NEXUS_DATA_DIR
 
 # Check backend
-nexus ls / --remote-url http://localhost:8080
+nexus ls / --remote-url http://localhost:2026
 
 # Verify database connection
 echo "SELECT COUNT(*) FROM file_paths;" | psql $NEXUS_DATABASE_URL
@@ -1236,7 +1236,7 @@ export NEXUS_DATABASE_URL="postgresql://postgres:password@localhost/nexus"
 export NEXUS_DATA_DIR="/var/lib/nexus"
 
 # Start server
-nexus serve --host 0.0.0.0 --port 8080
+nexus serve --host 0.0.0.0 --port 2026
 
 # Server is now running and accessible
 ```
@@ -1249,7 +1249,7 @@ Use the CLI with `--remote-url` to manage tenants from anywhere:
 #!/bin/bash
 # Remote admin script - manage tenants from your laptop
 
-SERVER_URL="http://your-server.com:8080"
+SERVER_URL="http://your-server.com:2026"
 
 # Set admin context
 export NEXUS_SUBJECT="user:admin"
@@ -1318,7 +1318,7 @@ echo "🎉 Multi-tenant setup complete - all managed remotely!"
 
 ```bash
 # Create permission remotely
-curl -X POST http://your-server.com:8080/api/nfs/rebac_create \
+curl -X POST http://your-server.com:2026/api/nfs/rebac_create \
   -H "Content-Type: application/json" \
   -H "X-Nexus-Subject: user:admin" \
   -d '{
@@ -1329,7 +1329,7 @@ curl -X POST http://your-server.com:8080/api/nfs/rebac_create \
   }'
 
 # Check permission remotely
-curl -X POST http://your-server.com:8080/api/nfs/rebac_check \
+curl -X POST http://your-server.com:2026/api/nfs/rebac_check \
   -H "Content-Type: application/json" \
   -H "X-Nexus-Subject: user:admin" \
   -d '{
@@ -1408,7 +1408,7 @@ echo "✓ Bootstrap complete"
 
 # 5. Start server in background
 export NEXUS_ENFORCE_PERMISSIONS=true
-nohup nexus serve --host 127.0.0.1 --port 8080 > /tmp/nexus.log 2>&1 &
+nohup nexus serve --host 127.0.0.1 --port 2026 > /tmp/nexus.log 2>&1 &
 SERVER_PID=$!
 echo $SERVER_PID > /tmp/nexus.pid
 
@@ -1420,11 +1420,11 @@ echo "✓ Server started (PID: $SERVER_PID)"
 echo ""
 echo "=== Testing Access ==="
 
-export NEXUS_REMOTE_URL="http://127.0.0.1:8080"
+export NEXUS_REMOTE_URL="http://127.0.0.1:2026"
 
 # Wait for server
 for i in {1..10}; do
-    if curl -s http://127.0.0.1:8080/health > /dev/null 2>&1; then
+    if curl -s http://127.0.0.1:2026/health > /dev/null 2>&1; then
         break
     fi
     sleep 1
@@ -1446,7 +1446,7 @@ echo "✓ Bob read: $bob_content"
 
 echo ""
 echo "=== Setup Complete! ==="
-echo "Server running at: http://127.0.0.1:8080"
+echo "Server running at: http://127.0.0.1:2026"
 echo "PID: $SERVER_PID"
 echo "Logs: tail -f /tmp/nexus.log"
 echo "Stop: kill $SERVER_PID"
@@ -1465,7 +1465,7 @@ chmod +x complete_cli_setup.sh
 
 ```bash
 # Server
-nexus serve --host 0.0.0.0 --port 8080
+nexus serve --host 0.0.0.0 --port 2026
 
 # Permissions
 nexus rebac create --subject-type user --subject-id alice --relation direct_owner --object-type file --object-id /workspace --tenant-id default
@@ -1474,10 +1474,10 @@ nexus rebac list --object-type file --object-id /workspace --tenant-id default
 nexus rebac delete --subject-type user --subject-id alice --relation direct_owner --object-type file --object-id /workspace --tenant-id default
 
 # Files (Remote)
-nexus write /path/file.txt "content" --remote-url http://localhost:8080
-nexus read /path/file.txt --remote-url http://localhost:8080
-nexus ls /path --remote-url http://localhost:8080
-nexus delete /path/file.txt --remote-url http://localhost:8080
+nexus write /path/file.txt "content" --remote-url http://localhost:2026
+nexus read /path/file.txt --remote-url http://localhost:2026
+nexus ls /path --remote-url http://localhost:2026
+nexus delete /path/file.txt --remote-url http://localhost:2026
 
 # Files (Local)
 nexus write /path/file.txt "content"

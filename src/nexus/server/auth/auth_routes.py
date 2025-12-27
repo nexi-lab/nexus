@@ -869,6 +869,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
             session.expunge(user)
 
         # Provision full user resources (workspace, agents, skills, permissions)
+        # IMPORTANT: This only runs for NEW users - existing users return early above (line 763)
         # This is done outside the session to avoid conflicts
         try:
             from nexus.core.permissions import OperationContext

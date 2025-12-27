@@ -38,7 +38,7 @@ class ReBACPermissionCache:
     - Write frequency tracking for adaptive TTL
 
     Example:
-        >>> cache = ReBACPermissionCache(max_size=10000, ttl_seconds=60)
+        >>> cache = ReBACPermissionCache(max_size=10000, ttl_seconds=300)
         >>> # Check cache
         >>> result = cache.get("agent", "alice", "read", "file", "/doc.txt")
         >>> if result is None:
@@ -50,8 +50,8 @@ class ReBACPermissionCache:
     def __init__(
         self,
         max_size: int = 10000,
-        ttl_seconds: int = 60,
-        denial_ttl_seconds: int = 30,
+        ttl_seconds: int = 300,
+        denial_ttl_seconds: int = 60,
         enable_metrics: bool = True,
         enable_adaptive_ttl: bool = False,
         quantization_interval: int = 5,
@@ -61,8 +61,8 @@ class ReBACPermissionCache:
 
         Args:
             max_size: Maximum number of entries (default: 10k)
-            ttl_seconds: Time-to-live for grant (True) cache entries (default: 60s)
-            denial_ttl_seconds: Time-to-live for denial (False) cache entries (default: 30s)
+            ttl_seconds: Time-to-live for grant (True) cache entries (default: 300s)
+            denial_ttl_seconds: Time-to-live for denial (False) cache entries (default: 60s)
                 Shorter TTL for denials ensures revoked access is reflected quickly (Issue #877)
             enable_metrics: Track hit rates and latency (default: True)
             enable_adaptive_ttl: Adjust TTL based on write frequency (default: False)

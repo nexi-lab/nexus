@@ -4464,6 +4464,9 @@ class NexusFS(
     def _delete_directory_recursive(self, dir_path: str, context: OperationContext) -> None:
         """Recursively delete a directory and all its contents.
 
+        Uses depth-first traversal: deletes files and subdirectories first,
+        then deletes the directory itself.
+
         Args:
             dir_path: Directory path to delete
             context: Operation context
@@ -4473,53 +4476,107 @@ class NexusFS(
         logger = logging.getLogger(__name__)
 
         try:
-            # List all files and subdirectories recursively
-            result = self.list(dir_path, recursive=True, context=context)
+            # List immediate children only (not recursive)
+            result = self.list(dir_path, recursive=False, context=context)
 
             # Handle different return formats
             if isinstance(result, dict) and "files" in result:
-                files = result["files"]
+                children = result["files"]
             elif isinstance(result, list):
-                files = result
+                children = result
             else:
-                files = []
+                children = []
 
-            # Sort paths by depth (deepest first) to delete files before their parent directories
-            paths_to_delete = []
-            for item in files:
+            # Process each child
+            for item in children:
+                # Extract path and type from item
+                child_path: str | None = None
+                is_dir = False
+
                 if isinstance(item, str):
-                    paths_to_delete.append(item)
-                elif isinstance(item, dict):
-                    path = item.get("path")
-                    if path:
-                        paths_to_delete.append(path)
-
-            # Sort by depth (deepest first)
-            paths_to_delete.sort(key=lambda p: p.count("/"), reverse=True)
-
-            # Delete all files first
-            for path in paths_to_delete:
-                if path == dir_path:  # Skip the root directory itself
-                    continue
-                try:
-                    # Try to delete as file first
-                    self.delete(path, context=context)
-                except Exception:
-                    # If not a file, try as directory
+                    child_path = item
+                    # Determine type by trying to list it
                     try:
-                        self.rmdir(path, context=context)
-                    except Exception as e:
-                        logger.debug(f"Could not delete {path}: {e}")
+                        self.list(child_path, recursive=False, context=context)
+                        is_dir = True
+                    except Exception:
+                        pass
+                elif isinstance(item, dict):
+                    child_path = item.get("path")
+                    if not child_path:
+                        continue
+                    item_type = item.get("type", "")
+                    is_dir = item_type == "directory"
+                else:
+                    continue
 
-            # Finally, delete the root directory
+                if not child_path or child_path == dir_path:
+                    continue
+
+                # Process based on type
+                if is_dir:
+                    # Recursively delete subdirectory
+                    try:
+                        self._delete_directory_recursive(child_path, context)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete subdirectory {child_path}: {e}")
+                else:
+                    # Delete file
+                    try:
+                        self.delete(child_path, context=context)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete file {child_path}: {e}")
+
+            # After all children are deleted, delete the directory itself
+            # Try multiple approaches to ensure directory is removed
+            directory_removed = False
+
+            # Approach 1: Use rmdir
             try:
                 self.rmdir(dir_path, context=context)
+                directory_removed = True
+                logger.debug(f"Deleted directory with rmdir: {dir_path}")
             except Exception as e:
-                logger.debug(f"Could not remove root directory {dir_path}: {e}")
+                logger.debug(f"rmdir failed for {dir_path}: {e}")
+
+            # Approach 2: Try delete (in case it's treated as a file)
+            if not directory_removed:
+                try:
+                    self.delete(dir_path, context=context)
+                    directory_removed = True
+                    logger.debug(f"Deleted directory with delete: {dir_path}")
+                except Exception as e:
+                    logger.debug(f"delete failed for {dir_path}: {e}")
+
+            # Approach 3: Try to delete from metadata directly
+            if not directory_removed and hasattr(self, "metadata"):
+                try:
+                    # Delete from metadata table
+                    session = self.metadata.SessionLocal()
+                    try:
+                        from nexus.storage.models import FileMetadataModel
+
+                        deleted_count = (
+                            session.query(FileMetadataModel).filter_by(file_path=dir_path).delete()
+                        )
+                        session.commit()
+                        if deleted_count > 0:
+                            directory_removed = True
+                            logger.debug(
+                                f"Deleted directory metadata for {dir_path}: {deleted_count} entries"
+                            )
+                    finally:
+                        session.close()
+                except Exception as e:
+                    logger.debug(f"metadata deletion failed for {dir_path}: {e}")
+
+            if not directory_removed:
+                logger.warning(f"Could not remove directory {dir_path} after trying all methods")
 
         except Exception as e:
-            logger.warning(f"Error deleting directory {dir_path}: {e}")
-            raise
+            logger.error(f"Error deleting directory {dir_path}: {e}")
+            # Don't raise - we want to continue with other directories
+            # Just log the error
 
     def _create_user_directories(
         self, user_id: str, tenant_id: str, context: OperationContext

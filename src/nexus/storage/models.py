@@ -1461,6 +1461,55 @@ class APIKeyModel(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class OAuthAPIKeyModel(Base):
+    """Stores encrypted API key values for OAuth users.
+
+    Since API keys are hashed in the api_keys table (for security), we can't retrieve
+    the raw key value to return to users on subsequent logins. This table stores the
+    encrypted raw API key value so OAuth users can retrieve their key on login.
+
+    SECURITY:
+    - Keys are encrypted using Fernet (AES-128 + HMAC-SHA256)
+    - Only used for OAuth-generated keys (not user-created keys)
+    - Automatically cleaned up when the corresponding API key is deleted
+    """
+
+    __tablename__ = "oauth_api_keys"
+
+    # Primary key (references api_keys.key_id)
+    key_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("api_keys.key_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    # User ID (for easier queries without joining api_keys table)
+    user_id: Mapped[str] = mapped_column(
+        String(255),
+        ForeignKey("users.user_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Encrypted API key value (can be decrypted and returned to user)
+    encrypted_key_value: Mapped[str] = mapped_column(
+        Text, nullable=False
+    )  # Fernet-encrypted raw API key (e.g., "sk-...")
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("idx_oauth_api_keys_user", "user_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<OAuthAPIKeyModel(key_id={self.key_id}, user_id={self.user_id})>"
+
+
 class MountConfigModel(Base):
     """Persistent mount configuration storage.
 

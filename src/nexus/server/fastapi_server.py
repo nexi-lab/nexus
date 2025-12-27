@@ -32,6 +32,7 @@ import secrets
 import time
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -39,6 +40,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from starlette.middleware.gzip import GZipMiddleware
+
+# Load environment variables from .env.local if it exists
+try:
+    from dotenv import load_dotenv
+    # Look for .env.local in project root (parent of src)
+    env_file = Path(__file__).parent.parent.parent.parent / ".env.local"
+    if env_file.exists():
+        load_dotenv(env_file)
+        logger = logging.getLogger(__name__)
+        logger.info(f"Loaded environment variables from {env_file}")
+except ImportError:
+    pass  # dotenv not installed, rely on system environment variables
 
 from nexus.core.exceptions import (
     ConflictError,
@@ -466,7 +479,66 @@ def create_app(
     # Register routes
     _register_routes(app)
 
+    # Initialize OAuth provider if credentials are available
+    _initialize_oauth_provider(nexus_fs, auth_provider, database_url)
+
     return app
+
+
+def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any, database_url: str | None) -> None:
+    """Initialize OAuth provider if Google OAuth credentials are available.
+
+    Args:
+        nexus_fs: NexusFS instance
+        auth_provider: Authentication provider (for session factory)
+        database_url: Database URL
+    """
+    try:
+        google_client_id = os.getenv("GOOGLE_CLIENT_ID") or os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
+        google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET") or os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
+        google_redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5173/oauth/callback")
+        jwt_secret = os.getenv("NEXUS_JWT_SECRET")
+
+        if not google_client_id or not google_client_secret:
+            logger.debug("Google OAuth credentials not found. OAuth endpoints will return 500 errors.")
+            return
+
+        # Get session factory from auth_provider or nexus_fs
+        session_factory = None
+        if auth_provider and hasattr(auth_provider, "session_factory"):
+            session_factory = auth_provider.session_factory
+        elif hasattr(nexus_fs, "metadata") and hasattr(nexus_fs.metadata, "SessionLocal"):
+            from sqlalchemy.orm import sessionmaker
+
+            # Create session factory from metadata
+            session_factory = sessionmaker(bind=nexus_fs.metadata.engine)
+        else:
+            logger.warning("Cannot initialize OAuth provider: no session factory available")
+            return
+
+        if not session_factory:
+            logger.warning("Cannot initialize OAuth provider: session factory is None")
+            return
+
+        # Initialize OAuth provider
+        from nexus.server.auth.auth_routes import set_oauth_provider
+        from nexus.server.auth.oauth_crypto import OAuthCrypto
+        from nexus.server.auth.oauth_user_auth import OAuthUserAuth
+
+        oauth_crypto = OAuthCrypto(db_url=database_url)
+        oauth_provider = OAuthUserAuth(
+            session_factory=session_factory,
+            google_client_id=google_client_id,
+            google_client_secret=google_client_secret,
+            google_redirect_uri=google_redirect_uri,
+            jwt_secret=jwt_secret,
+            oauth_crypto=oauth_crypto,
+        )
+
+        set_oauth_provider(oauth_provider)
+        logger.info("Google OAuth provider initialized successfully")
+    except Exception as e:
+        logger.warning(f"Failed to initialize OAuth provider: {e}. OAuth endpoints will not be available.")
 
 
 def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
@@ -497,6 +569,15 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/health", response_model=HealthResponse)
     async def health_check() -> HealthResponse:
         return HealthResponse(status="healthy", service="nexus-rpc")
+
+    # Authentication routes
+    try:
+        from nexus.server.auth.auth_routes import router as auth_router
+
+        app.include_router(auth_router)
+        logger.info("Authentication routes registered")
+    except ImportError as e:
+        logger.warning(f"Failed to import auth routes: {e}. OAuth endpoints will not be available.")
 
     # Asyncio debug endpoint (Python 3.14+)
     @app.get("/debug/asyncio", tags=["debug"])

@@ -635,6 +635,35 @@ async def oauth_check(
             oauth_credential=oauth_credential,  # Store the credential, not the code
         )
 
+        # Calculate smart tenant_id and tenant_name for preview
+        if provider_email:
+            email_username, email_domain = (
+                provider_email.split("@") if "@" in provider_email else (provider_email, "")
+            )
+            personal_domains = [
+                "gmail.com",
+                "outlook.com",
+                "hotmail.com",
+                "yahoo.com",
+                "icloud.com",
+                "proton.me",
+                "protonmail.com",
+            ]
+            is_personal = email_domain.lower() in personal_domains
+
+            # Calculate proposed tenant_id and name
+            if is_personal:
+                proposed_tenant_id = email_username
+                first_name = name.split()[0] if name else email_username.capitalize()
+                proposed_tenant_name = f"{first_name}'s Org"
+            else:
+                proposed_tenant_id = email_domain
+                proposed_tenant_name = email_domain
+        else:
+            is_personal = True
+            proposed_tenant_id = "default"
+            proposed_tenant_name = "Default Organization"
+
         return OAuthCheckResponseNew(
             needs_confirmation=True,
             pending_token=pending_token,
@@ -646,12 +675,12 @@ async def oauth_check(
                 "email_verified": email_verified,
             },
             tenant_info={
-                "tenant_id": "default",
-                "name": "Default Tenant",
-                "domain": None,
+                "tenant_id": proposed_tenant_id,
+                "name": proposed_tenant_name,
+                "domain": email_domain if provider_email else None,
                 "description": None,
-                "is_personal": True,
-                "can_edit_name": False,
+                "is_personal": is_personal,
+                "can_edit_name": is_personal,  # Only personal orgs can edit name
             },
         )
     except ValueError as e:
@@ -802,9 +831,29 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 "protonmail.com",
             ]
             # Use email username for personal domains, domain for org domains
-            tenant_id = email_username if email_domain.lower() in personal_domains else email_domain
+            default_tenant_id = (
+                email_username if email_domain.lower() in personal_domains else email_domain
+            )
+
+            # Calculate smart tenant name based on email type
+            if email_domain.lower() in personal_domains:
+                # Personal: extract first name from display_name
+                first_name = (
+                    registration.name.split()[0]
+                    if registration.name
+                    else email_username.capitalize()
+                )
+                default_tenant_name = f"{first_name}'s Org"
+            else:
+                # Work: use domain
+                default_tenant_name = email_domain
         else:
-            tenant_id = f"user_{user_id[:8]}"
+            default_tenant_id = f"user_{user_id[:8]}"
+            default_tenant_name = f"User {user_id[:8]} Organization"
+
+        # Use custom tenant_slug and tenant_name from frontend if provided, otherwise use defaults
+        tenant_id = request.tenant_slug if request.tenant_slug else default_tenant_id
+        tenant_name = request.tenant_name if request.tenant_name else default_tenant_name
 
         # Ensure provider email exists for new user creation
         if not registration.provider_email:
@@ -870,6 +919,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     email=user.email,
                     display_name=user.display_name,
                     tenant_id=tenant_id,
+                    tenant_name=tenant_name,
                     create_api_key=True,
                     api_key_name="OAuth Auto-generated Key",
                     api_key_expires_at=datetime.now(UTC) + timedelta(days=90),

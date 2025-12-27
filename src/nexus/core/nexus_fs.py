@@ -3938,6 +3938,7 @@ class NexusFS(
         email: str,
         display_name: str | None = None,
         tenant_id: str | None = None,
+        tenant_name: str | None = None,
         create_api_key: bool = True,
         api_key_name: str | None = None,
         api_key_expires_at: datetime | None = None,
@@ -3963,6 +3964,7 @@ class NexusFS(
             email: User email address
             display_name: Optional display name
             tenant_id: Tenant ID (extracted from email if not provided)
+            tenant_name: Optional custom tenant name (default: "{tenant_id} Organization")
             create_api_key: Whether to create API key for user
             api_key_name: Optional custom name for API key (default: "Primary key for {email}")
             api_key_expires_at: Optional expiry datetime for API key (default: None = no expiry)
@@ -4045,7 +4047,7 @@ class NexusFS(
             if not tenant:
                 tenant = TenantModel(
                     tenant_id=tenant_id,
-                    name=f"{tenant_id} Organization",
+                    name=tenant_name or f"{tenant_id} Organization",
                     is_active=1,
                     created_at=datetime.now(UTC),
                     updated_at=datetime.now(UTC),
@@ -4255,6 +4257,7 @@ class NexusFS(
         Removes:
         - All user directories (workspace, memory, skill, agent, connector, resource)
         - All API keys for the user
+        - All OAuth-specific records (OAuth API keys, OAuth account linkages)
         - All ReBAC permissions where user is subject
         - Entity registry entries for user and their agents
         - Optionally: UserModel record (soft delete)
@@ -4277,6 +4280,8 @@ class NexusFS(
                 "tenant_id": str,
                 "deleted_directories": list[str],
                 "deleted_api_keys": int,
+                "deleted_oauth_api_keys": int,
+                "deleted_oauth_accounts": int,
                 "deleted_permissions": int,
                 "deleted_entities": int,
                 "user_record_deleted": bool,
@@ -4316,6 +4321,8 @@ class NexusFS(
             "tenant_id": None,
             "deleted_directories": [],
             "deleted_api_keys": 0,
+            "deleted_oauth_api_keys": 0,
+            "deleted_oauth_accounts": 0,
             "deleted_permissions": 0,
             "deleted_entities": 0,
             "user_record_deleted": False,
@@ -4400,7 +4407,29 @@ class NexusFS(
                 logger.warning(f"Failed to delete API keys: {e}")
                 session.rollback()
 
-            # 3. Delete ReBAC permissions
+            # 3. Delete OAuth-specific records (for OAuth authenticated users)
+            try:
+                from nexus.storage.models import OAuthAPIKeyModel, UserOAuthAccountModel
+
+                # Delete OAuth API keys (encrypted keys for OAuth users)
+                deleted_oauth_keys = (
+                    session.query(OAuthAPIKeyModel).filter_by(user_id=user_id).delete()
+                )
+                result["deleted_oauth_api_keys"] = deleted_oauth_keys
+                logger.info(f"Deleted {deleted_oauth_keys} OAuth API keys for user {user_id}")
+
+                # Delete OAuth account linkages (Google, GitHub, etc.)
+                deleted_oauth_accounts = (
+                    session.query(UserOAuthAccountModel).filter_by(user_id=user_id).delete()
+                )
+                session.commit()
+                result["deleted_oauth_accounts"] = deleted_oauth_accounts
+                logger.info(f"Deleted {deleted_oauth_accounts} OAuth accounts for user {user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to delete OAuth records: {e}")
+                session.rollback()
+
+            # 4. Delete ReBAC permissions
             try:
                 # Query all permissions where user is subject
                 if hasattr(self, "rebac_manager") and self.rebac_manager:
@@ -4421,7 +4450,7 @@ class NexusFS(
             except Exception as e:
                 logger.warning(f"Failed to delete ReBAC permissions: {e}")
 
-            # 4. Delete entity registry entries
+            # 5. Delete entity registry entries
             try:
                 if self._entity_registry:
                     # Delete user entity (cascade will delete children)
@@ -4441,7 +4470,7 @@ class NexusFS(
             except Exception as e:
                 logger.warning(f"Failed to delete entity registry entries: {e}")
 
-            # 5. Soft-delete user record (if requested)
+            # 6. Soft-delete user record (if requested)
             if delete_user_record and user:
                 try:
                     user.is_active = 0

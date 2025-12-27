@@ -26,8 +26,11 @@ def nx_with_mount():
         # Create root backend
         root_backend = LocalBackend(root_path=tmpdir)
 
+        # Use unique SQLite database file to avoid parallel test conflicts
+        db_file = Path(tmpdir) / "metadata.db"
+
         # Create NexusFS with metadata store
-        nx = NexusFS(backend=root_backend, enforce_permissions=False)
+        nx = NexusFS(backend=root_backend, db_path=db_file, enforce_permissions=False)
 
         yield nx, tmpdir
 

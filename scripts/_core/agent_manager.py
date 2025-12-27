@@ -49,7 +49,6 @@ def create_impersonated_user_agent(
                 name="ImpersonatedUser",
                 description="Digital twin agent - no separate identity, inherits all user permissions",
                 generate_api_key=False,  # No API key - uses user's auth
-                inherit_permissions=True,  # Inherit all user's permissions
                 metadata=agent_metadata,
                 context=context,
             ),
@@ -97,7 +96,6 @@ def create_untrusted_agent(
                 name="UntrustedAgent",
                 description="Untrusted agent with API key - zero permissions by default, read-only access granted explicitly",
                 generate_api_key=True,  # Has its own API key
-                inherit_permissions=False,  # Zero permissions by default
                 metadata=agent_metadata,
                 context=context,
             ),

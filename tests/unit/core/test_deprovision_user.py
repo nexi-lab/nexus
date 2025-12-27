@@ -10,6 +10,7 @@ from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
 
 
+@pytest.mark.xdist_group("serial_sqlite")
 class TestDeprovisionUser:
     """Test suite for deprovision_user functionality."""
 

@@ -4144,9 +4144,11 @@ class NexusFS(
         # 7. Create default workspace
         workspace_path = None
         try:
-            from scripts.provision_namespace import generate_resource_id
+            import uuid
 
-            workspace_id = generate_resource_id("workspace", "personal")
+            # Generate workspace ID: ws_personal_{12-char-uuid}
+            uuid_suffix = str(uuid.uuid4()).replace("-", "")[:12]
+            workspace_id = f"ws_personal_{uuid_suffix}"
             workspace_path = f"/tenant:{tenant_id}/user:{user_id}/workspace/{workspace_id}"
 
             if not self.exists(workspace_path, context=admin_context):
@@ -4296,10 +4298,26 @@ class NexusFS(
 
         logger = logging.getLogger(__name__)
 
-        # Find skills directory
-        skills_dir = Path(__file__).parent.parent.parent / "scripts" / "data" / "skills"
-        if not skills_dir.exists():
-            logger.warning(f"Skills directory not found: {skills_dir}")
+        # Find skills directory (try multiple possible locations)
+        possible_dirs = [
+            Path(__file__).parent.parent.parent
+            / "scripts"
+            / "data"
+            / "skills",  # Original location
+            Path("nexus-data") / "skills",  # Common data directory
+            Path("./nexus-data/skills"),  # Relative to cwd
+        ]
+
+        skills_dir = None
+        for dir_path in possible_dirs:
+            if dir_path.exists() and dir_path.is_dir():
+                skills_dir = dir_path
+                break
+
+        if not skills_dir:
+            logger.warning(
+                f"Skills directory not found in any of: {[str(d) for d in possible_dirs]}"
+            )
             return []
 
         skill_files = list(skills_dir.glob("*.skill"))

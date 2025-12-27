@@ -17,7 +17,7 @@
 #
 # Services:
 #   - postgres:    PostgreSQL database (port 5432)
-#   - nexus:       Nexus RPC server (port 8080)
+#   - nexus:       Nexus RPC server (port 2026)
 #   - mcp-server:  Nexus MCP server (port 8081)
 #   - langgraph:   LangGraph agent server (port 2024)
 #   - frontend:    React web UI (port 5173)
@@ -88,7 +88,7 @@ services:
     environment:
       # Server configuration
       NEXUS_HOST: 0.0.0.0
-      NEXUS_PORT: 8080
+      NEXUS_PORT: 2026
       NEXUS_DATA_DIR: /app/data
 
       # Database configuration (PostgreSQL)

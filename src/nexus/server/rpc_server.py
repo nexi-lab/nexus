@@ -1572,7 +1572,7 @@ class NexusRPCServer:
         self,
         nexus_fs: NexusFilesystem,
         host: str = "0.0.0.0",
-        port: int = 8080,
+        port: int = 2026,
         api_key: str | None = None,
         auth_provider: Any = None,
     ):

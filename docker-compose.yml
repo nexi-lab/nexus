@@ -12,10 +12,10 @@ services:
     container_name: nexus-server
     restart: unless-stopped
     ports:
-      - "${PORT:-8080}:2026"
+      - "${PORT:-2026}:2026"
     environment:
       - NEXUS_HOST=0.0.0.0
-      - NEXUS_PORT=8080
+      - NEXUS_PORT=2026
       - NEXUS_DATA_DIR=/app/data
       - NEXUS_DATABASE_URL=${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@postgres:5432/nexus}
       - NEXUS_API_KEY=${NEXUS_API_KEY:-}

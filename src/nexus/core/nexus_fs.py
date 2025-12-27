@@ -5074,7 +5074,7 @@ class NexusFS(
 
             # Check NEXUS_SERVER_URL first (for Docker deployments), then NEXUS_URL
             nexus_url = os.getenv("NEXUS_SERVER_URL") or os.getenv(
-                "NEXUS_URL", "http://localhost:8080"
+                "NEXUS_URL", "http://localhost:2026"
             )
 
         # Get Nexus API key from context if not provided

@@ -77,7 +77,7 @@ jobs:
           # ============================================
           # Nexus Server
           # ============================================
-          NEXUS_PORT=8080
+          NEXUS_PORT=2026
           NEXUS_DATABASE_URL=postgresql://postgres:nexus@postgres:5432/nexus
 
           # Authentication - Dummy API Key for testing (proper Nexus format)

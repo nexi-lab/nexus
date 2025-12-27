@@ -54,7 +54,7 @@ class OAuthUserAuth:
             session_factory=session_factory,
             google_client_id="xxx.apps.googleusercontent.com",
             google_client_secret="GOCSPX-xxx",
-            google_redirect_uri="http://localhost:8080/auth/oauth/callback",
+            google_redirect_uri="http://localhost:2026/auth/oauth/callback",
             jwt_secret="your-jwt-secret",
             oauth_crypto=oauth_crypto
         )

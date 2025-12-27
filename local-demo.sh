@@ -328,15 +328,15 @@ ensure_docker_sandbox_image() {
     fi
 }
 
-# Function to check if port 8080 is available
-check_port_8080_available() {
+# Function to check if port 2026 is available
+check_port_2026_available() {
     # Only check for LISTEN state, not stale connections
     if lsof -ti :2026 -sTCP:LISTEN >/dev/null 2>&1; then
-        echo -e "${YELLOW}ERROR: Port 8080 is already in use${NC}"
+        echo -e "${YELLOW}ERROR: Port 2026 is already in use${NC}"
         echo ""
         PIDS=$(lsof -ti :2026 -sTCP:LISTEN 2>/dev/null || true)
         if [ -n "$PIDS" ]; then
-            echo "Process(es) running on port 8080:"
+            echo "Process(es) running on port 2026:"
             lsof -i :2026 -sTCP:LISTEN 2>/dev/null | grep -v "^COMMAND" | while read line; do
                 echo "  $line"
             done
@@ -550,8 +550,8 @@ start_server() {
     echo "╚═══════════════════════════════════════════╝"
     echo ""
 
-    # Check if port 8080 is available FIRST before any other setup work
-    if ! check_port_8080_available; then
+    # Check if port 2026 is available FIRST before any other setup work
+    if ! check_port_2026_available; then
         exit 1
     fi
 
@@ -648,7 +648,7 @@ start_server() {
     fi
     echo "  Data Dir:     $DATA_PATH"
     echo "  Host:         ${NEXUS_HOST:-0.0.0.0}"
-    echo "  Port:         ${NEXUS_PORT:-8080}"
+    echo "  Port:         ${NEXUS_PORT:-2026}"
     if [ "$START_UI" = true ]; then
         echo "  Frontend:     Enabled"
     fi
@@ -782,11 +782,11 @@ stop_server() {
     # Stop langgraph
     stop_langgraph
 
-    # Check for processes on port 8080 (only LISTEN state, not stale connections)
+    # Check for processes on port 2026 (only LISTEN state, not stale connections)
     PIDS=$(lsof -ti :2026 -sTCP:LISTEN 2>/dev/null || true)
 
     if [ -n "$PIDS" ]; then
-        echo "Found process(es) on port 8080:"
+        echo "Found process(es) on port 2026:"
         echo ""
         # Show detailed information about processes
         lsof -i :2026 -sTCP:LISTEN 2>/dev/null | grep -v "^COMMAND" | while read line; do
@@ -800,7 +800,7 @@ stop_server() {
         done
         echo ""
     else
-        echo "No server running on port 8080"
+        echo "No server running on port 2026"
         echo ""
     fi
 }
@@ -998,8 +998,8 @@ init_database() {
         set +a
     fi
 
-    # Check if port 8080 is available before starting server
-    if ! check_port_8080_available; then
+    # Check if port 2026 is available before starting server
+    if ! check_port_2026_available; then
         exit 1
     fi
 
@@ -1018,7 +1018,7 @@ init_database() {
     fi
     echo "  Data Dir:     $DATA_PATH"
     echo "  Host:         0.0.0.0"
-    echo "  Port:         8080"
+    echo "  Port:         2026"
     if [ "$START_UI" = true ]; then
         echo "  Frontend:     Enabled"
     fi

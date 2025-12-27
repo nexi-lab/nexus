@@ -16,7 +16,7 @@
 #
 # Services:
 #   - postgres:    PostgreSQL database (port 5432)
-#   - nexus:       Nexus RPC server (port 8080)
+#   - nexus:       Nexus RPC server (port 2026)
 #   - langgraph:   LangGraph agent server (port 2024)
 #   - frontend:    React web UI (port 5173)
 
@@ -248,7 +248,7 @@ show_services() {
     cat << EOF
 📦 Services:
    • postgres    - PostgreSQL database (port 5432)
-   • nexus       - Nexus RPC server (port 8080)
+   • nexus       - Nexus RPC server (port 2026)
    • langgraph   - LangGraph agent (port 2024)
    • frontend    - React web UI (port 5173)
 EOF

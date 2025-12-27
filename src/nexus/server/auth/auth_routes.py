@@ -228,7 +228,7 @@ async def register(
         422: Invalid request data
     """
     try:
-        user, token = await auth.register(
+        user, token = await auth.register(  # type: ignore[attr-defined]
             email=request.email,
             password=request.password,
             username=request.username,
@@ -263,7 +263,7 @@ async def login(
         401: Invalid credentials
     """
     try:
-        user, token = await auth.login(identifier=request.identifier, password=request.password)
+        user, token = await auth.login(identifier=request.identifier, password=request.password)  # type: ignore[misc]
 
         return LoginResponse(
             token=token,
@@ -455,6 +455,8 @@ async def oauth_check(
                 user = session.get(UserModel, existing_oauth.user_id)
                 if not user or user.is_active == 0:
                     raise ValueError("User account is inactive")
+                if not user.email:
+                    raise ValueError("User email is required for OAuth authentication")
 
                 # Generate JWT token
                 user_info_dict = {
@@ -498,10 +500,10 @@ async def oauth_check(
                 crypto = oauth_provider.oauth_crypto
 
                 # First, check if user has ANY OAuth API keys at all
-                stmt = select(OAuthAPIKeyModel).where(
+                api_key_stmt = select(OAuthAPIKeyModel).where(
                     OAuthAPIKeyModel.user_id == user.user_id,
                 )
-                oauth_api_keys = session.scalars(stmt).all()
+                oauth_api_keys = session.scalars(api_key_stmt).all()
 
                 # Try to find a valid (non-expired, non-revoked) API key with encrypted value
                 api_key_value = None
@@ -589,6 +591,8 @@ async def oauth_check(
                 user, token = await oauth_provider.handle_google_callback(
                     code=request.code, _state=request.state
                 )
+                if not user.email:
+                    raise ValueError("OAuth user must have an email")
 
                 return OAuthCheckResponseExisting(
                     needs_confirmation=False,
@@ -694,9 +698,14 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         from nexus.storage.models import UserModel
 
         # Check if user with this email already exists
+        if not registration.provider_email:
+            raise ValueError("Provider email is required")
+
         with oauth_provider.session_factory() as session:
             existing_user = get_user_by_email(session, registration.provider_email)
             if existing_user:
+                if not existing_user.email:
+                    raise ValueError("Existing user email is required")
                 # User exists but not linked to OAuth - auto-link them
                 user_id = existing_user.user_id
                 tenant_id = "default"  # Use their existing tenant
@@ -781,6 +790,10 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         else:
             tenant_id = f"user_{user_id[:8]}"
 
+        # Ensure provider email exists for new user creation
+        if not registration.provider_email:
+            raise ValueError("Provider email is required for user creation")
+
         with oauth_provider.session_factory() as session, session.begin():
             # Create user
             user = UserModel(
@@ -842,6 +855,9 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
 
             # Make user detached so we can access it after session closes
             session.expunge(user)
+
+        # Type guard: email is required for OAuth users
+        assert user.email is not None, "OAuth user must have email"
 
         # Generate JWT token
         user_info_dict = {
@@ -916,6 +932,10 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
         user, token = await oauth_provider.handle_google_callback(
             code=request.code, _state=request.state
         )
+
+        # Ensure user has email (required for OAuth)
+        if not user.email:
+            raise ValueError("OAuth user must have an email")
 
         # Determine if this is a new user (check if user was just created)
         # For now, we'll assume it's new if the user was created recently

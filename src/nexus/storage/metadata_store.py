@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import create_engine, pool, select, text, update
+from sqlalchemy import create_engine, event, pool, select, text, update
 from sqlalchemy.orm import sessionmaker
 
 try:
@@ -120,6 +120,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False)
 
+        # Setup connection pool monitoring (enabled via environment variable)
+        self._pool_checkout_count = 0
+        self._pool_checkin_count = 0
+        if os.getenv("NEXUS_POOL_LOGGING", "").lower() in ("1", "true", "yes"):
+            self._setup_pool_logging()
+
         # Initialize cache
         self._cache_enabled = enable_cache
         self._cache: MetadataCache | None
@@ -208,6 +214,185 @@ class SQLAlchemyMetadataStore(MetadataStore):
             config["pool_pre_ping"] = True  # Verify connections are alive before use
 
         return config
+
+    def _setup_pool_logging(self) -> None:
+        """Setup connection pool event listeners for debugging.
+
+        Enable by setting NEXUS_POOL_LOGGING=1 environment variable.
+        Logs checkout/checkin events and tracks connection counts.
+        """
+        pool_obj = self.engine.pool
+
+        @event.listens_for(pool_obj, "checkout")
+        def receive_checkout(
+            _dbapi_conn: Any, _connection_record: Any, _connection_proxy: Any
+        ) -> None:
+            self._pool_checkout_count += 1
+            # Use getattr for pool stats as they're QueuePool-specific
+            pool_size = getattr(pool_obj, "size", lambda: "N/A")()
+            checked_out = getattr(pool_obj, "checkedout", lambda: "N/A")()
+            logger.debug(
+                f"Connection checked out from pool "
+                f"(total checkouts: {self._pool_checkout_count}, "
+                f"pool size: {pool_size}, checked out: {checked_out})"
+            )
+
+        @event.listens_for(pool_obj, "checkin")
+        def receive_checkin(_dbapi_conn: Any, _connection_record: Any) -> None:
+            self._pool_checkin_count += 1
+            pool_size = getattr(pool_obj, "size", lambda: "N/A")()
+            checked_out = getattr(pool_obj, "checkedout", lambda: "N/A")()
+            logger.debug(
+                f"Connection returned to pool "
+                f"(total checkins: {self._pool_checkin_count}, "
+                f"pool size: {pool_size}, checked out: {checked_out})"
+            )
+
+    def get_pool_stats(self) -> dict[str, Any]:
+        """Get connection pool statistics.
+
+        Returns:
+            Dictionary with pool statistics including:
+            - pool_size: Current number of connections in pool
+            - checked_out: Number of connections currently checked out
+            - overflow: Current overflow connections
+            - checkedout_total: Total checkout operations
+            - checkedin_total: Total checkin operations
+            - pool_class: Pool implementation class name
+        """
+        pool_obj = self.engine.pool
+        stats: dict[str, Any] = {
+            "pool_class": pool_obj.__class__.__name__,
+            "checkedout_total": self._pool_checkout_count,
+            "checkedin_total": self._pool_checkin_count,
+        }
+
+        # QueuePool-specific stats
+        if hasattr(pool_obj, "size"):
+            stats["pool_size"] = pool_obj.size()
+        if hasattr(pool_obj, "checkedout"):
+            stats["checked_out"] = pool_obj.checkedout()
+        if hasattr(pool_obj, "overflow"):
+            stats["overflow"] = pool_obj.overflow()
+        if hasattr(pool_obj, "checkedin"):
+            stats["checked_in"] = pool_obj.checkedin()
+
+        return stats
+
+    def get_pg_connection_stats(self) -> dict[str, Any] | None:
+        """Get PostgreSQL connection statistics from pg_stat_activity.
+
+        Queries pg_stat_activity to monitor active database connections,
+        useful for diagnosing connection pool exhaustion issues.
+
+        Returns:
+            Dictionary with connection stats or None if not PostgreSQL:
+            - total: Total connections to this database
+            - active: Actively running queries
+            - idle: Idle connections (not in transaction)
+            - idle_in_transaction: Idle but holding transaction open (potential leak)
+            - waiting: Waiting for lock
+            - by_application: Breakdown by application_name
+            - by_state: Breakdown by connection state
+
+        Example:
+            >>> store.get_pg_connection_stats()
+            {
+                "total": 45,
+                "active": 3,
+                "idle": 40,
+                "idle_in_transaction": 2,
+                "waiting": 0,
+                "by_state": {"idle": 40, "active": 3, "idle in transaction": 2}
+            }
+        """
+        if self.db_type != "postgresql":
+            return None
+
+        try:
+            with self.engine.connect() as conn:
+                # Get connection counts by state
+                result = conn.execute(
+                    text("""
+                        SELECT
+                            COUNT(*) as total,
+                            COUNT(*) FILTER (WHERE state = 'active') as active,
+                            COUNT(*) FILTER (WHERE state = 'idle') as idle,
+                            COUNT(*) FILTER (WHERE state = 'idle in transaction') as idle_in_transaction,
+                            COUNT(*) FILTER (WHERE wait_event_type IS NOT NULL) as waiting
+                        FROM pg_stat_activity
+                        WHERE datname = current_database()
+                    """)
+                )
+                row = result.fetchone()
+
+                stats: dict[str, Any] = {
+                    "total": row[0] if row else 0,
+                    "active": row[1] if row else 0,
+                    "idle": row[2] if row else 0,
+                    "idle_in_transaction": row[3] if row else 0,
+                    "waiting": row[4] if row else 0,
+                }
+
+                # Get breakdown by state
+                result = conn.execute(
+                    text("""
+                        SELECT state, COUNT(*) as count
+                        FROM pg_stat_activity
+                        WHERE datname = current_database() AND state IS NOT NULL
+                        GROUP BY state
+                    """)
+                )
+                stats["by_state"] = {row[0]: row[1] for row in result.fetchall()}
+
+                # Get breakdown by application
+                result = conn.execute(
+                    text("""
+                        SELECT
+                            COALESCE(application_name, 'unknown') as app,
+                            COUNT(*) as count
+                        FROM pg_stat_activity
+                        WHERE datname = current_database()
+                        GROUP BY application_name
+                        ORDER BY count DESC
+                        LIMIT 10
+                    """)
+                )
+                stats["by_application"] = {row[0]: row[1] for row in result.fetchall()}
+
+                # Get long-running idle in transaction connections (potential leaks)
+                result = conn.execute(
+                    text("""
+                        SELECT
+                            pid,
+                            application_name,
+                            EXTRACT(EPOCH FROM (NOW() - state_change))::int as idle_seconds,
+                            query
+                        FROM pg_stat_activity
+                        WHERE datname = current_database()
+                          AND state = 'idle in transaction'
+                          AND state_change < NOW() - INTERVAL '60 seconds'
+                        ORDER BY state_change
+                        LIMIT 5
+                    """)
+                )
+                long_idle = []
+                for row in result.fetchall():
+                    long_idle.append(
+                        {
+                            "pid": row[0],
+                            "application": row[1],
+                            "idle_seconds": row[2],
+                            "query": row[3][:200] if row[3] else None,  # Truncate long queries
+                        }
+                    )
+                if long_idle:
+                    stats["long_idle_in_transaction"] = long_idle
+
+                return stats
+        except Exception as e:
+            logger.warning(f"Failed to get pg_stat_activity stats: {e}")
+            return None
 
     def _apply_db_optimizations(self) -> None:
         """Apply database-specific performance optimizations."""
@@ -890,8 +1075,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
             # This avoids DB queries for /skills/system/ when /skills/ is already cached
             if recursive and prefix and prefix != "/":
                 parent_prefix = prefix.rstrip("/")
+                prev_prefix = None  # Track previous to detect infinite loop
                 # Try progressively shorter parent prefixes
-                while "/" in parent_prefix:
+                while "/" in parent_prefix and parent_prefix != prev_prefix:
+                    prev_prefix = parent_prefix
                     parent_prefix = parent_prefix.rsplit("/", 1)[0] + "/"
                     if parent_prefix == "/":
                         parent_prefix = "/"

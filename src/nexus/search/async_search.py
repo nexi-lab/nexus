@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -136,6 +137,19 @@ class AsyncSemanticSearch:
 
         # Detect DB type
         self.db_type = "postgresql" if "postgresql" in database_url else "sqlite"
+
+    @asynccontextmanager
+    async def _session(self) -> Any:
+        """Get async database session with cancellation-safe cleanup.
+
+        Uses asyncio.shield() to protect cleanup from task cancellation,
+        preventing connection leaks when queries are interrupted by timeouts.
+        """
+        async with self.async_session() as session:
+            try:
+                yield session
+            finally:
+                await asyncio.shield(session.close())
 
     async def initialize(self) -> None:
         """Initialize database extensions (vector, FTS)."""

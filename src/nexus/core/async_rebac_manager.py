@@ -28,6 +28,7 @@ Example:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -199,7 +200,7 @@ class AsyncReBACManager:
         max_depth: int = 50,
         enable_l1_cache: bool = True,
         l1_cache_size: int = 10000,
-        l1_cache_ttl: int = 60,
+        l1_cache_ttl: int = 300,
         enable_metrics: bool = True,
     ):
         """Initialize async ReBAC manager.
@@ -210,7 +211,7 @@ class AsyncReBACManager:
             max_depth: Maximum graph traversal depth (default: 50 hops)
             enable_l1_cache: Enable in-memory L1 cache (default: True)
             l1_cache_size: L1 cache max entries (default: 10k)
-            l1_cache_ttl: L1 cache TTL in seconds (default: 60s)
+            l1_cache_ttl: L1 cache TTL in seconds (default: 300s)
             enable_metrics: Track cache metrics (default: True)
         """
         self.engine = engine
@@ -238,6 +239,9 @@ class AsyncReBACManager:
     async def _session(self) -> Any:
         """Get async database session.
 
+        Uses asyncio.shield() to protect cleanup from task cancellation,
+        preventing connection leaks when queries are interrupted by timeouts.
+
         Usage:
             async with self._session() as session:
                 result = await session.execute(...)
@@ -246,7 +250,9 @@ class AsyncReBACManager:
             try:
                 yield session
             finally:
-                await session.close()
+                # Shield cleanup from cancellation to prevent connection leaks
+                # See: https://medium.com/@har.avetisyan2002/how-we-discovered-and-fixed-a-connection-leak-in-async-sqlalchemy-during-chaos-testing-bf45acf65559
+                await asyncio.shield(session.close())
 
     def _is_postgresql(self) -> bool:
         """Check if using PostgreSQL."""

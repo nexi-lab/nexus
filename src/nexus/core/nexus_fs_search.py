@@ -117,13 +117,6 @@ class NexusFSSearchMixin:
             fs.list("/memory/by-user/alice")  # Returns memory paths for user alice
             fs.list("/workspace/alice/agent1/memory")  # Returns memories for agent1
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-        logger.debug(
-            f"[LIST-DEBUG-START] list() called with path={path}, recursive={recursive}, details={details}"
-        )
-
         # Phase 2 Integration (v0.4.0): Intercept memory paths
         from nexus.core.memory_router import MemoryViewRouter
 
@@ -133,12 +126,8 @@ class NexusFSSearchMixin:
         # Check if path routes to a dynamic API-backed connector (e.g., x_connector)
         # These connectors have virtual directories that don't exist in metadata
         if path and path != "/":
-            logger.debug(f"[LIST-DEBUG] Entering dynamic connector check for path={path}")
             try:
                 tenant_id, agent_id, is_admin = self._get_routing_params(context)
-                logger.debug(
-                    f"[LIST-DEBUG] routing_params: tenant_id={tenant_id}, is_admin={is_admin}"
-                )
                 route = self.router.route(
                     path,
                     tenant_id=tenant_id,
@@ -289,8 +278,8 @@ class NexusFSSearchMixin:
             except Exception as e:
                 import traceback
 
-                logger.warning(
-                    f"[LIST-DEBUG] Dynamic connector list_dir failed for {path}: {e}\n{traceback.format_exc()}"
+                logger.debug(
+                    f"Dynamic connector list_dir failed for {path}: {e}\n{traceback.format_exc()}"
                 )
                 # Fall through to normal metadata-based listing
 
@@ -328,10 +317,7 @@ class NexusFSSearchMixin:
 
         # Filter by read permission (v0.3.0)
         if self._enforce_permissions:
-            import logging
             import time
-
-            logger = logging.getLogger(__name__)
 
             perm_start = time.time()
             from nexus.core.permissions import OperationContext

@@ -4019,6 +4019,79 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("delete_agent", {"agent_id": agent_id})
         return result  # type: ignore[no-any-return]
 
+    def provision_user(
+        self,
+        user_id: str,
+        email: str,
+        display_name: str | None = None,
+        tenant_id: str | None = None,
+        create_api_key: bool = True,
+        create_agents: bool = True,
+        import_skills: bool = True,
+        context: dict | None = None,
+    ) -> dict[str, Any]:
+        """Provision a new user with all default resources (Issue #820).
+
+        Creates:
+        - User record (UserModel) in database
+        - Tenant record (TenantModel) if it doesn't exist
+        - All user directories under /tenant:{tenant_id}/user:{user_id}/
+        - Default workspace
+        - Default agents (ImpersonatedUser, UntrustedAgent)
+        - Default skills (all from data/skills/)
+        - API key (if create_api_key=True)
+        - ReBAC permissions (user as tenant owner)
+        - Entity registry entries
+
+        Args:
+            user_id: Unique user identifier
+            email: User email address
+            display_name: Optional display name
+            tenant_id: Tenant ID (extracted from email if not provided)
+            create_api_key: Whether to create API key for user
+            create_agents: Whether to create default agents
+            import_skills: Whether to import default skills
+            context: Optional operation context
+
+        Returns:
+            {
+                "user_id": str,
+                "tenant_id": str,
+                "api_key": str | None,
+                "workspace_path": str,
+                "agent_paths": list[str],
+                "skill_paths": list[str],
+            }
+
+        Raises:
+            RemoteFilesystemError: If provisioning fails
+
+        Example:
+            >>> result = nx.provision_user(
+            ...     user_id="alice",
+            ...     email="alice@example.com",
+            ...     display_name="Alice Smith"
+            ... )
+            >>> print(result["workspace_path"])
+            /tenant:alice/user:alice/workspace/ws_personal_abc123
+        """
+        params: dict[str, Any] = {
+            "user_id": user_id,
+            "email": email,
+            "display_name": display_name,
+            "tenant_id": tenant_id,
+            "create_api_key": create_api_key,
+            "create_agents": create_agents,
+            "import_skills": import_skills,
+        }
+
+        # Add context if provided
+        if context is not None:
+            params["context"] = context
+
+        result = self._call_rpc("provision_user", params)
+        return result  # type: ignore[no-any-return]
+
     # ============================================================
     # Lifecycle Management
     # ============================================================

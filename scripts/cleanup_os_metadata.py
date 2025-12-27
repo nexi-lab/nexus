@@ -12,7 +12,7 @@ Usage:
     python cleanup_os_metadata.py
 
     # Use remote server
-    python cleanup_os_metadata.py --remote-url http://nexus.example.com:8080
+    python cleanup_os_metadata.py --remote-url http://nexus.example.com:2026
 """
 
 import argparse
@@ -92,7 +92,7 @@ def main() -> None:
     parser.add_argument(
         "--remote-url",
         type=str,
-        help="Remote Nexus RPC server URL (e.g., http://localhost:8080)",
+        help="Remote Nexus RPC server URL (e.g., http://localhost:2026)",
     )
     parser.add_argument(
         "--data-dir",

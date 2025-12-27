@@ -643,7 +643,7 @@ show_api_key() {
         echo ""
         echo "  To use this key:"
         echo "    export NEXUS_API_KEY='${API_KEY}'"
-        echo "    export NEXUS_URL='http://localhost:8080'"
+        echo "    export NEXUS_URL='http://localhost:2026'"
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
@@ -661,12 +661,12 @@ cmd_urls() {
 ╚═══════════════════════════════════════════════════════════════════╝
 
   🎨 Frontend:        http://localhost:5173
-  🔧 Nexus API:       http://localhost:8080
+  🔧 Nexus API:       http://localhost:2026
   🔮 LangGraph:       http://localhost:2024
   🗄️  PostgreSQL:     localhost:5432
 
   📊 Health Checks:
-     • Nexus:         curl http://localhost:8080/health
+     • Nexus:         curl http://localhost:2026/health
      • Frontend:      curl http://localhost:5173/health
      • LangGraph:     curl http://localhost:2024/ok
 

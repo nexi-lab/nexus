@@ -378,7 +378,7 @@ Write file content with optimistic concurrency control.
 
 **cURL Example:**
 ```bash
-curl -X POST http://localhost:8080/api/nfs/write \
+curl -X POST http://localhost:2026/api/nfs/write \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -d '{
@@ -1209,7 +1209,7 @@ Add a dynamic backend mount at runtime.
 
 **cURL Example:**
 ```bash
-curl -X POST http://localhost:8080/api/nfs/add_mount \
+curl -X POST http://localhost:2026/api/nfs/add_mount \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -d '{
@@ -2876,7 +2876,7 @@ Note: The result is the tuple_id (string) of the created relationship.
 
 ```bash
 # Grant admin user ownership of /workspace
-curl -X POST http://localhost:8080/api/nfs/rebac_create \
+curl -X POST http://localhost:2026/api/nfs/rebac_create \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -d '{
@@ -2891,7 +2891,7 @@ curl -X POST http://localhost:8080/api/nfs/rebac_create \
   }'
 
 # Grant agent editor access to a file
-curl -X POST http://localhost:8080/api/nfs/rebac_create \
+curl -X POST http://localhost:2026/api/nfs/rebac_create \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -d '{

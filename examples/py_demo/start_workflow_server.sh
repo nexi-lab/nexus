@@ -1,7 +1,7 @@
 #!/bin/bash
 # Start Nexus server for workflow demo
 #
-# This script starts a Nexus server on localhost:8080 with PostgreSQL backend
+# This script starts a Nexus server on localhost:2026 with PostgreSQL backend
 # for testing workflow auto-fire in remote mode.
 #
 # Supports both local and Docker PostgreSQL
@@ -82,7 +82,7 @@ echo "ℹ️  Note: Skipping Alembic migrations (pre-existing cycle issue)"
 echo "   Tables will be auto-created by SQLAlchemy on first run"
 
 echo ""
-echo "🌐 Starting Nexus server on http://localhost:8080"
+echo "🌐 Starting Nexus server on http://localhost:2026"
 echo "   Press Ctrl+C to stop the server"
 echo ""
 
@@ -90,5 +90,5 @@ echo ""
 cd ../../
 nexus serve \
     --host 0.0.0.0 \
-    --port 8080 \
+    --port 2026 \
     --data-dir "$NEXUS_DATA_DIR"

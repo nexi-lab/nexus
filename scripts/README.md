@@ -38,7 +38,7 @@ Starts Nexus server **without authentication**.
 **What it does:**
 1. Creates `/workspace` directory
 2. Grants admin user ownership
-3. Starts server on port 8080
+3. Starts server on port 2026
 4. Accepts unauthenticated requests (uses `X-Nexus-Subject` header)
 
 **Security:** ⚠️ **INSECURE** - Anyone can impersonate any user
@@ -158,7 +158,7 @@ Both scripts support:
 - `--project-id` - GCP project (default: nexi-lab-888)
 - `--instance-name` - VM name (default: nexus-server)
 - `--zone` - GCP zone (default: us-west1-a)
-- `--port` - Server port (default: 8080)
+- `--port` - Server port (default: 2026)
 - `--cloud-sql-instance` - PostgreSQL Cloud SQL instance
 - `--db-name` - Database name (default: nexus)
 - `--db-user` - Database user (default: postgres)
@@ -226,7 +226,7 @@ export NEXUS_DATABASE_URL="postgresql://nexus:password@localhost/nexus"
 # Optional
 export NEXUS_DATA_DIR="./nexus-data"  # Default: ./nexus-data
 export NEXUS_ADMIN_USER="alice"       # Default: admin
-export NEXUS_PORT="9000"              # Default: 8080
+export NEXUS_PORT="9000"              # Default: 2026
 export NEXUS_HOST="127.0.0.1"         # Default: 0.0.0.0
 ```
 
@@ -243,7 +243,7 @@ export NEXUS_DATABASE_URL="postgresql://nexus:password@localhost/nexus"
 
 # 3. Use the admin key
 source .nexus-admin-env
-nexus ls /workspace --remote-url http://localhost:8080
+nexus ls /workspace --remote-url http://localhost:2026
 
 # 4. Create keys for other users
 python3 scripts/create-api-key.py alice "Alice's laptop" --days 90
@@ -296,7 +296,7 @@ Deployment scripts deploy with:
 - **Storage Backend:** GCS (`nexi-hub` bucket)
 - **Metadata Store:** PostgreSQL (Cloud SQL, optional)
 - **Networking:** Host network mode
-- **Ports:** 80 (public) → 8080 (container)
+- **Ports:** 80 (public) → 2026 (container)
 - **Authentication:** Via GCP metadata service
 
 Docker images are stored in GCR:

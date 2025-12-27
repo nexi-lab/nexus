@@ -95,11 +95,11 @@ You'll see output like:
 ```bash
 # Export the API key
 export NEXUS_API_KEY='nxk_your_key_here'
-export NEXUS_URL='http://localhost:8080'
+export NEXUS_URL='http://localhost:2026'
 
 # Or add to your shell profile (~/.bashrc, ~/.zshrc)
 echo "export NEXUS_API_KEY='nxk_your_key_here'" >> ~/.bashrc
-echo "export NEXUS_URL='http://localhost:8080'" >> ~/.bashrc
+echo "export NEXUS_URL='http://localhost:2026'" >> ~/.bashrc
 ```
 </details>
 
@@ -109,35 +109,35 @@ echo "export NEXUS_URL='http://localhost:8080'" >> ~/.bashrc
 ```bash
 # For current session (Git Bash)
 export NEXUS_API_KEY='nxk_your_key_here'
-export NEXUS_URL='http://localhost:8080'
+export NEXUS_URL='http://localhost:2026'
 
 # Or add to ~/.bashrc for persistence
 echo "export NEXUS_API_KEY='nxk_your_key_here'" >> ~/.bashrc
-echo "export NEXUS_URL='http://localhost:8080'" >> ~/.bashrc
+echo "export NEXUS_URL='http://localhost:2026'" >> ~/.bashrc
 ```
 
 **Windows PowerShell Alternative:**
 ```powershell
 $env:NEXUS_API_KEY='nxk_your_key_here'
-$env:NEXUS_URL='http://localhost:8080'
+$env:NEXUS_URL='http://localhost:2026'
 ```
 </details>
 
 ## Access Services
 
 - **Web UI**: http://localhost:5173
-- **Nexus API**: http://localhost:8080
+- **Nexus API**: http://localhost:2026
 - **LangGraph**: http://localhost:2024
 
 ## Test It Works
 
 ```bash
 # Check Nexus health
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 
 # List files (requires API key)
 curl -H "Authorization: Bearer $NEXUS_API_KEY" \
-     http://localhost:8080/list?path=/
+     http://localhost:2026/list?path=/
 ```
 
 ## Next Steps

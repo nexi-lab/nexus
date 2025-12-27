@@ -55,7 +55,7 @@ gcloud compute ssh nexus-server-spot --zone=us-west1-a --command="cd ~/nexus-fro
 
 **Verify:**
 ```bash
-curl http://35.197.30.59:8080/health
+curl http://35.197.30.59:2026/health
 gcloud compute ssh nexus-server-spot --zone=us-west1-a --command="docker exec nexus-server pip show nexus-ai-fs | grep Version"
 ```
 
@@ -69,13 +69,13 @@ gcloud compute ssh nexus-server-spot --zone=us-west1-a --command="docker exec ne
   - Frontend: `~/nexus-frontend` (nexi-lab/nexus-frontend)
 - Endpoints:
   - Frontend: http://35.197.30.59:5173
-  - API: http://35.197.30.59:8080
+  - API: http://35.197.30.59:2026
   - LangGraph: http://35.197.30.59:2024
 
 **Rebuild frontend with new configuration:**
 ```bash
 # If API URLs change, rebuild frontend
-gcloud compute ssh nexus-server-spot --zone=us-west1-a --command="cd ~/nexus-frontend && docker build --build-arg VITE_NEXUS_API_URL=http://35.197.30.59:8080 --build-arg VITE_LANGGRAPH_API_URL=http://35.197.30.59:2024 -t nexus-frontend:latest . && cd ~/nexus && docker-compose -f docker-compose.demo.yml up -d frontend"
+gcloud compute ssh nexus-server-spot --zone=us-west1-a --command="cd ~/nexus-frontend && docker build --build-arg VITE_NEXUS_API_URL=http://35.197.30.59:2026 --build-arg VITE_LANGGRAPH_API_URL=http://35.197.30.59:2024 -t nexus-frontend:latest . && cd ~/nexus && docker-compose -f docker-compose.demo.yml up -d frontend"
 ```
 
 ---
@@ -107,4 +107,3 @@ Before closing any issue:
 
 Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 **Always reference issue number.**
-

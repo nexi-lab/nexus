@@ -54,7 +54,7 @@ auth_provider = create_auth_provider("static", auth_config)
 server = NexusRPCServer(
     nexus_fs=nx,
     host="0.0.0.0",
-    port=8080,
+    port=2026,
     auth_provider=auth_provider  # Full auth provider support
 )
 server.serve_forever()
@@ -146,7 +146,7 @@ CLI usage:
 export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
 
 # Start server with database authentication
-nexus serve --host 0.0.0.0 --port 8080 --auth-type database
+nexus serve --host 0.0.0.0 --port 2026 --auth-type database
 ```
 
 Programmatic usage:
@@ -209,7 +209,7 @@ from nexus.remote import RemoteNexusFS
 
 # Connect with API key
 nx = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key="sk-alice-secret-key"
 )
 
@@ -222,7 +222,7 @@ nx.write("/workspace/file.txt", b"Hello, World!")
 Include API key in Authorization header:
 
 ```bash
-curl -X POST http://localhost:8080/api/nfs/read \
+curl -X POST http://localhost:2026/api/nfs/read \
   -H "Authorization: Bearer sk-alice-secret-key" \
   -H "Content-Type: application/json" \
   -d '{"id": 1, "params": {"path": "/workspace/file.txt"}}'
@@ -485,7 +485,7 @@ nexus serve --api-key sk-dev-secret-123
 
 # Use from Python client
 from nexus.remote import RemoteNexusFS
-nx = RemoteNexusFS("http://localhost:8080", api_key="sk-dev-secret-123")
+nx = RemoteNexusFS("http://localhost:2026", api_key="sk-dev-secret-123")
 nx.write("/workspace/file.txt", b"Hello!")
 ```
 
@@ -523,11 +523,11 @@ with SessionFactory() as session:
 EOF
 
 # Step 2: Start server with database authentication
-nexus serve --host 0.0.0.0 --port 8080 --auth-type database
+nexus serve --host 0.0.0.0 --port 2026 --auth-type database
 
 # Step 3: Use from Python client
 from nexus.remote import RemoteNexusFS
-nx = RemoteNexusFS("http://localhost:8080", api_key="sk-alice-...")
+nx = RemoteNexusFS("http://localhost:2026", api_key="sk-alice-...")
 nx.write("/workspace/file.txt", b"Hello!")
 ```
 
@@ -554,7 +554,7 @@ auth_provider = create_auth_provider("static", auth_config)
 server = NexusRPCServer(
     nexus_fs=nx,
     host="0.0.0.0",
-    port=8080,
+    port=2026,
     auth_provider=auth_provider
 )
 server.serve_forever()
@@ -598,7 +598,7 @@ auth_provider = create_auth_provider("database", session_factory=SessionFactory)
 server = NexusRPCServer(
     nexus_fs=nx,
     host="0.0.0.0",
-    port=8080,
+    port=2026,
     auth_provider=auth_provider
 )
 server.serve_forever()
@@ -626,7 +626,7 @@ auth_provider = create_auth_provider("oidc", auth_config)
 server = NexusRPCServer(
     nexus_fs=nx,
     host="0.0.0.0",
-    port=8080,
+    port=2026,
     auth_provider=auth_provider
 )
 server.serve_forever()

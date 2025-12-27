@@ -26,7 +26,7 @@ Usage:
     export OPENAI_API_KEY="your-key"
 
     # Optional: Set Nexus server URL for remote server
-    export NEXUS_SERVER_URL="http://your-server:8080"
+    export NEXUS_SERVER_URL="http://your-server:2026"
     export NEXUS_API_KEY="your-nexus-key"
 
     # Run the demo
@@ -76,7 +76,7 @@ def connect_to_nexus(tenant_id: str = "openai-agents-demo", agent_id: str = "rea
         - "team-acme" - Team-based tenant for collaboration
         - "prod-workflow" - Production workflow tenant
     """
-    server_url = os.getenv("NEXUS_SERVER_URL") or os.getenv("NEXUS_URL", "http://localhost:8080")
+    server_url = os.getenv("NEXUS_SERVER_URL") or os.getenv("NEXUS_URL", "http://localhost:2026")
     api_key = os.getenv("NEXUS_API_KEY")
 
     # Allow overriding via environment variables

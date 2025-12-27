@@ -12,7 +12,7 @@ services:
     container_name: nexus-server
     restart: unless-stopped
     ports:
-      - "${PORT:-8080}:8080"
+      - "${PORT:-8080}:2026"
     environment:
       - NEXUS_HOST=0.0.0.0
       - NEXUS_PORT=8080
@@ -39,7 +39,7 @@ services:
     # The nexus user inside the container doesn't have socket permissions
     user: root
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -72,7 +72,7 @@ services:
       - MCP_PORT=8081
 
       # Backend Connection (connect to nexus-server)
-      - NEXUS_URL=${NEXUS_URL:-http://nexus-server:8080}
+      - NEXUS_URL=${NEXUS_URL:-http://nexus-server:2026}
       - NEXUS_API_KEY=${NEXUS_API_KEY:-}
 
       # Alternative: Local mode (comment out NEXUS_URL, uncomment below)

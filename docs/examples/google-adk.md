@@ -328,7 +328,7 @@ endpoint = agent.deploy()
 export GOOGLE_API_KEY="your-gemini-api-key"
 
 # Optional: Nexus Server (default: local)
-export NEXUS_URL="http://localhost:8080"
+export NEXUS_URL="http://localhost:2026"
 export NEXUS_API_KEY="your-nexus-key"
 
 # Optional: Keep test data after demo

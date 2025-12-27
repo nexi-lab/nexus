@@ -33,7 +33,7 @@ def async_client(mock_httpx_client):
     """Create an AsyncRemoteNexusFS instance with mocked httpx client."""
     with patch("nexus.remote.async_client.httpx.AsyncClient", return_value=mock_httpx_client):
         client = AsyncRemoteNexusFS(
-            server_url="http://localhost:8080",
+            server_url="http://localhost:2026",
             api_key="test-key",
             timeout=30.0,
             connect_timeout=5.0,
@@ -49,11 +49,11 @@ class TestAsyncRemoteNexusFSInitialization:
         """Test initialization with API key."""
         with patch("nexus.remote.async_client.httpx.AsyncClient") as mock_client_class:
             client = AsyncRemoteNexusFS(
-                server_url="http://localhost:8080",
+                server_url="http://localhost:2026",
                 api_key="test-key",
             )
 
-            assert client.server_url == "http://localhost:8080"
+            assert client.server_url == "http://localhost:2026"
             assert client.api_key == "test-key"
             assert client.timeout == 30.0
             assert client.connect_timeout == 5.0
@@ -67,7 +67,7 @@ class TestAsyncRemoteNexusFSInitialization:
     def test_init_without_api_key(self):
         """Test initialization without API key."""
         with patch("nexus.remote.async_client.httpx.AsyncClient") as mock_client_class:
-            client = AsyncRemoteNexusFS(server_url="http://localhost:8080")
+            client = AsyncRemoteNexusFS(server_url="http://localhost:2026")
 
             assert client.api_key is None
             assert client._initialized is False
@@ -80,7 +80,7 @@ class TestAsyncRemoteNexusFSInitialization:
         """Test initialization with custom timeouts."""
         with patch("nexus.remote.async_client.httpx.AsyncClient"):
             client = AsyncRemoteNexusFS(
-                server_url="http://localhost:8080",
+                server_url="http://localhost:2026",
                 timeout=60.0,
                 connect_timeout=10.0,
             )
@@ -91,9 +91,9 @@ class TestAsyncRemoteNexusFSInitialization:
     def test_init_strips_trailing_slash(self):
         """Test that server_url trailing slash is stripped."""
         with patch("nexus.remote.async_client.httpx.AsyncClient"):
-            client = AsyncRemoteNexusFS(server_url="http://localhost:8080/")
+            client = AsyncRemoteNexusFS(server_url="http://localhost:2026/")
 
-            assert client.server_url == "http://localhost:8080"
+            assert client.server_url == "http://localhost:2026"
 
 
 class TestAsyncRemoteNexusFSContextManager:

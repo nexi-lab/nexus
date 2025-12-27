@@ -68,12 +68,12 @@ Secure deployment with API key authentication.
     # Start server
     nexus serve \
       --host 0.0.0.0 \
-      --port 8080 \
+      --port 2026 \
       --data-dir /var/lib/nexus \
       --backend postgresql
 
     # Connect clients
-    export NEXUS_REMOTE_URL=http://nexus.example.com:8080
+    export NEXUS_REMOTE_URL=http://nexus.example.com:2026
     export NEXUS_API_KEY=your-api-key
     ```
 
@@ -94,7 +94,7 @@ Secure deployment with API key authentication.
     ```bash
     # Run Nexus in Docker
     docker run -d \
-      -p 8080:8080 \
+      -p 2026:2026 \
       -v nexus-data:/data \
       -e NEXUS_BACKEND=postgresql \
       -e NEXUS_DB_URL=postgresql://... \
@@ -202,10 +202,10 @@ nx = nexus.connect(config={
 
 ```bash
 # Health endpoint
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 
 # Detailed metrics
-curl http://localhost:8080/metrics
+curl http://localhost:2026/metrics
 ```
 
 ### Logging
@@ -229,7 +229,7 @@ logging.basicConfig(
 #### Connection Issues
 - Check firewall rules
 - Verify server is running: `nexus health`
-- Test network connectivity: `curl http://server:8080/health`
+- Test network connectivity: `curl http://server:2026/health`
 </div>
 
 <div class="value-prop" markdown>

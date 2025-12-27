@@ -96,7 +96,7 @@ When monolithic and distributed modes are implemented, migration will be support
 nexus export --format jsonl > metadata.jsonl
 
 # Import to monolithic (future)
-nexus import --url http://server:8080 < metadata.jsonl
+nexus import --url http://server:2026 < metadata.jsonl
 ```
 
 ## Current Limitations

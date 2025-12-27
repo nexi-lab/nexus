@@ -65,10 +65,10 @@ This example demonstrates all file manipulation operations in Nexus: write, read
 
     ```bash
     # Start server
-    nexus serve --host 0.0.0.0 --port 8080
+    nexus serve --host 0.0.0.0 --port 2026
 
     # Set credentials
-    export NEXUS_URL=http://localhost:8080
+    export NEXUS_URL=http://localhost:2026
     export NEXUS_API_KEY=your-key
 
     # Same commands work remotely
@@ -369,13 +369,13 @@ This example demonstrates all file manipulation operations in Nexus: write, read
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Grant user read-only access
     nx.rebac_create("user", "alice", "direct_viewer", "file", "/workspace/hello.txt")
 
     # Alice can read
-    alice_nx = nexus.connect(remote_url="http://localhost:8080", api_key="alice-key")
+    alice_nx = nexus.connect(remote_url="http://localhost:2026", api_key="alice-key")
     content = alice_nx.read("/workspace/hello.txt")  # ✓ Works
 
     # Alice cannot write

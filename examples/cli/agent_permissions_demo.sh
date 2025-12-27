@@ -79,7 +79,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 base = os.getenv('DEMO_BASE')
 
 # Delete all tuples related to demo paths
@@ -347,7 +347,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nx = RemoteNexusFS('http://localhost:8080', api_key=os.getenv('NEXUS_API_KEY'))
+nx = RemoteNexusFS('http://localhost:2026', api_key=os.getenv('NEXUS_API_KEY'))
 tuples = nx.rebac_list_tuples(subject=("agent", "alice_agent"))
 print(f"\nalice_agent has {len(tuples)} direct ReBAC tuples:")
 for t in tuples[:10]:

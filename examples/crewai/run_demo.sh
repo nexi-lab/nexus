@@ -16,7 +16,7 @@
 set -e
 
 # Configuration
-NEXUS_URL="${NEXUS_URL:-http://localhost:8080}"
+NEXUS_URL="${NEXUS_URL:-http://localhost:2026}"
 
 echo "========================================================================"
 echo "CrewAI + Nexus MCP Integration Demo"

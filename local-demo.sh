@@ -331,13 +331,13 @@ ensure_docker_sandbox_image() {
 # Function to check if port 8080 is available
 check_port_8080_available() {
     # Only check for LISTEN state, not stale connections
-    if lsof -ti :8080 -sTCP:LISTEN >/dev/null 2>&1; then
+    if lsof -ti :2026 -sTCP:LISTEN >/dev/null 2>&1; then
         echo -e "${YELLOW}ERROR: Port 8080 is already in use${NC}"
         echo ""
-        PIDS=$(lsof -ti :8080 -sTCP:LISTEN 2>/dev/null || true)
+        PIDS=$(lsof -ti :2026 -sTCP:LISTEN 2>/dev/null || true)
         if [ -n "$PIDS" ]; then
             echo "Process(es) running on port 8080:"
-            lsof -i :8080 -sTCP:LISTEN 2>/dev/null | grep -v "^COMMAND" | while read line; do
+            lsof -i :2026 -sTCP:LISTEN 2>/dev/null | grep -v "^COMMAND" | while read line; do
                 echo "  $line"
             done
             echo ""
@@ -470,14 +470,14 @@ start_frontend() {
 
     # Start frontend in background with VITE_NEXUS_SERVER_URL set to localhost
     cd "$FRONTEND_DIR"
-    VITE_NEXUS_SERVER_URL=http://localhost:8080 pnpm run dev > /tmp/nexus-frontend.log 2>&1 &
+    VITE_NEXUS_SERVER_URL=http://localhost:2026 pnpm run dev > /tmp/nexus-frontend.log 2>&1 &
     local FRONTEND_PID=$!
     echo $FRONTEND_PID > /tmp/nexus-frontend.pid
 
     echo -e "${GREEN}✓ Frontend started (PID: $FRONTEND_PID)${NC}"
     echo "  Logs: /tmp/nexus-frontend.log"
     echo "  URL: http://localhost:5173"
-    echo "  Nexus Backend: http://localhost:8080"
+    echo "  Nexus Backend: http://localhost:2026"
 
     cd - > /dev/null
 }
@@ -738,7 +738,7 @@ start_server() {
             # Wait for server to be ready (check health endpoint)
             echo "Waiting for server to be ready..."
             for i in {1..30}; do
-                if curl -s http://localhost:8080/health >/dev/null 2>&1; then
+                if curl -s http://localhost:2026/health >/dev/null 2>&1; then
                     echo "Server is ready!"
                     sleep 1  # Give it one more second
 
@@ -783,13 +783,13 @@ stop_server() {
     stop_langgraph
 
     # Check for processes on port 8080 (only LISTEN state, not stale connections)
-    PIDS=$(lsof -ti :8080 -sTCP:LISTEN 2>/dev/null || true)
+    PIDS=$(lsof -ti :2026 -sTCP:LISTEN 2>/dev/null || true)
 
     if [ -n "$PIDS" ]; then
         echo "Found process(es) on port 8080:"
         echo ""
         # Show detailed information about processes
-        lsof -i :8080 -sTCP:LISTEN 2>/dev/null | grep -v "^COMMAND" | while read line; do
+        lsof -i :2026 -sTCP:LISTEN 2>/dev/null | grep -v "^COMMAND" | while read line; do
             echo "  $line"
         done
         echo ""

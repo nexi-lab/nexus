@@ -83,7 +83,7 @@ pip install nexus-ai-fs
 import nexus
 
 nx = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "nxk_..."
 })
 
@@ -106,7 +106,7 @@ nx.close()
 ```bash
 pip install nexus-ai-fs
 
-export NEXUS_URL="http://localhost:8080"
+export NEXUS_URL="http://localhost:2026"
 export NEXUS_API_KEY="nxk_..."
 
 nexus write /workspace/hello.txt "Hello, Nexus!"

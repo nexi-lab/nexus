@@ -69,7 +69,7 @@ steps:
         sleep 10
 
         # Check health endpoint
-        docker exec test-container curl -f http://localhost:8080/health || exit 1
+        docker exec test-container curl -f http://localhost:2026/health || exit 1
 
         # Verify installed version from PyPI
         echo "Verifying PyPI version..."

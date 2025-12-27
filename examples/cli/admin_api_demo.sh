@@ -25,7 +25,7 @@ NC='\033[0m' # No Color
 # Configuration
 DEMO_DIR="/tmp/nexus-admin-api-demo-$$"
 DB_PATH="$DEMO_DIR/nexus.db"
-SERVER_PORT=18080
+SERVER_PORT=12026
 SERVER_URL="http://localhost:$SERVER_PORT"
 KEEP="${KEEP:-0}"  # Set KEEP=1 to skip cleanup
 

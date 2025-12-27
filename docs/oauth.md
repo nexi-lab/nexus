@@ -82,7 +82,7 @@ manager = TokenManager(db_path="~/.nexus/nexus.db")
 provider = GoogleOAuthProvider(
     client_id="123456.apps.googleusercontent.com",
     client_secret="GOCSPX-...",
-    redirect_uri="http://localhost:8080/oauth/callback",
+    redirect_uri="http://localhost:2026/oauth/callback",
     scopes=["https://www.googleapis.com/auth/drive"]
 )
 

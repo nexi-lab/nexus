@@ -17,7 +17,7 @@ echo
 # Check environment
 if [ -z "$NEXUS_URL" ]; then
     echo "Error: NEXUS_URL not set. Please run:"
-    echo "  export NEXUS_URL=http://localhost:8080"
+    echo "  export NEXUS_URL=http://localhost:2026"
     exit 1
 fi
 

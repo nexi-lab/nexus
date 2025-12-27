@@ -26,7 +26,7 @@ Add to `~/.config/claude/claude_desktop_config.json`:
       "command": "nexus",
       "args": ["mcp", "serve", "--transport", "stdio"],
       "env": {
-        "NEXUS_URL": "http://localhost:8080",
+        "NEXUS_URL": "http://localhost:2026",
         "NEXUS_API_KEY": "your-api-key"
       }
     }
@@ -55,7 +55,7 @@ nexus mcp serve --transport stdio
 
 ### Remote Mode (With auth)
 ```bash
-NEXUS_URL=http://localhost:8080 \
+NEXUS_URL=http://localhost:2026 \
 NEXUS_API_KEY=your-key \
 nexus mcp serve --transport stdio
 ```

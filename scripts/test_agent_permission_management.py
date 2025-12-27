@@ -32,7 +32,7 @@ Test 4: Agent with API key (granular permissions)
 6. Cleaning up by deleting the agent
 
 Usage:
-    python scripts/test_agent_permission_management.py [--api-key YOUR_ADMIN_API_KEY] [--base-url http://localhost:8080] [--cleanup-old-agents]
+    python scripts/test_agent_permission_management.py [--api-key YOUR_ADMIN_API_KEY] [--base-url http://localhost:2026] [--cleanup-old-agents]
 """
 
 import argparse
@@ -87,7 +87,7 @@ def make_rpc_call(
             print(f"❌ RPC Error: {result['error']}")
             sys.exit(1)
 
-        return dict(result)  # type: ignore[arg-type]
+        return dict(result)
     except requests.exceptions.RequestException as e:
         print(f"❌ Request failed: {e}")
         sys.exit(1)
@@ -1136,8 +1136,8 @@ def main() -> None:
     parser.add_argument(
         "--base-url",
         type=str,
-        default="http://localhost:8080",
-        help="Base URL of Nexus server (default: http://localhost:8080)",
+        default="http://localhost:2026",
+        help="Base URL of Nexus server (default: http://localhost:2026)",
     )
     parser.add_argument(
         "--cleanup-old-agents",

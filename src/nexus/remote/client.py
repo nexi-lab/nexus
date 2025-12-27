@@ -4092,6 +4092,73 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("provision_user", params)
         return result  # type: ignore[no-any-return]
 
+    def deprovision_user(
+        self,
+        user_id: str,
+        tenant_id: str | None = None,
+        delete_user_record: bool = False,
+        force: bool = False,
+        context: dict | None = None,
+    ) -> dict[str, Any]:
+        """Deprovision a user and remove all their resources.
+
+        Removes:
+        - All user directories (workspace, memory, skill, agent, connector, resource)
+        - All API keys for the user
+        - All ReBAC permissions where user is subject
+        - Entity registry entries for user and their agents
+        - Optionally: UserModel record (soft delete)
+
+        Safety checks:
+        - Prevents deprovisioning global admin users (unless force=True)
+        - Idempotent: safe to call multiple times
+        - Handles missing resources gracefully
+
+        Args:
+            user_id: User ID to deprovision
+            tenant_id: Tenant ID (looked up from user if not provided)
+            delete_user_record: If True, soft-deletes UserModel record
+            force: Bypass safety checks (e.g., allow deprovisioning admin users)
+            context: Optional operation context
+
+        Returns:
+            {
+                "user_id": str,
+                "tenant_id": str,
+                "deleted_directories": list[str],
+                "deleted_api_keys": int,
+                "deleted_permissions": int,
+                "deleted_entities": int,
+                "user_record_deleted": bool,
+            }
+
+        Raises:
+            RemoteFilesystemError: If deprovisioning fails
+            ValueError: If attempting to deprovision admin user without force=True
+
+        Example:
+            >>> result = nx.deprovision_user(
+            ...     user_id="alice",
+            ...     tenant_id="example",
+            ...     delete_user_record=True
+            ... )
+            >>> print(result["deleted_directories"])
+            ['/tenant:example/user:alice/workspace', ...]
+        """
+        params: dict[str, Any] = {
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "delete_user_record": delete_user_record,
+            "force": force,
+        }
+
+        # Add context if provided
+        if context is not None:
+            params["context"] = context
+
+        result = self._call_rpc("deprovision_user", params)
+        return result  # type: ignore[no-any-return]
+
     # ============================================================
     # Lifecycle Management
     # ============================================================

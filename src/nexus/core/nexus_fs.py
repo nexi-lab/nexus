@@ -4231,6 +4231,296 @@ class NexusFS(
             "created_resources": created_resources,  # For debugging
         }
 
+    @rpc_expose(description="Deprovision a user and remove all their resources")
+    def deprovision_user(
+        self,
+        user_id: str,
+        tenant_id: str | None = None,
+        delete_user_record: bool = False,
+        force: bool = False,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Deprovision a user and remove all their resources.
+
+        Removes:
+        - All user directories (workspace, memory, skill, agent, connector, resource)
+        - All API keys for the user
+        - All ReBAC permissions where user is subject
+        - Entity registry entries for user and their agents
+        - Optionally: UserModel record (soft delete)
+
+        Safety checks:
+        - Prevents deprovisioning global admin users (unless force=True)
+        - Idempotent: safe to call multiple times
+        - Handles missing resources gracefully
+
+        Args:
+            user_id: User ID to deprovision
+            tenant_id: Tenant ID (looked up from user if not provided)
+            delete_user_record: If True, soft-deletes UserModel record
+            force: Bypass safety checks (e.g., allow deprovisioning admin users)
+            context: Operation context
+
+        Returns:
+            {
+                "user_id": str,
+                "tenant_id": str,
+                "deleted_directories": list[str],
+                "deleted_api_keys": int,
+                "deleted_permissions": int,
+                "deleted_entities": int,
+                "user_record_deleted": bool,
+            }
+
+        Example:
+            >>> result = nx.deprovision_user(
+            ...     user_id="alice",
+            ...     tenant_id="example",
+            ...     delete_user_record=True
+            ... )
+            >>> print(result["deleted_directories"])
+            ['/tenant:example/user:alice/workspace', ...]
+        """
+        import logging
+        from datetime import UTC, datetime
+
+        logger = logging.getLogger(__name__)
+
+        # Input validation
+        if not user_id:
+            raise ValueError("user_id is required")
+
+        logger.info(f"Deprovisioning user {user_id}")
+
+        # Use admin context for deprovisioning
+        admin_context = context or OperationContext(
+            user="system",
+            groups=[],
+            tenant_id=tenant_id or "system",
+            is_admin=True,
+        )
+
+        # Track deleted resources
+        result: dict[str, Any] = {
+            "user_id": user_id,
+            "tenant_id": None,
+            "deleted_directories": [],
+            "deleted_api_keys": 0,
+            "deleted_permissions": 0,
+            "deleted_entities": 0,
+            "user_record_deleted": False,
+        }
+
+        # Look up user in database
+        session = self.metadata.SessionLocal()
+        try:
+            from nexus.storage.models import UserModel
+
+            user = session.query(UserModel).filter_by(user_id=user_id).first()
+
+            if not user:
+                logger.warning(f"User not found in database: {user_id}")
+                # Continue with cleanup even if user doesn't exist
+            else:
+                # Get tenant_id from user if not provided
+                if not tenant_id:
+                    tenant_id = user.tenant_id
+                result["tenant_id"] = tenant_id
+
+                # Safety check: prevent deprovisioning global admin
+                if user.is_global_admin and not force:
+                    raise ValueError(
+                        f"Cannot deprovision global admin user {user_id}. "
+                        "Use force=True to override."
+                    )
+
+                logger.info(
+                    f"Found user {user_id} (email={user.email}, tenant={tenant_id}, "
+                    f"is_admin={user.is_global_admin})"
+                )
+
+            # Update context with proper tenant_id
+            if tenant_id:
+                admin_context = OperationContext(
+                    user="system",
+                    groups=[],
+                    tenant_id=tenant_id,
+                    is_admin=True,
+                )
+
+            # 1. Delete user directories
+            if tenant_id:
+                user_base_path = f"/tenant:{tenant_id}/user:{user_id}"
+                logger.info(f"Deleting user directories under {user_base_path}")
+
+                ALL_RESOURCE_TYPES = [
+                    "workspace",
+                    "memory",
+                    "skill",
+                    "agent",
+                    "connector",
+                    "resource",
+                ]
+
+                for resource_type in ALL_RESOURCE_TYPES:
+                    dir_path = f"{user_base_path}/{resource_type}"
+                    try:
+                        if self.exists(dir_path, context=admin_context):
+                            # Recursively delete all files in the directory
+                            self._delete_directory_recursive(dir_path, admin_context)
+                            result["deleted_directories"].append(dir_path)
+                            logger.info(f"Deleted directory: {dir_path}")
+                        else:
+                            logger.debug(f"Directory doesn't exist: {dir_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete directory {dir_path}: {e}")
+
+            # 2. Delete API keys
+            try:
+                from nexus.storage.models import APIKeyModel
+
+                deleted_keys = (
+                    session.query(APIKeyModel)
+                    .filter_by(user_id=user_id, subject_type="user")
+                    .delete()
+                )
+                session.commit()
+                result["deleted_api_keys"] = deleted_keys
+                logger.info(f"Deleted {deleted_keys} API keys for user {user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to delete API keys: {e}")
+                session.rollback()
+
+            # 3. Delete ReBAC permissions
+            try:
+                # Query all permissions where user is subject
+                if hasattr(self, "rebac_manager") and self.rebac_manager:
+                    tuples = self.rebac_manager.query_tuples_by_subject(("user", user_id))
+                    deleted_count = 0
+                    for tuple_info in tuples:
+                        tuple_id = tuple_info.get("tuple_id")
+                        if tuple_id:
+                            try:
+                                self.rebac_delete(tuple_id)
+                                deleted_count += 1
+                            except Exception:
+                                pass  # Continue with other tuples
+                    result["deleted_permissions"] = deleted_count
+                    logger.info(f"Deleted {deleted_count} ReBAC permissions for user {user_id}")
+                else:
+                    logger.debug("ReBAC manager not available")
+            except Exception as e:
+                logger.warning(f"Failed to delete ReBAC permissions: {e}")
+
+            # 4. Delete entity registry entries
+            try:
+                if self._entity_registry:
+                    # Delete user entity (cascade will delete children)
+                    user_entity = self._entity_registry.get_entity("user", user_id)
+                    if user_entity:
+                        # Delete with cascade to remove all child entities (agents, etc.)
+                        deleted = self._entity_registry.delete_entity("user", user_id, cascade=True)
+                        if deleted:
+                            result["deleted_entities"] = 1  # At least the user entity
+                            logger.info(
+                                f"Deleted user entity and children from registry: {user_id}"
+                            )
+                        else:
+                            logger.warning(f"Failed to delete user entity: {user_id}")
+                    else:
+                        logger.debug(f"User not found in entity registry: {user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to delete entity registry entries: {e}")
+
+            # 5. Soft-delete user record (if requested)
+            if delete_user_record and user:
+                try:
+                    user.is_active = 0
+                    user.deleted_at = datetime.now(UTC)
+                    session.commit()
+                    result["user_record_deleted"] = True
+                    logger.info(f"Soft-deleted user record: {user_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to soft-delete user record: {e}")
+                    session.rollback()
+
+        except Exception as e:
+            logger.error(f"Error during user deprovisioning: {e}")
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+        logger.info(
+            f"Successfully deprovisioned user {user_id}: "
+            f"dirs={len(result['deleted_directories'])}, "
+            f"keys={result['deleted_api_keys']}, "
+            f"perms={result['deleted_permissions']}, "
+            f"entities={result['deleted_entities']}"
+        )
+
+        return result
+
+    def _delete_directory_recursive(self, dir_path: str, context: OperationContext) -> None:
+        """Recursively delete a directory and all its contents.
+
+        Args:
+            dir_path: Directory path to delete
+            context: Operation context
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        try:
+            # List all files and subdirectories recursively
+            result = self.list(dir_path, recursive=True, context=context)
+
+            # Handle different return formats
+            if isinstance(result, dict) and "files" in result:
+                files = result["files"]
+            elif isinstance(result, list):
+                files = result
+            else:
+                files = []
+
+            # Sort paths by depth (deepest first) to delete files before their parent directories
+            paths_to_delete = []
+            for item in files:
+                if isinstance(item, str):
+                    paths_to_delete.append(item)
+                elif isinstance(item, dict):
+                    path = item.get("path")
+                    if path:
+                        paths_to_delete.append(path)
+
+            # Sort by depth (deepest first)
+            paths_to_delete.sort(key=lambda p: p.count("/"), reverse=True)
+
+            # Delete all files first
+            for path in paths_to_delete:
+                if path == dir_path:  # Skip the root directory itself
+                    continue
+                try:
+                    # Try to delete as file first
+                    self.delete(path, context=context)
+                except Exception:
+                    # If not a file, try as directory
+                    try:
+                        self.rmdir(path, context=context)
+                    except Exception as e:
+                        logger.debug(f"Could not delete {path}: {e}")
+
+            # Finally, delete the root directory
+            try:
+                self.rmdir(dir_path, context=context)
+            except Exception as e:
+                logger.debug(f"Could not remove root directory {dir_path}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Error deleting directory {dir_path}: {e}")
+            raise
+
     def _create_user_directories(
         self, user_id: str, tenant_id: str, context: OperationContext
     ) -> list[str]:

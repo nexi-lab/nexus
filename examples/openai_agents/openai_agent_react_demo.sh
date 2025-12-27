@@ -21,7 +21,7 @@ set -e  # Exit on error
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-NEXUS_PORT="${NEXUS_PORT:-8080}"
+NEXUS_PORT="${NEXUS_PORT:-2026}"
 NEXUS_URL="http://localhost:$NEXUS_PORT"
 
 # ============================================

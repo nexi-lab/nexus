@@ -391,7 +391,7 @@ Database (SQLite/PostgreSQL)
 from nexus.remote import RemoteNexusFS
 
 nx = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key="sk-alice-xxx"
 )
 

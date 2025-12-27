@@ -49,7 +49,7 @@ sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'nexus';"
 # - Create PostgreSQL schema
 # - Create admin user and API key
 # - Save credentials to .nexus-admin-env
-# - Start server at http://localhost:8080
+# - Start server at http://localhost:2026
 ```
 
 **Step 2:** Run Demo (in Terminal 2)
@@ -208,7 +208,7 @@ source .nexus-admin-env
 Make sure the auth-enabled server is running:
 ```bash
 # Check if server is running
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 
 # If not, start it:
 ./scripts/init-nexus-with-auth.sh

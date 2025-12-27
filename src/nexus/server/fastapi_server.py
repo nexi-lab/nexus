@@ -19,7 +19,7 @@ Example:
     from nexus.server.fastapi_server import create_app, run_server
 
     app = create_app(nexus_fs, database_url="postgresql://...")
-    run_server(app, host="0.0.0.0", port=8080)
+    run_server(app, host="0.0.0.0", port=2026)
 """
 
 from __future__ import annotations
@@ -2008,7 +2008,7 @@ def _handle_admin_update_key(params: Any, context: Any) -> dict[str, Any]:
 def run_server(
     app: FastAPI | str,
     host: str = "0.0.0.0",
-    port: int = 8080,
+    port: int = 2026,
     log_level: str = "info",
     workers: int | None = None,
 ) -> None:
@@ -2026,7 +2026,7 @@ def run_server(
 
     Production deployment for multi-worker:
         # Option 1: Use uvicorn CLI with workers
-        uvicorn nexus.server.fastapi_server:app --host 0.0.0.0 --port 8080 --workers 4
+        uvicorn nexus.server.fastapi_server:app --host 0.0.0.0 --port 2026 --workers 4
 
         # Option 2: Use gunicorn with uvicorn workers (recommended)
         gunicorn nexus.server.fastapi_server:app -w 4 -k uvicorn.workers.UvicornWorker
@@ -2034,7 +2034,7 @@ def run_server(
     Environment variables:
         NEXUS_WORKERS: Number of workers (default: 1)
         NEXUS_HOST: Host to bind (default: 0.0.0.0)
-        NEXUS_PORT: Port to bind (default: 8080)
+        NEXUS_PORT: Port to bind (default: 2026)
     """
     import os
 
@@ -2074,7 +2074,7 @@ def run_server(
 def run_server_from_config(
     nexus_fs: NexusFS,
     host: str = "0.0.0.0",
-    port: int = 8080,
+    port: int = 2026,
     api_key: str | None = None,
     auth_provider: Any = None,
     database_url: str | None = None,

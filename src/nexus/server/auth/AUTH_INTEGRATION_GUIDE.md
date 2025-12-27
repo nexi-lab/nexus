@@ -50,7 +50,7 @@ oauth_provider = OAuthUserAuth(
     session_factory=session_factory,
     google_client_id=os.getenv("GOOGLE_CLIENT_ID"),
     google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
-    google_redirect_uri=os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/auth/oauth/callback"),
+    google_redirect_uri=os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:2026/auth/oauth/callback"),
     jwt_secret=os.getenv("NEXUS_JWT_SECRET", "your-secret-key-here"),
     oauth_crypto=oauth_crypto
 )
@@ -72,7 +72,7 @@ export NEXUS_JWT_SECRET="your-long-random-secret-key"
 # Required for Google OAuth
 export GOOGLE_CLIENT_ID="123456789.apps.googleusercontent.com"
 export GOOGLE_CLIENT_SECRET="GOCSPX-xxxxxxxxxxxxx"
-export GOOGLE_REDIRECT_URI="http://localhost:8080/auth/oauth/callback"
+export GOOGLE_REDIRECT_URI="http://localhost:2026/auth/oauth/callback"
 
 # Optional: OAuth encryption key (auto-generated if not set)
 export NEXUS_OAUTH_ENCRYPTION_KEY="your-encryption-key"
@@ -270,7 +270,7 @@ Response:
 ```python
 import httpx
 
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:2026"
 
 # Test password authentication
 async def test_password_auth():
@@ -341,7 +341,7 @@ if __name__ == "__main__":
 
 ```bash
 # Register user
-curl -X POST http://localhost:8080/auth/register \
+curl -X POST http://localhost:2026/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "email": "test@example.com",
@@ -350,7 +350,7 @@ curl -X POST http://localhost:8080/auth/register \
   }'
 
 # Login
-curl -X POST http://localhost:8080/auth/login \
+curl -X POST http://localhost:2026/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "identifier": "test@example.com",
@@ -358,11 +358,11 @@ curl -X POST http://localhost:8080/auth/login \
   }'
 
 # Get user info (replace TOKEN with actual token)
-curl -X GET http://localhost:8080/auth/me \
+curl -X GET http://localhost:2026/auth/me \
   -H "Authorization: Bearer TOKEN"
 
 # Get Google OAuth URL
-curl -X GET http://localhost:8080/auth/oauth/google/authorize
+curl -X GET http://localhost:2026/auth/oauth/google/authorize
 ```
 
 ## Security Considerations

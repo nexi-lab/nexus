@@ -289,7 +289,7 @@ echo "  cd /opt/nexus"
 echo "  python scripts/create-api-key.py alice \"Alice's Key\" --days 90"
 echo
 echo -e "${GREEN}After (Remote admin CLI, no SSH):${NC}"
-echo "  export NEXUS_URL=http://nexus-server:8080"
+echo "  export NEXUS_URL=http://nexus-server:2026"
 echo "  export NEXUS_API_KEY=<your_admin_key>"
 echo "  nexus admin create-user alice --name \"Alice's Key\" --expires-days 90"
 echo

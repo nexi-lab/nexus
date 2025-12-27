@@ -76,7 +76,7 @@ def list_skills(
         >>>
         >>> config = RunnableConfig(metadata={
         ...     "x_auth": "Bearer sk-your-api-key",
-        ...     "nexus_server_url": "http://localhost:8080"
+        ...     "nexus_server_url": "http://localhost:2026"
         ... })
         >>>
         >>> # Get all skills (default)
@@ -106,13 +106,13 @@ def get_nexus_tools() -> list[BaseTool]:
     Create LangGraph tools that connect to Nexus server with per-request authentication.
 
     Args:
-        server_url: Nexus server URL (e.g., "http://localhost:8080" or ngrok URL)
+        server_url: Nexus server URL (e.g., "http://localhost:2026" or ngrok URL)
 
     Returns:
         List of LangGraph tool functions that require x_auth in metadata
 
     Usage:
-        tools = get_nexus_tools("http://localhost:8080")
+        tools = get_nexus_tools("http://localhost:2026")
         agent = create_react_agent(model=llm, tools=tools)
 
         # Frontend passes API key in metadata:

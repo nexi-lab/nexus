@@ -91,11 +91,11 @@ nexus llm read /doc.txt "Summarize" --no-search
 #### Remote Server
 ```bash
 # Set remote server URL
-export NEXUS_URL="http://localhost:8080"
+export NEXUS_URL="http://localhost:2026"
 export NEXUS_API_KEY="your-api-key"
 
 # Or use --remote-url flag
-nexus llm read /doc.pdf "Question" --remote-url http://localhost:8080
+nexus llm read /doc.pdf "Question" --remote-url http://localhost:2026
 ```
 
 ### Python SDK Usage

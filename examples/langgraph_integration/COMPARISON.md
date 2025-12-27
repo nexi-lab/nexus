@@ -85,7 +85,7 @@ requirements = nexus.read(state["research_file"])
 ```python
 # Connect as specific agent with restricted permissions
 nexus = RemoteNexusFS(
-    server_url=os.getenv("NEXUS_URL", "http://localhost:8080"),
+    server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
     api_key=os.getenv("NEXUS_API_KEY")
 )
 nexus.agent_id = "researcher"  # Identifies agent for permission checks
@@ -151,7 +151,7 @@ def researcher_node(state: AgentState) -> AgentState:
 
     # Connect as researcher agent
     nexus = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:8080"),
+        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
         api_key=os.getenv("NEXUS_API_KEY")
     )
     nexus.agent_id = "researcher"
@@ -262,11 +262,11 @@ Output: Local files in `./workspace/`
 ### Nexus Version
 ```bash
 # Terminal 1: Start Nexus server
-nexus serve --host localhost --port 8080
+nexus serve --host localhost --port 2026
 
 # Terminal 2: Run demo
 export OPENAI_API_KEY="your-key"
-export NEXUS_URL="http://localhost:8080"
+export NEXUS_URL="http://localhost:2026"
 ./run_nexus_demo.sh
 ```
 Output: Cloud files in Nexus at `/workspace/` with permission control

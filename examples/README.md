@@ -21,7 +21,7 @@ Initialize a Nexus server with authentication:
 
 This will:
 - Initialize the PostgreSQL database
-- Start the Nexus server on `http://localhost:8080`
+- Start the Nexus server on `http://localhost:2026`
 - Create an admin API key
 - Save credentials to `.nexus-admin-env`
 
@@ -143,7 +143,7 @@ Here's a typical workflow using both Python and CLI:
 # Start server with authentication
 ./scripts/init-nexus-with-auth.sh
 
-# Server is now running at http://localhost:8080
+# Server is now running at http://localhost:2026
 # Credentials saved to .nexus-admin-env
 ```
 
@@ -186,7 +186,7 @@ nexus ls /workspace/cli-project
 Both examples require these environment variables (automatically set by `.nexus-admin-env`):
 
 - `NEXUS_API_KEY`: Authentication API key
-- `NEXUS_URL`: Server URL (e.g., `http://localhost:8080`)
+- `NEXUS_URL`: Server URL (e.g., `http://localhost:2026`)
 
 **Quick setup**:
 ```bash
@@ -336,7 +336,7 @@ Both support:
 
 ### Server won't start
 - Check PostgreSQL is running: `psql $NEXUS_DATABASE_URL -c "SELECT 1"`
-- Check port 8080 is available: `lsof -i :8080`
+- Check port 2026 is available: `lsof -i :2026`
 
 ### Authentication errors
 - Ensure `.nexus-admin-env` exists: `ls -la .nexus-admin-env`
@@ -344,7 +344,7 @@ Both support:
 - Verify key is set: `echo $NEXUS_API_KEY`
 
 ### Connection refused
-- Verify server is running: `curl http://localhost:8080/health`
+- Verify server is running: `curl http://localhost:2026/health`
 - Check `SERVER_URL` is set: `echo $SERVER_URL`
 
 ## Support

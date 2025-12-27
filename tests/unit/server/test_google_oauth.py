@@ -18,14 +18,14 @@ class TestGoogleOAuthProvider:
         provider = GoogleOAuthProvider(
             client_id="test-client-id",
             client_secret="test-secret",
-            redirect_uri="http://localhost:8080/callback",
+            redirect_uri="http://localhost:2026/callback",
             scopes=["https://www.googleapis.com/auth/drive"],
             provider_name="google-drive",
         )
 
         assert provider.client_id == "test-client-id"
         assert provider.client_secret == "test-secret"
-        assert provider.redirect_uri == "http://localhost:8080/callback"
+        assert provider.redirect_uri == "http://localhost:2026/callback"
         assert provider.scopes == ["https://www.googleapis.com/auth/drive"]
         assert provider.provider_name == "google-drive"
 

@@ -75,7 +75,7 @@ export OPENROUTER_API_KEY="sk-or-v1-..."
 ./start_nexus_server.sh
 ```
 
-The server will run on `http://localhost:8080` by default.
+The server will run on `http://localhost:2026` by default.
 
 ### 4. Run the Demo
 
@@ -150,7 +150,7 @@ CrewAI + Nexus MCP Integration Demo
 Checking environment...
 ✓ Using Anthropic API (Claude)
 
-Nexus server: http://localhost:8080
+Nexus server: http://localhost:2026
 ✓ Connected to Nexus server
 
 ✓ Environment check passed!
@@ -248,7 +248,7 @@ Analysis complete. Report available at /reports/async-analysis.md
                                          ▼
                              ┌─────────────────────┐
                              │  Nexus Server       │
-                             │  localhost:8080     │
+                             │  localhost:2026     │
                              │                     │
                              │  - Filesystem       │
                              │  - Memory API       │
@@ -352,10 +352,10 @@ Automated workflows that process, analyze, and organize documents.
 
 ### Nexus Server URL
 
-By default, connects to `http://localhost:8080`. Override with:
+By default, connects to `http://localhost:2026`. Override with:
 
 ```bash
-export NEXUS_URL="http://your-server:8080"
+export NEXUS_URL="http://your-server:2026"
 ```
 
 ### Nexus API Key (Optional)
@@ -605,7 +605,7 @@ export OPENROUTER_API_KEY="sk-or-v1-..."
 
 1. **Check server is running**:
    ```bash
-   curl http://localhost:8080/health
+   curl http://localhost:2026/health
    ```
 
 2. **Start the server**:
@@ -623,11 +623,11 @@ export OPENROUTER_API_KEY="sk-or-v1-..."
 
 ### "Port already in use"
 
-Another process is using port 8080:
+Another process is using port 2026:
 
 ```bash
 # Find and stop the process
-lsof -ti:8080 | xargs kill
+lsof -ti:2026 | xargs kill
 
 # Or use a different port
 export NEXUS_PORT=8081

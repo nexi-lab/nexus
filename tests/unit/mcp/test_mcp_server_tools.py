@@ -1134,9 +1134,9 @@ class TestServerCreation:
             mock_instance.write = Mock()
             mock_remote.return_value = mock_instance
 
-            server = create_mcp_server(remote_url="http://localhost:8080", api_key="test-key")
+            server = create_mcp_server(remote_url="http://localhost:2026", api_key="test-key")
 
-            mock_remote.assert_called_once_with("http://localhost:8080", api_key="test-key")
+            mock_remote.assert_called_once_with("http://localhost:2026", api_key="test-key")
             assert server is not None
 
     def test_server_with_auto_connect(self):
@@ -1168,7 +1168,7 @@ class TestServerCreation:
         """Test main function with remote URL from environment."""
         with (
             patch("nexus.mcp.server.create_mcp_server") as mock_create,
-            patch.dict("os.environ", {"NEXUS_URL": "http://test:8080", "NEXUS_API_KEY": "key123"}),
+            patch.dict("os.environ", {"NEXUS_URL": "http://test:2026", "NEXUS_API_KEY": "key123"}),
         ):
             mock_server = Mock()
             mock_create.return_value = mock_server
@@ -1177,7 +1177,7 @@ class TestServerCreation:
             # by checking environment variable handling
             import os
 
-            assert os.getenv("NEXUS_URL") == "http://test:8080"
+            assert os.getenv("NEXUS_URL") == "http://test:2026"
             assert os.getenv("NEXUS_API_KEY") == "key123"
 
     def test_main_without_remote_url(self):

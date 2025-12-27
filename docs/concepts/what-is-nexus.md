@@ -128,7 +128,7 @@ backend = LocalBackend(root_path="/tmp/nexus-data")
 nx = NexusFS(backend=backend, is_admin=True)
 
 # Grow: Add remote server
-nx = RemoteNexusFS(server_url="http://localhost:8080", api_key="...")
+nx = RemoteNexusFS(server_url="http://localhost:2026", api_key="...")
 
 # Scale: Multi-backend mounts
 nx.mount("/workspace/db", PostgreSQLBackend(...))

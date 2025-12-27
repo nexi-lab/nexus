@@ -82,7 +82,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nexus_url = os.getenv('NEXUS_URL', 'http://localhost:8080')
+nexus_url = os.getenv('NEXUS_URL', 'http://localhost:2026')
 nx = RemoteNexusFS(nexus_url, api_key=os.getenv('NEXUS_API_KEY'))
 
 # Delete test agents (this will clean up entity registry)
@@ -178,7 +178,7 @@ if not alice_key:
     print("ERROR: ALICE_KEY not set in environment")
     sys.exit(1)
 
-nexus_url = os.getenv('NEXUS_URL', 'http://localhost:8080')
+nexus_url = os.getenv('NEXUS_URL', 'http://localhost:2026')
 print(f"Connecting to {nexus_url} with alice's key...")
 nx_alice = RemoteNexusFS(nexus_url, api_key=alice_key)
 
@@ -248,7 +248,7 @@ import sys, os
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nexus_url = os.getenv('NEXUS_URL', 'http://localhost:8080')
+nexus_url = os.getenv('NEXUS_URL', 'http://localhost:2026')
 nx = RemoteNexusFS(nexus_url, api_key=os.getenv('NEXUS_API_KEY'))
 
 agents = nx.list_agents()
@@ -330,7 +330,7 @@ import sys, os, json
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nexus_url = os.getenv('NEXUS_URL', 'http://localhost:8080')
+nexus_url = os.getenv('NEXUS_URL', 'http://localhost:2026')
 nx = RemoteNexusFS(nexus_url, api_key=os.getenv('NEXUS_API_KEY'))
 
 agent = nx.get_agent('data_analyst')
@@ -359,7 +359,7 @@ import sys, os, json
 sys.path.insert(0, 'src')
 from nexus.remote.client import RemoteNexusFS
 
-nexus_url = os.getenv('NEXUS_URL', 'http://localhost:8080')
+nexus_url = os.getenv('NEXUS_URL', 'http://localhost:2026')
 nx = RemoteNexusFS(nexus_url, api_key=os.getenv('NEXUS_API_KEY'))
 
 agent = nx.get_agent('legacy_agent')

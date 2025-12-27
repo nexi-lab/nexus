@@ -69,7 +69,7 @@ def oauth_provider(test_db):
         session_factory=test_db,
         google_client_id="test-client-id.apps.googleusercontent.com",
         google_client_secret="test-client-secret",
-        google_redirect_uri="http://localhost:8080/auth/oauth/callback",
+        google_redirect_uri="http://localhost:2026/auth/oauth/callback",
         jwt_secret="test-secret-key",
         oauth_crypto=oauth_crypto,
     )

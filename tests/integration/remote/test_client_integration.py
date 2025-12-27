@@ -24,14 +24,14 @@ class TestRemoteNexusFS:
     def client(self, mock_client):
         """Create RemoteNexusFS client with mocked httpx client."""
         with patch("nexus.remote.client.httpx.Client", return_value=mock_client):
-            client = RemoteNexusFS("http://localhost:8080", api_key="test-key")
+            client = RemoteNexusFS("http://localhost:2026", api_key="test-key")
             client.session = mock_client
             return client
 
     def test_initialization(self):
         """Test client initialization."""
-        client = RemoteNexusFS("http://localhost:8080", api_key="my-secret", timeout=60)
-        assert client.server_url == "http://localhost:8080"
+        client = RemoteNexusFS("http://localhost:2026", api_key="my-secret", timeout=60)
+        assert client.server_url == "http://localhost:2026"
         assert client.api_key == "my-secret"
         assert client.timeout == 60
         assert "Authorization" in client.session.headers
@@ -39,7 +39,7 @@ class TestRemoteNexusFS:
 
     def test_initialization_without_api_key(self):
         """Test client initialization without API key."""
-        client = RemoteNexusFS("http://localhost:8080")
+        client = RemoteNexusFS("http://localhost:2026")
         assert client.api_key is None
         assert "Authorization" not in client.session.headers
 

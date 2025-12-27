@@ -50,7 +50,7 @@ if [ -f "$REPO_ROOT/.nexus-admin-env" ]; then
 fi
 
 # Set default URL if not set
-: ${NEXUS_URL:=http://localhost:8080}
+: ${NEXUS_URL:=http://localhost:2026}
 
 # Check if Nexus server is running
 print_info "Checking if Nexus server is running at $NEXUS_URL..."

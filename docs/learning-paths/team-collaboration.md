@@ -71,13 +71,13 @@ First, start a Nexus server that supports multiple users:
 
 ```bash
 # Start server with authentication enabled
-nexus serve --host 0.0.0.0 --port 8080 --data-dir ./nexus-collab-data &
+nexus serve --host 0.0.0.0 --port 2026 --data-dir ./nexus-collab-data &
 
 # Wait for server to start
 sleep 2
 
 # Verify server is running
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 ```
 
 **Expected output:**
@@ -139,7 +139,7 @@ BOB_KEY=$(nexus admin create-user-key bob --description "Bob's key" | grep "API 
 CAROL_KEY=$(nexus admin create-user-key carol --description "Carol's key" | grep "API Key" | awk '{print $4}')
 
 # Export keys
-export NEXUS_URL=http://localhost:8080
+export NEXUS_URL=http://localhost:2026
 export ADMIN_KEY
 export ALICE_KEY
 export BOB_KEY
@@ -160,7 +160,7 @@ import nexus
 
 # Alice connects to the server
 alice = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "alice_key_here"  # Replace with actual key
 })
 
@@ -218,7 +218,7 @@ Alice grants permissions to team members:
 import nexus
 
 alice = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "alice_key_here"
 })
 
@@ -276,7 +276,7 @@ Bob adds his contribution:
 import nexus
 
 bob = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "bob_key_here"
 })
 
@@ -344,7 +344,7 @@ Carol views the project (read-only):
 import nexus
 
 carol = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "carol_key_here"
 })
 
@@ -382,7 +382,7 @@ import nexus
 
 # Alice creates a session for her work
 alice = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "alice_key_here"
 })
 
@@ -412,7 +412,7 @@ print("✅ Alice created private session notes")
 
 # Bob creates his own session
 bob = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "bob_key_here"
 })
 
@@ -459,7 +459,7 @@ Set up complex permission hierarchies:
 import nexus
 
 alice = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "alice_key_here"
 })
 
@@ -516,7 +516,7 @@ alice.write("/workspace/team-project/internal/specs.md", b"Internal specificatio
 alice.write("/workspace/team-project/confidential/strategy.md", b"Confidential strategy")
 
 # Test permissions
-bob = nexus.connect(config={"url": "http://localhost:8080", "api_key": "bob_key_here"})
+bob = nexus.connect(config={"url": "http://localhost:2026", "api_key": "bob_key_here"})
 
 # Bob can read public
 public_content = bob.read("/workspace/team-project/public/README.md")
@@ -540,7 +540,7 @@ Create user groups for easier permission management:
 import nexus
 
 admin = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "admin_key_here"
 })
 
@@ -598,7 +598,7 @@ class CollaborationWorkflow:
     def __init__(self, user_name, api_key):
         self.user_name = user_name
         self.nx = nexus.connect(config={
-            "url": "http://localhost:8080",
+            "url": "http://localhost:2026",
             "api_key": api_key
         })
 
@@ -824,7 +824,7 @@ class TeamCollaboration:
 # Demo usage
 def main():
     # Server configuration
-    SERVER_URL = "http://localhost:8080"
+    SERVER_URL = "http://localhost:2026"
 
     # API keys (replace with actual keys)
     ALICE_KEY = "alice_key_here"

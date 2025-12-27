@@ -199,14 +199,14 @@ def connect(
         Server mode (recommended for production):
             >>> import nexus
             >>> # Requires nexus server running (nexus serve)
-            >>> # export NEXUS_URL=http://localhost:8080
+            >>> # export NEXUS_URL=http://localhost:2026
             >>> # export NEXUS_API_KEY=your-api-key
             >>> nx = nexus.connect()
             >>> nx.write("/workspace/file.txt", b"Hello World")
 
         Server mode with explicit config:
             >>> nx = nexus.connect(config={
-            ...     "url": "http://localhost:8080",
+            ...     "url": "http://localhost:2026",
             ...     "api_key": "your-api-key"
             ... })
 
@@ -277,8 +277,8 @@ def connect(
             warnings.warn(
                 "Embedded mode is intended for development and testing only. "
                 "For production deployments, use server mode:\n"
-                "  1. Start server: nexus serve --host 0.0.0.0 --port 8080\n"
-                "  2. Set environment: export NEXUS_URL=http://localhost:8080\n"
+                "  1. Start server: nexus serve --host 0.0.0.0 --port 2026\n"
+                "  2. Set environment: export NEXUS_URL=http://localhost:2026\n"
                 "  3. Connect: nx = nexus.connect()\n"
                 "To silence this warning, explicitly set mode='embedded' in your config.",
                 UserWarning,

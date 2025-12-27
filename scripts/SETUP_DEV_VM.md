@@ -80,8 +80,8 @@ sudo ./scripts/setup-dev-server.sh \
 
 ### Access the Server
 
-- **Health Check**: http://34.145.1.138:8080/health
-- **API Endpoint**: http://34.145.1.138:8080
+- **Health Check**: http://34.145.1.138:2026/health
+- **API Endpoint**: http://34.145.1.138:2026
 
 ### Useful Commands
 
@@ -188,7 +188,7 @@ After setup is complete:
 
 1. **Test basic operations**:
    ```bash
-   curl http://34.145.1.138:8080/health
+   curl http://34.145.1.138:2026/health
    ```
 
 2. **Create staging/prod VMs** using the same process

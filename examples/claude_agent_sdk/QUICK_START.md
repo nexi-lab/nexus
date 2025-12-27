@@ -60,7 +60,7 @@ Admin API Key: nxk_1234abcd...
 
 Add to your ~/.bashrc or ~/.zshrc:
   export NEXUS_API_KEY='nxk_1234abcd...'
-  export NEXUS_URL='http://localhost:8080'
+  export NEXUS_URL='http://localhost:2026'
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
@@ -96,7 +96,7 @@ Use with:
 
 ```bash
 # Set Claude agent's credentials
-export NEXUS_URL="http://localhost:8080"
+export NEXUS_URL="http://localhost:2026"
 export NEXUS_API_KEY="nxk_5678efgh..."  # The key you just created
 
 # Run demo
@@ -112,7 +112,7 @@ For **testing only**, you can use a static API key:
 ./start_server.sh  # Uses static key "demo-key-12345"
 
 # Terminal 2
-export NEXUS_URL="http://localhost:8080"
+export NEXUS_URL="http://localhost:2026"
 export NEXUS_API_KEY="demo-key-12345"
 python claude_agent_react_demo.py
 ```
@@ -123,13 +123,13 @@ python claude_agent_react_demo.py
 
 ```bash
 # Check server health
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 # Should return: {"status":"ok"}
 
 # Test from Python
 python -c "
 from nexus.remote import RemoteNexusFS
-nx = RemoteNexusFS('http://localhost:8080', api_key='demo-key-12345')
+nx = RemoteNexusFS('http://localhost:2026', api_key='demo-key-12345')
 nx.write('/test.txt', b'Hello from Claude!')
 print('✓ Connected to Nexus server')
 "
@@ -210,7 +210,7 @@ python3 scripts/create-api-key.py claude-agent "Claude agent" --days 365
 
 # 3. Each user uses their own API key
 export NEXUS_API_KEY='nxk_...'  # From create-api-key.py output
-export NEXUS_URL='http://localhost:8080'
+export NEXUS_URL='http://localhost:2026'
 nexus ls /workspace
 ```
 
@@ -229,7 +229,7 @@ nexus serve
 nexus serve --host 0.0.0.0 --port 9000
 
 # Check server health
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 ```
 
 ## Server Configuration
@@ -238,7 +238,7 @@ curl http://localhost:8080/health
 
 ```bash
 # Server URL (for remote clients)
-export NEXUS_URL="http://localhost:8080"
+export NEXUS_URL="http://localhost:2026"
 
 # API key for authentication
 export NEXUS_API_KEY="your-key"
@@ -361,7 +361,7 @@ nexus serve --api-key "your-secret-key"
 │                                                 │
 │  [Local Mode]              [Server Mode]       │
 │  • Direct access           • Remote RPC        │
-│  • ./nexus-data/           • http://server:8080│
+│  • ./nexus-data/           • http://server:2026│
 │  • No server needed        • Multi-user        │
 │                            • API key auth      │
 │                                                 │

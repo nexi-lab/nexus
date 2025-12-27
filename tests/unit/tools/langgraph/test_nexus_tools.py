@@ -62,7 +62,7 @@ class TestGrepFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -89,7 +89,7 @@ class TestGrepFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -115,7 +115,7 @@ class TestGrepFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -141,7 +141,7 @@ class TestGrepFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -166,7 +166,7 @@ class TestGrepFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -192,7 +192,7 @@ class TestGrepFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -272,7 +272,7 @@ class TestGrepFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer ", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer ", "nexus_server_url": "http://localhost:2026"}
         }
 
         result = grep_tool("test", config, state)
@@ -289,7 +289,7 @@ class TestGrepFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -309,7 +309,7 @@ class TestGrepFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -330,7 +330,7 @@ class TestGrepFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -357,7 +357,7 @@ class TestGlobFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -377,7 +377,7 @@ class TestGlobFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -395,7 +395,7 @@ class TestGlobFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -414,7 +414,7 @@ class TestGlobFilesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -436,7 +436,7 @@ class TestReadFileTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -458,7 +458,7 @@ class TestReadFileTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -479,7 +479,7 @@ class TestReadFileTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -500,7 +500,7 @@ class TestReadFileTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -518,7 +518,7 @@ class TestReadFileTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -540,7 +540,7 @@ class TestWriteFileTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -560,7 +560,7 @@ class TestWriteFileTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -578,7 +578,7 @@ class TestWriteFileTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -608,7 +608,7 @@ class TestPythonTool:
         config: RunnableConfig = {
             "metadata": {
                 "x_auth": "Bearer test-token",
-                "nexus_server_url": "http://localhost:8080",
+                "nexus_server_url": "http://localhost:2026",
                 "sandbox_id": "test-sandbox-123",
             }
         }
@@ -644,7 +644,7 @@ class TestPythonTool:
         config: RunnableConfig = {
             "metadata": {
                 "x_auth": "Bearer test-token",
-                "nexus_server_url": "http://localhost:8080",
+                "nexus_server_url": "http://localhost:2026",
                 "sandbox_id": "test-sandbox-123",
             }
         }
@@ -662,7 +662,7 @@ class TestPythonTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         result = python_tool("print('test')", config, state)
@@ -689,7 +689,7 @@ class TestBashTool:
         config: RunnableConfig = {
             "metadata": {
                 "x_auth": "Bearer test-token",
-                "nexus_server_url": "http://localhost:8080",
+                "nexus_server_url": "http://localhost:2026",
                 "sandbox_id": "test-sandbox-456",
             }
         }
@@ -707,7 +707,7 @@ class TestBashTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         result = bash_tool("echo test", config, state)
@@ -735,7 +735,7 @@ class TestQueryMemoriesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):
@@ -757,7 +757,7 @@ class TestQueryMemoriesTool:
 
         state = {}
         config: RunnableConfig = {
-            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:8080"}
+            "metadata": {"x_auth": "Bearer test-token", "nexus_server_url": "http://localhost:2026"}
         }
 
         with patch("nexus.tools.langgraph.nexus_tools._get_nexus_client", return_value=mock_nx):

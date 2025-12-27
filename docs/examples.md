@@ -431,7 +431,7 @@ from langgraph_react_demo import create_react_agent
 
 # Connect to remote Nexus server
 nx = nexus.connect(
-    remote_url="http://nexus-server:8080",
+    remote_url="http://nexus-server:2026",
     config={"tenant_id": "team-dev", "agent_id": "code-analyzer"}
 )
 
@@ -484,7 +484,7 @@ from agents import Agent, function_tool
 
 # Connect to Nexus
 nx = nexus.connect(
-    remote_url="http://nexus-server:8080",
+    remote_url="http://nexus-server:2026",
     config={"tenant_id": "team-dev", "agent_id": "file-agent"}
 )
 

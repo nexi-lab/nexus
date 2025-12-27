@@ -416,7 +416,7 @@ The demo uses **remote mode** to demonstrate production patterns:
 
 # Terminal 2: CrewAI agents connect remotely
 nx = nexus.connect(config={
-    "remote_url": "http://localhost:8080",
+    "remote_url": "http://localhost:2026",
     "api_key": os.getenv("NEXUS_API_KEY")
 })
 ```
@@ -467,8 +467,8 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 export OPENAI_API_KEY="sk-..."
 export OPENROUTER_API_KEY="sk-or-v1-..."
 
-# Optional: Nexus server URL (default: http://localhost:8080)
-export NEXUS_URL="http://your-nexus-server:8080"
+# Optional: Nexus server URL (default: http://localhost:2026)
+export NEXUS_URL="http://your-nexus-server:2026"
 
 # Optional: Nexus API key for authentication
 export NEXUS_API_KEY="your-api-key"

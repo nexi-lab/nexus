@@ -43,7 +43,7 @@ jobs:
       MCP_HOST: localhost
       MCP_PORT: 8081
       NEXUS_HOST: localhost
-      NEXUS_PORT: 8080
+      NEXUS_PORT: 2026
 
     steps:
       - name: Checkout code
@@ -77,7 +77,7 @@ jobs:
           # ============================================
           # Nexus Server
           # ============================================
-          NEXUS_PORT=8080
+          NEXUS_PORT=2026
           NEXUS_DATABASE_URL=postgresql://postgres:nexus@postgres:5432/nexus
 
           # Authentication - Dummy API Key for testing (proper Nexus format)
@@ -232,7 +232,7 @@ jobs:
 
           # Test Nexus server health endpoint
           echo "Testing Nexus health endpoint..."
-          HEALTH_RESPONSE=$(curl -sf http://localhost:8080/health || echo "FAILED")
+          HEALTH_RESPONSE=$(curl -sf http://localhost:2026/health || echo "FAILED")
 
           if [ "$HEALTH_RESPONSE" = "FAILED" ]; then
             echo "❌ Health endpoint failed"
@@ -302,7 +302,7 @@ jobs:
           echo "Using API key: ${API_KEY:0:20}..."
 
           # Test list_mounts endpoint
-          RESPONSE=$(curl -sf http://localhost:8080/api/nfs/list_mounts \
+          RESPONSE=$(curl -sf http://localhost:2026/api/nfs/list_mounts \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d '{"jsonrpc":"2.0","id":1,"method":"list_mounts","params":{}}' || echo "FAILED")
@@ -331,7 +331,7 @@ jobs:
 
           # Step 1: Create directory with timestamp
           echo "📁 Step 1: Creating directory $TEST_DIR..."
-          MKDIR_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/mkdir \
+          MKDIR_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/mkdir \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"mkdir\",\"params\":{\"path\":\"$TEST_DIR\"}}" || echo "FAILED")
@@ -344,7 +344,7 @@ jobs:
 
           # Step 2: Write numbers.txt with "1, 5, 16"
           echo "📝 Step 2: Writing $TEST_DIR/numbers.txt..."
-          WRITE_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/write \
+          WRITE_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/write \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"write\",\"params\":{\"path\":\"$TEST_DIR/numbers.txt\",\"content\":\"1, 5, 16\"}}" || echo "FAILED")
@@ -357,7 +357,7 @@ jobs:
 
           # Step 3: List files to verify
           echo "📋 Step 3: Listing files in $TEST_DIR..."
-          LIST_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/list \
+          LIST_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/list \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"list\",\"params\":{\"path\":\"$TEST_DIR\"}}" || echo "FAILED")
@@ -371,7 +371,7 @@ jobs:
 
           # Step 4: Register langgraph agent
           echo "🤖 Step 4: Registering LangGraph agent..."
-          REGISTER_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/register_agent \
+          REGISTER_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/register_agent \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d '{"jsonrpc":"2.0","id":4,"method":"register_agent","params":{"agent_id":"admin,nexus_assistant_1","name":"nexus_assistant_1","description":"A claude-code like general agent that connects to Nexus File System.","generate_api_key":false}}' || echo "FAILED")
@@ -384,7 +384,7 @@ jobs:
 
           # Step 5: Create sandbox
           echo "🐳 Step 5: Creating sandbox..."
-          SANDBOX_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/sandbox_get_or_create \
+          SANDBOX_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/sandbox_get_or_create \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d '{"jsonrpc":"2.0","id":5,"method":"sandbox_get_or_create","params":{"name":"admin,nexus_assistant_1","ttl_minutes":60,"provider":"docker","verify_status":true}}' || echo "FAILED")
@@ -411,7 +411,7 @@ jobs:
           echo "🧵 Step 6: Creating LangGraph thread..."
           THREAD_RESPONSE=$(curl -sf http://localhost:2024/threads \
             -H "Content-Type: application/json" \
-            -d "{\"nexus_server_url\":\"http://nexus:8080\",\"sandbox_id\":\"$SANDBOX_ID\",\"selectedAgentId\":\"admin,nexus_assistant_1\",\"user_id\":\"admin\",\"x_auth\":\"Bearer $API_KEY\"}" || echo "FAILED")
+            -d "{\"nexus_server_url\":\"http://nexus:2026\",\"sandbox_id\":\"$SANDBOX_ID\",\"selectedAgentId\":\"admin,nexus_assistant_1\",\"user_id\":\"admin\",\"x_auth\":\"Bearer $API_KEY\"}" || echo "FAILED")
 
           if [ "$THREAD_RESPONSE" = "FAILED" ]; then
             echo "❌ Failed to create thread"
@@ -431,7 +431,7 @@ jobs:
           echo "🔢 Step 7: Executing sum calculation task..."
           TASK_RESPONSE=$(curl -sf http://localhost:2024/threads/$THREAD_ID/runs/stream \
             -H "Content-Type: application/json" \
-            -d "{\"input\":{\"messages\":[{\"type\":\"human\",\"content\":\"Read the file $TEST_DIR/numbers.txt, calculate the sum of all the numbers in it, and write the sum to $TEST_DIR/sum.txt\"}]},\"metadata\":{\"user_id\":\"admin\",\"selectedAgentId\":\"admin,nexus_assistant_1\",\"x_auth\":\"Bearer $API_KEY\",\"nexus_server_url\":\"http://nexus:8080\",\"sandbox_id\":\"$SANDBOX_ID\"},\"stream_mode\":[\"messages-tuple\",\"values\"],\"stream_resumable\":false,\"assistant_id\":\"agent\",\"on_disconnect\":\"cancel\"}" \
+            -d "{\"input\":{\"messages\":[{\"type\":\"human\",\"content\":\"Read the file $TEST_DIR/numbers.txt, calculate the sum of all the numbers in it, and write the sum to $TEST_DIR/sum.txt\"}]},\"metadata\":{\"user_id\":\"admin\",\"selectedAgentId\":\"admin,nexus_assistant_1\",\"x_auth\":\"Bearer $API_KEY\",\"nexus_server_url\":\"http://nexus:2026\",\"sandbox_id\":\"$SANDBOX_ID\"},\"stream_mode\":[\"messages-tuple\",\"values\"],\"stream_resumable\":false,\"assistant_id\":\"agent\",\"on_disconnect\":\"cancel\"}" \
             --no-buffer || echo "FAILED")
 
           if [ "$TASK_RESPONSE" = "FAILED" ]; then
@@ -446,7 +446,7 @@ jobs:
 
           # Step 8: Verify sum.txt contains 22
           echo "✅ Step 8: Verifying sum.txt..."
-          READ_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/read \
+          READ_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/read \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"read\",\"params\":{\"path\":\"$TEST_DIR/sum.txt\"}}" || echo "FAILED")
@@ -492,7 +492,7 @@ jobs:
 
           # Step 1: Create a new non-admin user
           echo "👤 Step 1: Creating non-admin user $TEST_USER..."
-          CREATE_USER_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/admin_create_key \
+          CREATE_USER_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/admin_create_key \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"admin_create_key\",\"params\":{\"user_id\":\"$TEST_USER\",\"name\":\"Test User Key\",\"is_admin\":false,\"tenant_id\":\"default\"}}" || echo "FAILED")
@@ -516,13 +516,13 @@ jobs:
           # Step 2: Ensure admin has ownership of /workspace (required for creating files)
           echo "🔑 Step 2: Ensuring admin ownership of /workspace..."
           # First, try to create /workspace directory if it doesn't exist
-          MKDIR_RESPONSE=$(curl -s http://localhost:8080/api/nfs/mkdir \
+          MKDIR_RESPONSE=$(curl -s http://localhost:2026/api/nfs/mkdir \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"mkdir\",\"params\":{\"path\":\"/workspace\"}}" 2>&1 || echo "")
 
           # Grant admin ownership of /workspace
-          OWNER_RESPONSE=$(curl -s http://localhost:8080/api/nfs/rebac_create \
+          OWNER_RESPONSE=$(curl -s http://localhost:2026/api/nfs/rebac_create \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"/workspace\"],\"tenant_id\":\"default\"}}" 2>&1)
@@ -542,7 +542,7 @@ jobs:
 
           # Step 3: Admin creates a file
           echo "📝 Step 3: Admin creating file $ADMIN_FILE..."
-          WRITE_RESPONSE=$(curl -s http://localhost:8080/api/nfs/write \
+          WRITE_RESPONSE=$(curl -s http://localhost:2026/api/nfs/write \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"write\",\"params\":{\"path\":\"$ADMIN_FILE\",\"content\":\"$ADMIN_FILE_CONTENT\"}}")
@@ -561,7 +561,7 @@ jobs:
 
           # Verify file exists by trying to read it as admin
           echo "🔍 Verifying file exists..."
-          VERIFY_RESPONSE=$(curl -s http://localhost:8080/api/nfs/read \
+          VERIFY_RESPONSE=$(curl -s http://localhost:2026/api/nfs/read \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"read\",\"params\":{\"path\":\"$ADMIN_FILE\"}}")
@@ -577,7 +577,7 @@ jobs:
 
           # Step 4: Grant admin ownership of the file (required for permission management)
           echo "🔑 Step 4: Granting admin ownership of $ADMIN_FILE..."
-          OWNER_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/rebac_create \
+          OWNER_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/rebac_create \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"$ADMIN_FILE\"],\"tenant_id\":\"default\"}}" || echo "FAILED")
@@ -591,7 +591,7 @@ jobs:
 
           # Step 5: Try to read the file as non-admin user (should fail)
           echo "🚫 Step 5: Attempting to read $ADMIN_FILE as $TEST_USER (should fail)..."
-          READ_RESPONSE=$(curl -s http://localhost:8080/api/nfs/read \
+          READ_RESPONSE=$(curl -s http://localhost:2026/api/nfs/read \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $USER_API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"read\",\"params\":{\"path\":\"$ADMIN_FILE\"}}" 2>&1)
@@ -614,7 +614,7 @@ jobs:
 
           # Step 6: Admin grants read permission to the user
           echo "🔓 Step 6: Admin granting read permission to $TEST_USER..."
-          GRANT_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/rebac_create \
+          GRANT_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/rebac_create \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"$TEST_USER\"],\"relation\":\"direct_viewer\",\"object\":[\"file\",\"$ADMIN_FILE\"],\"tenant_id\":\"default\"}}" || echo "FAILED")
@@ -628,7 +628,7 @@ jobs:
 
           # Step 7: Try to read the file as non-admin user again (should succeed)
           echo "✅ Step 7: Attempting to read $ADMIN_FILE as $TEST_USER (should succeed)..."
-          READ_RESPONSE=$(curl -s http://localhost:8080/api/nfs/read \
+          READ_RESPONSE=$(curl -s http://localhost:2026/api/nfs/read \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $USER_API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"read\",\"params\":{\"path\":\"$ADMIN_FILE\"}}")
@@ -678,7 +678,7 @@ jobs:
           echo "📋 Running agent permission management test script..."
           python3 scripts/test_agent_permission_management.py \
             --api-key "$ADMIN_API_KEY" \
-            --base-url http://localhost:8080 \
+            --base-url http://localhost:2026 \
             --cleanup-old-agents
 
           if [ $? -eq 0 ]; then
@@ -720,7 +720,7 @@ jobs:
 
           # Step 1: Save mount
           echo "💾 Step 1: Saving mount $MOUNT_POINT..."
-          SAVE_MOUNT_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/save_mount \
+          SAVE_MOUNT_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/save_mount \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"method\":\"save_mount\",\"params\":{\"mount_point\":\"$MOUNT_POINT\",\"backend_type\":\"gcs_connector\",\"backend_config\":{\"bucket\":\"nexi-lab-nexus-hub-integration-test\",\"project_id\":\"nexi-lab-888\",\"prefix\":\"\",\"access_token\":\"\"},\"priority\":10,\"readonly\":false,\"description\":\"Integration test mount\"},\"id\":1}" || echo "FAILED")
@@ -734,7 +734,7 @@ jobs:
 
           # Step 2: Load mount
           echo "📂 Step 2: Loading mount $MOUNT_POINT..."
-          LOAD_MOUNT_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/load_mount \
+          LOAD_MOUNT_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/load_mount \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"method\":\"load_mount\",\"params\":{\"mount_point\":\"$MOUNT_POINT\"},\"id\":2}" || echo "FAILED")
@@ -748,7 +748,7 @@ jobs:
 
           # Step 3: Sync mount
           echo "🔄 Step 3: Syncing mount $MOUNT_POINT..."
-          SYNC_MOUNT_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/sync_mount \
+          SYNC_MOUNT_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/sync_mount \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"method\":\"sync_mount\",\"params\":{\"mount_point\":\"$MOUNT_POINT\",\"recursive\":true},\"id\":3}" || echo "FAILED")
@@ -762,7 +762,7 @@ jobs:
 
           # Step 3.5: Grant admin ownership of mount point for ReBAC permissions
           echo "🔑 Step 3.5: Granting admin ownership of $MOUNT_POINT..."
-          GRANT_OWNERSHIP_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/rebac_create \
+          GRANT_OWNERSHIP_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/rebac_create \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"$MOUNT_POINT\"],\"tenant_id\":\"default\"},\"id\":3.5}" || echo "FAILED")
@@ -776,7 +776,7 @@ jobs:
 
           # Step 4: Read CSV file and verify headers
           echo "📄 Step 4: Reading $MOUNT_POINT/sample_customers.csv..."
-          READ_CSV_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/read \
+          READ_CSV_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/read \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"method\":\"read\",\"params\":{\"path\":\"$MOUNT_POINT/sample_customers.csv\"},\"id\":4}" || echo "FAILED")
@@ -808,7 +808,7 @@ jobs:
           # Encode timestamp as base64
           TIMESTAMP_BASE64=$(echo -n "$TIMESTAMP" | base64)
 
-          WRITE_FILE_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/write \
+          WRITE_FILE_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/write \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"method\":\"write\",\"params\":{\"path\":\"$MOUNT_POINT/test_${TIMESTAMP}.txt\",\"content\":{\"__type__\":\"bytes\",\"data\":\"$TIMESTAMP_BASE64\"}},\"id\":5}" || echo "FAILED")
@@ -1440,7 +1440,7 @@ jobs:
 
           # Step 2: Validate the skill package
           echo "✔️  Step 2: Validating skill package..."
-          VALIDATE_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/skills_validate_zip \
+          VALIDATE_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/skills_validate_zip \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"skills_validate_zip\",\"params\":{\"zip_data\":\"$ZIP_BASE64\"}}" || echo "FAILED")
@@ -1464,7 +1464,7 @@ jobs:
 
           # Step 3: Import skill to user tier
           echo "📥 Step 3: Importing skill to user tier..."
-          IMPORT_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/skills_import \
+          IMPORT_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/skills_import \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"skills_import\",\"params\":{\"zip_data\":\"$ZIP_BASE64\",\"tier\":\"user\",\"allow_overwrite\":false}}" || echo "FAILED")
@@ -1497,7 +1497,7 @@ jobs:
           echo "🔍 Step 4: Verifying skill was imported..."
           SKILL_MD_PATH="${SKILL_PATH}SKILL.md"
 
-          READ_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/read \
+          READ_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/read \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"read\",\"params\":{\"path\":\"$SKILL_MD_PATH\"}}" || echo "FAILED")
@@ -1523,7 +1523,7 @@ jobs:
           echo "🔐 Step 5: Testing permission checks..."
 
           # Create a non-admin user key
-          CREATE_USER_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/admin_create_key \
+          CREATE_USER_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/admin_create_key \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d '{"jsonrpc":"2.0","id":4,"method":"admin_create_key","params":{"user_id":"test_skill_user","name":"Test Skill User","is_admin":false,"tenant_id":"default"}}' || echo "FAILED")
@@ -1537,7 +1537,7 @@ jobs:
               echo "   Created test user with API key: ${USER_API_KEY:0:30}..."
 
               # Try to import to system tier (should fail)
-              SYSTEM_IMPORT_RESPONSE=$(curl -s http://localhost:8080/api/nfs/skills_import \
+              SYSTEM_IMPORT_RESPONSE=$(curl -s http://localhost:2026/api/nfs/skills_import \
                 -H "Content-Type: application/json" \
                 -H "Authorization: Bearer $USER_API_KEY" \
                 -d "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"skills_import\",\"params\":{\"zip_data\":\"$ZIP_BASE64\",\"tier\":\"system\",\"allow_overwrite\":false}}" 2>&1)
@@ -1561,7 +1561,7 @@ jobs:
           echo "🔄 Step 6: Testing overwrite behavior..."
 
           # Try to import same skill without overwrite (should fail)
-          REIMPORT_RESPONSE=$(curl -s http://localhost:8080/api/nfs/skills_import \
+          REIMPORT_RESPONSE=$(curl -s http://localhost:2026/api/nfs/skills_import \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"skills_import\",\"params\":{\"zip_data\":\"$ZIP_BASE64\",\"tier\":\"user\",\"allow_overwrite\":false}}" 2>&1)
@@ -1577,7 +1577,7 @@ jobs:
           fi
 
           # Now import with overwrite enabled (should succeed)
-          OVERWRITE_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/skills_import \
+          OVERWRITE_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/skills_import \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"skills_import\",\"params\":{\"zip_data\":\"$ZIP_BASE64\",\"tier\":\"user\",\"allow_overwrite\":true}}" || echo "FAILED")
@@ -1611,7 +1611,7 @@ jobs:
           chmod +x scripts/test_agent_permissions.sh
 
           # Run the test script
-          # Note: The script expects the server to be running on localhost:8080
+          # Note: The script expects the server to be running on localhost:2026
           # and will use the default admin API key from local-dev.env
           cd "${{ github.workspace }}"
           ./scripts/test_agent_permissions.sh
@@ -1687,7 +1687,7 @@ jobs:
           API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 
           # Test health endpoint
-          HEALTH_RESPONSE=$(curl -sf http://localhost:8080/health || echo "FAILED")
+          HEALTH_RESPONSE=$(curl -sf http://localhost:2026/health || echo "FAILED")
           if [ "$HEALTH_RESPONSE" = "FAILED" ]; then
             echo "❌ Health endpoint failed after restart"
             exit 1
@@ -1695,7 +1695,7 @@ jobs:
           echo "✅ Nexus health endpoint working: $HEALTH_RESPONSE"
 
           # Test basic RPC call
-          LIST_RESPONSE=$(curl -sf http://localhost:8080/api/nfs/list_mounts \
+          LIST_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/list_mounts \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d '{"jsonrpc":"2.0","id":1,"method":"list_mounts","params":{}}' || echo "FAILED")

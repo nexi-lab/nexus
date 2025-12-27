@@ -98,7 +98,7 @@ postgresql://postgres:nexus@localhost/nexus
 1. Creates database schema (users, api_keys, rebac_tuples, etc.)
 2. Creates admin user (username: `admin`)
 3. Generates admin API key with full permissions
-4. Starts Nexus server on `http://localhost:8080`
+4. Starts Nexus server on `http://localhost:2026`
 5. Saves credentials to `.nexus-admin-env`
 
 **You will see:**
@@ -124,7 +124,7 @@ source .nexus-admin-env
 **Check it worked:**
 ```bash
 echo $NEXUS_URL
-# Should output: http://localhost:8080
+# Should output: http://localhost:2026
 
 echo $NEXUS_API_KEY
 # Should output: your-api-key

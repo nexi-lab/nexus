@@ -928,7 +928,7 @@ CREATE INDEX ON embeddings USING ivfflat (embedding vector_cosine_ops);
 │  ┌──────────────────────────────────────────────────────────────────────┐  │
 │  │                        External Access                                 │  │
 │  │                                                                        │  │
-│  │   Frontend (5173)    API (8080)    MCP (8081)    LangGraph (2024)    │  │
+│  │   Frontend (5173)    API (2026)    MCP (8081)    LangGraph (2024)    │  │
 │  └────────┬─────────────────┬─────────────┬─────────────┬───────────────┘  │
 │           │                 │             │             │                   │
 │           ▼                 ▼             ▼             ▼                   │
@@ -938,7 +938,7 @@ CREATE INDEX ON embeddings USING ivfflat (embedding vector_cosine_ops);
 │  │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐     │   │
 │  │  │  Frontend  │  │   Nexus    │  │    MCP     │  │  LangGraph │     │   │
 │  │  │  (React)   │  │  (Server)  │  │  (Server)  │  │  (Agent)   │     │   │
-│  │  │  :5173     │  │  :8080     │  │  :8081     │  │  :2024     │     │   │
+│  │  │  :5173     │  │  :2026     │  │  :8081     │  │  :2024     │     │   │
 │  │  └────────────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘     │   │
 │  │                        │               │               │             │   │
 │  │                        └───────────────┴───────────────┘             │   │
@@ -982,7 +982,7 @@ CREATE INDEX ON embeddings USING ivfflat (embedding vector_cosine_ops);
 │  │  ┌───────────────────────────────────────────────────────────────┐  │   │
 │  │  │                   Docker Compose Stack                         │  │   │
 │  │  │                                                                 │  │   │
-│  │  │  Frontend (5173) ─── Nexus (8080) ─── LangGraph (2024)        │  │   │
+│  │  │  Frontend (5173) ─── Nexus (2026) ─── LangGraph (2024)        │  │   │
 │  │  │                          │                                      │  │   │
 │  │  │                          ▼                                      │  │   │
 │  │  │                    PostgreSQL (5432)                            │  │   │

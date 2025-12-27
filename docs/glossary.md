@@ -395,7 +395,7 @@ Google's relationship-based authorization system that inspired Nexus ReBAC imple
 | `nexus mkdir` | Create directory | `nexus mkdir /workspace/new-dir` |
 | `nexus rm` | Remove file | `nexus rm /workspace/old-file.txt` |
 | `nexus cat` | Display file contents | `nexus cat /workspace/file.txt` |
-| `nexus serve` | Start server | `nexus serve --port 8080` |
+| `nexus serve` | Start server | `nexus serve --port 2026` |
 | `nexus memory` | Memory operations | `nexus memory store "key" "value"` |
 | `nexus rebac` | Permission management | `nexus rebac create --subject user:alice --relation can_read --object file:/docs` |
 | `nexus skills` | Skill management | `nexus skills list` |

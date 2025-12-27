@@ -18,7 +18,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Create relationships
     nx.rebac_create("user", "alice", "member", "group", "engineers")
@@ -57,7 +57,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Add users to groups
     nx.rebac_create("user", "alice", "member", "group", "engineers")
@@ -74,7 +74,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Grant group permissions
     nx.rebac_create("group", "engineers", "write", "file", "/workspace/code")
@@ -91,7 +91,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Viewer: read-only access
     nx.rebac_create("user", "alice", "direct_viewer", "file", "/workspace/docs")
@@ -108,7 +108,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Custom relationships for your domain
     nx.rebac_create("user", "alice", "can_approve", "workflow", "deploy-prod")
@@ -125,7 +125,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Check if user has permission
     can_write = nx.rebac_check(
@@ -146,7 +146,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Get detailed explanation
     explanation = nx.rebac_explain(
@@ -166,7 +166,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     files = ["/workspace/file1.txt", "/workspace/file2.txt", "/workspace/file3.txt"]
 
@@ -182,7 +182,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Grant permission on parent directory
     nx.rebac_create(
@@ -205,7 +205,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Nested group structure
     nx.rebac_create("user", "alice", "member", "group", "backend-team")
@@ -227,7 +227,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Find all users with write access
     users_with_write = nx.rebac_expand(
@@ -245,7 +245,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # List all relationships for a user
     relationships = nx.rebac_list("user", "alice")
@@ -262,7 +262,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Remove user's permission
     nx.rebac_delete(
@@ -277,7 +277,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Remove user from group
     nx.rebac_delete(
@@ -296,7 +296,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # 1. Create project workspace
     nx.mkdir("/workspace/project-alpha", parents=True)
@@ -362,7 +362,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Create isolated tenant workspaces
     tenants = ["acme-corp", "beta-inc"]

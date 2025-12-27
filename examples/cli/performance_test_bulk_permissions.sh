@@ -16,10 +16,10 @@ echo "=========================================="
 echo ""
 
 # Check if server is running
-if ! curl -s http://localhost:8080/health > /dev/null 2>&1; then
-    echo "ERROR: Nexus server is not running on localhost:8080"
+if ! curl -s http://localhost:2026/health > /dev/null 2>&1; then
+    echo "ERROR: Nexus server is not running on localhost:2026"
     echo "Please start the server first:"
-    echo "  nexus serve --host 0.0.0.0 --port 8080"
+    echo "  nexus serve --host 0.0.0.0 --port 2026"
     exit 1
 fi
 

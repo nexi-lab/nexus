@@ -265,7 +265,7 @@ See [COMPARISON.md](../../examples/openai_agents/COMPARISON.md) for detailed sid
 ### Remote Nexus Server
 
 ```bash
-export NEXUS_SERVER_URL="http://your-server:8080"
+export NEXUS_SERVER_URL="http://your-server:2026"
 export NEXUS_API_KEY="your-api-key"
 ```
 
@@ -280,10 +280,10 @@ export NEXUS_AGENT_ID="file-analyzer"
 
 ```bash
 # Terminal 1: Start Nexus server
-nexus serve --port 8080
+nexus serve --port 2026
 
 # Terminal 2: Run agent
-export NEXUS_SERVER_URL="http://localhost:8080"
+export NEXUS_SERVER_URL="http://localhost:2026"
 python openai_agent_react_demo.py
 ```
 
@@ -316,9 +316,9 @@ export OPENAI_API_KEY="sk-..."
 
 ### "Error connecting to Nexus"
 
-1. Check server: `curl http://your-server:8080/health`
+1. Check server: `curl http://your-server:2026/health`
 2. Try local: `nexus serve`
-3. Set URL: `export NEXUS_SERVER_URL="http://localhost:8080"`
+3. Set URL: `export NEXUS_SERVER_URL="http://localhost:2026"`
 
 ### "Module not found"
 

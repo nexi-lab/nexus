@@ -357,7 +357,7 @@ def unmount(mount_point: str) -> None:
 
 @click.command(name="serve")
 @click.option("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
-@click.option("--port", default=8080, type=int, help="Server port (default: 8080)")
+@click.option("--port", default=2026, type=int, help="Server port (default: 2026)")
 @click.option(
     "--api-key",
     default=None,
@@ -426,11 +426,11 @@ def serve(
         nexus serve --auth-type database
 
         # Custom port and admin user
-        nexus serve --auth-type database --init --port 8080 --admin-user alice
+        nexus serve --auth-type database --init --port 2026 --admin-user alice
 
         # Connect from Python
         from nexus.remote import RemoteNexusFS
-        nx = RemoteNexusFS("http://localhost:8080", api_key="<admin-key>")
+        nx = RemoteNexusFS("http://localhost:2026", api_key="<admin-key>")
         nx.write("/workspace/file.txt", b"Hello, World!")
 
         # Mount with FUSE

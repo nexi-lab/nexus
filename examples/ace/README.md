@@ -267,7 +267,7 @@ Ensure Nexus is running:
 nexus serve --data-dir ./nexus_data
 
 # Or connect to remote server
-export NEXUS_URL=http://your-server:8080
+export NEXUS_URL=http://your-server:2026
 export NEXUS_API_KEY=your-api-key
 ```
 

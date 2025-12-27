@@ -60,7 +60,7 @@ REMOTE_URL_OPTION = click.option(
     type=str,
     default=None,
     envvar="NEXUS_URL",
-    help="Remote Nexus server URL (e.g., http://localhost:8080). Can also use NEXUS_URL env var.",
+    help="Remote Nexus server URL (e.g., http://localhost:2026). Can also use NEXUS_URL env var.",
 )
 
 REMOTE_API_KEY_OPTION = click.option(

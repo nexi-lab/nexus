@@ -16,7 +16,7 @@ Usage:
     python examples/cli/test_bulk_operations.py --server --port 8091
 
     # Remote mode (connect to existing server):
-    NEXUS_URL="http://localhost:8080" python examples/cli/test_bulk_operations.py --remote
+    NEXUS_URL="http://localhost:2026" python examples/cli/test_bulk_operations.py --remote
 """
 
 import argparse
@@ -605,8 +605,8 @@ def main() -> int:
     parser.add_argument(
         "--url",
         type=str,
-        default=os.environ.get("NEXUS_URL", "http://localhost:8080"),
-        help="Nexus server URL for remote mode (default: $NEXUS_URL or http://localhost:8080)",
+        default=os.environ.get("NEXUS_URL", "http://localhost:2026"),
+        help="Nexus server URL for remote mode (default: $NEXUS_URL or http://localhost:2026)",
     )
     parser.add_argument(
         "--api-key",

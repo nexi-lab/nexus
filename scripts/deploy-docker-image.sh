@@ -10,7 +10,7 @@
 #   --instance-name NAME     VM instance name (default: nexus-server)
 #   --zone ZONE              GCP zone (default: us-west1-a)
 #   --image IMAGE            Docker image to deploy (default: gcr.io/$PROJECT_ID/nexus-server:latest)
-#   --port PORT              Server port (default: 8080)
+#   --port PORT              Server port (default: 2026)
 #   --help                   Show this help message
 
 set -euo pipefail
@@ -20,7 +20,7 @@ PROJECT_ID="nexi-lab-888"
 INSTANCE_NAME="nexus-server"
 ZONE="us-west1-a"
 IMAGE=""
-PORT="8080"
+PORT="2026"
 DATA_DIR="/var/lib/nexus"
 CONTAINER_NAME="nexus-container"
 
@@ -81,10 +81,10 @@ sudo docker run -d \
   $IMAGE
 
 # Setup port 80 forwarding (excluding metadata service)
-echo "Setting up port 80 → 8080 forwarding..."
+echo "Setting up port 80 → 2026 forwarding..."
 # Only redirect external traffic on port 80, not localhost or metadata service
-sudo iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080 2>/dev/null || \
-  sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+sudo iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 2026 2>/dev/null || \
+  sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 2026
 
 # Wait and check health
 sleep 10
@@ -122,7 +122,7 @@ EXTERNAL_IP=$(gcloud compute instances describe "$INSTANCE_NAME" \
 echo ""
 echo "✓ Deployed successfully!"
 echo "  Server URL: http://${EXTERNAL_IP} (port 80)"
-echo "  Alternative: http://${EXTERNAL_IP}:${PORT} (port 8080)"
+echo "  Alternative: http://${EXTERNAL_IP}:${PORT} (port 2026)"
 echo ""
 echo "Test:"
 echo "  curl http://${EXTERNAL_IP}/health"

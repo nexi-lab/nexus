@@ -7,7 +7,7 @@ Docker-based local sandbox provider for code execution with Nexus filesystem mou
 The Docker sandbox provider enables local container-based code execution as an alternative to cloud-based E2B sandboxes. It provides:
 
 - **Local Development**: Run sandboxes without cloud dependencies or API keys
-- **Direct Access**: Connect to `localhost:8080` (no ngrok needed)
+- **Direct Access**: Connect to `localhost:2026` (no ngrok needed)
 - **Fast Mounting**: Reliable FUSE operations over local network
 - **Easy Debugging**: Use `docker logs` and `docker exec` for troubleshooting
 - **Cost Effective**: Free for local development
@@ -30,7 +30,7 @@ The Docker sandbox provider enables local container-based code execution as an a
 
 ```bash
 # Start Nexus server
-nexus serve --host 0.0.0.0 --port 8080
+nexus serve --host 0.0.0.0 --port 2026
 
 # Create a Docker sandbox
 nexus sandbox create my-sandbox --provider docker
@@ -114,7 +114,7 @@ export DOCKER_IMAGE=nexus-runtime:latest
 │  ┌────────────┐  │
 │  │ Nexus      │  │
 │  │ Server     │  │
-│  │ :8080      │  │
+│  │ :2026      │  │
 │  └────────────┘  │
 │        ▲         │
 │        │         │
@@ -194,7 +194,7 @@ result = nx.sandbox_run(
 # Mount filesystem
 mount = nx.sandbox_connect(
     sandbox["sandbox_id"],
-    nexus_url="http://localhost:8080",
+    nexus_url="http://localhost:2026",
     nexus_api_key="sk-your-key"
 )
 ```
@@ -215,7 +215,7 @@ mount = nx.sandbox_connect(
 # Inside container, this happens automatically:
 sudo NEXUS_API_KEY=sk-xxx \
   nexus mount /mnt/nexus \
-  --remote-url http://host.docker.internal:8080 \
+  --remote-url http://host.docker.internal:2026 \
   --allow-other &
 ```
 
@@ -223,7 +223,7 @@ sudo NEXUS_API_KEY=sk-xxx \
 
 **Mount fails with "Connection refused"**:
 - Ensure Nexus server is running on `0.0.0.0` (not `127.0.0.1`)
-- Check server is accessible: `curl http://localhost:8080/health`
+- Check server is accessible: `curl http://localhost:2026/health`
 
 **FUSE errors**:
 - Verify container has `SYS_ADMIN` capability
@@ -380,7 +380,7 @@ nx.write("/data/input.csv", "name,age\nAlice,30\nBob,25")
 sb = nx.sandbox_create("data-processor")
 nx.sandbox_connect(
     sb["sandbox_id"],
-    nexus_url="http://localhost:8080",
+    nexus_url="http://localhost:2026",
     nexus_api_key=api_key
 )
 

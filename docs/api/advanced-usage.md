@@ -283,7 +283,7 @@ import os
 
 # Connect to remote server with authentication
 nx = RemoteNexusFS(
-    server_url=os.environ['SERVER_URL'],    # http://localhost:8080
+    server_url=os.environ['SERVER_URL'],    # http://localhost:2026
     api_key=os.environ['NEXUS_API_KEY']     # sk-admin_...
 )
 
@@ -308,7 +308,7 @@ nx.close()
 
 ```bash
 # Set environment variables (or use: source .nexus-admin-env)
-export NEXUS_URL="http://localhost:8080"
+export NEXUS_URL="http://localhost:2026"
 export NEXUS_API_KEY="sk-admin_..."
 
 # CLI automatically uses NEXUS_URL and NEXUS_API_KEY from environment

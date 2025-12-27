@@ -429,7 +429,7 @@ Run the included demo script:
 
 ```bash
 # With server
-export NEXUS_URL=http://localhost:8080
+export NEXUS_URL=http://localhost:2026
 export NEXUS_API_KEY=your-api-key
 export S3_BUCKET_NAME=my-bucket
 export AWS_REGION=us-east-1

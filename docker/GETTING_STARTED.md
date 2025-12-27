@@ -46,11 +46,11 @@ The script demonstrates:
 
 ```bash
 # Start Nexus server
-nexus serve --host 0.0.0.0 --port 8080 &
+nexus serve --host 0.0.0.0 --port 2026 &
 
 # Create API key
 export NEXUS_API_KEY=$(nexus admin create-user dev --name "Developer" --subject-type user | grep "API Key:" | awk '{print $3}')
-export NEXUS_URL=http://localhost:8080
+export NEXUS_URL=http://localhost:2026
 
 # Create a sandbox
 SANDBOX_ID=$(nexus sandbox create my-sandbox --provider docker --ttl 30 --json | jq -r '.sandbox_id')
@@ -210,11 +210,11 @@ NEXUS_SANDBOX_PROVIDER=docker  # Default sandbox provider
 # Solution: Start Docker Desktop or Docker service
 ```
 
-### Port 8080 already in use
+### Port 2026 already in use
 
 ```bash
 # Kill existing process
-lsof -ti:8080 | xargs kill -9
+lsof -ti:2026 | xargs kill -9
 
 # Or use different port
 nexus serve --port 8081
@@ -241,7 +241,7 @@ docker build -f docker/nexus-runtime.Dockerfile -t nexus-runtime:latest . 2>&1 |
 docker inspect <container-id> | grep -A 10 CapAdd
 
 # Check server is accessible from container
-docker exec <container-id> curl http://host.docker.internal:8080/health
+docker exec <container-id> curl http://host.docker.internal:2026/health
 
 # View mount logs
 docker exec <container-id> cat /tmp/nexus-mount.log

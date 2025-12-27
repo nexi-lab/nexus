@@ -27,7 +27,7 @@ Most commands support these global options:
 - `--config PATH`: Path to Nexus config file (nexus.yaml) - **All commands**
 - `--backend [local|gcs]`: Backend type (default: local) - **Most commands**
 - `--data-dir PATH`: Path to Nexus data directory (can also use `NEXUS_DATA_DIR` env var) - **All commands**
-- `--remote-url URL`: Remote Nexus server URL (e.g., http://localhost:8080) - **File, directory, search, versions, metadata, rebac, mounts, operations commands**
+- `--remote-url URL`: Remote Nexus server URL (e.g., http://localhost:2026) - **File, directory, search, versions, metadata, rebac, mounts, operations commands**
 - `--remote-api-key KEY`: API key for remote authentication - **Same as --remote-url**
 - `--tenant-id TEXT`: Tenant ID for multi-tenant isolation (can also use `NEXUS_TENANT_ID` env var)
 - `--subject TEXT`: Subject in format 'type:id' (e.g., 'user:alice') (can also use `NEXUS_SUBJECT` env var)
@@ -476,7 +476,7 @@ nexus llm read /report.txt "Summarize" --no-search
 nexus llm read /docs/**/*.md "API endpoints" --search-mode keyword
 
 # Use with remote server
-export NEXUS_URL=http://localhost:8080
+export NEXUS_URL=http://localhost:2026
 export NEXUS_API_KEY=your-api-key
 nexus llm read /doc.pdf "Question"
 ```
@@ -742,7 +742,7 @@ nexus mounts remove /personal/alice
 nexus serve
 
 # Specify host and port
-nexus serve --host 0.0.0.0 --port 8080
+nexus serve --host 0.0.0.0 --port 2026
 
 # With specific data directory
 nexus serve --data-dir /var/lib/nexus

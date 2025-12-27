@@ -129,10 +129,10 @@ nexus memory retrieve "user_id"
 
 ```python
 # Start server
-nexus.serve(host="0.0.0.0", port=8080)
+nexus.serve(host="0.0.0.0", port=2026)
 
 # Connect remotely
-nx = nexus.connect(remote_url="http://localhost:8080")
+nx = nexus.connect(remote_url="http://localhost:2026")
 ```
 
 ### Plugins

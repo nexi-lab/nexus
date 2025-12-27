@@ -83,7 +83,7 @@ Master directory management with hierarchical permissions and automatic inherita
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Create directory
     nx.mkdir("/workspace/team-alpha", parents=True)
@@ -186,7 +186,7 @@ Master directory management with hierarchical permissions and automatic inherita
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Create directory hierarchy
     nx.mkdir("/workspace/company", parents=True)
@@ -218,7 +218,7 @@ Master directory management with hierarchical permissions and automatic inherita
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # Employee (in all-employees group) can read anywhere
     employee_can_read = nx.rebac_check(
@@ -286,7 +286,7 @@ Master directory management with hierarchical permissions and automatic inherita
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     tenants = ["acme-corp", "beta-inc", "gamma-ltd"]
 
@@ -344,7 +344,7 @@ Master directory management with hierarchical permissions and automatic inherita
     ```python
     import nexus
 
-    nx = nexus.connect(remote_url="http://localhost:8080", api_key="admin-key")
+    nx = nexus.connect(remote_url="http://localhost:2026", api_key="admin-key")
 
     # ✅ Good: Grant permissions at top level
     nx.rebac_create("group", "team", "owner", "file", "/workspace/team-folder")

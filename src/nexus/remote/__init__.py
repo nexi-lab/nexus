@@ -9,12 +9,12 @@ Two client implementations are available:
 
 Example (sync):
     >>> from nexus.remote import RemoteNexusFS
-    >>> nx = RemoteNexusFS("http://localhost:8080", api_key="sk-xxx")
+    >>> nx = RemoteNexusFS("http://localhost:2026", api_key="sk-xxx")
     >>> content = nx.read("/workspace/file.txt")
 
 Example (async):
     >>> from nexus.remote import AsyncRemoteNexusFS, AsyncRemoteMemory
-    >>> async with AsyncRemoteNexusFS("http://localhost:8080", api_key="sk-xxx") as nx:
+    >>> async with AsyncRemoteNexusFS("http://localhost:2026", api_key="sk-xxx") as nx:
     ...     content = await nx.read("/workspace/file.txt")
     ...     # Parallel reads
     ...     contents = await asyncio.gather(*[nx.read(p) for p in paths])

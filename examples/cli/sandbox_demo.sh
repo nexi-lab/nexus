@@ -71,7 +71,7 @@ if [ -z "$NEXUS_URL" ] || [[ "$NEXUS_URL" == *"localhost"* ]] || [[ "$NEXUS_URL"
     echo "⚠️  SKIPPING: Nexus server is running locally"
     echo "   E2B sandboxes need a publicly accessible Nexus server to mount"
     echo "   To enable mounting:"
-    echo "     1. Use ngrok: ngrok http 8080"
+    echo "     1. Use ngrok: ngrok http 2026"
     echo "     2. Set: export NEXUS_URL=https://your-ngrok-url.ngrok.io"
     echo "     3. Or deploy to production: export NEXUS_URL=https://nexus.sudorouter.ai"
     echo

@@ -102,7 +102,7 @@ gsutil mb -p YOUR-PROJECT-ID -l us-central1 gs://your-nexus-bucket
 | `--api-key` | Nexus API key for authentication | none |
 | `--gcs-bucket` | GCS bucket for backend storage | none (local) |
 | `--data-dir` | Data directory on VM | `/var/lib/nexus` |
-| `--port` | Server port | `8080` |
+| `--port` | Server port | `2026` |
 | `--deploy-only` | Skip VM creation, only deploy code | false |
 
 ## Machine Type Recommendations
@@ -176,13 +176,13 @@ The script will:
 export EXTERNAL_IP="<ip-from-script-output>"
 
 # Test health endpoint
-curl http://$EXTERNAL_IP:8080/health
+curl http://$EXTERNAL_IP:2026/health
 
 # Test status endpoint
-curl http://$EXTERNAL_IP:8080/api/nfs/status
+curl http://$EXTERNAL_IP:2026/api/nfs/status
 
 # Test with API key
-curl -X POST http://$EXTERNAL_IP:8080/api/nfs/list \
+curl -X POST http://$EXTERNAL_IP:2026/api/nfs/list \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_KEY" \
   -d '{"jsonrpc": "2.0", "method": "list", "params": {"path": "/"}, "id": 1}'
@@ -262,11 +262,11 @@ sudo systemctl status nexus-server
 sudo journalctl -u nexus-server -n 100 --no-pager
 
 # Check if port is in use
-sudo lsof -i :8080
+sudo lsof -i :2026
 
 # Try starting manually for debugging
 cd /opt/nexus/repo
-sudo -u nexus .venv/bin/python -m nexus.cli serve --host 0.0.0.0 --port 8080
+sudo -u nexus .venv/bin/python -m nexus.cli serve --host 0.0.0.0 --port 2026
 ```
 
 ### Firewall Issues
@@ -276,12 +276,12 @@ sudo -u nexus .venv/bin/python -m nexus.cli serve --host 0.0.0.0 --port 8080
 gcloud compute firewall-rules list
 
 # Check if rule exists
-gcloud compute firewall-rules describe allow-nexus-8080
+gcloud compute firewall-rules describe allow-nexus-2026
 
 # Recreate firewall rule
-gcloud compute firewall-rules delete allow-nexus-8080
-gcloud compute firewall-rules create allow-nexus-8080 \
-  --allow=tcp:8080 \
+gcloud compute firewall-rules delete allow-nexus-2026
+gcloud compute firewall-rules create allow-nexus-2026 \
+  --allow=tcp:2026 \
   --target-tags=nexus-server
 ```
 
@@ -400,7 +400,7 @@ gcloud compute ssh nexus-server --zone=us-central1-a --command='
 gcloud compute instances delete nexus-server --zone=us-central1-a --quiet
 
 # Delete firewall rule
-gcloud compute firewall-rules delete allow-nexus-8080 --quiet
+gcloud compute firewall-rules delete allow-nexus-2026 --quiet
 
 # Delete GCS bucket (WARNING: This deletes all data!)
 gsutil rm -r gs://your-nexus-bucket
@@ -415,7 +415,7 @@ from nexus import RemoteNexusFS
 
 # Connect to your GCP server
 nx = RemoteNexusFS(
-    server_url="http://YOUR-EXTERNAL-IP:8080",
+    server_url="http://YOUR-EXTERNAL-IP:2026",
     api_key="your-api-key"
 )
 
@@ -430,7 +430,7 @@ files = nx.list("/workspace", recursive=True)
 Update your frontend `.env` file:
 
 ```env
-VITE_API_URL=http://YOUR-EXTERNAL-IP:8080
+VITE_API_URL=http://YOUR-EXTERNAL-IP:2026
 VITE_API_KEY=your-api-key
 ```
 

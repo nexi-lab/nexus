@@ -7,7 +7,7 @@
 # Prerequisites:
 # 1. Server running with authentication: ./scripts/init-nexus-with-auth.sh
 # 2. Set environment variables:
-#    export NEXUS_URL="http://localhost:8080"
+#    export NEXUS_URL="http://localhost:2026"
 #    export NEXUS_API_KEY="sk-default_admin_..."
 #
 # Usage:
@@ -55,7 +55,7 @@ print_debug() {
 if [ -z "$NEXUS_URL" ] || [ -z "$NEXUS_API_KEY" ]; then
     print_error "NEXUS_URL and NEXUS_API_KEY not set"
     print_info "Set them with:"
-    print_info "  export NEXUS_URL='http://localhost:8080'"
+    print_info "  export NEXUS_URL='http://localhost:2026'"
     print_info "  export NEXUS_API_KEY='sk-default_admin_...'"
     exit 1
 fi

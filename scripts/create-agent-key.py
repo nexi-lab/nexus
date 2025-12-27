@@ -135,7 +135,7 @@ Agent Identity System (v0.5.0):
             print()
             print("Usage:")
             print(f"  export NEXUS_API_KEY='{raw_key}'")
-            print("  nexus ls /workspace --remote-url http://localhost:8080")
+            print("  nexus ls /workspace --remote-url http://localhost:2026")
             print()
         else:
             # Register agent WITHOUT API key (v0.5.0 recommended approach)
@@ -162,7 +162,7 @@ Agent Identity System (v0.5.0):
             print(f"  export NEXUS_API_KEY='<{args.user_id}_api_key>'")
             print("  curl -H 'Authorization: Bearer $NEXUS_API_KEY' \\")
             print(f"       -H 'X-Agent-ID: {args.agent_id}' \\")
-            print("       http://localhost:8080/api/nfs/list")
+            print("       http://localhost:2026/api/nfs/list")
             print()
 
         print("Agent Identity:")

@@ -379,7 +379,7 @@ class TestDockerSandboxProvider:
         result = await provider.mount_nexus(
             sandbox_id="test123",
             mount_path="/mnt/nexus",
-            nexus_url="http://localhost:8080",
+            nexus_url="http://localhost:2026",
             api_key="sk-test-key",
         )
 
@@ -423,7 +423,7 @@ class TestDockerSandboxProvider:
         result = await provider.mount_nexus(
             sandbox_id="test123",
             mount_path="/mnt/nexus",
-            nexus_url="http://localhost:8080",
+            nexus_url="http://localhost:2026",
             api_key="sk-test-key",
         )
 

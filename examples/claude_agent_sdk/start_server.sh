@@ -8,7 +8,7 @@ echo ""
 
 # Configuration
 export NEXUS_DATA_DIR="${NEXUS_DATA_DIR:-./nexus-demo-data}"
-SERVER_PORT="${NEXUS_PORT:-8080}"
+SERVER_PORT="${NEXUS_PORT:-2026}"
 API_KEY="${NEXUS_API_KEY:-demo-key-12345}"
 
 echo "Configuration:"

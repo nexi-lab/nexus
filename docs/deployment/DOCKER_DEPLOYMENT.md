@@ -39,10 +39,10 @@ cp .env.docker.example .env
 docker-compose up -d
 
 # 4. Test the server
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 ```
 
-That's it! The server is now running at `http://localhost:8080`.
+That's it! The server is now running at `http://localhost:2026`.
 
 ## Local Development
 
@@ -55,14 +55,14 @@ docker build -t nexus-server:latest .
 # Run with default settings
 docker run -d \
   --name nexus-server \
-  -p 8080:8080 \
+  -p 2026:2026 \
   -v nexus-data:/app/data \
   nexus-server:latest
 
 # Run with API key
 docker run -d \
   --name nexus-server \
-  -p 8080:8080 \
+  -p 2026:2026 \
   -e NEXUS_API_KEY="mysecretkey" \
   -v nexus-data:/app/data \
   nexus-server:latest
@@ -94,7 +94,7 @@ For development with code changes, mount the source directory:
 ```bash
 docker run -d \
   --name nexus-dev \
-  -p 8080:8080 \
+  -p 2026:2026 \
   -v $(pwd)/src:/app/src \
   -v nexus-data:/app/data \
   -e NEXUS_API_KEY="devkey" \
@@ -114,7 +114,7 @@ echo "Save this: $API_KEY"
 
 # Create .env file
 cat > .env <<EOF
-PORT=8080
+PORT=2026
 NEXUS_API_KEY=$API_KEY
 NEXUS_BACKEND=local
 EOF
@@ -143,7 +143,7 @@ cp /path/to/service-account-key.json ./gcs-credentials.json
 docker-compose up -d
 
 # Verify health
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 
 # View logs
 docker-compose logs -f nexus-server
@@ -294,8 +294,8 @@ gcloud compute instances create-with-container nexus-docker \
   --scopes=cloud-platform
 
 # Create firewall rule
-gcloud compute firewall-rules create allow-nexus-8080 \
-  --allow=tcp:8080 \
+gcloud compute firewall-rules create allow-nexus-2026 \
+  --allow=tcp:2026 \
   --target-tags=nexus-server
 ```
 
@@ -308,7 +308,7 @@ EXTERNAL_IP=$(gcloud compute instances describe nexus-docker \
   --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
 
 # Test
-curl http://$EXTERNAL_IP:8080/health
+curl http://$EXTERNAL_IP:2026/health
 ```
 
 ### Method 3: Google Cloud Run (Serverless)
@@ -320,7 +320,7 @@ gcloud run deploy nexus-server \
   --platform=managed \
   --region=us-central1 \
   --allow-unauthenticated \
-  --port=8080 \
+  --port=2026 \
   --memory=2Gi \
   --cpu=2 \
   --set-env-vars=NEXUS_API_KEY=$API_KEY,NEXUS_BACKEND=gcs,NEXUS_GCS_BUCKET_NAME=your-bucket
@@ -340,7 +340,7 @@ gcloud run services describe nexus-server \
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `NEXUS_HOST` | Server bind host | `0.0.0.0` |
-| `NEXUS_PORT` | Server port | `8080` |
+| `NEXUS_PORT` | Server port | `2026` |
 | `NEXUS_DATA_DIR` | Data directory path | `/app/data` |
 | `NEXUS_API_KEY` | API authentication key | none |
 | `NEXUS_BACKEND` | Storage backend (`local` or `gcs`) | `local` |
@@ -446,7 +446,7 @@ docker exec nexus-server python --version
 docker logs nexus-server
 
 # Check if port is in use
-lsof -i :8080
+lsof -i :2026
 
 # Check container status
 docker ps -a | grep nexus-server
@@ -467,7 +467,7 @@ docker run --rm -v nexus-data:/data alpine chown -R 1000:1000 /data
 docker run -d \
   --name nexus-server \
   --user root \
-  -p 8080:8080 \
+  -p 2026:2026 \
   nexus-server:latest
 ```
 
@@ -482,7 +482,7 @@ docker run -d \
   --name nexus-server \
   --memory="4g" \
   --memory-swap="4g" \
-  -p 8080:8080 \
+  -p 2026:2026 \
   nexus-server:latest
 ```
 

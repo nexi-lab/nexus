@@ -45,7 +45,7 @@ export MACHINE_TYPE="e2-small"  # Or e2-medium for better performance
 
 The script will:
 - Create a Compute Engine VM with Container-Optimized OS
-- Configure firewall rules for port 8080
+- Configure firewall rules for port 2026
 - Install and run Nexus in Docker
 - Mount persistent disk for SQLite database
 - Output the service URL and connection details
@@ -132,7 +132,7 @@ The script will:
    docker run -d \
      --name nexus-server \
      --restart unless-stopped \
-     -p 8080:8080 \
+     -p 2026:2026 \
      -v /var/lib/nexus:/app/data \
      -e NEXUS_ACCESS_KEY=your-key \
      -e NEXUS_SECRET_KEY=your-secret \
@@ -144,7 +144,7 @@ The script will:
 3. **Configure firewall**:
    ```bash
    gcloud compute firewall-rules create allow-nexus \
-     --allow tcp:8080 \
+     --allow tcp:2026 \
      --source-ranges 0.0.0.0/0
    ```
 
@@ -184,7 +184,7 @@ The script will:
      --platform managed \
      --region $REGION \
      --allow-unauthenticated \
-     --port 8080 \
+     --port 2026 \
      --memory 512Mi \
      --set-env-vars NEXUS_ACCESS_KEY=your-key,NEXUS_SECRET_KEY=your-secret
    ```
@@ -196,7 +196,7 @@ The script will:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `NEXUS_HOST` | Server host | `0.0.0.0` |
-| `NEXUS_PORT` | Server port | `8080` |
+| `NEXUS_PORT` | Server port | `2026` |
 | `NEXUS_BUCKET` | Virtual bucket name | `nexus` |
 | `NEXUS_ACCESS_KEY` | Authentication access key | `nexus-key` |
 | `NEXUS_SECRET_KEY` | Authentication secret key | `nexus-secret` |
@@ -304,7 +304,7 @@ gcloud run services describe nexus-server --region us-central1
 ### Test locally first
 ```bash
 docker build -t nexus-server .
-docker run -p 8080:8080 \
+docker run -p 2026:2026 \
   -e NEXUS_ACCESS_KEY=test-key \
   -e NEXUS_SECRET_KEY=test-secret \
   nexus-server

@@ -103,11 +103,11 @@ def create_mcp_server(
         >>> server = create_mcp_server(nx)
         >>>
         >>> # Remote filesystem
-        >>> server = create_mcp_server(remote_url="http://localhost:8080")
+        >>> server = create_mcp_server(remote_url="http://localhost:2026")
         >>>
         >>> # Remote filesystem with API key
         >>> server = create_mcp_server(
-        ...     remote_url="http://localhost:8080",
+        ...     remote_url="http://localhost:2026",
         ...     api_key="your-api-key"
         ... )
     """

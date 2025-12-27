@@ -26,7 +26,7 @@ Updated the LangGraph + Nexus demo to use the **auth-enabled server** (`./script
 **Key sections:**
 ```bash
 # Before
-nexus serve --host localhost --port 8080
+nexus serve --host localhost --port 2026
 
 # After
 ./scripts/init-nexus-with-auth.sh --init
@@ -104,7 +104,7 @@ fi
 ### Before (Broken)
 ```bash
 # User runs this (won't work for permissions)
-nexus serve --host localhost --port 8080
+nexus serve --host localhost --port 2026
 source .nexus-admin-env  # File doesn't exist
 python multi_agent_nexus.py  # Permissions fail
 ```
@@ -132,8 +132,8 @@ If you previously set up the demo with `nexus serve`:
 
 ### Old Setup
 ```bash
-nexus serve --host localhost --port 8080
-export NEXUS_URL="http://localhost:8080"
+nexus serve --host localhost --port 2026
+export NEXUS_URL="http://localhost:2026"
 python multi_agent_nexus.py  # Permissions don't work
 ```
 

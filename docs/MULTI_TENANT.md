@@ -135,7 +135,7 @@ nexus init --config nexus.yaml
 ### 3. Start Server with Config
 
 ```bash
-nexus serve --config nexus.yaml --host 0.0.0.0 --port 8080
+nexus serve --config nexus.yaml --host 0.0.0.0 --port 2026
 ```
 
 ## Dynamic User Management
@@ -150,7 +150,7 @@ from nexus import RemoteNexusClient
 # Connect to running server
 client = RemoteNexusClient(
     host="localhost",
-    port=8080,
+    port=2026,
     api_key="admin-api-key"  # Admin credentials
 )
 
@@ -200,7 +200,7 @@ If you expose a management endpoint:
 
 ```bash
 # POST /api/orgs/{org_id}/members
-curl -X POST http://localhost:8080/api/orgs/acme/members \
+curl -X POST http://localhost:2026/api/orgs/acme/members \
   -H "Authorization: Bearer admin-token" \
   -H "Content-Type: application/json" \
   -d '{
@@ -214,7 +214,7 @@ curl -X POST http://localhost:8080/api/orgs/acme/members \
 
 ```bash
 # Using remote client
-NEXUS_HOST=localhost NEXUS_PORT=8080 nexus admin add-user \
+NEXUS_HOST=localhost NEXUS_PORT=2026 nexus admin add-user \
   --org acme \
   --user charlie@acme.com \
   --role member \
@@ -653,12 +653,12 @@ nexus init --config nexus.yaml
 nexus serve --config nexus.yaml
 
 # 4. Add user dynamically (server running)
-curl -X POST http://localhost:8080/api/orgs/acme/members \
+curl -X POST http://localhost:2026/api/orgs/acme/members \
   -H "Authorization: Bearer admin-token" \
   -d '{"user_id": "bob@acme.com", "role": "member", "workspaces": ["sales"]}'
 
 # 5. User accesses data (permissions checked automatically)
-curl http://localhost:8080/api/orgs/acme/sales/context.json \
+curl http://localhost:2026/api/orgs/acme/sales/context.json \
   -H "Authorization: Bearer bob-token"
 ```
 

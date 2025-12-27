@@ -75,8 +75,8 @@ fi
 echo "=== Starting Nexus Server ==="
 echo "Starting server with database authentication..."
 
-# Kill any existing server on port 8080
-lsof -ti:8080 | xargs kill -9 2>/dev/null || true
+# Kill any existing server on port 2026
+lsof -ti:2026 | xargs kill -9 2>/dev/null || true
 
 # Use existing PostgreSQL container
 echo "Checking for existing PostgreSQL container..."
@@ -119,7 +119,7 @@ nexus serve \
     --auth-type database \
     --init \
     --data-dir "$NEXUS_DATA_DIR" \
-    --port 8080 \
+    --port 2026 \
     > "$NEXUS_DATA_DIR/server.log" 2>&1 &
 
 SERVER_PID=$!
@@ -128,7 +128,7 @@ echo "Server PID: $SERVER_PID"
 # Wait for server to be ready
 echo "Waiting for server to start..."
 for i in {1..30}; do
-    if curl -s http://localhost:8080/health > /dev/null 2>&1; then
+    if curl -s http://localhost:2026/health > /dev/null 2>&1; then
         echo -e "${GREEN}✓${NC} Server is ready"
         break
     fi
@@ -151,7 +151,7 @@ if [ -z "$NEXUS_API_KEY" ]; then
 fi
 
 export NEXUS_API_KEY
-export NEXUS_URL="http://localhost:8080"
+export NEXUS_URL="http://localhost:2026"
 
 echo -e "${GREEN}✓${NC} Server initialized with authentication"
 echo -e "${GREEN}✓${NC} API key: ${NEXUS_API_KEY:0:20}..."

@@ -101,7 +101,7 @@ Update your OAuth callback to use `/auth/oauth/check` instead of `/auth/oauth/ca
 // In your OAuth callback component (e.g., OAuthCallback.tsx)
 async function handleOAuthCallback(code: string, state: string) {
   try {
-    const response = await fetch('http://localhost:8080/auth/oauth/check', {
+    const response = await fetch('http://localhost:2026/auth/oauth/check', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -163,7 +163,7 @@ export function ConfirmationPage({ confirmationData }: ConfirmationPageProps) {
     setIsLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8080/auth/oauth/confirm', {
+      const response = await fetch('http://localhost:2026/auth/oauth/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -267,7 +267,7 @@ function OAuthCallbackHandler() {
   }, [code, state]);
 
   async function handleOAuthCallback(code, state) {
-    const response = await fetch('http://localhost:8080/auth/oauth/check', {
+    const response = await fetch('http://localhost:2026/auth/oauth/check', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: 'google', code, state }),

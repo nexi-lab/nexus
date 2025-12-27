@@ -21,7 +21,7 @@ Prerequisites:
 
 Usage:
     # With server:
-    export NEXUS_URL=http://localhost:8080
+    export NEXUS_URL=http://localhost:2026
     export NEXUS_API_KEY=your-api-key
     export S3_BUCKET_NAME=your-bucket-name
     export AWS_REGION=us-east-1
@@ -120,7 +120,7 @@ def demo_with_server():
 
     if not nexus_url:
         print_error("NEXUS_URL not set")
-        print_info("Set: export NEXUS_URL=http://localhost:8080")
+        print_info("Set: export NEXUS_URL=http://localhost:2026")
         sys.exit(1)
 
     if not api_key:

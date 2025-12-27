@@ -101,7 +101,7 @@ from nexus_skill_seekers.plugin import SkillSeekersPlugin
 
 async def main():
     # Connect to Nexus
-    nx = RemoteNexusFS("http://localhost:8080", api_key="your-key")
+    nx = RemoteNexusFS("http://localhost:2026", api_key="your-key")
 
     # Initialize plugin
     plugin = SkillSeekersPlugin(nx)
@@ -538,7 +538,7 @@ from nexus.remote import RemoteNexusFS
 from nexus_skill_seekers.plugin import SkillSeekersPlugin
 
 async def main():
-    nx = RemoteNexusFS("http://localhost:8080", api_key="...")
+    nx = RemoteNexusFS("http://localhost:2026", api_key="...")
     plugin = SkillSeekersPlugin(nx)
 
     # Your project's dependencies

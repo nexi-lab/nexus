@@ -87,7 +87,7 @@ The demo script will automatically start the server if needed. There are two sce
 # - Set up PostgreSQL database
 # - Create admin user and API key
 # - Save credentials to .nexus-admin-env
-# - Start server at http://localhost:8080
+# - Start server at http://localhost:2026
 
 # Type 'yes' when prompted to confirm initialization
 ```

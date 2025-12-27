@@ -18,7 +18,7 @@ Usage:
     export OPENAI_API_KEY="your-key"
 
     # Optional: Use remote Nexus server
-    export NEXUS_SERVER_URL="http://your-server:8080"
+    export NEXUS_SERVER_URL="http://your-server:2026"
     export NEXUS_API_KEY="your-nexus-key"
 
     # Run the demo

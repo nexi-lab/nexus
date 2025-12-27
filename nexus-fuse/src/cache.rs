@@ -316,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_cache_basic() {
-        let cache = FileCache::new("http://test.local:8080").unwrap();
+        let cache = FileCache::new("http://test.local:2026").unwrap();
 
         // Miss on empty cache
         assert!(matches!(cache.get("/test.txt"), CacheLookup::Miss));

@@ -38,7 +38,7 @@ def connectors_group() -> None:
         nexus connectors list
 
         # Remote (via RPC to server)
-        nexus connectors list --remote-url http://localhost:8080
+        nexus connectors list --remote-url http://localhost:2026
 
     Examples:
         # List all connectors
@@ -100,7 +100,7 @@ def list_connectors(category: str | None, as_json: bool, backend_config: Backend
         nexus connectors list
 
         # List connectors from remote server
-        nexus connectors list --remote-url http://localhost:8080
+        nexus connectors list --remote-url http://localhost:2026
 
         # List only storage connectors
         nexus connectors list --category storage
@@ -169,7 +169,7 @@ def connector_info(connector_name: str, backend_config: BackendConfig) -> None:
         nexus connectors info gcs_connector
 
         # Remote
-        nexus connectors info gcs_connector --remote-url http://localhost:8080
+        nexus connectors info gcs_connector --remote-url http://localhost:2026
     """
     try:
         # Get connector info

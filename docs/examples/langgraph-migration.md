@@ -42,7 +42,7 @@ from nexus.remote import RemoteNexusFS
 
 # Connect to Nexus
 nexus = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key=get_demo_user_key()
 )
 nexus.agent_id = "researcher"
@@ -179,7 +179,7 @@ def researcher_node(state: AgentState) -> AgentState:
 
     # ✨ Connect as researcher agent
     nexus = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:8080"),
+        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
         api_key=get_demo_user_key()  # Non-admin key
     )
     nexus.agent_id = "researcher"  # Set agent identity
@@ -255,7 +255,7 @@ def coder_node(state: AgentState) -> AgentState:
 
     # ✨ Connect as coder agent
     nexus = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:8080"),
+        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
         api_key=get_demo_user_key()
     )
     nexus.agent_id = "coder"
@@ -334,7 +334,7 @@ def reviewer_node(state: AgentState) -> AgentState:
 
     # ✨ Connect as reviewer agent
     nexus = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:8080"),
+        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
         api_key=get_demo_user_key()
     )
     nexus.agent_id = "reviewer"
@@ -405,7 +405,7 @@ def main():
 
     # ✨ Setup admin connection for permission configuration
     admin_nx = RemoteNexusFS(
-        server_url=os.getenv("NEXUS_URL", "http://localhost:8080"),
+        server_url=os.getenv("NEXUS_URL", "http://localhost:2026"),
         api_key=os.getenv("NEXUS_API_KEY")
     )
 

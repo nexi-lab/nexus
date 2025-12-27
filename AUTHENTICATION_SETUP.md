@@ -71,7 +71,7 @@ The user authentication system has been successfully integrated into the Nexus F
 ### Optional (for OAuth)
 - `GOOGLE_CLIENT_ID` - Google OAuth client ID
 - `GOOGLE_CLIENT_SECRET` - Google OAuth client secret
-- `GOOGLE_REDIRECT_URI` - OAuth redirect URI (default: `http://localhost:8080/auth/oauth/callback`)
+- `GOOGLE_REDIRECT_URI` - OAuth redirect URI (default: `http://localhost:2026/auth/oauth/callback`)
 
 ## Database Migration
 
@@ -108,7 +108,7 @@ Tests cover:
 ### 1. Register a New User
 
 ```bash
-curl -X POST http://localhost:8080/auth/register \
+curl -X POST http://localhost:2026/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "email": "alice@example.com",
@@ -133,7 +133,7 @@ Response:
 ### 2. Login
 
 ```bash
-curl -X POST http://localhost:8080/auth/login \
+curl -X POST http://localhost:2026/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "identifier": "alice@example.com",
@@ -161,7 +161,7 @@ Response:
 ### 3. Access Protected Endpoint
 
 ```bash
-curl -X GET http://localhost:8080/auth/me \
+curl -X GET http://localhost:2026/auth/me \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
 
@@ -169,7 +169,7 @@ curl -X GET http://localhost:8080/auth/me \
 
 #### Step 1: Get Authorization URL
 ```bash
-curl http://localhost:8080/auth/oauth/google/authorize
+curl http://localhost:2026/auth/oauth/google/authorize
 ```
 
 Response:
@@ -185,7 +185,7 @@ Response:
 After user authorizes, Google redirects to your callback with a `code` parameter.
 
 ```bash
-curl -X POST http://localhost:8080/auth/oauth/callback \
+curl -X POST http://localhost:2026/auth/oauth/callback \
   -H "Content-Type: application/json" \
   -d '{
     "provider": "google",

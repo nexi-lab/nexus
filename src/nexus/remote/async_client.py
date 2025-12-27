@@ -5,7 +5,7 @@ a remote Nexus RPC server over HTTP using httpx AsyncClient.
 
 Example:
     # Connect to remote Nexus server (async)
-    nx = AsyncRemoteNexusFS("http://localhost:8080", api_key="your-api-key")
+    nx = AsyncRemoteNexusFS("http://localhost:2026", api_key="your-api-key")
 
     # Use with async/await
     content = await nx.read("/workspace/file.txt")
@@ -72,7 +72,7 @@ class AsyncRemoteNexusFS:
     enabling parallel file operations and integration with async frameworks.
 
     Example:
-        >>> nx = AsyncRemoteNexusFS("http://localhost:8080", api_key="sk-xxx")
+        >>> nx = AsyncRemoteNexusFS("http://localhost:2026", api_key="sk-xxx")
         >>> content = await nx.read("/workspace/file.txt")
         >>> await nx.write("/workspace/new.txt", b"Hello!")
 
@@ -95,7 +95,7 @@ class AsyncRemoteNexusFS:
         """Initialize async remote filesystem client.
 
         Args:
-            server_url: Nexus server URL (e.g., "http://localhost:8080")
+            server_url: Nexus server URL (e.g., "http://localhost:2026")
             api_key: Optional API key for authentication
             timeout: Read timeout in seconds (default: 30s)
             connect_timeout: Connection timeout in seconds (default: 5s)
@@ -2446,7 +2446,7 @@ class AsyncRemoteMemory:
     to a remote Nexus server instead of direct database access.
 
     Example:
-        >>> nx = AsyncRemoteNexusFS("http://localhost:8080", api_key="sk-xxx")
+        >>> nx = AsyncRemoteNexusFS("http://localhost:2026", api_key="sk-xxx")
         >>> memory = AsyncRemoteMemory(nx)
         >>> memory_id = await memory.store("User prefers dark mode", memory_type="preference")
         >>> memories = await memory.search("dark mode")
@@ -2672,7 +2672,7 @@ class AsyncAdminAPI:
     used to create AsyncRemoteNexusFS is not an admin key.
 
     Example:
-        >>> nx = AsyncRemoteNexusFS("http://localhost:8080", api_key="sk-admin-xxx")
+        >>> nx = AsyncRemoteNexusFS("http://localhost:2026", api_key="sk-admin-xxx")
         >>> admin = AsyncAdminAPI(nx)
         >>> result = await admin.create_key(user_id="alice", name="Alice's key")
         >>> print(f"Created key: {result['api_key']}")
@@ -2816,7 +2816,7 @@ class AsyncACE:
     Provides trajectory tracking and playbook management for agent learning.
 
     Example:
-        >>> nx = AsyncRemoteNexusFS("http://localhost:8080", api_key="sk-xxx")
+        >>> nx = AsyncRemoteNexusFS("http://localhost:2026", api_key="sk-xxx")
         >>> ace = AsyncACE(nx)
         >>> # Start tracking a task
         >>> traj = await ace.start_trajectory("Process customer data")

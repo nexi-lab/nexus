@@ -258,7 +258,7 @@ async def list_all_memories() -> str:
 By default, connects to demo server at `http://136.117.224.98`. Override with:
 
 ```bash
-export NEXUS_SERVER_URL="http://your-server:8080"
+export NEXUS_SERVER_URL="http://your-server:2026"
 export NEXUS_API_KEY="your-api-key"
 ```
 
@@ -287,10 +287,10 @@ To test with a local Nexus server:
 
 ```bash
 # Terminal 1: Start server
-nexus serve --port 8080
+nexus serve --port 2026
 
 # Terminal 2: Run demos
-export NEXUS_SERVER_URL="http://localhost:8080"
+export NEXUS_SERVER_URL="http://localhost:2026"
 python openai_agent_react_demo.py
 ```
 
@@ -395,9 +395,9 @@ export OPENAI_API_KEY="sk-..."
 
 ### "Error connecting to Nexus"
 
-1. Check server is running: `curl http://136.117.224.98:8080/health`
+1. Check server is running: `curl http://136.117.224.98:2026/health`
 2. Try local server: `nexus serve`
-3. Set custom URL: `export NEXUS_SERVER_URL="http://localhost:8080"`
+3. Set custom URL: `export NEXUS_SERVER_URL="http://localhost:2026"`
 
 ### "Module not found"
 

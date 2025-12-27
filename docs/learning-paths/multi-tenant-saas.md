@@ -80,7 +80,7 @@ Start a Nexus server configured for multi-tenancy:
 # Start server with multi-tenant configuration
 nexus serve \
   --host 0.0.0.0 \
-  --port 8080 \
+  --port 2026 \
   --data-dir ./nexus-saas-data \
   --database-url "postgresql://postgres:nexus@localhost/nexus" \
   &
@@ -89,7 +89,7 @@ nexus serve \
 sleep 3
 
 # Verify server is running
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 ```
 
 **Expected output:**
@@ -117,7 +117,7 @@ from typing import Dict, List, Optional
 class TenantManager:
     """Manage multi-tenant SaaS tenants"""
 
-    def __init__(self, admin_api_key: str, server_url: str = "http://localhost:8080"):
+    def __init__(self, admin_api_key: str, server_url: str = "http://localhost:2026"):
         self.server_url = server_url
         self.admin = nexus.connect(config={
             "url": server_url,
@@ -409,13 +409,13 @@ import nexus
 
 # Acme tenant user (Alice)
 alice = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "alice_key_here"
 })
 
 # Beta tenant user (Bob)
 bob = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "bob_key_here"
 })
 
@@ -507,7 +507,7 @@ class CrossTenantSharing:
 
     def __init__(self, admin_api_key: str):
         self.admin = nexus.connect(config={
-            "url": "http://localhost:8080",
+            "url": "http://localhost:2026",
             "api_key": admin_api_key
         })
 
@@ -610,7 +610,7 @@ class TenantQuotaManager:
 
     def __init__(self, admin_api_key: str):
         self.admin = nexus.connect(config={
-            "url": "http://localhost:8080",
+            "url": "http://localhost:2026",
             "api_key": admin_api_key
         })
 
@@ -766,7 +766,7 @@ class TenantLifecycle:
 
     def __init__(self, admin_api_key: str):
         self.admin = nexus.connect(config={
-            "url": "http://localhost:8080",
+            "url": "http://localhost:2026",
             "api_key": admin_api_key
         })
 
@@ -898,7 +898,7 @@ class ScalableSaaS:
 
     def __init__(self, admin_api_key: str, max_workers: int = 10):
         self.admin = nexus.connect(config={
-            "url": "http://localhost:8080",
+            "url": "http://localhost:2026",
             "api_key": admin_api_key
         })
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -1252,7 +1252,7 @@ Need help? Contact support@example.com
 def main():
     """Demo the multi-tenant SaaS platform"""
 
-    SERVER_URL = "http://localhost:8080"
+    SERVER_URL = "http://localhost:2026"
     ADMIN_KEY = "admin_key_here"  # Replace with actual admin key
 
     saas = MultiTenantSaaS(SERVER_URL, ADMIN_KEY)

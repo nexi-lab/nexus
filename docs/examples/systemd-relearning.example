@@ -12,7 +12,7 @@ After=network.target
 Type=oneshot
 User=nexus
 Group=nexus
-Environment="NEXUS_URL=http://localhost:8080"
+Environment="NEXUS_URL=http://localhost:2026"
 Environment="NEXUS_API_KEY=your-api-key-here"
 ExecStart=/usr/local/bin/nexus memory process-relearning --limit 10
 StandardOutput=journal

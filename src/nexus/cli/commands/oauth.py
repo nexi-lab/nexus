@@ -577,7 +577,7 @@ def setup_x(
 @click.option(
     "--redirect-uri",
     type=str,
-    default="http://localhost:8080/oauth/callback",
+    default="http://localhost:2026/oauth/callback",
     help="OAuth redirect URI",
 )
 @click.option(

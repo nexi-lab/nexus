@@ -18,7 +18,7 @@ Usage:
     python scripts/test_etag_304.py
 
     # Connect to existing server (skip auto-start)
-    python scripts/test_etag_304.py --url http://localhost:8080 --no-auto-start
+    python scripts/test_etag_304.py --url http://localhost:2026 --no-auto-start
 
     # With API key
     python scripts/test_etag_304.py --api-key sk-xxx
@@ -912,7 +912,7 @@ class ETagTester:
 class NexusTestServer:
     """Manages a test Nexus server with uvicorn in a background thread."""
 
-    def __init__(self, port: int = 8080, api_key: str | None = None):
+    def __init__(self, port: int = 2026, api_key: str | None = None):
         self.port = port
         self.api_key = api_key
         self.server: uvicorn.Server | None = None

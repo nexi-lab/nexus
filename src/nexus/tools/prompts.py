@@ -169,7 +169,7 @@ def get_skills_prompt(config: RunnableConfig, state: dict[str, Any] | None = Non
         >>>
         >>> config = RunnableConfig(metadata={
         ...     "x_auth": "Bearer sk-your-api-key",
-        ...     "nexus_server_url": "http://localhost:8080"
+        ...     "nexus_server_url": "http://localhost:2026"
         ... })
         >>>
         >>> skills_section = get_skills_prompt(config)
@@ -238,7 +238,7 @@ def get_prompt(
         >>>
         >>> config = RunnableConfig(metadata={
         ...     "x_auth": "Bearer sk-your-api-key",
-        ...     "nexus_server_url": "http://localhost:8080",
+        ...     "nexus_server_url": "http://localhost:2026",
         ...     "opened_file_path": "/workspace/admin/script.py"
         ... })
         >>>

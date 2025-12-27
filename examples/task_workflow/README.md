@@ -288,7 +288,7 @@ Scale to multiple machines with Nexus server:
 
 ```python
 nx = nexus.connect(
-    remote_url="http://localhost:8080",
+    remote_url="http://localhost:2026",
     api_key="your-key"
 )
 ```

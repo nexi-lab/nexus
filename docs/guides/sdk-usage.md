@@ -316,7 +316,7 @@ from nexus.sdk import RemoteNexusFS
 
 # Connect to remote Nexus server
 nx = RemoteNexusFS(
-    server_url="http://your-server:8080",
+    server_url="http://your-server:2026",
     api_key="your-api-key"
 )
 

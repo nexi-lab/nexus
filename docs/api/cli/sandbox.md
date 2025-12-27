@@ -616,7 +616,7 @@ export NEXUS_DATA_DIR="/path/to/nexus-data"
 export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
 
 # Server URL (for remote mode)
-export NEXUS_URL="http://localhost:8080"
+export NEXUS_URL="http://localhost:2026"
 export NEXUS_API_KEY="your-api-key"
 ```
 
@@ -705,7 +705,7 @@ export E2B_API_KEY="your-key"
 ```bash
 # Solution: Ensure E2B_API_KEY is set before starting server
 export E2B_API_KEY="your-key"
-nexus serve --host 0.0.0.0 --port 8080
+nexus serve --host 0.0.0.0 --port 2026
 ```
 
 ### Problem: Sandbox creation is slow

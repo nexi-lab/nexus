@@ -151,14 +151,14 @@ python verify_mcp_tools.py
 
 ```bash
 # In terminal 1: Start Nexus server
-nexus serve --host 127.0.0.1 --port 8080
+nexus serve --host 127.0.0.1 --port 2026
 ```
 
 ### 5b. Connect MCP to Remote Server
 
 ```bash
 # In terminal 2: Start MCP server pointing to remote
-NEXUS_URL=http://127.0.0.1:8080 \
+NEXUS_URL=http://127.0.0.1:2026 \
 nexus mcp serve --transport stdio
 ```
 
@@ -166,7 +166,7 @@ nexus mcp serve --transport stdio
 
 ```bash
 # In terminal 3: Test with CLI
-export NEXUS_URL=http://127.0.0.1:8080
+export NEXUS_URL=http://127.0.0.1:2026
 
 # Write a file through remote server
 nexus write /test.txt "Hello from remote!"
@@ -204,7 +204,7 @@ nexus mcp serve --transport http --port 8081
 
 ### Start MCP Server with Remote Nexus
 ```bash
-NEXUS_URL=http://your-server:8080 \
+NEXUS_URL=http://your-server:2026 \
 NEXUS_API_KEY=your-api-key \
 nexus mcp serve --transport stdio
 ```

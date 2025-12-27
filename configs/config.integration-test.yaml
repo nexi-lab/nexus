@@ -11,7 +11,7 @@ db_path: postgresql://postgres:nexus@postgres:5432/nexus
 # Server settings
 server:
   host: 0.0.0.0
-  port: 8080
+  port: 2026
   workers: 4
   log_level: info
 

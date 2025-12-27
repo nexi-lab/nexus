@@ -7,13 +7,13 @@
 # Usage:
 #   ./start_nexus_server.sh
 #
-# The server will run on http://localhost:8080 by default.
+# The server will run on http://localhost:2026 by default.
 # Set NEXUS_PORT to use a different port.
 
 set -e
 
 # Configuration
-PORT="${NEXUS_PORT:-8080}"
+PORT="${NEXUS_PORT:-2026}"
 DATA_DIR="${NEXUS_DATA_DIR:-./nexus-data}"
 DB_URL="${NEXUS_DATABASE_URL:-}"
 

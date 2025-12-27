@@ -18,7 +18,7 @@ class TestMicrosoftOAuthProvider:
         provider = MicrosoftOAuthProvider(
             client_id="test-client-id",
             client_secret="test-secret",
-            redirect_uri="http://localhost:8080/callback",
+            redirect_uri="http://localhost:2026/callback",
             scopes=["Files.ReadWrite.All"],
             provider_name="microsoft-onedrive",
         )

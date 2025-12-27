@@ -45,12 +45,12 @@ gcloud compute instances create "$INSTANCE_NAME" \
     --tags=nexus-server \
     --scopes=cloud-platform
 
-# Create firewall rule for port 8080
-gcloud compute firewall-rules create allow-nexus-8080 \
+# Create firewall rule for port 2026
+gcloud compute firewall-rules create allow-nexus-2026 \
     --project="$PROJECT_ID" \
-    --allow=tcp:8080 \
+    --allow=tcp:2026 \
     --target-tags=nexus-server \
-    --description="Allow Nexus server traffic on port 8080" \
+    --description="Allow Nexus server traffic on port 2026" \
     2>/dev/null || true
 
 # Get external IP
@@ -64,7 +64,7 @@ echo "✓ VM created successfully!"
 echo ""
 echo "  Instance: $INSTANCE_NAME"
 echo "  External IP: $EXTERNAL_IP"
-echo "  Server URL: http://${EXTERNAL_IP}:8080"
+echo "  Server URL: http://${EXTERNAL_IP}:2026"
 echo ""
 echo "Next steps:"
 echo "  1. Build Docker image: gcloud builds submit . --config=cloudbuild-pypi.yaml --project=$PROJECT_ID"

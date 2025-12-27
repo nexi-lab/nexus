@@ -544,7 +544,7 @@ Use skills with any filesystem implementation:
 from nexus.skills import SkillRegistry
 
 # Use with remote Nexus server
-nx = connect(remote_url="http://localhost:8080")
+nx = connect(remote_url="http://localhost:2026")
 registry = SkillRegistry(nx)
 
 # Use with GCS backend

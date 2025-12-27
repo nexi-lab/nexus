@@ -741,7 +741,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Network-attached Nexus filesystem
   - Access remote files as if local
 - **CLI Command**: `nexus serve`
-  - `nexus serve --host 0.0.0.0 --port 8080 --api-key mysecret`
+  - `nexus serve --host 0.0.0.0 --port 2026 --api-key mysecret`
   - Supports all backend types
   - Production-ready with proper logging
 - **Deployment Ready**: Docker-compatible server mode

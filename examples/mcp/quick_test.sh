@@ -24,7 +24,7 @@ echo "1️⃣  Starting Nexus server with authentication..."
 # Wait for server and admin key to be written
 echo -n "   Waiting for server"
 for i in {1..30}; do
-    if curl -s http://localhost:8080/health > /dev/null 2>&1; then
+    if curl -s http://localhost:2026/health > /dev/null 2>&1; then
         echo " ✅"
         break
     fi
@@ -48,7 +48,7 @@ echo ""
 
 # Create Alice user
 echo "2️⃣  Creating test user (Alice)..."
-export NEXUS_URL=http://localhost:8080
+export NEXUS_URL=http://localhost:2026
 export NEXUS_API_KEY=$ADMIN_KEY
 
 ALICE_OUTPUT=$(nexus admin create-user alice --name "Alice Test" --json-output 2>&1 || echo "failed")
@@ -67,14 +67,14 @@ echo ""
 echo "3️⃣  Testing file operations..."
 
 # Alice writes a file
-curl -s -X POST http://localhost:8080/api/nfs/write \
+curl -s -X POST http://localhost:2026/api/nfs/write \
     -H "X-API-Key: $ALICE_KEY" \
     -H "Content-Type: application/json" \
     -d '{"path": "/test.txt", "content": "SGVsbG8gTUNQIQ=="}' > /dev/null
 echo "   ✅ Alice wrote /test.txt"
 
 # Alice reads it
-RESULT=$(curl -s -X POST http://localhost:8080/api/nfs/read \
+RESULT=$(curl -s -X POST http://localhost:2026/api/nfs/read \
     -H "X-API-Key: $ALICE_KEY" \
     -H "Content-Type: application/json" \
     -d '{"path": "/test.txt"}')
@@ -90,7 +90,7 @@ sys.path.insert(0, 'src')
 from nexus.mcp import create_mcp_server
 
 # Create MCP server pointing to authenticated Nexus
-mcp = create_mcp_server(remote_url="http://localhost:8080")
+mcp = create_mcp_server(remote_url="http://localhost:2026")
 
 print(f"   ✅ MCP server: {mcp.name}")
 print("   ✅ Ready to use with Claude Desktop!")
@@ -109,7 +109,7 @@ echo '    "nexus": {'
 echo '      "command": "nexus",'
 echo '      "args": ["mcp", "serve", "--transport", "stdio"],'
 echo '      "env": {'
-echo '        "NEXUS_URL": "http://localhost:8080",'
+echo '        "NEXUS_URL": "http://localhost:2026",'
 echo "        \"NEXUS_API_KEY\": \"$ALICE_KEY\""
 echo '      }'
 echo '    }'
@@ -119,6 +119,6 @@ echo ""
 
 echo "✅ All tests passed!"
 echo ""
-echo "Server is running at http://localhost:8080"
+echo "Server is running at http://localhost:2026"
 echo "Press Enter to stop..."
 read

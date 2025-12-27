@@ -69,7 +69,7 @@ Developers testing sandbox features with filesystem mounting experience:
 
 ✅ **Local Development:**
 - Run sandboxes locally without cloud dependencies
-- Direct access to `localhost:8080` (no ngrok needed)
+- Direct access to `localhost:2026` (no ngrok needed)
 - Fast container startup (<5 seconds)
 
 ✅ **Feature Parity:**
@@ -159,7 +159,7 @@ Developers testing sandbox features with filesystem mounting experience:
 │                                                          │
 │  ┌────────────────────────────────────────────────────┐ │
 │  │  FUSE Mount Point                                  │ │
-│  │  /mnt/nexus → http://host.docker.internal:8080     │ │
+│  │  /mnt/nexus → http://host.docker.internal:2026     │ │
 │  └────────────────────────────────────────────────────┘ │
 │                                                          │
 │  User: nexus (non-root with sudo)                       │
@@ -178,7 +178,7 @@ Developers testing sandbox features with filesystem mounting experience:
 │  ┌────────────┐  │
 │  │ Nexus      │  │
 │  │ Server     │  │
-│  │ :8080      │  │
+│  │ :2026      │  │
 │  └────────────┘  │
 │        ▲         │
 │        │         │
@@ -312,7 +312,7 @@ DockerSandboxProvider.mount_nexus()
     ├─► Get container
     │
     ├─► Transform URL
-    │   └─ localhost:8080 → host.docker.internal:8080
+    │   └─ localhost:2026 → host.docker.internal:2026
     │
     ├─► Create mount directory
     │   └─ exec: mkdir -p /mnt/nexus
@@ -323,7 +323,7 @@ DockerSandboxProvider.mount_nexus()
     │
     ├─► Run FUSE mount in background
     │   └─ sudo NEXUS_API_KEY=xxx nexus mount /mnt/nexus \
-    │       --remote-url http://host.docker.internal:8080 \
+    │       --remote-url http://host.docker.internal:2026 \
     │       --allow-other &
     │
     ├─► Wait for initialization (2-3 seconds)
@@ -514,7 +514,7 @@ result = nx.sandbox_run(
 # Mount Nexus filesystem
 mount_result = nx.sandbox_connect(
     sandbox["sandbox_id"],
-    nexus_url="http://localhost:8080",
+    nexus_url="http://localhost:2026",
     nexus_api_key="sk-your-key",
     mount_path="/mnt/nexus"
 )
@@ -544,7 +544,7 @@ nexus sandbox run <sandbox-id> python "print('Hello')"
 
 # Mount local Nexus
 nexus sandbox connect <sandbox-id> \
-    --nexus-url http://localhost:8080 \
+    --nexus-url http://localhost:2026 \
     --api-key sk-xxx
 
 # List active containers
@@ -782,7 +782,7 @@ class TestDockerSandboxE2E:
         nx.write("/test.txt", "Hello")
         mount = nx.sandbox_connect(
             sandbox["sandbox_id"],
-            nexus_url="http://localhost:8080",
+            nexus_url="http://localhost:2026",
             nexus_api_key=os.getenv("NEXUS_API_KEY")
         )
         assert mount["success"]
@@ -1209,7 +1209,7 @@ nx = NexusFS(
 sandbox = nx.sandbox_create("test")
 nx.sandbox_connect(
     sandbox["sandbox_id"],
-    nexus_url="http://localhost:8080",  # No ngrok needed
+    nexus_url="http://localhost:2026",  # No ngrok needed
     nexus_api_key="sk-xxx"
 )
 ```

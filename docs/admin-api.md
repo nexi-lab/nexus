@@ -22,7 +22,7 @@ User-friendly command-line interface with formatted output:
 
 ```bash
 # Set environment variables
-export NEXUS_URL=http://localhost:8080
+export NEXUS_URL=http://localhost:2026
 export NEXUS_API_KEY=<your_admin_key>
 
 # Create a user
@@ -43,7 +43,7 @@ nexus admin list-users
 Direct HTTP API calls for custom integrations:
 
 ```bash
-curl -X POST http://localhost:8080/api/nfs/admin_create_key \
+curl -X POST http://localhost:2026/api/nfs/admin_create_key \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -d '{"jsonrpc":"2.0","id":1,"params":{"user_id":"alice",...}}'
 ```
@@ -71,7 +71,7 @@ curl -X POST http://localhost:8080/api/nfs/admin_create_key \
 
 3. **Server must be running with database authentication**:
    ```bash
-   nexus serve --host 0.0.0.0 --port 8080 --auth-type=database
+   nexus serve --host 0.0.0.0 --port 2026 --auth-type=database
    ```
 
    **Note:** The `--auth-type=database` flag is required for admin API functionality.
@@ -113,7 +113,7 @@ Content-Type: application/json
 
 **Example Request:**
 ```bash
-curl -X POST http://localhost:8080/api/nfs/admin_create_key \
+curl -X POST http://localhost:2026/api/nfs/admin_create_key \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -170,7 +170,7 @@ curl -X POST http://localhost:8080/api/nfs/admin_create_key \
 
 **Example Request:**
 ```bash
-curl -X POST http://localhost:8080/api/nfs/admin_list_keys \
+curl -X POST http://localhost:2026/api/nfs/admin_list_keys \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -224,7 +224,7 @@ curl -X POST http://localhost:8080/api/nfs/admin_list_keys \
 
 **Example Request:**
 ```bash
-curl -X POST http://localhost:8080/api/nfs/admin_get_key \
+curl -X POST http://localhost:2026/api/nfs/admin_get_key \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -280,7 +280,7 @@ curl -X POST http://localhost:8080/api/nfs/admin_get_key \
 
 **Example Request:**
 ```bash
-curl -X POST http://localhost:8080/api/nfs/admin_update_key \
+curl -X POST http://localhost:2026/api/nfs/admin_update_key \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -324,7 +324,7 @@ curl -X POST http://localhost:8080/api/nfs/admin_update_key \
 
 **Example Request:**
 ```bash
-curl -X POST http://localhost:8080/api/nfs/admin_revoke_key \
+curl -X POST http://localhost:2026/api/nfs/admin_revoke_key \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -367,11 +367,11 @@ The Nexus CLI provides user-friendly commands that wrap the Admin API endpoints.
 
 ```bash
 # Set environment variables (recommended)
-export NEXUS_URL=http://localhost:8080
+export NEXUS_URL=http://localhost:2026
 export NEXUS_API_KEY=<your_admin_key>
 
 # Or use flags with each command
-nexus admin list-users --remote-url http://localhost:8080 --remote-api-key <key>
+nexus admin list-users --remote-url http://localhost:2026 --remote-api-key <key>
 ```
 
 ### Command Reference
@@ -612,7 +612,7 @@ The CLI commands work great in shell scripts:
 #!/bin/bash
 # Automated user provisioning script
 
-export NEXUS_URL="http://nexus-server:8080"
+export NEXUS_URL="http://nexus-server:2026"
 export NEXUS_API_KEY="<admin_key>"
 
 # Create users from CSV
@@ -755,7 +755,7 @@ The new way uses the admin CLI remotely:
 
 ```bash
 # One-time setup
-export NEXUS_URL=http://nexus-server:8080
+export NEXUS_URL=http://nexus-server:2026
 export NEXUS_API_KEY=<your_admin_key>
 
 # Create user (no SSH needed!)
@@ -855,7 +855,7 @@ If you have an existing server:
 
 ```bash
 # Set up environment
-export NEXUS_URL=http://localhost:8080
+export NEXUS_URL=http://localhost:2026
 export NEXUS_API_KEY=<your_admin_key>
 
 # Test commands
@@ -868,7 +868,7 @@ nexus admin get-user --user-id testuser
 
 ```bash
 # With existing server and admin key
-ADMIN_KEY="sk-default_admin_..." curl -X POST http://localhost:8080/api/nfs/admin_list_keys \
+ADMIN_KEY="sk-default_admin_..." curl -X POST http://localhost:2026/api/nfs/admin_list_keys \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"params":{}}'
@@ -879,7 +879,7 @@ ADMIN_KEY="sk-default_admin_..." curl -X POST http://localhost:8080/api/nfs/admi
 ```bash
 # Start server
 export NEXUS_DATABASE_URL="postgresql://postgres:nexus@localhost/nexus"
-nexus serve --host 0.0.0.0 --port 8080 --auth-type=database
+nexus serve --host 0.0.0.0 --port 2026 --auth-type=database
 
 # In another terminal: create admin key
 python scripts/create-api-key.py admin "Admin Key" --admin
@@ -923,7 +923,7 @@ nexus admin list-users
 **Solution:**
 ```bash
 unset NEXUS_URL
-nexus serve --host 0.0.0.0 --port 8080 --auth-type=database
+nexus serve --host 0.0.0.0 --port 2026 --auth-type=database
 ```
 
 The demo scripts automatically unset this for you.
@@ -938,7 +938,7 @@ The demo scripts automatically unset this for you.
 python scripts/create-api-key.py admin "Admin Key" --admin
 
 # Or update existing key to admin (if you have another admin key)
-curl -X POST http://localhost:8080/api/nfs/admin_update_key \
+curl -X POST http://localhost:2026/api/nfs/admin_update_key \
   -H "Authorization: Bearer $OTHER_ADMIN_KEY" \
   -d '{"params": {"key_id": "<key_id>", "is_admin": true}}'
 ```
@@ -950,7 +950,7 @@ curl -X POST http://localhost:8080/api/nfs/admin_update_key \
 **Solution:**
 ```bash
 # Make sure to include --auth-type=database flag
-nexus serve --host 0.0.0.0 --port 8080 --auth-type=database
+nexus serve --host 0.0.0.0 --port 2026 --auth-type=database
 ```
 
 ### "Port already in use"

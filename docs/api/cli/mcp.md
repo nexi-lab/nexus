@@ -18,7 +18,7 @@ nexus mcp serve --transport stdio
 nexus mcp serve --transport http --port 8081
 
 # With remote Nexus
-NEXUS_URL=http://localhost:8080 \
+NEXUS_URL=http://localhost:2026 \
 NEXUS_API_KEY=your-key \
 nexus mcp serve --transport stdio
 ```
@@ -34,7 +34,7 @@ nexus mcp serve --transport stdio
 **Environment Variables:**
 ```bash
 # Remote mode
-NEXUS_URL=http://localhost:8080
+NEXUS_URL=http://localhost:2026
 NEXUS_API_KEY=your-api-key
 
 # Local mode
@@ -52,7 +52,7 @@ nx = nexus.connect()
 mcp = create_mcp_server(nx=nx)
 
 # With remote server
-mcp = create_mcp_server(remote_url="http://localhost:8080")
+mcp = create_mcp_server(remote_url="http://localhost:2026")
 
 # Run with transport
 mcp.run(transport="stdio")  # For Claude Desktop
@@ -207,7 +207,7 @@ Edit `~/.config/claude/claude_desktop_config.json`:
       "command": "nexus",
       "args": ["mcp", "serve", "--transport", "stdio"],
       "env": {
-        "NEXUS_URL": "http://localhost:8080",
+        "NEXUS_URL": "http://localhost:2026",
         "NEXUS_API_KEY": "sk-your-api-key"
       }
     }

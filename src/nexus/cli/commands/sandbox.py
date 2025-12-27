@@ -694,14 +694,14 @@ def connect_sandbox(
     Examples:
         # Connect to E2B sandbox (API key from env)
         export E2B_API_KEY=your_key
-        export NEXUS_URL=http://localhost:8080
+        export NEXUS_URL=http://localhost:2026
         export NEXUS_API_KEY=sk-xxx
         nexus sandbox connect sb_xxx
 
         # Connect with explicit options
         nexus sandbox connect sb_xxx \\
             --sandbox-api-key your_e2b_key \\
-            --nexus-url http://localhost:8080 \\
+            --nexus-url http://localhost:2026 \\
             --nexus-api-key sk-xxx
 
         # Custom mount path

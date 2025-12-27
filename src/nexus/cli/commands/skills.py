@@ -1556,7 +1556,7 @@ def skills_mcp_mount(
             --oauth google:alice@example.com
 
         # Remote MCP server via URL
-        nexus skills mcp mount remote-api --url http://localhost:8080/sse
+        nexus skills mcp mount remote-api --url http://localhost:2026/sse
 
         # Remote hosted MCP server with auth header (Klavis, etc.)
         nexus skills mcp mount klavis-github \\

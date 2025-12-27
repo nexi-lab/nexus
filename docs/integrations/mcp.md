@@ -14,7 +14,7 @@ Expose Nexus to AI agents via the Model Context Protocol (MCP).
 nexus mcp serve --transport stdio
 
 # With remote Nexus
-NEXUS_URL=http://localhost:8080 \
+NEXUS_URL=http://localhost:2026 \
 NEXUS_API_KEY=your-key \
 nexus mcp serve --transport stdio
 ```
@@ -60,7 +60,7 @@ Edit `~/.config/claude/claude_desktop_config.json`:
       "command": "nexus",
       "args": ["mcp", "serve", "--transport", "stdio"],
       "env": {
-        "NEXUS_URL": "http://localhost:8080",
+        "NEXUS_URL": "http://localhost:2026",
         "NEXUS_API_KEY": "sk-your-api-key"
       }
     }
@@ -213,7 +213,7 @@ server_params = StdioServerParameters(
     command="nexus",
     args=["mcp", "serve", "--transport", "stdio"],
     env={
-        "NEXUS_URL": "http://localhost:8080",
+        "NEXUS_URL": "http://localhost:2026",
         "NEXUS_API_KEY": "your-key"
     }
 )

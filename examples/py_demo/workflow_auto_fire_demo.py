@@ -5,7 +5,7 @@ Workflow Auto-Fire Demo - Remote Mode
 This demo shows how file operations automatically trigger workflows in Nexus v0.7.0+
 
 Architecture:
-1. Nexus server running on localhost:8080
+1. Nexus server running on localhost:2026
 2. Client connects remotely
 3. Workflows load and execute automatically on file operations
 
@@ -50,7 +50,7 @@ async def main():
     print_header("🚀 Nexus Workflow Auto-Fire Demo (Remote Mode)")
 
     # Check for environment variables
-    server_url = os.getenv("NEXUS_URL", "http://localhost:8080")
+    server_url = os.getenv("NEXUS_URL", "http://localhost:2026")
     api_key = os.getenv("NEXUS_API_KEY")
 
     if not api_key:

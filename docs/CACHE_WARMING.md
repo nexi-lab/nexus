@@ -30,7 +30,7 @@ nexus serve --auth-type database
 ```
 [green]Starting Nexus RPC server...[/green]
   Host: 0.0.0.0
-  Port: 8080
+  Port: 2026
   Backend: local
   Data Dir: /Users/you/.nexus/data
   Authentication: database
@@ -95,10 +95,10 @@ $ nexus serve
 Starting server... (250ms)
 # Server ready
 
-$ curl http://localhost:8080/api/nfs/list -d '{"path": "/workspace"}'
+$ curl http://localhost:2026/api/nfs/list -d '{"path": "/workspace"}'
 # First request: 300ms (cold cache)
 
-$ curl http://localhost:8080/api/nfs/list -d '{"path": "/workspace"}'
+$ curl http://localhost:2026/api/nfs/list -d '{"path": "/workspace"}'
 # Second request: 10ms (warm cache)
 ```
 
@@ -109,10 +109,10 @@ Starting server... (250ms)
 Warming caches... ✓ (200ms)
 # Server ready (total: 450ms)
 
-$ curl http://localhost:8080/api/nfs/list -d '{"path": "/workspace"}'
+$ curl http://localhost:2026/api/nfs/list -d '{"path": "/workspace"}'
 # First request: 15ms (warm cache!)
 
-$ curl http://localhost:8080/api/nfs/list -d '{"path": "/workspace"}'
+$ curl http://localhost:2026/api/nfs/list -d '{"path": "/workspace"}'
 # Second request: 10ms (warm cache)
 ```
 
@@ -248,7 +248,7 @@ This tells you:
 nexus serve --auth-type database
 
 # Then mount from clients
-nexus mount http://localhost:8080 /mnt/nexus --api-key <key>
+nexus mount http://localhost:2026 /mnt/nexus --api-key <key>
 ```
 
 This ensures:

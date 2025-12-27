@@ -12,8 +12,8 @@ echo "╚═══════════════════════�
 echo ""
 
 # Check if server is running
-if ! curl -s http://localhost:8080/health >/dev/null 2>&1; then
-    echo "❌ Error: Nexus server is not running at http://localhost:8080"
+if ! curl -s http://localhost:2026/health >/dev/null 2>&1; then
+    echo "❌ Error: Nexus server is not running at http://localhost:2026"
     echo "   Please start the server first with: ./scripts/init-nexus-with-auth.sh"
     exit 1
 fi

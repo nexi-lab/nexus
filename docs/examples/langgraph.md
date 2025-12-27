@@ -104,7 +104,7 @@ from nexus_tools import get_nexus_tools
 import nexus
 
 # Connect to Nexus
-nx = nexus.connect(remote_url="http://nexus-server:8080")
+nx = nexus.connect(remote_url="http://nexus-server:2026")
 
 # Create tools
 tools = get_nexus_tools(nx)
@@ -194,19 +194,19 @@ Nexus supports isolated workspaces for different teams:
 ```python
 # Development team agent
 dev_nx = nexus.connect(
-    remote_url="http://nexus-server:8080",
+    remote_url="http://nexus-server:2026",
     config={"tenant_id": "team-dev", "agent_id": "code-analyzer"}
 )
 
 # QA team agent
 qa_nx = nexus.connect(
-    remote_url="http://nexus-server:8080",
+    remote_url="http://nexus-server:2026",
     config={"tenant_id": "team-qa", "agent_id": "test-validator"}
 )
 
 # Shared documentation
 docs_nx = nexus.connect(
-    remote_url="http://nexus-server:8080",
+    remote_url="http://nexus-server:2026",
     config={"tenant_id": "shared-docs", "agent_id": "doc-generator"}
 )
 ```
@@ -227,7 +227,7 @@ Find and analyze async/await patterns:
 from langgraph_react_demo import create_react_agent
 import nexus
 
-nx = nexus.connect(remote_url="http://nexus-server:8080")
+nx = nexus.connect(remote_url="http://nexus-server:2026")
 agent = create_react_agent(nx)
 
 result = agent.invoke({
@@ -407,7 +407,7 @@ llm = ChatAnthropic(
 Connect to your Nexus server:
 
 ```bash
-export NEXUS_SERVER_URL="http://your-server:8080"
+export NEXUS_SERVER_URL="http://your-server:2026"
 export NEXUS_API_KEY="your-api-key"  # Optional
 ```
 
@@ -415,7 +415,7 @@ Or configure in code:
 
 ```python
 nx = nexus.connect(
-    remote_url="http://your-server:8080",
+    remote_url="http://your-server:2026",
     api_key="your-api-key"
 )
 ```
@@ -433,7 +433,7 @@ Or in code:
 
 ```python
 nx = nexus.connect(
-    remote_url="http://server:8080",
+    remote_url="http://server:2026",
     config={
         "tenant_id": "my-team",
         "agent_id": "code-analyzer"
@@ -447,10 +447,10 @@ Test with local Nexus:
 
 ```bash
 # Terminal 1: Start server
-nexus serve --host 0.0.0.0 --port 8080
+nexus serve --host 0.0.0.0 --port 2026
 
 # Terminal 2: Run demo
-export NEXUS_SERVER_URL="http://localhost:8080"
+export NEXUS_SERVER_URL="http://localhost:2026"
 python langgraph_react_demo.py
 ```
 

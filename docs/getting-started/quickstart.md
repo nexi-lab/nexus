@@ -48,7 +48,7 @@ Admin API Key: sk-admin_a1b2c3d4_e5f6g7h8...
 
 Add to your ~/.bashrc or ~/.zshrc:
   export NEXUS_API_KEY='sk-admin_a1b2c3d4_e5f6g7h8...'
-  export NEXUS_URL='http://localhost:8080'
+  export NEXUS_URL='http://localhost:2026'
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
@@ -60,12 +60,12 @@ source .nexus-admin-env
 
 # Or set manually
 export NEXUS_API_KEY='sk-admin_...'  # Use your actual key
-export NEXUS_URL='http://localhost:8080'
+export NEXUS_URL='http://localhost:2026'
 ```
 
 **💡 Tip:** Once you set `NEXUS_URL` and `NEXUS_API_KEY`, all Nexus CLI commands will use them automatically - no need to pass `--remote-url` or `--remote-api-key` flags!
 
-Server is now running on `http://localhost:8080` with:
+Server is now running on `http://localhost:2026` with:
 - Admin user: `admin` (has API key)
 - Workspace: `/workspace` (admin owns it)
 - Default namespaces: `file`, `group`, `memory` (auto-registered)
@@ -81,10 +81,10 @@ source .nexus-admin-env
 
 # Verify the environment variables are set
 echo $NEXUS_API_KEY   # Should show: sk-admin_...
-echo $NEXUS_URL       # Should show: http://localhost:8080
+echo $NEXUS_URL       # Should show: http://localhost:2026
 
 # Verify server is running
-curl -s http://localhost:8080/health
+curl -s http://localhost:2026/health
 # Output: {"status": "healthy", "service": "nexus-rpc"}
 
 # Test authenticated access (automatically uses NEXUS_API_KEY and NEXUS_URL from environment)
@@ -102,7 +102,7 @@ source .nexus-admin-env
 
 # Verify environment variables are set
 echo $NEXUS_API_KEY  # Should show: sk-admin_... or sk-default_admin_...
-echo $NEXUS_URL      # Should show: http://localhost:8080
+echo $NEXUS_URL      # Should show: http://localhost:2026
 
 # The CLI automatically uses NEXUS_API_KEY and NEXUS_URL from environment
 # No need to pass --remote-url or --remote-api-key flags!
@@ -325,7 +325,7 @@ If you used `./scripts/init-nexus.sh` instead (no auth):
 ```bash
 # Insecure mode example
 export NEXUS_SUBJECT="user:alice"
-export NEXUS_URL="http://localhost:8080"
+export NEXUS_URL="http://localhost:2026"
 nexus ls /workspace
 # Server blindly trusts you're alice!
 ```

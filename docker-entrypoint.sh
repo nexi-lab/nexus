@@ -255,7 +255,7 @@ echo -e "  API Key: ${GREEN}${ADMIN_API_KEY}${NC}"
 echo ""
 echo "  To use this key:"
 echo "    export NEXUS_API_KEY='${ADMIN_API_KEY}'"
-echo "    export NEXUS_URL='http://localhost:${NEXUS_PORT:-8080}'"
+echo "    export NEXUS_URL='http://localhost:${NEXUS_PORT:-2026}'"
 echo ""
 echo "  Or retrieve from container:"
 echo "    docker logs <container-name> | grep 'API Key:'"
@@ -415,7 +415,7 @@ echo ""
 echo "🚀 Starting Nexus server..."
 echo ""
 echo "  Host: ${NEXUS_HOST:-0.0.0.0}"
-echo "  Port: ${NEXUS_PORT:-8080}"
+echo "  Port: ${NEXUS_PORT:-2026}"
 echo "  Backend: ${NEXUS_BACKEND:-local}"
 
 # Check if config file is specified
@@ -430,7 +430,7 @@ else
     echo ""
 
     # Build command based on backend type (legacy CLI mode)
-    CMD="nexus serve --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-8080} --auth-type database --async"
+    CMD="nexus serve --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-2026} --auth-type database --async"
 
     if [ "${NEXUS_BACKEND}" = "gcs" ]; then
         CMD="$CMD --backend gcs --gcs-bucket ${NEXUS_GCS_BUCKET}"
@@ -448,7 +448,7 @@ SERVER_PID=$!
 # Wait for server to be ready
 echo "Waiting for server to start..."
 for i in {1..30}; do
-    if curl -sf http://localhost:${NEXUS_PORT:-8080}/health > /dev/null 2>&1; then
+    if curl -sf http://localhost:${NEXUS_PORT:-2026}/health > /dev/null 2>&1; then
         echo -e "${GREEN}✓ Server is ready${NC}"
         break
     fi
@@ -466,7 +466,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
     echo "🔄 Loading saved mounts from database..."
 
     # Call list_saved_mounts API
-    SAVED_MOUNTS=$(curl -sf http://localhost:${NEXUS_PORT:-8080}/api/nfs/list_saved_mounts \
+    SAVED_MOUNTS=$(curl -sf http://localhost:${NEXUS_PORT:-2026}/api/nfs/list_saved_mounts \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer ${ADMIN_API_KEY}" \
         -d '{"jsonrpc": "2.0", "id": 1, "method": "list_saved_mounts"}' 2>/dev/null)
@@ -488,7 +488,7 @@ for mount in mounts:
 " 2>/dev/null | while read -r MOUNT_POINT; do
                 if [ -n "$MOUNT_POINT" ]; then
                     echo "  Loading mount: $MOUNT_POINT"
-                    LOAD_RESULT=$(curl -sf http://localhost:${NEXUS_PORT:-8080}/api/nfs/load_mount \
+                    LOAD_RESULT=$(curl -sf http://localhost:${NEXUS_PORT:-2026}/api/nfs/load_mount \
                         -H "Content-Type: application/json" \
                         -H "Authorization: Bearer ${ADMIN_API_KEY}" \
                         -d "{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"load_mount\", \"params\": {\"mount_point\": \"$MOUNT_POINT\"}}" 2>/dev/null)

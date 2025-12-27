@@ -32,7 +32,7 @@ This tutorial introduces you to Nexus's core file operations using **server mode
          ↓
 ┌─────────────────┐
 │  Nexus Server   │  ← nexus serve
-│  (Port 8080)    │
+│  (Port 2026)    │
 └────────┬────────┘
          │
          ↓
@@ -50,13 +50,13 @@ First, start a Nexus server with authentication enabled:
 
 ```bash
 # Start server in the background
-nexus serve --host 0.0.0.0 --port 8080 --data-dir ./nexus-data &
+nexus serve --host 0.0.0.0 --port 2026 --data-dir ./nexus-data &
 
 # Wait a moment for server to start
 sleep 2
 
 # Check if server is running
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 ```
 
 **Expected output:**
@@ -92,7 +92,7 @@ User ID: usr_abc123
 **💾 Save this key!** You'll need it for all operations. Export it as an environment variable:
 
 ```bash
-export NEXUS_URL=http://localhost:8080
+export NEXUS_URL=http://localhost:2026
 export NEXUS_API_KEY=nxk_1234567890abcdef...  # Use YOUR key
 ```
 
@@ -108,7 +108,7 @@ import nexus
 
 # Connect to server with API key
 nx = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "nxk_1234567890abcdef..."  # Replace with YOUR key
 })
 
@@ -231,12 +231,12 @@ Here's the full script you can copy and run:
 #!/usr/bin/env python3
 """
 Simple File Storage Demo with Nexus
-Prerequisites: Nexus server running on localhost:8080
+Prerequisites: Nexus server running on localhost:2026
 """
 import nexus
 
 # Configuration
-NEXUS_URL = "http://localhost:8080"
+NEXUS_URL = "http://localhost:2026"
 NEXUS_API_KEY = "nxk_1234567890abcdef..."  # Replace with YOUR key
 
 def main():
@@ -380,7 +380,7 @@ nexus serve --port 8081
 **Solution:**
 ```bash
 # Verify server is running
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 
 # Verify API key is correct
 echo $NEXUS_API_KEY
@@ -504,7 +504,7 @@ nx = nexus.connect()  # Reads NEXUS_URL and NEXUS_API_KEY
 
 # Or connect with explicit config
 nx = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "your-key"
 })
 
@@ -538,7 +538,7 @@ info = nx.stat("/file.txt")
 
 ```bash
 # Server
-nexus serve --host 0.0.0.0 --port 8080
+nexus serve --host 0.0.0.0 --port 2026
 
 # Admin
 nexus admin create-user <username>

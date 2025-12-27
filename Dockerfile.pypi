@@ -70,11 +70,11 @@ USER nexus
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NEXUS_HOST=0.0.0.0 \
-    NEXUS_PORT=8080 \
+    NEXUS_PORT=2026 \
     NEXUS_DATA_DIR=/app/data
 
 # Expose port
-EXPOSE 8080
+EXPOSE 2026
 
 # Health check - updated to correct endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

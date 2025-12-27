@@ -4409,22 +4409,38 @@ class NexusFS(
 
             # 3. Delete OAuth-specific records (for OAuth authenticated users)
             try:
+                from sqlalchemy import inspect
+
                 from nexus.storage.models import OAuthAPIKeyModel, UserOAuthAccountModel
 
-                # Delete OAuth API keys (encrypted keys for OAuth users)
-                deleted_oauth_keys = (
-                    session.query(OAuthAPIKeyModel).filter_by(user_id=user_id).delete()
-                )
-                result["deleted_oauth_api_keys"] = deleted_oauth_keys
-                logger.info(f"Deleted {deleted_oauth_keys} OAuth API keys for user {user_id}")
+                # Check if OAuth tables exist (they may not in test environments)
+                has_oauth_tables = False
+                if session.bind is not None:
+                    inspector = inspect(session.bind)
+                    table_names = inspector.get_table_names()
+                    has_oauth_tables = (
+                        "oauth_api_keys" in table_names and "user_oauth_accounts" in table_names
+                    )
 
-                # Delete OAuth account linkages (Google, GitHub, etc.)
-                deleted_oauth_accounts = (
-                    session.query(UserOAuthAccountModel).filter_by(user_id=user_id).delete()
-                )
-                session.commit()
-                result["deleted_oauth_accounts"] = deleted_oauth_accounts
-                logger.info(f"Deleted {deleted_oauth_accounts} OAuth accounts for user {user_id}")
+                if has_oauth_tables:
+                    # Delete OAuth API keys (encrypted keys for OAuth users)
+                    deleted_oauth_keys = (
+                        session.query(OAuthAPIKeyModel).filter_by(user_id=user_id).delete()
+                    )
+                    result["deleted_oauth_api_keys"] = deleted_oauth_keys
+                    logger.info(f"Deleted {deleted_oauth_keys} OAuth API keys for user {user_id}")
+
+                    # Delete OAuth account linkages (Google, GitHub, etc.)
+                    deleted_oauth_accounts = (
+                        session.query(UserOAuthAccountModel).filter_by(user_id=user_id).delete()
+                    )
+                    session.commit()
+                    result["deleted_oauth_accounts"] = deleted_oauth_accounts
+                    logger.info(
+                        f"Deleted {deleted_oauth_accounts} OAuth accounts for user {user_id}"
+                    )
+                else:
+                    logger.debug("OAuth tables not present in database, skipping OAuth cleanup")
             except Exception as e:
                 logger.warning(f"Failed to delete OAuth records: {e}")
                 session.rollback()

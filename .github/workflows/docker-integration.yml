@@ -688,6 +688,32 @@ jobs:
             exit 1
           fi
 
+      - name: User Deprovision Integration Test
+        run: |
+          echo "🗑️ Running User Deprovision integration test..."
+          echo ""
+
+          # Use known dummy API key (set in .env)
+          API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          echo "Using API key: ${API_KEY:0:20}..."
+          echo ""
+
+          # Install Python dependencies
+          python3 -m pip install sqlalchemy psycopg2-binary --quiet || true
+
+          # Run deprovision test
+          # Tests complete user lifecycle: provision -> verify -> deprovision -> verify cleanup
+          python3 tests/manual/test_deprovision_user.py \
+            --db "postgresql://postgres:nexus@localhost:5432/nexus" \
+            --backend-path "./nexus-data-local"
+
+          if [ $? -eq 0 ]; then
+            echo "✅ User deprovision integration test completed successfully!"
+          else
+            echo "❌ User deprovision integration test failed"
+            exit 1
+          fi
+
       - name: Authenticate gcloud with service account
         run: |
           echo "🔐 Authenticating gcloud with service account..."

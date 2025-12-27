@@ -4365,13 +4365,12 @@ class NexusFS(
                 for resource_type in ALL_RESOURCE_TYPES:
                     dir_path = f"{user_base_path}/{resource_type}"
                     try:
-                        if self.exists(dir_path, context=admin_context):
-                            # Recursively delete all files in the directory
-                            self._delete_directory_recursive(dir_path, admin_context)
+                        # Try to delete even if exists() returns False
+                        # (subdirectories may exist even if parent has no metadata)
+                        was_deleted = self._delete_directory_recursive(dir_path, admin_context)
+                        if was_deleted:
                             result["deleted_directories"].append(dir_path)
                             logger.info(f"Deleted directory: {dir_path}")
-                        else:
-                            logger.debug(f"Directory doesn't exist: {dir_path}")
                     except Exception as e:
                         logger.warning(f"Failed to delete directory {dir_path}: {e}")
 
@@ -4461,22 +4460,129 @@ class NexusFS(
 
         return result
 
-    def _delete_directory_recursive(self, dir_path: str, context: OperationContext) -> None:
+    def _delete_directory_recursive(self, dir_path: str, context: OperationContext) -> bool:
         """Recursively delete a directory and all its contents.
 
-        Uses depth-first traversal: deletes files and subdirectories first,
-        then deletes the directory itself.
+        Strategy:
+        1. Try physical deletion first (for LocalBackend) - fastest and most reliable
+        2. Fall back to virtual filesystem deletion if physical deletion fails
 
         Args:
             dir_path: Directory path to delete
             context: Operation context
+
+        Returns:
+            True if directory was deleted (or had content deleted), False otherwise
         """
         import logging
+        import os
+        import shutil
 
         logger = logging.getLogger(__name__)
 
+        directory_removed = False
+        had_content = False  # Track if directory had any content
+
+        # Approach 1: Physical deletion (for LocalBackend) - Try first for efficiency
+        if hasattr(self, "backend") and hasattr(self.backend, "root_path"):
+            try:
+                # Convert virtual path to physical path
+                # LocalBackend stores directories under "dirs" subdirectory
+                physical_path = self.backend.root_path / "dirs" / dir_path.lstrip("/")
+                if physical_path.exists() and physical_path.is_dir():
+                    had_content = True  # Directory exists, so it has content
+                    try:
+                        # shutil.rmtree() removes entire directory tree in one go
+                        shutil.rmtree(physical_path)
+                        directory_removed = True
+                        logger.info(f"Deleted physical directory: {dir_path}")
+                    except OSError as e:
+                        logger.debug(f"shutil.rmtree failed for {physical_path}: {e}")
+                        # Try os.rmdir() for empty directories
+                        try:
+                            os.rmdir(physical_path)
+                            directory_removed = True
+                            logger.info(f"Deleted empty physical directory: {dir_path}")
+                        except OSError as e2:
+                            logger.debug(f"os.rmdir failed for {physical_path}: {e2}")
+            except Exception as e:
+                logger.debug(f"Physical deletion failed for {dir_path}: {e}")
+
+        # If physical deletion worked, still need to clean up metadata and permissions
+        if directory_removed:
+            # Clean up metadata for the directory and all children
+            if hasattr(self, "metadata"):
+                try:
+                    session = self.metadata.SessionLocal()
+                    try:
+                        from nexus.storage.models import FilePathModel
+
+                        # Delete file paths for directory and all children (paths starting with dir_path)
+                        deleted_count = (
+                            session.query(FilePathModel)
+                            .filter(FilePathModel.virtual_path.like(f"{dir_path}%"))
+                            .delete(synchronize_session=False)
+                        )
+                        session.commit()
+                        logger.debug(f"Deleted {deleted_count} file path entries for {dir_path}")
+                    finally:
+                        session.close()
+                except Exception as e:
+                    logger.warning(f"Failed to clean up file paths for {dir_path}: {e}")
+
+            # Clean up ReBAC permission tuples for directory and all children
+            if hasattr(self, "rebac_manager") and self.rebac_manager:
+                try:
+                    # Query tuples where resource path starts with dir_path
+                    from nexus.storage.models import ReBACTupleModel
+
+                    session = self.metadata.SessionLocal()
+                    try:
+                        deleted_tuples = (
+                            session.query(ReBACTupleModel)
+                            .filter(
+                                ReBACTupleModel.object_type == "file",
+                                ReBACTupleModel.object_id.like(f"{dir_path}%"),
+                            )
+                            .delete(synchronize_session=False)
+                        )
+                        session.commit()
+                        logger.debug(f"Deleted {deleted_tuples} ReBAC tuples for {dir_path}")
+                    finally:
+                        session.close()
+                except Exception as e:
+                    logger.warning(f"Failed to clean up ReBAC tuples for {dir_path}: {e}")
+
+            # Invalidate all caches
+            try:
+                parent_path = "/".join(dir_path.rstrip("/").split("/")[:-1])
+                if parent_path and hasattr(self, "_list_cache"):
+                    self._list_cache.pop(parent_path, None)
+                    # Also clear the deleted directory itself
+                    self._list_cache.pop(dir_path, None)
+                if hasattr(self, "_exists_cache"):
+                    self._exists_cache.pop(dir_path, None)
+                    # Clear cache for parent too
+                    if parent_path:
+                        self._exists_cache.pop(parent_path, None)
+            except Exception:
+                pass
+
+            # Clear tiger cache entries for the directory and children
+            if hasattr(self, "rebac_manager") and hasattr(self.rebac_manager, "_tiger_cache"):
+                try:
+                    tiger_cache = self.rebac_manager._tiger_cache
+                    if hasattr(tiger_cache, "invalidate_all"):
+                        tiger_cache.invalidate_all()
+                        logger.debug("Invalidated tiger cache")
+                except Exception as e:
+                    logger.debug(f"Failed to invalidate tiger cache: {e}")
+
+            return True  # Successfully deleted
+
+        # Approach 2: Virtual filesystem deletion (fallback)
         try:
-            # List immediate children only (not recursive)
+            # List immediate children
             result = self.list(dir_path, recursive=False, context=context)
 
             # Handle different return formats
@@ -4487,15 +4593,17 @@ class NexusFS(
             else:
                 children = []
 
-            # Process each child
+            # Delete each child
+            if children:
+                had_content = True  # Directory has children
+
             for item in children:
-                # Extract path and type from item
                 child_path: str | None = None
                 is_dir = False
 
                 if isinstance(item, str):
                     child_path = item
-                    # Determine type by trying to list it
+                    # Determine if directory by trying to list
                     try:
                         self.list(child_path, recursive=False, context=context)
                         is_dir = True
@@ -4505,78 +4613,41 @@ class NexusFS(
                     child_path = item.get("path")
                     if not child_path:
                         continue
-                    item_type = item.get("type", "")
-                    is_dir = item_type == "directory"
-                else:
-                    continue
+                    is_dir = item.get("type", "") == "directory"
 
                 if not child_path or child_path == dir_path:
                     continue
 
-                # Process based on type
-                if is_dir:
-                    # Recursively delete subdirectory
-                    try:
+                # Recursively delete subdirectory or delete file
+                try:
+                    if is_dir:
                         self._delete_directory_recursive(child_path, context)
-                    except Exception as e:
-                        logger.warning(f"Failed to delete subdirectory {child_path}: {e}")
-                else:
-                    # Delete file
-                    try:
+                    else:
                         self.delete(child_path, context=context)
-                    except Exception as e:
-                        logger.warning(f"Failed to delete file {child_path}: {e}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete {child_path}: {e}")
 
-            # After all children are deleted, delete the directory itself
-            # Try multiple approaches to ensure directory is removed
-            directory_removed = False
-
-            # Approach 1: Use rmdir
-            try:
-                self.rmdir(dir_path, context=context)
-                directory_removed = True
-                logger.debug(f"Deleted directory with rmdir: {dir_path}")
-            except Exception as e:
-                logger.debug(f"rmdir failed for {dir_path}: {e}")
-
-            # Approach 2: Try delete (in case it's treated as a file)
-            if not directory_removed:
+            # Try to remove the directory itself using virtual filesystem methods
+            for method_name, method_func in [
+                ("rmdir", lambda: self.rmdir(dir_path, context=context)),
+                ("delete", lambda: self.delete(dir_path, context=context)),
+            ]:
                 try:
-                    self.delete(dir_path, context=context)
+                    method_func()
                     directory_removed = True
-                    logger.debug(f"Deleted directory with delete: {dir_path}")
+                    logger.info(f"Deleted directory with {method_name}: {dir_path}")
+                    break
                 except Exception as e:
-                    logger.debug(f"delete failed for {dir_path}: {e}")
-
-            # Approach 3: Try to delete from metadata directly
-            if not directory_removed and hasattr(self, "metadata"):
-                try:
-                    # Delete from metadata table
-                    session = self.metadata.SessionLocal()
-                    try:
-                        from nexus.storage.models import FileMetadataModel
-
-                        deleted_count = (
-                            session.query(FileMetadataModel).filter_by(file_path=dir_path).delete()
-                        )
-                        session.commit()
-                        if deleted_count > 0:
-                            directory_removed = True
-                            logger.debug(
-                                f"Deleted directory metadata for {dir_path}: {deleted_count} entries"
-                            )
-                    finally:
-                        session.close()
-                except Exception as e:
-                    logger.debug(f"metadata deletion failed for {dir_path}: {e}")
-
-            if not directory_removed:
-                logger.warning(f"Could not remove directory {dir_path} after trying all methods")
+                    logger.debug(f"{method_name} failed for {dir_path}: {e}")
 
         except Exception as e:
-            logger.error(f"Error deleting directory {dir_path}: {e}")
-            # Don't raise - we want to continue with other directories
-            # Just log the error
+            logger.error(f"Virtual filesystem deletion failed for {dir_path}: {e}")
+
+        if not directory_removed:
+            logger.warning(f"Could not remove directory {dir_path}")
+
+        # Return True if we had content (even if deletion failed) or successfully removed
+        return had_content or directory_removed
 
     def _create_user_directories(
         self, user_id: str, tenant_id: str, context: OperationContext

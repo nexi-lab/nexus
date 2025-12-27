@@ -1136,6 +1136,35 @@ class AdminUpdateKeyParams:
     name: str | None = None
 
 
+@dataclass
+class ProvisionUserParams:
+    """Parameters for provision_user() method (Issue #820).
+
+    Provision a new user account with all necessary resources.
+    """
+
+    user_id: str
+    email: str
+    display_name: str | None = None
+    tenant_id: str | None = None
+    create_api_key: bool = True
+    create_agents: bool = True
+    import_skills: bool = True
+
+
+@dataclass
+class DeprovisionUserParams:
+    """Parameters for deprovision_user() method.
+
+    Deprovision a user and remove all their resources.
+    """
+
+    user_id: str
+    tenant_id: str | None = None
+    delete_user_record: bool = False
+    force: bool = False
+
+
 # ============================================================================
 # Sandbox Management Parameters (Issue #372)
 # ============================================================================
@@ -1720,6 +1749,8 @@ METHOD_PARAMS = {
     "admin_get_key": AdminGetKeyParams,
     "admin_revoke_key": AdminRevokeKeyParams,
     "admin_update_key": AdminUpdateKeyParams,
+    "provision_user": ProvisionUserParams,  # Issue #820
+    "deprovision_user": DeprovisionUserParams,
     # Sandbox management methods (v0.8.0 - Issue #372)
     "sandbox_create": SandboxCreateParams,
     "sandbox_run": SandboxRunParams,

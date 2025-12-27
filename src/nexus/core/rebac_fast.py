@@ -121,9 +121,20 @@ def check_permissions_bulk_rust(
         module = _internal_module or _external_module
         if module is None:
             raise RuntimeError("No Rust module available")
-        result: Any = module.compute_permissions_bulk(
-            checks, tuples, namespace_configs, tuple_version
-        )
+
+        # Try with tuple_version first (newer API)
+        try:
+            result: Any = module.compute_permissions_bulk(
+                checks, tuples, namespace_configs, tuple_version
+            )
+        except TypeError as te:
+            # Fallback to old API without tuple_version parameter
+            if "takes 3 positional arguments" in str(te):
+                logger.debug("Rust module uses old API (3 args), calling without tuple_version")
+                result = module.compute_permissions_bulk(checks, tuples, namespace_configs)
+            else:
+                raise
+
         return result  # type: ignore[no-any-return]
     except Exception as e:
         logger.error(f"Rust permission check failed: {e}", exc_info=True)

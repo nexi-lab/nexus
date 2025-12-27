@@ -688,6 +688,32 @@ jobs:
             exit 1
           fi
 
+      - name: User Deprovision Integration Test
+        run: |
+          echo "🗑️ Running User Deprovision integration test..."
+          echo ""
+
+          # Install required Python packages if not already available
+          python3 -m pip install requests --quiet || true
+
+          # Use known dummy API key (set in .env)
+          ADMIN_API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          echo "Using API key: ${ADMIN_API_KEY:0:20}..."
+          echo ""
+
+          # Run deprovision test via RPC API
+          # Tests complete user lifecycle: provision -> verify -> deprovision -> verify cleanup
+          python3 tests/manual/test_deprovision_user_rpc.py \
+            --api-key "$ADMIN_API_KEY" \
+            --base-url http://localhost:2026
+
+          if [ $? -eq 0 ]; then
+            echo "✅ User deprovision integration test completed successfully!"
+          else
+            echo "❌ User deprovision integration test failed"
+            exit 1
+          fi
+
       - name: Authenticate gcloud with service account
         run: |
           echo "🔐 Authenticating gcloud with service account..."

@@ -39,12 +39,12 @@ def make_rpc_call(
     Raises:
         RuntimeError: If the RPC call fails
     """
-    url = f"{base_url}/rpc"
+    url = f"{base_url}/api/nfs/{method}"
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    payload = {"method": method, "params": params}
+    payload = {"params": params}
 
     print(f"→ RPC: {method}")
     print(f"  Params: {json.dumps(params, indent=2)}")

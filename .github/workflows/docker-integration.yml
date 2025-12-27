@@ -43,7 +43,7 @@ jobs:
       MCP_HOST: localhost
       MCP_PORT: 8081
       NEXUS_HOST: localhost
-      NEXUS_PORT: 8080
+      NEXUS_PORT: 2026
 
     steps:
       - name: Checkout code

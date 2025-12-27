@@ -553,6 +553,15 @@ def _initialize_oauth_provider(
             f"Failed to initialize OAuth provider: {e}. OAuth endpoints will not be available."
         )
 
+    # Set NexusFS instance for user provisioning in OAuth flow
+    try:
+        from nexus.server.auth.auth_routes import set_nexus_instance
+
+        set_nexus_instance(_app_state.nexus_fs)
+        logger.info("NexusFS instance registered for OAuth provisioning")
+    except Exception as e:
+        logger.warning(f"Failed to register NexusFS instance: {e}")
+
 
 def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
     """Discover all methods marked with @rpc_expose decorator."""

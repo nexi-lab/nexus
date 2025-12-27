@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _auth_provider: DatabaseLocalAuth | None = None
 _oauth_provider: OAuthUserAuth | None = None
+_nexus_fs_instance: Any | None = None  # NexusFS instance for provisioning
 
 
 def set_auth_provider(provider: DatabaseLocalAuth) -> None:
@@ -51,6 +52,17 @@ def set_oauth_provider(provider: OAuthUserAuth) -> None:
 def get_oauth_provider() -> OAuthUserAuth | None:
     """Get the OAuth authentication provider (optional)."""
     return _oauth_provider
+
+
+def set_nexus_instance(nexus_fs: Any) -> None:
+    """Set the global NexusFS instance for user provisioning."""
+    global _nexus_fs_instance
+    _nexus_fs_instance = nexus_fs
+
+
+def get_nexus_instance() -> Any | None:
+    """Get the global NexusFS instance."""
+    return _nexus_fs_instance
 
 
 # ==============================================================================
@@ -855,6 +867,36 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
 
             # Make user detached so we can access it after session closes
             session.expunge(user)
+
+        # Provision full user resources (workspace, agents, skills, permissions)
+        # This is done outside the session to avoid conflicts
+        try:
+            from nexus.core.permissions import OperationContext
+
+            nx = get_nexus_instance()
+            if nx:
+                admin_context = OperationContext(
+                    user="system",
+                    groups=[],
+                    tenant_id=tenant_id,
+                    is_admin=True,
+                )
+
+                # Provision user resources (API key already created above)
+                provision_result = nx.provision_user(
+                    user_id=user_id,
+                    email=user.email,
+                    display_name=user.display_name,
+                    tenant_id=tenant_id,
+                    create_api_key=False,  # Already created above
+                    create_agents=True,
+                    import_skills=True,
+                    context=admin_context,
+                )
+                logger.info(f"Provisioned OAuth user resources: {provision_result}")
+        except Exception as e:
+            logger.error(f"Failed to provision OAuth user resources: {e}")
+            # Continue - user can be provisioned later via retry
 
         # Type guard: email is required for OAuth users
         assert user.email is not None, "OAuth user must have email"

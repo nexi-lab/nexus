@@ -3929,6 +3929,403 @@ class NexusFS(
 
         return self._entity_registry.delete_entity("agent", agent_id)
 
+    # ===== User Provisioning API (Issue #820) =====
+
+    @rpc_expose(description="Provision a new user account with all resources")
+    def provision_user(
+        self,
+        user_id: str,
+        email: str,
+        display_name: str | None = None,
+        tenant_id: str | None = None,
+        create_api_key: bool = True,
+        create_agents: bool = True,
+        import_skills: bool = True,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Provision a new user with all default resources (Issue #820).
+
+        Creates:
+        - User record (UserModel) in database
+        - Tenant record (TenantModel) if it doesn't exist
+        - All user directories under /tenant:{tenant_id}/user:{user_id}/
+        - Default workspace
+        - Default agents (ImpersonatedUser, UntrustedAgent)
+        - Default skills (all from data/skills/)
+        - API key (if create_api_key=True)
+        - ReBAC permissions (user as tenant owner)
+        - Entity registry entries
+
+        Args:
+            user_id: Unique user identifier
+            email: User email address
+            display_name: Optional display name
+            tenant_id: Tenant ID (extracted from email if not provided)
+            create_api_key: Whether to create API key for user
+            create_agents: Whether to create default agents
+            import_skills: Whether to import default skills
+            context: Operation context
+
+        Returns:
+            {
+                "user_id": str,
+                "tenant_id": str,
+                "api_key": str | None,
+                "workspace_path": str,
+                "agent_paths": list[str],
+                "skill_paths": list[str],
+            }
+
+        Example:
+            >>> result = nx.provision_user(
+            ...     user_id="alice",
+            ...     email="alice@example.com",
+            ...     display_name="Alice Smith"
+            ... )
+            >>> print(result["workspace_path"])
+            /tenant:alice/user:alice/workspace/ws_personal_abc123
+        """
+        import logging
+        from datetime import UTC, datetime
+
+        logger = logging.getLogger(__name__)
+
+        # Input validation
+        if not user_id:
+            raise ValueError("user_id is required")
+        if not email or "@" not in email:
+            raise ValueError("Valid email required")
+
+        # Extract tenant_id from email if not provided
+        if not tenant_id:
+            tenant_id = email.split("@")[0]
+            if not tenant_id:
+                raise ValueError("Could not extract tenant_id from email")
+
+        logger.info(f"Provisioning user {user_id} (email={email}, tenant={tenant_id})")
+
+        # Use admin context for provisioning
+        admin_context = context or OperationContext(
+            user="system",
+            groups=[],
+            tenant_id=tenant_id,
+            is_admin=True,
+        )
+
+        # Track created resources
+        created_resources: dict[str, Any] = {
+            "user": False,
+            "tenant": False,
+            "directories": [],
+            "workspace": None,
+            "agents": [],
+            "skills": [],
+        }
+
+        # Initialize entity registry
+        if not self._entity_registry:
+            from nexus.core.entity_registry import EntityRegistry
+
+            self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+
+        session = self.metadata.SessionLocal()
+        api_key = None
+
+        try:
+            # 1. Create/update TenantModel (idempotent)
+            from nexus.storage.models import TenantModel, UserModel
+
+            tenant = session.query(TenantModel).filter_by(tenant_id=tenant_id).first()
+            if not tenant:
+                tenant = TenantModel(
+                    tenant_id=tenant_id,
+                    name=f"{tenant_id} Organization",
+                    is_active=1,
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                )
+                session.add(tenant)
+                session.commit()
+                logger.info(f"Created tenant: {tenant_id}")
+                created_resources["tenant"] = True
+            else:
+                logger.debug(f"Tenant already exists: {tenant_id}")
+
+            # 2. Register tenant in entity registry (idempotent)
+            if not self._entity_registry.get_entity("tenant", tenant_id):
+                self._entity_registry.register_entity("tenant", tenant_id)
+                logger.info(f"Registered tenant in entity registry: {tenant_id}")
+
+            # 3. Create/update UserModel (idempotent)
+            user = session.query(UserModel).filter_by(user_id=user_id).first()
+            if user:
+                logger.debug(f"User already exists: {user_id}")
+                # Reactivate if soft-deleted
+                if not user.is_active:
+                    user.is_active = 1
+                    user.deleted_at = None
+                    session.commit()
+                    logger.info(f"Reactivated soft-deleted user: {user_id}")
+            else:
+                user = UserModel(
+                    user_id=user_id,
+                    email=email,
+                    username=user_id,
+                    display_name=display_name or user_id,
+                    tenant_id=tenant_id,
+                    primary_auth_method="api_key",
+                    is_active=1,
+                    is_global_admin=0,
+                    email_verified=1,
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                )
+                session.add(user)
+                session.commit()
+                logger.info(f"Created user: {user_id}")
+                created_resources["user"] = True
+
+            # 4. Register user in entity registry (idempotent)
+            if not self._entity_registry.get_entity("user", user_id):
+                self._entity_registry.register_entity(
+                    "user", user_id, parent_type="tenant", parent_id=tenant_id
+                )
+                logger.info(f"Registered user in entity registry: {user_id}")
+
+            # 5. Create API key (if requested and doesn't exist)
+            if create_api_key:
+                from sqlalchemy import select
+
+                from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+                from nexus.storage.models import APIKeyModel
+
+                # Check if user already has an API key
+                existing_key_stmt = (
+                    select(APIKeyModel)
+                    .where(
+                        APIKeyModel.user_id == user_id,
+                        APIKeyModel.subject_type == "user",
+                        APIKeyModel.revoked == 0,
+                    )
+                    .limit(1)
+                )
+                existing_key = session.scalar(existing_key_stmt)
+
+                if not existing_key:
+                    _key_id, api_key = DatabaseAPIKeyAuth.create_key(
+                        session,
+                        user_id=user_id,
+                        name=f"Primary key for {email}",
+                        tenant_id=tenant_id,
+                        is_admin=False,
+                        expires_at=None,  # No expiry
+                    )
+                    session.commit()
+                    logger.info(f"Created API key for user: {user_id}")
+                else:
+                    logger.debug(f"User already has an API key: {user_id}")
+
+        except Exception as e:
+            logger.error(f"Database operation failed during provisioning: {e}")
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+        # 6. Create user directories
+        try:
+            dir_paths = self._create_user_directories(user_id, tenant_id, admin_context)
+            created_resources["directories"] = dir_paths
+            logger.info(f"Created {len(dir_paths)} directories for user {user_id}")
+        except Exception as e:
+            logger.error(f"Failed to create user directories: {e}")
+            # Continue - directories might already exist
+
+        # 7. Create default workspace
+        workspace_path = None
+        try:
+            from scripts.provision_namespace import generate_resource_id
+
+            workspace_id = generate_resource_id("workspace", "personal")
+            workspace_path = f"/tenant:{tenant_id}/user:{user_id}/workspace/{workspace_id}"
+
+            if not self.exists(workspace_path, context=admin_context):
+                self.mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
+                self.register_workspace(
+                    workspace_path,
+                    name="Personal Workspace",
+                    description="Default personal workspace",
+                    context=admin_context,
+                )
+                logger.info(f"Created workspace: {workspace_path}")
+                created_resources["workspace"] = workspace_path
+            else:
+                logger.debug(f"Workspace already exists: {workspace_path}")
+                created_resources["workspace"] = workspace_path
+        except Exception as e:
+            logger.error(f"Failed to create workspace: {e}")
+
+        # 8. Create agents (if requested)
+        agent_paths = []
+        if create_agents:
+            try:
+                # Import agent creation helper
+                import sys
+                from pathlib import Path
+
+                # Add scripts directory to path temporarily
+                scripts_dir = Path(__file__).parent.parent.parent / "scripts"
+                if str(scripts_dir) not in sys.path:
+                    sys.path.insert(0, str(scripts_dir))
+
+                from _core.agent_manager import create_standard_agents
+
+                agent_results = create_standard_agents(self, user_id, admin_context)
+
+                for agent_name, agent_result in agent_results.items():
+                    if agent_result and "config_path" in agent_result:
+                        agent_paths.append(agent_result["config_path"])
+                        created_resources["agents"].append(agent_name)
+
+                logger.info(f"Created {len(agent_paths)} agents for user {user_id}")
+            except Exception as e:
+                logger.error(f"Failed to create agents: {e}")
+
+        # 9. Import skills (if requested)
+        skill_paths = []
+        if import_skills:
+            try:
+                skill_paths = self._import_user_skills(tenant_id, user_id, admin_context)
+                created_resources["skills"] = skill_paths
+                logger.info(f"Imported {len(skill_paths)} skills for user {user_id}")
+            except Exception as e:
+                logger.error(f"Failed to import skills: {e}")
+
+        # 10. Grant ReBAC permissions (tenant owner)
+        try:
+            self.rebac_create(
+                subject=("user", user_id),
+                relation="member",
+                object=("group", f"tenant_owners:{tenant_id}"),
+                tenant_id=tenant_id,
+                context=admin_context,
+            )
+            logger.info(f"Granted tenant owner permissions to user {user_id}")
+        except Exception as e:
+            if "already exists" in str(e).lower():
+                logger.debug(f"User already has tenant owner permissions: {user_id}")
+            else:
+                logger.warning(f"Failed to grant tenant owner permissions: {e}")
+
+        logger.info(f"Successfully provisioned user {user_id}")
+
+        return {
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "api_key": api_key,
+            "workspace_path": workspace_path,
+            "agent_paths": agent_paths,
+            "skill_paths": skill_paths,
+            "created_resources": created_resources,  # For debugging
+        }
+
+    def _create_user_directories(
+        self, user_id: str, tenant_id: str, context: OperationContext
+    ) -> list[str]:
+        """Create all user directories with proper permissions.
+
+        Args:
+            user_id: User ID
+            tenant_id: Tenant ID
+            context: Operation context
+
+        Returns:
+            List of created directory paths
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        ALL_RESOURCE_TYPES = ["workspace", "memory", "skill", "agent", "connector", "resource"]
+        created_paths = []
+
+        for resource_type in ALL_RESOURCE_TYPES:
+            folder_path = f"/tenant:{tenant_id}/user:{user_id}/{resource_type}"
+
+            try:
+                # Create directory (idempotent)
+                self.mkdir(folder_path, parents=True, exist_ok=True, context=context)
+
+                # Grant user ownership
+                try:
+                    self.rebac_create(
+                        subject=("user", user_id),
+                        relation="direct_owner",
+                        object=("file", folder_path),
+                        tenant_id=tenant_id,
+                        context=context,
+                    )
+                except Exception as e:
+                    if "already exists" in str(e).lower():
+                        logger.debug(f"Permission already exists for {folder_path}")
+                    else:
+                        raise
+
+                created_paths.append(folder_path)
+            except Exception as e:
+                logger.warning(f"Failed to create directory {folder_path}: {e}")
+
+        return created_paths
+
+    def _import_user_skills(
+        self, _tenant_id: str, _user_id: str, context: OperationContext
+    ) -> list[str]:
+        """Import all default skills from data/skills/ directory.
+
+        Args:
+            _tenant_id: Tenant ID (unused, for future use)
+            _user_id: User ID (unused, for future use)
+            context: Operation context
+
+        Returns:
+            List of imported skill paths
+        """
+        import base64
+        import logging
+        from pathlib import Path
+
+        logger = logging.getLogger(__name__)
+
+        # Find skills directory
+        skills_dir = Path(__file__).parent.parent.parent / "scripts" / "data" / "skills"
+        if not skills_dir.exists():
+            logger.warning(f"Skills directory not found: {skills_dir}")
+            return []
+
+        skill_files = list(skills_dir.glob("*.skill"))
+        skill_paths = []
+
+        for skill_file in skill_files:
+            try:
+                with open(skill_file, "rb") as f:
+                    zip_bytes = f.read()
+
+                zip_base64 = base64.b64encode(zip_bytes).decode("utf-8")
+
+                result = self.skills_import(
+                    zip_data=zip_base64,
+                    tier="personal",  # User's personal skills
+                    allow_overwrite=False,  # Skip if exists (idempotent)
+                    context=context,
+                )
+
+                skill_paths.extend(result.get("skill_paths", []))
+                logger.debug(f"Imported skill: {skill_file.name}")
+            except Exception as e:
+                logger.warning(f"Failed to import skill {skill_file.name}: {e}")
+
+        return skill_paths
+
     # ===== ACE (Agentic Context Engineering) Integration (v0.5.0) =====
 
     @rpc_expose(description="Start a new execution trajectory")

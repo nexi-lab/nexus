@@ -108,7 +108,7 @@ USER nexus
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NEXUS_HOST=0.0.0.0 \
-    NEXUS_PORT=8080 \
+    NEXUS_PORT=2026 \
     NEXUS_DATA_DIR=/app/data \
     # Zoekt configuration (sidecar mode)
     ZOEKT_ENABLED=true \
@@ -116,8 +116,8 @@ ENV PYTHONUNBUFFERED=1 \
     ZOEKT_INDEX_DIR=/app/data/.zoekt-index \
     ZOEKT_DATA_DIR=/app/data
 
-# Expose ports (8080 = Nexus API, 6070 = Zoekt search)
-EXPOSE 8080 6070
+# Expose ports (2026 = Nexus API, 6070 = Zoekt search)
+EXPOSE 2026 6070
 
 # Health check - updated to correct endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \

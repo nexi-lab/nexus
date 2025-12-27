@@ -66,7 +66,7 @@ Nexus is a **programmable filesystem for AI agents** that combines:
     nexus init ./my-project
 
     # Use with server (see Server Mode tab)
-    export NEXUS_URL=http://localhost:8080
+    export NEXUS_URL=http://localhost:2026
     export NEXUS_API_KEY=your-key
     nexus write /workspace/hello.txt "Hello from CLI!"
     nexus cat /workspace/hello.txt
@@ -76,12 +76,12 @@ Nexus is a **programmable filesystem for AI agents** that combines:
 
     ```bash
     # Start server with authentication
-    nexus serve --host 0.0.0.0 --port 8080
+    nexus serve --host 0.0.0.0 --port 2026
 
     # Connect from Python
     import nexus
     nx = nexus.connect(
-        remote_url="http://localhost:8080",
+        remote_url="http://localhost:2026",
         api_key="your-api-key"
     )
     nx.write("/workspace/hello.txt", b"Remote write!")

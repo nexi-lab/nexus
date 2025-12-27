@@ -13,7 +13,7 @@
 #   --instance-name NAME              VM instance name (default: nexus-server)
 #   --zone ZONE                       GCP zone (default: us-west1-a)
 #   --tag TAG                         Docker image tag (default: local-TIMESTAMP)
-#   --port PORT                       Server port (default: 8080)
+#   --port PORT                       Server port (default: 2026)
 #   --cloud-sql-instance INSTANCE     Cloud SQL instance for PostgreSQL metadata
 #   --db-name NAME                    Database name (default: nexus)
 #   --db-user USER                    Database user (default: postgres)
@@ -42,7 +42,7 @@ PROJECT_ID="nexi-lab-888"
 INSTANCE_NAME="nexus-server"
 ZONE="us-west1-a"
 TAG="local-$(date +%Y%m%d-%H%M%S)"
-PORT="8080"
+PORT="2026"
 DATA_DIR="/var/lib/nexus"
 CONTAINER_NAME="nexus-container"
 SKIP_BUILD=false
@@ -166,9 +166,9 @@ sudo docker run -d \
   $IMAGE
 
 # Setup port 80 forwarding
-echo "Setting up port 80 → 8080 forwarding..."
-sudo iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080 2>/dev/null || \
-  sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+echo "Setting up port 80 → 2026 forwarding..."
+sudo iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 2026 2>/dev/null || \
+  sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 2026
 
 # Wait and check health
 sleep 10
@@ -224,9 +224,9 @@ sudo docker run -d \
   $IMAGE
 
 # Setup port 80 forwarding
-echo "Setting up port 80 → 8080 forwarding..."
-sudo iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080 2>/dev/null || \
-  sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+echo "Setting up port 80 → 2026 forwarding..."
+sudo iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 2026 2>/dev/null || \
+  sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 2026
 
 # Wait and check health
 sleep 10
@@ -273,7 +273,7 @@ echo "Source: Local build ($(git rev-parse --short HEAD 2>/dev/null || echo 'unk
 echo ""
 echo "Server:"
 echo "  URL: http://${EXTERNAL_IP} (port 80)"
-echo "  Alternative: http://${EXTERNAL_IP}:${PORT} (port 8080)"
+echo "  Alternative: http://${EXTERNAL_IP}:${PORT} (port 2026)"
 echo ""
 if [[ -n "$CLOUD_SQL_INSTANCE" ]]; then
 echo "Database:"

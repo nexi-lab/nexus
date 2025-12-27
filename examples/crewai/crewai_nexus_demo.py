@@ -53,7 +53,7 @@ def call_nexus_mcp(tool_name: str, **kwargs) -> str:
     """Call a Nexus MCP tool via stdio transport."""
     import json
 
-    nexus_url = os.getenv("NEXUS_URL", "http://localhost:8080")
+    nexus_url = os.getenv("NEXUS_URL", "http://localhost:2026")
     nexus_api_key = os.getenv("NEXUS_API_KEY", "")
 
     # Call via nexus CLI
@@ -444,7 +444,7 @@ def check_environment():
         sys.exit(1)
 
     # Check Nexus connection
-    nexus_url = os.getenv("NEXUS_URL", "http://localhost:8080")
+    nexus_url = os.getenv("NEXUS_URL", "http://localhost:2026")
     print(f"\nNexus server: {nexus_url}")
 
     # Test connection
@@ -473,7 +473,7 @@ def setup_test_data():
     try:
         from nexus import connect
 
-        nx = connect(config={"remote_url": os.getenv("NEXUS_URL", "http://localhost:8080")})
+        nx = connect(config={"remote_url": os.getenv("NEXUS_URL", "http://localhost:2026")})
 
         # Create directories
         for dir_path in ["/workspace", "/reports"]:

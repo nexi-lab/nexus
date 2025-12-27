@@ -281,10 +281,10 @@ LLM document reading works seamlessly with remote Nexus servers.
 **Setup:**
 ```bash
 # Start server
-nexus serve --host 0.0.0.0 --port 8080 --api-key secret123
+nexus serve --host 0.0.0.0 --port 2026 --api-key secret123
 
 # In another terminal, set environment
-export NEXUS_URL=http://localhost:8080
+export NEXUS_URL=http://localhost:2026
 export NEXUS_API_KEY=secret123
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
@@ -297,7 +297,7 @@ nexus llm read /workspace/doc.pdf "What are the key points?"
 **Or use flags:**
 ```bash
 nexus llm read /workspace/doc.pdf "Question" \
-  --remote-url http://localhost:8080 \
+  --remote-url http://localhost:2026 \
   --remote-api-key secret123
 ```
 

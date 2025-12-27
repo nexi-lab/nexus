@@ -37,7 +37,7 @@ def remote_client(mock_httpx_client):
     """Create a RemoteNexusFS instance with mocked httpx client."""
     with patch("nexus.remote.client.httpx.Client", return_value=mock_httpx_client):
         client = RemoteNexusFS(
-            server_url="http://localhost:8080",
+            server_url="http://localhost:2026",
             api_key="test-key",
             timeout=30.0,
             connect_timeout=5.0,
@@ -53,11 +53,11 @@ class TestRemoteNexusFSInitialization:
         """Test initialization with API key."""
         with patch("nexus.remote.client.httpx.Client") as mock_client_class:
             client = RemoteNexusFS(
-                server_url="http://localhost:8080",
+                server_url="http://localhost:2026",
                 api_key="test-key",
             )
 
-            assert client.server_url == "http://localhost:8080"
+            assert client.server_url == "http://localhost:2026"
             assert client.api_key == "test-key"
             assert client.timeout == 90  # Default is 90 seconds
             assert client.connect_timeout == 5
@@ -70,7 +70,7 @@ class TestRemoteNexusFSInitialization:
     def test_init_without_api_key(self):
         """Test initialization without API key."""
         with patch("nexus.remote.client.httpx.Client") as mock_client_class:
-            client = RemoteNexusFS(server_url="http://localhost:8080")
+            client = RemoteNexusFS(server_url="http://localhost:2026")
 
             assert client.api_key is None
 
@@ -82,7 +82,7 @@ class TestRemoteNexusFSInitialization:
         """Test initialization with custom timeouts."""
         with patch("nexus.remote.client.httpx.Client"):
             client = RemoteNexusFS(
-                server_url="http://localhost:8080",
+                server_url="http://localhost:2026",
                 timeout=60,
                 connect_timeout=10,
             )
@@ -93,9 +93,9 @@ class TestRemoteNexusFSInitialization:
     def test_init_strips_trailing_slash(self):
         """Test that server_url trailing slash is stripped."""
         with patch("nexus.remote.client.httpx.Client"):
-            client = RemoteNexusFS(server_url="http://localhost:8080/")
+            client = RemoteNexusFS(server_url="http://localhost:2026/")
 
-            assert client.server_url == "http://localhost:8080"
+            assert client.server_url == "http://localhost:2026"
 
     def test_context_manager(self, remote_client):
         """Test context manager functionality."""

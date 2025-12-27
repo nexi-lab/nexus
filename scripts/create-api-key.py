@@ -83,7 +83,7 @@ def main() -> None:
             print()
             print("Use with:")
             print(f"  export NEXUS_API_KEY='{raw_key}'")
-            print("  nexus ls /workspace --remote-url http://localhost:8080")
+            print("  nexus ls /workspace --remote-url http://localhost:2026")
 
         except Exception as e:
             print(f"Error creating API key: {e}")

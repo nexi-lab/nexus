@@ -108,7 +108,7 @@ API key authentication required for remote Nexus server:
 
 **Environment Variable:**
 ```bash
-NEXUS_URL=http://localhost:8080
+NEXUS_URL=http://localhost:2026
 NEXUS_API_KEY=sk-your-api-key
 nexus mcp serve --transport stdio
 ```
@@ -166,7 +166,7 @@ nexus mcp serve --transport stdio
       "command": "nexus",
       "args": ["mcp", "serve", "--transport", "stdio"],
       "env": {
-        "NEXUS_URL": "http://localhost:8080",
+        "NEXUS_URL": "http://localhost:2026",
         "NEXUS_API_KEY": "sk-your-api-key"
       }
     }
@@ -259,7 +259,7 @@ For Claude Desktop, use the stdio transport configuration:
       "command": "nexus",
       "args": ["mcp", "serve", "--transport", "stdio"],
       "env": {
-        "NEXUS_URL": "http://localhost:8080",
+        "NEXUS_URL": "http://localhost:2026",
         "NEXUS_API_KEY": "sk-your-api-key"
       }
     }
@@ -1023,7 +1023,7 @@ server_params = StdioServerParameters(
     command="nexus",
     args=["mcp", "serve", "--transport", "stdio"],
     env={
-        "NEXUS_URL": "http://localhost:8080",
+        "NEXUS_URL": "http://localhost:2026",
         "NEXUS_API_KEY": "sk-your-api-key"
     }
 )

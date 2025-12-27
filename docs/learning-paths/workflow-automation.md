@@ -69,13 +69,13 @@ Start a Nexus server to handle workflows:
 
 ```bash
 # Start server with workflow support
-nexus serve --host 0.0.0.0 --port 8080 --data-dir ./nexus-data &
+nexus serve --host 0.0.0.0 --port 2026 --data-dir ./nexus-data &
 
 # Wait for server to start
 sleep 2
 
 # Verify server is running
-curl http://localhost:8080/health
+curl http://localhost:2026/health
 ```
 
 **Expected output:**
@@ -103,7 +103,7 @@ nexus admin create-user-key admin \
 **Save the API key** and export it:
 
 ```bash
-export NEXUS_URL=http://localhost:8080
+export NEXUS_URL=http://localhost:2026
 export NEXUS_API_KEY=nxk_1234567890abcdef...  # Use YOUR key
 ```
 
@@ -120,7 +120,7 @@ import asyncio
 
 # Connect to remote server
 nx = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "nxk_1234567890abcdef..."  # Replace with YOUR key
 })
 
@@ -183,7 +183,7 @@ Now upload a text file to trigger the workflow:
 import nexus
 
 nx = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "nxk_1234567890abcdef..."
 })
 
@@ -564,7 +564,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-NEXUS_URL = "http://localhost:8080"
+NEXUS_URL = "http://localhost:2026"
 NEXUS_API_KEY = "nxk_..."  # Replace with your key
 
 class WorkflowAutomation:

@@ -40,7 +40,7 @@ The Control Panel supports different permission levels:
 
 ## Getting Started
 
-1. **Access the Control Panel**: Navigate to `http://localhost:8080/portal` (or your server URL)
+1. **Access the Control Panel**: Navigate to `http://localhost:2026/portal` (or your server URL)
 2. **Authentication**: Log in with your admin API key
 3. **Initial Setup**: Configure your first tenant and workspace
 4. **Grant Permissions**: Set up access control for your agents

@@ -338,7 +338,7 @@ print(f"Savings: {len(image_data) - len(optimized)} bytes")
 
 ```bash
 # Start server with plugin
-nexus serve --host 0.0.0.0 --port 8080 \
+nexus serve --host 0.0.0.0 --port 2026 \
   --plugin nexus_image_optimizer.plugin:create_plugin \
   --plugin-config '{"quality": 85, "max_width": 1920}'
 ```
@@ -348,7 +348,7 @@ nexus serve --host 0.0.0.0 --port 8080 \
 import nexus
 
 nx = nexus.connect(config={
-    "url": "http://localhost:8080",
+    "url": "http://localhost:2026",
     "api_key": "your-api-key"
 })
 

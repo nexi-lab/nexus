@@ -138,7 +138,7 @@ def mcp() -> None:
                     "command": "nexus",
                     "args": ["mcp", "serve", "--transport", "stdio"],
                     "env": {
-                        "NEXUS_URL": "http://localhost:8080",
+                        "NEXUS_URL": "http://localhost:2026",
                         "NEXUS_API_KEY": "your-api-key-here"
                     }
                 }
@@ -218,12 +218,12 @@ def serve(
         nexus mcp serve --transport http --port 8081
 
         # Use with remote Nexus server
-        NEXUS_URL=http://localhost:8080 nexus mcp serve
+        NEXUS_URL=http://localhost:2026 nexus mcp serve
 
         # Use with remote Nexus server and API key
-        nexus mcp serve --url http://localhost:8080 --api-key YOUR_KEY
+        nexus mcp serve --url http://localhost:2026 --api-key YOUR_KEY
         # Or via environment:
-        NEXUS_URL=http://localhost:8080 NEXUS_API_KEY=YOUR_KEY nexus mcp serve
+        NEXUS_URL=http://localhost:2026 NEXUS_API_KEY=YOUR_KEY nexus mcp serve
 
         # Use with local backend
         nexus mcp serve --data-dir ./my-data

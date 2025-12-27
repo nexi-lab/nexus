@@ -80,7 +80,7 @@ oauth_token = token_manager.get_valid_token(
 ```bash
 # 1. Start Nexus server with database auth
 export NEXUS_DATABASE_URL="postgresql://postgres:nexus@localhost:5432/nexus"
-nexus serve --auth-type database --init --port 8080
+nexus serve --auth-type database --init --port 2026
 
 # Output:
 # ✓ Admin user created
@@ -130,7 +130,7 @@ from nexus.core.permissions import OperationContext
 
 # Alice connects with her API key
 nx = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key="sk_alice_xyz123..."  # Alice's API key
 )
 
@@ -179,7 +179,7 @@ After this:
 ```python
 # Alice uses her API key for every request
 nx = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key="sk_alice_xyz123..."  # This identifies Alice
 )
 
@@ -253,7 +253,7 @@ bob@example.com   | google   | encrypted_token_b      | encrypted_refresh_b
 ```python
 # Alice's session
 alice_nx = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key="sk_alice_..."  # Alice's API key
 )
 
@@ -262,7 +262,7 @@ alice_nx.write("/gdrive/my-file.txt", b"Alice's file")
 
 # Bob's session
 bob_nx = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key="sk_bob_..."  # Bob's API key
 )
 

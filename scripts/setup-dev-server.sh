@@ -200,7 +200,7 @@ echo -e "${GREEN}✓ Environment configuration created${NC}"
 echo -e "${YELLOW}[7/8] Testing Nexus server manually...${NC}"
 
 # Test nexus serve command manually first
-echo "  Testing: nexus serve --host 0.0.0.0 --port 8080 --backend gcs --gcs-bucket $GCS_BUCKET --gcs-project nexi-lab-888 --auth-type database"
+echo "  Testing: nexus serve --host 0.0.0.0 --port 2026 --backend gcs --gcs-bucket $GCS_BUCKET --gcs-project nexi-lab-888 --auth-type database"
 
 # Start server in background for testing
 sudo -u $NEXUS_USER bash -c "
@@ -208,7 +208,7 @@ sudo -u $NEXUS_USER bash -c "
     cd '$REPO_PATH' && \
     nohup $VENV_PATH/bin/nexus serve \
         --host 0.0.0.0 \
-        --port 8080 \
+        --port 2026 \
         --backend gcs \
         --gcs-bucket $GCS_BUCKET \
         --gcs-project nexi-lab-888 \
@@ -226,7 +226,7 @@ sleep 10
 
 # Health check
 echo "  Testing health endpoint..."
-if curl -f -s http://localhost:8080/health > /dev/null 2>&1; then
+if curl -f -s http://localhost:2026/health > /dev/null 2>&1; then
     echo -e "${GREEN}✓ Manual test successful!${NC}"
 
     # Show server logs
@@ -267,7 +267,7 @@ WorkingDirectory=$REPO_PATH
 EnvironmentFile=$ENV_FILE
 ExecStart=$VENV_PATH/bin/nexus serve \\
     --host 0.0.0.0 \\
-    --port 8080 \\
+    --port 2026 \\
     --backend gcs \\
     --gcs-bucket $GCS_BUCKET \\
     --gcs-project nexi-lab-888 \\
@@ -296,7 +296,7 @@ sleep 10
 MAX_RETRIES=12
 RETRY_COUNT=0
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    if curl -f -s http://localhost:8080/health > /dev/null 2>&1; then
+    if curl -f -s http://localhost:2026/health > /dev/null 2>&1; then
         echo -e "${GREEN}✓ Nexus server is healthy!${NC}"
         break
     fi
@@ -366,8 +366,8 @@ echo "  Cloud SQL Proxy: $(systemctl is-active cloudsql-proxy.service)"
 echo "  Nexus Server:    $(systemctl is-active nexus-server.service)"
 echo ""
 echo "Access URLs:"
-echo "  Internal: http://localhost:8080"
-echo "  External: http://$EXTERNAL_IP:8080"
+echo "  Internal: http://localhost:2026"
+echo "  External: http://$EXTERNAL_IP:2026"
 echo ""
 
 # Show API key info
@@ -397,5 +397,5 @@ echo "  Stop:           sudo systemctl stop nexus-server"
 echo "  Start:          sudo systemctl start nexus-server"
 echo ""
 echo "Health check:"
-curl -s http://localhost:8080/health | jq . || echo "  Service is running"
+curl -s http://localhost:2026/health | jq . || echo "  Service is running"
 echo ""

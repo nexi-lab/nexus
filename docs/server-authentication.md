@@ -68,7 +68,7 @@ Save this API key securely - it won't be shown again!
 from nexus.remote import RemoteNexusFS
 
 nx = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key="sk_a1b2c3d4e5f6..."  # From init output
 )
 ```
@@ -103,7 +103,7 @@ nexus serve --auth-type local
 from nexus.remote import RemoteNexusFS
 
 # Login with username/password
-nx = RemoteNexusFS(server_url="http://localhost:8080")
+nx = RemoteNexusFS(server_url="http://localhost:2026")
 jwt_token = nx.login(username="alice", password="password123")
 
 # Use JWT token for requests
@@ -150,7 +150,7 @@ from nexus.remote import RemoteNexusFS
 id_token = "eyJhbGciOiJSUzI1NiIs..."  # From Google/Microsoft/etc.
 
 nx = RemoteNexusFS(
-    server_url="http://localhost:8080",
+    server_url="http://localhost:2026",
     api_key=id_token  # Pass OIDC token as API key
 )
 ```
@@ -199,8 +199,8 @@ google_token = "eyJ..."  # From Google OAuth
 microsoft_token = "eyJ..."  # From Microsoft OAuth
 
 # Both work!
-nx1 = RemoteNexusFS(server_url="http://localhost:8080", api_key=google_token)
-nx2 = RemoteNexusFS(server_url="http://localhost:8080", api_key=microsoft_token)
+nx1 = RemoteNexusFS(server_url="http://localhost:2026", api_key=google_token)
+nx2 = RemoteNexusFS(server_url="http://localhost:2026", api_key=microsoft_token)
 ```
 
 ### 6. Static API Key (Deprecated)
@@ -356,11 +356,11 @@ nexus cat /test.txt
 export NEXUS_DATABASE_URL="postgresql://postgres:nexus@prod-db:5432/nexus"
 
 # Initialize (first time only)
-nexus serve --auth-type database --init --port 8080
+nexus serve --auth-type database --init --port 2026
 
 # Save the admin API key from output
 # Then restart without --init
-nexus serve --auth-type database --port 8080
+nexus serve --auth-type database --port 2026
 ```
 
 ### Example 3: Enterprise SSO (Google)
@@ -371,7 +371,7 @@ export NEXUS_OIDC_ISSUER="https://accounts.google.com"
 export NEXUS_OIDC_AUDIENCE="123456.apps.googleusercontent.com"
 
 # Start server
-nexus serve --auth-type oidc --port 8080
+nexus serve --auth-type oidc --port 2026
 
 # Users authenticate via Google OAuth
 # Pass Google ID token as API key
@@ -392,7 +392,7 @@ export NEXUS_OIDC_PROVIDERS='{
   }
 }'
 
-nexus serve --auth-type multi-oidc --port 8080
+nexus serve --auth-type multi-oidc --port 2026
 ```
 
 ## Related Documentation

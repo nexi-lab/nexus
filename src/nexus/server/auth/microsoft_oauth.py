@@ -8,7 +8,7 @@ Example:
     ...     client_id="12345678-1234-1234-1234-123456789012",
     ...     client_secret="secret",
     ...     tenant_id="common",  # or specific tenant ID
-    ...     redirect_uri="http://localhost:8080/oauth/callback",
+    ...     redirect_uri="http://localhost:2026/oauth/callback",
     ...     scopes=["Files.ReadWrite.All", "offline_access"]
     ... )
     >>> auth_url = provider.get_authorization_url()
@@ -63,7 +63,7 @@ class MicrosoftOAuthProvider(OAuthProvider):
             >>> provider = MicrosoftOAuthProvider(
             ...     client_id="12345678-1234-1234-1234-123456789012",
             ...     client_secret="secret~...",
-            ...     redirect_uri="http://localhost:8080/oauth/callback",
+            ...     redirect_uri="http://localhost:2026/oauth/callback",
             ...     scopes=["Files.ReadWrite.All", "offline_access"],
             ...     provider_name="microsoft-onedrive"
             ... )

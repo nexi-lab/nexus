@@ -134,11 +134,7 @@ class PendingOAuthManager:
     def _cleanup_expired(self) -> None:
         """Remove expired registrations."""
         now = time.time()
-        expired_tokens = [
-            token
-            for token, reg in self._storage.items()
-            if reg.expires_at < now
-        ]
+        expired_tokens = [token for token, reg in self._storage.items() if reg.expires_at < now]
         for token in expired_tokens:
             del self._storage[token]
 

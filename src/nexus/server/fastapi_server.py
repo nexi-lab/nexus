@@ -44,6 +44,7 @@ from starlette.middleware.gzip import GZipMiddleware
 # Load environment variables from .env.local if it exists
 try:
     from dotenv import load_dotenv
+
     # Look for .env.local in project root (parent of src)
     env_file = Path(__file__).parent.parent.parent.parent / ".env.local"
     if env_file.exists():
@@ -485,7 +486,9 @@ def create_app(
     return app
 
 
-def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any, database_url: str | None) -> None:
+def _initialize_oauth_provider(
+    nexus_fs: NexusFS, auth_provider: Any, database_url: str | None
+) -> None:
     """Initialize OAuth provider if Google OAuth credentials are available.
 
     Args:
@@ -494,13 +497,21 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any, database_u
         database_url: Database URL
     """
     try:
-        google_client_id = os.getenv("GOOGLE_CLIENT_ID") or os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
-        google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET") or os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
-        google_redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5173/oauth/callback")
+        google_client_id = os.getenv("GOOGLE_CLIENT_ID") or os.getenv(
+            "NEXUS_OAUTH_GOOGLE_CLIENT_ID"
+        )
+        google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET") or os.getenv(
+            "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET"
+        )
+        google_redirect_uri = os.getenv(
+            "GOOGLE_REDIRECT_URI", "http://localhost:5173/oauth/callback"
+        )
         jwt_secret = os.getenv("NEXUS_JWT_SECRET")
 
         if not google_client_id or not google_client_secret:
-            logger.debug("Google OAuth credentials not found. OAuth endpoints will return 500 errors.")
+            logger.debug(
+                "Google OAuth credentials not found. OAuth endpoints will return 500 errors."
+            )
             return
 
         # Get session factory from auth_provider or nexus_fs
@@ -538,7 +549,9 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any, database_u
         set_oauth_provider(oauth_provider)
         logger.info("Google OAuth provider initialized successfully")
     except Exception as e:
-        logger.warning(f"Failed to initialize OAuth provider: {e}. OAuth endpoints will not be available.")
+        logger.warning(
+            f"Failed to initialize OAuth provider: {e}. OAuth endpoints will not be available."
+        )
 
 
 def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:

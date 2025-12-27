@@ -4,14 +4,15 @@ Simplified integration tests for OAuth API key management.
 Tests the core functionality without complex database persistence scenarios.
 """
 
-import pytest
 from datetime import UTC, datetime, timedelta
+
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.server.auth.oauth_crypto import OAuthCrypto
 from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-from nexus.storage.models import Base, APIKeyModel, OAuthAPIKeyModel, UserModel
+from nexus.server.auth.oauth_crypto import OAuthCrypto
+from nexus.storage.models import APIKeyModel, Base, OAuthAPIKeyModel, UserModel
 
 
 @pytest.fixture
@@ -108,9 +109,7 @@ class TestOAuthAPIKeyModel:
         db_session.commit()
 
         # Verify it was stored
-        stored_key = db_session.query(OAuthAPIKeyModel).filter_by(
-            key_id=key_id
-        ).first()
+        stored_key = db_session.query(OAuthAPIKeyModel).filter_by(key_id=key_id).first()
         assert stored_key is not None
         assert stored_key.user_id == test_user.user_id
 
@@ -181,9 +180,7 @@ class TestOAuthAPIKeyModel:
         db_session.commit()
 
         # Query all keys for user
-        user_keys = db_session.query(OAuthAPIKeyModel).filter_by(
-            user_id=test_user.user_id
-        ).all()
+        user_keys = db_session.query(OAuthAPIKeyModel).filter_by(user_id=test_user.user_id).all()
 
         assert len(user_keys) == 3
         # Verify all can be decrypted
@@ -198,9 +195,9 @@ class TestOAuthAPIKeyFlow:
     def test_first_login_scenario(self, db_session, test_user, oauth_crypto):
         """Test first OAuth login creates exactly one API key."""
         # Verify no existing keys
-        existing_keys = db_session.query(OAuthAPIKeyModel).filter_by(
-            user_id=test_user.user_id
-        ).all()
+        existing_keys = (
+            db_session.query(OAuthAPIKeyModel).filter_by(user_id=test_user.user_id).all()
+        )
         assert len(existing_keys) == 0
 
         # Create API key (as would happen in /auth/oauth/check)
@@ -224,9 +221,7 @@ class TestOAuthAPIKeyFlow:
         db_session.commit()
 
         # Verify exactly one key was created
-        keys = db_session.query(OAuthAPIKeyModel).filter_by(
-            user_id=test_user.user_id
-        ).all()
+        keys = db_session.query(OAuthAPIKeyModel).filter_by(user_id=test_user.user_id).all()
         assert len(keys) == 1
         assert oauth_crypto.decrypt_token(keys[0].encrypted_key_value) == api_key_value
 
@@ -251,9 +246,9 @@ class TestOAuthAPIKeyFlow:
         db_session.commit()
 
         # Simulate subsequent login - retrieve existing key
-        oauth_api_keys = db_session.query(OAuthAPIKeyModel).filter_by(
-            user_id=test_user.user_id
-        ).all()
+        oauth_api_keys = (
+            db_session.query(OAuthAPIKeyModel).filter_by(user_id=test_user.user_id).all()
+        )
 
         assert len(oauth_api_keys) == 1
         retrieved_key = oauth_crypto.decrypt_token(oauth_api_keys[0].encrypted_key_value)

@@ -1502,9 +1502,7 @@ class OAuthAPIKeyModel(Base):
     )
 
     # Indexes
-    __table_args__ = (
-        Index("idx_oauth_api_keys_user", "user_id"),
-    )
+    __table_args__ = (Index("idx_oauth_api_keys_user", "user_id"),)
 
     def __repr__(self) -> str:
         return f"<OAuthAPIKeyModel(key_id={self.key_id}, user_id={self.user_id})>"

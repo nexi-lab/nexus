@@ -78,7 +78,9 @@ class ChangePasswordRequest(BaseModel):
     """Change password request."""
 
     current_password: str
-    new_password: str = Field(..., min_length=8, description="New password must be at least 8 characters")
+    new_password: str = Field(
+        ..., min_length=8, description="New password must be at least 8 characters"
+    )
 
 
 class UpdateProfileRequest(BaseModel):
@@ -209,7 +211,9 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
-async def register(request: RegisterRequest, auth: DatabaseLocalAuth = Depends(get_auth_provider)) -> RegisterResponse:
+async def register(
+    request: RegisterRequest, auth: DatabaseLocalAuth = Depends(get_auth_provider)
+) -> RegisterResponse:
     """Register a new user.
 
     Args:
@@ -243,7 +247,9 @@ async def register(request: RegisterRequest, auth: DatabaseLocalAuth = Depends(g
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(request: LoginRequest, auth: DatabaseLocalAuth = Depends(get_auth_provider)) -> LoginResponse:
+async def login(
+    request: LoginRequest, auth: DatabaseLocalAuth = Depends(get_auth_provider)
+) -> LoginResponse:
     """Login with email/username and password.
 
     Args:
@@ -378,7 +384,9 @@ async def get_google_oauth_url() -> OAuthAuthorizeResponse:
 
 
 @router.post("/oauth/check")
-async def oauth_check(request: OAuthCheckRequest) -> OAuthCheckResponseExisting | OAuthCheckResponseNew:
+async def oauth_check(
+    request: OAuthCheckRequest,
+) -> OAuthCheckResponseExisting | OAuthCheckResponseNew:
     """Check OAuth callback and determine if confirmation is needed.
 
     This endpoint checks if the OAuth callback is for an existing user (can login immediately)
@@ -462,12 +470,24 @@ async def oauth_check(request: OAuthCheckRequest) -> OAuthCheckResponseExisting 
                 # For personal emails (gmail, outlook, etc): use username
                 # For work emails: use full domain (e.g., multifi.ai)
                 if user.email:
-                    email_username, email_domain = user.email.split("@") if "@" in user.email else (user.email, "")
-                    personal_domains = ["gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com", "proton.me", "protonmail.com"]
+                    email_username, email_domain = (
+                        user.email.split("@") if "@" in user.email else (user.email, "")
+                    )
+                    personal_domains = [
+                        "gmail.com",
+                        "outlook.com",
+                        "hotmail.com",
+                        "yahoo.com",
+                        "icloud.com",
+                        "proton.me",
+                        "protonmail.com",
+                    ]
                     if email_domain.lower() in personal_domains:
                         tenant_id = email_username  # Use username for personal emails (e.g., "joe")
                     else:
-                        tenant_id = email_domain  # Use full domain for work emails (e.g., "multifi.ai")
+                        tenant_id = (
+                            email_domain  # Use full domain for work emails (e.g., "multifi.ai")
+                        )
                 else:
                     tenant_id = f"user_{user.user_id[:8]}"
 
@@ -536,7 +556,9 @@ async def oauth_check(request: OAuthCheckRequest) -> OAuthCheckResponseExisting 
                 elif not api_key_value:
                     # User has oauth_api_keys but couldn't decrypt any - likely encryption key changed
                     # This shouldn't happen with persistent encryption key, but log it
-                    logger.error(f"User {user.user_id} has {len(oauth_api_keys)} OAuth API keys but none could be decrypted")
+                    logger.error(
+                        f"User {user.user_id} has {len(oauth_api_keys)} OAuth API keys but none could be decrypted"
+                    )
                     api_key_value = None
 
                 return OAuthCheckResponseExisting(
@@ -707,11 +729,15 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     "subject_id": user_id,
                     "tenant_id": tenant_id,
                     "is_admin": existing_user.is_global_admin == 1,
-                    "name": existing_user.display_name or existing_user.username or existing_user.email,
+                    "name": existing_user.display_name
+                    or existing_user.username
+                    or existing_user.email,
                 }
                 token = oauth_provider.local_auth.create_token(existing_user.email, user_info_dict)
 
-                logger.info(f"OAuth linked to existing user: {registration.provider_email} (user_id={user_id})")
+                logger.info(
+                    f"OAuth linked to existing user: {registration.provider_email} (user_id={user_id})"
+                )
 
                 return OAuthConfirmResponse(
                     token=token,
@@ -736,8 +762,20 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         # Generate tenant_id based on email type (same logic as existing users)
         # For personal emails: use username, for work emails: use full domain
         if registration.provider_email:
-            email_username, email_domain = registration.provider_email.split("@") if "@" in registration.provider_email else (registration.provider_email, "")
-            personal_domains = ["gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com", "proton.me", "protonmail.com"]
+            email_username, email_domain = (
+                registration.provider_email.split("@")
+                if "@" in registration.provider_email
+                else (registration.provider_email, "")
+            )
+            personal_domains = [
+                "gmail.com",
+                "outlook.com",
+                "hotmail.com",
+                "yahoo.com",
+                "icloud.com",
+                "proton.me",
+                "protonmail.com",
+            ]
             if email_domain.lower() in personal_domains:
                 tenant_id = email_username  # e.g., "joe" for joe@gmail.com
             else:
@@ -745,70 +783,73 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         else:
             tenant_id = f"user_{user_id[:8]}"
 
-        tenant_name = request.tenant_name or f"{registration.name}'s Workspace" if registration.name else f"{tenant_id}'s Workspace"
+        tenant_name = (
+            request.tenant_name or f"{registration.name}'s Workspace"
+            if registration.name
+            else f"{tenant_id}'s Workspace"
+        )
 
-        with oauth_provider.session_factory() as session:
-            with session.begin():
-                # Create user
-                user = UserModel(
-                    user_id=user_id,
-                    email=registration.provider_email,
-                    username=None,
-                    display_name=registration.name or registration.provider_email.split("@")[0]
-                    if registration.provider_email
-                    else "OAuth User",
-                    avatar_url=registration.picture,
-                    password_hash=None,  # OAuth users don't have password
-                    primary_auth_method="oauth",
-                    is_global_admin=0,
-                    is_active=1,
-                    email_verified=1 if registration.email_verified else 0,
-                    user_metadata=None,
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow(),
-                )
-                session.add(user)
-                session.flush()
+        with oauth_provider.session_factory() as session, session.begin():
+            # Create user
+            user = UserModel(
+                user_id=user_id,
+                email=registration.provider_email,
+                username=None,
+                display_name=registration.name or registration.provider_email.split("@")[0]
+                if registration.provider_email
+                else "OAuth User",
+                avatar_url=registration.picture,
+                password_hash=None,  # OAuth users don't have password
+                primary_auth_method="oauth",
+                is_global_admin=0,
+                is_active=1,
+                email_verified=1 if registration.email_verified else 0,
+                user_metadata=None,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+            session.add(user)
+            session.flush()
 
-                # Create OAuth account
-                oauth_account = await oauth_provider._create_oauth_account(
-                    session=session,
-                    user_id=user_id,
-                    provider=registration.provider,
-                    provider_user_id=registration.provider_user_id,
-                    provider_email=registration.provider_email,
-                    picture=registration.picture,
-                    oauth_credential=oauth_credential,
-                )
-                session.flush()
+            # Create OAuth account
+            oauth_account = await oauth_provider._create_oauth_account(
+                session=session,
+                user_id=user_id,
+                provider=registration.provider,
+                provider_user_id=registration.provider_user_id,
+                provider_email=registration.provider_email,
+                picture=registration.picture,
+                oauth_credential=oauth_credential,
+            )
+            session.flush()
 
-                # Generate API key for new OAuth user (90 days expiry)
-                key_id, api_key_value = DatabaseAPIKeyAuth.create_key(
-                    session,
-                    user_id=user_id,
-                    name="OAuth Auto-generated Key",
-                    tenant_id=tenant_id,
-                    is_admin=False,
-                    expires_at=datetime.now(UTC) + timedelta(days=90),
-                )
-                session.flush()
+            # Generate API key for new OAuth user (90 days expiry)
+            key_id, api_key_value = DatabaseAPIKeyAuth.create_key(
+                session,
+                user_id=user_id,
+                name="OAuth Auto-generated Key",
+                tenant_id=tenant_id,
+                is_admin=False,
+                expires_at=datetime.now(UTC) + timedelta(days=90),
+            )
+            session.flush()
 
-                # Encrypt and store the raw API key in oauth_api_keys table
-                from nexus.storage.models import OAuthAPIKeyModel
+            # Encrypt and store the raw API key in oauth_api_keys table
+            from nexus.storage.models import OAuthAPIKeyModel
 
-                # Use the OAuth crypto instance from the provider
-                crypto = oauth_provider.oauth_crypto
-                encrypted_key_value = crypto.encrypt_token(api_key_value)
-                oauth_api_key = OAuthAPIKeyModel(
-                    key_id=key_id,
-                    user_id=user_id,
-                    encrypted_key_value=encrypted_key_value,
-                )
-                session.add(oauth_api_key)
-                session.flush()
+            # Use the OAuth crypto instance from the provider
+            crypto = oauth_provider.oauth_crypto
+            encrypted_key_value = crypto.encrypt_token(api_key_value)
+            oauth_api_key = OAuthAPIKeyModel(
+                key_id=key_id,
+                user_id=user_id,
+                encrypted_key_value=encrypted_key_value,
+            )
+            session.add(oauth_api_key)
+            session.flush()
 
-                # Make user detached so we can access it after session closes
-                session.expunge(user)
+            # Make user detached so we can access it after session closes
+            session.expunge(user)
 
         # Generate JWT token
         user_info_dict = {
@@ -820,7 +861,9 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         }
         token = oauth_provider.local_auth.create_token(user.email, user_info_dict)
 
-        logger.info(f"OAuth registration confirmed: {registration.provider_email} (user_id={user_id}, tenant={tenant_id})")
+        logger.info(
+            f"OAuth registration confirmed: {registration.provider_email} (user_id={user_id}, tenant={tenant_id})"
+        )
 
         return OAuthConfirmResponse(
             token=token,
@@ -878,7 +921,9 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
         )
 
     try:
-        user, token = await oauth_provider.handle_google_callback(code=request.code, _state=request.state)
+        user, token = await oauth_provider.handle_google_callback(
+            code=request.code, _state=request.state
+        )
 
         # Determine if this is a new user (check if user was just created)
         # For now, we'll assume it's new if the user was created recently
@@ -948,4 +993,3 @@ async def unlink_oauth_account(oauth_account_id: str) -> dict[str, Any]:
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail="OAuth account unlinking requires JWT token authentication middleware",
     )
-

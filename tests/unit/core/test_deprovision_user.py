@@ -20,10 +20,25 @@ class TestDeprovisionUser:
         return tmp_path
 
     @pytest.fixture
-    def nx(self, temp_dir: Path) -> Generator[NexusFS, None, None]:
+    def nx(self, temp_dir: Path, monkeypatch) -> Generator[NexusFS, None, None]:
         """Create a NexusFS instance with permissions enforced."""
+        import time
+
         # Use SQLite file in temp directory
         db_file = temp_dir / "metadata.db"
+
+        # Monkey-patch to disable Tiger Cache worker startup in tests
+        from nexus.core import nexus_fs
+
+        original_start = nexus_fs.NexusFS._start_tiger_cache_worker
+
+        def _no_op_start(self) -> None:
+            """Disabled Tiger Cache worker for tests to avoid SQLite locking."""
+            _ = self  # Method signature requires self
+            return None
+
+        monkeypatch.setattr(nexus_fs.NexusFS, "_start_tiger_cache_worker", _no_op_start)
+
         nx_instance = NexusFS(
             backend=LocalBackend(temp_dir),
             db_path=db_file,
@@ -32,7 +47,13 @@ class TestDeprovisionUser:
             allow_admin_bypass=True,
         )
         yield nx_instance
+
+        # Ensure cleanup
+        time.sleep(0.1)  # Brief pause to ensure any pending operations finish
         nx_instance.close()
+
+        # Restore original method
+        monkeypatch.setattr(nexus_fs.NexusFS, "_start_tiger_cache_worker", original_start)
 
     @pytest.fixture
     def admin_context(self) -> OperationContext:

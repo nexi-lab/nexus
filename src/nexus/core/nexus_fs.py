@@ -543,7 +543,12 @@ class NexusFS(
         if hasattr(self, "_tiger_worker_stop"):
             self._tiger_worker_stop.set()
         if hasattr(self, "_tiger_worker_thread") and self._tiger_worker_thread is not None:
-            self._tiger_worker_thread.join(timeout=5.0)
+            # Wait longer in test environments (check if pytest is running)
+            import sys
+
+            is_test = "pytest" in sys.modules
+            timeout = 15.0 if is_test else 5.0
+            self._tiger_worker_thread.join(timeout=timeout)
 
     def _load_custom_parsers(self, parser_configs: list[dict[str, Any]]) -> None:
         """

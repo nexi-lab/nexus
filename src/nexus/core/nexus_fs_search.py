@@ -48,6 +48,10 @@ class NexusFSSearchMixin:
         _rebac_manager: EnhancedReBACManager
 
         def _validate_path(self, path: str) -> str: ...
+
+        def _has_descendant_access(
+            self, path: str, permission: Permission, context: OperationContext
+        ) -> bool: ...
         def _get_backend_directory_entries(self, path: str) -> set[str]: ...
         def _get_routing_params(
             self, context: OperationContext | None
@@ -166,11 +170,17 @@ class NexusFSSearchMixin:
                         else:
                             # Use TRAVERSE permission for directory listing (Unix-like behavior)
                             # TRAVERSE allows navigation, and results will be filtered by filter_list()
-                            # NOTE: Use _permission_enforcer.check() to get proper descendant-based TRAVERSE
-                            # (if user has READ on any file under this dir, they can TRAVERSE it)
+                            # Try direct TRAVERSE permission first
                             has_permission = self._permission_enforcer.check(
                                 mount_path, Permission.TRAVERSE, context
                             )
+                            # If TRAVERSE fails, check if user has READ on any descendant
+                            # This enables Unix-like behavior: users can traverse parent dirs
+                            # if they have READ on any file inside
+                            if not has_permission:
+                                has_permission = self._has_descendant_access(
+                                    mount_path, Permission.READ, context
+                                )
                         if not has_permission:
                             raise PermissionDeniedError(
                                 f"Access denied: User '{context.user}' does not have TRAVERSE permission for '{path}'"
@@ -489,7 +499,7 @@ class NexusFSSearchMixin:
                         # Fallback to individual checks (for single directory or if method not available)
                         for dir_path in dirs_needing_descendant_check:
                             # Check if user has access to this directory or any of its descendants
-                            if self._has_descendant_access(dir_path, Permission.READ, ctx):  # type: ignore[attr-defined]
+                            if self._has_descendant_access(dir_path, Permission.READ, ctx):
                                 directories.add(dir_path)
 
         if details:

@@ -693,13 +693,15 @@ jobs:
           echo "🗑️ Running User Deprovision integration test..."
           echo ""
 
+          # Install Python dependencies (nexus package with all dependencies)
+          echo "Installing Python dependencies..."
+          python3 -m pip install -e . --quiet || true
+          echo ""
+
           # Use known dummy API key (set in .env)
           API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
           echo "Using API key: ${API_KEY:0:20}..."
           echo ""
-
-          # Install Python dependencies
-          python3 -m pip install sqlalchemy psycopg2-binary --quiet || true
 
           # Run deprovision test
           # Tests complete user lifecycle: provision -> verify -> deprovision -> verify cleanup

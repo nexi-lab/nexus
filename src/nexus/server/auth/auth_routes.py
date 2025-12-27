@@ -685,6 +685,10 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
             detail="Google OAuth is not configured. Please set up OAuth provider.",
         )
 
+    # Initialize variables that may be set in different code paths
+    api_key_value: str | None = None
+    key_id: str | None = None
+
     try:
         # Validate and consume pending token (one-time use)
         from nexus.server.auth.pending_oauth import get_pending_oauth_manager
@@ -840,37 +844,14 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
             )
             session.flush()
 
-            # Generate API key for new OAuth user (90 days expiry)
-            key_id, api_key_value = DatabaseAPIKeyAuth.create_key(
-                session,
-                user_id=user_id,
-                name="OAuth Auto-generated Key",
-                tenant_id=tenant_id,
-                is_admin=False,
-                expires_at=datetime.now(UTC) + timedelta(days=90),
-            )
-            session.flush()
-
-            # Encrypt and store the raw API key in oauth_api_keys table
-            from nexus.storage.models import OAuthAPIKeyModel
-
-            # Use the OAuth crypto instance from the provider
-            crypto = oauth_provider.oauth_crypto
-            encrypted_key_value = crypto.encrypt_token(api_key_value)
-            oauth_api_key = OAuthAPIKeyModel(
-                key_id=key_id,
-                user_id=user_id,
-                encrypted_key_value=encrypted_key_value,
-            )
-            session.add(oauth_api_key)
-            session.flush()
-
             # Make user detached so we can access it after session closes
             session.expunge(user)
 
         # Provision full user resources (workspace, agents, skills, permissions)
         # IMPORTANT: This only runs for NEW users - existing users return early above (line 763)
         # This is done outside the session to avoid conflicts
+        api_key_value = None
+        key_id = None
         try:
             from nexus.core.permissions import OperationContext
 
@@ -883,21 +864,50 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     is_admin=True,
                 )
 
-                # Provision user resources (API key already created above)
+                # Provision user resources with OAuth-specific API key (90 days expiry)
                 provision_result = nx.provision_user(
                     user_id=user_id,
                     email=user.email,
                     display_name=user.display_name,
                     tenant_id=tenant_id,
-                    create_api_key=False,  # Already created above
+                    create_api_key=True,
+                    api_key_name="OAuth Auto-generated Key",
+                    api_key_expires_at=datetime.now(UTC) + timedelta(days=90),
                     create_agents=True,
                     import_skills=True,
                     context=admin_context,
                 )
                 logger.info(f"Provisioned OAuth user resources: {provision_result}")
+
+                # Extract API key and key_id for OAuth encryption
+                api_key_value = provision_result.get("api_key")
+                key_id = provision_result.get("key_id")
+
         except Exception as e:
             logger.error(f"Failed to provision OAuth user resources: {e}")
             # Continue - user can be provisioned later via retry
+
+        # Encrypt and store the raw API key in oauth_api_keys table
+        # This allows OAuth users to retrieve their API key on subsequent logins
+        if api_key_value and key_id:
+            try:
+                from nexus.storage.models import OAuthAPIKeyModel
+
+                # Use the OAuth crypto instance from the provider
+                crypto = oauth_provider.oauth_crypto
+                encrypted_key_value = crypto.encrypt_token(api_key_value)
+
+                # Store encrypted key in a new session
+                with oauth_provider.session_factory() as oauth_session, oauth_session.begin():
+                    oauth_api_key = OAuthAPIKeyModel(
+                        key_id=key_id,
+                        user_id=user_id,
+                        encrypted_key_value=encrypted_key_value,
+                    )
+                    oauth_session.add(oauth_api_key)
+                    logger.info(f"Stored encrypted API key for OAuth user: {user_id}")
+            except Exception as e:
+                logger.error(f"Failed to encrypt and store OAuth API key: {e}")
 
         # Type guard: email is required for OAuth users
         assert user.email is not None, "OAuth user must have email"

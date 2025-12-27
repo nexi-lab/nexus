@@ -3939,6 +3939,8 @@ class NexusFS(
         display_name: str | None = None,
         tenant_id: str | None = None,
         create_api_key: bool = True,
+        api_key_name: str | None = None,
+        api_key_expires_at: datetime | None = None,
         create_agents: bool = True,
         import_skills: bool = True,
         context: OperationContext | None = None,
@@ -3962,6 +3964,8 @@ class NexusFS(
             display_name: Optional display name
             tenant_id: Tenant ID (extracted from email if not provided)
             create_api_key: Whether to create API key for user
+            api_key_name: Optional custom name for API key (default: "Primary key for {email}")
+            api_key_expires_at: Optional expiry datetime for API key (default: None = no expiry)
             create_agents: Whether to create default agents
             import_skills: Whether to import default skills
             context: Operation context
@@ -3971,6 +3975,7 @@ class NexusFS(
                 "user_id": str,
                 "tenant_id": str,
                 "api_key": str | None,
+                "key_id": str | None,
                 "workspace_path": str,
                 "agent_paths": list[str],
                 "skill_paths": list[str],
@@ -4030,6 +4035,7 @@ class NexusFS(
 
         session = self.metadata.SessionLocal()
         api_key = None
+        key_id = None
 
         try:
             # 1. Create/update TenantModel (idempotent)
@@ -4112,13 +4118,16 @@ class NexusFS(
                 existing_key = session.scalar(existing_key_stmt)
 
                 if not existing_key:
-                    _key_id, api_key = DatabaseAPIKeyAuth.create_key(
+                    # Use custom key name if provided, otherwise default
+                    key_name = api_key_name or f"Primary key for {email}"
+
+                    key_id, api_key = DatabaseAPIKeyAuth.create_key(
                         session,
                         user_id=user_id,
-                        name=f"Primary key for {email}",
+                        name=key_name,
                         tenant_id=tenant_id,
                         is_admin=False,
-                        expires_at=None,  # No expiry
+                        expires_at=api_key_expires_at,  # Use provided expiry or None
                     )
                     session.commit()
                     logger.info(f"Created API key for user: {user_id}")
@@ -4225,6 +4234,7 @@ class NexusFS(
             "user_id": user_id,
             "tenant_id": tenant_id,
             "api_key": api_key,
+            "key_id": key_id,
             "workspace_path": workspace_path,
             "agent_paths": agent_paths,
             "skill_paths": skill_paths,

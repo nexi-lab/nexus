@@ -4019,6 +4019,146 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("delete_agent", {"agent_id": agent_id})
         return result  # type: ignore[no-any-return]
 
+    def provision_user(
+        self,
+        user_id: str,
+        email: str,
+        display_name: str | None = None,
+        tenant_id: str | None = None,
+        create_api_key: bool = True,
+        create_agents: bool = True,
+        import_skills: bool = True,
+        context: dict | None = None,
+    ) -> dict[str, Any]:
+        """Provision a new user with all default resources (Issue #820).
+
+        Creates:
+        - User record (UserModel) in database
+        - Tenant record (TenantModel) if it doesn't exist
+        - All user directories under /tenant:{tenant_id}/user:{user_id}/
+        - Default workspace
+        - Default agents (ImpersonatedUser, UntrustedAgent)
+        - Default skills (all from data/skills/)
+        - API key (if create_api_key=True)
+        - ReBAC permissions (user as tenant owner)
+        - Entity registry entries
+
+        Args:
+            user_id: Unique user identifier
+            email: User email address
+            display_name: Optional display name
+            tenant_id: Tenant ID (extracted from email if not provided)
+            create_api_key: Whether to create API key for user
+            create_agents: Whether to create default agents
+            import_skills: Whether to import default skills
+            context: Optional operation context
+
+        Returns:
+            {
+                "user_id": str,
+                "tenant_id": str,
+                "api_key": str | None,
+                "workspace_path": str,
+                "agent_paths": list[str],
+                "skill_paths": list[str],
+            }
+
+        Raises:
+            RemoteFilesystemError: If provisioning fails
+
+        Example:
+            >>> result = nx.provision_user(
+            ...     user_id="alice",
+            ...     email="alice@example.com",
+            ...     display_name="Alice Smith"
+            ... )
+            >>> print(result["workspace_path"])
+            /tenant:alice/user:alice/workspace/ws_personal_abc123
+        """
+        params: dict[str, Any] = {
+            "user_id": user_id,
+            "email": email,
+            "display_name": display_name,
+            "tenant_id": tenant_id,
+            "create_api_key": create_api_key,
+            "create_agents": create_agents,
+            "import_skills": import_skills,
+        }
+
+        # Add context if provided
+        if context is not None:
+            params["context"] = context
+
+        result = self._call_rpc("provision_user", params)
+        return result  # type: ignore[no-any-return]
+
+    def deprovision_user(
+        self,
+        user_id: str,
+        tenant_id: str | None = None,
+        delete_user_record: bool = False,
+        force: bool = False,
+        context: dict | None = None,
+    ) -> dict[str, Any]:
+        """Deprovision a user and remove all their resources.
+
+        Removes:
+        - All user directories (workspace, memory, skill, agent, connector, resource)
+        - All API keys for the user
+        - All ReBAC permissions where user is subject
+        - Entity registry entries for user and their agents
+        - Optionally: UserModel record (soft delete)
+
+        Safety checks:
+        - Prevents deprovisioning global admin users (unless force=True)
+        - Idempotent: safe to call multiple times
+        - Handles missing resources gracefully
+
+        Args:
+            user_id: User ID to deprovision
+            tenant_id: Tenant ID (looked up from user if not provided)
+            delete_user_record: If True, soft-deletes UserModel record
+            force: Bypass safety checks (e.g., allow deprovisioning admin users)
+            context: Optional operation context
+
+        Returns:
+            {
+                "user_id": str,
+                "tenant_id": str,
+                "deleted_directories": list[str],
+                "deleted_api_keys": int,
+                "deleted_permissions": int,
+                "deleted_entities": int,
+                "user_record_deleted": bool,
+            }
+
+        Raises:
+            RemoteFilesystemError: If deprovisioning fails
+            ValueError: If attempting to deprovision admin user without force=True
+
+        Example:
+            >>> result = nx.deprovision_user(
+            ...     user_id="alice",
+            ...     tenant_id="example",
+            ...     delete_user_record=True
+            ... )
+            >>> print(result["deleted_directories"])
+            ['/tenant:example/user:alice/workspace', ...]
+        """
+        params: dict[str, Any] = {
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "delete_user_record": delete_user_record,
+            "force": force,
+        }
+
+        # Add context if provided
+        if context is not None:
+            params["context"] = context
+
+        result = self._call_rpc("deprovision_user", params)
+        return result  # type: ignore[no-any-return]
+
     # ============================================================
     # Lifecycle Management
     # ============================================================

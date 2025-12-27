@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _auth_provider: DatabaseLocalAuth | None = None
 _oauth_provider: OAuthUserAuth | None = None
+_nexus_fs_instance: Any | None = None  # NexusFS instance for provisioning
 
 
 def set_auth_provider(provider: DatabaseLocalAuth) -> None:
@@ -51,6 +52,17 @@ def set_oauth_provider(provider: OAuthUserAuth) -> None:
 def get_oauth_provider() -> OAuthUserAuth | None:
     """Get the OAuth authentication provider (optional)."""
     return _oauth_provider
+
+
+def set_nexus_instance(nexus_fs: Any) -> None:
+    """Set the global NexusFS instance for user provisioning."""
+    global _nexus_fs_instance
+    _nexus_fs_instance = nexus_fs
+
+
+def get_nexus_instance() -> Any | None:
+    """Get the global NexusFS instance."""
+    return _nexus_fs_instance
 
 
 # ==============================================================================
@@ -623,6 +635,35 @@ async def oauth_check(
             oauth_credential=oauth_credential,  # Store the credential, not the code
         )
 
+        # Calculate smart tenant_id and tenant_name for preview
+        if provider_email:
+            email_username, email_domain = (
+                provider_email.split("@") if "@" in provider_email else (provider_email, "")
+            )
+            personal_domains = [
+                "gmail.com",
+                "outlook.com",
+                "hotmail.com",
+                "yahoo.com",
+                "icloud.com",
+                "proton.me",
+                "protonmail.com",
+            ]
+            is_personal = email_domain.lower() in personal_domains
+
+            # Calculate proposed tenant_id and name
+            if is_personal:
+                proposed_tenant_id = email_username
+                first_name = name.split()[0] if name else email_username.capitalize()
+                proposed_tenant_name = f"{first_name}'s Org"
+            else:
+                proposed_tenant_id = email_domain
+                proposed_tenant_name = email_domain
+        else:
+            is_personal = True
+            proposed_tenant_id = "default"
+            proposed_tenant_name = "Default Organization"
+
         return OAuthCheckResponseNew(
             needs_confirmation=True,
             pending_token=pending_token,
@@ -634,12 +675,12 @@ async def oauth_check(
                 "email_verified": email_verified,
             },
             tenant_info={
-                "tenant_id": "default",
-                "name": "Default Tenant",
-                "domain": None,
+                "tenant_id": proposed_tenant_id,
+                "name": proposed_tenant_name,
+                "domain": email_domain if provider_email else None,
                 "description": None,
-                "is_personal": True,
-                "can_edit_name": False,
+                "is_personal": is_personal,
+                "can_edit_name": is_personal,  # Only personal orgs can edit name
             },
         )
     except ValueError as e:
@@ -672,6 +713,10 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Google OAuth is not configured. Please set up OAuth provider.",
         )
+
+    # Initialize variables that may be set in different code paths
+    api_key_value: str | None = None
+    key_id: str | None = None
 
     try:
         # Validate and consume pending token (one-time use)
@@ -786,9 +831,29 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 "protonmail.com",
             ]
             # Use email username for personal domains, domain for org domains
-            tenant_id = email_username if email_domain.lower() in personal_domains else email_domain
+            default_tenant_id = (
+                email_username if email_domain.lower() in personal_domains else email_domain
+            )
+
+            # Calculate smart tenant name based on email type
+            if email_domain.lower() in personal_domains:
+                # Personal: extract first name from display_name
+                first_name = (
+                    registration.name.split()[0]
+                    if registration.name
+                    else email_username.capitalize()
+                )
+                default_tenant_name = f"{first_name}'s Org"
+            else:
+                # Work: use domain
+                default_tenant_name = email_domain
         else:
-            tenant_id = f"user_{user_id[:8]}"
+            default_tenant_id = f"user_{user_id[:8]}"
+            default_tenant_name = f"User {user_id[:8]} Organization"
+
+        # Use custom tenant_slug and tenant_name from frontend if provided, otherwise use defaults
+        tenant_id = request.tenant_slug if request.tenant_slug else default_tenant_id
+        tenant_name = request.tenant_name if request.tenant_name else default_tenant_name
 
         # Ensure provider email exists for new user creation
         if not registration.provider_email:
@@ -828,33 +893,71 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
             )
             session.flush()
 
-            # Generate API key for new OAuth user (90 days expiry)
-            key_id, api_key_value = DatabaseAPIKeyAuth.create_key(
-                session,
-                user_id=user_id,
-                name="OAuth Auto-generated Key",
-                tenant_id=tenant_id,
-                is_admin=False,
-                expires_at=datetime.now(UTC) + timedelta(days=90),
-            )
-            session.flush()
-
-            # Encrypt and store the raw API key in oauth_api_keys table
-            from nexus.storage.models import OAuthAPIKeyModel
-
-            # Use the OAuth crypto instance from the provider
-            crypto = oauth_provider.oauth_crypto
-            encrypted_key_value = crypto.encrypt_token(api_key_value)
-            oauth_api_key = OAuthAPIKeyModel(
-                key_id=key_id,
-                user_id=user_id,
-                encrypted_key_value=encrypted_key_value,
-            )
-            session.add(oauth_api_key)
-            session.flush()
-
             # Make user detached so we can access it after session closes
             session.expunge(user)
+
+        # Provision full user resources (workspace, agents, skills, permissions)
+        # IMPORTANT: This only runs for NEW users - existing users return early above (line 763)
+        # This is done outside the session to avoid conflicts
+        api_key_value = None
+        key_id = None
+        try:
+            from nexus.core.permissions import OperationContext
+
+            nx = get_nexus_instance()
+            if nx:
+                admin_context = OperationContext(
+                    user="system",
+                    groups=[],
+                    tenant_id=tenant_id,
+                    is_admin=True,
+                )
+
+                # Provision user resources with OAuth-specific API key (90 days expiry)
+                provision_result = nx.provision_user(
+                    user_id=user_id,
+                    email=user.email,
+                    display_name=user.display_name,
+                    tenant_id=tenant_id,
+                    tenant_name=tenant_name,
+                    create_api_key=True,
+                    api_key_name="OAuth Auto-generated Key",
+                    api_key_expires_at=datetime.now(UTC) + timedelta(days=90),
+                    create_agents=True,
+                    import_skills=True,
+                    context=admin_context,
+                )
+                logger.info(f"Provisioned OAuth user resources: {provision_result}")
+
+                # Extract API key and key_id for OAuth encryption
+                api_key_value = provision_result.get("api_key")
+                key_id = provision_result.get("key_id")
+
+        except Exception as e:
+            logger.error(f"Failed to provision OAuth user resources: {e}")
+            # Continue - user can be provisioned later via retry
+
+        # Encrypt and store the raw API key in oauth_api_keys table
+        # This allows OAuth users to retrieve their API key on subsequent logins
+        if api_key_value and key_id:
+            try:
+                from nexus.storage.models import OAuthAPIKeyModel
+
+                # Use the OAuth crypto instance from the provider
+                crypto = oauth_provider.oauth_crypto
+                encrypted_key_value = crypto.encrypt_token(api_key_value)
+
+                # Store encrypted key in a new session
+                with oauth_provider.session_factory() as oauth_session, oauth_session.begin():
+                    oauth_api_key = OAuthAPIKeyModel(
+                        key_id=key_id,
+                        user_id=user_id,
+                        encrypted_key_value=encrypted_key_value,
+                    )
+                    oauth_session.add(oauth_api_key)
+                    logger.info(f"Stored encrypted API key for OAuth user: {user_id}")
+            except Exception as e:
+                logger.error(f"Failed to encrypt and store OAuth API key: {e}")
 
         # Type guard: email is required for OAuth users
         assert user.email is not None, "OAuth user must have email"

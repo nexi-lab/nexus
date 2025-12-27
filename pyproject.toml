@@ -3,7 +3,7 @@ name = "nexus-ai-fs"
 version = "0.6.4"
 description = "AI-Native Distributed Filesystem Architecture"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
     {name = "Nexus Team", email = "team@nexus.example.com"}
@@ -27,6 +27,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -222,7 +223,7 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "-n", "auto",                 # Parallel execution (auto-detect CPU cores)
-    "--dist", "loadscope",        # Group tests by class/module for better fixture reuse
+    "--dist", "loadgroup",        # Group tests by xdist_group marker for serial execution
     "--ignore=tests/evaluation",  # Exclude LLM evaluation tests from default runs
 ]
 # Coverage disabled by default for faster local runs. Enable in CI:

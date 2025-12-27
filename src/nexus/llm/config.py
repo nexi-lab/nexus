@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
 class LLMConfig(BaseModel):
@@ -69,7 +69,4 @@ class LLMConfig(BaseModel):
         default=1.0, ge=0.1, description="Interval in seconds to check for cancellation"
     )
 
-    class Config:
-        """Pydantic config."""
-
-        validate_assignment = True
+    model_config = ConfigDict(validate_assignment=True)

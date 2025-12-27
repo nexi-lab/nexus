@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from nexus.core.permissions import OperationContext
 from nexus.server.auth.google_oauth import GoogleOAuthProvider
 from nexus.server.auth.local import LocalAuth
 from nexus.server.auth.oauth_crypto import OAuthCrypto
@@ -368,6 +369,19 @@ class OAuthUserAuth:
                 session.expunge(user)
 
                 logger.info(f"Created new user from OAuth: {provider_email} (user_id={user_id})")
+
+                # Provision user resources (tenant, directories, workspace, agents, skills, API key)
+                if provider_email:
+                    await self._provision_oauth_user(
+                        user_id=user_id,
+                        email=provider_email,
+                        display_name=user.display_name,
+                    )
+                else:
+                    logger.warning(
+                        f"Cannot provision OAuth user {user_id}: no email provided by OAuth provider"
+                    )
+
                 return user, True
 
             except IntegrityError:
@@ -447,6 +461,88 @@ class OAuthUserAuth:
 
         session.add(oauth_account)
         return oauth_account
+
+    async def _provision_oauth_user(
+        self,
+        user_id: str,
+        email: str,
+        display_name: str | None,
+    ) -> None:
+        """Provision user resources after OAuth user creation.
+
+        Creates all necessary resources for a new OAuth user:
+        - TenantModel (if tenant doesn't exist)
+        - User directories (workspace, memory, skill, agent, connector, resource)
+        - Default workspace
+        - Default agents (ImpersonatedUser, UntrustedAgent)
+        - Default skills (all from data/skills/)
+        - API key for programmatic access
+        - ReBAC permissions (user as tenant owner)
+        - Entity registry entries
+
+        Args:
+            user_id: User ID (UUID)
+            email: User email (used to extract tenant_id)
+            display_name: User display name
+
+        Notes:
+            - Errors are logged but don't fail OAuth login
+            - Idempotent: safe to call multiple times
+            - Requires NexusFS instance to be set via set_nexus_instance()
+        """
+        # Import here to avoid circular dependency
+        from nexus.server.auth.auth_routes import get_nexus_instance
+
+        nx = get_nexus_instance()
+        if nx is None:
+            logger.error(
+                "Cannot provision OAuth user: NexusFS instance not available. "
+                "User created but missing tenant, directories, workspace, agents, skills, API key."
+            )
+            return
+
+        # Extract tenant_id from email (e.g., alice@gmail.com → tenant_id "alice")
+        tenant_id = email.split("@")[0] if email else user_id
+
+        # Create admin context for provisioning
+        admin_context = OperationContext(
+            user="system",
+            groups=[],
+            tenant_id=tenant_id,
+            is_admin=True,
+        )
+
+        try:
+            logger.info(
+                f"Provisioning OAuth user resources: user_id={user_id}, tenant_id={tenant_id}"
+            )
+
+            result = nx.provision_user(
+                user_id=user_id,
+                email=email,
+                display_name=display_name,
+                tenant_id=tenant_id,
+                create_api_key=True,  # OAuth users need API keys for programmatic access
+                create_agents=True,
+                import_skills=True,
+                context=admin_context,
+            )
+
+            logger.info(
+                f"Successfully provisioned OAuth user: "
+                f"user_id={user_id}, "
+                f"tenant_id={result['tenant_id']}, "
+                f"workspace={result['workspace_path']}, "
+                f"agents={len(result['agent_paths'])}, "
+                f"skills={len(result['skill_paths'])}"
+            )
+
+        except Exception as e:
+            # Log error but don't fail OAuth login - user can be provisioned later
+            logger.error(
+                f"Failed to provision OAuth user resources (user_id={user_id}): {e}",
+                exc_info=True,
+            )
 
     def get_user_oauth_accounts(self, user_id: str) -> list[dict[str, Any]]:
         """Get list of OAuth accounts linked to user.

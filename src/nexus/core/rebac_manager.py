@@ -62,7 +62,7 @@ class ReBACManager:
         max_depth: int = 50,
         enable_l1_cache: bool = True,
         l1_cache_size: int = 50000,  # Increased from 10000 to handle bulk list operations
-        l1_cache_ttl: int = 60,
+        l1_cache_ttl: int = 300,
         enable_metrics: bool = True,
         enable_adaptive_ttl: bool = False,
         l1_cache_quantization_interval: int = 0,  # Disabled - was breaking cache (keys changed every 5s)
@@ -75,7 +75,7 @@ class ReBACManager:
             max_depth: Maximum graph traversal depth (default: 10 hops)
             enable_l1_cache: Enable in-memory L1 cache (default: True)
             l1_cache_size: L1 cache max entries (default: 10k)
-            l1_cache_ttl: L1 cache TTL in seconds (default: 60s)
+            l1_cache_ttl: L1 cache TTL in seconds (default: 300s)
             enable_metrics: Track cache metrics (default: True)
             enable_adaptive_ttl: Adjust TTL based on write frequency (default: False)
             l1_cache_quantization_interval: Time bucket size in seconds for distributed

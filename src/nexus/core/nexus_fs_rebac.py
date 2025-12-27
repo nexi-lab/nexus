@@ -466,6 +466,83 @@ class NexusFSReBACMixin:
 
         return result
 
+    def _has_descendant_access_for_traverse(
+        self,
+        path: str,
+        subject: tuple[str, str],
+        tenant_id: str | None = None,
+    ) -> bool:
+        """Check if user has READ access to any descendant of path.
+
+        This enables Unix-like TRAVERSE behavior: users can traverse parent
+        directories if they have READ permission on any file inside.
+
+        This method queries the ReBAC tuples directly to find files under
+        the target path, avoiding sync metadata queries that can block.
+
+        Args:
+            path: Directory path to check descendants of
+            subject: (subject_type, subject_id) tuple
+            tenant_id: Tenant ID for multi-tenant isolation
+
+        Returns:
+            True if user has READ on any descendant, False otherwise
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Normalize path prefix for matching
+        prefix = path if path.endswith("/") else path + "/"
+        if path == "/":
+            prefix = "/"
+
+        # Query ReBAC tuples directly to find files under this path
+        # that the user has READ access to. This avoids the blocking
+        # metadata.list() call.
+        try:
+            # Get all tuples for this subject in this tenant
+            effective_tenant = tenant_id or "default"
+
+            # Use the _fetch_tenant_tuples_from_db method to get cached tuples
+            # or fall back to checking the in-memory graph
+            if hasattr(self._rebac_manager, "_get_cached_tenant_tuples"):
+                tuples = self._rebac_manager._get_cached_tenant_tuples(effective_tenant)
+                if tuples is None:
+                    tuples = self._rebac_manager._fetch_tenant_tuples_from_db(effective_tenant)
+            else:
+                tuples = []
+
+            # Find any file objects under our path that this subject can read
+            for t in tuples:
+                # Check if this tuple grants read-like permission to our subject
+                if t.get("subject_type") != subject[0] or t.get("subject_id") != subject[1]:
+                    continue
+
+                # Check if the relation grants read permission
+                relation = t.get("relation", "")
+                if relation not in (
+                    "direct_viewer",
+                    "direct_editor",
+                    "direct_owner",
+                    "viewer",
+                    "editor",
+                    "owner",
+                ):
+                    continue
+
+                # Check if the object is a file under our path
+                obj_type = t.get("object_type", "")
+                obj_id = t.get("object_id", "")
+                if obj_type == "file" and obj_id.startswith(prefix):
+                    logger.debug(f"_has_descendant_access_for_traverse: GRANTED via {obj_id}")
+                    return True
+
+            return False
+        except Exception as e:
+            logger.debug(f"_has_descendant_access_for_traverse: check failed: {e}")
+            return False
+
     @rpc_expose(description="Check ReBAC permission")
     def rebac_check(
         self,
@@ -550,13 +627,26 @@ class NexusFSReBACMixin:
         # This allows proper tenant isolation testing
 
         # Check permission with optional context
-        return self._rebac_manager.rebac_check(
+        result = self._rebac_manager.rebac_check(
             subject=subject,
             permission=permission,
             object=object,
             context=context,
             tenant_id=effective_tenant_id,
         )
+
+        # Unix-like TRAVERSE behavior: if user has READ on any descendant,
+        # they can TRAVERSE the parent directory (like Unix x permission on dirs).
+        # This fallback uses rebac_check_bulk directly to avoid infinite recursion
+        # (since _has_descendant_access calls self.rebac_check internally).
+        if not result and permission == "traverse" and object[0] == "file":
+            result = self._has_descendant_access_for_traverse(
+                path=object[1],
+                subject=subject,
+                tenant_id=effective_tenant_id,
+            )
+
+        return result
 
     @rpc_expose(description="Expand ReBAC permissions to find all subjects")
     def rebac_expand(

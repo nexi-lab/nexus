@@ -55,7 +55,7 @@ class AsyncReBACBridge:
         max_depth: int = 50,
         enable_l1_cache: bool = True,
         l1_cache_size: int = 10000,
-        l1_cache_ttl: int = 60,
+        l1_cache_ttl: int = 300,
     ):
         """Initialize the async bridge.
 

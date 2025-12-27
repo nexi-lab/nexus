@@ -48,6 +48,10 @@ class NexusFSSearchMixin:
         _rebac_manager: EnhancedReBACManager
 
         def _validate_path(self, path: str) -> str: ...
+
+        def _has_descendant_access(
+            self, path: str, permission: Permission, context: OperationContext
+        ) -> bool: ...
         def _get_backend_directory_entries(self, path: str) -> set[str]: ...
         def _get_routing_params(
             self, context: OperationContext | None
@@ -113,13 +117,6 @@ class NexusFSSearchMixin:
             fs.list("/memory/by-user/alice")  # Returns memory paths for user alice
             fs.list("/workspace/alice/agent1/memory")  # Returns memories for agent1
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-        logger.debug(
-            f"[LIST-DEBUG-START] list() called with path={path}, recursive={recursive}, details={details}"
-        )
-
         # Phase 2 Integration (v0.4.0): Intercept memory paths
         from nexus.core.memory_router import MemoryViewRouter
 
@@ -129,12 +126,8 @@ class NexusFSSearchMixin:
         # Check if path routes to a dynamic API-backed connector (e.g., x_connector)
         # These connectors have virtual directories that don't exist in metadata
         if path and path != "/":
-            logger.debug(f"[LIST-DEBUG] Entering dynamic connector check for path={path}")
             try:
                 tenant_id, agent_id, is_admin = self._get_routing_params(context)
-                logger.debug(
-                    f"[LIST-DEBUG] routing_params: tenant_id={tenant_id}, is_admin={is_admin}"
-                )
                 route = self.router.route(
                     path,
                     tenant_id=tenant_id,
@@ -166,12 +159,17 @@ class NexusFSSearchMixin:
                         else:
                             # Use TRAVERSE permission for directory listing (Unix-like behavior)
                             # TRAVERSE allows navigation, and results will be filtered by filter_list()
-                            has_permission = self._rebac_manager.rebac_check(
-                                subject=(context.subject_type, context.subject_id),
-                                permission="traverse",
-                                object=("file", mount_path),
-                                tenant_id=context.tenant_id,
+                            # Try direct TRAVERSE permission first
+                            has_permission = self._permission_enforcer.check(
+                                mount_path, Permission.TRAVERSE, context
                             )
+                            # If TRAVERSE fails, check if user has READ on any descendant
+                            # This enables Unix-like behavior: users can traverse parent dirs
+                            # if they have READ on any file inside
+                            if not has_permission:
+                                has_permission = self._has_descendant_access(
+                                    mount_path, Permission.READ, context
+                                )
                         if not has_permission:
                             raise PermissionDeniedError(
                                 f"Access denied: User '{context.user}' does not have TRAVERSE permission for '{path}'"
@@ -280,8 +278,8 @@ class NexusFSSearchMixin:
             except Exception as e:
                 import traceback
 
-                logger.warning(
-                    f"[LIST-DEBUG] Dynamic connector list_dir failed for {path}: {e}\n{traceback.format_exc()}"
+                logger.debug(
+                    f"Dynamic connector list_dir failed for {path}: {e}\n{traceback.format_exc()}"
                 )
                 # Fall through to normal metadata-based listing
 
@@ -319,10 +317,7 @@ class NexusFSSearchMixin:
 
         # Filter by read permission (v0.3.0)
         if self._enforce_permissions:
-            import logging
             import time
-
-            logger = logging.getLogger(__name__)
 
             perm_start = time.time()
             from nexus.core.permissions import OperationContext
@@ -490,7 +485,7 @@ class NexusFSSearchMixin:
                         # Fallback to individual checks (for single directory or if method not available)
                         for dir_path in dirs_needing_descendant_check:
                             # Check if user has access to this directory or any of its descendants
-                            if self._has_descendant_access(dir_path, Permission.READ, ctx):  # type: ignore[attr-defined]
+                            if self._has_descendant_access(dir_path, Permission.READ, ctx):
                                 directories.add(dir_path)
 
         if details:

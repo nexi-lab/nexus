@@ -2172,8 +2172,18 @@ class NexusFSCoreMixin:
 
         # Check permission: TRAVERSE for implicit directories, READ for files
         # This enables `stat /skills` to work for authenticated users (TRAVERSE is auto-allowed)
+        ctx = context if context is not None else self._default_context
         if is_implicit_dir:
-            self._check_permission(path, Permission.TRAVERSE, context)
+            # Try TRAVERSE permission first (O(1))
+            # Fall back to descendant access check if TRAVERSE denied (Unix-like behavior)
+            has_permission = self._permission_enforcer.check(path, Permission.TRAVERSE, ctx)
+            if not has_permission:
+                has_permission = self._has_descendant_access(path, Permission.READ, ctx)  # type: ignore[attr-defined]
+            if not has_permission:
+                raise PermissionError(
+                    f"Access denied: User '{ctx.user}' does not have TRAVERSE "
+                    f"permission for '{path}'"
+                )
         else:
             self._check_permission(path, Permission.READ, context)
 

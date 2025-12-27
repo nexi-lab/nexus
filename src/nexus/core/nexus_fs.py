@@ -1393,7 +1393,6 @@ class NexusFS(
         # OPTIMIZATION 1: Try Tiger Cache first (O(1) lookup)
         # Tiger Cache stores pre-materialized permissions as Roaring Bitmaps
         if hasattr(self._rebac_manager, "tiger_check_access"):
-            # Check if user has access to the path directly via Tiger Cache
             tiger_result = self._rebac_manager.tiger_check_access(
                 subject=subject_tuple,
                 permission=rebac_permission,
@@ -1401,7 +1400,6 @@ class NexusFS(
                 tenant_id=tenant_id,
             )
             if tiger_result is True:
-                logger.debug(f"_has_descendant_access: Tiger Cache HIT (path={path})")
                 return True
             # If tiger_result is None, cache miss - continue with normal check
             # If tiger_result is False, explicitly denied - but still check descendants
@@ -4731,6 +4729,14 @@ class NexusFS(
             # Wait up to 5 seconds for each thread
             # Parser threads should complete quickly, but we don't want to hang forever
             thread.join(timeout=5.0)
+
+        # Close Memory API session to prevent connection leak
+        # The session is created lazily in the `memory` property but never closed
+        if self._memory_api is not None and hasattr(self._memory_api, "session"):
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                self._memory_api.session.close()
 
         # Close metadata store after all parsers have finished
         self.metadata.close()

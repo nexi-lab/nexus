@@ -282,7 +282,7 @@ async def login(
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_profile(auth: DatabaseLocalAuth = Depends(get_auth_provider)) -> UserResponse:
+async def get_profile(_auth: DatabaseLocalAuth = Depends(get_auth_provider)) -> UserResponse:
     """Get current user profile.
 
     Args:
@@ -304,7 +304,7 @@ async def get_profile(auth: DatabaseLocalAuth = Depends(get_auth_provider)) -> U
 
 @router.patch("/me", response_model=UserResponse)
 async def update_profile(
-    request: UpdateProfileRequest, auth: DatabaseLocalAuth = Depends(get_auth_provider)
+    _request: UpdateProfileRequest, _auth: DatabaseLocalAuth = Depends(get_auth_provider)
 ) -> UserResponse:
     """Update current user profile.
 
@@ -328,7 +328,7 @@ async def update_profile(
 
 @router.post("/change-password")
 async def change_password(
-    request: ChangePasswordRequest, auth: DatabaseLocalAuth = Depends(get_auth_provider)
+    _request: ChangePasswordRequest, _auth: DatabaseLocalAuth = Depends(get_auth_provider)
 ) -> dict[str, str]:
     """Change user password.
 
@@ -703,7 +703,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
 
                 with session.begin():
                     # Create OAuth account link
-                    oauth_account = await oauth_provider._create_oauth_account(
+                    await oauth_provider._create_oauth_account(
                         session=session,
                         user_id=user_id,
                         provider=registration.provider,
@@ -776,18 +776,10 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 "proton.me",
                 "protonmail.com",
             ]
-            if email_domain.lower() in personal_domains:
-                tenant_id = email_username  # e.g., "joe" for joe@gmail.com
-            else:
-                tenant_id = email_domain  # e.g., "multifi.ai" for joe@multifi.ai
+            # Use email username for personal domains, domain for org domains
+            tenant_id = email_username if email_domain.lower() in personal_domains else email_domain
         else:
             tenant_id = f"user_{user_id[:8]}"
-
-        tenant_name = (
-            request.tenant_name or f"{registration.name}'s Workspace"
-            if registration.name
-            else f"{tenant_id}'s Workspace"
-        )
 
         with oauth_provider.session_factory() as session, session.begin():
             # Create user
@@ -812,7 +804,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
             session.flush()
 
             # Create OAuth account
-            oauth_account = await oauth_provider._create_oauth_account(
+            await oauth_provider._create_oauth_account(
                 session=session,
                 user_id=user_id,
                 provider=registration.provider,
@@ -973,7 +965,7 @@ async def list_oauth_accounts() -> list[OAuthAccountResponse]:
 
 
 @router.delete("/oauth/accounts/{oauth_account_id}")
-async def unlink_oauth_account(oauth_account_id: str) -> dict[str, Any]:
+async def unlink_oauth_account(_oauth_account_id: str) -> dict[str, Any]:
     """Unlink an OAuth account.
 
     Args:

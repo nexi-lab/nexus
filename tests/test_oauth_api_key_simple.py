@@ -79,7 +79,9 @@ class TestOAuthCrypto:
 
     def test_decrypt_invalid_token_raises_error(self, oauth_crypto):
         """Test that decrypting invalid data raises an error."""
-        with pytest.raises(Exception):
+        from cryptography.fernet import InvalidToken
+
+        with pytest.raises(InvalidToken):
             oauth_crypto.decrypt_token("invalid-encrypted-data")
 
 

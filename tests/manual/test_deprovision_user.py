@@ -65,6 +65,7 @@ def main() -> None:
 
     # Initialize NexusFS
     print("Initializing NexusFS...")
+    # db_path accepts both PostgreSQL URLs and SQLite file paths
     nx = NexusFS(
         backend=LocalBackend(args.backend_path),
         db_path=db_path,

@@ -152,7 +152,6 @@ class FilePathModel(Base):
         Index("idx_file_paths_accessed_at", "accessed_at"),
         Index("idx_file_paths_locked_by", "locked_by"),
         # Performance: Composite indexes for common query patterns (#384)
-        Index("idx_tenant_path_prefix", "tenant_id", "virtual_path"),  # Optimized prefix queries
         Index("idx_content_hash_tenant", "content_hash", "tenant_id"),  # CAS dedup lookups
     )
 
@@ -1125,9 +1124,6 @@ class ReBACTupleModel(Base):
         # Tenant-scoped indexes
         Index("idx_rebac_tenant_subject", "tenant_id", "subject_type", "subject_id"),
         Index("idx_rebac_tenant_object", "tenant_id", "object_type", "object_id"),
-        # Original indexes (kept for backward compatibility)
-        Index("idx_rebac_subject", "subject_type", "subject_id"),
-        Index("idx_rebac_object", "object_type", "object_id"),
         Index("idx_rebac_relation", "relation"),
         Index("idx_rebac_expires", "expires_at"),
         # Subject relation index for userset-as-subject

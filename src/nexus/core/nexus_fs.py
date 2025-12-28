@@ -4216,28 +4216,47 @@ class NexusFS(
             except Exception as e:
                 logger.error(f"Failed to create agents: {e}")
 
-        # 9. Import skills (if requested)
-        skill_paths = []
+        # 9. Import skills (if requested) - ASYNC for fast registration
+        skill_paths: list[str] = []
         if import_skills:
-            try:
-                logger.info(f"Starting skill import for user {user_id}")
-                skill_paths = self._import_user_skills(tenant_id, user_id, admin_context)
-                created_resources["skills"] = skill_paths
-                logger.info(f"Imported {len(skill_paths)} skills for user {user_id}: {skill_paths}")
-            except Exception as e:
-                logger.error(f"Failed to import skills: {e}")
+            # Launch skill import as background thread to avoid blocking registration
+            # Skills will appear in user's workspace as they complete
+            def _import_skills_async() -> None:
+                try:
+                    logger.info(f"[ASYNC] Starting background skill import for user {user_id}")
+                    imported_paths = self._import_user_skills(tenant_id, user_id, admin_context)
+                    logger.info(
+                        f"[ASYNC] Background skill import completed for {user_id}: "
+                        f"{len(imported_paths)} skills imported"
+                    )
 
-        # 9.5. Grant SkillBuilder agent permissions (if agents and skills were created)
-        if create_agents and import_skills:
-            try:
-                from nexus.core.agent_provisioning import grant_skill_builder_permissions
+                    # Grant SkillBuilder permissions after skills are imported
+                    if create_agents:
+                        try:
+                            from nexus.core.agent_provisioning import (
+                                grant_skill_builder_permissions,
+                            )
 
-                granted = grant_skill_builder_permissions(self, user_id, tenant_id)
-                logger.info(
-                    f"Granted {granted} permissions to SkillBuilder agent for user {user_id}"
-                )
-            except Exception as e:
-                logger.error(f"Failed to grant SkillBuilder permissions: {e}")
+                            granted = grant_skill_builder_permissions(self, user_id, tenant_id)
+                            logger.info(
+                                f"[ASYNC] Granted {granted} permissions to SkillBuilder agent for user {user_id}"
+                            )
+                        except Exception as e:
+                            logger.error(f"[ASYNC] Failed to grant SkillBuilder permissions: {e}")
+                except Exception as e:
+                    logger.error(f"[ASYNC] Failed to import skills in background: {e}")
+
+            # Start background import thread
+            import threading
+
+            skill_import_thread = threading.Thread(
+                target=_import_skills_async,
+                name=f"skill-import-{user_id[:8]}",
+                daemon=True,  # Don't block process exit
+            )
+            skill_import_thread.start()
+            logger.info(f"Skill import started in background for user {user_id}")
+            created_resources["skills"] = "importing"  # Placeholder to indicate async import
 
         # 10. Grant ReBAC permissions (tenant owner)
         try:

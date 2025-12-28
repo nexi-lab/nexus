@@ -4435,13 +4435,15 @@ class NexusFS(
                     except Exception as e:
                         logger.warning(f"Failed to delete directory {dir_path}: {e}")
 
-            # 2. Delete API keys
+            # 2. Delete API keys (both user and agent keys)
             try:
                 from nexus.storage.models import APIKeyModel
 
+                # Delete ALL API keys for this user (subject_type="user" and "agent")
+                # Agent keys have subject_type="agent" and belong to user's agents
                 deleted_keys = (
                     session.query(APIKeyModel)
-                    .filter_by(user_id=user_id, subject_type="user")
+                    .filter_by(user_id=user_id)  # Remove subject_type filter to delete all keys
                     .delete()
                 )
                 session.commit()

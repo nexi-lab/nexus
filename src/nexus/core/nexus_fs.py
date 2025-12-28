@@ -2534,9 +2534,15 @@ class NexusFS(
         # Optionally store parsed text as file metadata
         if store_result and result.text:
             # Store parsed text in custom metadata
-            self.metadata.set_file_metadata(path, "parsed_text", result.text)
-            self.metadata.set_file_metadata(path, "parsed_at", datetime.now(UTC).isoformat())
-            self.metadata.set_file_metadata(path, "parser_name", parser.name)
+            await asyncio.to_thread(
+                self.metadata.set_file_metadata, path, "parsed_text", result.text
+            )
+            await asyncio.to_thread(
+                self.metadata.set_file_metadata, path, "parsed_at", datetime.now(UTC).isoformat()
+            )
+            await asyncio.to_thread(
+                self.metadata.set_file_metadata, path, "parser_name", parser.name
+            )
 
         return result
 

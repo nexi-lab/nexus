@@ -30,11 +30,12 @@ import logging
 import os
 import secrets
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
+from anyio import to_thread
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -110,6 +111,46 @@ class WhoamiResponse(BaseModel):
 
 
 # ============================================================================
+# Thread Pool Utilities (Issue #932)
+# ============================================================================
+
+T = TypeVar("T")
+
+
+async def to_thread_with_timeout(
+    func: Callable[..., T],
+    *args: Any,
+    timeout: float | None = None,
+    **kwargs: Any,
+) -> T:
+    """Run sync function in thread with timeout.
+
+    Wraps asyncio.to_thread() with asyncio.wait_for() to prevent thread pool
+    exhaustion from slow operations (Issue #932).
+
+    Args:
+        func: Sync function to run in thread
+        *args: Positional arguments for func
+        timeout: Timeout in seconds (uses _app_state.operation_timeout if None)
+        **kwargs: Keyword arguments for func
+
+    Returns:
+        Result from func
+
+    Raises:
+        TimeoutError: If operation exceeds timeout
+    """
+    effective_timeout = timeout if timeout is not None else _app_state.operation_timeout
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(func, *args, **kwargs),
+            timeout=effective_timeout,
+        )
+    except TimeoutError:
+        raise TimeoutError(f"Operation timed out after {effective_timeout}s") from None
+
+
+# ============================================================================
 # Application State
 # ============================================================================
 
@@ -125,6 +166,9 @@ class AppState:
         self.async_rebac_manager: Any = None
         self.database_url: str | None = None
         self.subscription_manager: Any = None  # SubscriptionManager for webhooks
+        # Thread pool and timeout settings (Issue #932)
+        self.thread_pool_size: int = 200
+        self.operation_timeout: float = 30.0
 
 
 # Global state (set during app creation)
@@ -389,6 +433,12 @@ async def lifespan(_app: FastAPI) -> Any:
     """
     logger.info("Starting FastAPI Nexus server...")
 
+    # Configure thread pool size (Issue #932)
+    # Increase from default 40 to prevent thread pool exhaustion under load
+    limiter = to_thread.current_default_thread_limiter()
+    limiter.total_tokens = _app_state.thread_pool_size
+    logger.info(f"Thread pool size set to {limiter.total_tokens}")
+
     # Initialize async ReBAC manager if database URL provided
     if _app_state.database_url:
         try:
@@ -423,6 +473,8 @@ def create_app(
     api_key: str | None = None,
     auth_provider: Any = None,
     database_url: str | None = None,
+    thread_pool_size: int | None = None,
+    operation_timeout: float | None = None,
 ) -> FastAPI:
     """Create FastAPI application.
 
@@ -431,6 +483,8 @@ def create_app(
         api_key: Static API key for authentication
         auth_provider: Auth provider instance
         database_url: Database URL for async operations
+        thread_pool_size: Thread pool size for sync operations (default: 200)
+        operation_timeout: Timeout for sync operations in seconds (default: 30.0)
 
     Returns:
         Configured FastAPI application
@@ -440,6 +494,15 @@ def create_app(
     _app_state.api_key = api_key
     _app_state.auth_provider = auth_provider
     _app_state.database_url = database_url
+
+    # Thread pool and timeout settings (Issue #932)
+    # Read from parameter, environment variable, or use default
+    _app_state.thread_pool_size = thread_pool_size or int(
+        os.environ.get("NEXUS_THREAD_POOL_SIZE", "200")
+    )
+    _app_state.operation_timeout = operation_timeout or float(
+        os.environ.get("NEXUS_OPERATION_TIMEOUT", "30.0")
+    )
 
     # Discover exposed methods
     _app_state.exposed_methods = _discover_exposed_methods(nexus_fs)
@@ -848,8 +911,8 @@ def _register_routes(app: FastAPI) -> None:
                 subject_id="stream",
             )
 
-            # Get metadata (includes content_hash/etag)
-            meta = await asyncio.to_thread(nexus_fs.stat, full_path, context=context)
+            # Get metadata (includes content_hash/etag) with timeout (Issue #932)
+            meta = await to_thread_with_timeout(nexus_fs.stat, full_path, context=context)
             content_hash = meta.get("etag") or meta.get("content_hash")
             if not content_hash:
                 raise HTTPException(status_code=500, detail="File has no content hash")
@@ -1125,52 +1188,52 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await _auto_dispatch(method, params, context)
 
     # Manual dispatch for core filesystem operations
-    # Use asyncio.to_thread to run sync handlers without blocking the event loop
+    # Use to_thread_with_timeout to run sync handlers with timeout (Issue #932)
     if method == "read":
         # Use async handler for read to support async parsing
         return await _handle_read_async(params, context)
     elif method == "write":
-        return await asyncio.to_thread(_handle_write, params, context)
+        return await to_thread_with_timeout(_handle_write, params, context)
     elif method == "exists":
-        return await asyncio.to_thread(_handle_exists, params, context)
+        return await to_thread_with_timeout(_handle_exists, params, context)
     elif method == "list":
-        return await asyncio.to_thread(_handle_list, params, context)
+        return await to_thread_with_timeout(_handle_list, params, context)
     elif method == "delete":
-        return await asyncio.to_thread(_handle_delete, params, context)
+        return await to_thread_with_timeout(_handle_delete, params, context)
     elif method == "rename":
-        return await asyncio.to_thread(_handle_rename, params, context)
+        return await to_thread_with_timeout(_handle_rename, params, context)
     elif method == "copy":
-        return await asyncio.to_thread(_handle_copy, params, context)
+        return await to_thread_with_timeout(_handle_copy, params, context)
     elif method == "mkdir":
-        return await asyncio.to_thread(_handle_mkdir, params, context)
+        return await to_thread_with_timeout(_handle_mkdir, params, context)
     elif method == "rmdir":
-        return await asyncio.to_thread(_handle_rmdir, params, context)
+        return await to_thread_with_timeout(_handle_rmdir, params, context)
     elif method == "get_metadata":
-        return await asyncio.to_thread(_handle_get_metadata, params, context)
+        return await to_thread_with_timeout(_handle_get_metadata, params, context)
     elif method == "glob":
-        return await asyncio.to_thread(_handle_glob, params, context)
+        return await to_thread_with_timeout(_handle_glob, params, context)
     elif method == "grep":
-        return await asyncio.to_thread(_handle_grep, params, context)
+        return await to_thread_with_timeout(_handle_grep, params, context)
     elif method == "search":
-        return await asyncio.to_thread(_handle_search, params, context)
+        return await to_thread_with_timeout(_handle_search, params, context)
     elif method == "is_directory":
-        return await asyncio.to_thread(_handle_is_directory, params, context)
+        return await to_thread_with_timeout(_handle_is_directory, params, context)
     # Delta sync methods (Issue #869)
     elif method == "delta_read":
-        return await asyncio.to_thread(_handle_delta_read, params, context)
+        return await to_thread_with_timeout(_handle_delta_read, params, context)
     elif method == "delta_write":
-        return await asyncio.to_thread(_handle_delta_write, params, context)
+        return await to_thread_with_timeout(_handle_delta_write, params, context)
     # Admin API methods (v0.5.1)
     elif method == "admin_create_key":
-        return await asyncio.to_thread(_handle_admin_create_key, params, context)
+        return await to_thread_with_timeout(_handle_admin_create_key, params, context)
     elif method == "admin_list_keys":
-        return await asyncio.to_thread(_handle_admin_list_keys, params, context)
+        return await to_thread_with_timeout(_handle_admin_list_keys, params, context)
     elif method == "admin_get_key":
-        return await asyncio.to_thread(_handle_admin_get_key, params, context)
+        return await to_thread_with_timeout(_handle_admin_get_key, params, context)
     elif method == "admin_revoke_key":
-        return await asyncio.to_thread(_handle_admin_revoke_key, params, context)
+        return await to_thread_with_timeout(_handle_admin_revoke_key, params, context)
     elif method == "admin_update_key":
-        return await asyncio.to_thread(_handle_admin_update_key, params, context)
+        return await to_thread_with_timeout(_handle_admin_update_key, params, context)
     elif method in _app_state.exposed_methods:
         return await _auto_dispatch(method, params, context)
     else:
@@ -1201,8 +1264,8 @@ async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:
     if asyncio.iscoroutinefunction(func):
         return await func(**kwargs)
     else:
-        # Run sync function in thread pool to avoid blocking
-        return await asyncio.to_thread(func, **kwargs)
+        # Run sync function in thread pool with timeout (Issue #932)
+        return await to_thread_with_timeout(func, **kwargs)
 
 
 # ============================================================================
@@ -1325,14 +1388,16 @@ async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any
 
     # Handle return_url - generate presigned URL for direct download
     if return_url:
-        result = await asyncio.to_thread(_generate_download_url, params.path, context, expires_in)
+        result = await to_thread_with_timeout(
+            _generate_download_url, params.path, context, expires_in
+        )
         if result:
             return result
         # Fall through to normal read if URL generation not supported
 
-    # If not parsed, use sync read in thread
+    # If not parsed, use sync read in thread with timeout (Issue #932)
     if not parsed:
-        read_result: bytes | dict[str, Any] = await asyncio.to_thread(
+        read_result: bytes | dict[str, Any] = await to_thread_with_timeout(
             nexus_fs.read,
             params.path,
             context,
@@ -1342,8 +1407,8 @@ async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any
         return read_result
 
     # For parsed reads, we need to handle async parsing
-    # First, read the raw content
-    raw_result = await asyncio.to_thread(
+    # First, read the raw content with timeout (Issue #932)
+    raw_result = await to_thread_with_timeout(
         nexus_fs.read,
         params.path,
         context,
@@ -1357,8 +1422,8 @@ async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any
     if hasattr(nexus_fs, "_get_parsed_content_async"):
         parsed_content, parse_info = await nexus_fs._get_parsed_content_async(params.path, content)
     else:
-        # Fallback to sync method in thread
-        parsed_content, parse_info = await asyncio.to_thread(
+        # Fallback to sync method in thread with timeout (Issue #932)
+        parsed_content, parse_info = await to_thread_with_timeout(
             nexus_fs._get_parsed_content, params.path, content
         )
 

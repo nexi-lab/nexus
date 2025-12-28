@@ -4219,6 +4219,18 @@ class NexusFS(
             except Exception as e:
                 logger.error(f"Failed to import skills: {e}")
 
+        # 9.5. Grant SkillBuilder agent permissions (if agents and skills were created)
+        if create_agents and import_skills:
+            try:
+                from nexus.core.agent_provisioning import grant_skill_builder_permissions
+
+                granted = grant_skill_builder_permissions(self, user_id, tenant_id)
+                logger.info(
+                    f"Granted {granted} permissions to SkillBuilder agent for user {user_id}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to grant SkillBuilder permissions: {e}")
+
         # 10. Grant ReBAC permissions (tenant owner)
         try:
             self.rebac_create(

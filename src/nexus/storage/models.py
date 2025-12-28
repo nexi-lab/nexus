@@ -1216,6 +1216,23 @@ class ReBACTupleModel(Base):
             "tenant_id",
             postgresql_where=text("expires_at IS NULL AND subject_relation IS NOT NULL"),
         ),
+        # ========== Issue #904: Cross-tenant share index ==========
+        # Optimizes queries for finding files shared with a user from other tenants.
+        # Query pattern: WHERE subject_type=? AND subject_id=?
+        #                  AND relation IN ('shared-viewer', 'shared-editor', 'shared-owner')
+        # This is a partial index covering only cross-tenant share relations.
+        Index(
+            "idx_rebac_cross_tenant_shares",
+            "subject_type",
+            "subject_id",
+            "relation",
+            "object_type",
+            "object_id",
+            postgresql_where=text(
+                "relation IN ('shared-viewer', 'shared-editor', 'shared-owner') "
+                "AND expires_at IS NULL"
+            ),
+        ),
     )
 
 

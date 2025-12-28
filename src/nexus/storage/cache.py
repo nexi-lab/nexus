@@ -196,22 +196,28 @@ class MetadataCache:
 
             # Invalidate list cache entries that might contain this path
             # Need to invalidate all prefixes that could include this path
-            # Cache keys are in format "prefix:r" or "prefix:nr" where prefix is the path prefix
+            # Cache keys are in format:
+            #   - Old: "prefix:r" or "prefix:nr"
+            #   - New (Issue #904): "prefix:r:t=tenant_id" or "prefix:nr:t=tenant_id"
             cache_keys_to_invalidate = []
             for cache_key in list(self._list_cache.keys()):
-                # Extract prefix from cache key (format: "prefix:r" or "prefix:nr")
-                # Split by last ":" to handle paths that contain ":"
-                if ":r" in cache_key or ":nr" in cache_key:
-                    # Find the last occurrence of :r or :nr
-                    if cache_key.endswith(":r"):
-                        prefix = cache_key[:-2]  # Remove ":r"
-                    elif cache_key.endswith(":nr"):
-                        prefix = cache_key[:-3]  # Remove ":nr"
-                    else:
-                        # Fallback: treat the whole key as prefix
-                        prefix = cache_key
-                else:
-                    prefix = cache_key
+                # Extract prefix from cache key
+                # Format: "prefix:r" or "prefix:nr" or "prefix:r:t=X" or "prefix:nr:t=X"
+                prefix = cache_key
+
+                # Try to extract prefix by finding :r or :nr pattern
+                if ":nr:" in cache_key:
+                    # Format: prefix:nr:t=X
+                    prefix = cache_key.split(":nr:")[0]
+                elif ":r:" in cache_key:
+                    # Format: prefix:r:t=X
+                    prefix = cache_key.split(":r:")[0]
+                elif cache_key.endswith(":nr"):
+                    # Format: prefix:nr (old format)
+                    prefix = cache_key[:-3]
+                elif cache_key.endswith(":r"):
+                    # Format: prefix:r (old format)
+                    prefix = cache_key[:-2]
 
                 # If path starts with prefix, the listing might be affected
                 if path.startswith(prefix):

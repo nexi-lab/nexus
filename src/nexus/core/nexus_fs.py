@@ -955,6 +955,14 @@ class NexusFS(
         assert isinstance(ctx_raw, OperationContext), "Context must be OperationContext"
         ctx: OperationContext = ctx_raw
 
+        # Skip permission checks for admin/system users during provisioning
+        # This significantly speeds up operations like skill imports (82s -> ~10s)
+        if ctx.is_admin:
+            logger.debug(
+                f"_check_permission: SKIPPED (admin bypass) - path={path}, permission={permission.name}, user={ctx.user}"
+            )
+            return
+
         logger.debug(
             f"_check_permission: path={path}, permission={permission.name}, user={ctx.user}, tenant={getattr(ctx, 'tenant_id', None)}"
         )

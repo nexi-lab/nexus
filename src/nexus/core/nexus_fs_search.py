@@ -9,6 +9,7 @@ This module contains file search and listing operations:
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import fnmatch
 import logging
@@ -69,6 +70,91 @@ class NexusFSSearchMixin:
         async def ls(
             self, path: str = "/", recursive: bool = False
         ) -> builtins.list[str] | builtins.list[dict[str, Any]]: ...
+
+    def _get_cross_tenant_shared_paths(
+        self,
+        subject_type: str,
+        subject_id: str,
+        tenant_id: str,
+        prefix: str = "",
+    ) -> list[str]:
+        """Fetch file paths shared with a user from other tenants.
+
+        Issue #904: This method fetches cross-tenant shared file paths to include
+        in list() results. Uses the idx_rebac_cross_tenant_shares index.
+
+        Args:
+            subject_type: Subject type (e.g., "user")
+            subject_id: Subject ID (e.g., user ID)
+            tenant_id: Current tenant ID (to exclude from results)
+            prefix: Path prefix filter (optional)
+
+        Returns:
+            List of file paths shared with this subject from other tenants
+        """
+        from datetime import UTC, datetime
+
+        from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS
+
+        try:
+            # Use the rebac manager's connection to query cross-tenant shares
+            with self._rebac_manager._connection() as conn:
+                cursor = self._rebac_manager._create_cursor(conn)
+
+                cross_tenant_relations = list(CROSS_TENANT_ALLOWED_RELATIONS)
+                placeholders = ", ".join("?" * len(cross_tenant_relations))
+
+                # Query for file objects shared with this subject from other tenants
+                query = f"""
+                    SELECT DISTINCT object_id
+                    FROM rebac_tuples
+                    WHERE relation IN ({placeholders})
+                      AND subject_type = ? AND subject_id = ?
+                      AND object_type = 'file'
+                      AND tenant_id != ?
+                      AND (expires_at IS NULL OR expires_at > ?)
+                """
+
+                # Add prefix filter if provided
+                if prefix:
+                    query += " AND object_id LIKE ?"
+                    params = (
+                        *cross_tenant_relations,
+                        subject_type,
+                        subject_id,
+                        tenant_id,
+                        datetime.now(UTC).isoformat(),
+                        f"{prefix}%",
+                    )
+                else:
+                    params = (
+                        *cross_tenant_relations,
+                        subject_type,
+                        subject_id,
+                        tenant_id,
+                        datetime.now(UTC).isoformat(),
+                    )
+
+                cursor.execute(
+                    self._rebac_manager._fix_sql_placeholders(query),
+                    params,
+                )
+
+                paths = []
+                for row in cursor.fetchall():
+                    path = row["object_id"] if isinstance(row, dict) else row[0]
+                    paths.append(path)
+
+                if paths:
+                    logger.debug(
+                        f"[CROSS-TENANT] Found {len(paths)} shared paths for {subject_type}:{subject_id}"
+                    )
+
+                return paths
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch cross-tenant shared paths: {e}")
+            return []
 
     @rpc_expose(description="List files in directory")
     def list(
@@ -283,13 +369,31 @@ class NexusFSSearchMixin:
                 )
                 # Fall through to normal metadata-based listing
 
+        # Issue #904: Extract tenant_id for PREWHERE-style DB filtering
+        # This filters files at the database level, reducing rows loaded by 30-90%
+        # NOTE: Only apply tenant filtering when permissions are enforced,
+        # because files are only stored with tenant_id when permissions are active.
+        list_tenant_id: str | None = None
+        subject_type: str | None = None
+        subject_id: str | None = None
+        if self._enforce_permissions and context:
+            if hasattr(context, "tenant_id"):
+                list_tenant_id = context.tenant_id
+            # Extract subject info for cross-tenant share lookup
+            if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
+                subject_type = context.subject_type
+                subject_id = context.subject_id or context.user_id
+            elif hasattr(context, "user_id"):
+                subject_type = "user"
+                subject_id = context.user_id
+
         # Handle backward compatibility with old 'prefix' parameter
         if prefix is not None:
             # Old API: list(prefix="/path") - always recursive
             if prefix:
                 prefix = self._validate_path(prefix)
-            all_files = self.metadata.list(prefix)
-            results = all_files
+            all_files = self.metadata.list(prefix, tenant_id=list_tenant_id)
+            list_prefix = prefix or ""
         else:
             # New API: list(path="/", recursive=False)
             if path and path != "/":
@@ -299,9 +403,38 @@ class NexusFSSearchMixin:
             if path and not path.endswith("/"):
                 path = path + "/"
 
-            # Get all files with this prefix
-            all_files = self.metadata.list(path if path != "/" else "")
+            list_prefix = path if path != "/" else ""
 
+            # Get all files with this prefix (Issue #904: tenant-filtered at DB level)
+            all_files = self.metadata.list(list_prefix, tenant_id=list_tenant_id)
+
+        # Issue #904: Fetch cross-tenant shared files
+        # If user has files shared from other tenants, include them in the listing
+        if list_tenant_id and subject_type and subject_id:
+            cross_tenant_paths = self._get_cross_tenant_shared_paths(
+                subject_type=subject_type,
+                subject_id=subject_id,
+                tenant_id=list_tenant_id,
+                prefix=list_prefix,
+            )
+            if cross_tenant_paths:
+                # Fetch metadata for cross-tenant shared paths
+                # Use get_batch if available, otherwise fetch individually
+                existing_paths = {meta.path for meta in all_files}
+                for ct_path in cross_tenant_paths:
+                    if ct_path not in existing_paths:
+                        try:
+                            ct_meta = self.metadata.get(ct_path)
+                            if ct_meta:
+                                all_files.append(ct_meta)
+                        except Exception:
+                            # Path may have been deleted, skip it
+                            pass
+
+        # Apply recursive filter if needed
+        if prefix is not None:
+            results = all_files
+        else:
             if recursive:
                 # Include all files under this path
                 results = all_files
@@ -1057,7 +1190,7 @@ class NexusFSSearchMixin:
         # Check if path is a file or directory
         try:
             # Try to read as file
-            self.read(path)
+            await asyncio.to_thread(self.read, path)
             # It's a file, index it
             num_chunks = await self._semantic_search.index_document(path)
             return {path: num_chunks}
@@ -1070,7 +1203,7 @@ class NexusFSSearchMixin:
             return await self._semantic_search.index_directory(path)
         else:
             # Index only direct files in directory
-            files = self.list(path, recursive=False)
+            files = await asyncio.to_thread(self.list, path, recursive=False)
             results: dict[str, int] = {}
             for item in files:
                 file_path = item["name"] if isinstance(item, dict) else item
@@ -1101,11 +1234,11 @@ class NexusFSSearchMixin:
 
         try:
             # Check if it's a file
-            self.read(path)
+            await asyncio.to_thread(self.read, path)
             files_to_index = [path]
         except Exception:
             # It's a directory
-            file_list = self.list(path, recursive=recursive)
+            file_list = await asyncio.to_thread(self.list, path, recursive=recursive)
             for item in file_list:
                 file_path = item if isinstance(item, str) else item.get("path", "")
                 if file_path and not file_path.endswith("/"):
@@ -1117,34 +1250,40 @@ class NexusFSSearchMixin:
         # Prepare documents for bulk indexing
         documents: list[tuple[str, str, str]] = []
 
-        with self.metadata.SessionLocal() as session:
-            for file_path in files_to_index:
-                try:
-                    # Get content
-                    content = self.metadata.get_searchable_text(file_path)
-                    if content is None:
-                        content_raw = self.read(file_path)
-                        if isinstance(content_raw, bytes):
-                            content = content_raw.decode("utf-8", errors="ignore")
-                        else:
-                            content = str(content_raw)
+        def _prepare_documents_sync() -> list[tuple[str, str, str]]:
+            """Synchronous helper to prepare documents inside a session."""
+            docs: list[tuple[str, str, str]] = []
+            with self.metadata.SessionLocal() as session:
+                for file_path in files_to_index:
+                    try:
+                        # Get content
+                        content = self.metadata.get_searchable_text(file_path)
+                        if content is None:
+                            content_raw = self.read(file_path)
+                            if isinstance(content_raw, bytes):
+                                content = content_raw.decode("utf-8", errors="ignore")
+                            else:
+                                content = str(content_raw)
 
-                    # Get path_id
-                    stmt = select(FilePathModel).where(
-                        FilePathModel.virtual_path == file_path,
-                        FilePathModel.deleted_at.is_(None),
-                    )
-                    result = session.execute(stmt)
-                    file_model = result.scalar_one_or_none()
+                        # Get path_id
+                        stmt = select(FilePathModel).where(
+                            FilePathModel.virtual_path == file_path,
+                            FilePathModel.deleted_at.is_(None),
+                        )
+                        result = session.execute(stmt)
+                        file_model = result.scalar_one_or_none()
 
-                    if file_model and content:
-                        documents.append((file_path, content, file_model.path_id))
-                except Exception as e:
-                    import logging
+                        if file_model and content:
+                            docs.append((file_path, content, file_model.path_id))
+                    except Exception as e:
+                        import logging
 
-                    logging.getLogger(__name__).warning(
-                        f"Failed to prepare {file_path} for indexing: {e}"
-                    )
+                        logging.getLogger(__name__).warning(
+                            f"Failed to prepare {file_path} for indexing: {e}"
+                        )
+            return docs
+
+        documents = await asyncio.to_thread(_prepare_documents_sync)
 
         if not documents:
             return {}

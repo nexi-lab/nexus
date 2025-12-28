@@ -4016,7 +4016,7 @@ class NexusFS(
 
         # Use admin context for provisioning
         admin_context = context or OperationContext(
-            user="system",
+            user=user_id,
             groups=[],
             tenant_id=tenant_id,
             is_admin=True,
@@ -4103,6 +4103,7 @@ class NexusFS(
                 )
                 logger.info(f"Registered user in entity registry: {user_id}")
 
+            admin_context.user_id = user_id
             # 5. Create API key (if requested and doesn't exist)
             if create_api_key:
                 from sqlalchemy import select
@@ -4211,9 +4212,10 @@ class NexusFS(
         skill_paths = []
         if import_skills:
             try:
+                logger.info(f"Starting skill import for user {user_id}")
                 skill_paths = self._import_user_skills(tenant_id, user_id, admin_context)
                 created_resources["skills"] = skill_paths
-                logger.info(f"Imported {len(skill_paths)} skills for user {user_id}")
+                logger.info(f"Imported {len(skill_paths)} skills for user {user_id}: {skill_paths}")
             except Exception as e:
                 logger.error(f"Failed to import skills: {e}")
 
@@ -4774,14 +4776,9 @@ class NexusFS(
 
         logger = logging.getLogger(__name__)
 
-        # Find skills directory (try multiple possible locations)
+        # Find skills directory
         possible_dirs = [
-            Path(__file__).parent.parent.parent
-            / "scripts"
-            / "data"
-            / "skills",  # Original location
-            Path("nexus-data") / "skills",  # Common data directory
-            Path("./nexus-data/skills"),  # Relative to cwd
+            Path(__file__).parent.parent.parent.parent / "data" / "skills",  # nexus/data/skills
         ]
 
         skills_dir = None
@@ -4809,7 +4806,7 @@ class NexusFS(
                 result = self.skills_import(
                     zip_data=zip_base64,
                     tier="personal",  # User's personal skills
-                    allow_overwrite=False,  # Skip if exists (idempotent)
+                    allow_overwrite=False,  # Allow overwrite during provisioning
                     context=context,
                 )
 

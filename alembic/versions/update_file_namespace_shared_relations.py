@@ -20,8 +20,8 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "update_file_namespace_shared"
-down_revision: Union[str, None] = None
-branch_labels: Sequence[str] | None = ("file_namespace_shared",)
+down_revision: Union[str, None] = "drop_duplicate_unused_indexes"
+branch_labels: Sequence[str] | None = None
 depends_on: Union[str, Sequence[str], None] = None
 
 

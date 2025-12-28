@@ -1038,16 +1038,28 @@ class SQLAlchemyMetadataStore(MetadataStore):
             # Database query failed - assume not a directory
             return False
 
-    def list(self, prefix: str = "", recursive: bool = True) -> list[FileMetadata]:
+    def list(
+        self,
+        prefix: str = "",
+        recursive: bool = True,
+        tenant_id: str | None = None,
+    ) -> list[FileMetadata]:
         """
         List all files with given path prefix.
 
         PERFORMANCE OPTIMIZATION (v0.7.0): Non-recursive listings now filter at database level
         instead of loading all files into memory and filtering in Python.
 
+        PERFORMANCE OPTIMIZATION (Issue #904): PREWHERE-style tenant filtering at DB level.
+        When tenant_id is provided, filters by tenant at the database level (indexed),
+        reducing rows loaded by 30-90% in multi-tenant deployments.
+
         Args:
             prefix: Path prefix to filter by
             recursive: If True, include all nested files. If False, only direct children.
+            tenant_id: Optional tenant ID to filter by (PREWHERE optimization).
+                      When provided, only files belonging to this tenant are returned.
+                      When None, all files are returned (backward compatible).
 
         Returns:
             List of file metadata
@@ -1060,9 +1072,14 @@ class SQLAlchemyMetadataStore(MetadataStore):
             # Non-recursive - only direct children of /workspace
             >>> store.list("/workspace/", recursive=False)
             ['/workspace/file.txt']  # /workspace/sub/deep.txt excluded
+
+            # Tenant-filtered (Issue #904) - only files for specific tenant
+            >>> store.list("/workspace/", tenant_id="org_acme")
+            ['/workspace/acme_file.txt']  # Only org_acme's files
         """
-        # Check cache first (note: cache key includes recursive flag)
-        cache_key = f"{prefix}:{'r' if recursive else 'nr'}"
+        # Check cache first (note: cache key includes recursive flag and tenant_id)
+        tenant_key = tenant_id or "all"
+        cache_key = f"{prefix}:{'r' if recursive else 'nr'}:t={tenant_key}"
         if self._cache_enabled and self._cache:
             cached = self._cache.get_list(cache_key)
             if cached is not None:
@@ -1074,6 +1091,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
             # OPTIMIZATION: Check if a PARENT prefix is cached and filter locally
             # This avoids DB queries for /skills/system/ when /skills/ is already cached
+            # Note: Parent cache lookup must also match tenant_id
             if recursive and prefix and prefix != "/":
                 parent_prefix = prefix.rstrip("/")
                 prev_prefix = None  # Track previous to detect infinite loop
@@ -1083,7 +1101,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     parent_prefix = parent_prefix.rsplit("/", 1)[0] + "/"
                     if parent_prefix == "/":
                         parent_prefix = "/"
-                    parent_cache_key = f"{parent_prefix}:r"
+                    parent_cache_key = f"{parent_prefix}:r:t={tenant_key}"
                     parent_cached = self._cache.get_list(parent_cache_key)
                     if parent_cached is not None:
                         # Filter parent cache for our prefix
@@ -1102,6 +1120,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
         try:
             with self.SessionLocal() as session:
+                # Build base conditions list
+                # Issue #904: PREWHERE-style tenant filtering at DB level
+                base_conditions: list[Any] = [FilePathModel.deleted_at.is_(None)]
+                if tenant_id is not None:
+                    base_conditions.append(FilePathModel.tenant_id == tenant_id)
+
                 if prefix:
                     if recursive:
                         # Recursive: All files under prefix
@@ -1109,7 +1133,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             select(FilePathModel)
                             .where(
                                 FilePathModel.virtual_path.like(f"{prefix}%"),
-                                FilePathModel.deleted_at.is_(None),
+                                *base_conditions,
                             )
                             .order_by(FilePathModel.virtual_path)
                         )
@@ -1130,7 +1154,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                                 ~FilePathModel.virtual_path.like(
                                     f"{prefix}%/%"
                                 ),  # ~ is SQLAlchemy NOT
-                                FilePathModel.deleted_at.is_(None),
+                                *base_conditions,
                             )
                             .order_by(FilePathModel.virtual_path)
                         )
@@ -1139,7 +1163,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     if recursive:
                         stmt = (
                             select(FilePathModel)
-                            .where(FilePathModel.deleted_at.is_(None))
+                            .where(*base_conditions)
                             .order_by(FilePathModel.virtual_path)
                         )
                     else:
@@ -1151,7 +1175,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             .where(
                                 FilePathModel.virtual_path.like("/%"),  # Must start with /
                                 ~FilePathModel.virtual_path.like("/%/%"),  # But not have another /
-                                FilePathModel.deleted_at.is_(None),
+                                *base_conditions,
                             )
                             .order_by(FilePathModel.virtual_path)
                         )

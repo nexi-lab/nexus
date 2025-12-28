@@ -152,7 +152,6 @@ class FilePathModel(Base):
         Index("idx_file_paths_accessed_at", "accessed_at"),
         Index("idx_file_paths_locked_by", "locked_by"),
         # Performance: Composite indexes for common query patterns (#384)
-        Index("idx_tenant_path_prefix", "tenant_id", "virtual_path"),  # Optimized prefix queries
         Index("idx_content_hash_tenant", "content_hash", "tenant_id"),  # CAS dedup lookups
     )
 
@@ -1125,9 +1124,6 @@ class ReBACTupleModel(Base):
         # Tenant-scoped indexes
         Index("idx_rebac_tenant_subject", "tenant_id", "subject_type", "subject_id"),
         Index("idx_rebac_tenant_object", "tenant_id", "object_type", "object_id"),
-        # Original indexes (kept for backward compatibility)
-        Index("idx_rebac_subject", "subject_type", "subject_id"),
-        Index("idx_rebac_object", "object_type", "object_id"),
         Index("idx_rebac_relation", "relation"),
         Index("idx_rebac_expires", "expires_at"),
         # Subject relation index for userset-as-subject
@@ -1215,6 +1211,23 @@ class ReBACTupleModel(Base):
             "subject_relation",
             "tenant_id",
             postgresql_where=text("expires_at IS NULL AND subject_relation IS NOT NULL"),
+        ),
+        # ========== Issue #904: Cross-tenant share index ==========
+        # Optimizes queries for finding files shared with a user from other tenants.
+        # Query pattern: WHERE subject_type=? AND subject_id=?
+        #                  AND relation IN ('shared-viewer', 'shared-editor', 'shared-owner')
+        # This is a partial index covering only cross-tenant share relations.
+        Index(
+            "idx_rebac_cross_tenant_shares",
+            "subject_type",
+            "subject_id",
+            "relation",
+            "object_type",
+            "object_id",
+            postgresql_where=text(
+                "relation IN ('shared-viewer', 'shared-editor', 'shared-owner') "
+                "AND expires_at IS NULL"
+            ),
         ),
     )
 

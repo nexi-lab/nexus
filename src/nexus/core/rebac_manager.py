@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -1665,12 +1666,35 @@ class ReBACManager:
         # Clean up expired tuples first (this will invalidate affected caches)
         self._cleanup_expired_tuples_if_needed()
 
-        # Check cache first (only if no context, since context makes checks dynamic)
+        # Check cache first with refresh-ahead (Issue #932)
+        # Only if no context, since context makes checks dynamic
         if context is None:
-            cached = self._get_cached_check(subject_entity, permission, object_entity, tenant_id)
-            if cached is not None:
-                logger.debug(f"✅ CACHE HIT: result={cached}")
-                return cached
+            # Use refresh-ahead pattern to proactively refresh cache before expiry
+            if self._l1_cache:
+                cached, needs_refresh, cache_key = self._l1_cache.get_with_refresh_check(
+                    subject_entity.entity_type,
+                    subject_entity.entity_id,
+                    permission,
+                    object_entity.entity_type,
+                    object_entity.entity_id,
+                    tenant_id,
+                )
+                if cached is not None:
+                    logger.debug(f"✅ CACHE HIT: result={cached}, needs_refresh={needs_refresh}")
+                    if needs_refresh:
+                        # Schedule background refresh without blocking
+                        self._schedule_background_refresh(
+                            cache_key, subject, permission, object, tenant_id
+                        )
+                    return cached
+            else:
+                # Fallback to old method if no L1 cache
+                cached = self._get_cached_check(
+                    subject_entity, permission, object_entity, tenant_id
+                )
+                if cached is not None:
+                    logger.debug(f"✅ CACHE HIT: result={cached}")
+                    return cached
 
             # Cache miss - use stampede prevention (Issue #878)
             # Only one request computes while others wait
@@ -3485,6 +3509,102 @@ class ReBACManager:
 
                 return result
             return None
+
+    # ============================================================
+    # Background Refresh (Issue #932)
+    # ============================================================
+
+    def _schedule_background_refresh(
+        self,
+        cache_key: str,
+        subject: tuple[str, str],
+        permission: str,
+        obj: tuple[str, str],
+        tenant_id: str | None,
+    ) -> None:
+        """Schedule a background refresh for a cache entry.
+
+        This is called when a cache hit occurs but the entry is past its
+        refresh threshold. The cached value is returned immediately while
+        a background thread refreshes the cache.
+
+        Args:
+            cache_key: Cache key being refreshed
+            subject: (subject_type, subject_id) tuple
+            permission: Permission to check
+            obj: (object_type, object_id) tuple
+            tenant_id: Optional tenant ID
+        """
+        if not self._l1_cache:
+            return
+
+        if not self._l1_cache.mark_refresh_in_progress(cache_key):
+            # Already being refreshed by another thread
+            return
+
+        # Start background refresh in a daemon thread
+        thread = threading.Thread(
+            target=self._background_refresh_worker,
+            args=(cache_key, subject, permission, obj, tenant_id),
+            daemon=True,
+            name=f"rebac-refresh-{cache_key[:20]}",
+        )
+        thread.start()
+        logger.debug(f"🔄 REFRESH: Scheduled background refresh for {cache_key[:50]}...")
+
+    def _background_refresh_worker(
+        self,
+        cache_key: str,
+        subject: tuple[str, str],
+        permission: str,
+        obj: tuple[str, str],
+        tenant_id: str | None,
+    ) -> None:
+        """Worker thread that refreshes a cache entry in the background.
+
+        Args:
+            cache_key: Cache key being refreshed
+            subject: (subject_type, subject_id) tuple
+            permission: Permission to check
+            obj: (object_type, object_id) tuple
+            tenant_id: Optional tenant ID
+        """
+        try:
+            subject_entity = Entity(subject[0], subject[1])
+            object_entity = Entity(obj[0], obj[1])
+
+            # Compute permission (bypassing cache)
+            result = self._compute_permission(
+                subject_entity,
+                permission,
+                object_entity,
+                visited=set(),
+                depth=0,
+                context=None,
+                tenant_id=tenant_id,
+            )
+
+            # Update cache
+            if self._l1_cache:
+                self._l1_cache.set(
+                    subject[0],
+                    subject[1],
+                    permission,
+                    obj[0],
+                    obj[1],
+                    result,
+                    tenant_id,
+                )
+
+            # Also update L2 cache
+            self._cache_check_result(subject_entity, permission, object_entity, result, tenant_id)
+
+            logger.debug(f"✅ REFRESH: Background refresh complete for {cache_key[:50]}...")
+        except Exception as e:
+            logger.warning(f"⚠️ REFRESH: Background refresh failed for {cache_key[:50]}: {e}")
+        finally:
+            if self._l1_cache:
+                self._l1_cache.complete_refresh(cache_key)
 
     def _cache_check_result(
         self,

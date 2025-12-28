@@ -162,16 +162,10 @@ def test_connect_context_manager() -> None:
 
 def test_connect_auto_discover() -> None:
     """Test that connect() can auto-discover config."""
-    # Without any config, should use defaults (./nexus-data)
-    # This test just verifies it doesn't crash
-    nx = nexus.connect()
-    assert isinstance(nx, NexusFS)
-    nx.close()
-    cleanup_windows_db()
-
-    # Clean up default directory if created
-    default_dir = Path("./nexus-data")
-    if default_dir.exists():
-        import shutil
-
-        shutil.rmtree(default_dir)
+    # Use a temporary directory to avoid cleanup issues with ./nexus-data
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Test with explicit data_dir to avoid creating ./nexus-data
+        nx = nexus.connect(config={"data_dir": tmpdir})
+        assert isinstance(nx, NexusFS)
+        nx.close()
+        cleanup_windows_db()

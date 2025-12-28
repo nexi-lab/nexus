@@ -1,5 +1,6 @@
 """Skill export functionality for creating .skill (ZIP) packages."""
 
+import asyncio
 import io
 import json
 import logging
@@ -183,7 +184,9 @@ class SkillExporter:
 
         # List all files in skill directory recursively
         try:
-            all_files = filesystem.list(path=skill_dir_path, recursive=True, context=context)
+            all_files = await asyncio.to_thread(
+                filesystem.list, path=skill_dir_path, recursive=True, context=context
+            )
         except Exception as e:
             raise SkillExportError(
                 f"Failed to list files in skill directory '{skill_dir_path}': {e}"
@@ -210,7 +213,7 @@ class SkillExporter:
                 # Strip trailing slash for consistent handling
                 directory_paths.append(entry.rstrip("/"))
             # Method 2: Use filesystem.is_directory() for entries without trailing "/"
-            elif filesystem.is_directory(entry, context=context):
+            elif await asyncio.to_thread(filesystem.is_directory, entry, context=context):
                 directory_paths.append(entry)
             else:
                 # It's a file
@@ -291,7 +294,7 @@ class SkillExporter:
         for file_path in file_paths:
             try:
                 # Read file content
-                raw_content = filesystem.read(file_path, context=context)
+                raw_content = await asyncio.to_thread(filesystem.read, file_path, context=context)
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
 
                 # Calculate relative path from skill directory using Path objects
@@ -472,7 +475,9 @@ class SkillExporter:
 
         # List all files in skill directory recursively
         try:
-            all_files = filesystem.list(path=skill_dir_path, recursive=True, context=context)
+            all_files = await asyncio.to_thread(
+                filesystem.list, path=skill_dir_path, recursive=True, context=context
+            )
         except Exception as e:
             logger.warning(f"Failed to list files for size calculation: {e}")
             # Fallback to SKILL.md only
@@ -492,7 +497,7 @@ class SkillExporter:
         total_size = 0
         for file_path in file_paths:
             try:
-                raw_content = filesystem.read(file_path, context=context)
+                raw_content = await asyncio.to_thread(filesystem.read, file_path, context=context)
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 total_size += len(raw_content)
             except Exception as e:

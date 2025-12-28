@@ -225,6 +225,26 @@ class NexusConfig(BaseModel):
     api_key: str | None = Field(default=None, description="API key for authentication")
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
 
+    # Thread pool and operation timeout settings (Issue #932)
+    thread_pool_size: int = Field(
+        default=200,
+        description="Thread pool size for sync operations (AnyIO limiter tokens)",
+    )
+    operation_timeout: float = Field(
+        default=30.0,
+        description="Timeout for sync operations in asyncio.to_thread() calls",
+    )
+
+    # Cache jitter and refresh-ahead settings (Issue #932)
+    cache_ttl_jitter: float = Field(
+        default=0.2,
+        description="Cache TTL jitter as fraction (0.2 = ±20%) to prevent thundering herd",
+    )
+    cache_refresh_factor: float = Field(
+        default=0.7,
+        description="Refresh cache at this fraction of TTL (0.7 = refresh at 70% of TTL)",
+    )
+
     # Identity settings for memory API (v0.4.0)
     tenant_id: str | None = Field(default=None, description="Tenant ID for memory operations")
     user_id: str | None = Field(default=None, description="User ID for memory operations")
@@ -383,6 +403,11 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_TENANT_ID": "tenant_id",
         "NEXUS_USER_ID": "user_id",
         "NEXUS_AGENT_ID": "agent_id",
+        # Thread pool and cache settings (Issue #932)
+        "NEXUS_THREAD_POOL_SIZE": "thread_pool_size",
+        "NEXUS_OPERATION_TIMEOUT": "operation_timeout",
+        "NEXUS_CACHE_TTL_JITTER": "cache_ttl_jitter",
+        "NEXUS_CACHE_REFRESH_FACTOR": "cache_refresh_factor",
     }
 
     for env_var, config_key in env_mapping.items():
@@ -396,9 +421,15 @@ def _load_from_environment() -> NexusConfig:
                 "cache_list_size",
                 "cache_kv_size",
                 "cache_exists_size",
+                "thread_pool_size",
             ]:
                 converted_value = int(value)
-            elif config_key == "timeout":
+            elif config_key in [
+                "timeout",
+                "operation_timeout",
+                "cache_ttl_jitter",
+                "cache_refresh_factor",
+            ]:
                 converted_value = float(value)
             elif config_key == "cache_ttl_seconds":
                 converted_value = int(value) if value.lower() != "none" else None

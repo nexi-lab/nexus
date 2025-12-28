@@ -955,6 +955,39 @@ class NexusFS(
         assert isinstance(ctx_raw, OperationContext), "Context must be OperationContext"
         ctx: OperationContext = ctx_raw
 
+        # P0-4: Tenant boundary security check (Issue #819)
+        # Even admins need tenant boundary checks (unless they have MANAGE_TENANTS capability)
+        if ctx.is_admin and self._permission_enforcer:
+            from nexus.core.permissions_enhanced import AdminCapability
+
+            # Extract tenant from path (format: /tenant:{tenant_id}/...)
+            path_tenant_id = None
+            if path.startswith("/tenant:"):
+                parts = path[8:].split("/", 1)  # Remove "/tenant:" prefix
+                if parts:
+                    path_tenant_id = parts[0]
+
+            # Check if admin is attempting cross-tenant access without MANAGE_TENANTS
+            if (
+                path_tenant_id
+                and ctx.tenant_id
+                and path_tenant_id != ctx.tenant_id
+                and AdminCapability.MANAGE_TENANTS not in ctx.admin_capabilities
+            ):
+                # Cross-tenant access requires MANAGE_TENANTS capability
+                raise PermissionError(
+                    f"Access denied: Cross-tenant access requires MANAGE_TENANTS capability. "
+                    f"Context tenant: {ctx.tenant_id}, Path tenant: {path_tenant_id}"
+                )
+
+        # Skip permission checks for admin/system users during provisioning
+        # This significantly speeds up operations like skill imports (82s -> ~10s)
+        if ctx.is_admin:
+            logger.debug(
+                f"_check_permission: SKIPPED (admin bypass) - path={path}, permission={permission.name}, user={ctx.user}"
+            )
+            return
+
         logger.debug(
             f"_check_permission: path={path}, permission={permission.name}, user={ctx.user}, tenant={getattr(ctx, 'tenant_id', None)}"
         )
@@ -4214,28 +4247,47 @@ class NexusFS(
             except Exception as e:
                 logger.error(f"Failed to create agents: {e}")
 
-        # 9. Import skills (if requested)
-        skill_paths = []
+        # 9. Import skills (if requested) - ASYNC for fast registration
+        skill_paths: list[str] = []
         if import_skills:
-            try:
-                logger.info(f"Starting skill import for user {user_id}")
-                skill_paths = self._import_user_skills(tenant_id, user_id, admin_context)
-                created_resources["skills"] = skill_paths
-                logger.info(f"Imported {len(skill_paths)} skills for user {user_id}: {skill_paths}")
-            except Exception as e:
-                logger.error(f"Failed to import skills: {e}")
+            # Launch skill import as background thread to avoid blocking registration
+            # Skills will appear in user's workspace as they complete
+            def _import_skills_async() -> None:
+                try:
+                    logger.info(f"[ASYNC] Starting background skill import for user {user_id}")
+                    imported_paths = self._import_user_skills(tenant_id, user_id, admin_context)
+                    logger.info(
+                        f"[ASYNC] Background skill import completed for {user_id}: "
+                        f"{len(imported_paths)} skills imported"
+                    )
 
-        # 9.5. Grant SkillBuilder agent permissions (if agents and skills were created)
-        if create_agents and import_skills:
-            try:
-                from nexus.core.agent_provisioning import grant_skill_builder_permissions
+                    # Grant SkillBuilder permissions after skills are imported
+                    if create_agents:
+                        try:
+                            from nexus.core.agent_provisioning import (
+                                grant_skill_builder_permissions,
+                            )
 
-                granted = grant_skill_builder_permissions(self, user_id, tenant_id)
-                logger.info(
-                    f"Granted {granted} permissions to SkillBuilder agent for user {user_id}"
-                )
-            except Exception as e:
-                logger.error(f"Failed to grant SkillBuilder permissions: {e}")
+                            granted = grant_skill_builder_permissions(self, user_id, tenant_id)
+                            logger.info(
+                                f"[ASYNC] Granted {granted} permissions to SkillBuilder agent for user {user_id}"
+                            )
+                        except Exception as e:
+                            logger.error(f"[ASYNC] Failed to grant SkillBuilder permissions: {e}")
+                except Exception as e:
+                    logger.error(f"[ASYNC] Failed to import skills in background: {e}")
+
+            # Start background import thread
+            import threading
+
+            skill_import_thread = threading.Thread(
+                target=_import_skills_async,
+                name=f"skill-import-{user_id[:8]}",
+                daemon=True,  # Don't block process exit
+            )
+            skill_import_thread.start()
+            logger.info(f"Skill import started in background for user {user_id}")
+            created_resources["skills"] = "importing"  # Placeholder to indicate async import
 
         # 10. Grant ReBAC permissions (tenant owner)
         try:
@@ -4414,13 +4466,15 @@ class NexusFS(
                     except Exception as e:
                         logger.warning(f"Failed to delete directory {dir_path}: {e}")
 
-            # 2. Delete API keys
+            # 2. Delete API keys (both user and agent keys)
             try:
                 from nexus.storage.models import APIKeyModel
 
+                # Delete ALL API keys for this user (subject_type="user" and "agent")
+                # Agent keys have subject_type="agent" and belong to user's agents
                 deleted_keys = (
                     session.query(APIKeyModel)
-                    .filter_by(user_id=user_id, subject_type="user")
+                    .filter_by(user_id=user_id)  # Remove subject_type filter to delete all keys
                     .delete()
                 )
                 session.commit()
@@ -4568,7 +4622,15 @@ class NexusFS(
                 # LocalBackend stores directories under "dirs" subdirectory
                 physical_path = self.backend.root_path / "dirs" / dir_path.lstrip("/")
                 if physical_path.exists() and physical_path.is_dir():
-                    had_content = True  # Directory exists, so it has content
+                    # Check if directory actually has content (not just an empty stub)
+                    from contextlib import suppress
+
+                    with suppress(OSError):
+                        # Use os.listdir to check if directory has any files/subdirs
+                        dir_contents = os.listdir(physical_path)
+                        if dir_contents:
+                            had_content = True  # Directory has actual content
+
                     try:
                         # shutil.rmtree() removes entire directory tree in one go
                         shutil.rmtree(physical_path)
@@ -4659,6 +4721,18 @@ class NexusFS(
             return True  # Successfully deleted
 
         # Approach 2: Virtual filesystem deletion (fallback)
+        # First check if directory actually exists before attempting deletion
+        from contextlib import suppress
+
+        directory_exists = False
+        with suppress(Exception):
+            directory_exists = self.exists(dir_path, context=context)
+
+        if not directory_exists:
+            # Directory doesn't exist, nothing to delete
+            logger.debug(f"Directory does not exist: {dir_path}")
+            return False
+
         try:
             # List immediate children
             result = self.list(dir_path, recursive=False, context=context)

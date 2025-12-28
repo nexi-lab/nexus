@@ -4111,6 +4111,15 @@ class NexusFS(
                 from nexus.server.auth.database_key import DatabaseAPIKeyAuth
                 from nexus.storage.models import APIKeyModel
 
+                # Lock the user row to prevent race conditions during concurrent provisioning
+                # This ensures only one thread can check and create API keys at a time
+                user_row = session.execute(
+                    select(UserModel).where(UserModel.user_id == user_id).with_for_update()
+                ).scalar_one_or_none()
+
+                if not user_row:
+                    raise ValueError(f"User not found: {user_id}")
+
                 # Check if user already has an API key
                 existing_key_stmt = (
                     select(APIKeyModel)
@@ -4186,16 +4195,7 @@ class NexusFS(
         agent_paths = []
         if create_agents:
             try:
-                # Import agent creation helper
-                import sys
-                from pathlib import Path
-
-                # Add scripts directory to path temporarily
-                scripts_dir = Path(__file__).parent.parent.parent / "scripts"
-                if str(scripts_dir) not in sys.path:
-                    sys.path.insert(0, str(scripts_dir))
-
-                from _core.agent_manager import create_standard_agents
+                from nexus.core.agent_provisioning import create_standard_agents
 
                 agent_results = create_standard_agents(self, user_id, admin_context)
 

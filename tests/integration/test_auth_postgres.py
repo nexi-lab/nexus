@@ -162,7 +162,10 @@ def test_oauth_race_condition_postgres(postgres_session):
             # Create API key with race condition protection
             with postgres_session() as session:
                 # Double-check if API key was created by concurrent request
-                user_model = session.get(UserModel, test_user_id)
+                # Use SELECT ... FOR UPDATE to lock the row and prevent race conditions
+                user_model = session.execute(
+                    select(UserModel).where(UserModel.user_id == test_user_id).with_for_update()
+                ).scalar_one_or_none()
                 if user_model and user_model.api_key:
                     # Another request already created the API key
                     api_key = user_model.api_key

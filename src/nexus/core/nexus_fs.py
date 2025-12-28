@@ -955,6 +955,31 @@ class NexusFS(
         assert isinstance(ctx_raw, OperationContext), "Context must be OperationContext"
         ctx: OperationContext = ctx_raw
 
+        # P0-4: Tenant boundary security check (Issue #819)
+        # Even admins need tenant boundary checks (unless they have MANAGE_TENANTS capability)
+        if ctx.is_admin and self._permission_enforcer:
+            from nexus.core.permissions_enhanced import AdminCapability
+
+            # Extract tenant from path (format: /tenant:{tenant_id}/...)
+            path_tenant_id = None
+            if path.startswith("/tenant:"):
+                parts = path[8:].split("/", 1)  # Remove "/tenant:" prefix
+                if parts:
+                    path_tenant_id = parts[0]
+
+            # Check if admin is attempting cross-tenant access without MANAGE_TENANTS
+            if (
+                path_tenant_id
+                and ctx.tenant_id
+                and path_tenant_id != ctx.tenant_id
+                and AdminCapability.MANAGE_TENANTS not in ctx.admin_capabilities
+            ):
+                # Cross-tenant access requires MANAGE_TENANTS capability
+                raise PermissionError(
+                    f"Access denied: Cross-tenant access requires MANAGE_TENANTS capability. "
+                    f"Context tenant: {ctx.tenant_id}, Path tenant: {path_tenant_id}"
+                )
+
         # Skip permission checks for admin/system users during provisioning
         # This significantly speeds up operations like skill imports (82s -> ~10s)
         if ctx.is_admin:
@@ -4591,7 +4616,15 @@ class NexusFS(
                 # LocalBackend stores directories under "dirs" subdirectory
                 physical_path = self.backend.root_path / "dirs" / dir_path.lstrip("/")
                 if physical_path.exists() and physical_path.is_dir():
-                    had_content = True  # Directory exists, so it has content
+                    # Check if directory actually has content (not just an empty stub)
+                    from contextlib import suppress
+
+                    with suppress(OSError):
+                        # Use os.listdir to check if directory has any files/subdirs
+                        dir_contents = os.listdir(physical_path)
+                        if dir_contents:
+                            had_content = True  # Directory has actual content
+
                     try:
                         # shutil.rmtree() removes entire directory tree in one go
                         shutil.rmtree(physical_path)
@@ -4682,6 +4715,18 @@ class NexusFS(
             return True  # Successfully deleted
 
         # Approach 2: Virtual filesystem deletion (fallback)
+        # First check if directory actually exists before attempting deletion
+        from contextlib import suppress
+
+        directory_exists = False
+        with suppress(Exception):
+            directory_exists = self.exists(dir_path, context=context)
+
+        if not directory_exists:
+            # Directory doesn't exist, nothing to delete
+            logger.debug(f"Directory does not exist: {dir_path}")
+            return False
+
         try:
             # List immediate children
             result = self.list(dir_path, recursive=False, context=context)

@@ -315,7 +315,14 @@ class NexusFSSearchMixin:
                     if "/" not in rel_path:
                         results.append(meta)
 
-        # Filter by read permission (v0.3.0)
+        # =======================================================================
+        # OPTIMIZATION (Issue #900): Single Permission Pass
+        # Instead of multiple filter_list() calls, collect ALL candidate paths
+        # upfront and make ONE permission check. Then reuse allowed_set everywhere.
+        # =======================================================================
+        allowed_set: set[str] = set()
+        backend_dirs: set[str] = set()
+
         if self._enforce_permissions:
             import time
 
@@ -325,32 +332,48 @@ class NexusFSSearchMixin:
             ctx_raw = context or self._default_context
             assert isinstance(ctx_raw, OperationContext), "Context must be OperationContext"
             ctx: OperationContext = ctx_raw
-            result_paths = [meta.path for meta in results]
 
-            logger.warning(
-                f"[PERF-LIST] Starting permission filter for {len(result_paths)} paths, path={path}, recursive={recursive}"
+            # Step 1: Collect ALL candidate paths for single permission check
+            candidate_paths: set[str] = set()
+
+            # Add all metadata result paths
+            candidate_paths.update(meta.path for meta in all_files)
+
+            # For non-recursive, also get backend directories
+            if not recursive:
+                backend_dirs = self._get_backend_directory_entries(path)
+                candidate_paths.update(backend_dirs)
+
+            logger.debug(
+                f"[PERF-LIST] Issue #900: Single permission pass for {len(candidate_paths)} candidates"
             )
 
+            # Step 2: SINGLE permission filter call
             filter_start = time.time()
-            allowed_paths = self._permission_enforcer.filter_list(result_paths, ctx)
+            allowed_list = self._permission_enforcer.filter_list(list(candidate_paths), ctx)
+            allowed_set = set(allowed_list)
             filter_elapsed = time.time() - filter_start
 
-            logger.warning(
-                f"[PERF-LIST] Permission filter completed in {filter_elapsed:.3f}s, allowed {len(allowed_paths)}/{len(result_paths)} paths"
+            logger.debug(
+                f"[PERF-LIST] Permission filter: {filter_elapsed:.3f}s, allowed {len(allowed_set)}/{len(candidate_paths)} paths"
             )
 
-            # Filter results to only include allowed paths
-            results = [meta for meta in results if meta.path in allowed_paths]
+            # Step 3: Filter results using allowed_set (O(1) lookups, no permission calls)
+            results = [meta for meta in results if meta.path in allowed_set]
 
             perm_total = time.time() - perm_start
-            logger.warning(f"[PERF-LIST] Total permission filtering: {perm_total:.3f}s")
+            logger.debug(f"[PERF-LIST] Total permission filtering: {perm_total:.3f}s")
+        else:
+            # No permission enforcement - get backend dirs for later
+            if not recursive:
+                backend_dirs = self._get_backend_directory_entries(path)
 
         # Sort by path name
         results.sort(key=lambda m: m.path)
 
         # Add directories to results (infer from file paths + check backend)
         # This ensures empty directories show up in listings
-        directories = set()
+        directories: set[str] = set()
 
         # Extract directories from directory marker files in results (v0.3.9+)
         # These are files with mime_type="inode/directory" created by mkdir
@@ -360,133 +383,51 @@ class NexusFSSearchMixin:
 
         if not recursive:
             # For non-recursive listings, infer immediate subdirectories from file paths
-            base_path = path if path != "/" else ""
-
-            # OPTIMIZATION (issue #380): Reuse metadata query and avoid double permission check
-            # Get all files to infer directories
-            all_files_for_dirs = self.metadata.list(base_path)
-
-            # Filter files by permission before inferring directories
-            # NOTE: We need to filter ALL files (not just results), because results may be filtered
-            # to only include files in the current directory (non-recursive), but we need to see
-            # files in subdirectories to infer those subdirectories exist
+            # Use allowed_set to filter (already computed above, no new permission checks)
             if self._enforce_permissions:
-                from nexus.core.permissions import OperationContext
+                # Use all_files filtered by allowed_set for directory inference
+                for meta in all_files:
+                    if meta.path in allowed_set:
+                        # Get relative path
+                        rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
+                        # Check if there's a directory component
+                        if "/" in rel_path:
+                            # Extract first directory component
+                            dir_name = rel_path.split("/")[0]
+                            dir_path = path + dir_name if path != "/" else "/" + dir_name
+                            directories.add(dir_path)
 
-                ctx_raw_glob = context or self._default_context
-                assert isinstance(ctx_raw_glob, OperationContext), (
-                    "Context must be OperationContext"
-                )
-                ctx_glob: OperationContext = ctx_raw_glob
-
-                # Check if we already have filtered results we can reuse
-                # If base_path matches our query path, we can use the already-filtered results
-                # plus any additional files found in subdirectories
-                if base_path == path or (path == "/" and base_path == ""):
-                    # Create a set of already-checked paths to avoid duplicate filtering
-                    already_filtered = {meta.path for meta in results}
-
-                    # Only filter paths we haven't already checked
-                    unfiltered_paths = [
-                        meta.path
-                        for meta in all_files_for_dirs
-                        if meta.path not in already_filtered
-                    ]
-
-                    if unfiltered_paths:
-                        # Filter only the new paths
-                        allowed_new_paths = self._permission_enforcer.filter_list(
-                            unfiltered_paths, ctx_glob
-                        )
-                        allowed_new_paths_set = set(allowed_new_paths)
-
-                        # Combine already-filtered results with newly-filtered paths
-                        all_files_for_dirs = [
-                            meta
-                            for meta in all_files_for_dirs
-                            if meta.path in already_filtered or meta.path in allowed_new_paths_set
-                        ]
-                    else:
-                        # All paths already filtered, reuse results
-                        all_files_for_dirs = results
-                else:
-                    # Different path, need to filter everything
-                    all_paths_for_dirs = [meta.path for meta in all_files_for_dirs]
-                    allowed_paths_for_dirs = self._permission_enforcer.filter_list(
-                        all_paths_for_dirs, ctx_glob
-                    )
-                    all_files_for_dirs = [
-                        meta for meta in all_files_for_dirs if meta.path in allowed_paths_for_dirs
-                    ]
-
-            for meta in all_files_for_dirs:
-                # Get relative path
-                rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
-                # Check if there's a directory component
-                if "/" in rel_path:
-                    # Extract first directory component
-                    dir_name = rel_path.split("/")[0]
-                    dir_path = path + dir_name if path != "/" else "/" + dir_name
-                    directories.add(dir_path)
-
-            # Check backend for empty directories (directories with no files)
-            # This catches newly created directories using the helper method
-            if not self._enforce_permissions:
-                # No permissions: add all backend directories
-                backend_dirs = self._get_backend_directory_entries(path)
-                directories.update(backend_dirs)
-            else:
-                # With permissions: only show directories if user has access to them OR any descendant
-                backend_dirs = self._get_backend_directory_entries(path)
-                ctx = context or self._default_context
-
-                # OPTIMIZATION 1: Parent-Grants-Child shortcut
-                # First check if user has DIRECT access to each directory (O(1) per dir)
-                # This avoids expensive descendant checks for directories where user has direct access
-                dirs_needing_descendant_check: list[str] = []
-                subject = ctx.get_subject() if hasattr(ctx, "get_subject") else ("user", ctx.user)
-
+                # Check backend directories for access
+                # A directory is accessible if:
+                # 1. User has TRAVERSE permission (can navigate into it), OR
+                # 2. User has READ permission (in allowed_set), OR
+                # 3. Any file under it is in allowed_set (has accessible descendants)
                 for dir_path in backend_dirs:
-                    # Try TRAVERSE permission first (O(1) check for implicit dirs)
+                    # Fast path: check if already in allowed_set (READ permission)
+                    if dir_path in allowed_set:
+                        directories.add(dir_path)
+                        continue
+
+                    # Check TRAVERSE permission (needed for empty directories)
                     if self._permission_enforcer.check(dir_path, Permission.TRAVERSE, ctx):
                         directories.add(dir_path)
                         continue
 
-                    # Try direct READ permission (O(1) check)
-                    if hasattr(self, "rebac_check"):
-                        direct_access = self.rebac_check(
-                            subject=subject,
-                            permission="read",
-                            object=("file", dir_path),
-                            tenant_id=ctx.tenant_id,
-                        )
-                        if direct_access:
-                            directories.add(dir_path)
-                            continue
+                    # Check if any allowed path starts with this directory (has accessible descendants)
+                    dir_prefix = dir_path.rstrip("/") + "/"
+                    if any(p.startswith(dir_prefix) for p in allowed_set):
+                        directories.add(dir_path)
+            else:
+                # No permissions: infer directories from all files
+                for meta in all_files:
+                    rel_path = meta.path[len(path) :] if path != "/" else meta.path[1:]
+                    if "/" in rel_path:
+                        dir_name = rel_path.split("/")[0]
+                        dir_path = path + dir_name if path != "/" else "/" + dir_name
+                        directories.add(dir_path)
 
-                    # No direct access - need to check descendants
-                    dirs_needing_descendant_check.append(dir_path)
-
-                # OPTIMIZATION 2 (issue #380): Use bulk check for remaining directories
-                # Only check descendants for directories without direct access
-                if dirs_needing_descendant_check:
-                    if (
-                        hasattr(self, "_has_descendant_access_bulk")
-                        and len(dirs_needing_descendant_check) > 1
-                    ):
-                        # Bulk check all remaining directories at once
-                        access_results = self._has_descendant_access_bulk(
-                            dirs_needing_descendant_check, Permission.READ, ctx
-                        )
-                        for dir_path, has_access in access_results.items():
-                            if has_access:
-                                directories.add(dir_path)
-                    else:
-                        # Fallback to individual checks (for single directory or if method not available)
-                        for dir_path in dirs_needing_descendant_check:
-                            # Check if user has access to this directory or any of its descendants
-                            if self._has_descendant_access(dir_path, Permission.READ, ctx):
-                                directories.add(dir_path)
+                # Add all backend directories
+                directories.update(backend_dirs)
 
         if details:
             # Filter out directory metadata markers to avoid duplicates

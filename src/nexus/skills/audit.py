@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -177,7 +178,8 @@ class SkillAuditLogger:
             """
             import json
 
-            self._db.execute(
+            await asyncio.to_thread(
+                self._db.execute,
                 query,
                 {
                     "audit_id": audit_id,
@@ -189,7 +191,7 @@ class SkillAuditLogger:
                     "timestamp": timestamp,
                 },
             )
-            self._db.commit()
+            await asyncio.to_thread(self._db.commit)
         else:
             # Store in memory
             self._in_memory_logs.append(entry)
@@ -272,7 +274,7 @@ class SkillAuditLogger:
 
             import json
 
-            results = self._db.fetchall(query, params)
+            results = await asyncio.to_thread(self._db.fetchall, query, params)
             logs = []
             for row in results:
                 details = json.loads(row["details"]) if row.get("details") else None

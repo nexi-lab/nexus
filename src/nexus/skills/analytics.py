@@ -378,9 +378,7 @@ class SkillAnalyticsTracker:
             if tenant_id:
                 query += " WHERE tenant_id = :tenant_id"
 
-            stats = await asyncio.to_thread(
-                self._db.fetchone, query, params if tenant_id else None
-            )
+            stats = await asyncio.to_thread(self._db.fetchone, query, params if tenant_id else None)
 
             # Success rates per skill
             query = """

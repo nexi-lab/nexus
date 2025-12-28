@@ -61,8 +61,5 @@ def downgrade() -> None:
         )
     )
     op.execute(
-        text(
-            "CREATE INDEX IF NOT EXISTS idx_rebac_object "
-            "ON rebac_tuples (object_type, object_id)"
-        )
+        text("CREATE INDEX IF NOT EXISTS idx_rebac_object ON rebac_tuples (object_type, object_id)")
     )

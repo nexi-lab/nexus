@@ -427,9 +427,7 @@ class SkillGovernance:
             ORDER BY submitted_at DESC
             LIMIT 1
             """
-            result = await asyncio.to_thread(
-                self._db.fetchone, query, {"skill_name": skill_name}
-            )
+            result = await asyncio.to_thread(self._db.fetchone, query, {"skill_name": skill_name})
 
             if not result:
                 return False
@@ -543,9 +541,7 @@ class SkillGovernance:
 
             import json
 
-            results = await asyncio.to_thread(
-                self._db.fetchall, query, {"skill_name": skill_name}
-            )
+            results = await asyncio.to_thread(self._db.fetchall, query, {"skill_name": skill_name})
             approvals = []
             for row in results:
                 # Handle JSON column - PostgreSQL auto-deserializes, SQLite returns string
@@ -659,9 +655,7 @@ class SkillGovernance:
 
             import json
 
-            result = await asyncio.to_thread(
-                self._db.fetchone, query, {"approval_id": approval_id}
-            )
+            result = await asyncio.to_thread(self._db.fetchone, query, {"approval_id": approval_id})
             if not result:
                 return None
 

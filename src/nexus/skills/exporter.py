@@ -294,9 +294,7 @@ class SkillExporter:
         for file_path in file_paths:
             try:
                 # Read file content
-                raw_content = await asyncio.to_thread(
-                    filesystem.read, file_path, context=context
-                )
+                raw_content = await asyncio.to_thread(filesystem.read, file_path, context=context)
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
 
                 # Calculate relative path from skill directory using Path objects
@@ -499,9 +497,7 @@ class SkillExporter:
         total_size = 0
         for file_path in file_paths:
             try:
-                raw_content = await asyncio.to_thread(
-                    filesystem.read, file_path, context=context
-                )
+                raw_content = await asyncio.to_thread(filesystem.read, file_path, context=context)
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 total_size += len(raw_content)
             except Exception as e:

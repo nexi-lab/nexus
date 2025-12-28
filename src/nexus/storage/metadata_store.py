@@ -1126,6 +1126,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 base_conditions: list[Any] = [FilePathModel.deleted_at.is_(None)]
                 if tenant_id is not None:
                     from sqlalchemy import or_
+
                     base_conditions.append(
                         or_(FilePathModel.tenant_id == tenant_id, FilePathModel.tenant_id.is_(None))
                     )

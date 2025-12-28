@@ -1689,7 +1689,9 @@ class ReBACManager:
                     return cached
             else:
                 # Fallback to old method if no L1 cache
-                cached = self._get_cached_check(subject_entity, permission, object_entity, tenant_id)
+                cached = self._get_cached_check(
+                    subject_entity, permission, object_entity, tenant_id
+                )
                 if cached is not None:
                     logger.debug(f"✅ CACHE HIT: result={cached}")
                     return cached
@@ -3595,9 +3597,7 @@ class ReBACManager:
                 )
 
             # Also update L2 cache
-            self._cache_check_result(
-                subject_entity, permission, object_entity, result, tenant_id
-            )
+            self._cache_check_result(subject_entity, permission, object_entity, result, tenant_id)
 
             logger.debug(f"✅ REFRESH: Background refresh complete for {cache_key[:50]}...")
         except Exception as e:

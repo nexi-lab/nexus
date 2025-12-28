@@ -516,10 +516,7 @@ class ReBACPermissionCache:
             age = time.time() - created_at
             refresh_threshold = jittered_ttl * self._refresh_ahead_factor
 
-            needs_refresh = (
-                age > refresh_threshold
-                and key not in self._refresh_in_progress
-            )
+            needs_refresh = age > refresh_threshold and key not in self._refresh_in_progress
 
             return result, needs_refresh, key
 

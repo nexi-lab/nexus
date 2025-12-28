@@ -30,18 +30,17 @@ import logging
 import os
 import secrets
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
+from anyio import to_thread
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from starlette.middleware.gzip import GZipMiddleware
-
-from anyio import to_thread
 
 # Load environment variables from .env.local if it exists
 try:
@@ -147,8 +146,8 @@ async def to_thread_with_timeout(
             asyncio.to_thread(func, *args, **kwargs),
             timeout=effective_timeout,
         )
-    except asyncio.TimeoutError:
-        raise TimeoutError(f"Operation timed out after {effective_timeout}s")
+    except TimeoutError:
+        raise TimeoutError(f"Operation timed out after {effective_timeout}s") from None
 
 
 # ============================================================================

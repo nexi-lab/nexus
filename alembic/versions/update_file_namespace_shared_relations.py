@@ -11,12 +11,12 @@ The issue was that existing databases had the file namespace created before thes
 relations were added to DEFAULT_FILE_NAMESPACE, so they were missing.
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
-from alembic import op
-import sqlalchemy as sa
 from sqlalchemy import text
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "update_file_namespace_shared"

@@ -59,7 +59,7 @@ if [ -z "$SKIP_BUILD" ]; then
         echo -e "${GREEN}✓${NC} Using existing dev image"
     else
         echo "Building nexus/runtime:dev from local source..."
-        docker build -f docker/nexus-runtime-dev.Dockerfile -t nexus/runtime:dev .
+        docker build -f dockerfiles/nexus-runtime-dev.Dockerfile -t nexus/runtime:dev .
         echo -e "${GREEN}✓${NC} Dev image built successfully"
     fi
     echo

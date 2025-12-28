@@ -29,10 +29,9 @@ logger = logging.getLogger(__name__)
 
 # Lazy import docker to avoid import errors if not installed
 try:
+    import docker
     import docker.errors
     from docker.errors import NotFound
-
-    import docker
 
     DOCKER_AVAILABLE = True
 except ImportError:
@@ -101,14 +100,14 @@ class DockerSandboxProvider(SandboxProvider):
         else:
             try:
                 # Try default Docker socket
-                self.docker_client = docker.from_env()  # type: ignore[attr-defined]
+                self.docker_client = docker.from_env()
             except Exception as e:
                 # Try Colima socket path
                 import os
 
                 colima_socket = os.path.expanduser("~/.colima/default/docker.sock")
                 if os.path.exists(colima_socket):
-                    self.docker_client = docker.DockerClient(base_url=f"unix://{colima_socket}")  # type: ignore[attr-defined]
+                    self.docker_client = docker.DockerClient(base_url=f"unix://{colima_socket}")
                 else:
                     raise RuntimeError(
                         "Cannot connect to Docker. Make sure Docker is running.\n"

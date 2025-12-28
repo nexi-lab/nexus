@@ -6,10 +6,10 @@
 # pre-installed for fast sandbox container startup.
 #
 # Usage:
-#   ./docker/build.sh           # Build production image (nexus-runtime:latest from PyPI)
-#   ./docker/build.sh --dev     # Build dev image (nexus-runtime:dev from local source)
-#   ./docker/build.sh --force   # Force rebuild (no cache)
-#   ./docker/build.sh --version # Show version info
+#   ./dockerfiles/build.sh           # Build production image (nexus-runtime:latest from PyPI)
+#   ./dockerfiles/build.sh --dev     # Build dev image (nexus-runtime:dev from local source)
+#   ./dockerfiles/build.sh --force   # Force rebuild (no cache)
+#   ./dockerfiles/build.sh --version # Show version info
 
 set -e
 
@@ -21,7 +21,7 @@ NC='\033[0m'
 
 IMAGE_NAME="nexus-sandbox"
 IMAGE_TAG="latest"
-DOCKERFILE="docker/nexus-runtime.Dockerfile"
+DOCKERFILE="dockerfiles/nexus-runtime.Dockerfile"
 BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Get Nexus version from pyproject.toml if available
@@ -51,7 +51,7 @@ for arg in "$@"; do
     case "$arg" in
         --dev)
             IMAGE_TAG="dev"
-            DOCKERFILE="docker/nexus-runtime-dev.Dockerfile"
+            DOCKERFILE="dockerfiles/nexus-runtime-dev.Dockerfile"
             echo "Building dev image from local source"
             ;;
         --force)
@@ -66,7 +66,7 @@ for arg in "$@"; do
         --help|-h)
             echo "Build Nexus Runtime Docker Image"
             echo ""
-            echo "Usage: ./docker/build.sh [OPTIONS]"
+            echo "Usage: ./dockerfiles/build.sh [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --dev       Build dev image from local source (nexus-runtime:dev)"
@@ -75,15 +75,15 @@ for arg in "$@"; do
             echo "  --help      Show this help message"
             echo ""
             echo "Examples:"
-            echo "  ./docker/build.sh           # Build production image"
-            echo "  ./docker/build.sh --dev     # Build dev image from local code"
-            echo "  ./docker/build.sh --force   # Force rebuild"
-            echo "  ./docker/build.sh --dev --force  # Force rebuild dev image"
+            echo "  ./dockerfiles/build.sh           # Build production image"
+            echo "  ./dockerfiles/build.sh --dev     # Build dev image from local code"
+            echo "  ./dockerfiles/build.sh --force   # Force rebuild"
+            echo "  ./dockerfiles/build.sh --dev --force  # Force rebuild dev image"
             exit 0
             ;;
         *)
             echo "Unknown argument: $arg"
-            echo "Usage: ./docker/build.sh [--dev] [--force] [--version] [--help]"
+            echo "Usage: ./dockerfiles/build.sh [--dev] [--force] [--version] [--help]"
             exit 1
             ;;
     esac

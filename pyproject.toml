@@ -168,6 +168,11 @@ e2b = [
     "e2b-code-interpreter>=1.0.0",
 ]
 
+docker = [
+    # Docker sandbox provider (local containerized execution)
+    "docker>=7.0.0",
+]
+
 # First-party plugins (install manually for now - not yet published to PyPI)
 # anthropic = [
 #     "nexus-plugin-anthropic>=0.1.0",

@@ -187,34 +187,51 @@ ensure_frontend_ready() {
     fi
 }
 
-# Ensure LangGraph example env exists and dependencies are installed
+# Ensure LangGraph repo is cloned and dependencies are installed
 ensure_langgraph_env() {
-    local LANGGRAPH_DIR="${SCRIPT_DIR}/examples/langgraph"
+    local LANGGRAPH_DIR="${SCRIPT_DIR}/../nexus-langgraph"
+    local LANGGRAPH_URL="${LANGGRAPH_REPO_URL:-https://github.com/nexi-lab/nexus-langgraph.git}"
     local python_bin="${PYTHON:-python3}"
 
+    # Clone repo if it doesn't exist
     if [ ! -d "$LANGGRAPH_DIR" ]; then
-        echo -e "${RED}ERROR: Langgraph directory not found: $LANGGRAPH_DIR${NC}"
-        return 1
+        echo -e "${YELLOW}LangGraph directory not found: $LANGGRAPH_DIR${NC}"
+        if ! command -v git >/dev/null 2>&1; then
+            echo -e "${RED}ERROR: git is required to clone nexus-langgraph.${NC}"
+            echo "Install git or clone manually:"
+            echo "  git clone $LANGGRAPH_URL \"$LANGGRAPH_DIR\""
+            return 1
+        fi
+        echo -e "${YELLOW}Cloning nexus-langgraph from ${LANGGRAPH_URL}...${NC}"
+        mkdir -p "$(dirname "$LANGGRAPH_DIR")"
+        if ! git clone "$LANGGRAPH_URL" "$LANGGRAPH_DIR"; then
+            echo -e "${RED}ERROR: Failed to clone nexus-langgraph repo.${NC}"
+            echo "Try manually:"
+            echo "  git clone $LANGGRAPH_URL \"$LANGGRAPH_DIR\""
+            return 1
+        fi
+        echo -e "${GREEN}✓ nexus-langgraph cloned to ${LANGGRAPH_DIR}${NC}"
+    else
+        # Pull latest if repo exists
+        echo -e "${YELLOW}Pulling latest changes for nexus-langgraph...${NC}"
+        (cd "$LANGGRAPH_DIR" && git pull origin main 2>/dev/null || echo "  (Already up to date or no git repo)")
     fi
 
+    # Create virtual environment if needed
     if [ ! -d "$LANGGRAPH_DIR/.venv" ]; then
         echo -e "${YELLOW}Creating LangGraph virtual environment at ${LANGGRAPH_DIR}/.venv${NC}"
         (cd "$LANGGRAPH_DIR" && $python_bin -m venv .venv)
     fi
 
+    # Install dependencies
     (
         cd "$LANGGRAPH_DIR"
         source .venv/bin/activate
         pip install --upgrade pip >/dev/null 2>&1 || true
 
-        # Ensure nexus editable install is available to langgraph
-        if ! pip show nexus-ai-fs 2>/dev/null | grep -q "Editable project location"; then
-            echo -e "${YELLOW}Installing nexus into LangGraph venv...${NC}"
-            pip install -e "${SCRIPT_DIR}"
-        fi
-
-        # Install langgraph example deps if not present
+        # Install langgraph deps (this will handle nexus-fs-python or nexus-ai-fs dependencies)
         if [ -f "pyproject.toml" ]; then
+            echo -e "${YELLOW}Installing LangGraph dependencies...${NC}"
             pip install -e .
         elif [ -f "requirements.txt" ]; then
             pip install -r requirements.txt
@@ -297,15 +314,15 @@ ensure_docker_sandbox_image() {
     fi
 
     echo -e "${YELLOW}Docker image '${image}' not found.${NC}"
-    # Prefer docker/build.sh if present to build runtime image (matches docker-demo.sh)
-    if [ -x "${SCRIPT_DIR}/docker/build.sh" ]; then
-        echo -e "${YELLOW}Building sandbox runtime via docker/build.sh ...${NC}"
-        if "${SCRIPT_DIR}/docker/build.sh"; then
-            echo -e "${GREEN}✓ Built sandbox runtime image via docker/build.sh${NC}"
+    # Prefer dockerfiles/build.sh if present to build runtime image (matches docker-demo.sh)
+    if [ -x "${SCRIPT_DIR}/dockerfiles/build.sh" ]; then
+        echo -e "${YELLOW}Building sandbox runtime via dockerfiles/build.sh ...${NC}"
+        if "${SCRIPT_DIR}/dockerfiles/build.sh"; then
+            echo -e "${GREEN}✓ Built sandbox runtime image via dockerfiles/build.sh${NC}"
             docker image inspect "${image}" >/dev/null 2>&1 && return 0
             echo -e "${YELLOW}Build succeeded but image '${image}' not visible in this Docker context.${NC}"
         else
-            echo -e "${YELLOW}docker/build.sh failed, falling back to direct docker build...${NC}"
+            echo -e "${YELLOW}dockerfiles/build.sh failed, falling back to direct docker build...${NC}"
         fi
     fi
 
@@ -484,7 +501,7 @@ start_frontend() {
 
 # Function to start langgraph
 start_langgraph() {
-    local LANGGRAPH_DIR="${SCRIPT_DIR}/examples/langgraph"
+    local LANGGRAPH_DIR="${SCRIPT_DIR}/../nexus-langgraph"
 
     ensure_docker_for_langgraph
     ensure_langgraph_env || return 1

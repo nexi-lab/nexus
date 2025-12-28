@@ -657,12 +657,13 @@ async def oauth_check(
                 first_name = name.split()[0] if name else email_username.capitalize()
                 proposed_tenant_name = f"{first_name}'s Org"
             else:
-                proposed_tenant_id = email_domain
+                # Remove dots from domain for tenant_id (e.g., multifi.ai -> multifiai)
+                proposed_tenant_id = email_domain.replace(".", "")
                 proposed_tenant_name = email_domain
         else:
             is_personal = True
-            proposed_tenant_id = "default"
-            proposed_tenant_name = "Default Organization"
+            proposed_tenant_id = ""
+            proposed_tenant_name = ""
 
         return OAuthCheckResponseNew(
             needs_confirmation=True,

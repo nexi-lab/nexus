@@ -340,8 +340,11 @@ class PermissionEnforcer:
                     "admin",
                     f"cross_tenant_access_denied_path_tenant={path_tenant_id}_context_tenant={context.tenant_id}",
                 )
-                # Fall through to ReBAC check (will deny)
-                return self._check_rebac(path, permission, context)
+                # Immediately raise PermissionError for cross-tenant access violation
+                raise PermissionError(
+                    f"Access denied: Cross-tenant access requires MANAGE_TENANTS capability. "
+                    f"Context tenant: {context.tenant_id}, Path tenant: {path_tenant_id}"
+                )
 
             required_capability = AdminCapability.get_required_capability(path, permission_str)
             wildcard_capability = f"admin:{permission_str}:*"

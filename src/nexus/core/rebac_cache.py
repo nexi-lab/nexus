@@ -16,6 +16,7 @@ Quantization (Issue #842):
 """
 
 import logging
+import random
 import threading
 import time
 from collections.abc import Callable
@@ -55,6 +56,8 @@ class ReBACPermissionCache:
         enable_metrics: bool = True,
         enable_adaptive_ttl: bool = False,
         quantization_interval: int = 5,
+        ttl_jitter_percent: float = 0.2,
+        refresh_ahead_factor: float = 0.7,
     ):
         """
         Initialize ReBAC permission cache.
@@ -68,6 +71,10 @@ class ReBACPermissionCache:
             enable_adaptive_ttl: Adjust TTL based on write frequency (default: False)
             quantization_interval: Time bucket size in seconds for cache key quantization
                 (default: 5s). Enables distributed cache sharing. Set to 0 to disable.
+            ttl_jitter_percent: Jitter percentage for TTL (default: 0.2 = ±20%)
+                Prevents thundering herd by staggering cache expiry (Issue #932)
+            refresh_ahead_factor: Refresh cache at this fraction of TTL (default: 0.7)
+                Triggers background refresh before expiry (Issue #932)
         """
         self._max_size = max_size
         self._ttl_seconds = ttl_seconds
@@ -111,6 +118,30 @@ class ReBACPermissionCache:
         self._stampede_waits = 0  # Number of requests that waited
         self._stampede_timeouts = 0  # Number of waits that timed out
         self._stampede_timeout_seconds = 5.0  # Max time to wait for computation
+
+        # TTL jitter and refresh-ahead (Issue #932)
+        # Prevents thundering herd by staggering cache expiry
+        self._ttl_jitter_percent = ttl_jitter_percent
+        self._refresh_ahead_factor = refresh_ahead_factor
+        # Track entry metadata for jitter and refresh-ahead
+        # Maps key -> (created_at, jittered_ttl)
+        self._entry_metadata: dict[str, tuple[float, float]] = {}
+        # Track keys currently being refreshed in background
+        self._refresh_in_progress: set[str] = set()
+
+    def _get_jittered_ttl(self, base_ttl: float) -> float:
+        """Add random jitter to TTL to prevent thundering herd.
+
+        Args:
+            base_ttl: Base TTL in seconds
+
+        Returns:
+            Jittered TTL with random offset of ±jitter_percent
+        """
+        if self._ttl_jitter_percent <= 0:
+            return base_ttl
+        jitter = base_ttl * self._ttl_jitter_percent
+        return base_ttl + random.uniform(-jitter, jitter)
 
     def _get_time_bucket(self) -> int:
         """Get current time bucket for cache key quantization."""
@@ -247,6 +278,11 @@ class ReBACPermissionCache:
         )
 
         with self._lock:
+            # Track entry metadata with jittered TTL for refresh-ahead (Issue #932)
+            base_ttl = self._ttl_seconds if result else self._denial_ttl_seconds
+            jittered_ttl = self._get_jittered_ttl(float(base_ttl))
+            self._entry_metadata[key] = (time.time(), jittered_ttl)
+
             # Route to appropriate cache based on result (Issue #877)
             # Grants get longer TTL, denials get shorter TTL for security
             if result:
@@ -402,6 +438,116 @@ class ReBACPermissionCache:
             event = self._computing.pop(key, None)
             if event:
                 event.set()
+
+    # ============================================================
+    # Refresh-Ahead Pattern (Issue #932)
+    # ============================================================
+
+    def get_with_refresh_check(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        object_type: str,
+        object_id: str,
+        tenant_id: str | None = None,
+    ) -> tuple[bool | None, bool, str]:
+        """
+        Get cached value and check if refresh is needed.
+
+        Uses _entry_metadata to track entry age with jittered TTL.
+        When an entry reaches refresh_ahead_factor of its TTL, it signals
+        that a background refresh should be triggered while still returning
+        the cached value.
+
+        Args:
+            subject_type: Type of subject
+            subject_id: Subject identifier
+            permission: Permission to check
+            object_type: Type of object
+            object_id: Object identifier
+            tenant_id: Optional tenant ID
+
+        Returns:
+            Tuple of (cached_value, needs_refresh, cache_key):
+            - cached_value: True/False if cached, None if not cached
+            - needs_refresh: True if entry should be refreshed in background
+            - cache_key: The cache key for use with refresh methods
+        """
+        start_time = time.perf_counter()
+        key = self._make_key(
+            subject_type, subject_id, permission, object_type, object_id, tenant_id
+        )
+
+        with self._lock:
+            # Get cached value (existing logic)
+            result = self._grant_cache.get(key)
+            is_grant_hit = result is not None
+
+            if result is None:
+                result = self._denial_cache.get(key)
+
+            # Track metrics
+            if self._enable_metrics:
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                self._total_lookup_time_ms += elapsed_ms
+                self._lookup_count += 1
+
+                if result is not None:
+                    self._hits += 1
+                    if is_grant_hit:
+                        self._grant_hits += 1
+                    else:
+                        self._denial_hits += 1
+                else:
+                    self._misses += 1
+
+            # If no cached result, no refresh needed
+            if result is None:
+                return None, False, key
+
+            # Check if refresh is needed based on entry metadata
+            metadata = self._entry_metadata.get(key)
+            if metadata is None:
+                # No metadata, don't trigger refresh
+                return result, False, key
+
+            created_at, jittered_ttl = metadata
+            age = time.time() - created_at
+            refresh_threshold = jittered_ttl * self._refresh_ahead_factor
+
+            needs_refresh = (
+                age > refresh_threshold
+                and key not in self._refresh_in_progress
+            )
+
+            return result, needs_refresh, key
+
+    def mark_refresh_in_progress(self, key: str) -> bool:
+        """
+        Mark a key as being refreshed in background.
+
+        Args:
+            key: Cache key to mark
+
+        Returns:
+            True if successfully marked, False if already in progress
+        """
+        with self._lock:
+            if key in self._refresh_in_progress:
+                return False
+            self._refresh_in_progress.add(key)
+            return True
+
+    def complete_refresh(self, key: str) -> None:
+        """
+        Mark a background refresh as complete.
+
+        Args:
+            key: Cache key that was refreshed
+        """
+        with self._lock:
+            self._refresh_in_progress.discard(key)
 
     def _invalidate_from_both_caches(self, keys_to_delete: list[str]) -> int:
         """Helper to delete keys from both grant and denial caches."""

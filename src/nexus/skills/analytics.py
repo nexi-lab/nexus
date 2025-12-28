@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -199,7 +200,8 @@ class SkillAnalyticsTracker:
                 :execution_time, :success, :error_message, :timestamp
             )
             """
-            self._db.execute(
+            await asyncio.to_thread(
+                self._db.execute,
                 query,
                 {
                     "usage_id": usage_id,
@@ -212,7 +214,7 @@ class SkillAnalyticsTracker:
                     "timestamp": timestamp,
                 },
             )
-            self._db.commit()
+            await asyncio.to_thread(self._db.commit)
         else:
             # Store in memory
             self._in_memory_records.append(record)
@@ -259,7 +261,7 @@ class SkillAnalyticsTracker:
                 query += " AND tenant_id = :tenant_id"
                 params["tenant_id"] = tenant_id
 
-            result = self._db.fetchone(query, params)
+            result = await asyncio.to_thread(self._db.fetchone, query, params)
 
             if not result:
                 return SkillAnalytics(skill_name=skill_name)
@@ -345,7 +347,7 @@ class SkillAnalyticsTracker:
                 params["tenant_id"] = tenant_id
 
             query += " GROUP BY skill_name ORDER BY usage_count DESC LIMIT 10"
-            most_used = self._db.fetchall(query, params)
+            most_used = await asyncio.to_thread(self._db.fetchall, query, params)
             most_used_skills = [(row["skill_name"], row["usage_count"]) for row in most_used]
 
             # Top contributors
@@ -359,7 +361,9 @@ class SkillAnalyticsTracker:
                 query += " AND tenant_id = :tenant_id"
 
             query += " GROUP BY agent_id ORDER BY contribution_count DESC LIMIT 10"
-            top_contrib = self._db.fetchall(query, params if tenant_id else None)
+            top_contrib = await asyncio.to_thread(
+                self._db.fetchall, query, params if tenant_id else None
+            )
             top_contributors = [(row["agent_id"], row["contribution_count"]) for row in top_contrib]
 
             # Overall stats
@@ -374,7 +378,9 @@ class SkillAnalyticsTracker:
             if tenant_id:
                 query += " WHERE tenant_id = :tenant_id"
 
-            stats = self._db.fetchone(query, params if tenant_id else None)
+            stats = await asyncio.to_thread(
+                self._db.fetchone, query, params if tenant_id else None
+            )
 
             # Success rates per skill
             query = """
@@ -388,7 +394,9 @@ class SkillAnalyticsTracker:
                 query += " WHERE tenant_id = :tenant_id"
 
             query += " GROUP BY skill_name"
-            success_rates_rows = self._db.fetchall(query, params if tenant_id else None)
+            success_rates_rows = await asyncio.to_thread(
+                self._db.fetchall, query, params if tenant_id else None
+            )
             success_rates = {row["skill_name"]: row["success_rate"] for row in success_rates_rows}
 
             # Avg execution times
@@ -404,7 +412,9 @@ class SkillAnalyticsTracker:
                 query += " AND tenant_id = :tenant_id"
 
             query += " GROUP BY skill_name"
-            avg_times_rows = self._db.fetchall(query, params if tenant_id else None)
+            avg_times_rows = await asyncio.to_thread(
+                self._db.fetchall, query, params if tenant_id else None
+            )
             avg_execution_times = {
                 row["skill_name"]: row["avg_time"]
                 for row in avg_times_rows

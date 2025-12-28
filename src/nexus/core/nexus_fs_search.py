@@ -9,6 +9,7 @@ This module contains file search and listing operations:
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import fnmatch
 import logging
@@ -370,10 +371,12 @@ class NexusFSSearchMixin:
 
         # Issue #904: Extract tenant_id for PREWHERE-style DB filtering
         # This filters files at the database level, reducing rows loaded by 30-90%
+        # NOTE: Only apply tenant filtering when permissions are enforced,
+        # because files are only stored with tenant_id when permissions are active.
         list_tenant_id: str | None = None
         subject_type: str | None = None
         subject_id: str | None = None
-        if context:
+        if self._enforce_permissions and context:
             if hasattr(context, "tenant_id"):
                 list_tenant_id = context.tenant_id
             # Extract subject info for cross-tenant share lookup
@@ -1187,7 +1190,7 @@ class NexusFSSearchMixin:
         # Check if path is a file or directory
         try:
             # Try to read as file
-            self.read(path)
+            await asyncio.to_thread(self.read, path)
             # It's a file, index it
             num_chunks = await self._semantic_search.index_document(path)
             return {path: num_chunks}
@@ -1200,7 +1203,7 @@ class NexusFSSearchMixin:
             return await self._semantic_search.index_directory(path)
         else:
             # Index only direct files in directory
-            files = self.list(path, recursive=False)
+            files = await asyncio.to_thread(self.list, path, recursive=False)
             results: dict[str, int] = {}
             for item in files:
                 file_path = item["name"] if isinstance(item, dict) else item
@@ -1231,11 +1234,11 @@ class NexusFSSearchMixin:
 
         try:
             # Check if it's a file
-            self.read(path)
+            await asyncio.to_thread(self.read, path)
             files_to_index = [path]
         except Exception:
             # It's a directory
-            file_list = self.list(path, recursive=recursive)
+            file_list = await asyncio.to_thread(self.list, path, recursive=recursive)
             for item in file_list:
                 file_path = item if isinstance(item, str) else item.get("path", "")
                 if file_path and not file_path.endswith("/"):
@@ -1247,34 +1250,40 @@ class NexusFSSearchMixin:
         # Prepare documents for bulk indexing
         documents: list[tuple[str, str, str]] = []
 
-        with self.metadata.SessionLocal() as session:
-            for file_path in files_to_index:
-                try:
-                    # Get content
-                    content = self.metadata.get_searchable_text(file_path)
-                    if content is None:
-                        content_raw = self.read(file_path)
-                        if isinstance(content_raw, bytes):
-                            content = content_raw.decode("utf-8", errors="ignore")
-                        else:
-                            content = str(content_raw)
+        def _prepare_documents_sync() -> list[tuple[str, str, str]]:
+            """Synchronous helper to prepare documents inside a session."""
+            docs: list[tuple[str, str, str]] = []
+            with self.metadata.SessionLocal() as session:
+                for file_path in files_to_index:
+                    try:
+                        # Get content
+                        content = self.metadata.get_searchable_text(file_path)
+                        if content is None:
+                            content_raw = self.read(file_path)
+                            if isinstance(content_raw, bytes):
+                                content = content_raw.decode("utf-8", errors="ignore")
+                            else:
+                                content = str(content_raw)
 
-                    # Get path_id
-                    stmt = select(FilePathModel).where(
-                        FilePathModel.virtual_path == file_path,
-                        FilePathModel.deleted_at.is_(None),
-                    )
-                    result = session.execute(stmt)
-                    file_model = result.scalar_one_or_none()
+                        # Get path_id
+                        stmt = select(FilePathModel).where(
+                            FilePathModel.virtual_path == file_path,
+                            FilePathModel.deleted_at.is_(None),
+                        )
+                        result = session.execute(stmt)
+                        file_model = result.scalar_one_or_none()
 
-                    if file_model and content:
-                        documents.append((file_path, content, file_model.path_id))
-                except Exception as e:
-                    import logging
+                        if file_model and content:
+                            docs.append((file_path, content, file_model.path_id))
+                    except Exception as e:
+                        import logging
 
-                    logging.getLogger(__name__).warning(
-                        f"Failed to prepare {file_path} for indexing: {e}"
-                    )
+                        logging.getLogger(__name__).warning(
+                            f"Failed to prepare {file_path} for indexing: {e}"
+                        )
+            return docs
+
+        documents = await asyncio.to_thread(_prepare_documents_sync)
 
         if not documents:
             return {}

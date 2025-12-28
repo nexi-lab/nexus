@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -196,7 +197,8 @@ class SkillGovernance:
             """
             import json
 
-            self._db.execute(
+            await asyncio.to_thread(
+                self._db.execute,
                 query,
                 {
                     "approval_id": approval_id,
@@ -208,7 +210,7 @@ class SkillGovernance:
                     "submitted_at": submitted_at,
                 },
             )
-            self._db.commit()
+            await asyncio.to_thread(self._db.commit)
         else:
             # Store in memory
             self._in_memory_approvals[approval_id] = approval
@@ -288,7 +290,8 @@ class SkillGovernance:
                 comments = :comments
             WHERE approval_id = :approval_id
             """
-            self._db.execute(
+            await asyncio.to_thread(
+                self._db.execute,
                 query,
                 {
                     "status": ApprovalStatus.APPROVED.value,
@@ -298,7 +301,7 @@ class SkillGovernance:
                     "approval_id": approval_id,
                 },
             )
-            self._db.commit()
+            await asyncio.to_thread(self._db.commit)
         else:
             # Update in memory
             approval.status = ApprovalStatus.APPROVED
@@ -381,7 +384,8 @@ class SkillGovernance:
                 comments = :comments
             WHERE approval_id = :approval_id
             """
-            self._db.execute(
+            await asyncio.to_thread(
+                self._db.execute,
                 query,
                 {
                     "status": ApprovalStatus.REJECTED.value,
@@ -391,7 +395,7 @@ class SkillGovernance:
                     "approval_id": approval_id,
                 },
             )
-            self._db.commit()
+            await asyncio.to_thread(self._db.commit)
         else:
             # Update in memory
             approval.status = ApprovalStatus.REJECTED
@@ -423,7 +427,9 @@ class SkillGovernance:
             ORDER BY submitted_at DESC
             LIMIT 1
             """
-            result = self._db.fetchone(query, {"skill_name": skill_name})
+            result = await asyncio.to_thread(
+                self._db.fetchone, query, {"skill_name": skill_name}
+            )
 
             if not result:
                 return False
@@ -478,7 +484,7 @@ class SkillGovernance:
 
             import json
 
-            results = self._db.fetchall(query, params)
+            results = await asyncio.to_thread(self._db.fetchall, query, params)
             approvals = []
             for row in results:
                 # Handle JSON column - PostgreSQL auto-deserializes, SQLite returns string
@@ -537,7 +543,9 @@ class SkillGovernance:
 
             import json
 
-            results = self._db.fetchall(query, {"skill_name": skill_name})
+            results = await asyncio.to_thread(
+                self._db.fetchall, query, {"skill_name": skill_name}
+            )
             approvals = []
             for row in results:
                 # Handle JSON column - PostgreSQL auto-deserializes, SQLite returns string
@@ -607,7 +615,7 @@ class SkillGovernance:
 
             import json
 
-            results = self._db.fetchall(query, params)
+            results = await asyncio.to_thread(self._db.fetchall, query, params)
             approvals = []
             for row in results:
                 # Handle JSON column - PostgreSQL auto-deserializes, SQLite returns string
@@ -651,7 +659,9 @@ class SkillGovernance:
 
             import json
 
-            result = self._db.fetchone(query, {"approval_id": approval_id})
+            result = await asyncio.to_thread(
+                self._db.fetchone, query, {"approval_id": approval_id}
+            )
             if not result:
                 return None
 
@@ -687,8 +697,10 @@ class SkillGovernance:
 
             import json
 
-            result = self._db.fetchone(
-                query, {"skill_name": skill_name, "status": ApprovalStatus.PENDING.value}
+            result = await asyncio.to_thread(
+                self._db.fetchone,
+                query,
+                {"skill_name": skill_name, "status": ApprovalStatus.PENDING.value},
             )
 
             if not result:

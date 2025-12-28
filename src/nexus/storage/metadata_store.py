@@ -1122,9 +1122,13 @@ class SQLAlchemyMetadataStore(MetadataStore):
             with self.SessionLocal() as session:
                 # Build base conditions list
                 # Issue #904: PREWHERE-style tenant filtering at DB level
+                # Include both matching tenant AND legacy NULL tenant files for backward compatibility
                 base_conditions: list[Any] = [FilePathModel.deleted_at.is_(None)]
                 if tenant_id is not None:
-                    base_conditions.append(FilePathModel.tenant_id == tenant_id)
+                    from sqlalchemy import or_
+                    base_conditions.append(
+                        or_(FilePathModel.tenant_id == tenant_id, FilePathModel.tenant_id.is_(None))
+                    )
 
                 if prefix:
                     if recursive:

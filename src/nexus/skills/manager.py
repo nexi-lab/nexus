@@ -1,5 +1,6 @@
 """Skill lifecycle management: create, fork, publish, and versioning."""
 
+import asyncio
 import contextlib
 import logging
 from datetime import UTC, datetime
@@ -314,10 +315,10 @@ class SkillManager:
         if self._filesystem:
             # Create directory
             with contextlib.suppress(Exception):
-                self._filesystem.mkdir(skill_dir, parents=True)
+                await asyncio.to_thread(self._filesystem.mkdir, skill_dir, parents=True)
 
             # Write file
-            self._filesystem.write(skill_file, skill_md.encode("utf-8"))
+            await asyncio.to_thread(self._filesystem.write, skill_file, skill_md.encode("utf-8"))
         else:
             # Use local filesystem
             local_dir = Path(skill_dir)
@@ -451,10 +452,10 @@ class SkillManager:
         if self._filesystem:
             # Create directory
             with contextlib.suppress(Exception):
-                self._filesystem.mkdir(skill_dir, parents=True)
+                await asyncio.to_thread(self._filesystem.mkdir, skill_dir, parents=True)
 
             # Write file
-            self._filesystem.write(skill_file, skill_md.encode("utf-8"))
+            await asyncio.to_thread(self._filesystem.write, skill_file, skill_md.encode("utf-8"))
         else:
             # Use local filesystem
             local_dir = Path(skill_dir)
@@ -613,10 +614,10 @@ class SkillManager:
         if self._filesystem:
             # Create directory
             with contextlib.suppress(Exception):
-                self._filesystem.mkdir(target_dir, parents=True)
+                await asyncio.to_thread(self._filesystem.mkdir, target_dir, parents=True)
 
             # Write file (CAS deduplication will happen automatically in NexusFS)
-            self._filesystem.write(target_file, skill_md.encode("utf-8"))
+            await asyncio.to_thread(self._filesystem.write, target_file, skill_md.encode("utf-8"))
         else:
             # Use local filesystem
             local_dir = Path(target_dir)
@@ -768,10 +769,10 @@ class SkillManager:
         if self._filesystem:
             # Create directory
             with contextlib.suppress(Exception):
-                self._filesystem.mkdir(target_dir, parents=True)
+                await asyncio.to_thread(self._filesystem.mkdir, target_dir, parents=True)
 
             # Write file (CAS deduplication will happen automatically)
-            self._filesystem.write(target_file, skill_md.encode("utf-8"))
+            await asyncio.to_thread(self._filesystem.write, target_file, skill_md.encode("utf-8"))
         else:
             # Use local filesystem
             local_dir = Path(target_dir)

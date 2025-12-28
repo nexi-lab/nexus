@@ -14,9 +14,8 @@ logger = logging.getLogger(__name__)
 
 # Lazy import docker
 try:
-    import docker.errors
-
     import docker
+    import docker.errors
 
     DOCKER_AVAILABLE = True
 except ImportError:
@@ -44,7 +43,7 @@ class DockerImageBuilder:
         if not DOCKER_AVAILABLE:
             raise RuntimeError("docker package not installed. Install with: pip install docker")
 
-        self.docker_client = docker_client or docker.from_env()  # type: ignore[attr-defined]
+        self.docker_client = docker_client or docker.from_env()
         self.use_cache = use_cache
 
     async def build_from_dockerfile(

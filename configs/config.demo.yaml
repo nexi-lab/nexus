@@ -5,7 +5,8 @@
 mode: embedded
 
 # Database path (for TokenManager and other components that need DB access)
-db_path: postgresql://postgres:nexus@postgres:5432/nexus
+# Uses NEXUS_DATABASE_URL env var if set, falls back to postgres:5432 for Docker
+db_path: ${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@postgres:5432/nexus}
 
 # Server settings
 server:
@@ -15,8 +16,9 @@ server:
   log_level: info
 
 # Database configuration (uses PostgreSQL from docker-compose)
+# Uses NEXUS_DATABASE_URL env var if set, falls back to postgres:5432 for Docker
 database:
-  url: postgresql://postgres:nexus@postgres:5432/nexus
+  url: ${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@postgres:5432/nexus}
   pool_size: 10
   max_overflow: 20
   echo: false

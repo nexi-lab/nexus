@@ -782,27 +782,25 @@ stop_server() {
     # Stop langgraph
     stop_langgraph
 
-    # Check for processes on port 2026 (only LISTEN state, not stale connections)
-    PIDS=$(lsof -ti :2026 -sTCP:LISTEN 2>/dev/null || true)
+    # Kill all processes on ports 2026, 5173, and 2024
+    for PORT in 2026 5173 2024; do
+        PIDS=$(lsof -ti :$PORT 2>/dev/null || true)
 
-    if [ -n "$PIDS" ]; then
-        echo "Found process(es) on port 2026:"
-        echo ""
-        # Show detailed information about processes
-        lsof -i :2026 -sTCP:LISTEN 2>/dev/null | grep -v "^COMMAND" | while read line; do
-            echo "  $line"
-        done
-        echo ""
-        echo "To stop these processes, run:"
-        for PID in $PIDS; do
-            echo "  kill $PID          # Graceful shutdown"
-            echo "  kill -9 $PID       # Force kill (if needed)"
-        done
-        echo ""
-    else
-        echo "No server running on port 2026"
-        echo ""
-    fi
+        if [ -n "$PIDS" ]; then
+            echo "Killing process(es) on port $PORT..."
+            for PID in $PIDS; do
+                echo "  Killing PID $PID"
+                kill -9 $PID 2>/dev/null || true
+            done
+            echo -e "${GREEN}✓ Port $PORT cleared${NC}"
+        else
+            echo "No process running on port $PORT"
+        fi
+    done
+
+    echo ""
+    echo -e "${GREEN}✓ All services stopped${NC}"
+    echo ""
 }
 
 # Function to initialize database
@@ -955,7 +953,25 @@ init_database() {
     # Export API key for provisioning
     export NEXUS_API_KEY="$ADMIN_API_KEY"
 
-    # Save to .env.local for future use
+    NEXUS_URL_VALUE="http://localhost:2026"
+
+    # Save to .nexus-admin-env for easy sourcing (standard format)
+    cat > .nexus-admin-env << EOF
+# Nexus Admin Environment
+# Created: $(date)
+# User: admin
+export NEXUS_API_KEY='$ADMIN_API_KEY'
+export NEXUS_URL='$NEXUS_URL_VALUE'
+export NEXUS_DATABASE_URL='$POSTGRES_URL'
+EOF
+
+    echo -e "${GREEN}✓ Saved credentials to .nexus-admin-env${NC}"
+    echo ""
+    echo "  To use in your shell:"
+    echo "    source .nexus-admin-env"
+    echo ""
+
+    # Also save to .env.local for future use (backwards compatibility)
     if [ ! -f .env.local ]; then
         touch .env.local
     fi
@@ -1099,46 +1115,6 @@ init_database() {
     }
     trap cleanup EXIT INT TERM
 
-    # Wait a moment for server to start, then run provisioning in background
-    (
-        cd "$SCRIPT_DIR"
-        sleep 5
-        echo ""
-        echo "📦 Running provisioning..."
-        if [ -f "scripts/provision_namespace.py" ]; then
-            # Activate venv in the background process
-            source "$SCRIPT_DIR/.venv/bin/activate"
-            # Set environment variables for embedded mode provisioning
-            # Note: Provisioning uses embedded mode (not server mode) because
-            # the provisioning script uses context parameters not supported by RemoteNexusFS
-            export NEXUS_DATABASE_URL="$POSTGRES_URL"
-            export NEXUS_DATA_DIR="$DATA_PATH"
-            export NEXUS_API_KEY="$ADMIN_API_KEY"
-            # Don't set NEXUS_URL - this forces embedded mode
-            unset NEXUS_URL
-            # Load .env.local if it exists
-            if [ -f .env.local ]; then
-                set -a
-                source .env.local
-                set +a
-            fi
-            python3 scripts/provision_namespace.py --tenant default --env-file .env.local 2>&1
-            if [ $? -eq 0 ]; then
-                echo -e "${GREEN}✓ Provisioning completed successfully${NC}"
-            else
-                echo -e "${YELLOW}⚠ Provisioning encountered errors${NC}"
-            fi
-            # After provisioning completes, open frontend if requested
-            if [ "$START_UI" = true ]; then
-                if command -v open >/dev/null 2>&1; then
-                    open "http://localhost:5173" >/dev/null 2>&1 || true
-                elif command -v xdg-open >/dev/null 2>&1; then
-                    xdg-open "http://localhost:5173" >/dev/null 2>&1 || true
-                fi
-            fi
-        fi
-    ) &
-
     # Start the Nexus server in background and capture PID
     nexus serve \
         --config ./configs/config.demo.yaml \
@@ -1162,16 +1138,21 @@ case "$1" in
     --stop)
         stop_server
         ;;
+    --init)
+        shift  # Remove --init from arguments
+        init_database "$@"
+        ;;
     *)
         echo ""
-        echo "Usage: $0 {--start|--stop} [OPTIONS]"
+        echo "Usage: $0 {--start|--stop|--init} [OPTIONS]"
         echo ""
         echo "Commands:"
         echo "  --start    Start Nexus server locally (outside Docker)"
         echo "  --stop     Stop local Nexus server"
+        echo "  --init     Initialize database (clear all data, create admin key, start server)"
         echo ""
-        echo "Options for --start and --stop:"
-        echo "  --sqlite   Use SQLite instead of PostgreSQL (requires --sqlite flag)"
+        echo "Options for --start, --init, and --stop:"
+        echo "  --sqlite   Use SQLite instead of PostgreSQL"
         echo "  --nosqlite     Use PostgreSQL instead of SQLite (default)"
         echo "  --postgres-url URL    PostgreSQL connection URL"
         echo "                       (default: $DEFAULT_POSTGRES_URL)"
@@ -1183,6 +1164,12 @@ case "$1" in
         echo "  --no-langgraph, --nolanggraph   Don't start langgraph"
         echo ""
         echo "Examples:"
+        echo "  # Initialize database (clean state) with PostgreSQL:"
+        echo "  $0 --init"
+        echo ""
+        echo "  # Initialize with SQLite:"
+        echo "  $0 --init --sqlite"
+        echo ""
         echo "  # Using PostgreSQL (default):"
         echo "  $0 --start"
         echo ""
@@ -1200,9 +1187,6 @@ case "$1" in
         echo ""
         echo "  # Start without UI or langgraph:"
         echo "  $0 --start --noui --nolanggraph"
-        echo ""
-        echo "  # Using custom PostgreSQL URL:"
-        echo "  $0 --start --postgres-url 'postgresql://user:pass@localhost:5432/db'"
         echo ""
         echo "  # Custom data directory (PostgreSQL):"
         echo "  $0 --start --data-dir '/custom/path'"

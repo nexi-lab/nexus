@@ -2411,6 +2411,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
         from sqlalchemy.dialects.postgresql import insert as pg_insert
         from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+        # Use default tenant if not specified (required for DB constraint)
+        effective_tenant_id = tenant_id or "default"
+
         # Normalize path - remove trailing slash for files
         path = path.rstrip("/") if not is_directory else path.rstrip("/") + "/"
 
@@ -2430,7 +2433,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
             entries_to_upsert.append(
                 {
-                    "tenant_id": tenant_id,
+                    "tenant_id": effective_tenant_id,
                     "parent_path": parent_path,
                     "entry_name": entry_name,
                     "entry_type": entry_type,
@@ -2473,11 +2476,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
         from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
         # Collect all unique entries across all paths
-        entries_map: dict[tuple[str | None, str, str], dict[str, Any]] = {}
+        entries_map: dict[tuple[str, str, str], dict[str, Any]] = {}
 
         for metadata in metadata_list:
             path = metadata.path.rstrip("/")
-            tenant_id = metadata.tenant_id
+            # Use default tenant if not specified (required for DB constraint)
+            tenant_id = metadata.tenant_id or "default"
             parts = path.strip("/").split("/")
 
             if not parts or parts == [""]:

@@ -442,27 +442,8 @@ class NexusFSReBACMixin:
             conditions=conditions,
         )
 
-        # OPTIMIZATION: Queue Tiger Cache update for affected subject
-        # This ensures O(1) permission lookups after cache is rebuilt
-        if hasattr(self._rebac_manager, "tiger_queue_update"):
-            # Map relation to permission
-            relation_to_permission = {
-                "direct_owner": "read",
-                "direct_editor": "read",
-                "direct_viewer": "read",
-                "owner-of": "read",
-                "editor-of": "read",
-                "viewer-of": "read",
-                "traverser-of": "traverse",
-                "dynamic_viewer": "read",
-            }
-            permission = relation_to_permission.get(relation, "read")
-            self._rebac_manager.tiger_queue_update(
-                subject=subject[:2] if len(subject) == 3 else subject,
-                permission=permission,
-                resource_type=object[0],
-                tenant_id=effective_tenant_id or "default",
-            )
+        # NOTE: Tiger Cache queue update is now handled in EnhancedReBACManager.rebac_write()
+        # This ensures ALL write paths (rebac_create, share_with_user, etc.) get Tiger Cache updates
 
         return result
 

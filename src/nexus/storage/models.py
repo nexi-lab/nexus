@@ -193,6 +193,89 @@ class FilePathModel(Base):
         # Validation removed for backward compatibility
 
 
+class DirectoryEntryModel(Base):
+    """Sparse directory index for O(1) non-recursive listings (Issue #924).
+
+    Stores parent-child relationships at the directory level rather than file level.
+    This enables fast non-recursive directory listings without scanning all descendants.
+
+    Performance:
+    - Before: list("/workspace/", recursive=False) with 10k files → ~500ms (LIKE scan)
+    - After: list("/workspace/", recursive=False) → ~5ms (index lookup)
+
+    Population Strategy:
+    - New files: Indexed on put()/put_batch()
+    - Existing files: Lazy population on modification, or optional backfill script
+    - Fallback: If no index entries exist for a path, falls back to LIKE query
+    """
+
+    __tablename__ = "directory_entries"
+
+    # Composite primary key: (tenant_id, parent_path, entry_name)
+    # tenant_id can be NULL for legacy/default tenant
+    tenant_id: Mapped[str | None] = mapped_column(String(255), primary_key=True, nullable=True)
+    parent_path: Mapped[str] = mapped_column(String(4096), primary_key=True, nullable=False)
+    entry_name: Mapped[str] = mapped_column(String(255), primary_key=True, nullable=False)
+
+    # Entry type: "file" or "directory"
+    entry_type: Mapped[str] = mapped_column(String(10), nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    # Indexes for fast lookups
+    __table_args__ = (
+        # Primary lookup pattern: list all entries in a directory for a tenant
+        Index("idx_directory_entries_lookup", "tenant_id", "parent_path"),
+        # PostgreSQL text_pattern_ops for LIKE prefix queries on parent_path
+        Index(
+            "idx_directory_entries_parent_prefix",
+            "parent_path",
+            postgresql_ops={"parent_path": "text_pattern_ops"},
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<DirectoryEntryModel(tenant={self.tenant_id}, parent={self.parent_path}, name={self.entry_name}, type={self.entry_type})>"
+
+    def validate(self) -> None:
+        """Validate directory entry model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate parent_path
+        if not self.parent_path:
+            raise ValidationError("parent_path is required")
+
+        if not self.parent_path.startswith("/"):
+            raise ValidationError(f"parent_path must start with '/', got {self.parent_path!r}")
+
+        if not self.parent_path.endswith("/"):
+            raise ValidationError(f"parent_path must end with '/', got {self.parent_path!r}")
+
+        # Validate entry_name
+        if not self.entry_name:
+            raise ValidationError("entry_name is required")
+
+        if "/" in self.entry_name:
+            raise ValidationError(f"entry_name cannot contain '/', got {self.entry_name!r}")
+
+        # Validate entry_type
+        if self.entry_type not in ("file", "directory"):
+            raise ValidationError(f"entry_type must be 'file' or 'directory', got {self.entry_type!r}")
+
+
 class FileMetadataModel(Base):
     """File metadata storage.
 

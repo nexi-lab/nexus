@@ -308,16 +308,27 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             from nexus.core.rebac_manager import ReBACManager
 
             logger.debug(f"  -> Falling back to base ReBACManager, base max_depth={self.max_depth}")
-            return ReBACManager.rebac_check(self, subject, permission, object, context, tenant_id)
+            result = ReBACManager.rebac_check(self, subject, permission, object, context, tenant_id)
+
+            # Write-through to Tiger Cache (Issue #935)
+            if result and self._tiger_cache and tenant_id:
+                self._tiger_write_through_single(subject, permission, object, tenant_id, logger)
+
+            return result
 
         logger.debug("  -> Using rebac_check_detailed")
-        result = self.rebac_check_detailed(
+        detailed_result = self.rebac_check_detailed(
             subject, permission, object, context, tenant_id, consistency
         )
         logger.debug(
-            f"  -> rebac_check_detailed result: allowed={result.allowed}, indeterminate={result.indeterminate}"
+            f"  -> rebac_check_detailed result: allowed={detailed_result.allowed}, indeterminate={detailed_result.indeterminate}"
         )
-        return result.allowed
+
+        # Write-through to Tiger Cache (Issue #935)
+        if detailed_result.allowed and self._tiger_cache and tenant_id:
+            self._tiger_write_through_single(subject, permission, object, tenant_id, logger)
+
+        return detailed_result.allowed
 
     def rebac_check_detailed(
         self,
@@ -894,6 +905,20 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 # Log but don't fail the write - closure can be rebuilt
                 logger.warning(f"[LEOPARD] Failed to update closure: {e}")
 
+        # Tiger Cache: Queue update for affected permissions
+        # This ensures Tiger Cache stays in sync for ALL write paths (rebac_create, share_with_user, etc.)
+        if self._tiger_updater:
+            subject_tuple = (subject[0], subject[1])
+            object_type = object[0]
+            # Queue updates for all permission types that might be affected
+            for permission in ["read", "write", "execute"]:
+                self.tiger_queue_update(
+                    subject=subject_tuple,
+                    permission=permission,
+                    resource_type=object_type,
+                    tenant_id=effective_tenant,
+                )
+
         return result
 
     def rebac_write_batch(
@@ -961,6 +986,25 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         except Exception as e:
                             # Log but don't fail - closure can be rebuilt
                             logger.warning(f"[LEOPARD] Failed to update closure: {e}")
+
+            # Tiger Cache: Queue updates for all affected subject/resource pairs
+            # This ensures Tiger Cache stays in sync for bulk import operations
+            if self._tiger_updater:
+                for t in tuples:
+                    subject = t["subject"]
+                    obj = t["object"]
+                    tenant_id = t.get("tenant_id") or "default"
+                    subject_tuple = (subject[0], subject[1])
+                    object_type = obj[0]
+
+                    # Queue updates for all permission types that might be affected
+                    for permission in ["read", "write", "execute"]:
+                        self.tiger_queue_update(
+                            subject=subject_tuple,
+                            permission=permission,
+                            resource_type=object_type,
+                            tenant_id=tenant_id,
+                        )
 
         return created_count
 
@@ -1162,6 +1206,53 @@ class EnhancedReBACManager(TenantAwareReBACManager):
     # ========================================================================
     # Tiger Cache Methods (Issue #682)
     # ========================================================================
+
+    def _tiger_write_through_single(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        tenant_id: str,
+        logger: Any = None,
+    ) -> None:
+        """Write-through single permission result to Tiger Cache (Issue #935).
+
+        Called after a single permission check computes a positive result.
+        Adds the resource to the subject's permission bitmap for O(1) future lookups.
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permission: Permission that was granted
+            object: (object_type, object_id) tuple
+            tenant_id: Tenant ID
+            logger: Optional logger instance
+        """
+        if not self._tiger_cache:
+            return
+
+        try:
+            # Get or create integer ID for the resource
+            resource_int_id = self._tiger_cache._resource_map.get_or_create_int_id(
+                object[0], object[1], tenant_id
+            )
+            if resource_int_id > 0:
+                self._tiger_cache.add_to_bitmap(
+                    subject_type=subject[0],
+                    subject_id=subject[1],
+                    permission=permission,
+                    resource_type=object[0],
+                    tenant_id=tenant_id,
+                    resource_int_id=resource_int_id,
+                )
+                if logger:
+                    logger.info(
+                        f"[TIGER] Write-through: {subject[0]}:{subject[1]} "
+                        f"{permission} {object[0]}:{object[1]} (int_id={resource_int_id})"
+                    )
+        except Exception as e:
+            # Don't fail the permission check if Tiger write fails
+            if logger:
+                logger.debug(f"[TIGER] Write-through failed: {e}")
 
     def tiger_check_access(
         self,
@@ -2702,6 +2793,62 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         f"[RUST-PERF] Wrote {l1_cache_writes} results to L1 in-memory cache"
                     )
 
+                # Write-through to Tiger Cache (Issue #935)
+                # Only cache positive (allowed) results to Tiger Cache bitmaps
+                if self._tiger_cache and tenant_id:
+                    tiger_writes = 0
+                    # Group results by (subject, permission, resource_type) for efficient bulk updates
+                    tiger_updates: dict[
+                        tuple[str, str, str, str, str], set[int]
+                    ] = {}  # (subj_type, subj_id, perm, res_type, tenant) -> set of int_ids
+
+                    for check in cache_misses:
+                        subject, permission, obj = check
+                        key = (subject[0], subject[1], permission, obj[0], obj[1])
+                        result = rust_results_dict.get(key, False)
+
+                        if result:  # Only cache positive results
+                            try:
+                                # Get or create integer ID for the resource
+                                resource_int_id = (
+                                    self._tiger_cache._resource_map.get_or_create_int_id(
+                                        obj[0], obj[1], tenant_id
+                                    )
+                                )
+                                if resource_int_id > 0:
+                                    # Group by (subject, permission, resource_type) for bulk add
+                                    group_key = (
+                                        subject[0],
+                                        subject[1],
+                                        permission,
+                                        obj[0],
+                                        tenant_id,
+                                    )
+                                    if group_key not in tiger_updates:
+                                        tiger_updates[group_key] = set()
+                                    tiger_updates[group_key].add(resource_int_id)
+                                    tiger_writes += 1
+                            except Exception as e:
+                                logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
+
+                    # Bulk add to Tiger Cache bitmaps
+                    for group_key, int_ids in tiger_updates.items():
+                        subj_type, subj_id, perm, res_type, tid = group_key
+                        self._tiger_cache.add_to_bitmap_bulk(
+                            subject_type=subj_type,
+                            subject_id=subj_id,
+                            permission=perm,
+                            resource_type=res_type,
+                            tenant_id=tid,
+                            resource_int_ids=int_ids,
+                        )
+
+                    if tiger_writes > 0:
+                        logger.debug(
+                            f"[TIGER] Write-through: {tiger_writes} positive results "
+                            f"to {len(tiger_updates)} Tiger Cache bitmaps"
+                        )
+
                 rust_success = True
                 logger.warning(
                     f"✅ [BULK-DEBUG] Rust acceleration successful for {len(cache_misses)} checks"
@@ -2749,6 +2896,58 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 if consistency == ConsistencyLevel.EVENTUAL:
                     self._cache_check_result(
                         subject_entity, permission, obj_entity, result, tenant_id
+                    )
+
+            # Write-through to Tiger Cache after Python fallback (Issue #935)
+            # Collect all positive results and bulk update Tiger Cache
+            if self._tiger_cache and tenant_id:
+                tiger_writes = 0
+                tiger_updates: dict[
+                    tuple[str, str, str, str, str], set[int]
+                ] = {}  # (subj_type, subj_id, perm, res_type, tenant) -> set of int_ids
+
+                for check in cache_misses:
+                    subject, permission, obj = check
+                    result = results.get(check, False)
+
+                    if result:  # Only cache positive results
+                        try:
+                            resource_int_id = (
+                                self._tiger_cache._resource_map.get_or_create_int_id(
+                                    obj[0], obj[1], tenant_id
+                                )
+                            )
+                            if resource_int_id > 0:
+                                group_key = (
+                                    subject[0],
+                                    subject[1],
+                                    permission,
+                                    obj[0],
+                                    tenant_id,
+                                )
+                                if group_key not in tiger_updates:
+                                    tiger_updates[group_key] = set()
+                                tiger_updates[group_key].add(resource_int_id)
+                                tiger_writes += 1
+                        except Exception as e:
+                            logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
+
+                # Bulk add to Tiger Cache bitmaps
+                for group_key, int_ids in tiger_updates.items():
+                    subj_type, subj_id, perm, res_type, tid = group_key
+                    self._tiger_cache.add_to_bitmap_bulk(
+                        subject_type=subj_type,
+                        subject_id=subj_id,
+                        permission=perm,
+                        resource_type=res_type,
+                        tenant_id=tid,
+                        resource_int_ids=int_ids,
+                    )
+
+                if tiger_writes > 0:
+                    logger.debug(
+                        f"[TIGER] Write-through (Python path): {tiger_writes} positive results "
+                        f"to {len(tiger_updates)} Tiger Cache bitmaps"
                     )
 
         # Report actual cache statistics

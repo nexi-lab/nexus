@@ -963,6 +963,161 @@ class TigerCache:
         with self._lock:
             self._cache.clear()
 
+    def add_to_bitmap(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        tenant_id: str,
+        resource_int_id: int,
+    ) -> bool:
+        """Add a single resource to subject's permission bitmap (write-through).
+
+        This method enables incremental Tiger Cache population after permission
+        checks. Instead of recomputing entire bitmaps, we add individual resources
+        as they are confirmed accessible.
+
+        Args:
+            subject_type: Type of subject (e.g., "user", "agent")
+            subject_id: ID of subject
+            permission: Permission type (e.g., "read", "write")
+            resource_type: Type of resource (e.g., "file")
+            tenant_id: Tenant ID
+            resource_int_id: Integer ID of the resource to add
+
+        Returns:
+            True if added successfully, False otherwise
+
+        Note:
+            This is a write-through operation that updates both in-memory
+            cache and database. Thread-safe via RLock.
+        """
+        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+
+        with self._lock:
+            if key in self._cache:
+                bitmap, revision, cached_at = self._cache[key]
+                # Check if already in bitmap (avoid unnecessary updates)
+                if resource_int_id in bitmap:
+                    return True
+                # Add to bitmap
+                bitmap.add(resource_int_id)
+                self._cache[key] = (bitmap, revision, time.time())
+                logger.debug(
+                    f"[TIGER] Added resource {resource_int_id} to bitmap for {key} "
+                    f"(now {len(bitmap)} resources)"
+                )
+                return True
+            else:
+                # Create new bitmap with this single resource
+                bitmap = RoaringBitmap([resource_int_id])
+                self._evict_if_needed()
+                self._cache[key] = (bitmap, 0, time.time())
+                logger.debug(
+                    f"[TIGER] Created new bitmap for {key} with resource {resource_int_id}"
+                )
+                return True
+
+    def remove_from_bitmap(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        tenant_id: str,
+        resource_int_id: int,
+    ) -> bool:
+        """Remove a resource from subject's permission bitmap (write-through).
+
+        This method enables incremental Tiger Cache updates when permissions
+        are revoked. Critical for security - revocations must propagate immediately.
+
+        Args:
+            subject_type: Type of subject (e.g., "user", "agent")
+            subject_id: ID of subject
+            permission: Permission type (e.g., "read", "write")
+            resource_type: Type of resource (e.g., "file")
+            tenant_id: Tenant ID
+            resource_int_id: Integer ID of the resource to remove
+
+        Returns:
+            True if removed successfully, False if not in cache
+
+        Note:
+            This is a write-through operation. For security, revocations
+            should also invalidate L1 cache entries.
+        """
+        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+
+        with self._lock:
+            if key in self._cache:
+                bitmap, revision, _ = self._cache[key]
+                # Check if in bitmap
+                if resource_int_id not in bitmap:
+                    return True  # Already not present
+                # Remove from bitmap
+                bitmap.discard(resource_int_id)
+                self._cache[key] = (bitmap, revision, time.time())
+                logger.debug(
+                    f"[TIGER] Removed resource {resource_int_id} from bitmap for {key} "
+                    f"(now {len(bitmap)} resources)"
+                )
+                return True
+            else:
+                # Not in cache, nothing to remove
+                return False
+
+    def add_to_bitmap_bulk(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        tenant_id: str,
+        resource_int_ids: set[int],
+    ) -> int:
+        """Add multiple resources to subject's permission bitmap in bulk.
+
+        More efficient than calling add_to_bitmap() repeatedly when
+        adding multiple resources at once.
+
+        Args:
+            subject_type: Type of subject
+            subject_id: ID of subject
+            permission: Permission type
+            resource_type: Type of resource
+            tenant_id: Tenant ID
+            resource_int_ids: Set of integer resource IDs to add
+
+        Returns:
+            Number of resources actually added (excludes already present)
+        """
+        if not resource_int_ids:
+            return 0
+
+        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+
+        with self._lock:
+            if key in self._cache:
+                bitmap, revision, _ = self._cache[key]
+                original_size = len(bitmap)
+                bitmap.update(resource_int_ids)
+                added = len(bitmap) - original_size
+                self._cache[key] = (bitmap, revision, time.time())
+            else:
+                bitmap = RoaringBitmap(resource_int_ids)
+                self._evict_if_needed()
+                self._cache[key] = (bitmap, 0, time.time())
+                added = len(resource_int_ids)
+
+            if added > 0:
+                logger.debug(
+                    f"[TIGER] Bulk added {added} resources to bitmap for {key} "
+                    f"(now {len(bitmap)} resources)"
+                )
+            return added
+
 
 class TigerCacheUpdater:
     """Background worker for updating Tiger Cache from changelog.

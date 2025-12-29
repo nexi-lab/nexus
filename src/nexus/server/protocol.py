@@ -424,6 +424,14 @@ class GrepParams:
 
 
 @dataclass
+class SemanticSearchIndexParams:
+    """Parameters for semantic_search_index() method (Issue #947)."""
+
+    path: str = "/"
+    recursive: bool = True
+
+
+@dataclass
 class MkdirParams:
     """Parameters for mkdir() method."""
 
@@ -1829,6 +1837,8 @@ METHOD_PARAMS = {
     "ace_create_playbook": AceCreatePlaybookParams,
     "ace_get_playbook": AceGetPlaybookParams,
     "ace_query_playbooks": AceQueryPlaybooksParams,
+    # Semantic search methods (Issue #947)
+    "semantic_search_index": SemanticSearchIndexParams,
 }
 
 

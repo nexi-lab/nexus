@@ -1438,8 +1438,8 @@ class ReBACManager:
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.debug(
-            f"update_object_path called: old_path={old_path}, new_path={new_path}, is_directory={is_directory}"
+        logger.info(
+            f"update_object_path: {old_path} -> {new_path}, object_type={object_type}, is_directory={is_directory}"
         )
 
         with self._connection() as conn:
@@ -1485,7 +1485,7 @@ class ReBACManager:
                 )
 
             rows = cursor.fetchall()
-            logger.debug(f"STEP 1: Found {len(rows)} tuples with object_id to update")
+            logger.debug(f"update_object_path: Found {len(rows)} tuples with object_id to update")
 
             if rows:
                 # PERF: Batch UPDATE with CASE statement (Issue #590)
@@ -1534,7 +1534,7 @@ class ReBACManager:
                         (new_path, object_type, old_path, now_iso),
                     )
 
-                logger.debug(f"STEP 1: Batch updated {cursor.rowcount} tuples")
+                logger.debug(f"update_object_path: Batch UPDATE affected {cursor.rowcount} rows")
 
                 # PERF: Batch INSERT changelog entries
                 changelog_entries = []
@@ -1589,6 +1589,20 @@ class ReBACManager:
                     self._invalidate_cache_for_tuple(
                         subject, relation, old_obj, tenant_id, subject_relation, conn=conn
                     )
+
+                    # BUG FIX (Issue #XXX): Also invalidate Tiger Cache for the subject
+                    # Tiger Cache stores materialized permissions - when a file is renamed,
+                    # the cached permissions for the subject are stale and must be invalidated
+                    if hasattr(self, "tiger_invalidate_cache"):
+                        try:
+                            self.tiger_invalidate_cache(
+                                subject=(subject.entity_type, subject.entity_id),
+                                resource_type=old_obj.entity_type,
+                                tenant_id=tenant_id or "default",
+                            )
+                        except Exception as e:
+                            logger.warning(f"Tiger Cache invalidation failed during rename: {e}")
+
                     self._invalidate_cache_for_tuple(
                         subject, relation, new_obj, tenant_id, subject_relation, conn=conn
                     )
@@ -1635,7 +1649,7 @@ class ReBACManager:
                 )
 
             subject_rows = cursor.fetchall()
-            logger.debug(f"STEP 2: Found {len(subject_rows)} tuples with subject_id to update")
+            logger.debug(f"update_object_path: Found {len(subject_rows)} tuples with subject_id to update")
 
             if subject_rows:
                 # PERF: Batch UPDATE with CASE statement (Issue #590)
@@ -1683,7 +1697,7 @@ class ReBACManager:
                         (new_path, object_type, old_path, now_iso),
                     )
 
-                logger.debug(f"STEP 2: Batch updated {cursor.rowcount} tuples")
+                logger.debug(f"update_object_path: Batch UPDATE (subject_id) affected {cursor.rowcount} rows")
 
                 # PERF: Batch INSERT changelog entries
                 changelog_entries = []
@@ -3875,6 +3889,9 @@ class ReBACManager:
         # Use "default" tenant if not specified
         effective_tenant_id = tenant_id if tenant_id is not None else "default"
 
+        import logging
+        logger = logging.getLogger(__name__)
+
         # Track write for adaptive TTL (Phase 4)
         if self._l1_cache:
             self._l1_cache.track_write(obj.entity_id)
@@ -3901,6 +3918,18 @@ class ReBACManager:
                 and subject.entity_type != "*"  # Not wildcard
                 and subject.entity_id != "*"
             )
+
+            # BUG FIX (Issue #XXX): ALWAYS invalidate L1 cache first, regardless of eager recompute
+            # The eager recompute only updates L2 (database) cache, but L1 (in-memory) cache
+            # will still have stale entries. We must invalidate L1 before any recomputation.
+            if self._l1_cache:
+                self._l1_cache.invalidate_subject_object_pair(
+                    subject.entity_type,
+                    subject.entity_id,
+                    obj.entity_type,
+                    obj.entity_id,
+                    tenant_id,
+                )
 
             if should_eager_recompute:
                 # Get the namespace to find which permissions this relation grants
@@ -3944,18 +3973,9 @@ class ReBACManager:
                             )
                             break
 
-            # If we didn't do eager recomputation, invalidate as usual
+            # If we didn't do eager recomputation, also invalidate L2 cache
+            # (L1 was already invalidated above)
             if not should_eager_recompute:
-                # L1 cache invalidation
-                if self._l1_cache:
-                    self._l1_cache.invalidate_subject_object_pair(
-                        subject.entity_type,
-                        subject.entity_id,
-                        obj.entity_type,
-                        obj.entity_id,
-                        tenant_id,
-                    )
-
                 # L2 cache invalidation
                 cursor.execute(
                     self._fix_sql_placeholders(

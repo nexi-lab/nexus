@@ -1181,6 +1181,7 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         "is_directory",
         "delta_read",  # Issue #869: Delta sync
         "delta_write",  # Issue #869: Delta sync
+        "semantic_search_index",  # Issue #947: HNSW tuning
     }
 
     # Try auto-dispatch first for exposed methods
@@ -1223,6 +1224,9 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await to_thread_with_timeout(_handle_delta_read, params, context)
     elif method == "delta_write":
         return await to_thread_with_timeout(_handle_delta_write, params, context)
+    # Semantic search methods (Issue #947)
+    elif method == "semantic_search_index":
+        return await _handle_semantic_search_index(params, context)
     # Admin API methods (v0.5.1)
     elif method == "admin_create_key":
         return await to_thread_with_timeout(_handle_admin_create_key, params, context)
@@ -1667,6 +1671,49 @@ def _handle_search(params: Any, context: Any) -> dict[str, Any]:
 
     results = nexus_fs.search(params.query, **kwargs)  # type: ignore[attr-defined]
     return {"results": results}
+
+
+async def _handle_semantic_search_index(params: Any, context: Any) -> dict[str, Any]:
+    """Handle semantic_search_index method (Issue #947).
+
+    Index documents for semantic search with embeddings.
+
+    Args:
+        params.path: Path to index (file or directory, default: "/")
+        params.recursive: If True, index directory recursively (default: True)
+        context: Operation context
+
+    Returns:
+        Dictionary mapping file paths to number of chunks indexed
+    """
+    nexus_fs = _app_state.nexus_fs
+    assert nexus_fs is not None
+
+    path = getattr(params, "path", "/")
+    recursive = getattr(params, "recursive", True)
+
+    # Check if semantic search is initialized
+    if not hasattr(nexus_fs, "_semantic_search") or nexus_fs._semantic_search is None:
+        # Try to initialize semantic search
+        try:
+            await nexus_fs.initialize_semantic_search()
+        except Exception as e:
+            raise ValueError(
+                f"Semantic search is not initialized and could not be auto-initialized: {e}"
+            )
+
+    # Call the async indexing method
+    results = await nexus_fs.semantic_search_index(path=path, recursive=recursive)
+
+    # Calculate total chunks (handle case where values might be dicts or errors)
+    total_chunks = 0
+    for v in results.values():
+        if isinstance(v, int):
+            total_chunks += v
+        elif isinstance(v, dict) and "chunks" in v:
+            total_chunks += v["chunks"]
+
+    return {"indexed": results, "total_files": len(results), "total_chunks": total_chunks}
 
 
 def _handle_is_directory(params: Any, context: Any) -> dict[str, Any]:

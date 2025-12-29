@@ -34,6 +34,7 @@ from nexus.storage.cache import _CACHE_MISS, MetadataCache
 from nexus.storage.models import (
     Base,
     ContentCacheModel,
+    DirectoryEntryModel,
     FileMetadataModel,
     FilePathModel,
     VersionHistoryModel,
@@ -755,6 +756,11 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             version_entry.validate()
                             session.add(version_entry)
 
+                    # Update directory index (Issue #924)
+                    self._update_directory_index(
+                        session, metadata.path, metadata.tenant_id, is_directory=False
+                    )
+
                     session.commit()
 
                 # Invalidate cache for this path
@@ -840,7 +846,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
                                 old.size_bytes AS size_bytes,
                                 old.current_version AS version,
                                 old.backend_id AS backend_id,
-                                old.physical_path AS physical_path
+                                old.physical_path AS physical_path,
+                                old.tenant_id AS tenant_id
                         """),
                         {"path": path, "deleted_at": deleted_at},
                     )
@@ -854,7 +861,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             "backend_id": row.backend_id,
                             "physical_path": row.physical_path,
                             "deleted_at": deleted_at,
+                            "tenant_id": row.tenant_id,
                         }
+                        # Remove from directory index (Issue #924)
+                        self._remove_from_directory_index(session, path, row.tenant_id)
                     session.commit()
                 else:
                     # SQLite / older PostgreSQL: SELECT then UPDATE
@@ -873,7 +883,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             "backend_id": file_path.backend_id,
                             "physical_path": file_path.physical_path,
                             "deleted_at": deleted_at,
+                            "tenant_id": file_path.tenant_id,
                         }
+                        # Remove from directory index (Issue #924)
+                        self._remove_from_directory_index(session, path, file_path.tenant_id)
                         # Soft delete
                         file_path.deleted_at = deleted_at
                         session.commit()
@@ -934,6 +947,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     file_path.updated_at = datetime.now(UTC)
 
                 # If it's a directory, update all child paths
+                children: list[Any] = []
                 if is_directory:
                     # Find all children (files with paths starting with old_path/)
                     dir_prefix = old_path.rstrip("/") + "/"
@@ -941,7 +955,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         FilePathModel.virtual_path.startswith(dir_prefix),
                         FilePathModel.deleted_at.is_(None),
                     )
-                    children = session.scalars(stmt_children).all()
+                    children = list(session.scalars(stmt_children).all())
 
                     # Update each child's path
                     for child in children:
@@ -949,6 +963,18 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         relative_path = child.virtual_path[len(old_path) :]
                         child.virtual_path = new_path + relative_path
                         child.updated_at = datetime.now(UTC)
+
+                # Update directory index (Issue #924)
+                # Get tenant_id from file_path (file rename) or first child (directory rename)
+                tenant_id: str | None = None
+                if file_path:
+                    tenant_id = file_path.tenant_id
+                elif is_directory and children:
+                    tenant_id = children[0].tenant_id
+
+                self._rename_in_directory_index(
+                    session, old_path, new_path, tenant_id, is_directory=is_directory
+                )
 
                 session.commit()
 
@@ -1620,9 +1646,19 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 )
 
                 deleted_paths: list[str] = []
+                # Group paths by tenant_id for directory index update (Issue #924)
+                paths_by_tenant: dict[str | None, list[str]] = {}
                 for file_path in session.scalars(stmt):
                     file_path.deleted_at = datetime.now(UTC)
                     deleted_paths.append(file_path.virtual_path)
+                    # Group by tenant_id
+                    if file_path.tenant_id not in paths_by_tenant:
+                        paths_by_tenant[file_path.tenant_id] = []
+                    paths_by_tenant[file_path.tenant_id].append(file_path.virtual_path)
+
+                # Remove from directory index (Issue #924)
+                for tenant_id, tenant_paths in paths_by_tenant.items():
+                    self._remove_from_directory_index_batch(session, tenant_paths, tenant_id)
 
                 session.commit()
 
@@ -1794,6 +1830,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     # Bulk insert version history - SINGLE INSERT statement
                     if version_mappings:
                         session.bulk_insert_mappings(VersionHistoryModel, version_mappings)  # type: ignore[arg-type]
+
+                # Update directory index for all files (Issue #924)
+                self._update_directory_index_batch(session, metadata_list)
 
                 session.commit()
 
@@ -2347,6 +2386,349 @@ class SQLAlchemyMetadataStore(MetadataStore):
         """
         with self.SessionLocal() as session:
             return VersionManager.get_version_diff(session, path, v1, v2)
+
+    # =========================================================================
+    # Directory Index Methods (Issue #924)
+    # =========================================================================
+
+    def _update_directory_index(
+        self,
+        session: Any,
+        path: str,
+        tenant_id: str | None,
+        is_directory: bool = False,
+    ) -> None:
+        """Add file/directory and all parent directories to the directory index.
+
+        Called by put() to maintain the sparse directory index.
+
+        Args:
+            session: SQLAlchemy session
+            path: Virtual path (e.g., "/workspace/src/file.txt")
+            tenant_id: Tenant ID for multi-tenant isolation
+            is_directory: True if path is a directory, False if file
+        """
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        # Normalize path - remove trailing slash for files
+        path = path.rstrip("/") if not is_directory else path.rstrip("/") + "/"
+
+        # Parse path into components
+        # e.g., "/workspace/src/file.txt" -> ["workspace", "src", "file.txt"]
+        parts = path.strip("/").split("/")
+        if not parts or parts == [""]:
+            return  # Root path, nothing to index
+
+        entries_to_upsert: list[dict[str, Any]] = []
+
+        # Build entries for each level of the path
+        for depth in range(len(parts)):
+            if depth == 0:
+                parent_path = "/"
+            else:
+                parent_path = "/" + "/".join(parts[:depth]) + "/"
+
+            entry_name = parts[depth]
+            entry_type = "file" if depth == len(parts) - 1 and not is_directory else "directory"
+
+            entries_to_upsert.append(
+                {
+                    "tenant_id": tenant_id,
+                    "parent_path": parent_path,
+                    "entry_name": entry_name,
+                    "entry_type": entry_type,
+                }
+            )
+
+        # Upsert all entries (INSERT ... ON CONFLICT DO UPDATE)
+        if self.db_type == "postgresql":
+            for entry in entries_to_upsert:
+                stmt = pg_insert(DirectoryEntryModel).values(**entry)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["tenant_id", "parent_path", "entry_name"],
+                    set_={"entry_type": entry["entry_type"], "updated_at": datetime.now(UTC)},
+                )
+                session.execute(stmt)
+        else:
+            # SQLite uses INSERT OR REPLACE
+            for entry in entries_to_upsert:
+                stmt = sqlite_insert(DirectoryEntryModel).values(**entry)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["tenant_id", "parent_path", "entry_name"],
+                    set_={"entry_type": entry["entry_type"], "updated_at": datetime.now(UTC)},
+                )
+                session.execute(stmt)
+
+    def _update_directory_index_batch(
+        self,
+        session: Any,
+        metadata_list: Sequence[FileMetadata],
+    ) -> None:
+        """Bulk update directory index for multiple files.
+
+        Optimized for put_batch() - collects all entries and performs bulk upsert.
+
+        Args:
+            session: SQLAlchemy session
+            metadata_list: List of file metadata being written
+        """
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        # Collect all unique entries across all paths
+        entries_map: dict[tuple[str | None, str, str], dict[str, Any]] = {}
+
+        for metadata in metadata_list:
+            path = metadata.path.rstrip("/")
+            tenant_id = metadata.tenant_id
+            parts = path.strip("/").split("/")
+
+            if not parts or parts == [""]:
+                continue
+
+            for depth in range(len(parts)):
+                if depth == 0:
+                    parent_path = "/"
+                else:
+                    parent_path = "/" + "/".join(parts[:depth]) + "/"
+
+                entry_name = parts[depth]
+                entry_type = "file" if depth == len(parts) - 1 else "directory"
+
+                key = (tenant_id, parent_path, entry_name)
+                # Only update if not already set, or if this is a file (takes precedence)
+                if key not in entries_map or entry_type == "file":
+                    entries_map[key] = {
+                        "tenant_id": tenant_id,
+                        "parent_path": parent_path,
+                        "entry_name": entry_name,
+                        "entry_type": entry_type,
+                    }
+
+        if not entries_map:
+            return
+
+        # Bulk upsert all entries
+        entries = list(entries_map.values())
+
+        if self.db_type == "postgresql":
+            for entry in entries:
+                stmt = pg_insert(DirectoryEntryModel).values(**entry)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["tenant_id", "parent_path", "entry_name"],
+                    set_={"entry_type": entry["entry_type"], "updated_at": datetime.now(UTC)},
+                )
+                session.execute(stmt)
+        else:
+            for entry in entries:
+                stmt = sqlite_insert(DirectoryEntryModel).values(**entry)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["tenant_id", "parent_path", "entry_name"],
+                    set_={"entry_type": entry["entry_type"], "updated_at": datetime.now(UTC)},
+                )
+                session.execute(stmt)
+
+    def _remove_from_directory_index(
+        self,
+        session: Any,
+        path: str,
+        tenant_id: str | None,
+    ) -> None:
+        """Remove a file entry from the directory index.
+
+        Called by delete(). Only removes the file entry, not parent directories
+        (they may still have other children).
+
+        Args:
+            session: SQLAlchemy session
+            path: Virtual path of file being deleted
+            tenant_id: Tenant ID for multi-tenant isolation
+        """
+        path = path.rstrip("/")
+        parts = path.strip("/").split("/")
+
+        if not parts or parts == [""]:
+            return
+
+        # Get parent path and entry name
+        if len(parts) == 1:
+            parent_path = "/"
+        else:
+            parent_path = "/" + "/".join(parts[:-1]) + "/"
+
+        entry_name = parts[-1]
+
+        # Delete the file entry
+        session.execute(
+            select(DirectoryEntryModel)
+            .where(
+                DirectoryEntryModel.tenant_id == tenant_id,
+                DirectoryEntryModel.parent_path == parent_path,
+                DirectoryEntryModel.entry_name == entry_name,
+                DirectoryEntryModel.entry_type == "file",
+            )
+        )
+        session.query(DirectoryEntryModel).filter(
+            DirectoryEntryModel.tenant_id == tenant_id,
+            DirectoryEntryModel.parent_path == parent_path,
+            DirectoryEntryModel.entry_name == entry_name,
+            DirectoryEntryModel.entry_type == "file",
+        ).delete(synchronize_session=False)
+
+    def _remove_from_directory_index_batch(
+        self,
+        session: Any,
+        paths: Sequence[str],
+        tenant_id: str | None,
+    ) -> None:
+        """Bulk remove file entries from directory index.
+
+        Called by delete_batch().
+
+        Args:
+            session: SQLAlchemy session
+            paths: List of virtual paths being deleted
+            tenant_id: Tenant ID for multi-tenant isolation
+        """
+        if not paths:
+            return
+
+        # Collect all (parent_path, entry_name) pairs to delete
+        entries_to_delete: list[tuple[str, str]] = []
+
+        for path in paths:
+            path = path.rstrip("/")
+            parts = path.strip("/").split("/")
+
+            if not parts or parts == [""]:
+                continue
+
+            if len(parts) == 1:
+                parent_path = "/"
+            else:
+                parent_path = "/" + "/".join(parts[:-1]) + "/"
+
+            entry_name = parts[-1]
+            entries_to_delete.append((parent_path, entry_name))
+
+        if not entries_to_delete:
+            return
+
+        # Delete all file entries in a single query using OR conditions
+        from sqlalchemy import or_, and_
+
+        conditions = [
+            and_(
+                DirectoryEntryModel.parent_path == parent_path,
+                DirectoryEntryModel.entry_name == entry_name,
+            )
+            for parent_path, entry_name in entries_to_delete
+        ]
+
+        session.query(DirectoryEntryModel).filter(
+            DirectoryEntryModel.tenant_id == tenant_id,
+            DirectoryEntryModel.entry_type == "file",
+            or_(*conditions),
+        ).delete(synchronize_session=False)
+
+    def _rename_in_directory_index(
+        self,
+        session: Any,
+        old_path: str,
+        new_path: str,
+        tenant_id: str | None,
+        is_directory: bool = False,
+    ) -> None:
+        """Update directory index when a file or directory is renamed.
+
+        Called by rename_path(). Removes old entries and adds new entries.
+
+        Args:
+            session: SQLAlchemy session
+            old_path: Original virtual path
+            new_path: New virtual path
+            tenant_id: Tenant ID for multi-tenant isolation
+            is_directory: True if renaming a directory
+        """
+        if is_directory:
+            # For directories, we need to update all entries under the old path
+            old_prefix = old_path.rstrip("/") + "/"
+            new_prefix = new_path.rstrip("/") + "/"
+
+            # Find all entries with parent_path starting with old_prefix
+            entries = (
+                session.query(DirectoryEntryModel)
+                .filter(
+                    DirectoryEntryModel.tenant_id == tenant_id,
+                    DirectoryEntryModel.parent_path.like(f"{old_prefix}%"),
+                )
+                .all()
+            )
+
+            # Update parent_path for each entry
+            for entry in entries:
+                new_parent = new_prefix + entry.parent_path[len(old_prefix) :]
+                entry.parent_path = new_parent
+
+            # Also update the directory entry itself in its parent
+            self._remove_from_directory_index(session, old_path, tenant_id)
+            self._update_directory_index(session, new_path, tenant_id, is_directory=True)
+        else:
+            # For files, just remove old and add new
+            self._remove_from_directory_index(session, old_path, tenant_id)
+            self._update_directory_index(session, new_path, tenant_id, is_directory=False)
+
+    def list_directory_entries(
+        self,
+        parent_path: str,
+        tenant_id: str | None = None,
+    ) -> builtins.list[dict[str, Any]] | None:
+        """List directory entries using the sparse index (O(1) lookup).
+
+        Returns None if no index entries exist for this path (triggers fallback).
+
+        Args:
+            parent_path: Directory path to list (must end with "/")
+            tenant_id: Tenant ID for multi-tenant isolation
+
+        Returns:
+            List of entry dicts with name, type, or None if no index data
+        """
+        # Normalize parent_path
+        if not parent_path.endswith("/"):
+            parent_path = parent_path + "/"
+
+        try:
+            with self.SessionLocal() as session:
+                # Check if we have any entries for this path
+                stmt = (
+                    select(DirectoryEntryModel)
+                    .where(
+                        DirectoryEntryModel.tenant_id == tenant_id,
+                        DirectoryEntryModel.parent_path == parent_path,
+                    )
+                    .order_by(DirectoryEntryModel.entry_name)
+                )
+
+                entries = session.scalars(stmt).all()
+
+                if not entries:
+                    # No index data - return None to trigger fallback
+                    return None
+
+                return [
+                    {
+                        "name": entry.entry_name,
+                        "type": entry.entry_type,
+                        "created_at": entry.created_at,
+                        "updated_at": entry.updated_at,
+                    }
+                    for entry in entries
+                ]
+        except Exception as e:
+            logger.warning(f"Failed to query directory index: {e}")
+            return None  # Fallback to LIKE query
 
     def __enter__(self) -> SQLAlchemyMetadataStore:
         """Context manager entry."""

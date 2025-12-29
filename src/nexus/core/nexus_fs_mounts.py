@@ -100,14 +100,19 @@ class NexusFSMountsMixin:
             logger.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
 
         # Grant direct_owner permission
-        if not context or not hasattr(context, "subject_id") or not context.subject_id:
-            logger.warning("[MOUNT-PERM] Skipping permission grant - no context or subject_id")
+        if not context:
+            logger.warning("[MOUNT-PERM] Skipping permission grant - no context")
             return
 
         try:
             # Get tenant and subject info from context
             tenant_id = get_tenant_id(context)
             subject_type, subject_id = get_user_identity(context)
+
+            # Check if we got a valid subject_id
+            if not subject_id:
+                logger.warning("[MOUNT-PERM] Skipping permission grant - no subject_id in context")
+                return
 
             # Create permission tuple using rebac_create method
             if hasattr(self, "rebac_create") and subject_id:
@@ -520,8 +525,14 @@ class NexusFSMountsMixin:
         ]
 
     @rpc_expose(description="List all backend mounts")
-    def list_mounts(self) -> list[dict[str, Any]]:
-        """List all active backend mounts.
+    def list_mounts(self, context: OperationContext | None = None) -> list[dict[str, Any]]:
+        """List all active backend mounts that the user has permission to access.
+
+        Automatically filters mounts based on the user's permissions. Only mounts
+        where the user has read access (viewer or direct_owner) are returned.
+
+        Args:
+            context: Operation context (automatically provided by RPC server)
 
         Returns:
             List of mount info dictionaries, each containing:
@@ -531,20 +542,91 @@ class NexusFSMountsMixin:
                 - backend_type: Backend type name (str)
 
         Examples:
-            >>> # List all mounts
+            >>> # List all mounts I have access to
             >>> for mount in nx.list_mounts():
             ...     print(f"{mount['mount_point']} (priority={mount['priority']})")
         """
         mounts = []
-        for mount_info in self.router.list_mounts():
-            mounts.append(
-                {
-                    "mount_point": mount_info.mount_point,
-                    "priority": mount_info.priority,
-                    "readonly": mount_info.readonly,
-                    "backend_type": type(mount_info.backend).__name__,
-                }
+
+        # Log context details for debugging
+        logger.info(f"[LIST_MOUNTS] Called with context: {context}")
+        if context:
+            logger.info(f"[LIST_MOUNTS] Context type: {type(context)}")
+            logger.info(f"[LIST_MOUNTS] Context attributes: {dir(context)}")
+            subject_type, subject_id = get_user_identity(context)
+            tenant_id = get_tenant_id(context)
+            logger.info(
+                f"[LIST_MOUNTS] Extracted: subject={subject_type}:{subject_id}, tenant={tenant_id}"
             )
+
+        router_mounts = list(self.router.list_mounts())
+        logger.info(f"[LIST_MOUNTS] Total mounts in router: {len(router_mounts)}")
+        for mi in router_mounts:
+            logger.info(f"[LIST_MOUNTS] Router mount: {mi.mount_point}")
+
+        for mount_info in router_mounts:
+            # Filter by permission - only include mounts the user can access
+            mount_point = mount_info.mount_point
+            logger.info(f"[LIST_MOUNTS] Checking mount: {mount_point}")
+
+            # Check if user has permission to access this mount
+            has_permission = False
+            if context and hasattr(self, "rebac_check"):
+                try:
+                    subject_type, subject_id = get_user_identity(context)
+                    tenant_id = get_tenant_id(context)
+
+                    logger.info(
+                        f"[LIST_MOUNTS] Checking permission for {subject_type}:{subject_id} "
+                        f"on {mount_point} (tenant={tenant_id})"
+                    )
+
+                    # Admin users can see all mounts
+                    is_admin = getattr(context, "is_admin", False)
+                    if is_admin:
+                        has_permission = True
+                        logger.info(
+                            f"[LIST_MOUNTS] Admin user {subject_type}:{subject_id} - granting access to {mount_point}"
+                        )
+                    elif subject_id:
+                        # Check if user has read permission (includes owner, editor, viewer)
+                        # This will match anyone with direct_owner, direct_editor, or direct_viewer
+                        has_permission = self.rebac_check(
+                            subject=(subject_type, subject_id),
+                            permission="read",
+                            object=("file", mount_point),
+                            tenant_id=tenant_id,
+                        )
+                        logger.info(
+                            f"[LIST_MOUNTS] Permission check result for {subject_type}:{subject_id} "
+                            f"on {mount_point}: {has_permission}"
+                        )
+                    else:
+                        logger.warning(f"[LIST_MOUNTS] No subject_id in context for {mount_point}")
+                except Exception as e:
+                    # If permission check fails, exclude this mount for safety
+                    logger.error(
+                        f"[LIST_MOUNTS] Permission check failed for {mount_point}: {e}",
+                        exc_info=True,
+                    )
+                    has_permission = False
+            else:
+                # No context or no ReBAC - include all mounts (backward compatibility)
+                # This happens in local/testing scenarios without auth
+                logger.info(f"[LIST_MOUNTS] No context or no rebac_check - allowing {mount_point}")
+                has_permission = True
+
+            # Only include mounts the user has permission to access
+            if has_permission:
+                mounts.append(
+                    {
+                        "mount_point": mount_info.mount_point,
+                        "priority": mount_info.priority,
+                        "readonly": mount_info.readonly,
+                        "backend_type": type(mount_info.backend).__name__,
+                    }
+                )
+
         return mounts
 
     @rpc_expose(description="Get mount details")
@@ -646,6 +728,18 @@ class NexusFSMountsMixin:
                 "Mount manager not available. Ensure NexusFS is initialized with a database."
             )
 
+        # Auto-populate owner_user_id and tenant_id from context if not provided
+        if owner_user_id is None and context:
+            subject_type, subject_id = get_user_identity(context)
+            if subject_id:
+                owner_user_id = f"{subject_type}:{subject_id}"
+                logger.info(f"[SAVE_MOUNT] Auto-populated owner_user_id: {owner_user_id}")
+
+        if tenant_id is None and context:
+            tenant_id = get_tenant_id(context)
+            if tenant_id:
+                logger.info(f"[SAVE_MOUNT] Auto-populated tenant_id: {tenant_id}")
+
         mount_id = self.mount_manager.save_mount(
             mount_point=mount_point,
             backend_type=backend_type,
@@ -668,31 +762,52 @@ class NexusFSMountsMixin:
 
     @rpc_expose(description="List saved mount configurations")
     def list_saved_mounts(
-        self, owner_user_id: str | None = None, tenant_id: str | None = None
+        self,
+        owner_user_id: str | None = None,
+        tenant_id: str | None = None,
+        context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """List mount configurations saved in the database.
 
+        Automatically filters by the current user's context (subject_id and tenant_id)
+        unless explicit filter parameters are provided. This ensures users can only
+        see their own mounts and mounts from their tenant.
+
         Args:
-            owner_user_id: Filter by owner user ID (optional)
-            tenant_id: Filter by tenant ID (optional)
+            owner_user_id: Filter by owner user ID (optional, defaults to current user)
+            tenant_id: Filter by tenant ID (optional, defaults to current tenant)
+            context: Operation context (automatically provided by RPC server)
 
         Returns:
-            List of saved mount configurations
+            List of saved mount configurations owned by the user or in their tenant
 
         Raises:
             RuntimeError: If mount manager is not available
 
         Examples:
-            >>> # List all saved mounts
+            >>> # List my saved mounts (automatically filtered)
             >>> mounts = nx.list_saved_mounts()
 
-            >>> # List mounts for specific user
-            >>> alice_mounts = nx.list_saved_mounts(owner_user_id="google:alice123")
+            >>> # List all mounts in my tenant
+            >>> tenant_mounts = nx.list_saved_mounts(owner_user_id=None)
         """
         if not hasattr(self, "mount_manager") or self.mount_manager is None:
             raise RuntimeError(
                 "Mount manager not available. Ensure NexusFS is initialized with a database."
             )
+
+        # Auto-populate filters from context if not explicitly provided
+        # This ensures users can only see their own mounts by default
+        if owner_user_id is None and context:
+            subject_type, subject_id = get_user_identity(context)
+            if subject_id:
+                owner_user_id = f"{subject_type}:{subject_id}"
+                logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by owner: {owner_user_id}")
+
+        if tenant_id is None and context:
+            tenant_id = get_tenant_id(context)
+            if tenant_id:
+                logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by tenant: {tenant_id}")
 
         return self.mount_manager.list_mounts(owner_user_id=owner_user_id, tenant_id=tenant_id)
 

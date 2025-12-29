@@ -1235,13 +1235,24 @@ class TigerCacheUpdater:
             )
 
         # Get pending entries
-        select_query = text(f"""
-            SELECT queue_id, subject_type, subject_id, permission, resource_type, tenant_id
-            FROM tiger_cache_queue
-            WHERE status = 'pending'
-            ORDER BY priority, created_at
-            LIMIT {batch_size}
-        """)
+        # Use FOR UPDATE SKIP LOCKED on PostgreSQL to avoid deadlocks
+        if self._is_postgresql:
+            select_query = text(f"""
+                SELECT queue_id, subject_type, subject_id, permission, resource_type, tenant_id
+                FROM tiger_cache_queue
+                WHERE status = 'pending'
+                ORDER BY priority, created_at
+                LIMIT {batch_size}
+                FOR UPDATE SKIP LOCKED
+            """)
+        else:
+            select_query = text(f"""
+                SELECT queue_id, subject_type, subject_id, permission, resource_type, tenant_id
+                FROM tiger_cache_queue
+                WHERE status = 'pending'
+                ORDER BY priority, created_at
+                LIMIT {batch_size}
+            """)
 
         def do_process(connection: Connection) -> int:
             processed = 0

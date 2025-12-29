@@ -119,6 +119,16 @@ class SQLAlchemyMetadataStore(MetadataStore):
         engine_kwargs = self._get_engine_config()
         self.engine = create_engine(self.database_url, **engine_kwargs)
 
+        # Set SQLite busy timeout on every connection to handle concurrent access
+        if self.db_type == "sqlite":
+
+            @event.listens_for(self.engine, "connect")
+            def set_sqlite_pragma(dbapi_conn: Any, _connection_record: Any) -> None:
+                cursor = dbapi_conn.cursor()
+                # Wait up to 30 seconds for locks instead of failing immediately
+                cursor.execute("PRAGMA busy_timeout=30000")
+                cursor.close()
+
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False)
 
         # Setup connection pool monitoring (enabled via environment variable)
@@ -399,6 +409,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
         """Apply database-specific performance optimizations."""
         if self.db_type == "sqlite":
             # Enable WAL mode for better concurrency and to avoid journal files
+            # Note: busy_timeout is set via event listener on every connection
             try:
                 with self.engine.connect() as conn:
                     conn.execute(text("PRAGMA journal_mode=WAL"))

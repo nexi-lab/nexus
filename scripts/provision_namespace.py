@@ -509,7 +509,7 @@ def load_env_file(env_file: str = ".env") -> dict:
 
 
 def ensure_admin_api_key(tenant_id: str = "default", env_file: str = ".env") -> str | None:
-    """Ensure admin API key exists, loading from .env.local or creating if needed.
+    """Ensure admin API key exists, loading from .env or creating if needed.
 
     Returns:
         API key string if found/created, None otherwise
@@ -697,7 +697,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Ensure admin API key exists (load from .env.local or create)
+    # Ensure admin API key exists (load from .env or create)
     print("\n" + "=" * 60)
     print("API Key Setup")
     print("=" * 60)

@@ -70,17 +70,17 @@ check_env_file() {
             ;;
         *)
             # Local development (default)
-            # Try .env.local first, then .env.example
-            if [ -f ".env.local" ]; then
-                ENV_FILE=".env.local"
+            # Try .env first, then .env.example
+            if [ -f ".env" ]; then
+                ENV_FILE=".env"
             elif [ -f ".env.example" ]; then
                 ENV_FILE=".env.example"
-                echo "⚠️  Using .env.example (no .env.local found)"
-                echo "   💡 Tip: Create .env.local for your personal config"
-                echo "   Run: cp .env.example .env.local"
+                echo "⚠️  Using .env.example (no .env found)"
+                echo "   💡 Tip: Create .env for your personal config"
+                echo "   Run: cp .env.example .env"
                 echo ""
             else
-                ENV_FILE=".env.local"
+                ENV_FILE=".env"
             fi
             ENV_SECRETS=""
             ;;
@@ -105,10 +105,10 @@ check_env_file() {
         else
             echo "❌ No environment file found!"
             echo ""
-            echo "To get started, create .env.local:"
-            echo "   cp .env.example .env.local"
+            echo "To get started, create .env:"
+            echo "   cp .env.example .env"
             echo ""
-            echo "Then edit .env.local and add your API keys:"
+            echo "Then edit .env and add your API keys:"
             echo "   - ANTHROPIC_API_KEY (required for LangGraph)"
             echo "   - OPENAI_API_KEY (optional, for LangGraph)"
             echo ""
@@ -778,7 +778,7 @@ case "$COMMAND" in
         echo "  --help, -h      Show this help message"
         echo ""
         echo "Environment Modes:"
-        echo "  local           Use .env.local and .env (default)"
+        echo "  local           Use .env or .env.example (default)"
         echo "  production      Use .env.production and .env.production.secrets"
         echo ""
         echo "Examples:"

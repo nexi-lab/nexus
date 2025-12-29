@@ -8,11 +8,12 @@ Architecture:
 - L2 Cache (database): rebac_check_cache table - 5-10ms lookup
 - L3 Compute: Graph traversal - 50-500ms
 
-Quantization (Issue #842):
-- Cache keys include a time bucket for distributed cache sharing
-- Multiple instances can independently generate the same key within a window
+Revision Quantization (Issue #909):
+- Cache keys include a revision bucket based on write operations
+- Multiple instances share cache entries within the same revision window
+- Replaces broken time-bucket approach from Issue #842
 - Based on SpiceDB/Google Zanzibar quantization approach
-- See: https://authzed.com/blog/how-caching-works-in-spicedb
+- See: https://authzed.com/blog/hotspot-caching-in-google-zanzibar-and-spicedb
 """
 
 import logging
@@ -55,7 +56,9 @@ class ReBACPermissionCache:
         denial_ttl_seconds: int = 60,
         enable_metrics: bool = True,
         enable_adaptive_ttl: bool = False,
-        quantization_interval: int = 5,
+        quantization_interval: int = 0,  # DEPRECATED: Use revision_quantization_window
+        revision_quantization_window: int = 10,
+        enable_revision_quantization: bool = True,
         ttl_jitter_percent: float = 0.2,
         refresh_ahead_factor: float = 0.7,
     ):
@@ -69,24 +72,45 @@ class ReBACPermissionCache:
                 Shorter TTL for denials ensures revoked access is reflected quickly (Issue #877)
             enable_metrics: Track hit rates and latency (default: True)
             enable_adaptive_ttl: Adjust TTL based on write frequency (default: False)
-            quantization_interval: Time bucket size in seconds for cache key quantization
-                (default: 5s). Enables distributed cache sharing. Set to 0 to disable.
+            quantization_interval: DEPRECATED - was broken (Issue #909). Ignored.
+            revision_quantization_window: Number of revisions per quantization bucket
+                (default: 10). Cache keys remain stable within a revision window.
+            enable_revision_quantization: Enable revision-based cache keys (default: True)
             ttl_jitter_percent: Jitter percentage for TTL (default: 0.2 = ±20%)
                 Prevents thundering herd by staggering cache expiry (Issue #932)
             refresh_ahead_factor: Refresh cache at this fraction of TTL (default: 0.7)
                 Triggers background refresh before expiry (Issue #932)
         """
+        # Deprecation warning for old parameter
+        if quantization_interval > 0:
+            import warnings
+
+            warnings.warn(
+                "quantization_interval is deprecated and was broken (Issue #909). "
+                "Use revision_quantization_window for revision-based quantization.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         self._max_size = max_size
         self._ttl_seconds = ttl_seconds
         self._denial_ttl_seconds = denial_ttl_seconds
         self._enable_metrics = enable_metrics
         self._enable_adaptive_ttl = enable_adaptive_ttl
-        self._quantization_interval = quantization_interval
+        self._revision_quantization_window = revision_quantization_window
+        self._enable_revision_quantization = enable_revision_quantization
         self._lock = threading.RLock()
+
+        # Revision-based quantization (Issue #909)
+        # Callback to fetch current revision for a tenant
+        self._revision_fetcher: Callable[[str], int] | None = None
+        # Local cache for revisions to reduce DB queries (tenant -> (revision, timestamp))
+        self._revision_cache: dict[str, tuple[int, float]] = {}
+        self._revision_cache_ttl = 1.0  # Refresh revision from DB every 1 second
 
         # Split caches for grants and denials (Issue #877)
         # Denials use shorter TTL for security - revoked access should be reflected quickly
-        # Key format: "subject_type:subject_id:permission:object_type:object_id:tenant_id:t{bucket}"
+        # Key format: "subject_type:subject_id:permission:object_type:object_id:tenant_id:r{revision_bucket}"
         grant_cache_size = max_size // 2  # Split capacity between grant and denial caches
         denial_cache_size = max_size - grant_cache_size
         self._grant_cache: TTLCache[str, bool] = TTLCache(maxsize=grant_cache_size, ttl=ttl_seconds)
@@ -143,11 +167,51 @@ class ReBACPermissionCache:
         jitter = base_ttl * self._ttl_jitter_percent
         return base_ttl + random.uniform(-jitter, jitter)
 
-    def _get_time_bucket(self) -> int:
-        """Get current time bucket for cache key quantization."""
-        if self._quantization_interval <= 0:
+    def set_revision_fetcher(self, fetcher: Callable[[str], int]) -> None:
+        """Set callback to fetch current revision for a tenant.
+
+        The revision fetcher is used for revision-based cache key quantization (Issue #909).
+        It should return the current write revision for the given tenant.
+
+        Args:
+            fetcher: Function that takes tenant_id and returns current revision number
+        """
+        self._revision_fetcher = fetcher
+
+    def _get_revision_bucket(self, tenant_id: str | None) -> int:
+        """Get quantized revision bucket for cache key.
+
+        Uses cached revision with short TTL to reduce DB queries.
+        Falls back to 0 if revision fetcher not set (graceful degradation).
+
+        Args:
+            tenant_id: Tenant ID (defaults to "default")
+
+        Returns:
+            Quantized revision bucket number
+        """
+        if not self._enable_revision_quantization:
             return 0
-        return int(time.time() // self._quantization_interval)
+
+        effective_tenant = tenant_id or "default"
+        current_time = time.time()
+
+        # Check local revision cache
+        if effective_tenant in self._revision_cache:
+            cached_rev, cached_at = self._revision_cache[effective_tenant]
+            if current_time - cached_at < self._revision_cache_ttl:
+                return cached_rev // self._revision_quantization_window
+
+        # Fetch from DB via callback
+        if self._revision_fetcher:
+            try:
+                revision = self._revision_fetcher(effective_tenant)
+                self._revision_cache[effective_tenant] = (revision, current_time)
+                return revision // self._revision_quantization_window
+            except Exception as e:
+                logger.warning(f"Failed to fetch revision for {effective_tenant}: {e}")
+
+        return 0  # Fallback: all entries share same bucket (still functional)
 
     def _make_key(
         self,
@@ -169,14 +233,14 @@ class ReBACPermissionCache:
             tenant_id: Optional tenant ID for multi-tenant isolation
 
         Returns:
-            Cache key string with time bucket for distributed cache sharing
+            Cache key string with revision bucket for distributed cache sharing
         """
         tenant_part = tenant_id if tenant_id else "default"
-        time_bucket = self._get_time_bucket()
-        return f"{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}:{tenant_part}:t{time_bucket}"
+        revision_bucket = self._get_revision_bucket(tenant_id)
+        return f"{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}:{tenant_part}:r{revision_bucket}"
 
     def _parse_key(self, key: str) -> tuple[str, str, str, str, str, str] | None:
-        """Parse a cache key into components (excluding time bucket).
+        """Parse a cache key into components (excluding revision bucket).
 
         Returns:
             Tuple of (subject_type, subject_id, permission, object_type, object_id, tenant_id)
@@ -836,7 +900,8 @@ class ReBACPermissionCache:
                 "denial_cache_size": len(self._denial_cache),
                 "ttl_seconds": self._ttl_seconds,
                 "denial_ttl_seconds": self._denial_ttl_seconds,
-                "quantization_interval": self._quantization_interval,
+                "revision_quantization_window": self._revision_quantization_window,
+                "enable_revision_quantization": self._enable_revision_quantization,
                 "hits": self._hits,
                 "grant_hits": self._grant_hits,
                 "denial_hits": self._denial_hits,

@@ -194,3 +194,4 @@ aws-credentials
 
 # Claude Code local settings
 .claude/settings.local.json
+docs/plans/

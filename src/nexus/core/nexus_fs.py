@@ -98,6 +98,7 @@ class NexusFS(  # type: ignore[misc]
         enable_workflows: bool = True,  # v0.7.0: Enable automatic workflow triggering (DEFAULT ON)
         workflow_engine: Any
         | None = None,  # v0.7.0: Optional workflow engine (auto-created if None)
+        enable_tiger_cache: bool = True,  # Enable Tiger Cache for materialized permissions (default: True)
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -274,6 +275,7 @@ class NexusFS(  # type: ignore[misc]
             max_depth=10,
             enforce_tenant_isolation=True,  # P0-2: Tenant scoping
             enable_graph_limits=True,  # P0-5: DoS protection
+            enable_tiger_cache=enable_tiger_cache,  # Tiger Cache for materialized permissions
         )
 
         # P0-4: Initialize AuditStore for admin bypass logging

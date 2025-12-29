@@ -2902,7 +2902,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             # Collect all positive results and bulk update Tiger Cache
             if self._tiger_cache and tenant_id:
                 tiger_writes = 0
-                tiger_updates: dict[
+                fallback_tiger_updates: dict[
                     tuple[str, str, str, str, str], set[int]
                 ] = {}  # (subj_type, subj_id, perm, res_type, tenant) -> set of int_ids
 
@@ -2923,15 +2923,15 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                                     obj[0],
                                     tenant_id,
                                 )
-                                if group_key not in tiger_updates:
-                                    tiger_updates[group_key] = set()
-                                tiger_updates[group_key].add(resource_int_id)
+                                if group_key not in fallback_tiger_updates:
+                                    fallback_tiger_updates[group_key] = set()
+                                fallback_tiger_updates[group_key].add(resource_int_id)
                                 tiger_writes += 1
                         except Exception as e:
                             logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
 
                 # Bulk add to Tiger Cache bitmaps
-                for group_key, int_ids in tiger_updates.items():
+                for group_key, int_ids in fallback_tiger_updates.items():
                     subj_type, subj_id, perm, res_type, tid = group_key
                     self._tiger_cache.add_to_bitmap_bulk(
                         subject_type=subj_type,
@@ -2945,7 +2945,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 if tiger_writes > 0:
                     logger.debug(
                         f"[TIGER] Write-through (Python path): {tiger_writes} positive results "
-                        f"to {len(tiger_updates)} Tiger Cache bitmaps"
+                        f"to {len(fallback_tiger_updates)} Tiger Cache bitmaps"
                     )
 
         # Report actual cache statistics

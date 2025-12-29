@@ -2449,12 +2449,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
         else:
             # SQLite uses INSERT OR REPLACE
             for entry in entries_to_upsert:
-                stmt = sqlite_insert(DirectoryEntryModel).values(**entry)
-                stmt = stmt.on_conflict_do_update(
+                sqlite_stmt = sqlite_insert(DirectoryEntryModel).values(**entry)
+                sqlite_stmt = sqlite_stmt.on_conflict_do_update(
                     index_elements=["tenant_id", "parent_path", "entry_name"],
                     set_={"entry_type": entry["entry_type"], "updated_at": datetime.now(UTC)},
                 )
-                session.execute(stmt)
+                session.execute(sqlite_stmt)
 
     def _update_directory_index_batch(
         self,
@@ -2514,12 +2514,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 session.execute(stmt)
         else:
             for entry in entries:
-                stmt = sqlite_insert(DirectoryEntryModel).values(**entry)
-                stmt = stmt.on_conflict_do_update(
+                sqlite_stmt = sqlite_insert(DirectoryEntryModel).values(**entry)
+                sqlite_stmt = sqlite_stmt.on_conflict_do_update(
                     index_elements=["tenant_id", "parent_path", "entry_name"],
                     set_={"entry_type": entry["entry_type"], "updated_at": datetime.now(UTC)},
                 )
-                session.execute(stmt)
+                session.execute(sqlite_stmt)
 
     def _remove_from_directory_index(
         self,

@@ -1,28 +1,34 @@
 # E2B Template for Nexus Server
 
-This directory contains an E2B sandbox template configuration for the Nexus server. The template includes Nexus pre-installed with FUSE support, allowing sandboxes to mount the Nexus filesystem.
+This directory contains an E2B sandbox template configuration for the Nexus server. The template extends the official E2B `code-interpreter-v1` template with Nexus pre-installed and FUSE support, enabling stateful Python execution and filesystem mounting capabilities.
 
 ## Overview
 
-The template is built from `e2b.Dockerfile` and configured via `e2b.toml`. It provides:
-- Ubuntu 24.04 base image
-- Python 3.13
-- FUSE support (libfuse, fusepy)
-- Nexus AI FS pre-installed
-- Node.js and npm for JavaScript execution
-- Proper user permissions for FUSE mounting
+The template uses E2B's **Build System 2.0** and provides:
+- **Stateful Python execution** via Jupyter kernel on port 49999
+- **FUSE support** for mounting Nexus filesystem
+- **Nexus AI FS** pre-installed from GitHub
+- All features of the official `code-interpreter-v1` template:
+  - Python 3.12 with Jupyter
+  - Node.js and npm
+  - R, Deno, Bash, Java kernels
+  - Matplotlib plotting support
 
-## Quick Start
+## Template Configuration
+
+### Template ID
+- **Template ID:** `yf6wfidzfb6i7n7iawob`
+- **Template Name:** `nexus-sandbox-latest`
+
+This template ID is stable and used across all Nexus deployments.
+
+## Building the Template
 
 ### Prerequisites
 
-1. **Install E2B CLI:**
+1. **Install Python dependencies:**
    ```bash
-   # macOS
-   brew install e2b
-
-   # Or via npm
-   npm i -g @e2b/cli
+   pip install e2b
    ```
 
 2. **Authenticate with E2B:**
@@ -30,156 +36,246 @@ The template is built from `e2b.Dockerfile` and configured via `e2b.toml`. It pr
    e2b auth login
    ```
 
-### Building the Template
+   The API key will be stored in `~/.e2b/config.json`.
 
-Use the provided build script:
+### Build Process
+
+Build the template using the v2 build system:
 
 ```bash
 cd nexus/e2b-template
-./build.sh
+python3 build.py
 ```
 
-Or build manually:
+The build script will:
+1. Read your E2B API key from `~/.e2b/config.json` or `E2B_API_KEY` environment variable
+2. Build the template by extending `code-interpreter-v1`
+3. Add FUSE support and install Nexus
+4. Push to E2B cloud infrastructure
+5. Output the template ID
 
-```bash
-e2b template build
+**Note:** The template ID (`yf6wfidzfb6i7n7iawob`) remains constant across builds. Updates will be available immediately to new sandboxes.
+
+## Template Architecture
+
+### template.py
+
+The `template.py` file defines the template using E2B's v2 Template SDK:
+
+```python
+from e2b import Template
+
+template = (
+    Template()
+    .from_template("code-interpreter-v1")  # Inherit Jupyter server
+    .set_user("root")
+    .run_cmd("apt-get update && apt-get install -y fuse ...")  # Install FUSE
+    .run_cmd("pip install fusepy nexus-ai-fs")  # Install packages
+    .set_user("user")
+    .set_workdir("/home/user")
+)
 ```
 
-The build process will:
-1. Build the Docker image from `e2b.Dockerfile`
-2. Push it to E2B's cloud infrastructure
-3. Create a micro VM snapshot
-4. Update `e2b.toml` with the template ID
+**Key Features:**
+- Extends official `code-interpreter-v1` template
+- Inherits Jupyter server on port 49999 for stateful execution
+- Adds FUSE support and Nexus installation
+- Configures passwordless sudo for FUSE operations
 
-## Configuration
+### build.py
 
-### e2b.toml
+The build script programmatically builds and pushes the template:
 
-The `e2b.toml` file contains template configuration:
+```python
+from e2b import Template
+from template import template
 
-```toml
-team_id = "c95e0b17-985d-4f1c-88ef-858e33bf5b8b"
-dockerfile = "e2b.Dockerfile"
-template_name = "nexus-fuse-fix10"
-template_id = "ohsk388peukvlesxaw6w"  # Generated on first build
+result = Template.build(
+    template,
+    alias="nexus-sandbox-latest",
+    api_key=api_key,
+)
 ```
-
-**Note:** The `template_id` is generated automatically on the first build and remains constant for updates.
-
-### e2b.Dockerfile
-
-The Dockerfile installs:
-- System dependencies (FUSE, Python 3.13, Node.js)
-- Python packages (fusepy, nexus-ai-fs)
-- User setup with sudo permissions for FUSE mounting
 
 ## Using the Template
 
 ### In Nexus Server
 
-Set the template ID as an environment variable:
+The Nexus server automatically uses this template for E2B sandboxes. Configure via environment variables:
 
 ```bash
 export E2B_API_KEY="your-e2b-api-key"
-export E2B_TEMPLATE_ID="ohsk388peukvlesxaw6w"  # From e2b.toml
+export E2B_TEMPLATE_ID="yf6wfidzfb6i7n7iawob"  # Optional, this is the default
 ```
 
-Or specify it when creating sandboxes:
+### With Nexus Client
 
 ```python
 from nexus_client import RemoteNexusFS
 
 nx = RemoteNexusFS("https://your-nexus-server.com", api_key="...")
 
-# Create sandbox with specific template
+# Create sandbox with E2B provider (uses template automatically)
 sandbox = nx.sandbox_create(
     name="my-sandbox",
-    provider="e2b",
-    template_id="ohsk388peukvlesxaw6w"
+    provider="e2b"
 )
+
+# Run stateful Python code
+result = sandbox.run_code("x = 42")
+result = sandbox.run_code("print(x)")  # Variable persists across calls
 ```
 
 ### Direct E2B SDK Usage
 
 ```python
-from e2b import AsyncSandbox
+from e2b_code_interpreter import AsyncSandbox
 
 # By template ID
-sandbox = await AsyncSandbox.create("ohsk388peukvlesxaw6w")
+sandbox = await AsyncSandbox.create("yf6wfidzfb6i7n7iawob")
 
 # Or by template name
-sandbox = await AsyncSandbox.create("nexus-fuse-fix10")
+sandbox = await AsyncSandbox.create("nexus-sandbox-latest")
+
+# Run stateful Python code
+result = await sandbox.run_code("sum([1, 2, 3])")
+print(result.text)  # Output: 6
 ```
 
 ## Updating the Template
 
-After modifying `e2b.Dockerfile`, rebuild:
+To update the template with new dependencies or configurations:
 
-```bash
-./build.sh
+1. **Edit `template.py`:**
+   ```python
+   # Add new packages or configuration
+   .run_cmd("pip install new-package")
+   ```
+
+2. **Rebuild:**
+   ```bash
+   python3 build.py
+   ```
+
+3. **Verify:**
+   ```python
+   # Test the updated template
+   sandbox = await AsyncSandbox.create("nexus-sandbox-latest")
+   ```
+
+The template ID remains the same, but new sandboxes will use the updated version immediately.
+
+## Template Features
+
+### Stateful Python Execution
+
+The template includes a Jupyter kernel on port 49999 that enables stateful code execution:
+
+```python
+# Variables persist across run_code() calls
+await sandbox.run_code("x = 42")
+result = await sandbox.run_code("x + 8")  # Returns 50
 ```
 
-The template ID remains the same, but new sandboxes will use the updated version.
+### FUSE Support
 
-## Template Details
+Pre-configured for mounting Nexus filesystem:
 
-### Base Image
-- Ubuntu 24.04
+```bash
+# In the sandbox
+nexus mount /home/user/nexus --api-key=...
+ls /home/user/nexus  # Access Nexus files
+```
 
 ### Installed Software
-- Python 3.13 (default python3)
-- Node.js and npm
-- FUSE (libfuse2, libfuse-dev)
-- fusepy (from git)
-- nexus-ai-fs (from GitHub main branch)
 
-### User Setup
-- User: `user`
-- Home: `/home/user`
-- Sudo: Passwordless sudo for FUSE mounting
-- Mount points: `/home/user/nexus`, `/mnt/nexus`
+- **Python 3.12** (with Jupyter kernel)
+- **Node.js 20.x** and npm
+- **FUSE** (libfuse2, libfuse-dev, fusepy)
+- **Nexus CLI** (`nexus-ai-fs` package)
+- R, Deno, Bash, Java kernels (from code-interpreter-v1)
 
-### Features
-- FUSE support enabled (`user_allow_other` in `/etc/fuse.conf`)
-- Nexus CLI available as `nexus` command
-- Python and JavaScript execution ready
-- Bash shell available
+### User Configuration
+
+- **User:** `user`
+- **Home:** `/home/user`
+- **Sudo:** Passwordless sudo enabled for FUSE operations
+- **Mount Points:** `/home/user/nexus`, `/mnt/nexus`
+- **FUSE Config:** `user_allow_other` enabled
 
 ## Troubleshooting
+
+### Port 49999 Not Open
+
+If you get "port is not open" errors, verify the template is using v2 build system:
+
+```bash
+# Check template build
+e2b template list | grep nexus-sandbox-latest
+
+# Rebuild if needed
+python3 build.py
+```
 
 ### Build Fails
 
 ```bash
-# Check E2B CLI version
-e2b --version
+# Verify E2B package version (should be 2.8.0+)
+pip show e2b
 
-# Re-authenticate
+# Check API key
+cat ~/.e2b/config.json
+
+# Re-authenticate if needed
 e2b auth login
-
-# Build with verbose output
-./build.sh --verbose
 ```
 
-### Template Not Found
+### Jupyter Kernel Not Working
 
-- Verify the template ID in `e2b.toml`
-- Check that you're authenticated: `e2b auth whoami`
-- Ensure the template was built successfully
+The Jupyter server is inherited from `code-interpreter-v1`. To verify:
+
+```python
+from e2b_code_interpreter import AsyncSandbox
+
+sandbox = await AsyncSandbox.create("nexus-sandbox-latest")
+result = await sandbox.run_code("print('Hello')")
+# Should work without "port not open" errors
+```
 
 ### FUSE Mount Issues
 
-- Verify FUSE is installed: `python3 -c "import fuse; print('OK')"`
-- Check user permissions: `sudo -l`
-- Verify fuse.conf: `cat /etc/fuse.conf | grep user_allow_other`
+```bash
+# In sandbox, verify FUSE is installed
+python3 -c "import fuse; print('OK')"
 
-## Related Files
+# Check sudo permissions
+sudo -l
 
-- `e2b.Dockerfile` - Docker image definition
-- `e2b.toml` - Template configuration
-- `build.sh` - Build script
+# Verify fuse.conf
+cat /etc/fuse.conf | grep user_allow_other
+```
+
+## Migration from v1 Build System
+
+This template has been migrated from E2B's deprecated v1 build system (Dockerfile + CLI) to the v2 build system (Python SDK).
+
+**What Changed:**
+- ❌ Removed: `e2b.Dockerfile`, `e2b.toml`, `e2b template build` CLI command
+- ✅ Added: `template.py`, `build.py`, programmatic build via Python SDK
+- ✅ Improved: Proper inheritance from `code-interpreter-v1` template
+- ✅ Fixed: Jupyter server on port 49999 now works correctly
+
+**Template ID:** Unchanged (`yf6wfidzfb6i7n7iawob`)
+
+## Files
+
+- **`template.py`** - Template definition using v2 SDK
+- **`build.py`** - Build script for deploying template
+- **`README.md`** - This documentation
 
 ## References
 
-- [E2B Documentation](https://e2b.dev/docs)
-- [E2B Template Guide](https://e2b.dev/docs/sandbox-template)
+- [E2B Build System 2.0](https://e2b.dev/blog/introducing-build-system-2-0)
+- [E2B Code Interpreter](https://github.com/e2b-dev/code-interpreter)
+- [E2B Template SDK Documentation](https://e2b.dev/docs)
 - [Nexus Sandbox Provider](../src/nexus/core/sandbox_e2b_provider.py)

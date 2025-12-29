@@ -25,10 +25,7 @@ from nexus.storage.models import Base
 
 def _check_postgres_available():
     """Check if PostgreSQL is available for testing."""
-    db_url = os.getenv(
-        "NEXUS_DATABASE_URL",
-        "postgresql://postgres:nexus@localhost:5432/nexus"
-    )
+    db_url = os.getenv("NEXUS_DATABASE_URL", "postgresql://postgres:nexus@localhost:5432/nexus")
     try:
         engine = create_engine(db_url)
         with engine.connect() as conn:
@@ -41,18 +38,14 @@ def _check_postgres_available():
 
 # Skip all tests in this module if PostgreSQL is not available
 pytestmark = pytest.mark.skipif(
-    not _check_postgres_available(),
-    reason="PostgreSQL not available at localhost:5432"
+    not _check_postgres_available(), reason="PostgreSQL not available at localhost:5432"
 )
 
 
 @pytest.fixture
 def engine():
     """Create PostgreSQL engine for testing."""
-    db_url = os.getenv(
-        "NEXUS_DATABASE_URL",
-        "postgresql://postgres:nexus@localhost:5432/nexus"
-    )
+    db_url = os.getenv("NEXUS_DATABASE_URL", "postgresql://postgres:nexus@localhost:5432/nexus")
     engine = create_engine(db_url)
     Base.metadata.create_all(engine)
     return engine
@@ -76,12 +69,11 @@ def manager(engine, test_tenant):
     # Cleanup test data
     with engine.connect() as conn:
         conn.execute(
-            text("DELETE FROM rebac_tuples WHERE tenant_id = :tenant"),
-            {"tenant": test_tenant}
+            text("DELETE FROM rebac_tuples WHERE tenant_id = :tenant"), {"tenant": test_tenant}
         )
         conn.execute(
             text("DELETE FROM rebac_version_sequences WHERE tenant_id = :tenant"),
-            {"tenant": test_tenant}
+            {"tenant": test_tenant},
         )
         conn.commit()
 
@@ -182,9 +174,7 @@ class TestRevisionCacheIntegration:
         )
 
         # Check the cache key format
-        key = manager._l1_cache._make_key(
-            "agent", "alice", "viewer", "file", "/doc", test_tenant
-        )
+        key = manager._l1_cache._make_key("agent", "alice", "viewer", "file", "/doc", test_tenant)
 
         # Key should end with :r{bucket} format (revision-based)
         assert key.endswith(":r0") or key.endswith(":r1"), f"Key should end with :rN, got: {key}"

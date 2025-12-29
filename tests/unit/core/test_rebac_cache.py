@@ -229,13 +229,13 @@ class TestRevisionQuantization:
     def test_revision_bucket_boundaries(self):
         """Test bucket boundaries work correctly."""
         test_cases = [
-            (0, 0),   # 0 // 10 = 0
-            (9, 0),   # 9 // 10 = 0
+            (0, 0),  # 0 // 10 = 0
+            (9, 0),  # 9 // 10 = 0
             (10, 1),  # 10 // 10 = 1
             (19, 1),  # 19 // 10 = 1
             (20, 2),  # 20 // 10 = 2
             (99, 9),  # 99 // 10 = 9
-            (100, 10), # 100 // 10 = 10
+            (100, 10),  # 100 // 10 = 10
         ]
 
         for revision, expected_bucket in test_cases:
@@ -243,7 +243,9 @@ class TestRevisionQuantization:
             cache = ReBACPermissionCache(revision_quantization_window=10)
             cache.set_revision_fetcher(lambda t, r=revision: r)
             bucket = cache._get_revision_bucket("tenant1")
-            assert bucket == expected_bucket, f"Revision {revision} -> expected bucket {expected_bucket}, got {bucket}"
+            assert bucket == expected_bucket, (
+                f"Revision {revision} -> expected bucket {expected_bucket}, got {bucket}"
+            )
 
     def test_cache_stable_within_window(self):
         """Test that cache entries are stable within a revision window."""
@@ -295,8 +297,7 @@ class TestRevisionQuantization:
     def test_disabled_revision_quantization(self):
         """When revision quantization is disabled, always uses bucket 0."""
         cache = ReBACPermissionCache(
-            revision_quantization_window=10,
-            enable_revision_quantization=False
+            revision_quantization_window=10, enable_revision_quantization=False
         )
         cache.set_revision_fetcher(lambda t: 999)
 
@@ -342,8 +343,7 @@ class TestRevisionQuantization:
     def test_stats_include_revision_info(self):
         """Test that stats include revision quantization configuration."""
         cache = ReBACPermissionCache(
-            revision_quantization_window=15,
-            enable_revision_quantization=True
+            revision_quantization_window=15, enable_revision_quantization=True
         )
 
         stats = cache.get_stats()

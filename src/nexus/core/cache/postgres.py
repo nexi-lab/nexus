@@ -125,9 +125,7 @@ class PostgresPermissionCache:
 
     async def clear(self, tenant_id: str | None = None) -> int:
         """Clear all cached permissions."""
-        raise NotImplementedError(
-            "PostgresPermissionCache.clear() not yet implemented."
-        )
+        raise NotImplementedError("PostgresPermissionCache.clear() not yet implemented.")
 
     async def health_check(self) -> bool:
         """Check if cache backend is healthy."""
@@ -288,9 +286,7 @@ class PostgresResourceMapCache:
         Note: In PostgreSQL, this is typically done via get_or_create_int_id
         which handles the INSERT with auto-increment.
         """
-        raise NotImplementedError(
-            "PostgresResourceMapCache.set_int_id() not yet implemented."
-        )
+        raise NotImplementedError("PostgresResourceMapCache.set_int_id() not yet implemented.")
 
     async def set_int_ids_bulk(
         self,

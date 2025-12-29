@@ -184,14 +184,10 @@ class TestListPaginated:
     def test_non_recursive(self, store):
         """Should respect recursive=False."""
         store.put(
-            FileMetadata(
-                path="/a/file1.txt", backend_name="local", physical_path="/x", size=1
-            )
+            FileMetadata(path="/a/file1.txt", backend_name="local", physical_path="/x", size=1)
         )
         store.put(
-            FileMetadata(
-                path="/a/b/file2.txt", backend_name="local", physical_path="/x", size=1
-            )
+            FileMetadata(path="/a/b/file2.txt", backend_name="local", physical_path="/x", size=1)
         )
         store.put(
             FileMetadata(
@@ -210,14 +206,10 @@ class TestListPaginated:
     def test_recursive_true(self, store):
         """Should include nested files with recursive=True."""
         store.put(
-            FileMetadata(
-                path="/a/file1.txt", backend_name="local", physical_path="/x", size=1
-            )
+            FileMetadata(path="/a/file1.txt", backend_name="local", physical_path="/x", size=1)
         )
         store.put(
-            FileMetadata(
-                path="/a/b/file2.txt", backend_name="local", physical_path="/x", size=1
-            )
+            FileMetadata(path="/a/b/file2.txt", backend_name="local", physical_path="/x", size=1)
         )
         store.put(
             FileMetadata(
@@ -259,11 +251,7 @@ class TestListPaginated:
         # Insert in random order
         paths = ["/z/file.txt", "/a/file.txt", "/m/file.txt", "/b/file.txt"]
         for path in paths:
-            store.put(
-                FileMetadata(
-                    path=path, backend_name="local", physical_path="/x", size=1
-                )
-            )
+            store.put(FileMetadata(path=path, backend_name="local", physical_path="/x", size=1))
 
         result = store.list_paginated(prefix="/", limit=10)
 

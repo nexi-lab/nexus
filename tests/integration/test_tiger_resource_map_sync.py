@@ -36,9 +36,7 @@ def admin_context() -> dict:
 class TestTigerResourceMapSync:
     """Test that tiger_resource_map is synced from metadata on startup."""
 
-    def test_sync_populates_resource_map_on_init(
-        self, temp_dir: Path, admin_context: dict
-    ) -> None:
+    def test_sync_populates_resource_map_on_init(self, temp_dir: Path, admin_context: dict) -> None:
         """Test that _sync_resource_map_from_metadata() populates the map."""
         db_path = temp_dir / "metadata.db"
 
@@ -113,9 +111,7 @@ class TestTigerResourceMapSync:
             tenant_id="acme_corp",
         )
 
-        ctx = OperationContext(
-            user="user1", groups=[], tenant_id="acme_corp", is_admin=True
-        )
+        ctx = OperationContext(user="user1", groups=[], tenant_id="acme_corp", is_admin=True)
         nx1.write("/acme/document.txt", b"acme content", context=ctx)
         nx1.close()
 
@@ -276,9 +272,7 @@ class TestTigerResourceMapSync:
 class TestTigerCacheAfterSync:
     """Test that Tiger Cache works correctly after resource map sync."""
 
-    def test_tiger_check_access_after_sync(
-        self, temp_dir: Path, admin_context: dict
-    ) -> None:
+    def test_tiger_check_access_after_sync(self, temp_dir: Path, admin_context: dict) -> None:
         """Test that Tiger Cache can check access after sync."""
         db_path = temp_dir / "metadata.db"
         os.environ["NEXUS_SYNC_TIGER_RESOURCE_MAP"] = "true"
@@ -316,16 +310,12 @@ class TestTigerCacheAfterSync:
         # Verify resource is in tiger_resource_map
         if nx._rebac_manager._tiger_cache:
             resource_map = nx._rebac_manager._tiger_cache._resource_map
-            int_id = resource_map.get_or_create_int_id(
-                "file", "/doc.txt", "test_tenant"
-            )
+            int_id = resource_map.get_or_create_int_id("file", "/doc.txt", "test_tenant")
             assert int_id > 0, "Resource should have an integer ID"
 
         nx.close()
 
-    def test_resource_map_survives_restart(
-        self, temp_dir: Path, admin_context: dict
-    ) -> None:
+    def test_resource_map_survives_restart(self, temp_dir: Path, admin_context: dict) -> None:
         """Test that resource map data persists across restarts."""
         db_path = temp_dir / "metadata.db"
         os.environ["NEXUS_SYNC_TIGER_RESOURCE_MAP"] = "true"
@@ -345,9 +335,7 @@ class TestTigerCacheAfterSync:
         int_id_1 = None
         if nx1._rebac_manager._tiger_cache:
             resource_map = nx1._rebac_manager._tiger_cache._resource_map
-            int_id_1 = resource_map.get_or_create_int_id(
-                "file", "/persistent.txt", "default"
-            )
+            int_id_1 = resource_map.get_or_create_int_id("file", "/persistent.txt", "default")
 
         nx1.close()
 
@@ -361,9 +349,7 @@ class TestTigerCacheAfterSync:
 
         if nx2._rebac_manager._tiger_cache:
             resource_map = nx2._rebac_manager._tiger_cache._resource_map
-            int_id_2 = resource_map.get_or_create_int_id(
-                "file", "/persistent.txt", "default"
-            )
+            int_id_2 = resource_map.get_or_create_int_id("file", "/persistent.txt", "default")
             assert int_id_1 == int_id_2, "Int ID should be same across restarts"
 
         nx2.close()

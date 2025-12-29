@@ -84,6 +84,7 @@ class ReBACPermissionCache:
         # Deprecation warning for old parameter
         if quantization_interval > 0:
             import warnings
+
             warnings.warn(
                 "quantization_interval is deprecated and was broken (Issue #909). "
                 "Use revision_quantization_window for revision-based quantization.",

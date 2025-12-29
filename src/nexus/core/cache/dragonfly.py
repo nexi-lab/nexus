@@ -51,9 +51,7 @@ class DragonflyClient:
             timeout: Socket timeout in seconds
         """
         if not REDIS_AVAILABLE:
-            raise ImportError(
-                "redis package not installed. Install with: pip install redis"
-            )
+            raise ImportError("redis package not installed. Install with: pip install redis")
 
         self._url = url
         self._pool_size = pool_size
@@ -199,7 +197,9 @@ class DragonflyPermissionCache:
         tenant_id: str,
     ) -> str:
         """Create cache key for permission entry."""
-        return f"perm:{tenant_id}:{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}"
+        return (
+            f"perm:{tenant_id}:{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}"
+        )
 
     async def get(
         self,
@@ -345,9 +345,7 @@ class DragonflyTigerCache:
         tenant_id: str,
     ) -> tuple[bytes, int] | None:
         """Get Tiger bitmap for a subject."""
-        key = self._make_key(
-            subject_type, subject_id, permission, resource_type, tenant_id
-        )
+        key = self._make_key(subject_type, subject_id, permission, resource_type, tenant_id)
         result = await self._client.client.hgetall(key)
         if not result:
             return None
@@ -371,9 +369,7 @@ class DragonflyTigerCache:
         revision: int,
     ) -> None:
         """Store Tiger bitmap for a subject."""
-        key = self._make_key(
-            subject_type, subject_id, permission, resource_type, tenant_id
-        )
+        key = self._make_key(subject_type, subject_id, permission, resource_type, tenant_id)
         pipe = self._client.client.pipeline()
         pipe.hset(key, mapping={"data": bitmap_data, "revision": str(revision)})
         pipe.expire(key, self._ttl)

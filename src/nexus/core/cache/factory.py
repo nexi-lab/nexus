@@ -104,9 +104,7 @@ class CacheFactory:
                 self._using_dragonfly = True
                 logger.info("Cache factory initialized with Dragonfly backend")
             except ImportError:
-                logger.warning(
-                    "redis package not installed, falling back to PostgreSQL cache"
-                )
+                logger.warning("redis package not installed, falling back to PostgreSQL cache")
                 self._using_dragonfly = False
             except Exception as e:
                 if self._settings.cache_backend == "dragonfly":
@@ -171,9 +169,7 @@ class CacheFactory:
         from nexus.core.cache.postgres import PostgresPermissionCache
 
         if not self._db_engine:
-            raise RuntimeError(
-                "PostgreSQL cache requires db_engine but none was provided"
-            )
+            raise RuntimeError("PostgreSQL cache requires db_engine but none was provided")
         return PostgresPermissionCache(
             engine=self._db_engine,
             ttl=self._settings.permission_ttl,
@@ -204,9 +200,7 @@ class CacheFactory:
         from nexus.core.cache.postgres import PostgresTigerCache
 
         if not self._db_engine:
-            raise RuntimeError(
-                "PostgreSQL cache requires db_engine but none was provided"
-            )
+            raise RuntimeError("PostgreSQL cache requires db_engine but none was provided")
         return PostgresTigerCache(engine=self._db_engine)
 
     def get_resource_map_cache(self) -> ResourceMapCacheProtocol:
@@ -230,9 +224,7 @@ class CacheFactory:
         from nexus.core.cache.postgres import PostgresResourceMapCache
 
         if not self._db_engine:
-            raise RuntimeError(
-                "PostgreSQL cache requires db_engine but none was provided"
-            )
+            raise RuntimeError("PostgreSQL cache requires db_engine but none was provided")
         return PostgresResourceMapCache(engine=self._db_engine)
 
     async def health_check(self) -> dict:
@@ -312,7 +304,5 @@ def get_cache_factory() -> CacheFactory:
         RuntimeError: If factory not initialized
     """
     if not _cache_factory:
-        raise RuntimeError(
-            "Cache factory not initialized. Call init_cache_factory() first."
-        )
+        raise RuntimeError("Cache factory not initialized. Call init_cache_factory() first.")
     return _cache_factory

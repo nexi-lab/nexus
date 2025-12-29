@@ -28,9 +28,7 @@ class CacheSettings:
     """Configuration for Nexus cache layer."""
 
     # Dragonfly connection (optional - if not set, use PostgreSQL)
-    dragonfly_url: str | None = field(
-        default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_URL")
-    )
+    dragonfly_url: str | None = field(default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_URL"))
 
     # Backend selection: auto, dragonfly, postgres
     cache_backend: Literal["auto", "dragonfly", "postgres"] = field(
@@ -64,8 +62,7 @@ class CacheSettings:
 
     # Enable L1 in-memory cache (optional layer before Dragonfly)
     enable_l1_cache: bool = field(
-        default_factory=lambda: os.environ.get("NEXUS_CACHE_ENABLE_L1", "true").lower()
-        == "true"
+        default_factory=lambda: os.environ.get("NEXUS_CACHE_ENABLE_L1", "true").lower() == "true"
     )
 
     # L1 cache max size (entries)
@@ -77,9 +74,7 @@ class CacheSettings:
         """Determine if Dragonfly should be used based on config."""
         if self.cache_backend == "dragonfly":
             if not self.dragonfly_url:
-                raise ValueError(
-                    "NEXUS_CACHE_BACKEND=dragonfly but NEXUS_DRAGONFLY_URL not set"
-                )
+                raise ValueError("NEXUS_CACHE_BACKEND=dragonfly but NEXUS_DRAGONFLY_URL not set")
             return True
         if self.cache_backend == "postgres":
             return False
@@ -95,9 +90,7 @@ class CacheSettings:
             )
 
         if self.cache_backend == "dragonfly" and not self.dragonfly_url:
-            raise ValueError(
-                "NEXUS_CACHE_BACKEND=dragonfly requires NEXUS_DRAGONFLY_URL to be set"
-            )
+            raise ValueError("NEXUS_CACHE_BACKEND=dragonfly requires NEXUS_DRAGONFLY_URL to be set")
 
         if self.permission_ttl <= 0:
             raise ValueError("NEXUS_CACHE_PERMISSION_TTL must be positive")

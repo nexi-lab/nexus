@@ -94,9 +94,7 @@ class TestCursorEncoding:
         import json
 
         # Missing "p" (path) field
-        bad_cursor = base64.urlsafe_b64encode(
-            json.dumps({"h": "somehash"}).encode()
-        ).decode()
+        bad_cursor = base64.urlsafe_b64encode(json.dumps({"h": "somehash"}).encode()).decode()
 
         with pytest.raises(CursorError, match="missing required"):
             decode_cursor(bad_cursor, {})
@@ -107,9 +105,7 @@ class TestCursorEncoding:
         import json
 
         # Missing "h" (hash) field
-        bad_cursor = base64.urlsafe_b64encode(
-            json.dumps({"p": "/file.txt"}).encode()
-        ).decode()
+        bad_cursor = base64.urlsafe_b64encode(json.dumps({"p": "/file.txt"}).encode()).decode()
 
         with pytest.raises(CursorError, match="missing required"):
             decode_cursor(bad_cursor, {})

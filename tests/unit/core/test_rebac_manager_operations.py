@@ -272,7 +272,6 @@ class TestRebacCheck:
         )
 
 
-
 class TestRebacCheckBatch:
     """Tests for rebac_check_batch method."""
 

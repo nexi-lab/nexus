@@ -50,7 +50,8 @@ async def engine(temp_db: Path) -> AsyncGenerator[AsyncEngine, None]:
     # Initialize tables in engine fixture so all tests have access
     async with engine.begin() as conn:
         # Create rebac_tuples table
-        await conn.execute(text("""
+        await conn.execute(
+            text("""
             CREATE TABLE IF NOT EXISTS rebac_tuples (
                 tuple_id TEXT PRIMARY KEY,
                 subject_type TEXT NOT NULL,
@@ -65,39 +66,43 @@ async def engine(temp_db: Path) -> AsyncGenerator[AsyncEngine, None]:
                 created_at TIMESTAMP,
                 updated_at TIMESTAMP
             )
-        """))
+        """)
+        )
 
         # Create rebac_namespaces table with default namespace
-        await conn.execute(text("""
+        await conn.execute(
+            text("""
             CREATE TABLE IF NOT EXISTS rebac_namespaces (
                 namespace_id TEXT PRIMARY KEY,
                 object_type TEXT NOT NULL,
                 config TEXT NOT NULL
             )
-        """))
+        """)
+        )
 
         # Insert default namespace config that maps direct_owner -> read
         import json
-        config = json.dumps({
-            "relations": {
-                "direct_owner": {},
-                "reader": {},
-                "writer": {},
-                "owner": {}
-            },
-            "permissions": {
-                "read": {"union": ["direct_owner", "reader", "writer", "owner"]},
-                "write": {"union": ["writer", "owner"]},
-                "admin": {"union": ["owner"]}
+
+        config = json.dumps(
+            {
+                "relations": {"direct_owner": {}, "reader": {}, "writer": {}, "owner": {}},
+                "permissions": {
+                    "read": {"union": ["direct_owner", "reader", "writer", "owner"]},
+                    "write": {"union": ["writer", "owner"]},
+                    "admin": {"union": ["owner"]},
+                },
             }
-        })
+        )
         await conn.execute(
-            text("INSERT OR REPLACE INTO rebac_namespaces (namespace_id, object_type, config) VALUES (:id, :type, :config)"),
-            {"id": "file_ns", "type": "file", "config": config}
+            text(
+                "INSERT OR REPLACE INTO rebac_namespaces (namespace_id, object_type, config) VALUES (:id, :type, :config)"
+            ),
+            {"id": "file_ns", "type": "file", "config": config},
         )
 
         # Create group closure table for LEOPARD
-        await conn.execute(text("""
+        await conn.execute(
+            text("""
             CREATE TABLE IF NOT EXISTS rebac_group_closure (
                 member_type TEXT NOT NULL,
                 member_id TEXT NOT NULL,
@@ -108,7 +113,8 @@ async def engine(temp_db: Path) -> AsyncGenerator[AsyncEngine, None]:
                 updated_at TIMESTAMP,
                 PRIMARY KEY (member_type, member_id, group_type, group_id, tenant_id)
             )
-        """))
+        """)
+        )
 
     yield engine
     await engine.dispose()
@@ -402,8 +408,7 @@ class TestAsyncRebacCheckBulk:
 
         # Bulk check - returns dict mapping check -> result
         checks = [
-            (("user", f"bulk_user_{i}"), "read", ("file", f"/bulk_file_{i}.txt"))
-            for i in range(3)
+            (("user", f"bulk_user_{i}"), "read", ("file", f"/bulk_file_{i}.txt")) for i in range(3)
         ]
         results = await manager.rebac_check_bulk(checks, tenant_id="default")
 
@@ -543,6 +548,7 @@ class TestAsyncConcurrency:
     @pytest.mark.asyncio
     async def test_concurrent_writes(self, manager: AsyncReBACManager) -> None:
         """Test concurrent tuple writes."""
+
         async def write_tuple(i: int) -> str:
             return await manager.write_tuple(
                 subject=("user", f"conc_user_{i}"),

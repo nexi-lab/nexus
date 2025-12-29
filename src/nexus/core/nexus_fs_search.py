@@ -700,12 +700,8 @@ class NexusFSSearchMixin:
             # Filter by permissions
             if self._enforce_permissions and context:
                 paths = [item.path for item in batch.items]
-                allowed_paths = set(
-                    self._permission_enforcer.filter_list(paths, context)
-                )
-                filtered_items = [
-                    item for item in batch.items if item.path in allowed_paths
-                ]
+                allowed_paths = set(self._permission_enforcer.filter_list(paths, context))
+                filtered_items = [item for item in batch.items if item.path in allowed_paths]
             else:
                 filtered_items = batch.items
 

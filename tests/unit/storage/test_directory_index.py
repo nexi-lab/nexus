@@ -1,7 +1,6 @@
 """Unit tests for sparse directory index (Issue #924)."""
 
 import tempfile
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest

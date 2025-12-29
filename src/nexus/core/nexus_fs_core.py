@@ -2057,7 +2057,7 @@ class NexusFSCoreMixin:
                     f"[RENAME-REBAC] FAILED to update ReBAC permissions: {e}", exc_info=True
                 )
         else:
-            logger.warning(f"[RENAME-REBAC] SKIPPED - no _rebac_manager available")
+            logger.warning("[RENAME-REBAC] SKIPPED - no _rebac_manager available")
 
         # Log operation for audit trail and undo capability
         try:

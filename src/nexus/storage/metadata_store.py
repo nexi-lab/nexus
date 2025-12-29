@@ -2424,11 +2424,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
         # Build entries for each level of the path
         for depth in range(len(parts)):
-            if depth == 0:
-                parent_path = "/"
-            else:
-                parent_path = "/" + "/".join(parts[:depth]) + "/"
-
+            parent_path = "/" if depth == 0 else "/" + "/".join(parts[:depth]) + "/"
             entry_name = parts[depth]
             entry_type = "file" if depth == len(parts) - 1 and not is_directory else "directory"
 
@@ -2488,11 +2484,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 continue
 
             for depth in range(len(parts)):
-                if depth == 0:
-                    parent_path = "/"
-                else:
-                    parent_path = "/" + "/".join(parts[:depth]) + "/"
-
+                parent_path = "/" if depth == 0 else "/" + "/".join(parts[:depth]) + "/"
                 entry_name = parts[depth]
                 entry_type = "file" if depth == len(parts) - 1 else "directory"
 
@@ -2552,11 +2544,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
             return
 
         # Get parent path and entry name
-        if len(parts) == 1:
-            parent_path = "/"
-        else:
-            parent_path = "/" + "/".join(parts[:-1]) + "/"
-
+        parent_path = "/" if len(parts) == 1 else "/" + "/".join(parts[:-1]) + "/"
         entry_name = parts[-1]
 
         # Delete the file entry
@@ -2604,11 +2592,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
             if not parts or parts == [""]:
                 continue
 
-            if len(parts) == 1:
-                parent_path = "/"
-            else:
-                parent_path = "/" + "/".join(parts[:-1]) + "/"
-
+            parent_path = "/" if len(parts) == 1 else "/" + "/".join(parts[:-1]) + "/"
             entry_name = parts[-1]
             entries_to_delete.append((parent_path, entry_name))
 
@@ -2616,7 +2600,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
             return
 
         # Delete all file entries in a single query using OR conditions
-        from sqlalchemy import or_, and_
+        from sqlalchemy import and_, or_
 
         conditions = [
             and_(

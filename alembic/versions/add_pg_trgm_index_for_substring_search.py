@@ -25,10 +25,12 @@ References:
 - Issue #946: perf(db): Add pg_trgm indexes for fast glob/LIKE pattern matching
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
+
+from sqlalchemy import text
 
 from alembic import op
-from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision: str = "add_pg_trgm_index"

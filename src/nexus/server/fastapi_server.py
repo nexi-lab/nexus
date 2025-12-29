@@ -1673,7 +1673,7 @@ def _handle_search(params: Any, context: Any) -> dict[str, Any]:
     return {"results": results}
 
 
-async def _handle_semantic_search_index(params: Any, context: Any) -> dict[str, Any]:
+async def _handle_semantic_search_index(params: Any, _context: Any) -> dict[str, Any]:
     """Handle semantic_search_index method (Issue #947).
 
     Index documents for semantic search with embeddings.
@@ -1700,7 +1700,7 @@ async def _handle_semantic_search_index(params: Any, context: Any) -> dict[str, 
         except Exception as e:
             raise ValueError(
                 f"Semantic search is not initialized and could not be auto-initialized: {e}"
-            )
+            ) from e
 
     # Call the async indexing method
     results = await nexus_fs.semantic_search_index(path=path, recursive=recursive)

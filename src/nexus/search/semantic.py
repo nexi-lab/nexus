@@ -232,7 +232,10 @@ class SemanticSearch:
             Dictionary mapping file paths to number of chunks indexed
         """
         # List all files
-        files = self.nx.list(path, recursive=True)
+        files_result = self.nx.list(path, recursive=True)
+
+        # Handle PaginatedResult if returned
+        files = files_result.items if hasattr(files_result, "items") else files_result
 
         # Filter to indexable files (exclude binary files, etc.)
         indexable_files = []

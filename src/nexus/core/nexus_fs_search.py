@@ -287,8 +287,8 @@ class NexusFSSearchMixin:
                             if entry.endswith("/"):
                                 # Directory - recurse into it if recursive=True
                                 if recursive:
-                                    # Add the directory itself
-                                    results.append(full_path)
+                                    # Add the directory itself (strip trailing slash for permission checks)
+                                    results.append(full_path.rstrip("/"))
                                     # Recurse into subdirectory
                                     subdir_backend_path = (
                                         f"{backend_path.rstrip('/')}/{entry.rstrip('/')}"
@@ -299,8 +299,8 @@ class NexusFSSearchMixin:
                                         list_recursive(full_path.rstrip("/"), subdir_backend_path)
                                     )
                                 else:
-                                    # Non-recursive - just add the directory
-                                    results.append(full_path)
+                                    # Non-recursive - add directory (strip trailing slash for permission checks)
+                                    results.append(full_path.rstrip("/"))
                             else:
                                 # File - add it
                                 results.append(full_path)
@@ -332,28 +332,47 @@ class NexusFSSearchMixin:
                         for entry_path in all_paths:
                             # Try to get metadata from file_paths table
                             file_meta = self.metadata.get(entry_path)
-                            is_dir = entry_path.endswith("/")
+                            # Check if directory by looking at metadata mime_type
+                            is_dir = (
+                                file_meta
+                                and hasattr(file_meta, "mime_type")
+                                and file_meta.mime_type == "inode/directory"
+                            )
                             # Extract just the name from the full path
                             name = entry_path.rstrip("/").split("/")[-1]
 
                             results_with_details.append(
                                 {
-                                    "name": name,  # FIX: was "path" - FUSE expects "name"
-                                    "path": entry_path,  # Keep full path for backwards compat
-                                    "type": "directory" if is_dir else "file",  # FIX: was missing
+                                    # New format fields (primary)
+                                    "path": entry_path,
                                     "size": file_meta.size
                                     if file_meta and hasattr(file_meta, "size")
                                     else 0,
+                                    "modified_at": file_meta.updated_at.isoformat()
+                                    if file_meta
+                                    and hasattr(file_meta, "updated_at")
+                                    and file_meta.updated_at
+                                    else None,
                                     "created_at": file_meta.created_at.isoformat()
                                     if file_meta
                                     and hasattr(file_meta, "created_at")
                                     and file_meta.created_at
                                     else None,
+                                    "etag": file_meta.etag
+                                    if file_meta and hasattr(file_meta, "etag")
+                                    else None,
+                                    "mime_type": file_meta.mime_type
+                                    if file_meta and hasattr(file_meta, "mime_type")
+                                    else None,
+                                    "is_directory": is_dir,
+                                    # Legacy fields for backward compatibility
+                                    "name": name,
+                                    "type": "directory" if is_dir else "file",
                                     "updated_at": file_meta.updated_at.isoformat()
                                     if file_meta
                                     and hasattr(file_meta, "updated_at")
                                     and file_meta.updated_at
-                                    else None,  # FIX: was "modified_at"
+                                    else None,
                                 }
                             )
                         return results_with_details

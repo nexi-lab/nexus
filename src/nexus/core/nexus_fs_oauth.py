@@ -71,6 +71,8 @@ class NexusFSOAuthMixin:
             # Use centralized database URL resolution
             db_path = get_database_url(self)
 
+            logger.debug(f"TokenManager database URL resolved to: {db_path}")
+
             # TokenManager accepts db_url for any database type, or db_path for SQLite
             if db_path.startswith(("postgresql://", "mysql://", "sqlite://")):
                 self._token_manager = TokenManager(db_url=db_path)

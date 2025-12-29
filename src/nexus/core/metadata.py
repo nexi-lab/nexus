@@ -173,8 +173,8 @@ class MetadataStore(ABC):
         prefix: str = "",
         recursive: bool = True,
         limit: int = 1000,
-        cursor: str | None = None,
-        tenant_id: str | None = None,
+        cursor: str | None = None,  # noqa: ARG002
+        tenant_id: str | None = None,  # noqa: ARG002
     ) -> PaginatedResult:
         """List files with cursor-based pagination (Issue #937).
 

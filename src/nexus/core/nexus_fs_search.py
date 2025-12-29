@@ -24,6 +24,7 @@ from nexus.core.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.core.metadata import PaginatedResult
     from nexus.core.permissions import OperationContext
     from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.semantic import SemanticSearch
@@ -167,7 +168,7 @@ class NexusFSSearchMixin:
         context: OperationContext | None = None,
         limit: int | None = None,
         cursor: str | None = None,
-    ) -> builtins.list[str] | builtins.list[dict[str, Any]] | "PaginatedResult":
+    ) -> builtins.list[str] | builtins.list[dict[str, Any]] | PaginatedResult:
         """
         List files in a directory.
 
@@ -641,7 +642,7 @@ class NexusFSSearchMixin:
         limit: int,
         cursor: str | None,
         context: OperationContext | None,
-    ) -> "PaginatedResult":
+    ) -> PaginatedResult:
         """Internal paginated list implementation (Issue #937).
 
         Handles permission filtering with over-fetch strategy:
@@ -667,9 +668,8 @@ class NexusFSSearchMixin:
 
         # Extract tenant_id for PREWHERE-style DB filtering (Issue #904)
         list_tenant_id: str | None = None
-        if self._enforce_permissions and context:
-            if hasattr(context, "tenant_id"):
-                list_tenant_id = context.tenant_id
+        if self._enforce_permissions and context and hasattr(context, "tenant_id"):
+            list_tenant_id = context.tenant_id
 
         # Normalize path to prefix for metadata query
         if path and path != "/":
@@ -730,8 +730,6 @@ class NexusFSSearchMixin:
                 "recursive": recursive,
                 "tenant_id": list_tenant_id,
             }
-            # Get path_id from the metadata store for stable pagination
-            last_meta = self.metadata.get(last_item.path)
             # Note: path_id is internal to metadata store, we pass None here
             # The actual cursor will use the path as the primary key
             next_cursor = encode_cursor(

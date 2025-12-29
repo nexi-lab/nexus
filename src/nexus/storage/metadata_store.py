@@ -29,7 +29,7 @@ except ImportError:
     psycopg2 = None
 
 from nexus.core.exceptions import MetadataError
-from nexus.core.metadata import FileMetadata, MetadataStore
+from nexus.core.metadata import FileMetadata, MetadataStore, PaginatedResult
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
 from nexus.storage.models import (
     Base,
@@ -1220,7 +1220,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
         limit: int = 1000,
         cursor: str | None = None,
         tenant_id: str | None = None,
-    ) -> "PaginatedResult":
+    ) -> PaginatedResult:
         """List files with cursor-based (keyset) pagination (Issue #937).
 
         Uses keyset pagination for O(log n) performance at any page depth.

@@ -12,7 +12,6 @@ import pytest
 from nexus import NexusFS
 from nexus.backends import LocalBackend
 from nexus.core.metadata import PaginatedResult
-from nexus.core.permissions import OperationContext
 
 
 @pytest.fixture

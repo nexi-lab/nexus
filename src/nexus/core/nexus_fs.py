@@ -3456,6 +3456,23 @@ class NexusFS(
 
         tenant_id = self._extract_tenant_id(context) or "default"
 
+        # Check if agent config already exists BEFORE modifying entity registry
+        # Extract agent name from agent_id (format: user_id,agent_name)
+        agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
+        agent_dir = f"/tenant:{tenant_id}/user:{user_id}/agent/{agent_name_part}"
+        config_path = f"{agent_dir}/config.yaml"
+
+        try:
+            existing_meta = self.metadata.get(config_path)
+            if existing_meta:
+                raise ValueError(
+                    f"Agent already exists at {config_path}. "
+                    f"Cannot re-register existing agent. Delete the agent first if you want to recreate it."
+                )
+        except FileNotFoundError:
+            # Config doesn't exist, this is expected for new agents
+            pass
+
         # Ensure EntityRegistry is initialized
         if not self._entity_registry:
             from nexus.core.entity_registry import EntityRegistry
@@ -3471,13 +3488,6 @@ class NexusFS(
             metadata={"description": description} if description else None,
             entity_registry=self._entity_registry,
         )
-
-        # Create agent directory structure
-        # Extract agent name from agent_id (format: user_id,agent_name)
-        # Use new namespace convention: /tenant:<tenant_id>/user:<user_id>/agent/<agent_id>
-        agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
-        agent_dir = f"/tenant:{tenant_id}/user:{user_id}/agent/{agent_name_part}"
-        config_path = f"{agent_dir}/config.yaml"
 
         # Create initial config data
         config_data = self._create_agent_config_data(
@@ -4864,14 +4874,26 @@ class NexusFS(
         """
         import base64
         import logging
+        import os
         from pathlib import Path
 
         logger = logging.getLogger(__name__)
 
         # Find skills directory
-        possible_dirs = [
-            Path(__file__).parent.parent.parent.parent / "data" / "skills",  # nexus/data/skills
-        ]
+        possible_dirs = []
+
+        # 1. Try NEXUS_DATA_DIR environment variable (for Docker/production)
+        if os.environ.get("NEXUS_DATA_DIR"):
+            data_dir = Path(os.environ["NEXUS_DATA_DIR"])
+            possible_dirs.append(data_dir / "skills")
+
+        # 2. Try backend data directory if available
+        if hasattr(self.backend, "data_dir") and self.backend.data_dir:
+            backend_data_dir = Path(self.backend.data_dir)
+            possible_dirs.append(backend_data_dir / "skills")
+
+        # 3. Fall back to relative path from module location (for development)
+        possible_dirs.append(Path(__file__).parent.parent.parent.parent / "data" / "skills")
 
         skills_dir = None
         for dir_path in possible_dirs:

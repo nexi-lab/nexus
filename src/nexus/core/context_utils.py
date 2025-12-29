@@ -10,8 +10,11 @@ These utilities eliminate code duplication across nexus_fs_mounts, nexus_fs_oaut
 and workspace_registry modules.
 """
 
+import logging
 import os
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def get_tenant_id(context: Any) -> str:
@@ -98,6 +101,7 @@ def get_database_url(obj: Any, context: Any = None) -> str:  # noqa: ARG001
         'postgresql://localhost/nexus'
     """
     database_url = os.getenv("TOKEN_MANAGER_DB")
+    logger.debug(f"TOKEN_MANAGER_DB env var: {database_url}")
 
     if not database_url:
         if (
@@ -107,10 +111,13 @@ def get_database_url(obj: Any, context: Any = None) -> str:  # noqa: ARG001
             and obj._config.db_path
         ):
             database_url = obj._config.db_path
+            logger.debug(f"Using obj._config.db_path: {database_url}")
         elif hasattr(obj, "db_path") and obj.db_path:
             database_url = str(obj.db_path)
+            logger.debug(f"Using obj.db_path: {database_url}")
         elif hasattr(obj, "metadata") and hasattr(obj.metadata, "database_url"):
             database_url = obj.metadata.database_url
+            logger.debug(f"Using obj.metadata.database_url: {database_url}")
 
     if not database_url:
         raise RuntimeError(

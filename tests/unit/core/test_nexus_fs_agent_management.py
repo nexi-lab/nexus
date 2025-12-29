@@ -38,7 +38,6 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
         db_path=temp_dir / "metadata.db",
         auto_parse=False,
         enforce_permissions=True,
-        enable_tiger_cache=False,  # Disable Tiger Cache to avoid SQLite deadlocks in tests
     )
     yield nx
     nx.close()

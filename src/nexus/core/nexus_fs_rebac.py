@@ -856,15 +856,17 @@ class NexusFSReBACMixin:
         result = self._rebac_manager.rebac_delete(tuple_id=tuple_id)
 
         # OPTIMIZATION: Invalidate Tiger Cache for affected subject
+        # Wrap in suppress to prevent SQLite deadlocks - cache will be stale briefly
         if result and tuple_info and hasattr(self._rebac_manager, "tiger_invalidate_cache"):
             subject_type = tuple_info.get("subject_type")
             subject_id = tuple_info.get("subject_id")
             if subject_type and subject_id:
-                self._rebac_manager.tiger_invalidate_cache(
-                    subject=(subject_type, subject_id),
-                    resource_type=tuple_info.get("object_type"),
-                    tenant_id=tuple_info.get("tenant_id"),
-                )
+                with contextlib.suppress(Exception):
+                    self._rebac_manager.tiger_invalidate_cache(
+                        subject=(subject_type, subject_id),
+                        resource_type=tuple_info.get("object_type"),
+                        tenant_id=tuple_info.get("tenant_id"),
+                    )
 
         return result
 

@@ -5,16 +5,26 @@ Provides functions to create and configure standard agent types
 """
 
 import logging
+import os
 from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
+
 # Default agent configuration metadata
-DEFAULT_AGENT_METADATA = {
-    "platform": "langgraph",
-    "endpoint_url": "http://localhost:2024",
-    "agent_id": "agent",
-}
+def get_default_agent_metadata() -> dict[str, Any]:
+    """Get default agent metadata with configurable URLs from environment."""
+    return {
+        "platform": "langgraph",
+        "endpoint_url": os.getenv("LANGGRAPH_SERVER_URL", "http://localhost:2024"),
+        "nexus_server_url": os.getenv("NEXUS_SERVER_URL")
+        or os.getenv("NEXUS_URL", "http://localhost:2026"),
+        "agent_id": "agent",
+    }
+
+
+# For backwards compatibility
+DEFAULT_AGENT_METADATA = get_default_agent_metadata()
 
 
 def create_impersonated_user_agent(
@@ -29,7 +39,7 @@ def create_impersonated_user_agent(
         nx: NexusFS instance
         user_id: User ID to create agent for
         context: Operation context for the user
-        metadata: Optional agent metadata (uses DEFAULT_AGENT_METADATA if not provided)
+        metadata: Optional agent metadata (uses get_default_agent_metadata() if not provided)
 
     Returns:
         Agent creation result dict, or None on failure
@@ -39,7 +49,7 @@ def create_impersonated_user_agent(
         >>> print(result.get('config_path'))
         /tenant:default/user:alice/agent/ImpersonatedUser/config.yaml
     """
-    agent_metadata = metadata or DEFAULT_AGENT_METADATA
+    agent_metadata = metadata or get_default_agent_metadata()
     agent_id = f"{user_id},ImpersonatedUser"
 
     try:
@@ -72,7 +82,7 @@ def create_untrusted_agent(
         nx: NexusFS instance
         user_id: User ID to create agent for
         context: Operation context for the user
-        metadata: Optional agent metadata (uses DEFAULT_AGENT_METADATA if not provided)
+        metadata: Optional agent metadata (uses get_default_agent_metadata() if not provided)
 
     Returns:
         Agent creation result dict, or None on failure
@@ -82,7 +92,7 @@ def create_untrusted_agent(
         >>> print(result.get('api_key'))
         sk-alice,UntrustedAgent_12345...
     """
-    agent_metadata = metadata or DEFAULT_AGENT_METADATA
+    agent_metadata = metadata or get_default_agent_metadata()
     agent_id = f"{user_id},UntrustedAgent"
 
     try:
@@ -116,7 +126,7 @@ def create_skill_builder_agent(
         nx: NexusFS instance
         user_id: User ID to create agent for
         context: Operation context for the user
-        metadata: Optional agent metadata (uses DEFAULT_AGENT_METADATA if not provided)
+        metadata: Optional agent metadata (uses get_default_agent_metadata() if not provided)
 
     Returns:
         Agent creation result dict, or None on failure
@@ -126,7 +136,7 @@ def create_skill_builder_agent(
         >>> print(result.get('api_key'))
         sk-alice,SkillBuilder_12345...
     """
-    agent_metadata = metadata or DEFAULT_AGENT_METADATA
+    agent_metadata = metadata or get_default_agent_metadata()
     agent_id = f"{user_id},SkillBuilder"
 
     try:
@@ -158,7 +168,7 @@ def create_standard_agents(
         nx: NexusFS instance
         user_id: User ID to create agents for
         context: Operation context for the user
-        metadata: Optional agent metadata (uses DEFAULT_AGENT_METADATA if not provided)
+        metadata: Optional agent metadata (uses get_default_agent_metadata() if not provided)
 
     Returns:
         Dictionary with 'impersonated', 'untrusted', and 'skill_builder' keys containing results
@@ -231,11 +241,12 @@ def grant_skill_builder_permissions(
     user_id: str,
     tenant_id: str,
 ) -> int:
-    """Grant SkillBuilder agent viewer permissions to skill-creator skill and resource folder.
+    """Grant SkillBuilder agent permissions to skill-creator skill, resource folder, and workspace.
 
-    This grants the SkillBuilder agent read-only access to:
-    - The skill-creator skill (for skill creation capabilities)
-    - The user's resource folder (for accessing resources during skill building)
+    This grants the SkillBuilder agent:
+    - Read-only access to the skill-creator skill (for skill creation capabilities)
+    - Read-only access to the user's resource folder (for accessing resources during skill building)
+    - Editor access to the user's workspace (for creating and modifying skill files)
 
     Args:
         nx: NexusFS instance
@@ -248,7 +259,7 @@ def grant_skill_builder_permissions(
     Examples:
         >>> granted = grant_skill_builder_permissions(nx, "alice", "default")
         >>> print(f"Granted {granted} permissions to SkillBuilder")
-        Granted 2 permissions to SkillBuilder
+        Granted 3 permissions to SkillBuilder
     """
     agent_id = f"{user_id},SkillBuilder"
     user_base_path = f"/tenant:{tenant_id}/user:{user_id}"
@@ -281,5 +292,19 @@ def grant_skill_builder_permissions(
         granted_count += 1
     except Exception as e:
         logger.warning(f"Failed to grant permission on {resource_path}: {e}")
+
+    # Grant editor access to workspace folder
+    workspace_path = f"{user_base_path}/workspace"
+    try:
+        nx.rebac_create(
+            subject=("agent", agent_id),
+            relation="direct_editor",  # Editor access for creating/modifying skills
+            object=("file", workspace_path),
+            tenant_id=tenant_id,
+        )
+        logger.info(f"Granted editor permission on {workspace_path} to SkillBuilder")
+        granted_count += 1
+    except Exception as e:
+        logger.warning(f"Failed to grant permission on {workspace_path}: {e}")
 
     return granted_count

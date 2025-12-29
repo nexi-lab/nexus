@@ -3977,6 +3977,63 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("register_agent", params)
         return result  # type: ignore[no-any-return]
 
+    def update_agent(
+        self,
+        agent_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        metadata: dict | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Update an existing agent's configuration (v0.5.1).
+
+        Updates the agent's config.yaml file and optionally updates entity registry metadata.
+        Does NOT regenerate API keys or change permissions.
+
+        Args:
+            agent_id: Agent identifier to update
+            name: Optional new name
+            description: Optional new description
+            metadata: Optional metadata to update (platform, endpoint_url, agent_id, etc.)
+            context: Optional operation context (for compatibility with NexusFS)
+
+        Returns:
+            Updated agent info dict
+
+        Raises:
+            RemoteFilesystemError: If update fails
+
+        Example:
+            >>> # Update agent metadata
+            >>> agent = nx.update_agent(
+            ...     "alice,DataAnalyst",
+            ...     name="Data Analyst Pro",
+            ...     description="Enhanced data analysis agent",
+            ...     metadata={
+            ...         "platform": "langgraph",
+            ...         "endpoint_url": "https://agent.example.com",
+            ...         "agent_id": "analyst"
+            ...     }
+            ... )
+        """
+        params: dict[str, Any] = {
+            "agent_id": agent_id,
+        }
+
+        if name is not None:
+            params["name"] = name
+        if description is not None:
+            params["description"] = description
+        if metadata is not None:
+            params["metadata"] = metadata
+
+        # Add context if provided (for compatibility with NexusFS)
+        if context is not None:
+            params["context"] = context
+
+        result = self._call_rpc("update_agent", params)
+        return result  # type: ignore[no-any-return]
+
     def list_agents(self) -> builtins.list[dict]:
         """List all registered agents.
 

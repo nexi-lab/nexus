@@ -499,9 +499,7 @@ class AsyncScopedFilesystem:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Update an existing agent's configuration (async)."""
-        result: dict[str, Any] = await self._fs.update_agent(  # type: ignore[attr-defined]
-            agent_id, name, description, metadata
-        )
+        result: dict[str, Any] = await self._fs.update_agent(agent_id, name, description, metadata)
         return result
 
     async def list_agents(self) -> builtins.list[dict[str, Any]]:

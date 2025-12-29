@@ -1203,6 +1203,52 @@ class TigerCacheUpdater:
             with self._engine.begin() as new_conn:
                 return execute(new_conn)
 
+    def reset_stuck_entries(
+        self, stuck_timeout_minutes: int = 5, conn: Connection | None = None
+    ) -> int:
+        """Reset entries stuck in 'processing' state.
+
+        If a worker crashes while processing, entries can get stuck in
+        'processing' state. This method resets them to 'pending' so they
+        can be retried.
+
+        Args:
+            stuck_timeout_minutes: Reset entries stuck longer than this
+            conn: Optional database connection
+
+        Returns:
+            Number of entries reset
+        """
+        from sqlalchemy import text
+
+        if self._is_postgresql:
+            query = text("""
+                UPDATE tiger_cache_queue
+                SET status = 'pending'
+                WHERE status = 'processing'
+                  AND created_at < NOW() - INTERVAL ':minutes minutes'
+            """)
+        else:
+            query = text("""
+                UPDATE tiger_cache_queue
+                SET status = 'pending'
+                WHERE status = 'processing'
+                  AND created_at < datetime('now', '-' || :minutes || ' minutes')
+            """)
+
+        def execute(connection: Connection) -> int:
+            result = connection.execute(query, {"minutes": stuck_timeout_minutes})
+            count = result.rowcount
+            if count > 0:
+                logger.info(f"[TIGER] Reset {count} stuck queue entries to pending")
+            return count
+
+        if conn:
+            return execute(conn)
+        else:
+            with self._engine.begin() as new_conn:
+                return execute(new_conn)
+
     def process_queue(self, batch_size: int = 100, conn: Connection | None = None) -> int:
         """Process pending queue entries.
 
@@ -1221,6 +1267,12 @@ class TigerCacheUpdater:
         if self._rebac_manager is None:
             logger.warning("[TIGER] Cannot process queue - no ReBAC manager set")
             return 0
+
+        # Reset any stuck entries before processing
+        try:
+            self.reset_stuck_entries(stuck_timeout_minutes=5)
+        except Exception as e:
+            logger.debug(f"[TIGER] Could not reset stuck entries: {e}")
 
         now_sql = "NOW()" if self._is_postgresql else "datetime('now')"
 

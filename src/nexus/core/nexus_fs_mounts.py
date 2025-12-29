@@ -1426,6 +1426,64 @@ class NexusFSMountsMixin:
                         entry_backend_path = entry_name
 
                     if is_dir:
+                        # Create explicit directory marker in metadata
+                        if not ctx.dry_run:
+                            existing_meta = self.metadata.get(entry_virtual_path)  # type: ignore[attr-defined]
+                            if not existing_meta:
+                                try:
+                                    # Extract tenant_id from context or mount point path
+                                    tenant_id = get_tenant_id(ctx.context) if ctx.context else None
+                                    if not tenant_id and ctx.mount_point:
+                                        # Try to extract from mount point path like /tenant:TENANT_ID/...
+                                        import re
+
+                                        match = re.match(r"^/tenant:([^/]+)/", ctx.mount_point)
+                                        if match:
+                                            tenant_id = match.group(1)
+
+                                    now = datetime.now(UTC)
+                                    import hashlib
+
+                                    path_hash = hashlib.sha256(
+                                        entry_backend_path.encode()
+                                    ).hexdigest()
+
+                                    # Create directory metadata entry
+                                    dir_meta = FileMetadata(
+                                        path=entry_virtual_path,
+                                        backend_name=ctx.backend.name,  # type: ignore[union-attr]
+                                        physical_path=entry_backend_path,
+                                        size=0,  # Directories have size 0
+                                        etag=path_hash,
+                                        mime_type="inode/directory",  # Mark as directory
+                                        created_at=now,
+                                        modified_at=now,
+                                        version=1,
+                                        created_by=ctx.created_by,
+                                        tenant_id=tenant_id,  # Set proper tenant_id for permission checks
+                                    )
+
+                                    # Save directory to database
+                                    self.metadata.put(dir_meta)  # type: ignore[attr-defined]
+
+                                    # Track directory as found in backend (prevents deletion in cleanup phase)
+                                    files_found_in_backend.add(entry_virtual_path)
+
+                                    # Collect path for batch parent tuple creation
+                                    if ctx.has_hierarchy and self._hierarchy_manager:  # type: ignore[attr-defined]
+                                        paths_needing_tuples.append(entry_virtual_path)
+                                        # Flush batch if chunk size reached
+                                        if len(paths_needing_tuples) >= PATHS_CHUNK_SIZE:
+                                            flush_parent_tuples_batch()
+
+                                except Exception as e:
+                                    error_msg = f"Failed to create directory marker for {entry_virtual_path}: {e}"
+                                    cast(list[str], stats["errors"]).append(error_msg)
+                                    logger.warning(error_msg)
+
+                        # Track directory as found in backend even if it already existed
+                        files_found_in_backend.add(entry_virtual_path)
+
                         # Add subdirectory to queue for BFS traversal
                         if ctx.recursive:
                             queue.append((entry_virtual_path, entry_backend_path))

@@ -1649,7 +1649,9 @@ class ReBACManager:
                 )
 
             subject_rows = cursor.fetchall()
-            logger.debug(f"update_object_path: Found {len(subject_rows)} tuples with subject_id to update")
+            logger.debug(
+                f"update_object_path: Found {len(subject_rows)} tuples with subject_id to update"
+            )
 
             if subject_rows:
                 # PERF: Batch UPDATE with CASE statement (Issue #590)
@@ -1697,7 +1699,9 @@ class ReBACManager:
                         (new_path, object_type, old_path, now_iso),
                     )
 
-                logger.debug(f"update_object_path: Batch UPDATE (subject_id) affected {cursor.rowcount} rows")
+                logger.debug(
+                    f"update_object_path: Batch UPDATE (subject_id) affected {cursor.rowcount} rows"
+                )
 
                 # PERF: Batch INSERT changelog entries
                 changelog_entries = []
@@ -3890,6 +3894,7 @@ class ReBACManager:
         effective_tenant_id = tenant_id if tenant_id is not None else "default"
 
         import logging
+
         logger = logging.getLogger(__name__)
 
         # Track write for adaptive TTL (Phase 4)

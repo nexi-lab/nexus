@@ -2549,8 +2549,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
         # Delete the file entry
         session.execute(
-            select(DirectoryEntryModel)
-            .where(
+            select(DirectoryEntryModel).where(
                 DirectoryEntryModel.tenant_id == tenant_id,
                 DirectoryEntryModel.parent_path == parent_path,
                 DirectoryEntryModel.entry_name == entry_name,

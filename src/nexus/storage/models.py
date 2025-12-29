@@ -273,7 +273,9 @@ class DirectoryEntryModel(Base):
 
         # Validate entry_type
         if self.entry_type not in ("file", "directory"):
-            raise ValidationError(f"entry_type must be 'file' or 'directory', got {self.entry_type!r}")
+            raise ValidationError(
+                f"entry_type must be 'file' or 'directory', got {self.entry_type!r}"
+            )
 
 
 class FileMetadataModel(Base):

@@ -44,9 +44,7 @@ def upgrade() -> None:
         return
 
     # Check if pgvector extension is available
-    result = conn.execute(
-        text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
-    )
+    result = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'"))
     if not result.fetchone():
         # pgvector not installed, skip
         return
@@ -91,9 +89,7 @@ def downgrade() -> None:
         return
 
     # Check if pgvector extension is available
-    result = conn.execute(
-        text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
-    )
+    result = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'"))
     if not result.fetchone():
         return
 

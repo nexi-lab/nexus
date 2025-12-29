@@ -2912,10 +2912,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
                     if result:  # Only cache positive results
                         try:
-                            resource_int_id = (
-                                self._tiger_cache._resource_map.get_or_create_int_id(
-                                    obj[0], obj[1], tenant_id
-                                )
+                            resource_int_id = self._tiger_cache._resource_map.get_or_create_int_id(
+                                obj[0], obj[1], tenant_id
                             )
                             if resource_int_id > 0:
                                 group_key = (

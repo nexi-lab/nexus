@@ -394,7 +394,9 @@ class TestTigerCacheIncrementalUpdates:
         tiger_cache.add_to_bitmap("user", "alice", "read", "file", "tenant1", r1)
 
         # Should still have only 1 resource in bitmap
-        accessible = tiger_cache.get_accessible_resources("user", "alice", "read", "file", "tenant1")
+        accessible = tiger_cache.get_accessible_resources(
+            "user", "alice", "read", "file", "tenant1"
+        )
         assert accessible == {r1}
 
     def test_remove_from_bitmap(self, tiger_cache, resource_map):
@@ -425,7 +427,9 @@ class TestTigerCacheIncrementalUpdates:
         assert result is True
 
         # Verify r1 is no longer accessible but r2 is
-        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "tenant1") is False
+        assert (
+            tiger_cache.check_access("user", "alice", "read", "file", "file1", "tenant1") is False
+        )
         assert tiger_cache.check_access("user", "alice", "read", "file", "file2", "tenant1") is True
 
     def test_remove_from_bitmap_not_in_cache(self, tiger_cache, resource_map):
@@ -461,7 +465,9 @@ class TestTigerCacheIncrementalUpdates:
         assert added == 3
 
         # Verify all are accessible
-        accessible = tiger_cache.get_accessible_resources("user", "alice", "read", "file", "tenant1")
+        accessible = tiger_cache.get_accessible_resources(
+            "user", "alice", "read", "file", "tenant1"
+        )
         assert accessible == {r1, r2, r3}
 
     def test_add_to_bitmap_bulk_partial_duplicates(self, tiger_cache, resource_map):
@@ -493,7 +499,9 @@ class TestTigerCacheIncrementalUpdates:
         assert added == 2  # Only r2 and r3 are new
 
         # Verify all are accessible
-        accessible = tiger_cache.get_accessible_resources("user", "alice", "read", "file", "tenant1")
+        accessible = tiger_cache.get_accessible_resources(
+            "user", "alice", "read", "file", "tenant1"
+        )
         assert accessible == {r1, r2, r3}
 
     def test_add_to_bitmap_bulk_empty_set(self, tiger_cache):

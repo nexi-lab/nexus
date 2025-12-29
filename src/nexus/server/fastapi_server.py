@@ -1500,7 +1500,12 @@ def _handle_exists(params: Any, context: Any) -> dict[str, Any]:
 
 
 def _handle_list(params: Any, context: Any) -> dict[str, Any]:
-    """Handle list method."""
+    """Handle list method with optional pagination support (Issue #937).
+
+    Backward Compatibility:
+    - If limit not provided: returns {"files": [...]} (legacy format)
+    - If limit provided: returns {"files": [...], "next_cursor": ..., "has_more": ...}
+    """
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
 
@@ -1512,6 +1517,29 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
     if hasattr(params, "details") and params.details is not None:
         kwargs["details"] = params.details
 
+    # Check for pagination mode (Issue #937)
+    limit = getattr(params, "limit", None)
+    cursor = getattr(params, "cursor", None)
+
+    if limit is not None:
+        # Paginated mode - pass limit and cursor to list()
+        kwargs["limit"] = limit
+        if cursor:
+            kwargs["cursor"] = cursor
+
+        result = nexus_fs.list(params.path, **kwargs)
+
+        # Result is PaginatedResult when limit is provided
+        if hasattr(result, "to_dict"):
+            paginated = result.to_dict()
+            return {
+                "files": paginated["items"],
+                "next_cursor": paginated["next_cursor"],
+                "has_more": paginated["has_more"],
+                "total_count": paginated.get("total_count"),
+            }
+
+    # Legacy mode - return flat list
     entries = nexus_fs.list(params.path, **kwargs)
     # Client expects "files" key, not "entries"
     return {"files": entries}

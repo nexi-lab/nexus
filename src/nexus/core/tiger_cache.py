@@ -137,6 +137,8 @@ class TigerResourceMap:
                     },
                 )
                 row = result.fetchone()
+                # Commit so the data persists (Issue #934 fix)
+                connection.commit()
                 if row:
                     return int(row.resource_int_id)
                 # Conflict occurred, fetch again

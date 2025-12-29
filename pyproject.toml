@@ -64,6 +64,7 @@ dependencies = [
     "aiosqlite>=0.20.0", # SQLite driver (async)
     # Caching
     "cachetools>=6.2.2",
+    "redis>=7.0.0",  # Redis/Dragonfly client (async support)
     # Authentication
     "authlib>=1.6.5", # JWT and OAuth support for OIDC auth
     "bcrypt>=4.0.0", # Password hashing for local auth

@@ -165,11 +165,14 @@ class NexusFSSearchMixin:
         prefix: str | None = None,
         show_parsed: bool = True,  # noqa: ARG002
         context: OperationContext | None = None,
-    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> builtins.list[str] | builtins.list[dict[str, Any]] | "PaginatedResult":
         """
         List files in a directory.
 
         Supports memory virtual paths since v0.4.0.
+        Supports cursor-based pagination since Issue #937.
 
         Args:
             path: Directory path to list (default: "/", supports memory paths)
@@ -180,9 +183,13 @@ class NexusFSSearchMixin:
             show_parsed: If True, include parsed virtual views in listing (default: True).
                         Note: Virtual views are added at the RPC layer, not in this method.
             context: Optional operation context for permission filtering (uses default if not provided)
+            limit: Max items per page (Issue #937). When provided, enables pagination mode
+                   and returns PaginatedResult instead of list. Range: 1-10000.
+            cursor: Continuation token from previous page's next_cursor (Issue #937).
 
         Returns:
-            List of file paths (if details=False) or list of file metadata dicts (if details=True).
+            - If limit is None: List of file paths (details=False) or list of metadata dicts (details=True)
+            - If limit is provided: PaginatedResult with items, next_cursor, and has_more
             Each metadata dict contains: path, size, modified_at, etag
             Results are filtered by read permission.
 
@@ -202,7 +209,23 @@ class NexusFSSearchMixin:
             # List memories (v0.4.0)
             fs.list("/memory/by-user/alice")  # Returns memory paths for user alice
             fs.list("/workspace/alice/agent1/memory")  # Returns memories for agent1
+
+            # Paginated listing (Issue #937)
+            result = fs.list("/workspace/", limit=1000)  # Returns PaginatedResult
+            while result.has_more:
+                process(result.items)
+                result = fs.list("/workspace/", limit=1000, cursor=result.next_cursor)
         """
+        # Issue #937: Pagination mode - use dedicated paginated implementation
+        if limit is not None:
+            return self._list_paginated(
+                path=path,
+                recursive=recursive,
+                details=details,
+                limit=limit,
+                cursor=cursor,
+                context=context,
+            )
         # Phase 2 Integration (v0.4.0): Intercept memory paths
         from nexus.core.memory_router import MemoryViewRouter
 
@@ -609,6 +632,137 @@ class NexusFSSearchMixin:
                 f"[LIST-DEBUG] Returning {len(all_paths)} paths (details=False), path={path}, recursive={recursive}, file_paths={len(file_paths)}, directories={len(directories)}"
             )
             return all_paths
+
+    def _list_paginated(
+        self,
+        path: str,
+        recursive: bool,
+        details: bool,
+        limit: int,
+        cursor: str | None,
+        context: OperationContext | None,
+    ) -> "PaginatedResult":
+        """Internal paginated list implementation (Issue #937).
+
+        Handles permission filtering with over-fetch strategy:
+        1. Fetch limit * 1.5 items from DB
+        2. Filter by permissions
+        3. If not enough items, continue fetching until limit reached or no more data
+
+        Args:
+            path: Directory path to list
+            recursive: Include nested subdirectories
+            details: Return metadata dicts vs paths
+            limit: Max items per page
+            cursor: Continuation token from previous page
+            context: Operation context for permission filtering
+
+        Returns:
+            PaginatedResult with items, next_cursor, and has_more
+        """
+        from nexus.core.metadata import PaginatedResult
+        from nexus.core.pagination import encode_cursor
+
+        context = context or self._default_context
+
+        # Extract tenant_id for PREWHERE-style DB filtering (Issue #904)
+        list_tenant_id: str | None = None
+        if self._enforce_permissions and context:
+            if hasattr(context, "tenant_id"):
+                list_tenant_id = context.tenant_id
+
+        # Normalize path to prefix for metadata query
+        if path and path != "/":
+            path = self._validate_path(path)
+        if path and not path.endswith("/"):
+            path = path + "/"
+        list_prefix = path if path != "/" else ""
+
+        # Over-fetch strategy for permission filtering
+        # Fetch 1.5x to account for items that get filtered out
+        buffer_multiplier = 1.5
+        fetch_limit = int(limit * buffer_multiplier)
+
+        collected_items: builtins.list[Any] = []
+        current_cursor = cursor
+        has_more = True
+
+        while len(collected_items) < limit and has_more:
+            # Fetch batch from metadata store using keyset pagination
+            batch = self.metadata.list_paginated(
+                prefix=list_prefix,
+                recursive=recursive,
+                limit=fetch_limit,
+                cursor=current_cursor,
+                tenant_id=list_tenant_id,
+            )
+
+            # Filter by permissions
+            if self._enforce_permissions and context:
+                paths = [item.path for item in batch.items]
+                allowed_paths = set(
+                    self._permission_enforcer.filter_list(paths, context)
+                )
+                filtered_items = [
+                    item for item in batch.items if item.path in allowed_paths
+                ]
+            else:
+                filtered_items = batch.items
+
+            collected_items.extend(filtered_items)
+            has_more = batch.has_more
+            current_cursor = batch.next_cursor
+
+            # Avoid infinite loop if no items pass filter
+            if not batch.items:
+                break
+
+        # Trim to requested limit
+        result_items = collected_items[:limit]
+        final_has_more = has_more or len(collected_items) > limit
+
+        # Generate cursor for next page
+        next_cursor = None
+        if final_has_more and result_items:
+            last_item = result_items[-1]
+            filters = {
+                "prefix": list_prefix,
+                "recursive": recursive,
+                "tenant_id": list_tenant_id,
+            }
+            # Get path_id from the metadata store for stable pagination
+            last_meta = self.metadata.get(last_item.path)
+            # Note: path_id is internal to metadata store, we pass None here
+            # The actual cursor will use the path as the primary key
+            next_cursor = encode_cursor(
+                last_path=last_item.path,
+                last_path_id=None,  # SQLAlchemy store handles this internally
+                filters=filters,
+            )
+
+        # Convert to output format
+        if details:
+            items_output = [
+                {
+                    "path": meta.path,
+                    "size": meta.size,
+                    "modified_at": meta.modified_at,
+                    "created_at": meta.created_at,
+                    "etag": meta.etag,
+                    "mime_type": meta.mime_type,
+                    "is_directory": meta.is_directory if hasattr(meta, "is_directory") else False,
+                }
+                for meta in result_items
+            ]
+        else:
+            items_output = [meta.path for meta in result_items]
+
+        return PaginatedResult(
+            items=items_output,
+            next_cursor=next_cursor,
+            has_more=final_has_more,
+            total_count=None,  # Skip expensive COUNT(*) at scale
+        )
 
     @rpc_expose(description="Find files by glob pattern")
     def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:

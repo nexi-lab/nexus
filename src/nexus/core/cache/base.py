@@ -1,0 +1,329 @@
+"""Abstract cache interfaces for Nexus caching layer.
+
+This module defines protocols (interfaces) that all cache backends must implement.
+Using Protocol allows for structural subtyping without requiring inheritance.
+"""
+
+from typing import Optional, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class PermissionCacheProtocol(Protocol):
+    """Protocol for permission cache backends.
+
+    Implementations must provide async methods for:
+    - Getting cached permission results
+    - Setting permission results with TTL
+    - Invalidating entries by subject or object
+    - Health checking
+
+    Example:
+        class MyCache(PermissionCacheProtocol):
+            async def get(self, ...) -> Optional[bool]:
+                ...
+    """
+
+    async def get(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        object_type: str,
+        object_id: str,
+        tenant_id: str,
+    ) -> Optional[bool]:
+        """Get cached permission result.
+
+        Args:
+            subject_type: Type of subject (e.g., "user", "agent")
+            subject_id: ID of subject
+            permission: Permission to check (e.g., "read", "write")
+            object_type: Type of object (e.g., "file", "workspace")
+            object_id: ID of object (e.g., "/workspace/file.txt")
+            tenant_id: Tenant ID for multi-tenancy
+
+        Returns:
+            True if permission granted, False if denied, None if not in cache
+        """
+        ...
+
+    async def set(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        object_type: str,
+        object_id: str,
+        result: bool,
+        tenant_id: str,
+    ) -> None:
+        """Cache permission result.
+
+        The TTL should be shorter for denials (security) than grants.
+
+        Args:
+            subject_type: Type of subject
+            subject_id: ID of subject
+            permission: Permission checked
+            object_type: Type of object
+            object_id: ID of object
+            result: True if granted, False if denied
+            tenant_id: Tenant ID
+        """
+        ...
+
+    async def invalidate_subject(
+        self,
+        subject_type: str,
+        subject_id: str,
+        tenant_id: str,
+    ) -> int:
+        """Invalidate all cached permissions for a subject.
+
+        Called when a subject's permissions change (e.g., removed from group).
+
+        Args:
+            subject_type: Type of subject
+            subject_id: ID of subject
+            tenant_id: Tenant ID
+
+        Returns:
+            Number of entries invalidated
+        """
+        ...
+
+    async def invalidate_object(
+        self,
+        object_type: str,
+        object_id: str,
+        tenant_id: str,
+    ) -> int:
+        """Invalidate all cached permissions for an object.
+
+        Called when an object's permissions change (e.g., ACL updated).
+
+        Args:
+            object_type: Type of object
+            object_id: ID of object
+            tenant_id: Tenant ID
+
+        Returns:
+            Number of entries invalidated
+        """
+        ...
+
+    async def invalidate_subject_object(
+        self,
+        subject_type: str,
+        subject_id: str,
+        object_type: str,
+        object_id: str,
+        tenant_id: str,
+    ) -> int:
+        """Invalidate cached permissions for a specific subject-object pair.
+
+        More precise than invalidate_subject or invalidate_object.
+
+        Args:
+            subject_type: Type of subject
+            subject_id: ID of subject
+            object_type: Type of object
+            object_id: ID of object
+            tenant_id: Tenant ID
+
+        Returns:
+            Number of entries invalidated
+        """
+        ...
+
+    async def clear(self, tenant_id: Optional[str] = None) -> int:
+        """Clear all cached permissions.
+
+        Args:
+            tenant_id: If provided, only clear entries for this tenant.
+                       If None, clear all entries.
+
+        Returns:
+            Number of entries cleared
+        """
+        ...
+
+    async def health_check(self) -> bool:
+        """Check if the cache backend is healthy and responding.
+
+        Returns:
+            True if healthy, False otherwise
+        """
+        ...
+
+    async def get_stats(self) -> dict:
+        """Get cache statistics.
+
+        Returns:
+            Dict with stats like hits, misses, size, etc.
+        """
+        ...
+
+
+@runtime_checkable
+class TigerCacheProtocol(Protocol):
+    """Protocol for Tiger cache backends.
+
+    Tiger cache stores pre-materialized permission bitmaps for O(1) list filtering.
+    Each bitmap represents all resources a subject can access with a given permission.
+
+    Example:
+        # Check if user can access resource using bitmap
+        bitmap_data = await cache.get_bitmap("user", "alice", "read", "file", "tenant1")
+        if bitmap_data:
+            bitmap = RoaringBitmap.deserialize(bitmap_data[0])
+            can_access = resource_int_id in bitmap
+    """
+
+    async def get_bitmap(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        tenant_id: str,
+    ) -> Optional[tuple[bytes, int]]:
+        """Get Tiger bitmap for a subject.
+
+        Args:
+            subject_type: Type of subject (e.g., "user")
+            subject_id: ID of subject (e.g., "alice")
+            permission: Permission type (e.g., "read")
+            resource_type: Type of resources in bitmap (e.g., "file")
+            tenant_id: Tenant ID
+
+        Returns:
+            Tuple of (bitmap_data, revision) if found, None otherwise.
+            bitmap_data is serialized Roaring Bitmap bytes.
+            revision is used for staleness detection.
+        """
+        ...
+
+    async def set_bitmap(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        tenant_id: str,
+        bitmap_data: bytes,
+        revision: int,
+    ) -> None:
+        """Store Tiger bitmap for a subject.
+
+        Args:
+            subject_type: Type of subject
+            subject_id: ID of subject
+            permission: Permission type
+            resource_type: Type of resources
+            tenant_id: Tenant ID
+            bitmap_data: Serialized Roaring Bitmap bytes
+            revision: Current revision for staleness detection
+        """
+        ...
+
+    async def invalidate(
+        self,
+        subject_type: Optional[str] = None,
+        subject_id: Optional[str] = None,
+        permission: Optional[str] = None,
+        resource_type: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+    ) -> int:
+        """Invalidate Tiger cache entries matching criteria.
+
+        All parameters are optional filters. If all are None, clears everything.
+
+        Args:
+            subject_type: Filter by subject type
+            subject_id: Filter by subject ID
+            permission: Filter by permission
+            resource_type: Filter by resource type
+            tenant_id: Filter by tenant
+
+        Returns:
+            Number of entries invalidated
+        """
+        ...
+
+    async def health_check(self) -> bool:
+        """Check if the cache backend is healthy.
+
+        Returns:
+            True if healthy, False otherwise
+        """
+        ...
+
+
+@runtime_checkable
+class ResourceMapCacheProtocol(Protocol):
+    """Protocol for resource map cache (UUID -> int64 mappings).
+
+    Tiger cache uses integer IDs for Roaring Bitmap compatibility.
+    This cache stores the mapping between resource UUIDs and integer IDs.
+    """
+
+    async def get_int_id(
+        self,
+        resource_type: str,
+        resource_id: str,
+        tenant_id: str,
+    ) -> Optional[int]:
+        """Get integer ID for a resource.
+
+        Args:
+            resource_type: Type of resource (e.g., "file")
+            resource_id: String ID of resource (e.g., "/workspace/file.txt")
+            tenant_id: Tenant ID
+
+        Returns:
+            Integer ID if found, None otherwise
+        """
+        ...
+
+    async def get_int_ids_bulk(
+        self,
+        resources: list[tuple[str, str, str]],  # (resource_type, resource_id, tenant_id)
+    ) -> dict[tuple[str, str, str], Optional[int]]:
+        """Bulk get integer IDs for multiple resources.
+
+        Args:
+            resources: List of (resource_type, resource_id, tenant_id) tuples
+
+        Returns:
+            Dict mapping resource tuples to their integer IDs (None if not found)
+        """
+        ...
+
+    async def set_int_id(
+        self,
+        resource_type: str,
+        resource_id: str,
+        tenant_id: str,
+        int_id: int,
+    ) -> None:
+        """Store integer ID for a resource.
+
+        Args:
+            resource_type: Type of resource
+            resource_id: String ID of resource
+            tenant_id: Tenant ID
+            int_id: Integer ID to store
+        """
+        ...
+
+    async def set_int_ids_bulk(
+        self,
+        mappings: dict[tuple[str, str, str], int],  # (type, id, tenant) -> int_id
+    ) -> None:
+        """Bulk store integer IDs for multiple resources.
+
+        Args:
+            mappings: Dict mapping (resource_type, resource_id, tenant_id) to integer IDs
+        """
+        ...

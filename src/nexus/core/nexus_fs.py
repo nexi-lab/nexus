@@ -440,9 +440,10 @@ class NexusFS(
         """Initialize performance optimizations for permission checks.
 
         This method:
-        1. Grants TRAVERSE permission on implicit directories (enables O(1) stat)
-        2. Warms the Tiger Cache for faster subsequent permission checks
-        3. Starts background worker for Tiger Cache queue processing
+        1. Syncs tiger_resource_map from existing metadata (Issue #934)
+        2. Grants TRAVERSE permission on implicit directories (enables O(1) stat)
+        3. Warms the Tiger Cache for faster subsequent permission checks
+        4. Starts background worker for Tiger Cache queue processing
 
         Called automatically during __init__. Can be called manually to refresh.
         """
@@ -458,12 +459,25 @@ class NexusFS(
             return
 
         try:
-            # 1. TRAVERSE on implicit directories is now AUTOMATIC
+            # 1. Sync tiger_resource_map from existing metadata (Issue #934)
+            # This MUST happen BEFORE cache warming so Tiger Cache can find resources
+            # Fixes chicken-and-egg: resources only added during check_access(),
+            # but check_access() returns cache miss because map is empty
+            if os.getenv("NEXUS_SYNC_TIGER_RESOURCE_MAP", "true").lower() in (
+                "true",
+                "1",
+                "yes",
+            ):
+                synced = self._sync_resource_map_from_metadata()
+                if synced > 0:
+                    logger.info(f"Synced {synced} resources to Tiger resource map")
+
+            # 2. TRAVERSE on implicit directories is now AUTOMATIC
             # The permission check auto-allows TRAVERSE for any implicit directory
             # when the user is authenticated. No manual grants needed!
             # See: permissions.py _check_rebac() TRAVERSE handling
 
-            # 2. Warm Tiger Cache (optional, can be slow for large systems)
+            # 3. Warm Tiger Cache (optional, can be slow for large systems)
             # Only warm if explicitly enabled via environment variable
             if os.getenv("NEXUS_WARM_TIGER_CACHE", "false").lower() in (
                 "true",
@@ -474,13 +488,94 @@ class NexusFS(
                 if entries > 0:
                     logger.info(f"Warmed Tiger Cache with {entries} entries")
 
-            # 3. Start Tiger Cache background worker
+            # 4. Start Tiger Cache background worker
             # This processes permission change queue to keep Tiger Cache up-to-date
             self._start_tiger_cache_worker()
 
         except Exception as e:
             # Don't fail initialization if optimizations fail
             logger.warning(f"Failed to initialize performance optimizations: {e}")
+
+    def _sync_resource_map_from_metadata(self) -> int:
+        """Populate tiger_resource_map from existing metadata.
+
+        Issue #934: Enables Tiger Cache to work for pre-existing files by
+        ensuring all files have integer IDs in the resource map.
+
+        This fixes the chicken-and-egg problem where:
+        - Tiger Cache needs resource IDs to check access
+        - Resource IDs were only created during permission checks
+        - Permission checks returned cache miss → never populated
+
+        Returns:
+            Number of resources synced to the map
+
+        Performance:
+            ~5 seconds for 6,000 files (one-time startup cost)
+
+        Environment:
+            NEXUS_SYNC_TIGER_RESOURCE_MAP: Set to "false" to disable (default: true)
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Check if Tiger Cache is available
+        if not hasattr(self, "_rebac_manager"):
+            logger.debug("No ReBAC manager - skipping resource map sync")
+            return 0
+
+        tiger_cache = getattr(self._rebac_manager, "_tiger_cache", None)
+        if not tiger_cache:
+            logger.debug("Tiger Cache disabled - skipping resource map sync")
+            return 0
+
+        resource_map = getattr(tiger_cache, "_resource_map", None)
+        if not resource_map:
+            logger.debug("No resource map in Tiger Cache - skipping sync")
+            return 0
+
+        try:
+            # Get all files from metadata store
+            all_files = self.metadata.list("/", recursive=True)
+            total = len(all_files)
+
+            if total == 0:
+                logger.debug("No files in metadata - nothing to sync")
+                return 0
+
+            logger.info(f"Syncing {total} files to tiger_resource_map...")
+
+            count = 0
+            batch_size = 1000
+
+            for i in range(0, total, batch_size):
+                batch = all_files[i : i + batch_size]
+
+                for meta in batch:
+                    # Use file's tenant_id, default to "default" for legacy files
+                    tenant_id = meta.tenant_id if meta.tenant_id else "default"
+
+                    # Register resource in the map (idempotent operation)
+                    resource_map.get_or_create_int_id(
+                        resource_type="file",
+                        resource_id=meta.path,
+                        tenant_id=tenant_id,
+                    )
+                    count += 1
+
+                # Log progress for large datasets
+                if total > batch_size:
+                    logger.debug(
+                        f"Tiger resource map sync progress: {min(i + batch_size, total)}/{total}"
+                    )
+
+            logger.info(f"Tiger resource map sync complete: {count} resources")
+            return count
+
+        except Exception as e:
+            logger.warning(f"Failed to sync resource map from metadata: {e}")
+            return 0
 
     def _start_tiger_cache_worker(self) -> None:
         """Start background thread for Tiger Cache queue processing.

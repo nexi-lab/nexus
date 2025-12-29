@@ -213,3 +213,151 @@ class TestReBACPermissionCache:
 
         # Cache entries should still exist
         assert cache.get("agent", "alice", "read", "file", "/doc.txt") is True
+
+
+class TestRevisionQuantization:
+    """Test revision-based cache key quantization (Issue #909)."""
+
+    def test_revision_bucket_calculation(self):
+        """Test that revision buckets are calculated correctly."""
+        cache = ReBACPermissionCache(revision_quantization_window=10)
+        cache.set_revision_fetcher(lambda t: 25)  # Revision 25 -> bucket 2
+
+        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", "tenant1")
+        assert ":r2" in key  # 25 // 10 = 2
+
+    def test_revision_bucket_boundaries(self):
+        """Test bucket boundaries work correctly."""
+        test_cases = [
+            (0, 0),   # 0 // 10 = 0
+            (9, 0),   # 9 // 10 = 0
+            (10, 1),  # 10 // 10 = 1
+            (19, 1),  # 19 // 10 = 1
+            (20, 2),  # 20 // 10 = 2
+            (99, 9),  # 99 // 10 = 9
+            (100, 10), # 100 // 10 = 10
+        ]
+
+        for revision, expected_bucket in test_cases:
+            # Create fresh cache for each test to avoid local revision cache
+            cache = ReBACPermissionCache(revision_quantization_window=10)
+            cache.set_revision_fetcher(lambda t, r=revision: r)
+            bucket = cache._get_revision_bucket("tenant1")
+            assert bucket == expected_bucket, f"Revision {revision} -> expected bucket {expected_bucket}, got {bucket}"
+
+    def test_cache_stable_within_window(self):
+        """Test that cache entries are stable within a revision window."""
+        current_revision = [20]  # Use list to allow mutation in closure
+        cache = ReBACPermissionCache(revision_quantization_window=10)
+        cache.set_revision_fetcher(lambda t: current_revision[0])
+
+        # Set a value
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True, "tenant1")
+
+        # Advance revision within same bucket (20-29 all map to bucket 2)
+        current_revision[0] = 25
+
+        # Should still hit
+        result = cache.get("agent", "alice", "read", "file", "/doc.txt", "tenant1")
+        assert result is True
+
+    def test_cache_miss_after_bucket_change(self):
+        """Test that cache misses when revision bucket changes."""
+        current_revision = [25]  # Bucket 2
+        cache = ReBACPermissionCache(revision_quantization_window=10)
+        cache.set_revision_fetcher(lambda t: current_revision[0])
+
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True, "tenant1")
+
+        # Advance to next bucket
+        current_revision[0] = 30  # Bucket 3
+
+        # Clear the local revision cache to simulate time passing (TTL expiry)
+        cache._revision_cache.clear()
+
+        # Should miss (different revision bucket in key)
+        result = cache.get("agent", "alice", "read", "file", "/doc.txt", "tenant1")
+        assert result is None
+
+    def test_tenant_isolation_with_revisions(self):
+        """Test that different tenants have independent revision tracking."""
+        revisions = {"tenant1": 50, "tenant2": 100}
+        cache = ReBACPermissionCache(revision_quantization_window=10)
+        cache.set_revision_fetcher(lambda t: revisions.get(t, 0))
+
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True, "tenant1")
+        cache.set("agent", "alice", "read", "file", "/doc.txt", False, "tenant2")
+
+        # Keys should differ due to different revision buckets
+        assert cache.get("agent", "alice", "read", "file", "/doc.txt", "tenant1") is True
+        assert cache.get("agent", "alice", "read", "file", "/doc.txt", "tenant2") is False
+
+    def test_disabled_revision_quantization(self):
+        """When revision quantization is disabled, always uses bucket 0."""
+        cache = ReBACPermissionCache(
+            revision_quantization_window=10,
+            enable_revision_quantization=False
+        )
+        cache.set_revision_fetcher(lambda t: 999)
+
+        bucket = cache._get_revision_bucket("tenant1")
+        assert bucket == 0
+
+    def test_fallback_without_fetcher(self):
+        """Graceful degradation when fetcher not set."""
+        cache = ReBACPermissionCache(revision_quantization_window=10)
+        # Don't set fetcher
+
+        bucket = cache._get_revision_bucket("tenant1")
+        assert bucket == 0  # Fallback to 0
+
+    def test_key_format_with_revision(self):
+        """Cache key includes revision bucket with 'r' prefix."""
+        cache = ReBACPermissionCache(revision_quantization_window=10)
+        cache.set_revision_fetcher(lambda t: 35)
+
+        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", "tenant1")
+
+        assert key == "agent:alice:read:file:/doc.txt:tenant1:r3"
+
+    def test_revision_cache_local_caching(self):
+        """Test that revisions are cached locally to reduce fetcher calls."""
+        call_count = [0]
+
+        def counting_fetcher(t):
+            call_count[0] += 1
+            return 50
+
+        cache = ReBACPermissionCache(revision_quantization_window=10)
+        cache.set_revision_fetcher(counting_fetcher)
+
+        # First call fetches from callback
+        cache._get_revision_bucket("tenant1")
+        assert call_count[0] == 1
+
+        # Second call should use local cache (no new fetch)
+        cache._get_revision_bucket("tenant1")
+        assert call_count[0] == 1
+
+    def test_stats_include_revision_info(self):
+        """Test that stats include revision quantization configuration."""
+        cache = ReBACPermissionCache(
+            revision_quantization_window=15,
+            enable_revision_quantization=True
+        )
+
+        stats = cache.get_stats()
+        assert stats["revision_quantization_window"] == 15
+        assert stats["enable_revision_quantization"] is True
+
+    def test_deprecation_warning_for_old_param(self):
+        """Test that using old quantization_interval triggers deprecation warning."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            ReBACPermissionCache(quantization_interval=5)
+
+            assert len(w) == 1
+            assert issubclass(w[0].category, DeprecationWarning)
+            assert "quantization_interval is deprecated" in str(w[0].message)

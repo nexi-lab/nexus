@@ -1213,6 +1213,149 @@ class SQLAlchemyMetadataStore(MetadataStore):
         except Exception as e:
             raise MetadataError(f"Failed to list metadata: {e}") from e
 
+    def list_paginated(
+        self,
+        prefix: str = "",
+        recursive: bool = True,
+        limit: int = 1000,
+        cursor: str | None = None,
+        tenant_id: str | None = None,
+    ) -> "PaginatedResult":
+        """List files with cursor-based (keyset) pagination (Issue #937).
+
+        Uses keyset pagination for O(log n) performance at any page depth.
+        Contrast with OFFSET which is O(n) for deep pages.
+
+        SQL Pattern:
+            SELECT * FROM file_paths
+            WHERE (virtual_path, path_id) > (:cursor_path, :cursor_id)
+              AND virtual_path LIKE :prefix || '%'
+              AND deleted_at IS NULL
+            ORDER BY virtual_path, path_id
+            LIMIT :limit + 1
+
+        Args:
+            prefix: Path prefix to filter by
+            recursive: If True, include nested files. If False, only direct children.
+            limit: Maximum items per page (1-10000, default: 1000)
+            cursor: Continuation token from previous page
+            tenant_id: Optional tenant filter (PREWHERE optimization from Issue #904)
+
+        Returns:
+            PaginatedResult with items, next_cursor, and has_more flag
+
+        Raises:
+            CursorError: If cursor is invalid or filters changed
+            MetadataError: If database query fails
+        """
+        from nexus.core.metadata import PaginatedResult
+        from nexus.core.pagination import CursorData, CursorError, decode_cursor, encode_cursor
+
+        # Validate and cap limit
+        limit = min(max(1, limit), 10000)  # 1 <= limit <= 10000
+
+        # Build filters dict for cursor validation
+        filters = {
+            "prefix": prefix,
+            "recursive": recursive,
+            "tenant_id": tenant_id,
+        }
+
+        # Decode cursor if provided
+        cursor_data: CursorData | None = None
+        if cursor:
+            cursor_data = decode_cursor(cursor, filters)
+
+        try:
+            with self.SessionLocal() as session:
+                # Build base conditions
+                conditions: builtins.list[Any] = [FilePathModel.deleted_at.is_(None)]
+
+                # Tenant filtering (Issue #904 PREWHERE optimization)
+                if tenant_id is not None:
+                    from sqlalchemy import or_
+
+                    conditions.append(
+                        or_(
+                            FilePathModel.tenant_id == tenant_id,
+                            FilePathModel.tenant_id.is_(None),
+                        )
+                    )
+
+                # Prefix filtering
+                if prefix:
+                    conditions.append(FilePathModel.virtual_path.like(f"{prefix}%"))
+                    if not recursive:
+                        # Non-recursive: exclude nested paths
+                        conditions.append(~FilePathModel.virtual_path.like(f"{prefix}%/%"))
+                elif not recursive:
+                    # Root non-recursive
+                    conditions.append(FilePathModel.virtual_path.like("/%"))
+                    conditions.append(~FilePathModel.virtual_path.like("/%/%"))
+
+                # Keyset pagination condition
+                if cursor_data:
+                    from sqlalchemy import tuple_
+
+                    conditions.append(
+                        tuple_(FilePathModel.virtual_path, FilePathModel.path_id)
+                        > (cursor_data.path, cursor_data.path_id)
+                    )
+
+                # Build query with ORDER BY for stable pagination
+                stmt = (
+                    select(FilePathModel)
+                    .where(*conditions)
+                    .order_by(FilePathModel.virtual_path, FilePathModel.path_id)
+                    .limit(limit + 1)  # +1 to detect has_more
+                )
+
+                rows = builtins.list(session.scalars(stmt))
+
+                # Check if more results exist
+                has_more = len(rows) > limit
+                if has_more:
+                    rows = rows[:limit]  # Trim extra row
+
+                # Convert to FileMetadata
+                items = [
+                    FileMetadata(
+                        path=row.virtual_path,
+                        backend_name=row.backend_id,
+                        physical_path=row.physical_path,
+                        size=row.size_bytes,
+                        etag=row.content_hash,
+                        mime_type=row.file_type,
+                        created_at=row.created_at,
+                        modified_at=row.updated_at,
+                        version=row.current_version,
+                        tenant_id=row.tenant_id,
+                    )
+                    for row in rows
+                ]
+
+                # Generate next cursor
+                next_cursor = None
+                if has_more and rows:
+                    last_row = rows[-1]
+                    next_cursor = encode_cursor(
+                        last_path=last_row.virtual_path,
+                        last_path_id=last_row.path_id,
+                        filters=filters,
+                    )
+
+                return PaginatedResult(
+                    items=items,
+                    next_cursor=next_cursor,
+                    has_more=has_more,
+                    total_count=None,  # Skip expensive COUNT(*) by default
+                )
+
+        except CursorError:
+            raise  # Re-raise cursor errors as-is
+        except Exception as e:
+            raise MetadataError(f"Failed to list paginated metadata: {e}") from e
+
     def list_with_pattern(self, pattern: str) -> builtins.list[FileMetadata]:
         """
         List all files matching a SQL LIKE pattern.

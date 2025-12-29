@@ -10,6 +10,35 @@ from typing import Any
 
 
 @dataclass
+class PaginatedResult:
+    """Result container for paginated list operations (Issue #937).
+
+    Supports cursor-based pagination for efficient traversal of large datasets
+    at 1M+ file scale without OOM or timeouts.
+
+    Attributes:
+        items: List of FileMetadata or dict items for current page
+        next_cursor: Opaque token for fetching next page (None if last page)
+        has_more: Whether more results exist beyond this page
+        total_count: Optional total count (expensive at scale, often None)
+    """
+
+    items: list[Any]
+    next_cursor: str | None
+    has_more: bool
+    total_count: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-serializable dict for API response."""
+        return {
+            "items": self.items,
+            "next_cursor": self.next_cursor,
+            "has_more": self.has_more,
+            "total_count": self.total_count,
+        }
+
+
+@dataclass
 class FileMetadata:
     """File metadata information.
 
@@ -138,6 +167,39 @@ class MetadataStore(ABC):
             List of file metadata
         """
         pass
+
+    def list_paginated(
+        self,
+        prefix: str = "",
+        recursive: bool = True,
+        limit: int = 1000,
+        cursor: str | None = None,
+        tenant_id: str | None = None,
+    ) -> PaginatedResult:
+        """List files with cursor-based pagination (Issue #937).
+
+        Uses keyset pagination for efficient traversal of large datasets.
+        O(log n) performance regardless of page depth.
+
+        Args:
+            prefix: Path prefix to filter by
+            recursive: If True, include nested files
+            limit: Maximum items per page (default: 1000, max: 10000)
+            cursor: Continuation token from previous page
+            tenant_id: Optional tenant filter (PREWHERE optimization)
+
+        Returns:
+            PaginatedResult with items and next_cursor
+        """
+        # Default implementation for backwards compatibility
+        # Subclasses should override with efficient keyset pagination
+        all_items = self.list(prefix, recursive)
+        return PaginatedResult(
+            items=all_items[:limit],
+            next_cursor=None,
+            has_more=len(all_items) > limit,
+            total_count=len(all_items),
+        )
 
     def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
         """

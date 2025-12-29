@@ -66,7 +66,8 @@ class ReBACManager:
         l1_cache_ttl: int = 300,
         enable_metrics: bool = True,
         enable_adaptive_ttl: bool = False,
-        l1_cache_quantization_interval: int = 0,  # Disabled - was breaking cache (keys changed every 5s)
+        l1_cache_quantization_interval: int = 0,  # DEPRECATED: Use l1_cache_revision_window
+        l1_cache_revision_window: int = 10,
     ):
         """Initialize ReBAC manager.
 
@@ -79,8 +80,9 @@ class ReBACManager:
             l1_cache_ttl: L1 cache TTL in seconds (default: 300s)
             enable_metrics: Track cache metrics (default: True)
             enable_adaptive_ttl: Adjust TTL based on write frequency (default: False)
-            l1_cache_quantization_interval: Time bucket size in seconds for distributed
-                cache sharing (default: 5s). Set to 0 to disable. See Issue #842.
+            l1_cache_quantization_interval: DEPRECATED - was broken (Issue #909). Ignored.
+            l1_cache_revision_window: Number of revisions per cache key bucket (default: 10).
+                Cache keys remain stable within a revision window. See Issue #909.
         """
         self.engine = engine
         self.cache_ttl_seconds = cache_ttl_seconds
@@ -89,7 +91,18 @@ class ReBACManager:
         self._namespaces_initialized = False  # Track if default namespaces were initialized
         self._tuple_version: int = 0  # Track tuple changes for Rust graph cache invalidation
 
-        # Initialize L1 in-memory cache
+        # Deprecation warning for old parameter (Issue #909)
+        if l1_cache_quantization_interval > 0:
+            import warnings
+
+            warnings.warn(
+                "l1_cache_quantization_interval is deprecated and was broken (Issue #909). "
+                "Use l1_cache_revision_window for revision-based quantization.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        # Initialize L1 in-memory cache with revision-based quantization (Issue #909)
         self._l1_cache: ReBACPermissionCache | None = None
         if enable_l1_cache:
             self._l1_cache = ReBACPermissionCache(
@@ -97,10 +110,16 @@ class ReBACManager:
                 ttl_seconds=l1_cache_ttl,
                 enable_metrics=enable_metrics,
                 enable_adaptive_ttl=enable_adaptive_ttl,
-                quantization_interval=l1_cache_quantization_interval,
+                revision_quantization_window=l1_cache_revision_window,
+            )
+            # Wire up revision fetcher for revision-based cache keys
+            self._l1_cache.set_revision_fetcher(
+                lambda tenant_id: self._get_tenant_revision(tenant_id)
             )
             logger.info(
-                f"L1 cache enabled: max_size={l1_cache_size}, ttl={l1_cache_ttl}s, metrics={enable_metrics}, adaptive_ttl={enable_adaptive_ttl}, quantization={l1_cache_quantization_interval}s"
+                f"L1 cache enabled: max_size={l1_cache_size}, ttl={l1_cache_ttl}s, "
+                f"metrics={enable_metrics}, adaptive_ttl={enable_adaptive_ttl}, "
+                f"revision_window={l1_cache_revision_window}"
             )
 
         # Use SQLAlchemy sessionmaker for proper connection management
@@ -186,6 +205,110 @@ class ReBACManager:
                 self._pg_version = 0
 
         return self._pg_version >= 18
+
+    def _get_tenant_revision(self, tenant_id: str | None, conn: Any | None = None) -> int:
+        """Get current revision for a tenant (read-only, no increment).
+
+        Used for revision-based cache key generation (Issue #909).
+        This replaces the broken time-bucket quantization with logical revisions.
+
+        Args:
+            tenant_id: Tenant ID (defaults to "default")
+            conn: Optional database connection to reuse
+
+        Returns:
+            Current revision number (0 if tenant has no writes yet)
+        """
+        effective_tenant = tenant_id or "default"
+        should_close = conn is None
+        if conn is None:
+            conn = self._get_connection()
+        try:
+            cursor = self._create_cursor(conn)
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    "SELECT current_version FROM rebac_version_sequences WHERE tenant_id = ?"
+                ),
+                (effective_tenant,),
+            )
+            row = cursor.fetchone()
+            return row["current_version"] if row else 0
+        finally:
+            if should_close:
+                self._close_connection(conn)
+
+    def _increment_tenant_revision(self, tenant_id: str | None, conn: Any) -> int:
+        """Increment and return the new revision for a tenant.
+
+        Called after successful write operations (write, delete, batch).
+        Uses atomic DB operations for distributed consistency (Issue #909).
+
+        This enables revision-based cache quantization:
+        - Cache keys include revision bucket instead of time bucket
+        - Multiple instances share cache entries within same revision window
+        - Based on SpiceDB/Google Zanzibar quantization approach
+
+        Args:
+            tenant_id: Tenant ID (defaults to "default")
+            conn: Database connection (reuse existing transaction)
+
+        Returns:
+            New revision number after increment
+        """
+        effective_tenant = tenant_id or "default"
+        cursor = self._create_cursor(conn)
+
+        if self.engine.dialect.name == "postgresql":
+            # Atomic upsert with RETURNING
+            cursor.execute(
+                """
+                INSERT INTO rebac_version_sequences (tenant_id, current_version, updated_at)
+                VALUES (%s, 1, NOW())
+                ON CONFLICT (tenant_id)
+                DO UPDATE SET current_version = rebac_version_sequences.current_version + 1,
+                              updated_at = NOW()
+                RETURNING current_version
+                """,
+                (effective_tenant,),
+            )
+            row = cursor.fetchone()
+            return row["current_version"] if row else 1
+        else:
+            # SQLite: Two-step increment
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    "SELECT current_version FROM rebac_version_sequences WHERE tenant_id = ?"
+                ),
+                (effective_tenant,),
+            )
+            row = cursor.fetchone()
+
+            if row:
+                new_version = row["current_version"] + 1
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        UPDATE rebac_version_sequences
+                        SET current_version = ?, updated_at = ?
+                        WHERE tenant_id = ?
+                        """
+                    ),
+                    (new_version, datetime.now(UTC).isoformat(), effective_tenant),
+                )
+            else:
+                # First version for this tenant
+                new_version = 1
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        INSERT INTO rebac_version_sequences (tenant_id, current_version, updated_at)
+                        VALUES (?, ?, ?)
+                        """
+                    ),
+                    (effective_tenant, new_version, datetime.now(UTC).isoformat()),
+                )
+
+            return new_version
 
     @contextmanager
     def _connection(self) -> Any:
@@ -779,6 +902,9 @@ class ReBACManager:
                 ),
             )
 
+            # Increment tenant revision before commit for atomicity (Issue #909)
+            self._increment_tenant_revision(tenant_id, conn)
+
             conn.commit()
             self._tuple_version += 1  # Invalidate Rust graph cache
 
@@ -1063,6 +1189,16 @@ class ReBACManager:
                             conn=conn,  # FIX: Reuse connection
                         )
 
+                # Increment revision for all affected tenants before commit (Issue #909)
+                if created_count > 0:
+                    affected_tenants = set()
+                    for pt in parsed_tuples:
+                        affected_tenants.add(pt["tenant_id"] or "default")
+                        if pt["subject_tenant_id"] and pt["subject_tenant_id"] != pt["tenant_id"]:
+                            affected_tenants.add(pt["subject_tenant_id"])
+                    for tenant in affected_tenants:
+                        self._increment_tenant_revision(tenant, conn)
+
                 # Commit transaction after all inserts succeed
                 conn.commit()
                 if created_count > 0:
@@ -1255,6 +1391,9 @@ class ReBACManager:
                     now,
                 ),
             )
+
+            # Increment tenant revision before commit for atomicity (Issue #909)
+            self._increment_tenant_revision(tenant_id, conn)
 
             conn.commit()
             self._tuple_version += 1  # Invalidate Rust graph cache

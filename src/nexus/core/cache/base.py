@@ -187,7 +187,7 @@ class TigerCacheProtocol(Protocol):
         permission: str,
         resource_type: str,
         tenant_id: str,
-    ) -> tuple[bytes, int | None]:
+    ) -> tuple[bytes, int] | None:
         """Get Tiger bitmap for a subject.
 
         Args:

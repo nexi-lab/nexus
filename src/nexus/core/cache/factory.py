@@ -96,7 +96,7 @@ class CacheFactory:
                 from nexus.core.cache.dragonfly import DragonflyClient
 
                 self._dragonfly_client = DragonflyClient(
-                    url=self._settings.dragonfly_url,  # type: ignore (validated above)
+                    url=self._settings.dragonfly_url,  # type: ignore[arg-type]
                     pool_size=self._settings.dragonfly_pool_size,
                     timeout=self._settings.dragonfly_timeout,
                 )
@@ -251,7 +251,7 @@ class CacheFactory:
         await self.initialize()
         return self
 
-    async def __aexit__(self, *args) -> None:
+    async def __aexit__(self, *args: object) -> None:
         """Async context manager exit."""
         await self.shutdown()
 

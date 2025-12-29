@@ -465,7 +465,7 @@ class DragonflyResourceMapCache:
 
         for (resource_type, tenant_id), resource_ids in groups.items():
             key = self._make_key(resource_type, tenant_id)
-            values = await self._client.client.hmget(key, resource_ids)
+            values = await self._client.client.hmget(key, resource_ids)  # type: ignore[misc]
 
             for resource_id, value in zip(resource_ids, values, strict=True):
                 result_key = (resource_type, resource_id, tenant_id)
@@ -482,7 +482,7 @@ class DragonflyResourceMapCache:
     ) -> None:
         """Store integer ID for a resource."""
         key = self._make_key(resource_type, tenant_id)
-        await self._client.client.hset(key, resource_id, str(int_id))
+        await self._client.client.hset(key, resource_id, str(int_id))  # type: ignore[misc]
 
     async def set_int_ids_bulk(
         self,

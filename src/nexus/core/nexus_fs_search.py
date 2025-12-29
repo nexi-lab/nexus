@@ -1351,7 +1351,9 @@ class NexusFSSearchMixin:
             return await self._semantic_search.index_directory(path)
         else:
             # Index only direct files in directory
-            files = await asyncio.to_thread(self.list, path, recursive=False)
+            files_result = await asyncio.to_thread(self.list, path, recursive=False)
+            # Handle PaginatedResult if returned
+            files = files_result.items if hasattr(files_result, "items") else files_result
             results: dict[str, int] = {}
             for item in files:
                 file_path = item["name"] if isinstance(item, dict) else item
@@ -1389,8 +1391,8 @@ class NexusFSSearchMixin:
             file_list = await asyncio.to_thread(self.list, path, recursive=recursive)
             if hasattr(file_list, "items"):
                 # PaginatedResult - use .items
-                file_list = file_list.items  # type: ignore[union-attr]
-            for item in file_list:  # type: ignore[union-attr]
+                file_list = file_list.items
+            for item in file_list:
                 file_path = item if isinstance(item, str) else item.get("path", "")
                 if file_path and not file_path.endswith("/"):
                     files_to_index.append(file_path)

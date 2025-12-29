@@ -63,9 +63,9 @@ jobs:
           # Create GCS credentials from GitHub secret
           echo '${{ secrets.NEXUS_GCS_CREDENTIALS }}' > gcs-credentials.json
 
-          # Create .env.local file with config from GitHub secrets
-          # Note: docker-demo.sh looks for .env.local (not .env)
-          cat > .env.local << 'EOF'
+          # Create .env file with config from GitHub secrets
+          # Note: docker-demo.sh looks for .env (not .env)
+          cat > .env << 'EOF'
           # ============================================
           # PostgreSQL Database
           # ============================================
@@ -96,26 +96,26 @@ jobs:
           # ============================================
           EOF
 
-          # Append secrets to .env.local
-          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env.local
+          # Append secrets to .env
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env
 
           # ============================================
           # Configuration
           # ============================================
-          echo "NEXUS_CONFIG_FILE=/app/configs/config.integration-test.yaml" >> .env.local
+          echo "NEXUS_CONFIG_FILE=/app/configs/config.integration-test.yaml" >> .env
 
           # ============================================
           # OAuth & Permissions
           # ============================================
-          echo "NEXUS_SKIP_PERMISSIONS=false" >> .env.local
-          echo "VITE_SKIP_AUTH=false" >> .env.local
+          echo "NEXUS_SKIP_PERMISSIONS=false" >> .env
+          echo "VITE_SKIP_AUTH=false" >> .env
 
           # ============================================
           # CI Optimizations
           # ============================================
           # Skip heavy skills (docx, xlsx, pptx) during provisioning
           # These have 100s of files and cause connection pool exhaustion in CI
-          echo "NEXUS_SKIP_HEAVY_SKILLS=true" >> .env.local
+          echo "NEXUS_SKIP_HEAVY_SKILLS=true" >> .env
 
       - name: Verify credentials setup
         run: |
@@ -138,14 +138,14 @@ jobs:
             exit 1
           fi
 
-          # Check .env.local file exists and has required keys
-          if [ -f .env.local ]; then
-            echo "✅ .env.local file created"
+          # Check .env file exists and has required keys
+          if [ -f .env ]; then
+            echo "✅ .env file created"
             echo "   - Checking required variables..."
 
             # Check ANTHROPIC_API_KEY has a value
-            if grep -q "^ANTHROPIC_API_KEY=" .env.local; then
-              KEY_VALUE=$(grep "^ANTHROPIC_API_KEY=" .env.local | cut -d'=' -f2- | tr -d '[:space:]')
+            if grep -q "^ANTHROPIC_API_KEY=" .env; then
+              KEY_VALUE=$(grep "^ANTHROPIC_API_KEY=" .env | cut -d'=' -f2- | tr -d '[:space:]')
               if [ -n "$KEY_VALUE" ] && [ "$KEY_VALUE" != "" ]; then
                 echo "   ✅ ANTHROPIC_API_KEY present (length: ${#KEY_VALUE} chars)"
               else
@@ -155,8 +155,8 @@ jobs:
                   echo "   ℹ️  This is normal and expected - the workflow will continue"
                 else
                   echo "   ❌ ANTHROPIC_API_KEY is empty or whitespace only"
-                  echo "   DEBUG: Checking .env.local content..."
-                  echo "   Line found: $(grep "^ANTHROPIC_API_KEY=" .env.local | head -c 50)..."
+                  echo "   DEBUG: Checking .env content..."
+                  echo "   Line found: $(grep "^ANTHROPIC_API_KEY=" .env | head -c 50)..."
                   echo ""
                   echo "   ERROR: ANTHROPIC_API_KEY must be set in GitHub secrets"
                   echo "   To fix:"
@@ -172,16 +172,16 @@ jobs:
               if [ "$IS_FORK_PR" = "true" ]; then
                 echo "   ⚠️  ANTHROPIC_API_KEY line not found (expected for fork PRs)"
               else
-                echo "   ❌ ANTHROPIC_API_KEY line not found in .env.local"
+                echo "   ❌ ANTHROPIC_API_KEY line not found in .env"
                 echo "   ERROR: ANTHROPIC_API_KEY must be set in GitHub secrets"
                 exit 1
               fi
             fi
 
-            grep -q "POSTGRES_DB" .env.local && echo "   ✅ POSTGRES_DB present" || echo "   ❌ POSTGRES_DB missing"
-            grep -q "NEXUS_API_KEY" .env.local && echo "   ✅ NEXUS_API_KEY present" || echo "   ❌ NEXUS_API_KEY missing"
+            grep -q "POSTGRES_DB" .env && echo "   ✅ POSTGRES_DB present" || echo "   ❌ POSTGRES_DB missing"
+            grep -q "NEXUS_API_KEY" .env && echo "   ✅ NEXUS_API_KEY present" || echo "   ❌ NEXUS_API_KEY missing"
           else
-            echo "❌ .env.local file not found"
+            echo "❌ .env file not found"
             exit 1
           fi
 
@@ -286,8 +286,8 @@ jobs:
             echo "✅ ANTHROPIC_API_KEY is set in LangGraph container (length: ${#LANG_KEY} chars)"
           else
             echo "❌ ANTHROPIC_API_KEY is NOT set in LangGraph container"
-            echo "   Checking .env.local file..."
-            grep "ANTHROPIC_API_KEY" .env.local || echo "   Not found in .env.local"
+            echo "   Checking .env file..."
+            grep "ANTHROPIC_API_KEY" .env || echo "   Not found in .env"
             echo "   Checking docker-compose environment..."
             docker-compose -f docker-compose.demo.yml config | grep -A 5 "ANTHROPIC_API_KEY" || echo "   Not found in docker-compose config"
             exit 1

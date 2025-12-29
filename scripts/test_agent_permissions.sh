@@ -28,15 +28,22 @@ USER_ID="admin"
 TEST_AGENT_NAME="TestAgent"
 TEST_AGENT_ID="${USER_ID},${TEST_AGENT_NAME}"
 
-# Load configuration
-CONFIG_FILE="${PROJECT_DIR}/configs/local-dev.env"
-if [ -f "$CONFIG_FILE" ]; then
-    source "$CONFIG_FILE"
-    echo -e "${GREEN}✓ Loaded configuration from ${CONFIG_FILE}${NC}"
+# Load configuration from .env
+ENV_FILE="${PROJECT_DIR}/.env"
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    source "$ENV_FILE"
+    set +a
+    echo -e "${GREEN}✓ Loaded configuration from ${ENV_FILE}${NC}"
+elif [ -f "${PROJECT_DIR}/.env.example" ]; then
+    echo -e "${YELLOW}⚠️  No .env file found, using .env.example${NC}"
+    set -a
+    source "${PROJECT_DIR}/.env.example"
+    set +a
 fi
 
-# Use admin API key from config
-ADMIN_API_KEY="${ADMIN_API_KEY:-sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}"
+# Use admin API key from env (may be set as NEXUS_API_KEY)
+ADMIN_API_KEY="${NEXUS_API_KEY:-sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}"
 
 echo "╔═══════════════════════════════════════════════════╗"
 echo "║   Agent Permission Integration Test               ║"

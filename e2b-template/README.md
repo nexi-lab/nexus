@@ -20,7 +20,7 @@ The template is built from `e2b.Dockerfile` and configured via `e2b.toml`. It pr
    ```bash
    # macOS
    brew install e2b
-   
+
    # Or via npm
    npm i -g @e2b/cli
    ```

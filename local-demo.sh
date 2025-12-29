@@ -17,25 +17,56 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Load configuration from config file
+# Load configuration from .env file (same as docker-demo.sh)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/configs/local-dev.env"
+ENV_FILE="${SCRIPT_DIR}/.env"
 
-if [ -f "$CONFIG_FILE" ]; then
-    source "$CONFIG_FILE"
-    echo -e "${GREEN}✓ Loaded configuration from ${CONFIG_FILE}${NC}"
+if [ -f "$ENV_FILE" ]; then
+    set -a  # Auto-export all variables
+    source "$ENV_FILE"
+    set +a
+    echo -e "${GREEN}✓ Loaded configuration from ${ENV_FILE}${NC}"
+
+    # Construct database URL from primitives
+    # Note: If using POSTGRES_HOST=postgres, ensure /etc/hosts has: 127.0.0.1 postgres
+    POSTGRES_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+    TOKEN_MANAGER_DB="$POSTGRES_URL"
+    ADMIN_API_KEY="${NEXUS_API_KEY}"
+
+    # Set defaults for variables that might not be in .env
+    NEXUS_DATA_DIR="${NEXUS_DATA_DIR:-./nexus-data-local}"
+    POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-nexus-postgres}"
+elif [ -f "${SCRIPT_DIR}/.env.example" ]; then
+    echo -e "${YELLOW}⚠️  No .env file found, using .env.example${NC}"
+    echo "   💡 Tip: Create .env for your personal config"
+    echo "   Run: cp .env.example .env"
+    echo ""
+    set -a
+    source "${SCRIPT_DIR}/.env.example"
+    set +a
+
+    # Construct database URL from primitives
+    # Note: If using POSTGRES_HOST=postgres, ensure /etc/hosts has: 127.0.0.1 postgres
+    POSTGRES_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+    TOKEN_MANAGER_DB="$POSTGRES_URL"
+    ADMIN_API_KEY="${NEXUS_API_KEY}"
+
+    # Set defaults
+    NEXUS_DATA_DIR="${NEXUS_DATA_DIR:-./nexus-data-local}"
+    POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-nexus-postgres}"
 else
-    echo -e "${RED}✗ Configuration file not found: ${CONFIG_FILE}${NC}"
+    echo -e "${RED}✗ Configuration file not found: ${ENV_FILE}${NC}"
     echo "Using fallback default values..."
     # Fallback defaults
     NEXUS_DATA_DIR="./nexus-data-local"
-    POSTGRES_USER="nexus_test"
-    POSTGRES_PASSWORD="nexus_test_password"
-    POSTGRES_DB="tmp_nexus_test"
-    POSTGRES_PORT="5433"
+    POSTGRES_USER="postgres"
+    POSTGRES_PASSWORD="nexus"
+    POSTGRES_DB="nexus"
+    POSTGRES_PORT="5432"
     POSTGRES_HOST="localhost"
-    POSTGRES_CONTAINER="nexus-test-postgres"
+    POSTGRES_CONTAINER="nexus-postgres"
     POSTGRES_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+    TOKEN_MANAGER_DB="$POSTGRES_URL"
     ADMIN_API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 fi
 
@@ -592,21 +623,26 @@ start_server() {
         # Check and start PostgreSQL container if needed
         ensure_postgres_running
 
-        # Check if 'postgres' hostname resolves to localhost for connectors
+        # Check if 'postgres' hostname resolves to localhost
+        # This is needed for both core functionality and connectors
         if ! grep -q "127.0.0.1.*postgres" /etc/hosts 2>/dev/null; then
             echo ""
-            echo -e "${YELLOW}⚠  For connectors to work, add this to /etc/hosts:${NC}"
+            echo -e "${YELLOW}⚠  For local-demo.sh to work with POSTGRES_HOST=postgres, add this to /etc/hosts:${NC}"
             echo ""
             echo "    127.0.0.1    postgres"
             echo ""
             echo "  Run: sudo bash -c 'echo \"127.0.0.1    postgres\" >> /etc/hosts'"
             echo ""
-            echo "  (This allows 'postgres:5432' in connector configs to resolve to localhost)"
+            echo "  This allows the same .env config to work for both local-demo.sh and docker-demo.sh"
             echo ""
-            read -p "Continue without it? (connectors will fail but core server works) [Y/n] " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]] && [[ ! -z $REPLY ]]; then
-                exit 1
+
+            # Auto-fallback to localhost if postgres hostname not mapped
+            if [ "$POSTGRES_HOST" = "postgres" ]; then
+                echo -e "${YELLOW}  Using localhost fallback for now...${NC}"
+                POSTGRES_HOST="localhost"
+                POSTGRES_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+                TOKEN_MANAGER_DB="$POSTGRES_URL"
+                echo ""
             fi
         fi
 
@@ -622,15 +658,7 @@ start_server() {
         fi
     fi
 
-    # Load environment variables from .env.local
-    if [ -f .env.local ]; then
-        set -a
-        source .env.local
-        set +a
-        echo -e "${GREEN}✓${NC} Loaded environment from .env.local"
-    else
-        echo -e "${YELLOW}⚠${NC}  No .env.local file found (using defaults)"
-    fi
+    # Environment variables already loaded at script start from .env
 
     # Get data directory path (create if missing)
     DATA_PATH=$(get_data_path "$DATA_DIR")
@@ -988,17 +1016,17 @@ EOF
     echo "    source .nexus-admin-env"
     echo ""
 
-    # Also save to .env.local for future use (backwards compatibility)
-    if [ ! -f .env.local ]; then
-        touch .env.local
+    # Also save to .env for future use
+    if [ ! -f .env ]; then
+        touch .env
     fi
 
-    # Update or add NEXUS_API_KEY to .env.local
-    if grep -q "^NEXUS_API_KEY=" .env.local 2>/dev/null; then
-        sed -i.bak "s|^NEXUS_API_KEY=.*|NEXUS_API_KEY=$ADMIN_API_KEY|" .env.local
-        rm -f .env.local.bak
+    # Update or add NEXUS_API_KEY to .env
+    if grep -q "^NEXUS_API_KEY=" .env 2>/dev/null; then
+        sed -i.bak "s|^NEXUS_API_KEY=.*|NEXUS_API_KEY=$ADMIN_API_KEY|" .env
+        rm -f .env.bak
     else
-        echo "NEXUS_API_KEY=$ADMIN_API_KEY" >> .env.local
+        echo "NEXUS_API_KEY=$ADMIN_API_KEY" >> .env
     fi
 
     echo ""
@@ -1024,12 +1052,7 @@ EOF
     export NEXUS_DATA_DIR="$DATA_PATH"
     export NEXUS_API_KEY="$ADMIN_API_KEY"
 
-    # Load environment variables from .env.local if it exists
-    if [ -f .env.local ]; then
-        set -a
-        source .env.local
-        set +a
-    fi
+    # Environment variables already loaded at script start from .env
 
     # Check if port 2026 is available before starting server
     if ! check_port_2026_available; then
@@ -1131,6 +1154,30 @@ EOF
         exit 0
     }
     trap cleanup EXIT INT TERM
+
+    # Wait for server to be ready, then open browser (if frontend enabled)
+    if [ "$START_UI" = true ]; then
+        (
+            # Wait for server to be ready (check health endpoint)
+            echo "Waiting for server to be ready..."
+            for i in {1..30}; do
+                if curl -s http://localhost:2026/health >/dev/null 2>&1; then
+                    echo "Server is ready!"
+                    sleep 1  # Give it one more second
+
+                    # Open browser
+                    echo "Opening browser to http://localhost:5173"
+                    if [[ "$OSTYPE" == "darwin"* ]]; then
+                        open "http://localhost:5173" >/dev/null 2>&1 || true
+                    elif command -v xdg-open >/dev/null 2>&1; then
+                        xdg-open "http://localhost:5173" >/dev/null 2>&1 || true
+                    fi
+                    break
+                fi
+                sleep 1
+            done
+        ) &
+    fi
 
     # Start the Nexus server in background and capture PID
     nexus serve \

@@ -57,7 +57,7 @@ This repo contains the open-source [server](src/nexus/server/), [SDK](src/nexus/
 ```bash
 git clone https://github.com/nexi-lab/nexus.git
 cd nexus
-cp .env.example .env.local
+cp .env.example .env
 
 # Set env
 # Required: ANTHROPIC_API_KEY

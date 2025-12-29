@@ -232,7 +232,7 @@ class ReBACManager:
                 (effective_tenant,),
             )
             row = cursor.fetchone()
-            return row["current_version"] if row else 0
+            return int(row["current_version"]) if row else 0
         finally:
             if should_close:
                 self._close_connection(conn)
@@ -272,7 +272,7 @@ class ReBACManager:
                 (effective_tenant,),
             )
             row = cursor.fetchone()
-            return row["current_version"] if row else 1
+            return int(row["current_version"]) if row else 1
         else:
             # SQLite: Two-step increment
             cursor.execute(

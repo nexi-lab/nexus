@@ -47,9 +47,6 @@ env/
 # Environments
 .env
 .env.save
-.env.local
-.env*.local
-.env.production.secrets
 .venv
 env/
 venv/

@@ -491,6 +491,17 @@ class AsyncScopedFilesystem:
         """Register an AI agent (async)."""
         return await self._fs.register_agent(agent_id, name, description, generate_api_key)
 
+    async def update_agent(
+        self,
+        agent_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Update an existing agent's configuration (async)."""
+        result: dict[str, Any] = await self._fs.update_agent(agent_id, name, description, metadata)
+        return result
+
     async def list_agents(self) -> builtins.list[dict[str, Any]]:
         """List all registered agents (async)."""
         return await self._fs.list_agents()

@@ -77,7 +77,7 @@ class CacheFactory:
         """
         self._settings = settings
         self._db_engine = db_engine
-        self._dragonfly_client: Optional["DragonflyClient"] = None
+        self._dragonfly_client: DragonflyClient | None = None
         self._initialized = False
         self._using_dragonfly = False
 
@@ -102,7 +102,7 @@ class CacheFactory:
                 )
                 await self._dragonfly_client.connect()
                 self._using_dragonfly = True
-                logger.info(f"Cache factory initialized with Dragonfly backend")
+                logger.info("Cache factory initialized with Dragonfly backend")
             except ImportError:
                 logger.warning(
                     "redis package not installed, falling back to PostgreSQL cache"
@@ -265,7 +265,7 @@ class CacheFactory:
 
 
 # Global factory instance for dependency injection
-_cache_factory: Optional[CacheFactory] = None
+_cache_factory: CacheFactory | None = None
 
 
 async def init_cache_factory(

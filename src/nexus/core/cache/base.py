@@ -4,7 +4,7 @@ This module defines protocols (interfaces) that all cache backends must implemen
 Using Protocol allows for structural subtyping without requiring inheritance.
 """
 
-from typing import Optional, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -19,7 +19,7 @@ class PermissionCacheProtocol(Protocol):
 
     Example:
         class MyCache(PermissionCacheProtocol):
-            async def get(self, ...) -> Optional[bool]:
+            async def get(self, ...) -> bool | None:
                 ...
     """
 
@@ -31,7 +31,7 @@ class PermissionCacheProtocol(Protocol):
         object_type: str,
         object_id: str,
         tenant_id: str,
-    ) -> Optional[bool]:
+    ) -> bool | None:
         """Get cached permission result.
 
         Args:
@@ -136,7 +136,7 @@ class PermissionCacheProtocol(Protocol):
         """
         ...
 
-    async def clear(self, tenant_id: Optional[str] = None) -> int:
+    async def clear(self, tenant_id: str | None = None) -> int:
         """Clear all cached permissions.
 
         Args:
@@ -187,7 +187,7 @@ class TigerCacheProtocol(Protocol):
         permission: str,
         resource_type: str,
         tenant_id: str,
-    ) -> Optional[tuple[bytes, int]]:
+    ) -> tuple[bytes, int | None]:
         """Get Tiger bitmap for a subject.
 
         Args:
@@ -229,11 +229,11 @@ class TigerCacheProtocol(Protocol):
 
     async def invalidate(
         self,
-        subject_type: Optional[str] = None,
-        subject_id: Optional[str] = None,
-        permission: Optional[str] = None,
-        resource_type: Optional[str] = None,
-        tenant_id: Optional[str] = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        permission: str | None = None,
+        resource_type: str | None = None,
+        tenant_id: str | None = None,
     ) -> int:
         """Invalidate Tiger cache entries matching criteria.
 
@@ -273,7 +273,7 @@ class ResourceMapCacheProtocol(Protocol):
         resource_type: str,
         resource_id: str,
         tenant_id: str,
-    ) -> Optional[int]:
+    ) -> int | None:
         """Get integer ID for a resource.
 
         Args:
@@ -289,7 +289,7 @@ class ResourceMapCacheProtocol(Protocol):
     async def get_int_ids_bulk(
         self,
         resources: list[tuple[str, str, str]],  # (resource_type, resource_id, tenant_id)
-    ) -> dict[tuple[str, str, str], Optional[int]]:
+    ) -> dict[tuple[str, str, str], int | None]:
         """Bulk get integer IDs for multiple resources.
 
         Args:

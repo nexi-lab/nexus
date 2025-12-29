@@ -10,7 +10,6 @@ This module provides the client connection manager and cache implementations.
 """
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +58,8 @@ class DragonflyClient:
         self._url = url
         self._pool_size = pool_size
         self._timeout = timeout
-        self._pool: Optional[ConnectionPool] = None
-        self._client: Optional[redis.Redis] = None
+        self._pool: ConnectionPool | None = None
+        self._client: redis.Redis | None = None
         self._connected = False
 
     async def connect(self) -> None:
@@ -210,7 +209,7 @@ class DragonflyPermissionCache:
         object_type: str,
         object_id: str,
         tenant_id: str,
-    ) -> Optional[bool]:
+    ) -> bool | None:
         """Get cached permission result."""
         key = self._make_key(
             subject_type, subject_id, permission, object_type, object_id, tenant_id
@@ -270,12 +269,9 @@ class DragonflyPermissionCache:
         pattern = f"perm:{tenant_id}:{subject_type}:{subject_id}:*:{object_type}:{object_id}"
         return await self._delete_by_pattern(pattern)
 
-    async def clear(self, tenant_id: Optional[str] = None) -> int:
+    async def clear(self, tenant_id: str | None = None) -> int:
         """Clear all cached permissions."""
-        if tenant_id:
-            pattern = f"perm:{tenant_id}:*"
-        else:
-            pattern = "perm:*"
+        pattern = f"perm:{tenant_id}:*" if tenant_id else "perm:*"
         return await self._delete_by_pattern(pattern)
 
     async def _delete_by_pattern(self, pattern: str) -> int:
@@ -347,7 +343,7 @@ class DragonflyTigerCache:
         permission: str,
         resource_type: str,
         tenant_id: str,
-    ) -> Optional[tuple[bytes, int]]:
+    ) -> tuple[bytes, int] | None:
         """Get Tiger bitmap for a subject."""
         key = self._make_key(
             subject_type, subject_id, permission, resource_type, tenant_id
@@ -385,11 +381,11 @@ class DragonflyTigerCache:
 
     async def invalidate(
         self,
-        subject_type: Optional[str] = None,
-        subject_id: Optional[str] = None,
-        permission: Optional[str] = None,
-        resource_type: Optional[str] = None,
-        tenant_id: Optional[str] = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        permission: str | None = None,
+        resource_type: str | None = None,
+        tenant_id: str | None = None,
     ) -> int:
         """Invalidate Tiger cache entries matching criteria."""
         # Build pattern from provided filters
@@ -445,7 +441,7 @@ class DragonflyResourceMapCache:
         resource_type: str,
         resource_id: str,
         tenant_id: str,
-    ) -> Optional[int]:
+    ) -> int | None:
         """Get integer ID for a resource."""
         key = self._make_key(resource_type, tenant_id)
         result = await self._client.client.hget(key, resource_id)
@@ -456,7 +452,7 @@ class DragonflyResourceMapCache:
     async def get_int_ids_bulk(
         self,
         resources: list[tuple[str, str, str]],
-    ) -> dict[tuple[str, str, str], Optional[int]]:
+    ) -> dict[tuple[str, str, str], int | None]:
         """Bulk get integer IDs for multiple resources."""
         if not resources:
             return {}
@@ -469,13 +465,13 @@ class DragonflyResourceMapCache:
                 groups[group_key] = []
             groups[group_key].append(resource_id)
 
-        results: dict[tuple[str, str, str], Optional[int]] = {}
+        results: dict[tuple[str, str, str], int | None] = {}
 
         for (resource_type, tenant_id), resource_ids in groups.items():
             key = self._make_key(resource_type, tenant_id)
             values = await self._client.client.hmget(key, resource_ids)
 
-            for resource_id, value in zip(resource_ids, values):
+            for resource_id, value in zip(resource_ids, values, strict=True):
                 result_key = (resource_type, resource_id, tenant_id)
                 results[result_key] = int(value) if value is not None else None
 

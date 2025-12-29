@@ -10,7 +10,7 @@ TODO (Phase 2): Extract existing Tiger cache logic from tiger_cache.py
 """
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -52,7 +52,7 @@ class PostgresPermissionCache:
         object_type: str,
         object_id: str,
         tenant_id: str,
-    ) -> Optional[bool]:
+    ) -> bool | None:
         """Get cached permission result.
 
         TODO: Implement by extracting from rebac_manager.py
@@ -123,7 +123,7 @@ class PostgresPermissionCache:
             "PostgresPermissionCache.invalidate_subject_object() not yet implemented."
         )
 
-    async def clear(self, tenant_id: Optional[str] = None) -> int:
+    async def clear(self, tenant_id: str | None = None) -> int:
         """Clear all cached permissions."""
         raise NotImplementedError(
             "PostgresPermissionCache.clear() not yet implemented."
@@ -171,7 +171,7 @@ class PostgresTigerCache:
         permission: str,
         resource_type: str,
         tenant_id: str,
-    ) -> Optional[tuple[bytes, int]]:
+    ) -> tuple[bytes, int] | None:
         """Get Tiger bitmap for a subject.
 
         TODO: Implement by extracting from tiger_cache.py
@@ -204,11 +204,11 @@ class PostgresTigerCache:
 
     async def invalidate(
         self,
-        subject_type: Optional[str] = None,
-        subject_id: Optional[str] = None,
-        permission: Optional[str] = None,
-        resource_type: Optional[str] = None,
-        tenant_id: Optional[str] = None,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        permission: str | None = None,
+        resource_type: str | None = None,
+        tenant_id: str | None = None,
     ) -> int:
         """Invalidate Tiger cache entries matching criteria.
 
@@ -252,7 +252,7 @@ class PostgresResourceMapCache:
         resource_type: str,
         resource_id: str,
         tenant_id: str,
-    ) -> Optional[int]:
+    ) -> int | None:
         """Get integer ID for a resource.
 
         TODO: Implement by extracting from tiger_cache.py
@@ -266,7 +266,7 @@ class PostgresResourceMapCache:
     async def get_int_ids_bulk(
         self,
         resources: list[tuple[str, str, str]],
-    ) -> dict[tuple[str, str, str], Optional[int]]:
+    ) -> dict[tuple[str, str, str], int | None]:
         """Bulk get integer IDs for multiple resources.
 
         TODO: Implement by extracting from tiger_cache.py

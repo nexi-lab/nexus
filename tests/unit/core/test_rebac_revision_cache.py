@@ -23,6 +23,29 @@ from nexus.core.rebac_manager import ReBACManager
 from nexus.storage.models import Base
 
 
+def _check_postgres_available():
+    """Check if PostgreSQL is available for testing."""
+    db_url = os.getenv(
+        "NEXUS_DATABASE_URL",
+        "postgresql://postgres:nexus@localhost:5432/nexus"
+    )
+    try:
+        engine = create_engine(db_url)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine.dispose()
+        return True
+    except Exception:
+        return False
+
+
+# Skip all tests in this module if PostgreSQL is not available
+pytestmark = pytest.mark.skipif(
+    not _check_postgres_available(),
+    reason="PostgreSQL not available at localhost:5432"
+)
+
+
 @pytest.fixture
 def engine():
     """Create PostgreSQL engine for testing."""

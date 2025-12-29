@@ -20,7 +20,7 @@ Environment variables:
 
 import os
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Literal
 
 
 @dataclass
@@ -28,7 +28,7 @@ class CacheSettings:
     """Configuration for Nexus cache layer."""
 
     # Dragonfly connection (optional - if not set, use PostgreSQL)
-    dragonfly_url: Optional[str] = field(
+    dragonfly_url: str | None = field(
         default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_URL")
     )
 

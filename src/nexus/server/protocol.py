@@ -1326,7 +1326,7 @@ class ListConnectorsParams:
 class ListMountsParams:
     """Parameters for list_mounts() method."""
 
-    pass
+    context: dict | None = None  # For compatibility with NexusFS signature
 
 
 @dataclass
@@ -1363,6 +1363,7 @@ class ListSavedMountsParams:
 
     owner_user_id: str | None = None
     tenant_id: str | None = None
+    context: dict | None = None  # For compatibility with NexusFS signature
 
 
 @dataclass

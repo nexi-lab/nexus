@@ -730,6 +730,7 @@ jobs:
 
       - name: Mount Integration Test
         run: |
+          set -x  # Enable command tracing for debugging
           echo "🗄️ Running mount integration test..."
 
           # Use known dummy API key (set in .env)
@@ -813,7 +814,8 @@ jobs:
           fi
 
           # Extract and decode base64 content (try 'content' key first, then 'data' for compatibility)
-          CSV_CONTENT=$(echo "$READ_CSV_RESPONSE" | python3 -c "import sys, json, base64; data=json.load(sys.stdin); result=data.get('result', {}); content=result.get('content') or result.get('data', ''); print(base64.b64decode(content).decode('utf-8')) if content else ''" 2>/dev/null || echo "")
+          echo "DEBUG: READ_CSV_RESPONSE=$READ_CSV_RESPONSE"
+          CSV_CONTENT=$(echo "$READ_CSV_RESPONSE" | python3 -c "import sys, json, base64; data=json.load(sys.stdin); result=data.get('result', {}); content=result.get('content') or result.get('data', ''); print(base64.b64decode(content).decode('utf-8')) if content else ''" || echo "DECODE_FAILED")
 
           echo "CSV content (first 200 chars): ${CSV_CONTENT:0:200}"
           echo ""

@@ -28,10 +28,10 @@ The Docker setup includes 4 services:
 ### 1. Setup Environment
 
 ```bash
-# Option 1: Create .env.local (recommended)
-cp .env.example .env.local
+# Option 1: Create .env (recommended)
+cp .env.example .env
 
-# Edit .env.local and add your API keys
+# Edit .env and add your API keys
 # Required:
 #   - ANTHROPIC_API_KEY (required for LangGraph)
 # Optional:
@@ -39,10 +39,10 @@ cp .env.example .env.local
 #   - TAVILY_API_KEY (for web search)
 #   - E2B_API_KEY (for cloud sandboxes)
 #   - FIRECRAWL_API_KEY (for web scraping)
-nano .env.local
+nano .env
 
 # Option 2: Edit .env.example directly
-# The script will use .env.example if no .env.local or .env is found
+# The script will use .env.example if no .env or .env is found
 nano .env.example
 ```
 
@@ -398,7 +398,7 @@ ls -lh ./gcs-credentials.json
 
 ### Configure Docker Environment
 
-Edit your `.env.local` or `.env` file:
+Edit your `.env` or `.env` file:
 
 ```bash
 # Enable GCS backend

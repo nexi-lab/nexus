@@ -450,7 +450,7 @@ Or if using manual start:
 pkill -f "nexus serve"
 
 # Start with environment
-set -a && source .env.local && set +a
+set -a && source .env && set +a
 export NEXUS_DATABASE_URL="postgresql://postgres:nexus@localhost:5432/nexus"
 nexus serve --config ./configs/config.demo.yaml --auth-type database --async
 ```

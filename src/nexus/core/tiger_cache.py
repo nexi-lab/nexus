@@ -1213,13 +1213,26 @@ class TigerCacheUpdater:
         Returns:
             Number of entries processed
         """
+        import sqlite3
+
         from sqlalchemy import text
+        from sqlalchemy.exc import OperationalError
 
         if self._rebac_manager is None:
             logger.warning("[TIGER] Cannot process queue - no ReBAC manager set")
             return 0
 
         now_sql = "NOW()" if self._is_postgresql else "datetime('now')"
+
+        # Helper to check if error is a database lock/deadlock error
+        def is_lock_error(e: Exception) -> bool:
+            err_str = str(e).lower()
+            return (
+                "database is locked" in err_str
+                or "deadlock" in err_str
+                or isinstance(e, sqlite3.OperationalError)
+                or (isinstance(e, OperationalError) and "lock" in err_str)
+            )
 
         # Get pending entries
         select_query = text(f"""
@@ -1280,21 +1293,43 @@ class TigerCacheUpdater:
                     processed += 1
 
                 except Exception as e:
-                    logger.error(f"[TIGER] Failed to process queue entry {entry.queue_id}: {e}")
-                    connection.execute(
-                        text(
-                            f"UPDATE tiger_cache_queue SET status = 'failed', error_message = :err, processed_at = {now_sql} WHERE queue_id = :qid"
-                        ),
-                        {"qid": entry.queue_id, "err": str(e)[:1000]},
-                    )
+                    # For database lock errors, don't try to update (it would also fail)
+                    # Leave entry in 'processing' state - it will be cleaned up later
+                    if is_lock_error(e):
+                        logger.debug(
+                            f"[TIGER] Database lock during queue processing for entry {entry.queue_id}, will retry later"
+                        )
+                    else:
+                        logger.error(f"[TIGER] Failed to process queue entry {entry.queue_id}: {e}")
+                        try:
+                            connection.execute(
+                                text(
+                                    f"UPDATE tiger_cache_queue SET status = 'failed', error_message = :err, processed_at = {now_sql} WHERE queue_id = :qid"
+                                ),
+                                {"qid": entry.queue_id, "err": str(e)[:1000]},
+                            )
+                        except Exception as update_err:
+                            # If we can't update the status, just log and continue
+                            logger.debug(
+                                f"[TIGER] Could not update queue entry status: {update_err}"
+                            )
 
             return processed
 
-        if conn:
-            return do_process(conn)
-        else:
-            with self._engine.begin() as new_conn:
-                return do_process(new_conn)
+        try:
+            if conn:
+                return do_process(conn)
+            else:
+                with self._engine.begin() as new_conn:
+                    return do_process(new_conn)
+        except Exception as e:
+            # Handle lock errors at the top level (e.g., during SELECT)
+            if is_lock_error(e):
+                logger.debug(
+                    f"[TIGER] Database lock during queue processing, will retry later: {e}"
+                )
+                return 0
+            raise
 
     def _compute_accessible_resources(
         self,

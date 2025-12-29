@@ -46,7 +46,7 @@ from nexus.storage.content_cache import ContentCache
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
 
-class NexusFS(
+class NexusFS(  # type: ignore[misc]
     NexusFSCoreMixin,
     NexusFSSearchMixin,
     NexusFSReBACMixin,

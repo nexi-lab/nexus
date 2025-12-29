@@ -308,7 +308,7 @@ class ReBACManager:
                     (effective_tenant, new_version, datetime.now(UTC).isoformat()),
                 )
 
-            return new_version
+            return int(new_version)
 
     @contextmanager
     def _connection(self) -> Any:

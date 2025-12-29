@@ -76,7 +76,7 @@ class DragonflyClient:
 
         # Verify connection
         try:
-            await self._client.ping()
+            await self._client.ping()  # type: ignore[misc]
             self._connected = True
             logger.info(f"Connected to Dragonfly at {self._safe_url}")
         except Exception as e:
@@ -122,7 +122,7 @@ class DragonflyClient:
         if not self._client or not self._connected:
             return False
         try:
-            await self._client.ping()
+            await self._client.ping()  # type: ignore[misc]
             return True
         except Exception as e:
             logger.warning(f"Dragonfly health check failed: {e}")
@@ -152,7 +152,7 @@ class DragonflyClient:
         await self.connect()
         return self
 
-    async def __aexit__(self, *args) -> None:
+    async def __aexit__(self, *args: object) -> None:
         """Async context manager exit."""
         await self.disconnect()
 
@@ -217,7 +217,7 @@ class DragonflyPermissionCache:
         value = await self._client.client.get(key)
         if value is None:
             return None
-        return value == b"1"
+        return bool(value == b"1")
 
     async def set(
         self,
@@ -346,7 +346,7 @@ class DragonflyTigerCache:
     ) -> tuple[bytes, int] | None:
         """Get Tiger bitmap for a subject."""
         key = self._make_key(subject_type, subject_id, permission, resource_type, tenant_id)
-        result = await self._client.client.hgetall(key)
+        result = await self._client.client.hgetall(key)  # type: ignore[misc]
         if not result:
             return None
 
@@ -440,7 +440,7 @@ class DragonflyResourceMapCache:
     ) -> int | None:
         """Get integer ID for a resource."""
         key = self._make_key(resource_type, tenant_id)
-        result = await self._client.client.hget(key, resource_id)
+        result = await self._client.client.hget(key, resource_id)  # type: ignore[misc]
         if result is None:
             return None
         return int(result)

@@ -265,8 +265,12 @@ def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig)
         with console.status(f"[yellow]Scanning files in {path}...[/yellow]", spinner="dots"):
             all_files_raw = nx.list(path, recursive=True)
 
+            # Handle PaginatedResult if limit was used (not expected here, but be safe)
+            if hasattr(all_files_raw, "items"):
+                all_files_raw = all_files_raw.items  # type: ignore[union-attr]
+
             # Check if we got detailed results (list of dicts) or simple paths (list of strings)
-            if all_files_raw and isinstance(all_files_raw[0], dict):
+            if all_files_raw and isinstance(all_files_raw[0], dict):  # type: ignore[index]
                 # details=True was used
                 all_files_detailed = cast(list[dict[str, Any]], all_files_raw)
                 file_paths = [f["path"] for f in all_files_detailed]

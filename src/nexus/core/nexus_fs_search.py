@@ -1387,7 +1387,10 @@ class NexusFSSearchMixin:
         except Exception:
             # It's a directory
             file_list = await asyncio.to_thread(self.list, path, recursive=recursive)
-            for item in file_list:
+            if hasattr(file_list, "items"):
+                # PaginatedResult - use .items
+                file_list = file_list.items  # type: ignore[union-attr]
+            for item in file_list:  # type: ignore[union-attr]
                 file_path = item if isinstance(item, str) else item.get("path", "")
                 if file_path and not file_path.endswith("/"):
                     files_to_index.append(file_path)

@@ -12,6 +12,8 @@ TODO (Phase 2): Extract existing Tiger cache logic from tiger_cache.py
 import logging
 from typing import TYPE_CHECKING
 
+from sqlalchemy import text
+
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
@@ -131,7 +133,7 @@ class PostgresPermissionCache:
         """Check if cache backend is healthy."""
         try:
             with self._engine.connect() as conn:
-                conn.execute("SELECT 1")
+                conn.execute(text("SELECT 1"))
             return True
         except Exception:
             return False
@@ -222,7 +224,7 @@ class PostgresTigerCache:
         """Check if cache backend is healthy."""
         try:
             with self._engine.connect() as conn:
-                conn.execute("SELECT 1")
+                conn.execute(text("SELECT 1"))
             return True
         except Exception:
             return False

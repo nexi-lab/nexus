@@ -9,6 +9,7 @@ This module contains relationship-based permission operations:
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -2565,8 +2566,10 @@ class NexusFSReBACMixin:
                     )
                     entries_created += 1
 
-        # Process the queue immediately
+        # Process the queue (non-blocking - ignore lock errors)
+        # Lock errors are expected during concurrent operations, queue will be processed later
         if hasattr(self._rebac_manager, "tiger_process_queue"):
-            self._rebac_manager.tiger_process_queue(batch_size=1000)
+            with contextlib.suppress(Exception):
+                self._rebac_manager.tiger_process_queue(batch_size=1000)
 
         return entries_created

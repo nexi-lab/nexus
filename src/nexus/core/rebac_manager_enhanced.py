@@ -228,9 +228,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             )
 
         # Tiger Cache for materialized permissions (Issue #682)
+        # Only enable on PostgreSQL - SQLite has lock contention issues
         self._tiger_cache: TigerCache | None = None
         self._tiger_updater: TigerCacheUpdater | None = None
-        if enable_tiger_cache:
+        if enable_tiger_cache and engine.dialect.name == "postgresql":
             from nexus.core.tiger_cache import TigerCache, TigerCacheUpdater, TigerResourceMap
 
             resource_map = TigerResourceMap(engine)

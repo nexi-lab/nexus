@@ -1,10 +1,15 @@
 """Semantic search implementation for Nexus.
 
 Provides semantic search capabilities using vector embeddings with:
-- SQLite: sqlite-vec + FTS5
-- PostgreSQL: pgvector + tsvector
+- SQLite: sqlite-vec for vectors, FTS5 for keywords
+- PostgreSQL: pgvector for vectors, pg_textsearch BM25 for keywords (PG17+)
 
-Supports hybrid search combining keyword (FTS) and semantic (vector) search.
+BM25 ranking (pg_textsearch):
+- True BM25 with IDF, term frequency saturation, length normalization
+- ~10ms queries vs ts_rank's 25-30s degradation at 800K rows
+- Falls back to ts_rank() on PostgreSQL < 17 or when extension unavailable
+
+Supports hybrid search combining keyword (FTS/BM25) and semantic (vector) search.
 """
 
 from __future__ import annotations
@@ -49,7 +54,9 @@ class SemanticSearch:
 
     Provides semantic and hybrid search using database-native extensions:
     - SQLite: sqlite-vec for vectors, FTS5 for keywords
-    - PostgreSQL: pgvector for vectors, tsvector for keywords
+    - PostgreSQL: pgvector for vectors, pg_textsearch BM25 for keywords (PG17+)
+
+    Falls back to tsvector/ts_rank on PostgreSQL < 17 or when pg_textsearch unavailable.
     """
 
     def __init__(

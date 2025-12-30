@@ -869,14 +869,41 @@ class PermissionEnforcer:
                                 )
 
                                 if paths_needing_fallback:
+                                    # OPTIMIZATION: Only check fallback paths via rebac_check_bulk,
+                                    # not ALL paths. Combine Tiger Cache results with bulk results.
                                     logger.debug(
                                         f"[TIGER-RUST] {len(paths_needing_fallback)} paths need fallback: "
                                         f"{len(paths_not_in_map)} not in map, "
                                         f"{len(paths_in_map_but_not_granted)} in map but not in bitmap "
                                         "(may have inherited permissions)"
                                     )
-                                    # Fall through to rebac_check_bulk for these paths
-                                    # (This is handled below by checking if all paths were processed)
+
+                                    # Build checks only for paths needing fallback
+                                    fallback_checks = []
+                                    subject = context.get_subject()
+                                    for path in paths_needing_fallback:
+                                        fallback_checks.append((subject, "read", ("file", path)))
+
+                                    # Check fallback paths via rebac_check_bulk
+                                    fallback_results = self.rebac_manager.rebac_check_bulk(
+                                        fallback_checks, tenant_id=tenant_id
+                                    )
+
+                                    # Add paths that passed fallback check to filtered results
+                                    for path, check in zip(
+                                        paths_needing_fallback, fallback_checks, strict=False
+                                    ):
+                                        if fallback_results.get(check, False):
+                                            filtered.append(path)
+
+                                    tiger_elapsed = time.time() - tiger_start
+                                    logger.info(
+                                        f"[TIGER-RUST] filter_list hybrid: {tiger_elapsed:.3f}s, "
+                                        f"allowed {len(filtered)}/{len(paths)} paths "
+                                        f"(bitmap: {len(filtered) - len([p for p in paths_needing_fallback if fallback_results.get((subject, 'read', ('file', p)), False)])}, "
+                                        f"fallback: {len([p for p in paths_needing_fallback if fallback_results.get((subject, 'read', ('file', p)), False)])})"
+                                    )
+                                    return filtered
                                 else:
                                     tiger_elapsed = time.time() - tiger_start
                                     overall_elapsed = time.time() - overall_start

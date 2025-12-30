@@ -6,9 +6,12 @@ Provides background cleanup tasks for session management and expired resources.
 import asyncio
 import logging
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.core.sessions import cleanup_expired_sessions, cleanup_inactive_sessions
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +111,68 @@ async def inactive_session_cleanup_task(
 
         except Exception as e:
             logger.error(f"Inactive session cleanup failed: {e}", exc_info=True)
+
+        await asyncio.sleep(interval_seconds)
+
+
+async def tiger_cache_queue_task(
+    nexus_fs: "NexusFS",
+    interval_seconds: int = 60,  # Process less frequently since write-through handles new grants
+    batch_size: int = 1,  # Process ONE entry at a time to avoid blocking
+) -> None:
+    """Background task: Process Tiger Cache queue (Issue #935).
+
+    NOTE: With write-through implemented, this queue is mainly for:
+    1. Warming cache on startup (legacy entries)
+    2. Processing any entries that failed write-through
+
+    New permission grants are handled immediately by persist_single_grant().
+
+    Args:
+        nexus_fs: NexusFS instance with ReBAC manager
+        interval_seconds: How often to process queue (default: 60 seconds)
+        batch_size: Number of queue entries to process per batch (default: 1)
+
+    Examples:
+        >>> # Start Tiger Cache queue processor
+        >>> asyncio.create_task(tiger_cache_queue_task(nexus_fs, 60, 1))
+    """
+    import concurrent.futures
+
+    logger.info(
+        f"Starting Tiger Cache queue task (interval: {interval_seconds}s, batch: {batch_size})"
+    )
+
+    # Wait for server to fully start
+    await asyncio.sleep(5)
+
+    # Create a thread pool for blocking queue processing
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="tiger_queue"
+    )
+
+    while True:
+        try:
+            # Access the rebac_manager from nexus_fs
+            rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
+            if rebac_manager and hasattr(rebac_manager, "tiger_process_queue"):
+                # Run blocking queue processing in thread pool to avoid blocking event loop
+                loop = asyncio.get_event_loop()
+
+                # Bind rebac_manager to avoid B023 late-binding closure issue
+                def process_queue(mgr: Any = rebac_manager) -> int:
+                    result: int = mgr.tiger_process_queue(batch_size=batch_size)
+                    return result
+
+                processed = await loop.run_in_executor(executor, process_queue)
+                if processed > 0:
+                    logger.info(f"Tiger Cache: processed {processed} queue entries (background)")
+            elif rebac_manager:
+                tiger_updater = getattr(rebac_manager, "_tiger_updater", None)
+                if tiger_updater is None:
+                    logger.debug("Tiger Cache: _tiger_updater is None, queue cannot be processed")
+        except Exception as e:
+            logger.warning(f"Tiger Cache queue processing error: {e}")
 
         await asyncio.sleep(interval_seconds)
 

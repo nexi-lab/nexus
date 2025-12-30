@@ -795,6 +795,32 @@ nexus
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### pgvector HNSW Index Tuning
+
+For production deployments with 100K+ vectors, the HNSW index is tuned for optimal performance:
+
+| Parameter | Default | Tuned | Purpose |
+|-----------|---------|-------|---------|
+| `m` | 16 | 24 | Max connections per node. Higher = better recall for high-dimensional data (1536 dims) |
+| `ef_construction` | 64 | 128 | Build-time candidate list. Higher = better graph quality |
+| `ef_search` | 40 | 100 | Query-time candidate list. Higher = better recall (~0.998 vs ~0.95) |
+
+**Performance Impact** (based on pgvector benchmarks):
+- Default settings: ~20 QPS, 0.95 recall
+- Tuned settings: ~40 QPS, 0.998 recall
+
+**Index Build Optimization**:
+```sql
+-- Speed up index creation with parallel workers
+SET max_parallel_maintenance_workers = 7;
+SET maintenance_work_mem = '1GB';
+```
+
+**References**:
+- [Issue #947](https://github.com/nexi-lab/nexus/issues/947)
+- [pgvector HNSW documentation](https://github.com/pgvector/pgvector#hnsw)
+- [Supabase HNSW benchmarks](https://supabase.com/blog/increase-performance-pgvector-hnsw)
+
 ---
 
 ## Database Schema

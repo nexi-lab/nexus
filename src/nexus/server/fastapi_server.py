@@ -31,7 +31,7 @@ import os
 import secrets
 import time
 from collections.abc import Callable, Iterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from anyio import to_thread
@@ -439,10 +439,39 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize async ReBAC manager: {e}")
 
+    # Tiger Cache queue processor (Issue #935)
+    # NOTE: Disabled by default - write-through handles grants/revokes immediately
+    # Enable with NEXUS_ENABLE_TIGER_WORKER=true for cache warming scenarios
+    tiger_task: asyncio.Task | None = None
+    if _app_state.nexus_fs and os.getenv("NEXUS_ENABLE_TIGER_WORKER", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    ):
+        try:
+            from nexus.server.background_tasks import tiger_cache_queue_task
+
+            tiger_task = asyncio.create_task(
+                tiger_cache_queue_task(_app_state.nexus_fs, interval_seconds=60, batch_size=1)
+            )
+            logger.info("Tiger Cache queue processor started (explicit enable)")
+        except Exception as e:
+            logger.warning(f"Failed to start Tiger Cache queue processor: {e}")
+    else:
+        logger.debug("Tiger Cache queue processor disabled (write-through handles grants)")
+
     yield
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Cancel Tiger Cache task
+    if tiger_task:
+        tiger_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await tiger_task
+        logger.info("Tiger Cache queue processor stopped")
+
     if _app_state.subscription_manager:
         await _app_state.subscription_manager.close()
     if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "close"):
@@ -1167,6 +1196,7 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         "is_directory",
         "delta_read",  # Issue #869: Delta sync
         "delta_write",  # Issue #869: Delta sync
+        "semantic_search_index",  # Issue #947: HNSW tuning
     }
 
     # Try auto-dispatch first for exposed methods
@@ -1209,6 +1239,9 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await to_thread_with_timeout(_handle_delta_read, params, context)
     elif method == "delta_write":
         return await to_thread_with_timeout(_handle_delta_write, params, context)
+    # Semantic search methods (Issue #947)
+    elif method == "semantic_search_index":
+        return await _handle_semantic_search_index(params, context)
     # Admin API methods (v0.5.1)
     elif method == "admin_create_key":
         return await to_thread_with_timeout(_handle_admin_create_key, params, context)
@@ -1653,6 +1686,49 @@ def _handle_search(params: Any, context: Any) -> dict[str, Any]:
 
     results = nexus_fs.search(params.query, **kwargs)  # type: ignore[attr-defined]
     return {"results": results}
+
+
+async def _handle_semantic_search_index(params: Any, _context: Any) -> dict[str, Any]:
+    """Handle semantic_search_index method (Issue #947).
+
+    Index documents for semantic search with embeddings.
+
+    Args:
+        params.path: Path to index (file or directory, default: "/")
+        params.recursive: If True, index directory recursively (default: True)
+        context: Operation context
+
+    Returns:
+        Dictionary mapping file paths to number of chunks indexed
+    """
+    nexus_fs = _app_state.nexus_fs
+    assert nexus_fs is not None
+
+    path = getattr(params, "path", "/")
+    recursive = getattr(params, "recursive", True)
+
+    # Check if semantic search is initialized
+    if not hasattr(nexus_fs, "_semantic_search") or nexus_fs._semantic_search is None:
+        # Try to initialize semantic search
+        try:
+            await nexus_fs.initialize_semantic_search()
+        except Exception as e:
+            raise ValueError(
+                f"Semantic search is not initialized and could not be auto-initialized: {e}"
+            ) from e
+
+    # Call the async indexing method
+    results = await nexus_fs.semantic_search_index(path=path, recursive=recursive)
+
+    # Calculate total chunks (handle case where values might be dicts or errors)
+    total_chunks = 0
+    for v in results.values():
+        if isinstance(v, int):
+            total_chunks += v
+        elif isinstance(v, dict) and "chunks" in v:
+            total_chunks += v["chunks"]
+
+    return {"indexed": results, "total_files": len(results), "total_chunks": total_chunks}
 
 
 def _handle_is_directory(params: Any, context: Any) -> dict[str, Any]:

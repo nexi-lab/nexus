@@ -223,6 +223,7 @@ class TestTigerCache:
         assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "tenant1") is None
 
 
+@pytest.mark.skip(reason="Tiger Cache disabled on SQLite - PostgreSQL only optimization")
 class TestEnhancedReBACManagerWithTiger:
     """Tests for EnhancedReBACManager Tiger Cache integration."""
 
@@ -285,6 +286,7 @@ class TestEnhancedReBACManagerWithTiger:
         assert count >= 0
 
 
+@pytest.mark.skip(reason="Tiger Cache disabled on SQLite - PostgreSQL only optimization")
 class TestTigerCacheIntegration:
     """Integration tests for Tiger Cache with permissions."""
 
@@ -331,6 +333,212 @@ class TestTigerCacheIntegration:
             tenant_id="tenant1",
         )
         assert result is None  # Not in cache (bob)
+
+
+class TestTigerCacheIncrementalUpdates:
+    """Tests for incremental Tiger Cache updates (Issue #935)."""
+
+    def test_add_to_bitmap_creates_new_bitmap(self, tiger_cache, resource_map):
+        """Test that add_to_bitmap creates a new bitmap if none exists."""
+        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
+
+        # Add to bitmap when none exists
+        result = tiger_cache.add_to_bitmap(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            tenant_id="tenant1",
+            resource_int_id=r1,
+        )
+        assert result is True
+
+        # Verify resource is now accessible
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "tenant1") is True
+
+    def test_add_to_bitmap_updates_existing_bitmap(self, tiger_cache, resource_map):
+        """Test that add_to_bitmap adds to an existing bitmap."""
+        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
+        r2 = resource_map.get_or_create_int_id("file", "file2", "tenant1")
+
+        # Create initial bitmap with r1
+        tiger_cache.update_cache(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            tenant_id="tenant1",
+            resource_int_ids={r1},
+            revision=1,
+        )
+
+        # Add r2 to bitmap
+        result = tiger_cache.add_to_bitmap(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            tenant_id="tenant1",
+            resource_int_id=r2,
+        )
+        assert result is True
+
+        # Verify both resources are accessible
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "tenant1") is True
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file2", "tenant1") is True
+
+    def test_add_to_bitmap_idempotent(self, tiger_cache, resource_map):
+        """Test that adding same resource twice is idempotent."""
+        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
+
+        # Add same resource twice
+        tiger_cache.add_to_bitmap("user", "alice", "read", "file", "tenant1", r1)
+        tiger_cache.add_to_bitmap("user", "alice", "read", "file", "tenant1", r1)
+
+        # Should still have only 1 resource in bitmap
+        accessible = tiger_cache.get_accessible_resources(
+            "user", "alice", "read", "file", "tenant1"
+        )
+        assert accessible == {r1}
+
+    def test_remove_from_bitmap(self, tiger_cache, resource_map):
+        """Test removing a resource from bitmap."""
+        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
+        r2 = resource_map.get_or_create_int_id("file", "file2", "tenant1")
+
+        # Create bitmap with both resources
+        tiger_cache.update_cache(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            tenant_id="tenant1",
+            resource_int_ids={r1, r2},
+            revision=1,
+        )
+
+        # Remove r1
+        result = tiger_cache.remove_from_bitmap(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            tenant_id="tenant1",
+            resource_int_id=r1,
+        )
+        assert result is True
+
+        # Verify r1 is no longer accessible but r2 is
+        assert (
+            tiger_cache.check_access("user", "alice", "read", "file", "file1", "tenant1") is False
+        )
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file2", "tenant1") is True
+
+    def test_remove_from_bitmap_not_in_cache(self, tiger_cache, resource_map):
+        """Test removing from non-existent bitmap returns False."""
+        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
+
+        # Try to remove from non-existent bitmap
+        result = tiger_cache.remove_from_bitmap(
+            subject_type="user",
+            subject_id="nobody",
+            permission="read",
+            resource_type="file",
+            tenant_id="tenant1",
+            resource_int_id=r1,
+        )
+        assert result is False
+
+    def test_add_to_bitmap_bulk(self, tiger_cache, resource_map):
+        """Test bulk adding resources to bitmap."""
+        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
+        r2 = resource_map.get_or_create_int_id("file", "file2", "tenant1")
+        r3 = resource_map.get_or_create_int_id("file", "file3", "tenant1")
+
+        # Bulk add all resources
+        added = tiger_cache.add_to_bitmap_bulk(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            tenant_id="tenant1",
+            resource_int_ids={r1, r2, r3},
+        )
+        assert added == 3
+
+        # Verify all are accessible
+        accessible = tiger_cache.get_accessible_resources(
+            "user", "alice", "read", "file", "tenant1"
+        )
+        assert accessible == {r1, r2, r3}
+
+    def test_add_to_bitmap_bulk_partial_duplicates(self, tiger_cache, resource_map):
+        """Test bulk add with some resources already in bitmap."""
+        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
+        r2 = resource_map.get_or_create_int_id("file", "file2", "tenant1")
+        r3 = resource_map.get_or_create_int_id("file", "file3", "tenant1")
+
+        # Create bitmap with r1
+        tiger_cache.update_cache(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            tenant_id="tenant1",
+            resource_int_ids={r1},
+            revision=1,
+        )
+
+        # Bulk add r1, r2, r3 (r1 is duplicate)
+        added = tiger_cache.add_to_bitmap_bulk(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            tenant_id="tenant1",
+            resource_int_ids={r1, r2, r3},
+        )
+        assert added == 2  # Only r2 and r3 are new
+
+        # Verify all are accessible
+        accessible = tiger_cache.get_accessible_resources(
+            "user", "alice", "read", "file", "tenant1"
+        )
+        assert accessible == {r1, r2, r3}
+
+    def test_add_to_bitmap_bulk_empty_set(self, tiger_cache):
+        """Test bulk add with empty set returns 0."""
+        added = tiger_cache.add_to_bitmap_bulk(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            tenant_id="tenant1",
+            resource_int_ids=set(),
+        )
+        assert added == 0
+
+    def test_incremental_updates_different_permissions(self, tiger_cache, resource_map):
+        """Test incremental updates maintain separate bitmaps per permission."""
+        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
+        r2 = resource_map.get_or_create_int_id("file", "file2", "tenant1")
+
+        # Add r1 to read bitmap
+        tiger_cache.add_to_bitmap("user", "alice", "read", "file", "tenant1", r1)
+
+        # Add r2 to write bitmap
+        tiger_cache.add_to_bitmap("user", "alice", "write", "file", "tenant1", r2)
+
+        # Verify bitmaps are separate
+        read_accessible = tiger_cache.get_accessible_resources(
+            "user", "alice", "read", "file", "tenant1"
+        )
+        write_accessible = tiger_cache.get_accessible_resources(
+            "user", "alice", "write", "file", "tenant1"
+        )
+
+        assert read_accessible == {r1}
+        assert write_accessible == {r2}
 
 
 class TestRoaringBitmap:

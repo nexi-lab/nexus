@@ -790,6 +790,20 @@ class RegisterAgentParams:
 
 
 @dataclass
+class UpdateAgentParams:
+    """Parameters for update_agent() method (v0.5.1).
+
+    Updates agent configuration without re-registering or regenerating API keys.
+    """
+
+    agent_id: str
+    name: str | None = None
+    description: str | None = None
+    metadata: dict | None = None  # Optional metadata (platform, endpoint_url, agent_id, etc.)
+    context: dict | None = None  # For compatibility with NexusFS signature
+
+
+@dataclass
 class ListAgentsParams:
     """Parameters for list_agents() method (v0.5.0)."""
 
@@ -1320,7 +1334,7 @@ class ListConnectorsParams:
 class ListMountsParams:
     """Parameters for list_mounts() method."""
 
-    pass
+    context: dict | None = None  # For compatibility with NexusFS signature
 
 
 @dataclass
@@ -1357,6 +1371,7 @@ class ListSavedMountsParams:
 
     owner_user_id: str | None = None
     tenant_id: str | None = None
+    context: dict | None = None  # For compatibility with NexusFS signature
 
 
 @dataclass
@@ -1732,6 +1747,7 @@ METHOD_PARAMS = {
     "list_memories": ListMemoriesParams,  # v0.5.0
     "list_registered_memories": ListRegisteredMemoriesParams,  # v0.5.0
     "register_agent": RegisterAgentParams,  # v0.5.0
+    "update_agent": UpdateAgentParams,  # v0.5.1
     "list_agents": ListAgentsParams,  # v0.5.0
     "get_agent": GetAgentParams,  # v0.5.0
     "delete_agent": DeleteAgentParams,  # v0.5.0

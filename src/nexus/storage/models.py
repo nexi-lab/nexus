@@ -1597,11 +1597,11 @@ class OAuthAPIKeyModel(Base):
     )
 
     # User ID (for easier queries without joining api_keys table)
+    # Note: Index defined in __table_args__ (idx_oauth_api_keys_user)
     user_id: Mapped[str] = mapped_column(
         String(255),
         ForeignKey("users.user_id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     # Encrypted API key value (can be decrypted and returned to user)
@@ -2635,11 +2635,12 @@ class UserModel(Base):
     # Identity
     # NOTE: Uniqueness enforced via partial unique indexes (see migration) to support soft delete
     # Do NOT use unique=True here - it would prevent email/username reuse after soft delete
+    # Note: Indexes defined in __table_args__ (idx_users_username, idx_users_email)
     username: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
+        String(255), nullable=True
     )  # For username/password auth (unique for active users via partial index)
     email: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
+        String(255), nullable=True
     )  # Email address (unique for active users via partial index)
 
     # Profile
@@ -2652,16 +2653,18 @@ class UserModel(Base):
     password_hash: Mapped[str | None] = mapped_column(
         String(512), nullable=True
     )  # Bcrypt hash for username/password auth (512 chars for future-proofing with argon2/scrypt)
+    # Note: Index defined in __table_args__ (idx_users_auth_method)
     primary_auth_method: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="password", index=True
+        String(50), nullable=False, default="password"
     )  # 'password', 'oauth', 'external', 'api_key' - indicates how account was created
 
     # External user management
+    # Note: Covered by composite idx_users_external in __table_args__
     external_user_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
+        String(255), nullable=True
     )  # ID in external user service
     external_user_service: Mapped[str | None] = mapped_column(
-        String(100), nullable=True, index=True
+        String(100), nullable=True
     )  # External service identifier (e.g., 'auth0', 'okta', 'custom')
     # NOTE: Endpoint configuration stored in ExternalUserServiceModel, not per-user
 
@@ -2692,11 +2695,12 @@ class UserModel(Base):
     # SOFT DELETE: Users are marked inactive instead of hard deleted
     # This preserves audit trail, API keys, and relationships
     # Hard delete only via admin command after retention period (e.g., 90 days)
+    # Note: Indexes defined in __table_args__ (idx_users_active, idx_users_deleted)
     is_active: Mapped[int] = mapped_column(
-        Integer, default=1, nullable=False, index=True
+        Integer, default=1, nullable=False
     )  # SQLite: bool as Integer (0 = soft deleted)
     deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True, index=True
+        DateTime, nullable=True
     )  # Timestamp when user was soft deleted (None = active)
     email_verified: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False
@@ -2777,11 +2781,11 @@ class UserOAuthAccountModel(Base):
     )
 
     # Foreign key to user
+    # Note: Index defined in __table_args__ (idx_user_oauth_user)
     user_id: Mapped[str] = mapped_column(
         String(255),
         ForeignKey("users.user_id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     # OAuth provider
@@ -2854,12 +2858,14 @@ class TenantModel(Base):
     )  # Tenant identifier (matches tenant_id used throughout the system)
 
     # Metadata
+    # Note: Index defined in __table_args__ (idx_tenants_name)
     name: Mapped[str] = mapped_column(
-        String(255), nullable=False, index=True
+        String(255), nullable=False
     )  # Display name for the tenant/organization
 
+    # Note: unique=True creates an index, no need for additional index=True
     domain: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, unique=True, index=True
+        String(255), nullable=True, unique=True
     )  # Unique domain identifier (company URL, email domain, etc.)
 
     description: Mapped[str | None] = mapped_column(Text, nullable=True)  # Optional description
@@ -2870,8 +2876,9 @@ class TenantModel(Base):
     )  # JSON as string for additional tenant settings/config
 
     # Status
+    # Note: Index defined in __table_args__ (idx_tenants_active)
     is_active: Mapped[int] = mapped_column(
-        Integer, default=1, nullable=False, index=True
+        Integer, default=1, nullable=False
     )  # SQLite: bool as Integer (0 = soft deleted)
 
     deleted_at: Mapped[datetime | None] = mapped_column(

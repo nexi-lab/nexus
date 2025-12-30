@@ -198,6 +198,29 @@ def upgrade() -> None:
     # =========================================================================
     op.execute(text("DROP INDEX IF EXISTS ix_sync_jobs_mount_point"))
 
+    # =========================================================================
+    # Additional duplicates found in user-related tables
+    # =========================================================================
+
+    # users table - 5 duplicates (some covered by composites)
+    op.execute(text("DROP INDEX IF EXISTS ix_users_email"))  # → idx_users_email
+    op.execute(text("DROP INDEX IF EXISTS ix_users_username"))  # → idx_users_username
+    op.execute(text("DROP INDEX IF EXISTS ix_users_deleted_at"))  # → idx_users_deleted
+    op.execute(text("DROP INDEX IF EXISTS ix_users_primary_auth_method"))  # → idx_users_auth_method
+    op.execute(text("DROP INDEX IF EXISTS ix_users_is_active"))  # → idx_users_active
+    op.execute(text("DROP INDEX IF EXISTS ix_users_external_user_id"))  # → idx_users_external composite
+    op.execute(text("DROP INDEX IF EXISTS ix_users_external_user_service"))  # → idx_users_external composite
+
+    # user_oauth_accounts table - 1 duplicate
+    op.execute(text("DROP INDEX IF EXISTS ix_user_oauth_accounts_user_id"))  # → idx_user_oauth_user
+
+    # oauth_api_keys table - 1 duplicate
+    op.execute(text("DROP INDEX IF EXISTS ix_oauth_api_keys_user_id"))  # → idx_oauth_api_keys_user
+
+    # tenants table - 2 duplicates
+    op.execute(text("DROP INDEX IF EXISTS ix_tenants_name"))  # → idx_tenants_name
+    op.execute(text("DROP INDEX IF EXISTS ix_tenants_is_active"))  # → idx_tenants_active
+
 
 def downgrade() -> None:
     """Recreate ix_* indexes if needed for rollback.

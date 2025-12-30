@@ -3671,6 +3671,135 @@ class NexusFS(  # type: ignore[misc]
 
         return agent
 
+    @rpc_expose(description="Update agent configuration")
+    def update_agent(
+        self,
+        agent_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        metadata: dict | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Update an existing agent's configuration (v0.5.1).
+
+        Updates the agent's config.yaml file and optionally updates entity registry metadata.
+        Does NOT regenerate API keys or change permissions.
+
+        Args:
+            agent_id: Agent identifier to update
+            name: Optional new name
+            description: Optional new description
+            metadata: Optional metadata to update (platform, endpoint_url, agent_id, etc.)
+            context: Operation context (user_id extracted from here)
+
+        Returns:
+            Updated agent info dict
+
+        Example:
+            >>> # Update agent metadata
+            >>> agent = nx.update_agent(
+            ...     "alice,DataAnalyst",
+            ...     name="Data Analyst Pro",
+            ...     description="Enhanced data analysis agent",
+            ...     metadata={
+            ...         "platform": "langgraph",
+            ...         "endpoint_url": "https://agent.example.com",
+            ...         "agent_id": "analyst"
+            ...     }
+            ... )
+        """
+        import logging
+
+        import yaml
+
+        logger = logging.getLogger(__name__)
+
+        # Extract user_id and tenant_id from context
+        user_id = self._extract_user_id(context)
+        if not user_id:
+            raise ValueError("user_id required in context to update agent")
+
+        tenant_id = self._extract_tenant_id(context) or "default"
+
+        # Extract agent name from agent_id (format: user_id,agent_name)
+        agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
+        agent_dir = f"/tenant:{tenant_id}/user:{user_id}/agent/{agent_name_part}"
+        config_path = f"{agent_dir}/config.yaml"
+
+        # Check if agent config exists
+        try:
+            existing_meta = self.metadata.get(config_path)
+            if not existing_meta:
+                raise ValueError(f"Agent not found at {config_path}")
+        except FileNotFoundError as e:
+            raise ValueError(f"Agent not found: {agent_id}") from e
+
+        # Read existing config
+        ctx = self._parse_context(context)
+        existing_content = self.read(config_path, context=ctx)
+        if isinstance(existing_content, dict):
+            existing_config = existing_content
+        else:
+            existing_config = yaml.safe_load(existing_content.decode("utf-8"))
+
+        # Update fields
+        if name is not None:
+            existing_config["name"] = name
+        if description is not None:
+            existing_config["description"] = description
+
+        # Update metadata section
+        if metadata is not None:
+            if "metadata" not in existing_config:
+                existing_config["metadata"] = {}
+            existing_config["metadata"].update(metadata)
+
+        # Write updated config back
+        updated_yaml = yaml.dump(existing_config, default_flow_style=False, sort_keys=False)
+        self.write(config_path, updated_yaml.encode("utf-8"), context=ctx)
+
+        # Optionally update entity registry if name/description changed
+        if self._entity_registry and (name is not None or description is not None):
+            entity = self._entity_registry.get_entity("agent", agent_id)
+            if entity and entity.entity_metadata:
+                import json
+
+                try:
+                    entity_meta = json.loads(entity.entity_metadata)
+                    if name is not None:
+                        entity_meta["name"] = name
+                    if description is not None:
+                        entity_meta["description"] = description
+
+                    # Update entity metadata
+                    from sqlalchemy import update
+
+                    from nexus.storage.models import EntityRegistryModel
+
+                    with self._entity_registry._get_session() as session:
+                        stmt = (
+                            update(EntityRegistryModel)
+                            .where(
+                                EntityRegistryModel.entity_type == "agent",
+                                EntityRegistryModel.entity_id == agent_id,
+                            )
+                            .values(entity_metadata=json.dumps(entity_meta))
+                        )
+                        session.execute(stmt)
+                        session.commit()
+                        logger.info(f"Updated entity registry metadata for agent {agent_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to update entity registry: {e}")
+
+        return {
+            "agent_id": agent_id,
+            "user_id": user_id,
+            "name": existing_config.get("name"),
+            "description": existing_config.get("description"),
+            "metadata": existing_config.get("metadata", {}),
+            "config_path": config_path,
+        }
+
     @rpc_expose(description="List all registered agents")
     def list_agents(self, _context: dict | None = None) -> list[dict]:
         """List all registered agents (v0.5.0).

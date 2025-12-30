@@ -32,7 +32,6 @@ import secrets
 import time
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager, suppress
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from anyio import to_thread
@@ -41,19 +40,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from starlette.middleware.gzip import GZipMiddleware
-
-# Load environment variables from .env.local if it exists
-try:
-    from dotenv import load_dotenv
-
-    # Look for .env.local in project root (parent of src)
-    env_file = Path(__file__).parent.parent.parent.parent / ".env.local"
-    if env_file.exists():
-        load_dotenv(env_file)
-        logger = logging.getLogger(__name__)
-        logger.info(f"Loaded environment variables from {env_file}")
-except ImportError:
-    pass  # dotenv not installed, rely on system environment variables
 
 from nexus.core.exceptions import (
     ConflictError,

@@ -30,6 +30,10 @@ import pytest
 
 from nexus import LocalBackend, NexusFS
 
+# Mark all tests in this module to run sequentially to avoid SQLite locking issues
+# when running tests in parallel with pytest-xdist
+pytestmark = pytest.mark.xdist_group(name="rebac_sqlite")
+
 
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:

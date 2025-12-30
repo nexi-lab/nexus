@@ -5,17 +5,17 @@ Revises: add_directory_entries_table, drop_ix_duplicate_indexes
 Create Date: 2025-12-29 23:53:15.613091
 
 """
-from typing import Sequence, Union
 
-from alembic import op
-import sqlalchemy as sa
-
+from collections.abc import Sequence
 
 # revision identifiers, used by Alembic.
-revision: str = '77274f750d1f'
-down_revision: Union[str, Sequence[str], None] = ('add_directory_entries_table', 'drop_ix_duplicate_indexes')
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision: str = "77274f750d1f"
+down_revision: str | Sequence[str] | None = (
+    "add_directory_entries_table",
+    "drop_ix_duplicate_indexes",
+)
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

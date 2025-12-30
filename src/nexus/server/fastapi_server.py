@@ -443,7 +443,11 @@ async def lifespan(_app: FastAPI) -> Any:
     # NOTE: Disabled by default - write-through handles grants/revokes immediately
     # Enable with NEXUS_ENABLE_TIGER_WORKER=true for cache warming scenarios
     tiger_task: asyncio.Task | None = None
-    if _app_state.nexus_fs and os.getenv("NEXUS_ENABLE_TIGER_WORKER", "false").lower() in ("true", "1", "yes"):
+    if _app_state.nexus_fs and os.getenv("NEXUS_ENABLE_TIGER_WORKER", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    ):
         try:
             from nexus.server.background_tasks import tiger_cache_queue_task
 

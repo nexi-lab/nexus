@@ -2548,6 +2548,7 @@ class NexusFSReBACMixin:
                 self._rebac_manager.tiger_process_queue(batch_size=5)
             except Exception as e:
                 import logging
+
                 logging.getLogger(__name__).warning(f"[WARM-TIGER] Queue processing failed: {e}")
 
         return entries_created

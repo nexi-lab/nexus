@@ -208,8 +208,12 @@ def upgrade() -> None:
     op.execute(text("DROP INDEX IF EXISTS ix_users_deleted_at"))  # → idx_users_deleted
     op.execute(text("DROP INDEX IF EXISTS ix_users_primary_auth_method"))  # → idx_users_auth_method
     op.execute(text("DROP INDEX IF EXISTS ix_users_is_active"))  # → idx_users_active
-    op.execute(text("DROP INDEX IF EXISTS ix_users_external_user_id"))  # → idx_users_external composite
-    op.execute(text("DROP INDEX IF EXISTS ix_users_external_user_service"))  # → idx_users_external composite
+    op.execute(
+        text("DROP INDEX IF EXISTS ix_users_external_user_id")
+    )  # → idx_users_external composite
+    op.execute(
+        text("DROP INDEX IF EXISTS ix_users_external_user_service")
+    )  # → idx_users_external composite
 
     # user_oauth_accounts table - 1 duplicate
     op.execute(text("DROP INDEX IF EXISTS ix_user_oauth_accounts_user_id"))  # → idx_user_oauth_user
@@ -238,28 +242,64 @@ def downgrade() -> None:
     op.execute(text("CREATE INDEX IF NOT EXISTS ix_memories_namespace ON memories (namespace)"))
 
     # rebac_tuples table
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_rebac_tuples_tenant_id ON rebac_tuples (tenant_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_rebac_tuples_subject_type ON rebac_tuples (subject_type)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_rebac_tuples_relation ON rebac_tuples (relation)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_rebac_tuples_object_type ON rebac_tuples (object_type)"))
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_rebac_tuples_tenant_id ON rebac_tuples (tenant_id)")
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_rebac_tuples_subject_type ON rebac_tuples (subject_type)"
+        )
+    )
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_rebac_tuples_relation ON rebac_tuples (relation)")
+    )
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_rebac_tuples_object_type ON rebac_tuples (object_type)")
+    )
 
     # rebac_check_cache table
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_rebac_check_cache_tenant_id ON rebac_check_cache (tenant_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_rebac_check_cache_subject_type ON rebac_check_cache (subject_type)"))
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_rebac_check_cache_tenant_id ON rebac_check_cache (tenant_id)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_rebac_check_cache_subject_type ON rebac_check_cache (subject_type)"
+        )
+    )
 
     # rebac_version_sequences - index on PK, not needed
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_rebac_version_sequences_tenant_id ON rebac_version_sequences (tenant_id)"))
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_rebac_version_sequences_tenant_id ON rebac_version_sequences (tenant_id)"
+        )
+    )
 
     # trajectories table
     op.execute(text("CREATE INDEX IF NOT EXISTS ix_trajectories_user_id ON trajectories (user_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_trajectories_agent_id ON trajectories (agent_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_trajectories_tenant_id ON trajectories (tenant_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_trajectories_task_type ON trajectories (task_type)"))
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_trajectories_agent_id ON trajectories (agent_id)")
+    )
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_trajectories_tenant_id ON trajectories (tenant_id)")
+    )
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_trajectories_task_type ON trajectories (task_type)")
+    )
     op.execute(text("CREATE INDEX IF NOT EXISTS ix_trajectories_status ON trajectories (status)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_trajectories_completed_at ON trajectories (completed_at)"))
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_trajectories_completed_at ON trajectories (completed_at)"
+        )
+    )
     op.execute(text("CREATE INDEX IF NOT EXISTS ix_trajectories_path ON trajectories (path)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_trajectories_session_id ON trajectories (session_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_trajectories_expires_at ON trajectories (expires_at)"))
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_trajectories_session_id ON trajectories (session_id)")
+    )
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_trajectories_expires_at ON trajectories (expires_at)")
+    )
 
     # playbooks table
     op.execute(text("CREATE INDEX IF NOT EXISTS ix_playbooks_user_id ON playbooks (user_id)"))
@@ -272,56 +312,168 @@ def downgrade() -> None:
     op.execute(text("CREATE INDEX IF NOT EXISTS ix_playbooks_expires_at ON playbooks (expires_at)"))
 
     # user_sessions table
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_user_sessions_user_id ON user_sessions (user_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_user_sessions_agent_id ON user_sessions (agent_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_user_sessions_tenant_id ON user_sessions (tenant_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_user_sessions_created_at ON user_sessions (created_at)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_user_sessions_expires_at ON user_sessions (expires_at)"))
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_user_sessions_user_id ON user_sessions (user_id)")
+    )
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_user_sessions_agent_id ON user_sessions (agent_id)")
+    )
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_user_sessions_tenant_id ON user_sessions (tenant_id)")
+    )
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_user_sessions_created_at ON user_sessions (created_at)")
+    )
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_user_sessions_expires_at ON user_sessions (expires_at)")
+    )
 
     # sandbox_metadata table
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_sandbox_metadata_user_id ON sandbox_metadata (user_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_sandbox_metadata_agent_id ON sandbox_metadata (agent_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_sandbox_metadata_tenant_id ON sandbox_metadata (tenant_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_sandbox_metadata_status ON sandbox_metadata (status)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_sandbox_metadata_created_at ON sandbox_metadata (created_at)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_sandbox_metadata_expires_at ON sandbox_metadata (expires_at)"))
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_sandbox_metadata_user_id ON sandbox_metadata (user_id)")
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_sandbox_metadata_agent_id ON sandbox_metadata (agent_id)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_sandbox_metadata_tenant_id ON sandbox_metadata (tenant_id)"
+        )
+    )
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_sandbox_metadata_status ON sandbox_metadata (status)")
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_sandbox_metadata_created_at ON sandbox_metadata (created_at)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_sandbox_metadata_expires_at ON sandbox_metadata (expires_at)"
+        )
+    )
 
     # oauth_credentials table
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_oauth_credentials_provider ON oauth_credentials (provider)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_oauth_credentials_user_email ON oauth_credentials (user_email)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_oauth_credentials_user_id ON oauth_credentials (user_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_oauth_credentials_tenant_id ON oauth_credentials (tenant_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_oauth_credentials_expires_at ON oauth_credentials (expires_at)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_oauth_credentials_revoked ON oauth_credentials (revoked)"))
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_oauth_credentials_provider ON oauth_credentials (provider)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_oauth_credentials_user_email ON oauth_credentials (user_email)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_oauth_credentials_user_id ON oauth_credentials (user_id)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_oauth_credentials_tenant_id ON oauth_credentials (tenant_id)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_oauth_credentials_expires_at ON oauth_credentials (expires_at)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_oauth_credentials_revoked ON oauth_credentials (revoked)"
+        )
+    )
 
     # trajectory_feedback table
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_trajectory_feedback_trajectory_id ON trajectory_feedback (trajectory_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_trajectory_feedback_feedback_type ON trajectory_feedback (feedback_type)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_trajectory_feedback_created_at ON trajectory_feedback (created_at)"))
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_trajectory_feedback_trajectory_id ON trajectory_feedback (trajectory_id)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_trajectory_feedback_feedback_type ON trajectory_feedback (feedback_type)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_trajectory_feedback_created_at ON trajectory_feedback (created_at)"
+        )
+    )
 
     # workspace_snapshots table
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_workspace_snapshots_workspace_path ON workspace_snapshots (workspace_path)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_workspace_snapshots_manifest_hash ON workspace_snapshots (manifest_hash)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_workspace_snapshots_created_at ON workspace_snapshots (created_at)"))
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_workspace_snapshots_workspace_path ON workspace_snapshots (workspace_path)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_workspace_snapshots_manifest_hash ON workspace_snapshots (manifest_hash)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_workspace_snapshots_created_at ON workspace_snapshots (created_at)"
+        )
+    )
 
     # workspace_configs table
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_workspace_configs_user_id ON workspace_configs (user_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_workspace_configs_session_id ON workspace_configs (session_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_workspace_configs_expires_at ON workspace_configs (expires_at)"))
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_workspace_configs_user_id ON workspace_configs (user_id)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_workspace_configs_session_id ON workspace_configs (session_id)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_workspace_configs_expires_at ON workspace_configs (expires_at)"
+        )
+    )
 
     # memory_configs table
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_memory_configs_user_id ON memory_configs (user_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_memory_configs_session_id ON memory_configs (session_id)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_memory_configs_expires_at ON memory_configs (expires_at)"))
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_memory_configs_user_id ON memory_configs (user_id)")
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_memory_configs_session_id ON memory_configs (session_id)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_memory_configs_expires_at ON memory_configs (expires_at)"
+        )
+    )
 
     # file_paths table
     op.execute(text("CREATE INDEX IF NOT EXISTS ix_file_paths_tenant_id ON file_paths (tenant_id)"))
 
     # content_cache table
-    op.execute(text("CREATE INDEX IF NOT EXISTS ix_content_cache_tenant_id ON content_cache (tenant_id)"))
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_content_cache_tenant_id ON content_cache (tenant_id)")
+    )
 
     # Indexes covered by unique constraints
-    op.execute(text("CREATE INDEX IF NOT EXISTS idx_content_chunks_hash ON content_chunks (content_hash)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS idx_mount_configs_mount_point ON mount_configs (mount_point)"))
-    op.execute(text("CREATE INDEX IF NOT EXISTS idx_version_history_resource ON version_history (resource_type, resource_id)"))
+    op.execute(
+        text("CREATE INDEX IF NOT EXISTS idx_content_chunks_hash ON content_chunks (content_hash)")
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_mount_configs_mount_point ON mount_configs (mount_point)"
+        )
+    )
+    op.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_version_history_resource ON version_history (resource_type, resource_id)"
+        )
+    )
     op.execute(text("CREATE INDEX IF NOT EXISTS idx_workflows_tenant ON workflows (tenant_id)"))

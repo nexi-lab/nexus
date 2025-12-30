@@ -1025,12 +1025,8 @@ class MemoryModel(Base):
     # Identity relationships
     # Note: Indexes defined in __table_args__ (idx_memory_tenant, idx_memory_user, idx_memory_agent)
     tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    user_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True
-    )  # Real user ownership
-    agent_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True
-    )  # Created by agent
+    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Real user ownership
+    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Created by agent
 
     # Scope and visibility
     scope: Mapped[str] = mapped_column(
@@ -1495,9 +1491,7 @@ class ReBACCheckCacheModel(Base):
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     # Composite index for efficient lookups
     __table_args__ = (
@@ -1852,9 +1846,7 @@ class WorkspaceConfigModel(Base):
         String(20), nullable=False, default="persistent"
     )  # "persistent" or "session"
     # Note: Indexes defined in __table_args__ (idx_workspace_configs_session, idx_workspace_configs_expires)
-    session_id: Mapped[str | None] = mapped_column(
-        String(36), nullable=True
-    )  # FK to user_sessions
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # FK to user_sessions
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True
     )  # Auto-cleanup time
@@ -1912,9 +1904,7 @@ class MemoryConfigModel(Base):
         String(20), nullable=False, default="persistent"
     )  # "persistent" or "session"
     # Note: Indexes defined in __table_args__ (idx_memory_configs_session, idx_memory_configs_expires)
-    session_id: Mapped[str | None] = mapped_column(
-        String(36), nullable=True
-    )  # FK to user_sessions
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # FK to user_sessions
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True
     )  # Auto-cleanup time

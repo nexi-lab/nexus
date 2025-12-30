@@ -147,7 +147,9 @@ async def tiger_cache_queue_task(
     await asyncio.sleep(5)
 
     # Create a thread pool for blocking queue processing
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="tiger_queue")
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="tiger_queue"
+    )
 
     while True:
         try:
@@ -156,10 +158,12 @@ async def tiger_cache_queue_task(
             if rebac_manager and hasattr(rebac_manager, "tiger_process_queue"):
                 # Run blocking queue processing in thread pool to avoid blocking event loop
                 loop = asyncio.get_event_loop()
+
                 # Bind rebac_manager to avoid B023 late-binding closure issue
                 def process_queue(mgr: Any = rebac_manager) -> int:
                     result: int = mgr.tiger_process_queue(batch_size=batch_size)
                     return result
+
                 processed = await loop.run_in_executor(executor, process_queue)
                 if processed > 0:
                     logger.info(f"Tiger Cache: processed {processed} queue entries (background)")

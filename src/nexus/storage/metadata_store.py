@@ -109,8 +109,13 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
         # Log database configuration for debugging
         import logging
+
         logger = logging.getLogger(__name__)
-        logger.info(f"MetadataStore database: {self.db_type} ({self.database_url[:50]}...)" if len(self.database_url) > 50 else f"MetadataStore database: {self.db_type} ({self.database_url})")
+        logger.info(
+            f"MetadataStore database: {self.db_type} ({self.database_url[:50]}...)"
+            if len(self.database_url) > 50
+            else f"MetadataStore database: {self.db_type} ({self.database_url})"
+        )
 
         # For SQLite, extract and ensure parent directory exists
         self.db_path: Path | None

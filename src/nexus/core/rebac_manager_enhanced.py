@@ -1179,9 +1179,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                             )
                         except Exception as e:
                             import logging
-                            logging.getLogger(__name__).debug(
-                                f"[TIGER] Revoke failed: {e}"
-                            )
+
+                            logging.getLogger(__name__).debug(f"[TIGER] Revoke failed: {e}")
 
             # Leopard: Update transitive closure for membership relations
             if self._leopard and tuple_info["relation"] in self.MEMBERSHIP_RELATIONS:
@@ -1391,9 +1390,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 # Resource not in memory cache - skip
                 # The permission grant (write path) will populate via persist_single_grant
                 if logger:
-                    logger.debug(
-                        f"[TIGER] Read skip: resource {object[1]} not in memory cache"
-                    )
+                    logger.debug(f"[TIGER] Read skip: resource {object[1]} not in memory cache")
         except Exception as e:
             # Don't fail the permission check if Tiger write fails
             if logger:
@@ -1574,6 +1571,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             Number of entries processed
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         if not self._tiger_updater:

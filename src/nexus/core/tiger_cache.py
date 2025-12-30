@@ -1216,9 +1216,7 @@ class TigerCache:
 
                 if existing_bitmap is None:
                     # No bitmap exists - nothing to revoke
-                    logger.debug(
-                        f"[TIGER] Revoke: No bitmap for {subject_id}, nothing to do"
-                    )
+                    logger.debug(f"[TIGER] Revoke: No bitmap for {subject_id}, nothing to do")
                     return True
 
                 if resource_int_id not in existing_bitmap:
@@ -1590,7 +1588,7 @@ class TigerCacheUpdater:
             logger.info(f"[TIGER] do_process: fetched {len(entries)} entries from queue")
 
             for i, entry in enumerate(entries):
-                logger.info(f"[TIGER] Processing entry {i+1}/{len(entries)}: {entry.subject_id}")
+                logger.info(f"[TIGER] Processing entry {i + 1}/{len(entries)}: {entry.subject_id}")
                 try:
                     # Mark as processing
                     connection.execute(

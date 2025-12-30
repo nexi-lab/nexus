@@ -2028,13 +2028,19 @@ class NexusFSCoreMixin:
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        logger.warning(f"[RENAME-REBAC] Starting ReBAC update: {old_path} -> {new_path}")
+        logger.warning(
+            f"[RENAME-REBAC] has _rebac_manager: {hasattr(self, '_rebac_manager')}, is truthy: {bool(getattr(self, '_rebac_manager', None))}"
+        )
+
         if hasattr(self, "_rebac_manager") and self._rebac_manager:
             try:
-                import logging
-
-                logger = logging.getLogger(__name__)
-                logger.info(
-                    f"Updating ReBAC permissions: {old_path} -> {new_path}, is_directory={is_directory}"
+                logger.warning(
+                    f"[RENAME-REBAC] Calling update_object_path: old={old_path}, new={new_path}, is_dir={is_directory}"
                 )
 
                 # Update all ReBAC tuples that reference this path
@@ -2046,19 +2052,17 @@ class NexusFSCoreMixin:
                 )
 
                 # Log if any permissions were updated
-                logger.info(f"Updated {updated_count} ReBAC tuples")
-                if updated_count > 0:
-                    pass  # Successfully updated permissions silently
+                logger.warning(
+                    f"[RENAME-REBAC] update_object_path returned: {updated_count} tuples updated"
+                )
             except Exception as e:
                 # Don't fail the rename operation if ReBAC update fails
                 # The file is already renamed in metadata, we just couldn't update permissions
-                import logging
-
-                logger = logging.getLogger(__name__)
                 logger.error(
-                    f"Failed to update ReBAC permissions during rename: {e}", exc_info=True
+                    f"[RENAME-REBAC] FAILED to update ReBAC permissions: {e}", exc_info=True
                 )
-                pass
+        else:
+            logger.warning("[RENAME-REBAC] SKIPPED - no _rebac_manager available")
 
         # Log operation for audit trail and undo capability
         try:

@@ -297,5 +297,5 @@ class TestModelIndexes:
         # Check content_chunks indexes
         content_chunks_indexes = inspector.get_indexes("content_chunks")
         index_names = [idx["name"] for idx in content_chunks_indexes]
-        assert "idx_content_chunks_hash" in index_names
+        # Note: idx_content_chunks_hash was removed - content_hash lookups use unique constraint
         assert "idx_content_chunks_ref_count" in index_names

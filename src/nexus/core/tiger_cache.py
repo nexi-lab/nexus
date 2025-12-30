@@ -848,6 +848,9 @@ class TigerCache:
             execute(conn)
         else:
             with self._engine.begin() as new_conn:
+                # Set short timeout for Tiger Cache ops - fail fast instead of blocking
+                if not self._is_postgresql:
+                    new_conn.execute(text("PRAGMA busy_timeout=100"))
                 execute(new_conn)
 
         # Update in-memory cache
@@ -919,6 +922,9 @@ class TigerCache:
             count = execute(conn)
         else:
             with self._engine.begin() as new_conn:
+                # Set short timeout for Tiger Cache ops - fail fast instead of blocking
+                if not self._is_postgresql:
+                    new_conn.execute(text("PRAGMA busy_timeout=100"))
                 count = execute(new_conn)
 
         # Clear in-memory cache entries
@@ -1201,6 +1207,9 @@ class TigerCacheUpdater:
             return execute(conn)
         else:
             with self._engine.begin() as new_conn:
+                # Set short timeout for Tiger Cache ops - fail fast instead of blocking
+                if not self._is_postgresql:
+                    new_conn.execute(text("PRAGMA busy_timeout=100"))
                 return execute(new_conn)
 
     def reset_stuck_entries(
@@ -1247,6 +1256,9 @@ class TigerCacheUpdater:
             return execute(conn)
         else:
             with self._engine.begin() as new_conn:
+                # Set short timeout for Tiger Cache ops - fail fast instead of blocking
+                if not self._is_postgresql:
+                    new_conn.execute(text("PRAGMA busy_timeout=100"))
                 return execute(new_conn)
 
     def process_queue(self, batch_size: int = 100, conn: Connection | None = None) -> int:
@@ -1384,6 +1396,9 @@ class TigerCacheUpdater:
                 return do_process(conn)
             else:
                 with self._engine.begin() as new_conn:
+                    # Set short timeout for Tiger Cache ops - fail fast instead of blocking
+                    if not self._is_postgresql:
+                        new_conn.execute(text("PRAGMA busy_timeout=100"))
                     return do_process(new_conn)
         except Exception as e:
             # Handle lock errors at the top level (e.g., during SELECT)
@@ -1497,4 +1512,7 @@ class TigerCacheUpdater:
             return execute(conn)
         else:
             with self._engine.begin() as new_conn:
+                # Set short timeout for Tiger Cache ops - fail fast instead of blocking
+                if not self._is_postgresql:
+                    new_conn.execute(text("PRAGMA busy_timeout=100"))
                 return execute(new_conn)

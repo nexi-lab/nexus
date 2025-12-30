@@ -228,9 +228,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             )
 
         # Tiger Cache for materialized permissions (Issue #682)
+        # Only enable on PostgreSQL - SQLite has lock contention issues
         self._tiger_cache: TigerCache | None = None
         self._tiger_updater: TigerCacheUpdater | None = None
-        if enable_tiger_cache:
+        if enable_tiger_cache and engine.dialect.name == "postgresql":
             from nexus.core.tiger_cache import TigerCache, TigerCacheUpdater, TigerResourceMap
 
             resource_map = TigerResourceMap(engine)
@@ -308,16 +309,27 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             from nexus.core.rebac_manager import ReBACManager
 
             logger.debug(f"  -> Falling back to base ReBACManager, base max_depth={self.max_depth}")
-            return ReBACManager.rebac_check(self, subject, permission, object, context, tenant_id)
+            result = ReBACManager.rebac_check(self, subject, permission, object, context, tenant_id)
+
+            # Write-through to Tiger Cache (Issue #935)
+            if result and self._tiger_cache and tenant_id:
+                self._tiger_write_through_single(subject, permission, object, tenant_id, logger)
+
+            return result
 
         logger.debug("  -> Using rebac_check_detailed")
-        result = self.rebac_check_detailed(
+        detailed_result = self.rebac_check_detailed(
             subject, permission, object, context, tenant_id, consistency
         )
         logger.debug(
-            f"  -> rebac_check_detailed result: allowed={result.allowed}, indeterminate={result.indeterminate}"
+            f"  -> rebac_check_detailed result: allowed={detailed_result.allowed}, indeterminate={detailed_result.indeterminate}"
         )
-        return result.allowed
+
+        # Write-through to Tiger Cache (Issue #935)
+        if detailed_result.allowed and self._tiger_cache and tenant_id:
+            self._tiger_write_through_single(subject, permission, object, tenant_id, logger)
+
+        return detailed_result.allowed
 
     def rebac_check_detailed(
         self,
@@ -894,6 +906,61 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 # Log but don't fail the write - closure can be rebuilt
                 logger.warning(f"[LEOPARD] Failed to update closure: {e}")
 
+        # Tiger Cache: Write-through - persist grant immediately
+        # This is the fast path (~1-5ms) vs queue processing (~20-40s)
+        if self._tiger_cache:
+            subject_tuple = (subject[0], subject[1])
+            object_type = object[0]
+            object_id = object[1]
+
+            # Map relation to permissions granted
+            # Based on namespace schema: read <- [viewer, editor, owner], write <- [editor, owner]
+            # IMPORTANT: Include BOTH direct_* relations AND computed unions
+            relation_to_permissions: dict[str, list[str]] = {
+                # Direct relations (explicit grants in database)
+                "direct_viewer": ["read"],
+                "direct_editor": ["read", "write"],
+                "direct_owner": ["read", "write", "execute"],
+                # Computed relations (unions that expand from direct_*)
+                "viewer": ["read"],
+                "editor": ["read", "write"],
+                "owner": ["read", "write", "execute"],
+                # Legacy/alternative naming
+                "viewer-of": ["read"],
+                "owner-of": ["read", "write", "execute"],
+                # Cross-tenant shared relations
+                "shared-viewer": ["read"],
+                "shared-editor": ["read", "write"],
+                "shared-owner": ["read", "write", "execute"],
+                # Special relations
+                "traverser-of": ["read"],  # Directory traversal
+                "reader": ["read"],
+                "writer": ["read", "write"],
+                # Parent inheritance (grants same as their base)
+                "parent_viewer": ["read"],
+                "parent_editor": ["read", "write"],
+                "parent_owner": ["read", "write", "execute"],
+                # Group inheritance
+                "group_viewer": ["read"],
+                "group_editor": ["read", "write"],
+                "group_owner": ["read", "write", "execute"],
+            }
+
+            # Get permissions for this relation
+            # FIX: Default to empty list (no permissions) for unknown relations
+            # This is fail-closed - unknown relations grant nothing
+            permissions = relation_to_permissions.get(relation, [])
+
+            # Persist each permission grant immediately
+            for permission in permissions:
+                self.tiger_persist_grant(
+                    subject=subject_tuple,
+                    permission=permission,
+                    resource_type=object_type,
+                    resource_id=object_id,
+                    tenant_id=effective_tenant,
+                )
+
         return result
 
     def rebac_write_batch(
@@ -962,6 +1029,59 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                             # Log but don't fail - closure can be rebuilt
                             logger.warning(f"[LEOPARD] Failed to update closure: {e}")
 
+            # Tiger Cache: Write-through for bulk operations
+            if self._tiger_cache:
+                # Relation to permissions mapping
+                # IMPORTANT: Include BOTH direct_* relations AND computed unions
+                relation_to_permissions: dict[str, list[str]] = {
+                    # Direct relations (explicit grants in database)
+                    "direct_viewer": ["read"],
+                    "direct_editor": ["read", "write"],
+                    "direct_owner": ["read", "write", "execute"],
+                    # Computed relations
+                    "viewer": ["read"],
+                    "editor": ["read", "write"],
+                    "owner": ["read", "write", "execute"],
+                    "viewer-of": ["read"],
+                    "owner-of": ["read", "write", "execute"],
+                    "shared-viewer": ["read"],
+                    "shared-editor": ["read", "write"],
+                    "shared-owner": ["read", "write", "execute"],
+                    "traverser-of": ["read"],
+                    "reader": ["read"],
+                    "writer": ["read", "write"],
+                    # Parent/group inheritance
+                    "parent_viewer": ["read"],
+                    "parent_editor": ["read", "write"],
+                    "parent_owner": ["read", "write", "execute"],
+                    "group_viewer": ["read"],
+                    "group_editor": ["read", "write"],
+                    "group_owner": ["read", "write", "execute"],
+                }
+
+                for t in tuples:
+                    subject = t["subject"]
+                    obj = t["object"]
+                    relation = t.get("relation", "")
+                    tenant_id = t.get("tenant_id") or "default"
+                    subject_tuple = (subject[0], subject[1])
+                    object_type = obj[0]
+                    object_id = obj[1]
+
+                    # Get permissions for this relation
+                    # FIX: Default to empty list for unknown relations
+                    permissions = relation_to_permissions.get(relation, [])
+
+                    # Persist each permission grant immediately
+                    for permission in permissions:
+                        self.tiger_persist_grant(
+                            subject=subject_tuple,
+                            permission=permission,
+                            resource_type=object_type,
+                            resource_id=object_id,
+                            tenant_id=tenant_id,
+                        )
+
         return created_count
 
     def rebac_delete(self, tuple_id: str) -> bool:
@@ -1006,6 +1126,61 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             tenant_id = tuple_info["tenant_id"]
             if tenant_id:
                 self.invalidate_tenant_graph_cache(tenant_id)
+
+            # Tiger Cache: Write-through revocation
+            if self._tiger_cache:
+                subject_type = tuple_info["subject_type"]
+                subject_id = tuple_info["subject_id"]
+                relation = tuple_info["relation"]
+                object_type = tuple_info["object_type"]
+                object_id = tuple_info["object_id"]
+
+                if subject_type and subject_id and object_type and object_id:
+                    # Map relation to permissions
+                    # IMPORTANT: Include BOTH direct_* relations AND computed unions
+                    relation_to_permissions: dict[str, list[str]] = {
+                        # Direct relations (explicit grants in database)
+                        "direct_viewer": ["read"],
+                        "direct_editor": ["read", "write"],
+                        "direct_owner": ["read", "write", "execute"],
+                        # Computed relations
+                        "viewer": ["read"],
+                        "editor": ["read", "write"],
+                        "owner": ["read", "write", "execute"],
+                        "viewer-of": ["read"],
+                        "owner-of": ["read", "write", "execute"],
+                        "shared-viewer": ["read"],
+                        "shared-editor": ["read", "write"],
+                        "shared-owner": ["read", "write", "execute"],
+                        "traverser-of": ["read"],
+                        "reader": ["read"],
+                        "writer": ["read", "write"],
+                        # Parent/group inheritance
+                        "parent_viewer": ["read"],
+                        "parent_editor": ["read", "write"],
+                        "parent_owner": ["read", "write", "execute"],
+                        "group_viewer": ["read"],
+                        "group_editor": ["read", "write"],
+                        "group_owner": ["read", "write", "execute"],
+                    }
+
+                    # FIX: Default to empty list for unknown relations
+                    permissions = relation_to_permissions.get(relation, [])
+
+                    # Revoke each permission immediately
+                    for permission in permissions:
+                        try:
+                            self.tiger_persist_revoke(
+                                subject=(subject_type, subject_id),
+                                permission=permission,
+                                resource_type=object_type,
+                                resource_id=object_id,
+                                tenant_id=tenant_id or "default",
+                            )
+                        except Exception as e:
+                            import logging
+
+                            logging.getLogger(__name__).debug(f"[TIGER] Revoke failed: {e}")
 
             # Leopard: Update transitive closure for membership relations
             if self._leopard and tuple_info["relation"] in self.MEMBERSHIP_RELATIONS:
@@ -1163,6 +1338,64 @@ class EnhancedReBACManager(TenantAwareReBACManager):
     # Tiger Cache Methods (Issue #682)
     # ========================================================================
 
+    def _tiger_write_through_single(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        tenant_id: str,
+        logger: Any = None,
+    ) -> None:
+        """Write-through single permission result to Tiger Cache (Issue #935).
+
+        Called after a single permission check computes a positive result.
+        This is the READ path - must be non-blocking to keep reads fast.
+
+        Strategy:
+        1. Check if resource int_id is already in memory cache (no DB)
+        2. If yes: update in-memory bitmap (~microseconds)
+        3. If no: skip (permission grant will populate via write-through)
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permission: Permission that was granted
+            object: (object_type, object_id) tuple
+            tenant_id: Tenant ID
+            logger: Optional logger instance
+        """
+        if not self._tiger_cache:
+            return
+
+        try:
+            # Check memory cache ONLY - no DB hit on read path
+            resource_key = (object[0], object[1], tenant_id)
+            resource_int_id = self._tiger_cache._resource_map._uuid_to_int.get(resource_key)
+
+            if resource_int_id is not None:
+                # Fast path: resource already mapped, just update in-memory bitmap
+                self._tiger_cache.add_to_bitmap(
+                    subject_type=subject[0],
+                    subject_id=subject[1],
+                    permission=permission,
+                    resource_type=object[0],
+                    tenant_id=tenant_id,
+                    resource_int_id=resource_int_id,
+                )
+                if logger:
+                    logger.debug(
+                        f"[TIGER] Read write-through: {subject[0]}:{subject[1]} "
+                        f"{permission} {object[0]}:{object[1]} (int_id={resource_int_id})"
+                    )
+            else:
+                # Resource not in memory cache - skip
+                # The permission grant (write path) will populate via persist_single_grant
+                if logger:
+                    logger.debug(f"[TIGER] Read skip: resource {object[1]} not in memory cache")
+        except Exception as e:
+            # Don't fail the permission check if Tiger write fails
+            if logger:
+                logger.debug(f"[TIGER] Write-through failed: {e}")
+
     def tiger_check_access(
         self,
         subject: tuple[str, str],
@@ -1256,6 +1489,76 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             priority=priority,
         )
 
+    def tiger_persist_grant(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        resource_type: str,
+        resource_id: str,
+        tenant_id: str,
+    ) -> bool:
+        """Write-through: Persist a single permission grant to Tiger Cache.
+
+        This is the fast path (~1-5ms) that updates both in-memory cache and
+        database immediately when a permission is granted. Much faster than
+        queue processing (~20-40 seconds) which recomputes all resources.
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permission: Permission type (e.g., "read", "write")
+            resource_type: Type of resource (e.g., "file")
+            resource_id: String ID of the resource being granted
+            tenant_id: Tenant ID
+
+        Returns:
+            True if persisted successfully, False on error
+        """
+        if not self._tiger_cache:
+            return False
+
+        return self._tiger_cache.persist_single_grant(
+            subject_type=subject[0],
+            subject_id=subject[1],
+            permission=permission,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            tenant_id=tenant_id,
+        )
+
+    def tiger_persist_revoke(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        resource_type: str,
+        resource_id: str,
+        tenant_id: str,
+    ) -> bool:
+        """Write-through: Persist a single permission revocation to Tiger Cache.
+
+        Critical for security - permission revocations must propagate immediately.
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permission: Permission type (e.g., "read", "write")
+            resource_type: Type of resource (e.g., "file")
+            resource_id: String ID of the resource being revoked
+            tenant_id: Tenant ID
+
+        Returns:
+            True if persisted successfully, False on error
+        """
+        if not self._tiger_cache:
+            return False
+
+        return self._tiger_cache.persist_single_revoke(
+            subject_type=subject[0],
+            subject_id=subject[1],
+            permission=permission,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            tenant_id=tenant_id,
+        )
+
     def tiger_process_queue(self, batch_size: int = 100) -> int:
         """Process pending Tiger Cache update queue.
 
@@ -1267,10 +1570,18 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         Returns:
             Number of entries processed
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         if not self._tiger_updater:
+            logger.warning("[TIGER] tiger_process_queue: _tiger_updater is None")
             return 0
 
-        return self._tiger_updater.process_queue(batch_size=batch_size)
+        logger.info(f"[TIGER] tiger_process_queue: calling updater (batch={batch_size})")
+        result = self._tiger_updater.process_queue(batch_size=batch_size)
+        logger.info(f"[TIGER] tiger_process_queue: result={result}")
+        return result
 
     def tiger_invalidate_cache(
         self,
@@ -1437,13 +1748,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if namespace.has_permission(permission):
             usersets = namespace.get_permission_usersets(permission)
             if usersets:
-                logger.info(
+                logger.debug(
                     f"{indent}├─[PERM-MAPPING] Permission '{permission}' maps to relations: {usersets}"
                 )
                 # Permission is defined as a mapping to relations (e.g., write -> [editor, owner])
                 # Check if subject has ANY of the relations that grant this permission
                 for i, relation in enumerate(usersets):
-                    logger.info(
+                    logger.debug(
                         f"{indent}├─[PERM-REL {i + 1}/{len(usersets)}] Checking relation '{relation}' for permission '{permission}'"
                     )
                     try:
@@ -1494,7 +1805,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         # Handle union (OR of multiple relations)
         if namespace.has_union(permission):
             union_relations = namespace.get_union_relations(permission)
-            logger.info(f"{indent}├─[UNION] Relation '{permission}' expands to: {union_relations}")
+            logger.debug(f"{indent}├─[UNION] Relation '{permission}' expands to: {union_relations}")
 
             # P0-5: Check fan-out limit
             if self.enable_graph_limits and len(union_relations) > GraphLimits.MAX_FAN_OUT:
@@ -1544,7 +1855,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             if ttu:
                 tupleset_relation = ttu["tupleset"]
                 computed_userset = ttu["computedUserset"]
-                logger.info(
+                logger.debug(
                     f"{indent}├─[TTU] '{permission}' = tupleToUserset(tupleset='{tupleset_relation}', computed='{computed_userset}')"
                 )
 
@@ -1559,7 +1870,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 related_objects = self._find_related_objects_tenant_aware(
                     obj, tupleset_relation, tenant_id
                 )
-                logger.info(
+                logger.debug(
                     f"{indent}│ ├─[TTU-PARENT] Found {len(related_objects)} objects via '{tupleset_relation}': {[f'{o.entity_type}:{o.entity_id}' for o in related_objects]}"
                 )
 
@@ -1815,7 +2126,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         logger = logging.getLogger(__name__)
 
         # EXTENSIVE DEBUG LOGGING
-        logger.info(
+        logger.debug(
             f"[DIRECT-CHECK] Checking: ({subject.entity_type}:{subject.entity_id}) "
             f"has '{relation}' on ({obj.entity_type}:{obj.entity_id})? tenant={tenant_id}"
         )
@@ -1842,12 +2153,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 tenant_id,
                 datetime.now(UTC).isoformat(),
             )
-            logger.info(f"[DIRECT-CHECK] SQL Query params: {params}")
+            logger.debug(f"[DIRECT-CHECK] SQL Query params: {params}")
 
             cursor.execute(self._fix_sql_placeholders(query), params)
 
             row = cursor.fetchone()
-            logger.info(f"[DIRECT-CHECK] Query result row: {dict(row) if row else None}")
+            logger.debug(f"[DIRECT-CHECK] Query result row: {dict(row) if row else None}")
             if row:
                 # Tuple exists - check conditions if context provided
                 conditions_json = row["conditions"]
@@ -2702,6 +3013,62 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         f"[RUST-PERF] Wrote {l1_cache_writes} results to L1 in-memory cache"
                     )
 
+                # Write-through to Tiger Cache (Issue #935)
+                # Only cache positive (allowed) results to Tiger Cache bitmaps
+                if self._tiger_cache and tenant_id:
+                    tiger_writes = 0
+                    # Group results by (subject, permission, resource_type) for efficient bulk updates
+                    tiger_updates: dict[
+                        tuple[str, str, str, str, str], set[int]
+                    ] = {}  # (subj_type, subj_id, perm, res_type, tenant) -> set of int_ids
+
+                    for check in cache_misses:
+                        subject, permission, obj = check
+                        key = (subject[0], subject[1], permission, obj[0], obj[1])
+                        result = rust_results_dict.get(key, False)
+
+                        if result:  # Only cache positive results
+                            try:
+                                # Get or create integer ID for the resource
+                                resource_int_id = (
+                                    self._tiger_cache._resource_map.get_or_create_int_id(
+                                        obj[0], obj[1], tenant_id
+                                    )
+                                )
+                                if resource_int_id > 0:
+                                    # Group by (subject, permission, resource_type) for bulk add
+                                    group_key = (
+                                        subject[0],
+                                        subject[1],
+                                        permission,
+                                        obj[0],
+                                        tenant_id,
+                                    )
+                                    if group_key not in tiger_updates:
+                                        tiger_updates[group_key] = set()
+                                    tiger_updates[group_key].add(resource_int_id)
+                                    tiger_writes += 1
+                            except Exception as e:
+                                logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
+
+                    # Bulk add to Tiger Cache bitmaps
+                    for group_key, int_ids in tiger_updates.items():
+                        subj_type, subj_id, perm, res_type, tid = group_key
+                        self._tiger_cache.add_to_bitmap_bulk(
+                            subject_type=subj_type,
+                            subject_id=subj_id,
+                            permission=perm,
+                            resource_type=res_type,
+                            tenant_id=tid,
+                            resource_int_ids=int_ids,
+                        )
+
+                    if tiger_writes > 0:
+                        logger.debug(
+                            f"[TIGER] Write-through: {tiger_writes} positive results "
+                            f"to {len(tiger_updates)} Tiger Cache bitmaps"
+                        )
+
                 rust_success = True
                 logger.warning(
                     f"✅ [BULK-DEBUG] Rust acceleration successful for {len(cache_misses)} checks"
@@ -2749,6 +3116,56 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 if consistency == ConsistencyLevel.EVENTUAL:
                     self._cache_check_result(
                         subject_entity, permission, obj_entity, result, tenant_id
+                    )
+
+            # Write-through to Tiger Cache after Python fallback (Issue #935)
+            # Collect all positive results and bulk update Tiger Cache
+            if self._tiger_cache and tenant_id:
+                tiger_writes = 0
+                fallback_tiger_updates: dict[
+                    tuple[str, str, str, str, str], set[int]
+                ] = {}  # (subj_type, subj_id, perm, res_type, tenant) -> set of int_ids
+
+                for check in cache_misses:
+                    subject, permission, obj = check
+                    result = results.get(check, False)
+
+                    if result:  # Only cache positive results
+                        try:
+                            resource_int_id = self._tiger_cache._resource_map.get_or_create_int_id(
+                                obj[0], obj[1], tenant_id
+                            )
+                            if resource_int_id > 0:
+                                group_key = (
+                                    subject[0],
+                                    subject[1],
+                                    permission,
+                                    obj[0],
+                                    tenant_id,
+                                )
+                                if group_key not in fallback_tiger_updates:
+                                    fallback_tiger_updates[group_key] = set()
+                                fallback_tiger_updates[group_key].add(resource_int_id)
+                                tiger_writes += 1
+                        except Exception as e:
+                            logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
+
+                # Bulk add to Tiger Cache bitmaps
+                for group_key, int_ids in fallback_tiger_updates.items():
+                    subj_type, subj_id, perm, res_type, tid = group_key
+                    self._tiger_cache.add_to_bitmap_bulk(
+                        subject_type=subj_type,
+                        subject_id=subj_id,
+                        permission=perm,
+                        resource_type=res_type,
+                        tenant_id=tid,
+                        resource_int_ids=int_ids,
+                    )
+
+                if tiger_writes > 0:
+                    logger.debug(
+                        f"[TIGER] Write-through (Python path): {tiger_writes} positive results "
+                        f"to {len(fallback_tiger_updates)} Tiger Cache bitmaps"
                     )
 
         # Report actual cache statistics

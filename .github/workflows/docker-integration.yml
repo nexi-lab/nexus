@@ -772,9 +772,9 @@ jobs:
           echo "✅ Mount loaded: $LOAD_MOUNT_RESPONSE"
           echo ""
 
-          # Step 3: Sync mount
+          # Step 3: Sync mount (may take 10+ seconds for large mounts)
           echo "🔄 Step 3: Syncing mount $MOUNT_POINT..."
-          SYNC_MOUNT_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/sync_mount \
+          SYNC_MOUNT_RESPONSE=$(curl -sf --max-time 120 http://localhost:2026/api/nfs/sync_mount \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
             -d "{\"jsonrpc\":\"2.0\",\"method\":\"sync_mount\",\"params\":{\"mount_point\":\"$MOUNT_POINT\",\"recursive\":true},\"id\":3}" || echo "FAILED")

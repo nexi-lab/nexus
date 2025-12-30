@@ -233,6 +233,10 @@ class VectorDatabase:
             conn.rollback()
 
         # Create HNSW index for vector search (only if pgvector available)
+        # Tuned for 100K+ vectors with 1536 dimensions (OpenAI embeddings)
+        # - m=24: More connections for high-dimensional data, improves recall
+        # - ef_construction=128: Better graph quality at build time
+        # See: https://github.com/nexi-lab/nexus/issues/947
         if vec_available:
             try:
                 conn.execute(
@@ -240,6 +244,7 @@ class VectorDatabase:
                     CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw
                     ON document_chunks
                     USING hnsw (embedding vector_cosine_ops)
+                    WITH (m = 24, ef_construction = 128)
                 """)
                 )
                 conn.commit()
@@ -392,6 +397,11 @@ class VectorDatabase:
         Returns:
             Search results
         """
+        # Set ef_search for better recall (default is 40, we use 100 for ~0.998 recall)
+        # Using SET LOCAL to only affect current transaction
+        # See: https://github.com/nexi-lab/nexus/issues/947
+        session.execute(text("SET LOCAL hnsw.ef_search = 100"))
+
         if path_filter:
             query = text("""
                 SELECT

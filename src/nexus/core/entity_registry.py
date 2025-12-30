@@ -318,17 +318,29 @@ class EntityRegistry:
                 self.delete_entity(child.entity_type, child.entity_id, cascade=True)
 
         # Delete the entity itself using a fresh query in the session context
-        with self._get_session() as session:
-            # Query the entity within this session (don't reuse detached entity)
-            stmt = select(EntityRegistryModel).where(
-                EntityRegistryModel.entity_type == entity_type,
-                EntityRegistryModel.entity_id == entity_id,
-            )
-            entity_to_delete = session.execute(stmt).scalar_one_or_none()
+        # Retry on database lock errors (SQLite single-writer limitation)
+        import time
 
-            if entity_to_delete:
-                session.delete(entity_to_delete)
-                session.commit()
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                with self._get_session() as session:
+                    # Query the entity within this session (don't reuse detached entity)
+                    stmt = select(EntityRegistryModel).where(
+                        EntityRegistryModel.entity_type == entity_type,
+                        EntityRegistryModel.entity_id == entity_id,
+                    )
+                    entity_to_delete = session.execute(stmt).scalar_one_or_none()
+
+                    if entity_to_delete:
+                        session.delete(entity_to_delete)
+                        session.commit()
+                break  # Success
+            except Exception as e:
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    time.sleep(0.1 * (attempt + 1))  # Exponential backoff
+                    continue
+                raise
 
         return True
 

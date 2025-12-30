@@ -89,7 +89,8 @@ class FilePathModel(Base):
     # P0 SECURITY: Defense-in-depth tenant isolation
     # tenant_id restored for database-level filtering (defense-in-depth)
     # Previous architecture relied solely on ReBAC, creating single point of failure
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # Note: Covered by composite index idx_file_paths_tenant_path in __table_args__
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Path information
     virtual_path: Mapped[str] = mapped_column(Text, nullable=False)
@@ -193,6 +194,91 @@ class FilePathModel(Base):
         # Validation removed for backward compatibility
 
 
+class DirectoryEntryModel(Base):
+    """Sparse directory index for O(1) non-recursive listings (Issue #924).
+
+    Stores parent-child relationships at the directory level rather than file level.
+    This enables fast non-recursive directory listings without scanning all descendants.
+
+    Performance:
+    - Before: list("/workspace/", recursive=False) with 10k files → ~500ms (LIKE scan)
+    - After: list("/workspace/", recursive=False) → ~5ms (index lookup)
+
+    Population Strategy:
+    - New files: Indexed on put()/put_batch()
+    - Existing files: Lazy population on modification, or optional backfill script
+    - Fallback: If no index entries exist for a path, falls back to LIKE query
+    """
+
+    __tablename__ = "directory_entries"
+
+    # Composite primary key: (tenant_id, parent_path, entry_name)
+    # tenant_id can be NULL for legacy/default tenant
+    tenant_id: Mapped[str | None] = mapped_column(String(255), primary_key=True, nullable=True)
+    parent_path: Mapped[str] = mapped_column(String(4096), primary_key=True, nullable=False)
+    entry_name: Mapped[str] = mapped_column(String(255), primary_key=True, nullable=False)
+
+    # Entry type: "file" or "directory"
+    entry_type: Mapped[str] = mapped_column(String(10), nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    # Indexes for fast lookups
+    __table_args__ = (
+        # Primary lookup pattern: list all entries in a directory for a tenant
+        Index("idx_directory_entries_lookup", "tenant_id", "parent_path"),
+        # PostgreSQL text_pattern_ops for LIKE prefix queries on parent_path
+        Index(
+            "idx_directory_entries_parent_prefix",
+            "parent_path",
+            postgresql_ops={"parent_path": "text_pattern_ops"},
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<DirectoryEntryModel(tenant={self.tenant_id}, parent={self.parent_path}, name={self.entry_name}, type={self.entry_type})>"
+
+    def validate(self) -> None:
+        """Validate directory entry model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate parent_path
+        if not self.parent_path:
+            raise ValidationError("parent_path is required")
+
+        if not self.parent_path.startswith("/"):
+            raise ValidationError(f"parent_path must start with '/', got {self.parent_path!r}")
+
+        if not self.parent_path.endswith("/"):
+            raise ValidationError(f"parent_path must end with '/', got {self.parent_path!r}")
+
+        # Validate entry_name
+        if not self.entry_name:
+            raise ValidationError("entry_name is required")
+
+        if "/" in self.entry_name:
+            raise ValidationError(f"entry_name cannot contain '/', got {self.entry_name!r}")
+
+        # Validate entry_type
+        if self.entry_type not in ("file", "directory"):
+            raise ValidationError(
+                f"entry_type must be 'file' or 'directory', got {self.entry_type!r}"
+            )
+
+
 class FileMetadataModel(Base):
     """File metadata storage.
 
@@ -294,8 +380,8 @@ class ContentChunkModel(Base):
     )  # Grace period before garbage collection
 
     # Indexes
+    # Note: content_hash already has unique=True which creates an index
     __table_args__ = (
-        Index("idx_content_chunks_hash", "content_hash"),
         Index("idx_content_chunks_ref_count", "ref_count"),
         Index("idx_content_chunks_last_accessed", "last_accessed_at"),
     )
@@ -365,12 +451,14 @@ class WorkspaceSnapshotModel(Base):
     )
 
     # Workspace identification (changed from tenant_id+agent_id to workspace_path)
-    workspace_path: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    # Note: Index defined in __table_args__ (idx_workspace_snapshots_workspace_path)
+    workspace_path: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Snapshot metadata
     snapshot_number: Mapped[int] = mapped_column(Integer, nullable=False)  # Sequential version
+    # Note: Index defined in __table_args__ (idx_workspace_snapshots_manifest)
     manifest_hash: Mapped[str] = mapped_column(
-        String(64), nullable=False, index=True
+        String(64), nullable=False
     )  # SHA-256 hash of manifest (CAS key)
 
     # Snapshot stats (for quick display)
@@ -383,8 +471,9 @@ class WorkspaceSnapshotModel(Base):
     tags: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of tags
 
     # Timestamps
+    # Note: Index defined in __table_args__ (idx_workspace_snapshots_created_at)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
 
     # Indexes and constraints
@@ -461,9 +550,9 @@ class VersionHistoryModel(Base):
     )
 
     # Indexes and constraints
+    # Note: (resource_type, resource_id) is covered by uq_version prefix
     __table_args__ = (
         UniqueConstraint("resource_type", "resource_id", "version_number", name="uq_version"),
-        Index("idx_version_history_resource", "resource_type", "resource_id"),
         Index("idx_version_history_content_hash", "content_hash"),
         Index("idx_version_history_created_at", "created_at"),
         Index("idx_version_history_parent", "parent_version_id"),
@@ -657,9 +746,9 @@ class WorkflowModel(Base):
     )
 
     # Indexes and constraints
+    # Note: tenant_id is covered by uq_tenant_workflow_name prefix
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uq_tenant_workflow_name"),
-        Index("idx_workflows_tenant", "tenant_id"),
         Index("idx_workflows_enabled", "enabled"),
     )
 
@@ -934,13 +1023,10 @@ class MemoryModel(Base):
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
     # Identity relationships
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
-    user_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
-    )  # Real user ownership
-    agent_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
-    )  # Created by agent
+    # Note: Indexes defined in __table_args__ (idx_memory_tenant, idx_memory_user, idx_memory_agent)
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Real user ownership
+    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Created by agent
 
     # Scope and visibility
     scope: Mapped[str] = mapped_column(
@@ -951,8 +1037,9 @@ class MemoryModel(Base):
     )  # 'private', 'shared', 'public'
 
     # Session scope for session-scoped memories
-    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    # Note: Indexes defined in __table_args__ (idx_memory_session, idx_memory_expires)
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Memory metadata
     memory_type: Mapped[str | None] = mapped_column(
@@ -963,13 +1050,15 @@ class MemoryModel(Base):
     )  # 0.0-1.0 importance score
 
     # State management (#368)
+    # Note: Index defined in __table_args__ (idx_memory_state)
     state: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="active", index=True
+        String(20), nullable=False, default="active"
     )  # 'inactive', 'active' - supports manual approval workflow (default: active for backward compatibility)
 
     # Namespace organization (v0.8.0 - #350)
+    # Note: Index defined in __table_args__ (idx_memory_namespace)
     namespace: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
+        String(255), nullable=True
     )  # Hierarchical namespace for organization (e.g., "knowledge/geography/facts")
     path_key: Mapped[str | None] = mapped_column(
         String(255), nullable=True
@@ -989,7 +1078,7 @@ class MemoryModel(Base):
 
     # Semantic search support (#406)
     embedding_model: Mapped[str | None] = mapped_column(
-        String(100), nullable=True, index=True
+        String(100), nullable=True
     )  # Name of embedding model used
     embedding_dim: Mapped[int | None] = mapped_column(
         Integer, nullable=True
@@ -1092,23 +1181,27 @@ class ReBACTupleModel(Base):
     tuple_id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
     # Tenant isolation - P0-2 Critical Security Fix
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # Note: Covered by composite indexes in __table_args__ (idx_rebac_tenant_subject, idx_rebac_tenant_object, etc.)
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     subject_tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     object_tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Subject (who/what has the relationship)
-    subject_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    subject_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    # Note: Covered by composite indexes (idx_rebac_permission_check, idx_rebac_subject_relation)
+    subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
     subject_relation: Mapped[str | None] = mapped_column(
         String(50), nullable=True
     )  # For userset-as-subject
 
     # Relation type
-    relation: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    # Note: Covered by idx_rebac_relation in __table_args__
+    relation: Mapped[str] = mapped_column(String(50), nullable=False)
 
     # Object (what is being accessed/owned)
-    object_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    object_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    # Note: Covered by composite indexes (idx_rebac_object_expand, idx_rebac_permission_check)
+    object_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    object_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -1364,7 +1457,8 @@ class ReBACVersionSequenceModel(Base):
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
 
-    __table_args__ = (Index("ix_rebac_version_sequences_tenant_id", "tenant_id"),)
+    # Note: No explicit index needed - tenant_id is the primary key
+    __table_args__: tuple = ()
 
 
 class ReBACCheckCacheModel(Base):
@@ -1381,23 +1475,23 @@ class ReBACCheckCacheModel(Base):
     cache_id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
     # Tenant isolation
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # Note: Covered by composite index idx_rebac_cache_tenant_check in __table_args__
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Cached check parameters
-    subject_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    subject_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    permission: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    object_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    object_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    # Note: All covered by composite indexes idx_rebac_cache_tenant_check and idx_rebac_cache_check
+    subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    permission: Mapped[str] = mapped_column(String(50), nullable=False)
+    object_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    object_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Result and metadata
     result: Mapped[bool] = mapped_column(Integer, nullable=False)  # 0=False, 1=True
     computed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
-    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     # Composite index for efficient lookups
     __table_args__ = (
@@ -1497,11 +1591,11 @@ class OAuthAPIKeyModel(Base):
     )
 
     # User ID (for easier queries without joining api_keys table)
+    # Note: Index defined in __table_args__ (idx_oauth_api_keys_user)
     user_id: Mapped[str] = mapped_column(
         String(255),
         ForeignKey("users.user_id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     # Encrypted API key value (can be decrypted and returned to user)
@@ -1579,8 +1673,8 @@ class MountConfigModel(Base):
     )
 
     # Indexes
+    # Note: mount_point already has unique=True which creates an index
     __table_args__ = (
-        Index("idx_mount_configs_mount_point", "mount_point"),
         Index("idx_mount_configs_owner", "owner_user_id"),
         Index("idx_mount_configs_tenant", "tenant_id"),
         Index("idx_mount_configs_backend_type", "backend_type"),
@@ -1648,7 +1742,8 @@ class SyncJobModel(Base):
     )
 
     # Mount being synced
-    mount_point: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    # Note: Index defined in __table_args__ (idx_sync_jobs_mount_point)
+    mount_point: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Job status: pending, running, completed, failed, cancelled
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
@@ -1740,20 +1835,20 @@ class WorkspaceConfigModel(Base):
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Agent identity
-    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # Owner
+    # Note: Indexes defined in __table_args__ (idx_workspace_configs_user, idx_workspace_configs_agent)
+    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Owner
     agent_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
+        String(255), nullable=True
     )  # Agent that created it
 
     # Session scope
     scope: Mapped[str] = mapped_column(
         String(20), nullable=False, default="persistent"
     )  # "persistent" or "session"
-    session_id: Mapped[str | None] = mapped_column(
-        String(36), nullable=True, index=True
-    )  # FK to user_sessions
+    # Note: Indexes defined in __table_args__ (idx_workspace_configs_session, idx_workspace_configs_expires)
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # FK to user_sessions
     expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True, index=True
+        DateTime, nullable=True
     )  # Auto-cleanup time
 
     # User-defined metadata (JSON as text for SQLite compat)
@@ -1764,6 +1859,7 @@ class WorkspaceConfigModel(Base):
     __table_args__ = (
         Index("idx_workspace_configs_created_at", "created_at"),
         Index("idx_workspace_configs_user", "user_id"),
+        Index("idx_workspace_configs_agent", "agent_id"),
         Index("idx_workspace_configs_session", "session_id"),
         Index("idx_workspace_configs_expires", "expires_at"),
     )
@@ -1797,20 +1893,20 @@ class MemoryConfigModel(Base):
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Agent identity
-    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # Owner
+    # Note: Indexes defined in __table_args__ (idx_memory_configs_user, idx_memory_configs_agent)
+    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Owner
     agent_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
+        String(255), nullable=True
     )  # Agent that created it
 
     # Session scope
     scope: Mapped[str] = mapped_column(
         String(20), nullable=False, default="persistent"
     )  # "persistent" or "session"
-    session_id: Mapped[str | None] = mapped_column(
-        String(36), nullable=True, index=True
-    )  # FK to user_sessions
+    # Note: Indexes defined in __table_args__ (idx_memory_configs_session, idx_memory_configs_expires)
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # FK to user_sessions
     expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True, index=True
+        DateTime, nullable=True
     )  # Auto-cleanup time
 
     # User-defined metadata (JSON as text for SQLite compat)
@@ -1821,6 +1917,7 @@ class MemoryConfigModel(Base):
     __table_args__ = (
         Index("idx_memory_configs_created_at", "created_at"),
         Index("idx_memory_configs_user", "user_id"),
+        Index("idx_memory_configs_agent", "agent_id"),
         Index("idx_memory_configs_session", "session_id"),
         Index("idx_memory_configs_expires", "expires_at"),
     )
@@ -1852,16 +1949,18 @@ class TrajectoryModel(Base):
     )
 
     # Identity relationships
-    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # Owner
+    # Note: Indexes defined in __table_args__ (idx_traj_user, idx_traj_agent, idx_traj_tenant)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # Owner
     agent_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
+        String(255), nullable=True
     )  # Agent that created it
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Task information
     task_description: Mapped[str] = mapped_column(Text, nullable=False)
+    # Note: Index defined in __table_args__ (idx_traj_task_type)
     task_type: Mapped[str | None] = mapped_column(
-        String(50), nullable=True, index=True
+        String(50), nullable=True
     )  # 'api_call', 'data_processing', 'reasoning'
 
     # Execution trace (stored as CAS content)
@@ -1870,8 +1969,9 @@ class TrajectoryModel(Base):
     )  # JSON with steps/decisions/outcomes
 
     # Outcome
+    # Note: Index defined in __table_args__ (idx_traj_status)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, index=True
+        String(20), nullable=False
     )  # 'success', 'failure', 'partial'
     success_score: Mapped[float | None] = mapped_column(Float, nullable=True)  # 0.0-1.0
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1888,9 +1988,10 @@ class TrajectoryModel(Base):
 
     # Timestamps
     started_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    # Note: Index defined in __table_args__ (idx_traj_completed)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Feedback tracking (Dynamic Feedback System)
     feedback_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -1902,11 +2003,13 @@ class TrajectoryModel(Base):
     last_feedback_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Path context (Optional path-based filtering)
-    path: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    # Note: Index defined in __table_args__ (idx_traj_path)
+    path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Session lifecycle (For temporary trajectories)
-    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    # Note: Indexes defined in __table_args__ (idx_traj_session, idx_traj_expires)
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Relationships
     parent_trajectory: Mapped["TrajectoryModel | None"] = relationship(
@@ -1980,14 +2083,16 @@ class PlaybookModel(Base):
     )
 
     # Identity relationships
-    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # Owner
+    # Note: Indexes defined in __table_args__ (idx_playbook_user, idx_playbook_agent, idx_playbook_tenant)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # Owner
     agent_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
+        String(255), nullable=True
     )  # Agent that created it
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Playbook information
-    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    # Note: Index defined in __table_args__ (idx_playbook_name)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
@@ -2002,8 +2107,9 @@ class PlaybookModel(Base):
     avg_improvement: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     # Scope and visibility
+    # Note: Index defined in __table_args__ (idx_playbook_scope)
     scope: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="agent", index=True
+        String(50), nullable=False, default="agent"
     )  # 'agent', 'user', 'tenant', 'global'
     visibility: Mapped[str] = mapped_column(
         String(50), nullable=False, default="private"
@@ -2011,7 +2117,7 @@ class PlaybookModel(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -2022,11 +2128,13 @@ class PlaybookModel(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Path context (Optional path-based filtering)
-    path: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    # Note: Index defined in __table_args__ (idx_playbook_path)
+    path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Session lifecycle (For temporary playbooks)
-    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    # Note: Indexes defined in __table_args__ (idx_playbook_session, idx_playbook_expires)
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Indexes and constraints
     __table_args__ = (
@@ -2108,16 +2216,18 @@ class UserSessionModel(Base):
     )
 
     # Identity
-    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # Note: Indexes defined in __table_args__ (idx_session_user, idx_session_agent, idx_session_tenant)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Lifecycle
+    # Note: Indexes defined in __table_args__ (idx_session_created, idx_session_expires)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
     expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True, index=True
+        DateTime, nullable=True
     )  # None = persistent session
     last_activity: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
@@ -2131,6 +2241,7 @@ class UserSessionModel(Base):
     __table_args__ = (
         Index("idx_session_user", "user_id"),
         Index("idx_session_agent", "agent_id"),
+        Index("idx_session_tenant", "tenant_id"),
         Index("idx_session_expires", "expires_at"),
         Index("idx_session_created", "created_at"),
     )
@@ -2173,16 +2284,17 @@ class TrajectoryFeedbackModel(Base):
     )
 
     # Foreign key to trajectories
+    # Note: Index defined in __table_args__ (idx_feedback_trajectory)
     trajectory_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("trajectories.trajectory_id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     # Feedback details
+    # Note: Index defined in __table_args__ (idx_feedback_type)
     feedback_type: Mapped[str] = mapped_column(
-        String(50), nullable=False, index=True
+        String(50), nullable=False
     )  # 'human', 'monitoring', 'ab_test', 'production'
     revised_score: Mapped[float | None] = mapped_column(Float, nullable=True)  # New score (0.0-1.0)
     source: Mapped[str | None] = mapped_column(
@@ -2196,8 +2308,9 @@ class TrajectoryFeedbackModel(Base):
     )  # Additional structured data
 
     # Timestamps
+    # Note: Index defined in __table_args__ (idx_feedback_created)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
 
     # Indexes
@@ -2231,12 +2344,14 @@ class SandboxMetadataModel(Base):
     )  # E2B sandbox ID (e.g., "sb_xxx")
 
     # User-friendly name (unique per user)
-    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    # Note: Index defined in __table_args__ (idx_sandbox_name)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Identity relationships
-    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    # Note: Indexes defined in __table_args__ (idx_sandbox_user, idx_sandbox_agent, idx_sandbox_tenant)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Provider information
     provider: Mapped[str] = mapped_column(
@@ -2245,11 +2360,12 @@ class SandboxMetadataModel(Base):
     template_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # E2B template ID
 
     # Lifecycle management
+    # Note: Indexes defined in __table_args__ (idx_sandbox_status, idx_sandbox_created)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, index=True
+        String(20), nullable=False
     )  # "creating", "active", "paused", "stopping", "stopped", "error"
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
     last_active_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
@@ -2259,8 +2375,9 @@ class SandboxMetadataModel(Base):
 
     # TTL configuration
     ttl_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=10)  # Idle timeout
+    # Note: Index defined in __table_args__ (idx_sandbox_expires)
     expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True, index=True
+        DateTime, nullable=True
     )  # Computed expiry time
 
     # Auto-creation flag
@@ -2278,6 +2395,7 @@ class SandboxMetadataModel(Base):
     __table_args__ = (
         # Note: Removed UniqueConstraint on (user_id, name) to allow name reuse
         # for stopped sandboxes. Application layer enforces uniqueness for active sandboxes only.
+        Index("idx_sandbox_name", "name"),
         Index("idx_sandbox_user", "user_id"),
         Index("idx_sandbox_agent", "agent_id"),
         Index("idx_sandbox_tenant", "tenant_id"),
@@ -2368,14 +2486,16 @@ class OAuthCredentialModel(Base):
     )
 
     # OAuth provider (google, microsoft, dropbox, etc.)
-    provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    # Note: Index defined in __table_args__ (idx_oauth_provider)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
 
     # User identity
     # user_email: Email from OAuth provider (required for token association)
     # user_id: Nexus user identity (for permission checks, may differ from email)
-    user_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # Note: Indexes defined in __table_args__ (idx_oauth_user_email, idx_oauth_user_id, idx_oauth_tenant)
+    user_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Encrypted tokens (encrypted at rest)
     encrypted_access_token: Mapped[str] = mapped_column(Text, nullable=False)
@@ -2385,7 +2505,8 @@ class OAuthCredentialModel(Base):
     token_type: Mapped[str] = mapped_column(
         String(50), nullable=False, default="Bearer"
     )  # "Bearer", "MAC", etc.
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    # Note: Index defined in __table_args__ (idx_oauth_expires)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     scopes: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of scopes
 
     # OAuth provider metadata
@@ -2403,7 +2524,8 @@ class OAuthCredentialModel(Base):
         onupdate=lambda: datetime.now(UTC),
     )
     last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    revoked: Mapped[int] = mapped_column(Integer, default=0, index=True)  # SQLite: bool as Integer
+    # Note: Index defined in __table_args__ (idx_oauth_revoked)
+    revoked: Mapped[int] = mapped_column(Integer, default=0)  # SQLite: bool as Integer
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Audit fields
@@ -2503,11 +2625,12 @@ class UserModel(Base):
     # Identity
     # NOTE: Uniqueness enforced via partial unique indexes (see migration) to support soft delete
     # Do NOT use unique=True here - it would prevent email/username reuse after soft delete
+    # Note: Indexes defined in __table_args__ (idx_users_username, idx_users_email)
     username: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
+        String(255), nullable=True
     )  # For username/password auth (unique for active users via partial index)
     email: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
+        String(255), nullable=True
     )  # Email address (unique for active users via partial index)
 
     # Profile
@@ -2520,16 +2643,18 @@ class UserModel(Base):
     password_hash: Mapped[str | None] = mapped_column(
         String(512), nullable=True
     )  # Bcrypt hash for username/password auth (512 chars for future-proofing with argon2/scrypt)
+    # Note: Index defined in __table_args__ (idx_users_auth_method)
     primary_auth_method: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="password", index=True
+        String(50), nullable=False, default="password"
     )  # 'password', 'oauth', 'external', 'api_key' - indicates how account was created
 
     # External user management
+    # Note: Covered by composite idx_users_external in __table_args__
     external_user_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, index=True
+        String(255), nullable=True
     )  # ID in external user service
     external_user_service: Mapped[str | None] = mapped_column(
-        String(100), nullable=True, index=True
+        String(100), nullable=True
     )  # External service identifier (e.g., 'auth0', 'okta', 'custom')
     # NOTE: Endpoint configuration stored in ExternalUserServiceModel, not per-user
 
@@ -2560,11 +2685,12 @@ class UserModel(Base):
     # SOFT DELETE: Users are marked inactive instead of hard deleted
     # This preserves audit trail, API keys, and relationships
     # Hard delete only via admin command after retention period (e.g., 90 days)
+    # Note: Indexes defined in __table_args__ (idx_users_active, idx_users_deleted)
     is_active: Mapped[int] = mapped_column(
-        Integer, default=1, nullable=False, index=True
+        Integer, default=1, nullable=False
     )  # SQLite: bool as Integer (0 = soft deleted)
     deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True, index=True
+        DateTime, nullable=True
     )  # Timestamp when user was soft deleted (None = active)
     email_verified: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False
@@ -2645,11 +2771,11 @@ class UserOAuthAccountModel(Base):
     )
 
     # Foreign key to user
+    # Note: Index defined in __table_args__ (idx_user_oauth_user)
     user_id: Mapped[str] = mapped_column(
         String(255),
         ForeignKey("users.user_id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     # OAuth provider
@@ -2722,12 +2848,14 @@ class TenantModel(Base):
     )  # Tenant identifier (matches tenant_id used throughout the system)
 
     # Metadata
+    # Note: Index defined in __table_args__ (idx_tenants_name)
     name: Mapped[str] = mapped_column(
-        String(255), nullable=False, index=True
+        String(255), nullable=False
     )  # Display name for the tenant/organization
 
+    # Note: unique=True creates an index, no need for additional index=True
     domain: Mapped[str | None] = mapped_column(
-        String(255), nullable=True, unique=True, index=True
+        String(255), nullable=True, unique=True
     )  # Unique domain identifier (company URL, email domain, etc.)
 
     description: Mapped[str | None] = mapped_column(Text, nullable=True)  # Optional description
@@ -2738,8 +2866,9 @@ class TenantModel(Base):
     )  # JSON as string for additional tenant settings/config
 
     # Status
+    # Note: Index defined in __table_args__ (idx_tenants_active)
     is_active: Mapped[int] = mapped_column(
-        Integer, default=1, nullable=False, index=True
+        Integer, default=1, nullable=False
     )  # SQLite: bool as Integer (0 = soft deleted)
 
     deleted_at: Mapped[datetime | None] = mapped_column(
@@ -2866,7 +2995,8 @@ class ContentCacheModel(Base):
     )
 
     # Tenant isolation (same pattern as other tables)
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # Note: Index defined in __table_args__ (idx_content_cache_tenant)
+    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Content storage
     content_text: Mapped[str | None] = mapped_column(

@@ -442,27 +442,8 @@ class NexusFSReBACMixin:
             conditions=conditions,
         )
 
-        # OPTIMIZATION: Queue Tiger Cache update for affected subject
-        # This ensures O(1) permission lookups after cache is rebuilt
-        if hasattr(self._rebac_manager, "tiger_queue_update"):
-            # Map relation to permission
-            relation_to_permission = {
-                "direct_owner": "read",
-                "direct_editor": "read",
-                "direct_viewer": "read",
-                "owner-of": "read",
-                "editor-of": "read",
-                "viewer-of": "read",
-                "traverser-of": "traverse",
-                "dynamic_viewer": "read",
-            }
-            permission = relation_to_permission.get(relation, "read")
-            self._rebac_manager.tiger_queue_update(
-                subject=subject[:2] if len(subject) == 3 else subject,
-                permission=permission,
-                resource_type=object[0],
-                tenant_id=effective_tenant_id or "default",
-            )
+        # NOTE: Tiger Cache queue update is now handled in EnhancedReBACManager.rebac_write()
+        # This ensures ALL write paths (rebac_create, share_with_user, etc.) get Tiger Cache updates
 
         return result
 
@@ -857,34 +838,9 @@ class NexusFSReBACMixin:
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
 
-        # OPTIMIZATION: Get tuple info before deletion for Tiger Cache invalidation
-        tuple_info = None
-        if hasattr(self._rebac_manager, "tiger_invalidate_cache"):
-            # Try to get tuple info for cache invalidation
-            try:
-                tuples = self.rebac_list_tuples()
-                for t in tuples:
-                    if t.get("tuple_id") == tuple_id:
-                        tuple_info = t
-                        break
-            except Exception:
-                pass
-
-        # Delete tuple
-        result = self._rebac_manager.rebac_delete(tuple_id=tuple_id)
-
-        # OPTIMIZATION: Invalidate Tiger Cache for affected subject
-        if result and tuple_info and hasattr(self._rebac_manager, "tiger_invalidate_cache"):
-            subject_type = tuple_info.get("subject_type")
-            subject_id = tuple_info.get("subject_id")
-            if subject_type and subject_id:
-                self._rebac_manager.tiger_invalidate_cache(
-                    subject=(subject_type, subject_id),
-                    resource_type=tuple_info.get("object_type"),
-                    tenant_id=tuple_info.get("tenant_id"),
-                )
-
-        return result
+        # Delete tuple - the enhanced rebac_delete already handles Tiger Cache invalidation
+        # No need to fetch tuple info here; the manager does it efficiently by tuple_id
+        return self._rebac_manager.rebac_delete(tuple_id=tuple_id)
 
     @rpc_expose(description="List ReBAC relationship tuples")
     def rebac_list_tuples(
@@ -2584,8 +2540,15 @@ class NexusFSReBACMixin:
                     )
                     entries_created += 1
 
-        # Process the queue immediately
+        # Process the queue (non-blocking - ignore lock errors)
+        # Lock errors are expected during concurrent operations, queue will be processed later
         if hasattr(self._rebac_manager, "tiger_process_queue"):
-            self._rebac_manager.tiger_process_queue(batch_size=1000)
+            try:
+                # Use small batch size since each entry can take 10-40 seconds
+                self._rebac_manager.tiger_process_queue(batch_size=5)
+            except Exception as e:
+                import logging
+
+                logging.getLogger(__name__).warning(f"[WARM-TIGER] Queue processing failed: {e}")
 
         return entries_created

@@ -124,6 +124,59 @@ echo ""
 # Track test failures
 FAILED_TESTS=0
 
+# Debug: Check if permission tuple was created
+echo "🔍 Debug: Checking permission tuples for agent..."
+DEBUG_TUPLES=$(curl -s -X POST "${SERVER_URL}/api/nfs/rebac_list_tuples" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${ADMIN_API_KEY}" \
+  -d "{
+    \"jsonrpc\": \"2.0\",
+    \"method\": \"rebac_list_tuples\",
+    \"params\": {
+      \"subject\": [\"agent\", \"${TEST_AGENT_ID}\"]
+    },
+    \"id\": 100
+  }")
+echo -e "${BLUE}  Agent permission tuples: $(echo "$DEBUG_TUPLES" | python3 -c "import sys, json; data=json.load(sys.stdin); print(len(data.get('result', [])))" 2>/dev/null || echo "error") tuples${NC}"
+echo "$DEBUG_TUPLES" | python3 -m json.tool 2>/dev/null || echo "$DEBUG_TUPLES"
+
+# Debug: Check rebac_check directly
+echo "🔍 Debug: Testing rebac_check for agent on directory..."
+DEBUG_CHECK=$(curl -s -X POST "${SERVER_URL}/api/nfs/rebac_check" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${ADMIN_API_KEY}" \
+  -d "{
+    \"jsonrpc\": \"2.0\",
+    \"method\": \"rebac_check\",
+    \"params\": {
+      \"subject\": [\"agent\", \"${TEST_AGENT_ID}\"],
+      \"permission\": \"read\",
+      \"object\": [\"file\", \"/tenant:${TENANT_ID}/user:${USER_ID}/agent/${TEST_AGENT_NAME}\"],
+      \"tenant_id\": \"${TENANT_ID}\"
+    },
+    \"id\": 101
+  }")
+echo -e "${BLUE}  rebac_check(directory) = $(echo "$DEBUG_CHECK" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('result', 'error'))" 2>/dev/null || echo "error")${NC}"
+
+# Debug: Check rebac_check for config.yaml
+echo "🔍 Debug: Testing rebac_check for agent on config.yaml..."
+DEBUG_CHECK_FILE=$(curl -s -X POST "${SERVER_URL}/api/nfs/rebac_check" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${ADMIN_API_KEY}" \
+  -d "{
+    \"jsonrpc\": \"2.0\",
+    \"method\": \"rebac_check\",
+    \"params\": {
+      \"subject\": [\"agent\", \"${TEST_AGENT_ID}\"],
+      \"permission\": \"read\",
+      \"object\": [\"file\", \"/tenant:${TENANT_ID}/user:${USER_ID}/agent/${TEST_AGENT_NAME}/config.yaml\"],
+      \"tenant_id\": \"${TENANT_ID}\"
+    },
+    \"id\": 102
+  }")
+echo -e "${BLUE}  rebac_check(config.yaml) = $(echo "$DEBUG_CHECK_FILE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('result', 'error'))" 2>/dev/null || echo "error")${NC}"
+echo ""
+
 # Step 3: Test initial access (should only see agent config)
 echo "🔒 Step 3: Testing initial access (zero permissions except own config)..."
 

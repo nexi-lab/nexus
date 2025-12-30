@@ -154,26 +154,33 @@ echo ""
 echo "🔒 Step 3: Testing initial access (zero permissions except own config)..."
 
 # Test 1: List agent directory (should see own config - auto-granted)
+# Retry logic to handle potential cache propagation delays
 echo -e "${BLUE}  Test 1: List /tenant:${TENANT_ID}/user:${USER_ID}/agent/${TEST_AGENT_NAME}${NC}"
-AGENT_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer ${TEST_AGENT_API_KEY}" \
-  -d "{
-    \"jsonrpc\": \"2.0\",
-    \"method\": \"list\",
-    \"params\": {
-      \"path\": \"/tenant:${TENANT_ID}/user:${USER_ID}/agent/${TEST_AGENT_NAME}\"
-    },
-    \"id\": 3
-  }")
-
-if echo "$AGENT_DIR_RESULT" | grep -q "config.yaml"; then
+for retry in 1 2 3; do
+  AGENT_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${TEST_AGENT_API_KEY}" \
+    -d "{
+      \"jsonrpc\": \"2.0\",
+      \"method\": \"list\",
+      \"params\": {
+        \"path\": \"/tenant:${TENANT_ID}/user:${USER_ID}/agent/${TEST_AGENT_NAME}\"
+      },
+      \"id\": 3
+    }")
+  if echo "$AGENT_DIR_RESULT" | grep -q "config.yaml"; then
     echo -e "${GREEN}  ✓ Can access own config (expected)${NC}"
-else
-    echo -e "${RED}  ✗ Cannot access own config (FAILED)${NC}"
+    break
+  fi
+  if [ "$retry" -lt 3 ]; then
+    echo -e "${YELLOW}  ⚠ Retry $retry: waiting for permission propagation...${NC}"
+    sleep 0.2
+  else
+    echo -e "${RED}  ✗ Cannot access own config (FAILED after $retry retries)${NC}"
     echo "$AGENT_DIR_RESULT" | python3 -m json.tool
     FAILED_TESTS=$((FAILED_TESTS + 1))
-fi
+  fi
+done
 
 # Test 2: Try to list skill directory (should return empty - no permission)
 echo -e "${BLUE}  Test 2: List /tenant:${TENANT_ID}/user:${USER_ID}/skill (should be empty)${NC}"

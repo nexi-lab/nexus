@@ -854,12 +854,28 @@ class PermissionEnforcer:
 
                                 # Handle paths not in resource map (need fallback check)
                                 paths_not_in_map = [p for p in paths if p not in path_to_int]
-                                if paths_not_in_map:
+
+                                # CRITICAL FIX: Also handle paths that ARE in the map but NOT
+                                # in the bitmap. These might have inherited permissions via
+                                # parent directories (e.g., agent has viewer on directory,
+                                # child files inherit read permission via parent_viewer).
+                                # Tiger Cache only stores direct grants, not inherited permissions.
+                                paths_in_map_but_not_granted = [
+                                    p for p in paths if p in path_to_int and p not in filtered
+                                ]
+
+                                paths_needing_fallback = (
+                                    paths_not_in_map + paths_in_map_but_not_granted
+                                )
+
+                                if paths_needing_fallback:
                                     logger.debug(
-                                        f"[TIGER-RUST] {len(paths_not_in_map)} paths not in resource map, "
-                                        "falling back to rebac_check_bulk for those"
+                                        f"[TIGER-RUST] {len(paths_needing_fallback)} paths need fallback: "
+                                        f"{len(paths_not_in_map)} not in map, "
+                                        f"{len(paths_in_map_but_not_granted)} in map but not in bitmap "
+                                        "(may have inherited permissions)"
                                     )
-                                    # Fall through to rebac_check_bulk for unmapped paths
+                                    # Fall through to rebac_check_bulk for these paths
                                     # (This is handled below by checking if all paths were processed)
                                 else:
                                     tiger_elapsed = time.time() - tiger_start

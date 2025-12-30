@@ -1364,6 +1364,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         # Issue #919: Notify directory visibility cache invalidators
         self._notify_dir_visibility_invalidators(effective_tenant, object)
 
+        # Invalidate L1 permission cache for affected subject and object
+        # This ensures subsequent rebac_check_bulk calls see the new permission
+        if self._l1_cache is not None:
+            subject_type, subject_id = subject[0], subject[1]
+            object_type, object_id = object[0], object[1]
+            self._l1_cache.invalidate_subject(subject_type, subject_id, effective_tenant)
+            self._l1_cache.invalidate_object(object_type, object_id, effective_tenant)
+
         return result
 
     def rebac_write_batch(
@@ -1490,6 +1498,15 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 obj = t["object"]
                 tenant_id = t.get("tenant_id") or "default"
                 self._notify_dir_visibility_invalidators(tenant_id, obj)
+
+            # Invalidate L1 permission cache for all affected subjects and objects
+            if self._l1_cache is not None:
+                for t in tuples:
+                    subject = t["subject"]
+                    obj = t["object"]
+                    tenant_id = t.get("tenant_id") or "default"
+                    self._l1_cache.invalidate_subject(subject[0], subject[1], tenant_id)
+                    self._l1_cache.invalidate_object(obj[0], obj[1], tenant_id)
 
         return created_count
 
@@ -1618,6 +1635,16 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             # Issue #919: Notify directory visibility cache invalidators
             object_tuple = (tuple_info["object_type"], tuple_info["object_id"])
             self._notify_dir_visibility_invalidators(tenant_id or "default", object_tuple)
+
+            # Invalidate L1 permission cache for affected subject and object
+            if self._l1_cache is not None:
+                subject_type = tuple_info["subject_type"]
+                subject_id = tuple_info["subject_id"]
+                object_type = tuple_info["object_type"]
+                object_id = tuple_info["object_id"]
+                effective_tenant = tenant_id or "default"
+                self._l1_cache.invalidate_subject(subject_type, subject_id, effective_tenant)
+                self._l1_cache.invalidate_object(object_type, object_id, effective_tenant)
 
         return result
 
